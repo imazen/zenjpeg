@@ -1,0 +1,47 @@
+[package]
+name = "jpegli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Improved JPEG encoder/decoder - Rust port of jpegli"
+keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
+categories = ["multimedia::images", "encoding"]
+
+[dependencies]
+wide = { workspace = true }
+bytemuck = { workspace = true }
+arrayref = { workspace = true }
+rgb = { workspace = true }
+imgref = { workspace = true }
+multiversion = { workspace = true }
+lcms2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+proptest = { workspace = true }
+criterion = { workspace = true }
+png = { workspace = true }
+dssim = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+zune-jpeg = { workspace = true }
+
+# For FFI comparison testing
+jpegli-sys = { path = "../jpegli-sys" }
+
+[features]
+default = ["simd"]
+simd = []
+cms = ["dep:lcms2"]
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "decode"
+harness = false
+
+[lints]
+workspace = true

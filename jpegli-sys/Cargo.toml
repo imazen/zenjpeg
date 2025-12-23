@@ -1,0 +1,18 @@
+[package]
+name = "jpegli-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FFI bindings to jpegli C++ for comparison testing"
+links = "jpegli_ffi"
+build = "build.rs"
+
+[dependencies]
+libc = { workspace = true }
+
+[build-dependencies]
+cc = "1.0"
+cmake = "0.1"
+
+[lints]
+workspace = true
