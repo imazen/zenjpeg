@@ -49,9 +49,9 @@ pub mod huffman;
 pub mod quant;
 
 // Layer 2: Transforms
+pub mod color;
 pub mod dct;
 pub mod idct;
-pub mod color;
 pub mod xyb;
 
 // Layer 3: Bitstream I/O
@@ -61,8 +61,8 @@ pub mod bitstream;
 pub mod entropy;
 
 // Layer 5-6: Pipelines
-pub mod encode;
 pub mod decode;
+pub mod encode;
 
 // Quality and adaptive quantization
 pub mod adaptive_quant;

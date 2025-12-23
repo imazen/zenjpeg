@@ -6,12 +6,9 @@
 //! - Various pixel format conversions
 
 use crate::consts::{
-    YCBCR_R_TO_Y, YCBCR_G_TO_Y, YCBCR_B_TO_Y,
-    YCBCR_R_TO_CB, YCBCR_G_TO_CB, YCBCR_B_TO_CB,
-    YCBCR_R_TO_CR, YCBCR_G_TO_CR, YCBCR_B_TO_CR,
-    YCBCR_Y_TO_R, YCBCR_CB_TO_R, YCBCR_CR_TO_R,
-    YCBCR_Y_TO_G, YCBCR_CB_TO_G, YCBCR_CR_TO_G,
-    YCBCR_Y_TO_B, YCBCR_CB_TO_B, YCBCR_CR_TO_B,
+    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_CB_TO_B, YCBCR_CB_TO_G, YCBCR_CB_TO_R,
+    YCBCR_CR_TO_B, YCBCR_CR_TO_G, YCBCR_CR_TO_R, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
+    YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y, YCBCR_Y_TO_B, YCBCR_Y_TO_G, YCBCR_Y_TO_R,
 };
 use crate::types::PixelFormat;
 
@@ -119,11 +116,7 @@ pub fn convert_ycbcr_to_rgb_buffer(buffer: &mut [u8]) {
 }
 
 /// Converts RGB to separate Y, Cb, Cr planes.
-pub fn rgb_to_ycbcr_planes(
-    rgb: &[u8],
-    width: usize,
-    height: usize,
-) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+pub fn rgb_to_ycbcr_planes(rgb: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let num_pixels = width * height;
     assert_eq!(rgb.len(), num_pixels * 3);
 
@@ -229,11 +222,7 @@ pub fn rgb_to_cmyk(r: u8, g: u8, b: u8) -> (u8, u8, u8, u8) {
 }
 
 /// Extracts a single channel from a pixel buffer.
-pub fn extract_channel(
-    data: &[u8],
-    format: PixelFormat,
-    channel: usize,
-) -> Vec<u8> {
+pub fn extract_channel(data: &[u8], format: PixelFormat, channel: usize) -> Vec<u8> {
     let bpp = format.bytes_per_pixel();
     let num_pixels = data.len() / bpp;
     let mut result = vec![0u8; num_pixels];
@@ -266,9 +255,27 @@ mod tests {
             let (r2, g2, b2) = ycbcr_to_rgb(y, cb, cr);
 
             // Allow small rounding errors
-            assert!((r as i16 - r2 as i16).abs() <= 1, "R mismatch for ({},{},{})", r, g, b);
-            assert!((g as i16 - g2 as i16).abs() <= 1, "G mismatch for ({},{},{})", r, g, b);
-            assert!((b as i16 - b2 as i16).abs() <= 1, "B mismatch for ({},{},{})", r, g, b);
+            assert!(
+                (r as i16 - r2 as i16).abs() <= 1,
+                "R mismatch for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                (g as i16 - g2 as i16).abs() <= 1,
+                "G mismatch for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                (b as i16 - b2 as i16).abs() <= 1,
+                "B mismatch for ({},{},{})",
+                r,
+                g,
+                b
+            );
         }
     }
 

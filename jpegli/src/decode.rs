@@ -4,11 +4,9 @@
 
 use crate::color;
 use crate::consts::{
-    DCT_BLOCK_SIZE, DCT_SIZE, MAX_COMPONENTS, MAX_QUANT_TABLES, MAX_HUFFMAN_TABLES,
-    MARKER_SOI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2,
-    MARKER_DHT, MARKER_DQT, MARKER_SOS, MARKER_DRI,
-    MARKER_APP0, MARKER_COM,
-    JPEG_NATURAL_ORDER,
+    DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
+    MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI, MARKER_SOS,
+    MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result};
@@ -288,23 +286,30 @@ impl<'a> JpegParser<'a> {
                 });
             }
 
-            let mut values = [0u16; DCT_BLOCK_SIZE];
+            // Read values in zigzag order (as stored in JPEG)
+            let mut zigzag_values = [0u16; DCT_BLOCK_SIZE];
 
             if precision == 0 {
                 // 8-bit values
                 for i in 0..DCT_BLOCK_SIZE {
-                    values[i] = self.read_u8()? as u16;
+                    zigzag_values[i] = self.read_u8()? as u16;
                 }
                 length -= 65;
             } else {
                 // 16-bit values
                 for i in 0..DCT_BLOCK_SIZE {
-                    values[i] = self.read_u16()?;
+                    zigzag_values[i] = self.read_u16()?;
                 }
                 length -= 129;
             }
 
-            self.quant_tables[table_idx] = Some(values);
+            // Convert from zigzag order to natural order for dequantization
+            let mut natural_values = [0u16; DCT_BLOCK_SIZE];
+            for i in 0..DCT_BLOCK_SIZE {
+                natural_values[JPEG_NATURAL_ORDER[i] as usize] = zigzag_values[i];
+            }
+
+            self.quant_tables[table_idx] = Some(natural_values);
         }
 
         Ok(())
@@ -435,7 +440,8 @@ impl<'a> JpegParser<'a> {
 
         if self.coeffs.is_empty() {
             for _ in 0..self.num_components {
-                self.coeffs.push(vec![[0i16; DCT_BLOCK_SIZE]; blocks_h * blocks_v]);
+                self.coeffs
+                    .push(vec![[0i16; DCT_BLOCK_SIZE]; blocks_h * blocks_v]);
             }
         }
 
@@ -445,10 +451,10 @@ impl<'a> JpegParser<'a> {
 
         for (comp_idx, dc_table, ac_table) in scan_components {
             if let Some(table) = &self.dc_tables[*dc_table as usize] {
-                decoder.set_dc_table(*comp_idx, table.clone());
+                decoder.set_dc_table(*dc_table as usize, table.clone());
             }
             if let Some(table) = &self.ac_tables[*ac_table as usize] {
-                decoder.set_ac_table(*comp_idx, table.clone());
+                decoder.set_ac_table(*ac_table as usize, table.clone());
             }
         }
 
@@ -458,11 +464,8 @@ impl<'a> JpegParser<'a> {
                 let block_idx = by * blocks_h + bx;
 
                 for (comp_idx, dc_table, ac_table) in scan_components {
-                    let coeffs = decoder.decode_block(
-                        *comp_idx,
-                        *dc_table as usize,
-                        *ac_table as usize,
-                    )?;
+                    let coeffs =
+                        decoder.decode_block(*comp_idx, *dc_table as usize, *ac_table as usize)?;
                     self.coeffs[*comp_idx][block_idx] = coeffs;
                 }
             }
@@ -506,9 +509,11 @@ impl<'a> JpegParser<'a> {
 
         for comp_idx in 0..self.num_components as usize {
             let quant_idx = self.components[comp_idx].quant_table_idx as usize;
-            let quant = self.quant_tables[quant_idx].as_ref().ok_or(Error::InternalError {
-                reason: "missing quantization table",
-            })?;
+            let quant = self.quant_tables[quant_idx]
+                .as_ref()
+                .ok_or(Error::InternalError {
+                    reason: "missing quantization table",
+                })?;
 
             let mut plane = vec![0u8; width * height];
 
@@ -555,9 +560,9 @@ impl<'a> JpegParser<'a> {
                 }
                 Ok(rgb)
             }
-            (3, PixelFormat::Rgb) => {
-                Ok(color::ycbcr_planes_to_rgb(&planes[0], &planes[1], &planes[2], width, height))
-            }
+            (3, PixelFormat::Rgb) => Ok(color::ycbcr_planes_to_rgb(
+                &planes[0], &planes[1], &planes[2], width, height,
+            )),
             _ => Err(Error::UnsupportedFeature {
                 feature: "unsupported color conversion",
             }),
@@ -568,6 +573,8 @@ impl<'a> JpegParser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encode::Encoder;
+    use crate::quant::Quality;
 
     #[test]
     fn test_decoder_creation() {
@@ -577,5 +584,92 @@ mod tests {
 
         assert_eq!(decoder.config.output_format, Some(PixelFormat::Rgb));
         assert!(decoder.config.fancy_upsampling);
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip_gray() {
+        // Create a simple 8x8 grayscale image
+        let width = 8;
+        let height = 8;
+        let mut input = vec![0u8; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                input[y * width + x] = ((x + y) * 16) as u8;
+            }
+        }
+
+        // Encode
+        let encoder = Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .pixel_format(PixelFormat::Gray)
+            .quality(Quality::from_quality(95.0));
+
+        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+
+        // Verify JPEG structure
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], 0xD8); // SOI
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], 0xD9); // EOI
+
+        // Decode
+        let decoder = Decoder::new().output_format(PixelFormat::Gray);
+        let decoded = decoder.decode(&jpeg).expect("decoding should succeed");
+
+        assert_eq!(decoded.width, width as u32);
+        assert_eq!(decoded.height, height as u32);
+        assert_eq!(decoded.data.len(), width * height);
+
+        // Check pixel values are reasonably close (JPEG is lossy)
+        let mut max_diff = 0i32;
+        for i in 0..input.len() {
+            let diff = (input[i] as i32 - decoded.data[i] as i32).abs();
+            max_diff = max_diff.max(diff);
+        }
+        // At quality 95, differences should be small
+        assert!(max_diff < 20, "max_diff {} too large", max_diff);
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip_rgb() {
+        // Create a simple 16x16 RGB image
+        let width = 16;
+        let height = 16;
+        let mut input = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                input[idx] = (x * 16) as u8; // R
+                input[idx + 1] = (y * 16) as u8; // G
+                input[idx + 2] = 128; // B
+            }
+        }
+
+        // Encode
+        let encoder = Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .pixel_format(PixelFormat::Rgb)
+            .quality(Quality::from_quality(95.0));
+
+        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+
+        // Decode
+        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+        let decoded = decoder.decode(&jpeg).expect("decoding should succeed");
+
+        assert_eq!(decoded.width, width as u32);
+        assert_eq!(decoded.height, height as u32);
+        assert_eq!(decoded.data.len(), width * height * 3);
+
+        // Check pixel values are reasonably close
+        let mut max_diff = 0i32;
+        for i in 0..input.len() {
+            let diff = (input[i] as i32 - decoded.data[i] as i32).abs();
+            max_diff = max_diff.max(diff);
+        }
+        // At quality 95, differences should be small
+        assert!(max_diff < 30, "max_diff {} too large", max_diff);
     }
 }

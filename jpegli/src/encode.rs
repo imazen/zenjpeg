@@ -4,9 +4,8 @@
 
 use crate::color;
 use crate::consts::{
-    DCT_BLOCK_SIZE, DCT_SIZE,
-    MARKER_SOI, MARKER_EOI, MARKER_SOF0, MARKER_SOF2,
-    MARKER_DHT, MARKER_DQT, MARKER_SOS, MARKER_DRI, MARKER_APP0,
+    DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, JPEG_ZIGZAG_ORDER, MARKER_APP0, MARKER_DHT,
+    MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF2, MARKER_SOI, MARKER_SOS,
 };
 use crate::dct::forward_dct_8x8;
 use crate::entropy::EntropyEncoder;
@@ -247,9 +246,7 @@ impl Encoder {
                 let cr = vec![128u8; width * height];
                 Ok((y, cb, cr))
             }
-            PixelFormat::Rgb => {
-                Ok(color::rgb_to_ycbcr_planes(data, width, height))
-            }
+            PixelFormat::Rgb => Ok(color::rgb_to_ycbcr_planes(data, width, height)),
             PixelFormat::Rgba => {
                 // Strip alpha and convert
                 let rgb: Vec<u8> = data
@@ -272,11 +269,9 @@ impl Encoder {
                     .collect();
                 Ok(color::rgb_to_ycbcr_planes(&rgb, width, height))
             }
-            PixelFormat::Cmyk => {
-                Err(Error::UnsupportedFeature {
-                    feature: "CMYK encoding",
-                })
-            }
+            PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
+                feature: "CMYK encoding",
+            }),
         }
     }
 
@@ -294,7 +289,7 @@ impl Encoder {
             0x00, 0x10, // Length
             b'J', b'F', b'I', b'F', 0x00, // Identifier
             0x01, 0x01, // Version 1.01
-            0x00,       // Units: no units
+            0x00, // Units: no units
             0x00, 0x01, // X density
             0x00, 0x01, // Y density
             0x00, 0x00, // No thumbnail
@@ -311,24 +306,25 @@ impl Encoder {
         y_quant: &QuantTable,
         c_quant: &QuantTable,
     ) -> Result<()> {
-        // DQT for Y (table 0)
+        // DQT for Y (table 0) - values must be written in zigzag order
         output.push(0xFF);
         output.push(MARKER_DQT);
         output.push(0x00);
         output.push(0x43); // Length: 67 bytes
         output.push(0x00); // 8-bit precision, table 0
-        for &v in &y_quant.values {
-            output.push(v as u8);
+        for i in 0..DCT_BLOCK_SIZE {
+            // For zigzag position i, output the quant value for natural position JPEG_NATURAL_ORDER[i]
+            output.push(y_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
         }
 
-        // DQT for C (table 1)
+        // DQT for C (table 1) - values must be written in zigzag order
         output.push(0xFF);
         output.push(MARKER_DQT);
         output.push(0x00);
         output.push(0x43);
         output.push(0x01); // 8-bit precision, table 1
-        for &v in &c_quant.values {
-            output.push(v as u8);
+        for i in 0..DCT_BLOCK_SIZE {
+            output.push(c_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
         }
 
         Ok(())
@@ -364,9 +360,9 @@ impl Encoder {
 
         if num_components == 1 {
             // Grayscale
-            output.push(1);    // Component ID
+            output.push(1); // Component ID
             output.push(0x11); // 1x1 sampling
-            output.push(0);    // Quant table 0
+            output.push(0); // Quant table 0
         } else {
             // Y component
             let (h_samp, v_samp) = match self.config.subsampling {
@@ -376,17 +372,17 @@ impl Encoder {
                 Subsampling::S440 => (1, 2),
             };
 
-            output.push(1);    // Component ID = 1 (Y)
+            output.push(1); // Component ID = 1 (Y)
             output.push((h_samp << 4) | v_samp);
-            output.push(0);    // Quant table 0
+            output.push(0); // Quant table 0
 
-            output.push(2);    // Component ID = 2 (Cb)
+            output.push(2); // Component ID = 2 (Cb)
             output.push(0x11); // 1x1 sampling
-            output.push(1);    // Quant table 1
+            output.push(1); // Quant table 1
 
-            output.push(3);    // Component ID = 3 (Cr)
+            output.push(3); // Component ID = 3 (Cr)
             output.push(0x11); // 1x1 sampling
-            output.push(1);    // Quant table 1
+            output.push(1); // Quant table 1
         }
 
         Ok(())
@@ -395,10 +391,9 @@ impl Encoder {
     /// Writes Huffman tables.
     fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
         use crate::huffman::{
+            STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_AC_LUMINANCE_BITS,
+            STD_AC_LUMINANCE_VALUES, STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
             STD_DC_LUMINANCE_BITS, STD_DC_LUMINANCE_VALUES,
-            STD_AC_LUMINANCE_BITS, STD_AC_LUMINANCE_VALUES,
-            STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
-            STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
         };
 
         // Helper to write one table
@@ -416,16 +411,40 @@ impl Encoder {
         };
 
         // DC luminance (class 0, id 0)
-        write_table(output, 0, 0, &STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES);
+        write_table(
+            output,
+            0,
+            0,
+            &STD_DC_LUMINANCE_BITS,
+            &STD_DC_LUMINANCE_VALUES,
+        );
 
         // AC luminance (class 1, id 0)
-        write_table(output, 1, 0, &STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES);
+        write_table(
+            output,
+            1,
+            0,
+            &STD_AC_LUMINANCE_BITS,
+            &STD_AC_LUMINANCE_VALUES,
+        );
 
         // DC chrominance (class 0, id 1)
-        write_table(output, 0, 1, &STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES);
+        write_table(
+            output,
+            0,
+            1,
+            &STD_DC_CHROMINANCE_BITS,
+            &STD_DC_CHROMINANCE_VALUES,
+        );
 
         // AC chrominance (class 1, id 1)
-        write_table(output, 1, 1, &STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES);
+        write_table(
+            output,
+            1,
+            1,
+            &STD_AC_CHROMINANCE_BITS,
+            &STD_AC_CHROMINANCE_VALUES,
+        );
 
         Ok(())
     }
@@ -459,16 +478,16 @@ impl Encoder {
         output.push(num_components);
 
         if num_components == 1 {
-            output.push(1);    // Component selector
+            output.push(1); // Component selector
             output.push(0x00); // DC/AC table selectors
         } else {
-            output.push(1);    // Y component
+            output.push(1); // Y component
             output.push(0x00); // DC table 0, AC table 0
 
-            output.push(2);    // Cb component
+            output.push(2); // Cb component
             output.push(0x11); // DC table 1, AC table 1
 
-            output.push(3);    // Cr component
+            output.push(3); // Cr component
             output.push(0x11); // DC table 1, AC table 1
         }
 
@@ -518,20 +537,23 @@ impl Encoder {
                 let y_block = self.extract_block(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
                 let y_quant_coeffs = quant::quantize_block(&y_dct, &y_quant.values);
-                encoder.encode_block(&y_quant_coeffs, 0, 0, 0)?;
+                let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
+                encoder.encode_block(&y_zigzag, 0, 0, 0)?;
 
                 if self.config.pixel_format != PixelFormat::Gray {
                     // Cb block
                     let cb_block = self.extract_block(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
                     let cb_quant_coeffs = quant::quantize_block(&cb_dct, &c_quant.values);
-                    encoder.encode_block(&cb_quant_coeffs, 1, 1, 1)?;
+                    let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
+                    encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
 
                     // Cr block
                     let cr_block = self.extract_block(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
                     let cr_quant_coeffs = quant::quantize_block(&cr_dct, &c_quant.values);
-                    encoder.encode_block(&cr_quant_coeffs, 2, 1, 1)?;
+                    let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
+                    encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
                 }
 
                 encoder.check_restart();
@@ -542,7 +564,14 @@ impl Encoder {
     }
 
     /// Extracts an 8x8 block from a plane with level shift.
-    fn extract_block(&self, plane: &[u8], width: usize, height: usize, bx: usize, by: usize) -> [f32; DCT_BLOCK_SIZE] {
+    fn extract_block(
+        &self,
+        plane: &[u8],
+        width: usize,
+        height: usize,
+        bx: usize,
+        by: usize,
+    ) -> [f32; DCT_BLOCK_SIZE] {
         let mut block = [0.0f32; DCT_BLOCK_SIZE];
 
         for y in 0..DCT_SIZE {
@@ -563,6 +592,15 @@ impl Default for Encoder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Converts coefficients from natural order to zigzag order for JPEG encoding.
+fn natural_to_zigzag(natural: &[i16; DCT_BLOCK_SIZE]) -> [i16; DCT_BLOCK_SIZE] {
+    let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+    for i in 0..DCT_BLOCK_SIZE {
+        zigzag[JPEG_ZIGZAG_ORDER[i] as usize] = natural[i];
+    }
+    zigzag
 }
 
 #[cfg(test)]

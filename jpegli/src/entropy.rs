@@ -125,12 +125,16 @@ impl EntropyEncoder {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> Result<()> {
-        let dc_table = self.dc_tables[dc_table_idx].as_ref().ok_or(Error::InternalError {
-            reason: "DC table not set",
-        })?;
-        let ac_table = self.ac_tables[ac_table_idx].as_ref().ok_or(Error::InternalError {
-            reason: "AC table not set",
-        })?;
+        let dc_table = self.dc_tables[dc_table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "DC table not set",
+            })?;
+        let ac_table = self.ac_tables[ac_table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
 
         // Encode DC coefficient
         let dc = coeffs[0];
@@ -256,10 +260,18 @@ impl<'a> EntropyDecoder<'a> {
     /// Decodes a Huffman symbol.
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> Result<u8> {
         // Try fast lookup first
-        let bits = self.reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8)?;
-        if let Some((symbol, len)) = table.fast_decode(bits as u32) {
-            self.reader.skip_bits(len);
-            return Ok(symbol);
+        match self.reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
+            Ok(bits) => {
+                // fast_decode expects bits in MSB position (shifted left by 32 - FAST_BITS)
+                let shifted = (bits as u32) << (32 - HuffmanDecodeTable::FAST_BITS);
+                if let Some((symbol, len)) = table.fast_decode(shifted) {
+                    self.reader.skip_bits(len);
+                    return Ok(symbol);
+                }
+            }
+            Err(_) => {
+                // Not enough bits for fast lookup, try slow path
+            }
         }
 
         // Slow path for longer codes
@@ -288,12 +300,16 @@ impl<'a> EntropyDecoder<'a> {
         ac_table_idx: usize,
     ) -> Result<[i16; DCT_BLOCK_SIZE]> {
         // Clone tables to avoid borrow conflicts with self.decode_huffman()
-        let dc_table = self.dc_tables[dc_table_idx].clone().ok_or(Error::InternalError {
-            reason: "DC table not set",
-        })?;
-        let ac_table = self.ac_tables[ac_table_idx].clone().ok_or(Error::InternalError {
-            reason: "AC table not set",
-        })?;
+        let dc_table = self.dc_tables[dc_table_idx]
+            .clone()
+            .ok_or(Error::InternalError {
+                reason: "DC table not set",
+            })?;
+        let ac_table = self.ac_tables[ac_table_idx]
+            .clone()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 

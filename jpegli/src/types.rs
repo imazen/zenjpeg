@@ -223,7 +223,11 @@ impl QuantTable {
         }
         Self {
             values: zigzag,
-            precision: if values.iter().any(|&v| v > 255) { 1 } else { 0 },
+            precision: if values.iter().any(|&v| v > 255) {
+                1
+            } else {
+                0
+            },
         }
     }
 
@@ -231,7 +235,10 @@ impl QuantTable {
     #[must_use]
     pub fn to_natural_order(&self) -> [u16; DCT_BLOCK_SIZE] {
         let mut natural = [0u16; DCT_BLOCK_SIZE];
-        for (i, &zi) in crate::consts::JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+        for (i, &zi) in crate::consts::JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE]
+            .iter()
+            .enumerate()
+        {
             natural[zi as usize] = self.values[i];
         }
         natural
@@ -355,14 +362,11 @@ mod tests {
 
     #[test]
     fn test_quant_table_order_conversion() {
-        let natural = [1, 2, 3, 4, 5, 6, 7, 8,
-                       9, 10, 11, 12, 13, 14, 15, 16,
-                       17, 18, 19, 20, 21, 22, 23, 24,
-                       25, 26, 27, 28, 29, 30, 31, 32,
-                       33, 34, 35, 36, 37, 38, 39, 40,
-                       41, 42, 43, 44, 45, 46, 47, 48,
-                       49, 50, 51, 52, 53, 54, 55, 56,
-                       57, 58, 59, 60, 61, 62, 63, 64];
+        let natural = [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64,
+        ];
         let table = QuantTable::from_natural_order(&natural);
         let recovered = table.to_natural_order();
         assert_eq!(natural, recovered);

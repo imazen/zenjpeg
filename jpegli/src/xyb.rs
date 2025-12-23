@@ -10,8 +10,7 @@
 //! 4. Final XYB matrix
 
 use crate::consts::{
-    XYB_OPSIN_ABSORBANCE_MATRIX, XYB_OPSIN_ABSORBANCE_BIAS,
-    XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT,
+    XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT, XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX,
 };
 
 /// Applies sRGB gamma decoding (sRGB to linear RGB).
@@ -140,9 +139,8 @@ pub fn xyb_to_linear_rgb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
     // Inverse of opsin absorbance matrix
     // Pre-computed inverse matrix
     const INV_OPSIN: [f32; 9] = [
-        11.031_567, -9.866_944, -0.164_623,
-        -3.254_147, 4.418_770, -0.164_623,
-        -3.658_851, 2.712_923, 1.945_928,
+        11.031_567, -9.866_944, -0.164_623, -3.254_147, 4.418_770, -0.164_623, -3.658_851,
+        2.712_923, 1.945_928,
     ];
 
     let r = INV_OPSIN[0] * opsin_r + INV_OPSIN[1] * opsin_g + INV_OPSIN[2] * opsin_b;
@@ -252,17 +250,29 @@ mod tests {
             assert!(
                 (r as i16 - r2 as i16).abs() <= 2,
                 "R mismatch for ({},{},{}): {} vs {}",
-                r, g, b, r, r2
+                r,
+                g,
+                b,
+                r,
+                r2
             );
             assert!(
                 (g as i16 - g2 as i16).abs() <= 2,
                 "G mismatch for ({},{},{}): {} vs {}",
-                r, g, b, g, g2
+                r,
+                g,
+                b,
+                g,
+                g2
             );
             assert!(
                 (b as i16 - b2 as i16).abs() <= 2,
                 "B mismatch for ({},{},{}): {} vs {}",
-                r, g, b, b, b2
+                r,
+                g,
+                b,
+                b,
+                b2
             );
         }
     }

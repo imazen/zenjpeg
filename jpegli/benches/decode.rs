@@ -1,6 +1,6 @@
 //! Decoding benchmarks for jpegli.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jpegli::{Decoder, Encoder, PixelFormat, Quality};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
@@ -34,8 +34,7 @@ fn bench_decode(c: &mut Criterion) {
             &jpeg_data,
             |b, data| {
                 b.iter(|| {
-                    let decoder = Decoder::new()
-                        .output_format(PixelFormat::Rgb);
+                    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
                     decoder.decode(black_box(data))
                 });
             },

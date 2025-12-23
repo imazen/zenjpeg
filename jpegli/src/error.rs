@@ -87,7 +87,11 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidDimensions { width, height, reason } => {
+            Self::InvalidDimensions {
+                width,
+                height,
+                reason,
+            } => {
                 write!(f, "invalid dimensions {}x{}: {}", width, height, reason)
             }
             Self::InvalidQuality { value, valid_range } => {
@@ -97,7 +101,11 @@ impl fmt::Display for Error {
                 write!(f, "invalid color format: {}", reason)
             }
             Self::InvalidBufferSize { expected, actual } => {
-                write!(f, "invalid buffer size: expected {} bytes, got {}", expected, actual)
+                write!(
+                    f,
+                    "invalid buffer size: expected {} bytes, got {}",
+                    expected, actual
+                )
             }
             Self::InvalidJpegData { reason } => {
                 write!(f, "invalid JPEG data: {}", reason)

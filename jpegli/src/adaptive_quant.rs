@@ -111,14 +111,7 @@ pub fn compute_quant_map(
 
     for by in 0..height_blocks {
         for bx in 0..width_blocks {
-            let multiplier = compute_block_quant_multiplier(
-                y_plane,
-                width,
-                height,
-                bx,
-                by,
-                config,
-            );
+            let multiplier = compute_block_quant_multiplier(y_plane, width, height, bx, by, config);
             map.multipliers.push(multiplier);
         }
     }
@@ -212,13 +205,7 @@ fn activity_to_multiplier(activity: f32, config: &AdaptiveQuantConfig) -> f32 {
 }
 
 /// Computes an edge detection factor for a block.
-fn compute_edge_factor(
-    y_plane: &[f32],
-    width: usize,
-    height: usize,
-    bx: usize,
-    by: usize,
-) -> f32 {
+fn compute_edge_factor(y_plane: &[f32], width: usize, height: usize, bx: usize, by: usize) -> f32 {
     // Simple edge detection using horizontal and vertical gradients
     let mut max_gradient = 0.0f32;
 

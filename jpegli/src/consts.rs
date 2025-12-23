@@ -291,11 +291,8 @@ pub mod xyb {
     pub const M22: f32 = 0.551_809_87; // 1.0 - M20 - M21
 
     /// Opsin absorbance matrix (3x3, row-major)
-    pub const OPSIN_ABSORBANCE_MATRIX: [[f32; 3]; 3] = [
-        [M00, M01, M02],
-        [M10, M11, M12],
-        [M20, M21, M22],
-    ];
+    pub const OPSIN_ABSORBANCE_MATRIX: [[f32; 3]; 3] =
+        [[M00, M01, M02], [M10, M11, M12], [M20, M21, M22]];
 
     /// Opsin absorbance bias (added before cube root)
     pub const OPSIN_ABSORBANCE_BIAS: f32 = 0.003_793_073_3;
@@ -445,17 +442,19 @@ pub const YCBCR_CR_TO_B: f32 = 0.0;
 
 /// XYB opsin absorbance matrix as flat 9-element array (row-major 3x3).
 pub const XYB_OPSIN_ABSORBANCE_MATRIX: [f32; 9] = [
-    0.30, 0.622, 0.078,      // Row 0
-    0.23, 0.692, 0.078,      // Row 1
-    0.243_422_69, 0.204_767_44, 0.551_809_87, // Row 2
+    0.30,
+    0.622,
+    0.078, // Row 0
+    0.23,
+    0.692,
+    0.078, // Row 1
+    0.243_422_69,
+    0.204_767_44,
+    0.551_809_87, // Row 2
 ];
 
 /// XYB opsin absorbance bias (3-element array).
-pub const XYB_OPSIN_ABSORBANCE_BIAS: [f32; 3] = [
-    0.003_793_073_3,
-    0.003_793_073_3,
-    0.003_793_073_3,
-];
+pub const XYB_OPSIN_ABSORBANCE_BIAS: [f32; 3] = [0.003_793_073_3, 0.003_793_073_3, 0.003_793_073_3];
 
 /// Negative of opsin absorbance bias after cube root (for XYB to RGB conversion).
 /// This is -cbrt(bias) for each channel.

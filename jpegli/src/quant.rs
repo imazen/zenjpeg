@@ -7,9 +7,8 @@
 //! - Adaptive quantization support
 
 use crate::consts::{
+    quality_to_distance, BASE_QUANT_MATRIX_STD, BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR,
     DCT_BLOCK_SIZE, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
-    BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR, BASE_QUANT_MATRIX_STD,
-    quality_to_distance,
 };
 use crate::types::ColorSpace;
 
@@ -19,27 +18,17 @@ pub use crate::types::QuantTable;
 /// Standard JPEG luminance quantization table.
 /// From ITU-T T.81 (1992) K.1
 pub const STD_LUMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
-    16, 11, 10, 16, 24, 40, 51, 61,
-    12, 12, 14, 19, 26, 58, 60, 55,
-    14, 13, 16, 24, 40, 57, 69, 56,
-    14, 17, 22, 29, 51, 87, 80, 62,
-    18, 22, 37, 56, 68, 109, 103, 77,
-    24, 35, 55, 64, 81, 104, 113, 92,
-    49, 64, 78, 87, 103, 121, 120, 101,
-    72, 92, 95, 98, 112, 100, 103, 99,
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113,
+    92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
 ];
 
 /// Standard JPEG chrominance quantization table.
 /// From ITU-T T.81 (1992) K.2
 pub const STD_CHROMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
-    17, 18, 24, 47, 99, 99, 99, 99,
-    18, 21, 26, 66, 99, 99, 99, 99,
-    24, 26, 56, 99, 99, 99, 99, 99,
-    47, 66, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
+    17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99, 24, 26, 56, 99, 99, 99, 99, 99,
+    47, 66, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+    99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
 ];
 
 /// Quality representation that can be either traditional (1-100) or butteraugli distance.
@@ -162,17 +151,27 @@ fn generate_xyb_quant_table(distance: f32, component: usize) -> QuantTable {
 }
 
 /// Generates a quantization table using standard or YCbCr matrices.
-fn generate_standard_quant_table(distance: f32, component: usize, color_space: ColorSpace) -> QuantTable {
+fn generate_standard_quant_table(
+    distance: f32,
+    component: usize,
+    color_space: ColorSpace,
+) -> QuantTable {
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
     // Choose base matrix based on color space
     let (base, global_scale) = if color_space == ColorSpace::YCbCr {
         let base_idx = component.min(2) * DCT_BLOCK_SIZE;
-        (&BASE_QUANT_MATRIX_YCBCR[base_idx..base_idx + DCT_BLOCK_SIZE], GLOBAL_SCALE_YCBCR)
+        (
+            &BASE_QUANT_MATRIX_YCBCR[base_idx..base_idx + DCT_BLOCK_SIZE],
+            GLOBAL_SCALE_YCBCR,
+        )
     } else {
         // Use standard JPEG tables
         let base_idx = if component == 0 { 0 } else { DCT_BLOCK_SIZE };
-        (&BASE_QUANT_MATRIX_STD[base_idx..base_idx + DCT_BLOCK_SIZE], 1.0)
+        (
+            &BASE_QUANT_MATRIX_STD[base_idx..base_idx + DCT_BLOCK_SIZE],
+            1.0,
+        )
     };
 
     // Scale by distance
@@ -238,7 +237,10 @@ pub fn dequantize(quantized: i16, quant: u16) -> f32 {
 }
 
 /// Quantizes a block of DCT coefficients.
-pub fn quantize_block(coeffs: &[f32; DCT_BLOCK_SIZE], quant: &[u16; DCT_BLOCK_SIZE]) -> [i16; DCT_BLOCK_SIZE] {
+pub fn quantize_block(
+    coeffs: &[f32; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+) -> [i16; DCT_BLOCK_SIZE] {
     let mut result = [0i16; DCT_BLOCK_SIZE];
     for i in 0..DCT_BLOCK_SIZE {
         result[i] = quantize(coeffs[i], quant[i]);
@@ -247,7 +249,10 @@ pub fn quantize_block(coeffs: &[f32; DCT_BLOCK_SIZE], quant: &[u16; DCT_BLOCK_SI
 }
 
 /// Dequantizes a block of coefficients.
-pub fn dequantize_block(quantized: &[i16; DCT_BLOCK_SIZE], quant: &[u16; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
+pub fn dequantize_block(
+    quantized: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+) -> [f32; DCT_BLOCK_SIZE] {
     let mut result = [0.0f32; DCT_BLOCK_SIZE];
     for i in 0..DCT_BLOCK_SIZE {
         result[i] = dequantize(quantized[i], quant[i]);
@@ -308,12 +313,7 @@ mod tests {
 
     #[test]
     fn test_xyb_table_generation() {
-        let table = generate_quant_table(
-            Quality::from_distance(1.0),
-            0,
-            ColorSpace::Xyb,
-            true,
-        );
+        let table = generate_quant_table(Quality::from_distance(1.0), 0, ColorSpace::Xyb, true);
 
         // All values should be valid
         for &v in &table.values {

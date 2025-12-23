@@ -159,6 +159,13 @@ impl<'a> BitReader<'a> {
 
     /// Reads the next byte, handling byte unstuffing.
     fn read_byte(&mut self) -> Result<u8> {
+        // If we've already found a marker, don't read more data
+        if self.marker_found.is_some() {
+            return Err(Error::UnexpectedEof {
+                context: "marker found, end of entropy data",
+            });
+        }
+
         if self.position >= self.data.len() {
             return Err(Error::UnexpectedEof {
                 context: "reading bit stream",
@@ -183,9 +190,13 @@ impl<'a> BitReader<'a> {
                 // Restart marker - skip it and continue
                 self.position += 1;
             } else {
-                // Found a marker
+                // Found a marker - don't consume these bytes as data
+                // Rewind position to before the FF so the parser can read the marker
+                self.position -= 1;
                 self.marker_found = Some(next);
-                self.position += 1;
+                return Err(Error::UnexpectedEof {
+                    context: "marker found, end of entropy data",
+                });
             }
         }
 
@@ -193,25 +204,45 @@ impl<'a> BitReader<'a> {
     }
 
     /// Fills the bit buffer to have at least `count` bits.
-    fn fill_buffer(&mut self, count: u8) -> Result<()> {
+    /// Returns Ok(true) if filled, Ok(false) if end of data but some bits available.
+    fn fill_buffer(&mut self, count: u8) -> Result<bool> {
         while self.bits_in_buffer < count {
-            let byte = self.read_byte()?;
-            self.bit_buffer = (self.bit_buffer << 8) | (byte as u32);
-            self.bits_in_buffer += 8;
+            match self.read_byte() {
+                Ok(byte) => {
+                    self.bit_buffer = (self.bit_buffer << 8) | (byte as u32);
+                    self.bits_in_buffer += 8;
+                }
+                Err(_) => {
+                    // Can't read more bytes, but might have enough bits already
+                    return Ok(false);
+                }
+            }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Peeks at the next `count` bits without consuming them.
+    /// Returns Err if not enough bits available.
     pub fn peek_bits(&mut self, count: u8) -> Result<u32> {
         debug_assert!(count <= 24);
         self.fill_buffer(count)?;
+        if self.bits_in_buffer < count {
+            return Err(Error::UnexpectedEof {
+                context: "not enough bits in buffer",
+            });
+        }
         Ok((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1 << count) - 1))
     }
 
     /// Reads `count` bits from the stream.
     pub fn read_bits(&mut self, count: u8) -> Result<u32> {
-        let bits = self.peek_bits(count)?;
+        self.fill_buffer(count)?;
+        if self.bits_in_buffer < count {
+            return Err(Error::UnexpectedEof {
+                context: "not enough bits to read",
+            });
+        }
+        let bits = (self.bit_buffer >> (self.bits_in_buffer - count)) & ((1 << count) - 1);
         self.bits_in_buffer -= count;
         Ok(bits)
     }
