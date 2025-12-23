@@ -201,7 +201,7 @@ fn idct1d_8(input: &[f32], output: &mut [f32]) {
     multiply_and_add_8(&tmp, output);
 }
 
-/// 1D IDCT on all 8 rows
+/// 1D IDCT on all 8 rows (no scaling - scaling handled in main function)
 fn idct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
         let in_slice = &input[row * 8..(row + 1) * 8];
@@ -216,6 +216,7 @@ fn idct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// Performs an 8x8 inverse DCT on the input coefficients.
 ///
 /// Uses SIMD optimization when the `simd` feature is enabled.
+/// Includes 1/8 scaling for JPEG compatibility with external encoders.
 ///
 /// # Arguments
 /// * `input` - 8x8 block of DCT coefficients (after dequantization)
@@ -245,6 +246,13 @@ pub fn inverse_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Row IDCT
     let mut output = [0.0f32; 64];
     idct_rows(&block1, &mut output);
+
+    // Apply 1/8 scaling for JPEG compatibility
+    // Standard JPEG uses a scaling factor that our DCT includes but external encoders may not
+    let scale = 1.0 / 8.0;
+    for v in &mut output {
+        *v *= scale;
+    }
 
     output
 }

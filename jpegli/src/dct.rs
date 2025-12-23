@@ -147,10 +147,9 @@ fn dct1d_8(mem: &mut [f32]) {
     inverse_even_odd::<8>(&tmp, mem);
 }
 
-/// 1D DCT on all 8 rows, storing results with 1/8 scaling (scalar version)
+/// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
 #[cfg(not(feature = "simd"))]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
-    let scale = 1.0 / 8.0;
     for row in 0..8 {
         let mut tmp = [0.0f32; 8];
         for i in 0..8 {
@@ -158,7 +157,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
         }
         dct1d_8(&mut tmp);
         for i in 0..8 {
-            output[row * 8 + i] = tmp[i] * scale;
+            output[row * 8 + i] = tmp[i];
         }
     }
 }
@@ -226,16 +225,13 @@ mod simd {
     }
 }
 
-/// 1D DCT on all 8 rows, storing results with 1/8 scaling (SIMD version)
+/// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
 #[cfg(feature = "simd")]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
-    let scale = f32x8::splat(1.0 / 8.0);
-
     for row in 0..8 {
         let row_vec = f32x8::from(&input[row * 8..row * 8 + 8]);
         let result = simd::dct1d_8_simd(row_vec);
-        let scaled = result * scale;
-        let arr = scaled.to_array();
+        let arr = result.to_array();
         for i in 0..8 {
             output[row * 8 + i] = arr[i];
         }
@@ -246,6 +242,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// The input should be pixel values (typically shifted by -128 for level shift).
 /// The output is DCT coefficients ready for quantization.
+/// Includes 1/8 scaling for JPEG compatibility.
 ///
 /// Uses SIMD optimization when the `simd` feature is enabled.
 ///
@@ -259,7 +256,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     let mut scratch = [0.0f32; 64];
     let mut coefficients = [0.0f32; 64];
 
-    // Row transform with scaling
+    // Row transform
     dct_rows(input, &mut scratch);
 
     // Transpose (use SIMD version when available)
@@ -268,7 +265,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     #[cfg(not(feature = "simd"))]
     transpose_8x8(&scratch, &mut coefficients);
 
-    // Column transform (on transposed data) with scaling
+    // Column transform (on transposed data)
     dct_rows(&coefficients, &mut scratch);
 
     // Transpose back
@@ -276,6 +273,12 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     simd::transpose_8x8_simd(&scratch, &mut coefficients);
     #[cfg(not(feature = "simd"))]
     transpose_8x8(&scratch, &mut coefficients);
+
+    // Apply 1/8 scaling for JPEG compatibility (matches IDCT 1/8 scaling)
+    let scale = 1.0 / 8.0;
+    for v in &mut coefficients {
+        *v *= scale;
+    }
 
     coefficients
 }

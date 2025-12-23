@@ -45,7 +45,8 @@ impl Default for EncoderConfig {
             pixel_format: PixelFormat::Rgb,
             quality: Quality::default(),
             mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420,
+            // Use 4:4:4 - this is what the encoder actually supports currently
+            subsampling: Subsampling::S444,
             use_xyb: false,
             restart_interval: 0,
             optimize_huffman: false,
