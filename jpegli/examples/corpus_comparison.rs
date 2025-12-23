@@ -243,8 +243,10 @@ fn generate_html_chart(data: &[DataPoint], output_path: &str) {
   <style>
     .axis {{ stroke: #333; stroke-width: 1; }}
     .grid {{ stroke: #ddd; stroke-width: 0.5; }}
-    .jpegli {{ stroke: #2196F3; fill: #2196F3; }}
-    .mozjpeg {{ stroke: #4CAF50; fill: #4CAF50; }}
+    .jpegli-line {{ stroke: #2196F3; fill: none; }}
+    .jpegli-point {{ stroke: #2196F3; fill: #2196F3; }}
+    .mozjpeg-line {{ stroke: #4CAF50; fill: none; }}
+    .mozjpeg-point {{ stroke: #4CAF50; fill: #4CAF50; }}
     .label {{ font-family: sans-serif; font-size: 12px; }}
     .title {{ font-family: sans-serif; font-size: 16px; font-weight: bold; }}
     .legend {{ font-family: sans-serif; font-size: 12px; }}
@@ -324,7 +326,7 @@ fn generate_html_chart(data: &[DataPoint], output_path: &str) {
         }
     }
     svg.push_str(&format!(
-        r#"  <path d="{}" class="jpegli" fill="none" stroke-width="2"/>
+        r#"  <path d="{}" class="jpegli-line" stroke-width="2"/>
 "#,
         jpegli_path
     ));
@@ -333,7 +335,7 @@ fn generate_html_chart(data: &[DataPoint], output_path: &str) {
         let x = scale_x(d.jpegli_size);
         let y = scale_y(d.jpegli_dssim);
         svg.push_str(&format!(
-            r#"  <circle cx="{}" cy="{}" r="5" class="jpegli"/>
+            r#"  <circle cx="{}" cy="{}" r="5" class="jpegli-point"/>
   <text x="{}" y="{}" class="label" text-anchor="middle">Q{}</text>
 "#,
             x, y, x, y - 8.0, d.quality
@@ -352,7 +354,7 @@ fn generate_html_chart(data: &[DataPoint], output_path: &str) {
         }
     }
     svg.push_str(&format!(
-        r#"  <path d="{}" class="mozjpeg" fill="none" stroke-width="2"/>
+        r#"  <path d="{}" class="mozjpeg-line" stroke-width="2"/>
 "#,
         mozjpeg_path
     ));
@@ -361,7 +363,7 @@ fn generate_html_chart(data: &[DataPoint], output_path: &str) {
         let x = scale_x(d.mozjpeg_size);
         let y = scale_y(d.mozjpeg_dssim);
         svg.push_str(&format!(
-            r#"  <circle cx="{}" cy="{}" r="5" class="mozjpeg"/>
+            r#"  <circle cx="{}" cy="{}" r="5" class="mozjpeg-point"/>
 "#,
             x, y
         ));
@@ -370,11 +372,11 @@ fn generate_html_chart(data: &[DataPoint], output_path: &str) {
     // Legend
     svg.push_str(&format!(
         "  <rect x=\"{}\" y=\"40\" width=\"120\" height=\"50\" fill=\"white\" stroke=\"#ccc\"/>\n\
-  <line x1=\"{}\" y1=\"55\" x2=\"{}\" y2=\"55\" class=\"jpegli\" stroke-width=\"2\"/>\n\
-  <circle cx=\"{}\" cy=\"55\" r=\"4\" class=\"jpegli\"/>\n\
+  <line x1=\"{}\" y1=\"55\" x2=\"{}\" y2=\"55\" class=\"jpegli-line\" stroke-width=\"2\"/>\n\
+  <circle cx=\"{}\" cy=\"55\" r=\"4\" class=\"jpegli-point\"/>\n\
   <text x=\"{}\" y=\"59\" class=\"legend\">jpegli-rs</text>\n\
-  <line x1=\"{}\" y1=\"75\" x2=\"{}\" y2=\"75\" class=\"mozjpeg\" stroke-width=\"2\"/>\n\
-  <circle cx=\"{}\" cy=\"75\" r=\"4\" class=\"mozjpeg\"/>\n\
+  <line x1=\"{}\" y1=\"75\" x2=\"{}\" y2=\"75\" class=\"mozjpeg-line\" stroke-width=\"2\"/>\n\
+  <circle cx=\"{}\" cy=\"75\" r=\"4\" class=\"mozjpeg-point\"/>\n\
   <text x=\"{}\" y=\"79\" class=\"legend\">mozjpeg (4:4:4)</text>\n",
         width - 140.0,
         width - 130.0, width - 100.0,
