@@ -67,6 +67,9 @@ pub mod encode;
 // Quality and adaptive quantization
 pub mod adaptive_quant;
 
+// Quality metrics
+pub mod butteraugli;
+
 // Error types
 pub mod error;
 

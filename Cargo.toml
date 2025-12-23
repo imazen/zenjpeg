@@ -36,6 +36,7 @@ jpeg-decoder = "0.3"   # Another reference decoder
 
 # Quality metrics
 dssim = "3.2"
+ssimulacra2 = "0.5"
 
 # Testing
 approx = "0.5"

@@ -13,13 +13,13 @@ cd jpegli-rs
 # Build and test
 cargo build
 cargo test
-cargo test -- --ignored  # Shows the failing DCT/IDCT roundtrip test
+cargo test --release  # Run with optimizations
 ```
 
 ## Repository Info
 
 - **Main branch**: `main`
-- **Current working branch**: `stepbystep`
+- **Current working branch**: `stepbystep2`
 - **Rust project location**: `jpegli-rs/` subdirectory within the main jpegli repo
 - **C++ source**: Root of repository (this is Google's libjxl/jpegli)
 
@@ -33,25 +33,36 @@ This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from 
 jpegli-rs/
 ├── Cargo.toml          # Workspace root
 ├── jpegli/             # Main library crate
-│   └── src/
-│       ├── lib.rs      # Module exports
-│       ├── consts.rs   # Constants, tables, matrices
-│       ├── types.rs    # Core types (ColorSpace, PixelFormat, etc.)
-│       ├── huffman.rs  # Huffman coding
-│       ├── quant.rs    # Quantization
-│       ├── dct.rs      # Forward DCT (NEEDS FIX)
-│       ├── idct.rs     # Inverse DCT (NEEDS FIX)
-│       ├── color.rs    # RGB/YCbCr conversion
-│       ├── xyb.rs      # XYB perceptual color space
-│       ├── bitstream.rs # Bitstream I/O
-│       ├── entropy.rs  # Entropy coding
-│       ├── encode.rs   # Encoder pipeline
-│       ├── decode.rs   # Decoder pipeline
-│       ├── adaptive_quant.rs # Adaptive quantization
-│       └── error.rs    # Error types
+│   ├── src/
+│   │   ├── lib.rs           # Module exports
+│   │   ├── consts.rs        # Constants, tables, matrices
+│   │   ├── types.rs         # Core types (ColorSpace, PixelFormat, etc.)
+│   │   ├── huffman.rs       # Huffman coding
+│   │   ├── quant.rs         # Quantization
+│   │   ├── dct.rs           # Forward DCT ✓
+│   │   ├── idct.rs          # Inverse DCT ✓
+│   │   ├── color.rs         # RGB/YCbCr conversion
+│   │   ├── xyb.rs           # XYB perceptual color space ✓
+│   │   ├── butteraugli.rs   # Butteraugli quality metric (skeleton)
+│   │   ├── bitstream.rs     # Bitstream I/O
+│   │   ├── entropy.rs       # Entropy coding
+│   │   ├── encode.rs        # Encoder pipeline
+│   │   ├── decode.rs        # Decoder pipeline
+│   │   ├── adaptive_quant.rs # Adaptive quantization
+│   │   └── error.rs         # Error types
+│   ├── tests/
+│   │   ├── roundtrip_quality.rs  # DSSIM-based quality tests
+│   │   ├── pareto_front.rs       # Pareto efficiency vs mozjpeg
+│   │   ├── decode_external.rs    # Decode JPEGs from other tools
+│   │   ├── metrics_comparison.rs # DSSIM vs SSIMULACRA2 tests
+│   │   ├── xyb_roundtrip.rs      # XYB color space tests
+│   │   └── quality_mapping.rs    # mozjpeg->jpegli quality mapping
+│   └── examples/
+│       ├── roundtrip_corpus.rs    # Batch corpus testing
+│       ├── corpus_comparison.rs   # HTML chart: jpegli vs mozjpeg
+│       ├── multi_codec_comparison.rs # Compare with CID22 dataset
+│       └── compare_quality.rs     # Quality comparison tool
 └── jpegli-sys/         # FFI bindings (for testing)
-    ├── Cargo.toml
-    └── build.rs
 ```
 
 ## Completed Tasks
@@ -64,162 +75,140 @@ jpegli-rs/
 - [x] Port Layer 4: Entropy coding
 - [x] Port Layer 5-6: Encoder and decoder pipelines
 - [x] Port adaptive quantization
-- [x] Build and fix compilation errors
+- [x] **Fix DCT/IDCT scaling** - 1/8 scaling factor for JPEG compatibility
+- [x] **XYB color space** - Full roundtrip working, < 2-bit error
+- [x] **DSSIM quality testing** - Integrated with mozjpeg comparison
+- [x] **SSIMULACRA2 metric** - Added via ssimulacra2 crate
+- [x] **Butteraugli metric** - Skeleton implementation, uses XYB internally
+- [x] **Quality mapping tests** - Find equivalent Q values across encoders
+- [x] **Pareto front validation** - Verify jpegli beats mozjpeg on quality/size
 
 ## Pending Tasks
 
-### 1. Fix DCT/IDCT Roundtrip (HIGH PRIORITY)
+### 1. Add SIMD Toggle Feature Flag
+Make toggling SIMD on/off easy to:
+- Ensure SIMD and non-SIMD produce identical images
+- Max difference should be ≤1 when decoded
+- Add accuracy tests comparing SIMD vs scalar
 
-The current DCT/IDCT implementations don't form a proper inverse pair. The test in `idct.rs:200` is marked `#[ignore]`.
+### 2. Set Up Test Image Submodule
+- Create separate git repo for test images (size conscious)
+- Add as submodule to avoid bloating main repo
+- Include: gradient, photo, graphic, edge case images
 
-**Problem**: The Rust implementation uses a generic AAN algorithm, but jpegli uses a specific recursive splitting algorithm with different constants.
+### 3. Create Comparative Benchmarks (C++ vs Rust)
+- Measure encode/decode performance
+- Compare against C++ jpegli
+- Iterate on matching performance without reducing accuracy
 
-**C++ Algorithm Location**:
-- Forward DCT: `lib/jpegli/dct-inl.h` - Uses recursive `DCT1DImpl<N>` template
-- Inverse DCT: `lib/jpegli/idct.cc` - Uses recursive `IDCT1DImpl<N>` template
+### 4. Fix 4:2:0 Subsampling Decoder
+Currently only 4:4:4 is supported. 4:2:0 requires:
+- MCU interleaving in decoder
+- Chroma upsampling
 
-**Key C++ Constants** (from `dct-inl.h:110-117`):
-```cpp
-// WcMultipliers<8>::kMultipliers
-0.5097955791041592,  // 1/(2*cos(0.5*pi/8))
-0.6013448869350453,  // 1/(2*cos(1.5*pi/8))
-0.8999762231364156,  // 1/(2*cos(2.5*pi/8))
-2.5629154477415055,  // 1/(2*cos(3.5*pi/8))
-```
+### 5. Port Progressive JPEG Support
+Progressive JPEG uses multiple scans with spectral selection.
+- `ScanSpec` type already defined
+- Encoder returns "not yet implemented" error
 
-**Algorithm Structure**:
-1. DCT uses: `AddReverse` → recursive DCT → `SubReverse` → `Multiply` → recursive DCT → `B` → `InverseEvenOdd`
-2. IDCT uses: `ForwardEvenOdd` → recursive IDCT → `BTranspose` → recursive IDCT → `MultiplyAndAdd`
-3. Both do row pass → transpose → column pass → transpose
-4. Scaling: DCT applies `1/8` factor in `StoreToBlockAndScale`
+## Quality Metrics
 
-### DCT Algorithm Deep Dive
+### Available Metrics
 
-The jpegli DCT uses a **recursive splitting approach** (not the typical AAN or LLM algorithms).
+| Metric | Crate | Description | Range |
+|--------|-------|-------------|-------|
+| DSSIM | `dssim` | Structural dissimilarity | 0 = identical, lower = better |
+| SSIMULACRA2 | `ssimulacra2` | Perceptual quality | 100 = identical, higher = better |
+| Butteraugli | `jpegli::butteraugli` | Psychovisual distance | < 1.0 = good, > 2.0 = bad |
 
-**Forward DCT pseudo-code** (from `dct-inl.h`):
-```
-DCT1DImpl<8>(input):
-    // Split into even/odd halves with reverse
-    tmp[0:4] = input[0:4] + reverse(input[4:8])  // AddReverse
-    tmp[4:8] = input[0:4] - reverse(input[4:8])  // SubReverse
+### Using Metrics in Tests
 
-    // Multiply odd part by Wc multipliers
-    tmp[4:8] *= [0.5098, 0.6013, 0.8999, 2.5629]
-
-    // Recursive DCT on both halves
-    DCT1DImpl<4>(tmp[0:4])
-    DCT1DImpl<4>(tmp[4:8])
-
-    // B transform on odd part
-    B<4>(tmp[4:8])  // tmp[0] *= sqrt(2), then cumulative sum
-
-    // Interleave even/odd results
-    output[even_indices] = tmp[0:4]
-    output[odd_indices] = tmp[4:8]
-```
-
-**Inverse IDCT pseudo-code** (from `idct.cc`):
-```
-IDCT1DImpl<8>(input):
-    // De-interleave even/odd
-    tmp[0:4] = input[even_indices]
-    tmp[4:8] = input[odd_indices]
-
-    // Recursive IDCT on even half
-    IDCT1DImpl<4>(tmp[0:4])
-
-    // BTranspose on odd half (reverse of B)
-    BTranspose<4>(tmp[4:8])
-
-    // Recursive IDCT on odd half
-    IDCT1DImpl<4>(tmp[4:8])
-
-    // MultiplyAndAdd to reconstruct
-    for i in 0..4:
-        output[i] = tmp[i] + Wc[i] * tmp[4+i]
-        output[7-i] = tmp[i] - Wc[i] * tmp[4+i]
-```
-
-**Key insight**: The forward and inverse transforms must use the SAME constants and be exact mirrors. The current Rust code uses different algorithms for DCT and IDCT which is why roundtrip fails.
-
-**Full 2D Transform Flow**:
-```
-Forward:  pixels → DCT1D(rows) → Transpose → DCT1D(cols) → Transpose → coeffs × (1/8)
-Inverse:  coeffs → Transpose → IDCT1D(cols) → Transpose → IDCT1D(rows) → pixels
-```
-
-**All Constants Needed** (copy these exactly):
 ```rust
-// WcMultipliers<4>
-const WC4: [f32; 2] = [0.541196100146197, 1.3065629648763764];
+use dssim::Dssim;
+use ssimulacra2::{compute_frame_ssimulacra2, Rgb, ColorPrimaries, TransferCharacteristic};
 
-// WcMultipliers<8>
-const WC8: [f32; 4] = [
-    0.5097955791041592,
-    0.6013448869350453,
-    0.8999762231364156,
-    2.5629154477415055,
-];
+// DSSIM
+let attr = Dssim::new();
+let orig = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
+let comp = attr.create_image_rgba(&comp_rgba, width, height).unwrap();
+let (dssim, _) = attr.compare(&orig, comp);
 
-const SQRT2: f32 = 1.41421356237;
+// SSIMULACRA2
+let rgb = Rgb::new(
+    pixels.chunks(3).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect(),
+    width, height,
+    TransferCharacteristic::SRGB,
+    ColorPrimaries::BT709,
+).unwrap();
+let score = compute_frame_ssimulacra2(orig_rgb, dist_rgb).unwrap();
 ```
 
-**Transpose Helper** (needed for 2D transform):
-```rust
-fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
-    for row in 0..8 {
-        for col in 0..8 {
-            output[col * 8 + row] = input[row * 8 + col];
-        }
-    }
-}
+## Test Corpora
+
+### CID22-512 (Recommended for quick tests)
+512x512 center crops of CID22 images:
+- Path: `/mnt/v/work/corpus/CID22-512`
+- ~250 PNG files
+- Good variety of content types
+
+### CID22 Full Dataset
+Cloudinary Image Dataset 2022 with pre-encoded files:
+- Path: `/mnt/v/work/CID22/CID22`
+- `original/` - Source PNGs
+- `compressed/<image_id>/<codec>/` - Pre-encoded at various Q levels
+- Codecs: mozjpeg, libjxl, aom, cld_avif, cld_heic, cld_jp2, cld_webp, vis_avif
+- CSV with MCOS (human quality scores)
+
+### Flower Test Images
+Small test images for quick validation:
+- Path: `/home/lilith/work/jpegli/testdata/jxl/flower/`
+- `flower_small.rgb.png` - Small test image
+- Various pre-encoded JPEGs for decode testing
+
+## Comparison Tools
+
+### corpus_comparison.rs
+Generates HTML chart comparing jpegli vs mozjpeg:
+```bash
+MAX_FILES=50 cargo run --release --example corpus_comparison -- \
+    /mnt/v/work/corpus/CID22-512 /mnt/v/work/jpegli_data/comparison.html
 ```
 
-### 2. Build C++ FFI Export DLL
+### multi_codec_comparison.rs
+Uses CID22 CSV data to compare all codecs:
+```bash
+cargo run --release --example multi_codec_comparison -- \
+    /mnt/v/work/CID22/CID22 /mnt/v/work/jpegli_data/multi_codec.html
+```
 
-Create FFI bindings to call C++ jpegli functions for comparison testing.
+### quality_mapping test
+Finds jpegli Q that matches mozjpeg DSSIM:
+```bash
+cargo test --test quality_mapping -- --nocapture
+CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_quality_mapping_corpus -- --ignored --nocapture
+```
 
-**Purpose**: Dual-execution testing - run both Rust and C++ implementations, compare outputs.
+## Key Test Results
 
-**Files needed**:
-- `jpegli-sys/build.rs` - CMake integration
-- `jpegli-sys/src/lib.rs` - FFI declarations
+### jpegli vs mozjpeg (4:4:4 subsampling)
+- jpegli achieves **10-17% better DSSIM** at same Q value
+- At Q90+, jpegli also produces **5-8% smaller files**
+- jpegli wins on both quality AND size at high quality settings
 
-### 3. Create Test Asset Generation and Golden Tests
-
-- Generate test images with known properties
-- Create golden output files from C++ implementation
-- Compare Rust output against golden files
-- Tolerances: 1e-5 for intermediate f32, 1e-4 for final pixels
-
-### 4. Port Progressive JPEG Support
-
-Progressive JPEG uses multiple scans with spectral selection and successive approximation.
-
-**Key types**: `ScanSpec` in `types.rs` already defined with `ss`, `se`, `ah`, `al` fields.
-
-### 5. Performance Optimization with SIMD
-
-Use `wide` crate for SIMD acceleration (equivalent to Highway in C++).
-
-**Target functions**:
-- DCT/IDCT transforms
-- Color conversion
-- Quantization
+### Quality Mapping (to match DSSIM)
+- mozjpeg Q60 → jpegli ~Q55 (jpegli is more efficient)
+- mozjpeg Q90 → jpegli ~Q89
 
 ## C++ Build Instructions
 
-### Ubuntu 22.04 (Primary Development Platform)
+### Ubuntu 22.04
 
 ```bash
-# Install dependencies
 sudo apt update
 sudo apt install -y cmake build-essential ninja-build \
     libbrotli-dev libgif-dev libjpeg-dev libpng-dev \
     libwebp-dev pkg-config
 
-# Clone and build
 cd /path/to/jpegli
 mkdir -p build && cd build
 cmake -G Ninja \
@@ -232,30 +221,6 @@ cmake -G Ninja \
 ninja jpegli-static cjpegli djpegli
 ```
 
-**Ubuntu build outputs**:
-- `lib/libjpegli-static.a`
-- `tools/cjpegli`
-- `tools/djpegli`
-
-### Windows (Visual Studio 2022)
-
-```bash
-cd V:\GitHub\jpegli
-mkdir build && cd build
-cmake -G "Visual Studio 17 2022" -A x64 \
-    -DBUILD_TESTING=OFF \
-    -DJPEGXL_ENABLE_TOOLS=ON \
-    -DJPEGXL_ENABLE_JPEGLI_LIBJPEG=ON \
-    -DJPEGXL_ENABLE_SJPEG=OFF \
-    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
-cmake --build . --config Release --target jpegli-static cjpegli djpegli
-```
-
-**Windows build outputs**:
-- `lib/jpegli/Release/jpegli-static.lib`
-- `tools/Release/cjpegli.exe`
-- `tools/Release/djpegli.exe`
-
 ## Key C++ Source Files
 
 | C++ File | Purpose | Rust Equivalent |
@@ -265,24 +230,23 @@ cmake --build . --config Release --target jpegli-static cjpegli djpegli
 | `lib/jpegli/color_transform.cc` | Color conversion | `color.rs` |
 | `lib/jpegli/encode.cc` | Encoder | `encode.rs` |
 | `lib/jpegli/decode.cc` | Decoder | `decode.rs` |
-| `lib/jpegli/huffman.cc` | Huffman coding | `huffman.rs` |
-| `lib/jpegli/quant.cc` | Quantization | `quant.rs` |
-| `lib/jpegli/adaptive_quantization.cc` | Adaptive quant | `adaptive_quant.rs` |
-| `lib/jpegli/bitstream.cc` | Bit I/O | `bitstream.rs` |
+| `lib/extras/butteraugli.cc` | Quality metric | `butteraugli.rs` |
 | `lib/jxl/enc_xyb.cc` | XYB color space | `xyb.rs` |
 
 ## Dependencies
 
-**Rust crate dependencies** (in `jpegli/Cargo.toml`):
+### Production
 - `wide` - SIMD (Highway equivalent)
 - `bytemuck` - Safe transmutes
 - `arrayref` - Array references
-- `thiserror` - Error handling
+- `rgb`, `imgref` - Image buffers
 
-**Test dependencies**:
-- `approx` - Floating point comparison
-- `png` - Test image I/O
-- `dssim` - Image quality metrics
+### Testing
+- `dssim` - DSSIM quality metric
+- `ssimulacra2` - SSIMULACRA2 quality metric
+- `png` - Image I/O
+- `mozjpeg` - Encoder comparison
+- `jpeg-decoder` - Reference decoder
 
 ## Architecture Notes
 
@@ -294,99 +258,49 @@ Layer 2: dct, idct, color, xyb (transforms)
 Layer 3: bitstream (I/O)
 Layer 4: entropy (stateful)
 Layer 5-6: encode, decode (pipelines)
+Metrics: butteraugli (quality assessment)
 ```
 
 ### XYB Color Space
-- XYB is pure math with fixed constants - NO color management system needed
-- Opsin absorbance matrix and bias values are in `consts.rs`
-- CMS (lcms2) only needed at tool level for ICC profile handling
+- XYB is pure math with fixed constants
+- Opsin absorbance matrix and bias values in `consts.rs`
+- Roundtrip error < 2 bits (confirmed by tests)
 
-### FFI Testing Strategy
-1. Build C++ as DLL with exported test hooks
-2. Call both implementations with same input
-3. Compare outputs within tolerance
-4. Eventually transition to recorded test assets
+### SIMD Feature Flag
+```toml
+[features]
+default = ["simd"]
+simd = []
+```
+
+To disable SIMD: `cargo build --no-default-features`
 
 ## Running Tests
 
 ```bash
-cd jpegli-rs
-cargo test                    # Run all tests
-cargo test -- --ignored       # Run ignored tests (currently failing)
-cargo test --release          # Release mode
+cargo test                              # All tests
+cargo test --release                    # With optimizations
+cargo test --test xyb_roundtrip         # XYB specific
+cargo test --test metrics_comparison    # Quality metrics
+cargo test -- --ignored                 # Ignored tests (need files)
 ```
-
-## Next Steps for New Developer
-
-1. **Start with DCT/IDCT fix** - This is blocking everything else
-   - Read `lib/jpegli/dct-inl.h` carefully
-   - Port the recursive `DCT1DImpl<8>` algorithm exactly
-   - Port the recursive `IDCT1DImpl<8>` algorithm exactly
-   - Remove `#[ignore]` from roundtrip test when working
-
-2. **Verify with simple cases**:
-   - DC-only block (constant input)
-   - Single AC coefficient
-   - Known reference vectors
-
-3. **Build FFI testing infrastructure** after DCT/IDCT works
 
 ## What Makes jpegli Special
 
-jpegli provides better image quality than standard JPEG at the same file sizes through:
+1. **Adaptive Quantization**: Content-aware bit allocation
+2. **XYB Color Space**: Perceptually optimized (from JPEG XL)
+3. **Improved Quantization Tables**: Better than IJG libjpeg
+4. **Float-based Pipeline**: Higher precision
+5. **Smart Zero-Biasing**: Intelligent coefficient rounding
 
-1. **Adaptive Quantization**: Analyzes image content to allocate more bits to complex regions
-2. **XYB Color Space**: Perceptually optimized color space (from JPEG XL research)
-3. **Improved Quantization Tables**: Better default tables than IJG libjpeg
-4. **Float-based Pipeline**: Higher precision during encoding reduces artifacts
-5. **Smart Zero-Biasing**: Intelligent coefficient rounding near zero
-
-These improvements are **backward compatible** - output is standard JPEG readable by any decoder.
-
-## Important Notes
-
-### Test Tolerances
-- Intermediate f32 calculations: tolerance of 1e-5
-- Final pixel values: tolerance of 1e-4
-- DCT coefficients should match exactly (integer values after quantization)
-
-### Design Decisions
-- **No libjpeg API compatibility**: This is intentional. We want idiomatic Rust.
-- **FFI is testing-only**: Not for production use, just to verify Rust matches C++
-- **SIMD comes last**: Get scalar version correct first, then optimize
-
-### Files You'll Edit Most
-- `jpegli-rs/jpegli/src/dct.rs` - Forward DCT needs complete rewrite
-- `jpegli-rs/jpegli/src/idct.rs` - Inverse DCT needs complete rewrite
-
-### Useful Commands
-```bash
-# Run specific test
-cargo test test_dct_idct_roundtrip -- --ignored --nocapture
-
-# Check for compile errors without full build
-cargo check
-
-# Run with debug output
-RUST_BACKTRACE=1 cargo test
-
-# Format code
-cargo fmt
-
-# Lint
-cargo clippy
-```
+Output is **backward compatible** - standard JPEG readable by any decoder.
 
 ## Git Workflow
 
 ```bash
-# Current state
-git status  # Shows jpegli-rs/ as new untracked directory
-
-# To commit Rust work
-git add jpegli-rs/
-git commit -m "Add jpegli-rs Rust port (WIP)"
-
-# Stay on stepbystep branch for development
+git status                    # Check current state
+git add jpegli-rs/           # Stage changes
+git commit -m "Description"  # Commit
+# Stay on stepbystep2 branch for development
 # PR to main when features are complete
 ```
