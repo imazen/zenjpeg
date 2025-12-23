@@ -26,6 +26,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
+mozjpeg = { workspace = true }
+jpeg-decoder = { workspace = true }
 
 # For FFI comparison testing
 jpegli-sys = { path = "../jpegli-sys" }

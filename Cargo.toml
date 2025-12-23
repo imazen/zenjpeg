@@ -30,7 +30,9 @@ lcms2 = "6.0"
 
 # Image I/O (for testing)
 png = "0.17"
-zune-jpeg = "0.4"  # Reference decoder for comparison
+zune-jpeg = "0.4"      # Reference decoder for comparison
+mozjpeg = "0.10"       # For encoder comparison
+jpeg-decoder = "0.3"   # Another reference decoder
 
 # Quality metrics
 dssim = "3.2"
