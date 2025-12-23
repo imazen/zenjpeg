@@ -82,34 +82,120 @@ jpegli-rs/
 - [x] **Butteraugli metric** - Skeleton implementation, uses XYB internally
 - [x] **Quality mapping tests** - Find equivalent Q values across encoders
 - [x] **Pareto front validation** - Verify jpegli beats mozjpeg on quality/size
+- [x] **corpus_comparison caching** - Versioned JPEG cache for fast reruns
+- [x] **Low-Q analysis** - Per-image comparison at Q10-Q60 with SSIM2
+- [x] **XYB quant bug fix** - Disabled broken XYB-only mode (needs color conversion)
+- [x] **XYB encoding pipeline skeleton** - Basic infrastructure implemented but incomplete
 
 ## Pending Tasks
 
-### 1. Add SIMD Toggle Feature Flag
+### 1. Complete XYB Mode with ICC Profile
+XYB mode is partially implemented but marked deprecated. Full implementation requires:
+- **RGB → Linear RGB → XYB conversion** using `LinearRGBRowToXYB()` (port from C++)
+- **XYB value scaling** using `ScaleXYBRow()`
+- **ICC profile embedding** - XYB ICC profile so decoders interpret colors correctly
+- **Frequency-dependent quant scaling** - `DistanceToScale()` with per-frequency exponents
+
+Current state:
+- Encoding pipeline produces valid JPEGs (R/G/B component IDs, 2×2/2×2/1×1 sampling)
+- Missing color conversion causes quality degradation
+- `use_xyb()` is deprecated with warning until complete
+
+Reference files:
+- `lib/extras/enc/jpegli.cc` - High-level XYB encoding with color conversion + ICC
+- `lib/extras/xyb_transform.cc` - XYB color conversion
+- `lib/jpegli/quant.cc` - `DistanceToScale()` and frequency exponents
+
+### 2. Add SIMD Toggle Feature Flag
 Make toggling SIMD on/off easy to:
 - Ensure SIMD and non-SIMD produce identical images
 - Max difference should be ≤1 when decoded
 - Add accuracy tests comparing SIMD vs scalar
 
-### 2. Set Up Test Image Submodule
+### 3. Set Up Test Image Submodule
 - Create separate git repo for test images (size conscious)
 - Add as submodule to avoid bloating main repo
 - Include: gradient, photo, graphic, edge case images
 
-### 3. Create Comparative Benchmarks (C++ vs Rust)
-- Measure encode/decode performance
-- Compare against C++ jpegli
-- Iterate on matching performance without reducing accuracy
+### 4. Create Comparative Benchmarks (C++ vs Rust)
+- [x] Stage-by-stage C++ instrumentation (recovered from commit fe1e841f)
+- [x] Output comparison via `xyb_cpp_comparison.rs`
+- [ ] Performance benchmarks (encode/decode timing)
+- [ ] Full function-level accuracy validation using C++ test data
 
-### 4. Fix 4:2:0 Subsampling Decoder
+### 5. Fix 4:2:0 Subsampling Decoder
 Currently only 4:4:4 is supported. 4:2:0 requires:
 - MCU interleaving in decoder
 - Chroma upsampling
 
-### 5. Port Progressive JPEG Support
+### 6. Port Progressive JPEG Support
 Progressive JPEG uses multiple scans with spectral selection.
 - `ScanSpec` type already defined
 - Encoder returns "not yet implemented" error
+
+### 7. Add Fuzz Testing
+Replicate fuzzing coverage from other JPEG libraries:
+- libjpeg-turbo fuzz targets
+- jpeg-decoder fuzzing
+- zune-jpeg fuzzing
+- mozjpeg fuzzing
+Critical for server-side untrusted input handling.
+
+### 8. Security Examination and Red Teaming
+Required for server-side deployment:
+- Memory safety review (unsafe blocks)
+- Integer overflow checks
+- Input validation (malformed JPEGs)
+- DoS resistance (large images, many components)
+- Comparison with CVEs from other JPEG libs
+
+## C++ Instrumentation for Rust Validation
+
+### History
+C++ instrumentation was created (commit fe1e841f) to capture intermediate values
+for validating Rust implementations. It was inadvertently removed when cherry-picking
+upstream clang-tidy cleanup (c9c2be2d). Instrumentation has been restored.
+
+### Instrumented Functions
+| File | Function | Test Data Type |
+|------|----------|---------------|
+| `adaptive_quantization.cc` | `PerBlockModulations()` | `PerBlockModulationsTest` |
+| `adaptive_quantization.cc` | `FuzzyErosion()` | `FuzzyErosionTest` |
+| `adaptive_quantization.cc` | `ComputePreErosion()` | TBD |
+| `quant.cc` | `SetQuantMatrices()` | Quant table outputs |
+| `quant.cc` | `InitQuantizer()` | Quantizer state |
+| `encode.cc` | Various | Encoding pipeline state |
+
+### Using Instrumentation
+
+1. Build C++ with instrumentation (enabled by default):
+   ```bash
+   mkdir -p build && cd build
+   cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+       -DJPEGXL_ENABLE_TOOLS=ON ..
+   ninja cjpegli
+   ```
+
+2. Generate test data:
+   ```bash
+   GENERATE_RUST_TEST_DATA=1 ./build/tools/cjpegli input.png output.jpg
+   ```
+
+3. Test data written to working directory:
+   - `PerBlockModulations.testdata`
+   - `FuzzyErosion.testdata`
+   - `SetQuantMatrices.testdata`
+   - etc.
+
+### How It Works
+- `ENABLE_RUST_TEST_INSTRUMENTATION` macro (default ON in `test_data_gen.h`)
+- `GENERATE_RUST_TEST_DATA=1` env var enables runtime capture
+- JSON output to `*.testdata` files (one JSON object per line)
+- Thread-safe via mutex
+
+### Strategy: Fork vs Upstream
+This repo is now a **fork** of Google's JPEG XL, not a downstream cherry-picker.
+C++ modifications for instrumentation will be maintained independently.
 
 ## Quality Metrics
 
@@ -168,11 +254,17 @@ Small test images for quick validation:
 ## Comparison Tools
 
 ### corpus_comparison.rs
-Generates HTML chart comparing jpegli vs mozjpeg:
+Generates HTML chart comparing jpegli vs mozjpeg with DSSIM and SSIMULACRA2:
 ```bash
 MAX_FILES=50 cargo run --release --example corpus_comparison -- \
     /mnt/v/work/corpus/CID22-512 /mnt/v/work/jpegli_data/comparison.html
 ```
+
+Features:
+- **Caching**: Encoded JPEGs cached in `jpeg_cache/` (version-tagged for invalidation)
+- **Low-Q analysis**: Per-image breakdown at Q30 showing where each encoder excels
+- **Dual metrics**: Both DSSIM and SSIMULACRA2 charts
+- Env vars: `MAX_FILES=N` (limit images), `NO_CACHE=1` (disable caching)
 
 ### multi_codec_comparison.rs
 Uses CID22 CSV data to compare all codecs:
@@ -195,9 +287,24 @@ CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_q
 - At Q90+, jpegli also produces **5-8% smaller files**
 - jpegli wins on both quality AND size at high quality settings
 
+### SSIMULACRA2 Results (30 images, CID22-512 corpus)
+| Quality | jpegli bpp | jpegli SSIM2 | mozjpeg bpp | mozjpeg SSIM2 |
+|---------|------------|--------------|-------------|---------------|
+| Q30     | 0.77       | 59.5         | 0.57        | 50.8          |
+| Q50     | 0.94       | 67.4         | 0.85        | 65.7          |
+| Q70     | 1.28       | 76.4         | 1.22        | 74.5          |
+| Q90     | 2.32       | 87.4         | 2.53        | 86.4          |
+
+**Key finding**: jpegli produces higher SSIM2 scores (better quality) at similar or lower bitrates.
+
 ### Quality Mapping (to match DSSIM)
 - mozjpeg Q60 → jpegli ~Q55 (jpegli is more efficient)
 - mozjpeg Q90 → jpegli ~Q89
+
+### XYB Mode Status
+**Currently disabled** - XYB quantization tables without XYB color conversion
+produces severe block artifacts. Will be re-enabled once full XYB color
+pipeline is ported.
 
 ## C++ Build Instructions
 
