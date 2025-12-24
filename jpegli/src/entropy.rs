@@ -207,6 +207,375 @@ impl EntropyEncoder {
     pub fn finish(self) -> Vec<u8> {
         self.writer.into_bytes()
     }
+
+    // ===== Progressive encoding methods =====
+
+    /// Writes raw bits to the output (for progressive refinement).
+    pub fn write_bits(&mut self, bits: u32, count: u8) {
+        self.writer.write_bits(bits, count);
+    }
+
+    /// Encodes a DC coefficient for progressive scan.
+    ///
+    /// For DC first scan (ah=0): encodes the full shifted DC value.
+    /// For DC refinement (ah>0): encodes just one bit.
+    pub fn encode_dc_progressive(
+        &mut self,
+        dc: i16,
+        component: usize,
+        table_idx: usize,
+        al: u8,
+        ah: u8,
+    ) -> Result<()> {
+        if ah > 0 {
+            // DC refinement: just emit the bit at position al
+            let bit = ((dc >> al) & 1) as u32;
+            self.writer.write_bits(bit, 1);
+        } else {
+            // DC first scan: encode shifted DC difference
+            let shifted_dc = dc >> al;
+            let dc_diff = shifted_dc - self.prev_dc[component];
+            self.prev_dc[component] = shifted_dc;
+
+            let dc_table = self.dc_tables[table_idx]
+                .as_ref()
+                .ok_or(Error::InternalError {
+                    reason: "DC table not set",
+                })?;
+
+            let dc_cat = category(dc_diff);
+            let (code, len) = dc_table.encode(dc_cat);
+            if len == 0 {
+                return Err(Error::InternalError {
+                    reason: "DC symbol not in Huffman table",
+                });
+            }
+            self.writer.write_bits(code, len);
+
+            if dc_cat > 0 {
+                let additional = additional_bits(dc_diff);
+                self.writer.write_bits(additional as u32, dc_cat);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encodes AC coefficients for progressive first scan.
+    ///
+    /// Returns the EOB run that should be accumulated.
+    pub fn encode_ac_progressive_first(
+        &mut self,
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        eob_run: &mut u16,
+    ) -> Result<()> {
+        // Find the last non-zero coefficient in range [ss, se]
+        let mut last_nz = ss as usize;
+        for k in (ss as usize..=se as usize).rev() {
+            let coef = coeffs[k] >> al;
+            if coef != 0 {
+                last_nz = k;
+                break;
+            }
+        }
+
+        // Check if block is all zeros in this range
+        let all_zero = (ss as usize..=se as usize).all(|k| (coeffs[k] >> al) == 0);
+
+        if all_zero {
+            *eob_run += 1;
+            if *eob_run == 0x7FFF {
+                self.emit_eob_run_by_idx(table_idx, *eob_run)?;
+                *eob_run = 0;
+            }
+            return Ok(());
+        }
+
+        // Emit any pending EOB run
+        if *eob_run > 0 {
+            self.emit_eob_run_by_idx(table_idx, *eob_run)?;
+            *eob_run = 0;
+        }
+
+        let ac_table = self.ac_tables[table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
+
+        // Encode non-zero coefficients
+        let mut r = 0u8; // Run of zeros
+        for k in ss as usize..=last_nz {
+            let coef = coeffs[k] >> al;
+
+            if coef == 0 {
+                r += 1;
+                continue;
+            }
+
+            // Emit ZRL (16 zeros) tokens if needed
+            while r >= 16 {
+                let (code, len) = ac_table.encode(0xF0);
+                self.writer.write_bits(code, len);
+                r -= 16;
+            }
+
+            // Encode the coefficient
+            let abs_coef = coef.unsigned_abs();
+            let nbits = 16 - abs_coef.leading_zeros();
+            let symbol = ((r as u16) << 4) | nbits as u16;
+
+            let (code, len) = ac_table.encode(symbol as u8);
+            if len == 0 {
+                return Err(Error::InternalError {
+                    reason: "AC symbol not in Huffman table",
+                });
+            }
+            self.writer.write_bits(code, len);
+
+            // Additional bits (magnitude and sign)
+            let bits = if coef < 0 {
+                (abs_coef - 1) as u32
+            } else {
+                abs_coef as u32
+            };
+            self.writer.write_bits(bits, nbits as u8);
+
+            r = 0;
+        }
+
+        // If we didn't reach se, there's an EOB
+        if last_nz < se as usize {
+            *eob_run += 1;
+            if *eob_run == 0x7FFF {
+                self.emit_eob_run_by_idx(table_idx, *eob_run)?;
+                *eob_run = 0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Emits an EOB run for progressive AC encoding using table index.
+    fn emit_eob_run_by_idx(&mut self, table_idx: usize, eob_run: u16) -> Result<()> {
+        if eob_run == 0 {
+            return Ok(());
+        }
+
+        let ac_table = self.ac_tables[table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
+
+        // EOB run encoding:
+        // - eob_run=1: symbol=0x00 (EOB), no extra bits
+        // - eob_run>=2: symbol=(nbits<<4), extra_bits = run & ((1<<nbits)-1)
+        // nbits = floor(log2(eob_run)) = 31 - leading_zeros for u32
+        let nbits = if eob_run == 1 {
+            0
+        } else {
+            31 - (eob_run as u32).leading_zeros()
+        };
+        let symbol = (nbits << 4) as u8;
+
+        let (code, len) = ac_table.encode(symbol);
+
+        // Check if this symbol exists in the table (length 0 means not present)
+        if len == 0 && symbol != 0x00 {
+            // Symbol not in table (e.g., standard tables don't have EOB run symbols)
+            // Fall back to emitting individual EOBs
+            let (eob_code, eob_len) = ac_table.encode(0x00);
+            for _ in 0..eob_run {
+                self.writer.write_bits(eob_code, eob_len);
+            }
+        } else {
+            self.writer.write_bits(code, len);
+
+            if nbits > 0 {
+                let extra_bits = eob_run & ((1 << nbits) - 1);
+                self.writer.write_bits(extra_bits as u32, nbits as u8);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Flushes the EOB run at the end of a progressive AC scan.
+    pub fn flush_eob_run(&mut self, table_idx: usize, eob_run: u16) -> Result<()> {
+        self.emit_eob_run_by_idx(table_idx, eob_run)
+    }
+
+    /// Encodes AC coefficients for progressive refinement scan.
+    pub fn encode_ac_progressive_refine(
+        &mut self,
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        ah: u8,
+        eob_run: &mut u16,
+        pending_bits: &mut Vec<u8>,
+    ) -> Result<()> {
+        // Clear pending bits at start of each block
+        pending_bits.clear();
+
+        let mut r = 0u16; // Run of never-been-nonzero coefficients
+        let mut found_new_nonzero = false;
+
+        // Collect information about what needs to be encoded
+        #[derive(Clone)]
+        enum Action {
+            EmitEobRun(u16),
+            EmitZrl(Vec<u8>), // with pending bits to emit after
+            EmitCoef { symbol: u8, sign: u32, pending: Vec<u8> },
+        }
+        let mut actions: Vec<Action> = Vec::new();
+
+        for k in ss as usize..=se as usize {
+            let coef = coeffs[k];
+            let abs_coef = coef.abs();
+            // Check if this coefficient was already transmitted (had non-zero bits above Al)
+            let was_nonzero = (abs_coef >> ah) != 0;
+
+            if was_nonzero {
+                // Already non-zero from previous pass - emit refinement bit after current symbol
+                let bit = ((abs_coef >> al) & 1) as u8;
+                pending_bits.push(bit);
+            } else {
+                // Check if coefficient becomes non-zero in this pass
+                let newly_nonzero = ((abs_coef >> al) & 1) != 0;
+
+                if newly_nonzero {
+                    // Newly non-zero coefficient - first emit any pending EOB run
+                    if *eob_run > 0 {
+                        actions.push(Action::EmitEobRun(*eob_run));
+                        *eob_run = 0;
+                    }
+
+                    found_new_nonzero = true;
+
+                    // Handle ZRL for runs of 16+ zeros
+                    while r >= 16 {
+                        actions.push(Action::EmitZrl(pending_bits.clone()));
+                        pending_bits.clear();
+                        r -= 16;
+                    }
+
+                    // Emit the coefficient: symbol = (run, 1) plus sign bit
+                    let symbol = ((r as u8) << 4) | 1;
+                    let sign_bit = if coef > 0 { 1u32 } else { 0u32 };
+
+                    actions.push(Action::EmitCoef {
+                        symbol,
+                        sign: sign_bit,
+                        pending: pending_bits.clone(),
+                    });
+                    pending_bits.clear();
+
+                    r = 0;
+                } else {
+                    // Still zero - increment run
+                    r += 1;
+                }
+            }
+        }
+
+        // Handle EOB if we didn't end with a newly non-zero coefficient
+        if !found_new_nonzero || r > 0 || !pending_bits.is_empty() {
+            // We need to emit an EOB with pending bits
+            if !pending_bits.is_empty() {
+                // Must emit EOB now to include pending bits
+                if *eob_run > 0 {
+                    actions.push(Action::EmitEobRun(*eob_run));
+                    *eob_run = 0;
+                }
+                // Emit single EOB for this block - will be handled with pending bits
+                // Mark with special run=1 and include pending bits
+            } else {
+                // No pending bits - accumulate EOB run
+                *eob_run += 1;
+                if *eob_run >= 0x7FFF {
+                    actions.push(Action::EmitEobRun(*eob_run));
+                    *eob_run = 0;
+                }
+            }
+        }
+
+        // Now execute all actions
+        let ac_table = self.ac_tables[table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?
+            .clone();
+
+        for action in actions {
+            match action {
+                Action::EmitEobRun(run) => {
+                    if run > 0 {
+                        let nbits = if run == 1 {
+                            0
+                        } else {
+                            31 - (run as u32).leading_zeros()
+                        };
+                        let symbol = (nbits << 4) as u8;
+                        let (code, len) = ac_table.encode(symbol);
+
+                        if len == 0 && symbol != 0x00 {
+                            let (eob_code, eob_len) = ac_table.encode(0x00);
+                            for _ in 0..run {
+                                self.writer.write_bits(eob_code, eob_len);
+                            }
+                        } else {
+                            self.writer.write_bits(code, len);
+                            if nbits > 0 {
+                                let extra_bits = run & ((1 << nbits) - 1);
+                                self.writer.write_bits(extra_bits as u32, nbits as u8);
+                            }
+                        }
+                    }
+                }
+                Action::EmitZrl(bits) => {
+                    let (code, len) = ac_table.encode(0xF0);
+                    self.writer.write_bits(code, len);
+                    for bit in bits {
+                        self.writer.write_bits(bit as u32, 1);
+                    }
+                }
+                Action::EmitCoef { symbol, sign, pending } => {
+                    let (code, len) = ac_table.encode(symbol);
+                    self.writer.write_bits(code, len);
+                    self.writer.write_bits(sign, 1);
+                    for bit in pending {
+                        self.writer.write_bits(bit as u32, 1);
+                    }
+                }
+            }
+        }
+
+        // Emit final EOB with pending bits if needed
+        if !pending_bits.is_empty() {
+            let (code, len) = ac_table.encode(0x00);
+            self.writer.write_bits(code, len);
+            for &bit in pending_bits.iter() {
+                self.writer.write_bits(bit as u32, 1);
+            }
+            pending_bits.clear();
+        }
+
+        Ok(())
+    }
+
+    /// Flushes the EOB run for refinement scan at the end.
+    pub fn flush_refine_eob(&mut self, table_idx: usize, eob_run: u16) -> Result<()> {
+        self.emit_eob_run_by_idx(table_idx, eob_run)
+    }
 }
 
 impl Default for EntropyEncoder {

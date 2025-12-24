@@ -35,7 +35,7 @@ This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from 
 |---------|---------------------|-----------------|--------------|
 | **Chroma subsampling** | **4:4:4** (no subsampling) | 4:2:0 | 4:4:4 ✓ |
 | **Adaptive quantization** | **ON** | ON | Per-block ✓ |
-| **Progressive level** | **2** (10+ scans) | 0 (sequential) | Not implemented ✗ |
+| **Progressive level** | **2** (10+ scans) | 0 (sequential) | Level 0 ✓ (no SA) |
 | **Huffman optimization** | **ON** | OFF (fixed tables) | ON ✓ |
 | **Quality** | **90** | 90 | 90 ✓ |
 
@@ -321,9 +321,11 @@ jpegli-rs/
    - Rust uses fixed standard Huffman tables only
    - C++ file: `lib/jpegli/huffman.cc` - table optimization section
 
-3. ✗ **Progressive JPEG** - Returns "not implemented" error
-   - C++ file: `lib/jpegli/encode.cc` - multiple scan support
-   - Rust has `ScanSpec` type but no implementation
+3. ⚠️ **Progressive JPEG** - Simple mode works, level 2 needs refinement fix
+   - Level 0 (DC + AC scans, no successive approximation): ✓ WORKING
+   - Level 2 (with successive approximation): ✗ Refinement encoding produces invalid bitstream
+   - Tests: `tests/progressive_encoding.rs` - 5 passing tests
+   - TODO: Fix AC refinement scan encoding for full progressive level 2 support
 
 4. ? **DCT/Entropy precision** - Unknown source of ~1-2% gap
    - May be floating-point precision differences
