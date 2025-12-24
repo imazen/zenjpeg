@@ -588,6 +588,47 @@ CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_q
 
 **Verification test**: `cargo test --test parity_enforcement -- --ignored --nocapture`
 
+## Red Herrings (Investigated but NOT the cause)
+
+Things we investigated that looked promising but turned out not to be the issue:
+
+### DCT Scaling (1/8 vs 1/64)
+
+**Hypothesis**: C++ jpegli comments in `dct-inl.h` mention 1/8 scaling applied per dimension (rows + columns = 1/64 total). Rust uses 1/8 total. Maybe changing to 1/64 would fix the file size gap.
+
+**What we tried**:
+```rust
+// Changed dct.rs from:
+let scale = 1.0 / 8.0;
+// To:
+let scale = 1.0 / 64.0;
+```
+
+**Result**: CATASTROPHIC FAILURE
+- Decoded pixel values were ~8× too small (e.g., 137 instead of 200)
+- DSSIM jumped from 0.002 to 0.46 (10× worse)
+- jpeg-decoder couldn't interpret the coefficients correctly
+
+**Root cause**: The 1/8 scaling is correct for compatibility with standard JPEG decoders like libjpeg/jpeg-decoder. The C++ jpegli must handle things differently internally but produces decoder-compatible output.
+
+**Lesson**: Don't trust C++ comments about internal scaling without testing decoder compatibility.
+
+**Examples created**: `trace_dct_scaling.rs`, `test_decoder_compat.rs`
+
+### DC Bias Timing (Before vs After DCT)
+
+**Hypothesis**: C++ subtracts 128 from DC coefficient AFTER DCT (see `dct-inl.h` line 253: `const float dc = (dct[0] - kDCBias) * qmc[0]`). Rust subtracts 128 from ALL pixels BEFORE DCT. Maybe this causes coefficient differences.
+
+**What we found**:
+- For uniform block of value V:
+  - C++ approach: DCT(V) - 128 = V - 128 (with 1/64 scale, DC = V)
+  - Rust approach: DCT(V - 128) = (V - 128) * 8 (with 1/8 scale)
+- The final quantized values are different due to scaling, not timing
+
+**Why it's NOT the issue**: The 1/8 scaling compensates. With 1/8 scale, level shift before DCT produces the same quantized coefficients as 1/64 scale with level shift after DCT.
+
+**Test created**: `test_dc_bias.rs`
+
 ## C++ Build Instructions
 
 ### Ubuntu 22.04

@@ -242,7 +242,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// The input should be pixel values (typically shifted by -128 for level shift).
 /// The output is DCT coefficients ready for quantization.
-/// Includes 1/8 scaling for JPEG compatibility.
+/// Includes 1/8 scaling for JPEG decoder compatibility.
 ///
 /// Uses SIMD optimization when the `simd` feature is enabled.
 ///
@@ -274,9 +274,10 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     #[cfg(not(feature = "simd"))]
     transpose_8x8(&scratch, &mut coefficients);
 
-    // Apply 1/8 scaling for JPEG compatibility
-    // Note: C++ jpegli applies 1/8 in each DCT1D pass (rows and columns) for 1/64 total,
-    // but our quantization tables expect 1/8 total scaling.
+    // Apply 1/8 scaling for JPEG decoder compatibility
+    // Note: C++ jpegli applies 1/8 per dimension (1/64 total), but standard JPEG
+    // decoders like libjpeg/jpeg-decoder expect 1/8 total scaling.
+    // Using 1/64 here breaks compatibility (decoded values are 8× too small).
     let scale = 1.0 / 8.0;
     for v in &mut coefficients {
         *v *= scale;
