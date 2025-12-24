@@ -280,8 +280,8 @@ tr:nth-child(even) { background: #fafafa; }
 <li><strong>XYB:</strong> Rust matches C++ closely</li>
 <li><strong>XYB vs YCbCr:</strong> ~9-11% size reduction at same Q</li>
 </ul>
-<p><em>Note: Butteraugli implementation is a skeleton - values are not yet calibrated.
-Expected range: &lt;1.0 good, 1-2 noticeable, &gt;2 bad. Current values are ~1000× too low.</em></p>
+<p><em>Note: Butteraugli uses simplified jpegli-XYB (not C++ butteraugli's native opsin model).
+Scores are empirically calibrated. &lt;1.0 = imperceptible, 1-2 = noticeable, &gt;2 = visible.</em></p>
 </div>
 "#,
     );
@@ -331,7 +331,7 @@ Expected range: &lt;1.0 good, 1-2 noticeable, &gt;2 bad. Current values are ~100
 
     // Butteraugli Chart
     html.push_str(
-        r#"<h2>Rate-Distortion: Butteraugli (⚠️ UNCALIBRATED - relative values only)</h2><div id="butter-chart" class="chart"></div><script>
+        r#"<h2>Rate-Distortion: Butteraugli (lower is better, &lt;1.0 = good, &gt;2.0 = bad)</h2><div id="butter-chart" class="chart"></div><script>
 "#,
     );
 
