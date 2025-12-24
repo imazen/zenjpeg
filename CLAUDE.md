@@ -48,9 +48,40 @@ A feature is **NOT ported** until ALL of these are true:
 | Create struct + unit tests = "done" | Verify encoder USES the struct |
 | Port constants only = "done" | Port constants AND wire into pipeline |
 | Make tests pass with loose thresholds | Use exact C++ values as reference |
-| Skip integration test = "done" | Run `cpp_filesize_comparison` test |
-| "Simplified version" = "done" | Match C++ algorithm exactly |
-| Default mode is Off = "done" | Default must match C++ default |
+
+## ⚠️ MANDATORY: Git Commit Discipline
+
+**Uncommitted work is invisible work. It cannot be reviewed, reverted, or understood.**
+
+### When to Commit
+
+1. **Before trying something new** - Create a checkpoint before experiments
+2. **After any working change** - Even small fixes should be committed
+3. **After adding/modifying examples or tests** - These are valuable artifacts
+4. **Before ending a session** - NEVER leave work uncommitted
+5. **When investigation produces insights** - Commit notes/findings even if code unchanged
+
+### Commit Message Guidelines
+
+```
+<type>: <short description>
+
+<what was done>
+<what was found/learned>
+<what still needs work>
+```
+
+Types: `fix`, `feat`, `refactor`, `test`, `docs`, `investigate`, `wip`
+
+### Anti-Patterns
+
+| ❌ DON'T | ✅ DO INSTEAD |
+|----------|---------------|
+| "I'll commit when it's done" | Commit incrementally as you work |
+| Modify 10 files then commit once | Commit logical chunks as you go |
+| Debug without committing attempts | Commit each approach tried |
+| Leave examples uncommitted | Examples ARE deliverables, commit them |
+| Forget to commit at end of session | Always `git status` before stopping |
 
 ### Mandatory Verification Checklist
 
