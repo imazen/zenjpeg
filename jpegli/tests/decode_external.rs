@@ -86,8 +86,7 @@ fn test_decode_444_non_interleaved() {
 /// Test that 4:2:0 decoding fails gracefully (known limitation)
 #[test]
 fn test_decode_420_fails_gracefully() {
-    let path =
-        Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower.png.im_q85_420.jpg");
+    let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower.png.im_q85_420.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;
@@ -97,15 +96,17 @@ fn test_decode_420_fails_gracefully() {
 
     // 4:2:0 is not yet supported - should fail with an error, not panic
     let result = decode_with_jpegli(&jpeg_data);
-    assert!(result.is_err(), "4:2:0 should fail until MCU interleaving is implemented");
+    assert!(
+        result.is_err(),
+        "4:2:0 should fail until MCU interleaving is implemented"
+    );
     println!("4:2:0 error (expected): {}", result.unwrap_err());
 }
 
 /// Test decoding grayscale JPEG
 #[test]
 fn test_decode_grayscale() {
-    let path =
-        Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower.png.im_q85_gray.jpg");
+    let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower.png.im_q85_gray.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;

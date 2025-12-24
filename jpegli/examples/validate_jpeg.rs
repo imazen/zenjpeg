@@ -21,8 +21,11 @@ fn main() {
             .expect("Failed to read directory")
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.path().extension()
-                    .map(|ext| ext.to_ascii_lowercase() == "jpg" || ext.to_ascii_lowercase() == "jpeg")
+                e.path()
+                    .extension()
+                    .map(|ext| {
+                        ext.to_ascii_lowercase() == "jpg" || ext.to_ascii_lowercase() == "jpeg"
+                    })
                     .unwrap_or(false)
             })
             .collect();
@@ -59,7 +62,12 @@ fn validate_file(path: &Path) {
     // Test with our decoder
     print!("  jpegli-rs: ");
     match jpegli::Decoder::new().decode(&data) {
-        Ok(img) => println!("OK ({}x{}, {} bytes)", img.width, img.height, img.data.len()),
+        Ok(img) => println!(
+            "OK ({}x{}, {} bytes)",
+            img.width,
+            img.height,
+            img.data.len()
+        ),
         Err(e) => println!("ERROR: {}", e),
     }
 

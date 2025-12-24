@@ -35,7 +35,7 @@ fn main() {
     // Test AC coefficients too
     let mut gradient = [0.0f32; 64];
     for i in 0..64 {
-        gradient[i] = (i % 8) as f32;  // 0,1,2,3,4,5,6,7 repeated
+        gradient[i] = (i % 8) as f32; // 0,1,2,3,4,5,6,7 repeated
     }
     let gradient_dct = dct::forward_dct_blocks(&[gradient])[0];
 

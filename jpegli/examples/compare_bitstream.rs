@@ -26,11 +26,13 @@ fn main() {
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",
-            "-p", "0",
+            "-p",
+            "0",
             "--fixed_code",
             ppm_path,
             cpp_path,
-            "-q", "90",
+            "-q",
+            "90",
         ])
         .output()
         .expect("cjpegli failed");
@@ -53,9 +55,11 @@ fn main() {
     println!("=== 8x8 Gray Image Comparison ===");
     println!("C++ size: {} bytes", cpp_jpeg.len());
     println!("Rust size: {} bytes", rust_jpeg.len());
-    println!("Difference: {} bytes ({:+.1}%)",
-             rust_jpeg.len() as i64 - cpp_jpeg.len() as i64,
-             100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64);
+    println!(
+        "Difference: {} bytes ({:+.1}%)",
+        rust_jpeg.len() as i64 - cpp_jpeg.len() as i64,
+        100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64
+    );
 
     // Find first difference
     let min_len = cpp_jpeg.len().min(rust_jpeg.len());
@@ -120,8 +124,10 @@ fn describe_jpeg_position(data: &[u8], pos: usize) {
                 if i + 3 < data.len() {
                     let len = ((data[i + 2] as usize) << 8) | (data[i + 3] as usize);
                     if pos >= i && pos < i + 2 + len {
-                        println!("Position is in {} segment (offset {:#x}, len {})",
-                                 name, i, len);
+                        println!(
+                            "Position is in {} segment (offset {:#x}, len {})",
+                            name, i, len
+                        );
                         return;
                     }
                     i += 2 + len;
@@ -153,7 +159,10 @@ fn dump_jpeg_structure(data: &[u8]) {
                 0xC4 => "DHT",
                 0xDA => "SOS",
                 0xD9 => "EOI",
-                0x00 => { i += 2; continue; }  // Stuffed byte
+                0x00 => {
+                    i += 2;
+                    continue;
+                } // Stuffed byte
                 _ => "?",
             };
 

@@ -219,18 +219,8 @@ impl Encoder {
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Generate quantization tables
-        let y_quant = quant::generate_quant_table(
-            self.config.quality,
-            0,
-            ColorSpace::YCbCr,
-            false,
-        );
-        let c_quant = quant::generate_quant_table(
-            self.config.quality,
-            1,
-            ColorSpace::YCbCr,
-            false,
-        );
+        let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
+        let c_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
 
         // Write JPEG structure
         self.write_header(output)?;
@@ -276,19 +266,19 @@ impl Encoder {
         // Generate XYB quantization tables (one per component)
         let x_quant = quant::generate_quant_table(
             self.config.quality,
-            0,  // X component
+            0, // X component
             ColorSpace::Rgb,
             true,
         );
         let y_quant = quant::generate_quant_table(
             self.config.quality,
-            1,  // Y component (luma-like)
+            1, // Y component (luma-like)
             ColorSpace::Rgb,
             true,
         );
         let b_quant = quant::generate_quant_table(
             self.config.quality,
-            2,  // B component
+            2, // B component
             ColorSpace::Rgb,
             true,
         );
@@ -309,9 +299,16 @@ impl Encoder {
 
         // Encode image data with XYB MCU structure (float-based)
         let scan_data = self.encode_scan_xyb_float(
-            &x_plane, &y_plane, &b_downsampled,
-            width, height, b_width, b_height,
-            &x_quant, &y_quant, &b_quant,
+            &x_plane,
+            &y_plane,
+            &b_downsampled,
+            width,
+            height,
+            b_width,
+            b_height,
+            &x_quant,
+            &y_quant,
+            &b_quant,
         )?;
         output.extend_from_slice(&scan_data);
 
@@ -338,11 +335,8 @@ impl Encoder {
         match self.config.pixel_format {
             PixelFormat::Rgb => {
                 for i in 0..num_pixels {
-                    let (x, y, b) = srgb_to_scaled_xyb(
-                        data[i * 3],
-                        data[i * 3 + 1],
-                        data[i * 3 + 2],
-                    );
+                    let (x, y, b) =
+                        srgb_to_scaled_xyb(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]);
                     x_plane[i] = x;
                     y_plane[i] = y;
                     b_plane[i] = b;
@@ -350,11 +344,8 @@ impl Encoder {
             }
             PixelFormat::Rgba => {
                 for i in 0..num_pixels {
-                    let (x, y, b) = srgb_to_scaled_xyb(
-                        data[i * 4],
-                        data[i * 4 + 1],
-                        data[i * 4 + 2],
-                    );
+                    let (x, y, b) =
+                        srgb_to_scaled_xyb(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
                     x_plane[i] = x;
                     y_plane[i] = y;
                     b_plane[i] = b;
@@ -371,11 +362,8 @@ impl Encoder {
             }
             PixelFormat::Bgr => {
                 for i in 0..num_pixels {
-                    let (x, y, b) = srgb_to_scaled_xyb(
-                        data[i * 3 + 2],
-                        data[i * 3 + 1],
-                        data[i * 3],
-                    );
+                    let (x, y, b) =
+                        srgb_to_scaled_xyb(data[i * 3 + 2], data[i * 3 + 1], data[i * 3]);
                     x_plane[i] = x;
                     y_plane[i] = y;
                     b_plane[i] = b;
@@ -383,11 +371,8 @@ impl Encoder {
             }
             PixelFormat::Bgra => {
                 for i in 0..num_pixels {
-                    let (x, y, b) = srgb_to_scaled_xyb(
-                        data[i * 4 + 2],
-                        data[i * 4 + 1],
-                        data[i * 4],
-                    );
+                    let (x, y, b) =
+                        srgb_to_scaled_xyb(data[i * 4 + 2], data[i * 4 + 1], data[i * 4]);
                     x_plane[i] = x;
                     y_plane[i] = y;
                     b_plane[i] = b;
@@ -778,15 +763,15 @@ impl Encoder {
         // This means R and G are full resolution, B is 1/4 resolution
         output.push(b'R'); // Component ID = 'R' (82)
         output.push(0x22); // 2x2 sampling
-        output.push(0);    // Quant table 0
+        output.push(0); // Quant table 0
 
         output.push(b'G'); // Component ID = 'G' (71)
         output.push(0x22); // 2x2 sampling
-        output.push(1);    // Quant table 1
+        output.push(1); // Quant table 1
 
         output.push(b'B'); // Component ID = 'B' (66)
         output.push(0x11); // 1x1 sampling (subsampled)
-        output.push(2);    // Quant table 2
+        output.push(2); // Quant table 2
 
         Ok(())
     }
@@ -979,7 +964,11 @@ impl Encoder {
                 let y_block = self.extract_block(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
                 let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
                 encoder.encode_block(&y_zigzag, 0, 0, 0)?;
 
@@ -988,7 +977,11 @@ impl Encoder {
                     let cb_block = self.extract_block(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
-                        &cb_dct, &c_quant.values, &cb_zero_bias, aq_strength);
+                        &cb_dct,
+                        &c_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
                     let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
                     encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
 
@@ -996,7 +989,11 @@ impl Encoder {
                     let cr_block = self.extract_block(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
-                        &cr_dct, &c_quant.values, &cr_zero_bias, aq_strength);
+                        &cr_dct,
+                        &c_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
                     let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
                     encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
                 }
@@ -1050,7 +1047,11 @@ impl Encoder {
                 let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
                 let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
                 encoder.encode_block(&y_zigzag, 0, 0, 0)?;
 
@@ -1059,7 +1060,11 @@ impl Encoder {
                     let cb_block = self.extract_block_ycbcr_f32(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
-                        &cb_dct, &c_quant.values, &cb_zero_bias, aq_strength);
+                        &cb_dct,
+                        &c_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
                     let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
                     encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
 
@@ -1067,7 +1072,11 @@ impl Encoder {
                     let cr_block = self.extract_block_ycbcr_f32(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
-                        &cr_dct, &c_quant.values, &cr_zero_bias, aq_strength);
+                        &cr_dct,
+                        &c_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
                     let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
                     encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
                 }
@@ -1088,7 +1097,7 @@ impl Encoder {
         &self,
         x_plane: &[f32],
         y_plane: &[f32],
-        b_plane: &[f32],  // Already downsampled
+        b_plane: &[f32], // Already downsampled
         width: usize,
         height: usize,
         b_width: usize,
@@ -1308,9 +1317,9 @@ mod tests {
         for y in 0..16 {
             for x in 0..16 {
                 let idx = (y * 16 + x) * 3;
-                data[idx] = (x * 16) as u8;     // Red gradient
+                data[idx] = (x * 16) as u8; // Red gradient
                 data[idx + 1] = (y * 16) as u8; // Green gradient
-                data[idx + 2] = 128;            // Constant blue
+                data[idx + 2] = 128; // Constant blue
             }
         }
 
@@ -1347,9 +1356,9 @@ mod tests {
                 let idx = (y * 32 + x) * 3;
                 // Checkerboard pattern
                 let checker = ((x / 4) + (y / 4)) % 2 == 0;
-                data[idx] = if checker { 255 } else { 0 };     // Red
+                data[idx] = if checker { 255 } else { 0 }; // Red
                 data[idx + 1] = if checker { 0 } else { 255 }; // Green
-                data[idx + 2] = 128;                           // Blue
+                data[idx + 2] = 128; // Blue
             }
         }
 

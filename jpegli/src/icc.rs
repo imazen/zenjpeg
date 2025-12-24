@@ -174,9 +174,9 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
         .decode()
         .map_err(|e| Error::DecodeError(format!("jpeg decode: {e}")))?;
 
-    let info = decoder.info().ok_or_else(|| {
-        Error::DecodeError("no image info".to_string())
-    })?;
+    let info = decoder
+        .info()
+        .ok_or_else(|| Error::DecodeError("no image info".to_string()))?;
 
     let width = info.width as usize;
     let height = info.height as usize;

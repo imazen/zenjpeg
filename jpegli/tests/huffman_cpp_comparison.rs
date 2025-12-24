@@ -77,7 +77,7 @@ fn extract_array(json: &str, key: &str) -> Option<Vec<u64>> {
         arr_content
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
-            .collect()
+            .collect(),
     )
 }
 
@@ -112,7 +112,11 @@ fn test_huffman_cpp_reference() {
         let mut case_matches = true;
         let mut case_max_diff = 0u8;
 
-        for (j, (&rust_d, &cpp_d)) in rust_depths.iter().zip(case.expected_depth.iter()).enumerate() {
+        for (j, (&rust_d, &cpp_d)) in rust_depths
+            .iter()
+            .zip(case.expected_depth.iter())
+            .enumerate()
+        {
             let diff = (rust_d as i16 - cpp_d as i16).abs() as u8;
             if diff > 0 {
                 case_matches = false;
@@ -137,7 +141,10 @@ fn test_huffman_cpp_reference() {
 
     // For now, just report - we'll tighten this after fixing the algorithm
     if passed < total {
-        println!("\nNOTE: {} cases differ - algorithm needs to be ported from C++", total - passed);
+        println!(
+            "\nNOTE: {} cases differ - algorithm needs to be ported from C++",
+            total - passed
+        );
     }
 }
 

@@ -435,7 +435,9 @@ pub fn build_code_lengths(freqs: &[u64], max_length: u8) -> Vec<u8> {
 
             // Create parent node at the end (replacing sentinel)
             let j_end = tree.len() - 1;
-            tree[j_end].total_count = tree[left].total_count.saturating_add(tree[right].total_count);
+            tree[j_end].total_count = tree[left]
+                .total_count
+                .saturating_add(tree[right].total_count);
             tree[j_end].index_left = left as i16;
             tree[j_end].index_right_or_value = right as i16;
 

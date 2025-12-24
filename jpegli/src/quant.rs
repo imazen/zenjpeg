@@ -20,14 +20,10 @@ pub use crate::types::QuantTable;
 /// while high frequencies (bottom-right) use 1.0 for linear scaling.
 /// From C++ jpegli quant.cc
 pub const FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
-    1.00, 0.51, 0.67, 0.74, 1.00, 1.00, 1.00, 1.00,
-    0.51, 0.66, 0.69, 0.87, 1.00, 1.00, 1.00, 1.00,
-    0.67, 0.69, 0.84, 0.83, 0.96, 1.00, 1.00, 1.00,
-    0.74, 0.87, 0.83, 1.00, 1.00, 0.91, 0.91, 1.00,
-    1.00, 1.00, 0.96, 1.00, 1.00, 1.00, 1.00, 1.00,
-    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
-    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
-    1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
+    1.00, 0.51, 0.67, 0.74, 1.00, 1.00, 1.00, 1.00, 0.51, 0.66, 0.69, 0.87, 1.00, 1.00, 1.00, 1.00,
+    0.67, 0.69, 0.84, 0.83, 0.96, 1.00, 1.00, 1.00, 0.74, 0.87, 0.83, 1.00, 1.00, 0.91, 0.91, 1.00,
+    1.00, 1.00, 0.96, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
 ];
 
 /// Distance threshold where non-linear scaling kicks in.
@@ -621,7 +617,10 @@ mod tests {
     #[test]
     fn test_quant_table_comparison() {
         println!("\n=== Quant Table Comparison (Y channel) ===");
-        println!("{:>5} {:>8} {:>10} {:>10} {:>8} {:>8}", "Q", "dist", "YCbCr_sum", "XYB_sum", "YCbCr[0]", "XYB[0]");
+        println!(
+            "{:>5} {:>8} {:>10} {:>10} {:>8} {:>8}",
+            "Q", "dist", "YCbCr_sum", "XYB_sum", "YCbCr[0]", "XYB[0]"
+        );
 
         for q in [10, 20, 30, 40, 50, 60, 70, 80, 90] {
             let quality = Quality::from_quality(q as f32);
@@ -633,8 +632,10 @@ mod tests {
             let ycbcr_sum: u32 = ycbcr.values.iter().map(|&x| x as u32).sum();
             let xyb_sum: u32 = xyb.values.iter().map(|&x| x as u32).sum();
 
-            println!("{:>5} {:>8.2} {:>10} {:>10} {:>8} {:>8}",
-                q, distance, ycbcr_sum, xyb_sum, ycbcr.values[0], xyb.values[0]);
+            println!(
+                "{:>5} {:>8.2} {:>10} {:>10} {:>8} {:>8}",
+                q, distance, ycbcr_sum, xyb_sum, ycbcr.values[0], xyb.values[0]
+            );
         }
     }
 
@@ -647,7 +648,9 @@ mod tests {
                 assert!(
                     (scale - distance).abs() < 1e-6,
                     "Linear region failed: d={}, k={}, scale={}",
-                    distance, freq_idx, scale
+                    distance,
+                    freq_idx,
+                    scale
                 );
             }
         }
@@ -680,7 +683,10 @@ mod tests {
                 assert!(
                     (recovered - distance).abs() < 0.01,
                     "Roundtrip failed: d={}, k={}, scale={}, recovered={}",
-                    distance, freq_idx, scale, recovered
+                    distance,
+                    freq_idx,
+                    scale,
+                    recovered
                 );
             }
         }
@@ -715,9 +721,9 @@ mod tests {
             (1.0, 1, 1.0),
             (1.0, 63, 1.0),
             // Non-linear region
-            (2.0, 0, 2.0),   // exp=1.0: max(1.0, 2.0) = 2.0
-            (3.0, 0, 3.0),   // exp=1.0: max(1.5, 3.0) = 3.0
-            (5.0, 0, 5.0),   // exp=1.0: linear
+            (2.0, 0, 2.0), // exp=1.0: max(1.0, 2.0) = 2.0
+            (3.0, 0, 3.0), // exp=1.0: max(1.5, 3.0) = 3.0
+            (5.0, 0, 5.0), // exp=1.0: linear
         ];
 
         for (distance, freq_idx, expected) in test_cases {
@@ -725,7 +731,10 @@ mod tests {
             assert!(
                 (actual - expected).abs() < 0.01,
                 "Mismatch: distance_to_scale({}, {}) = {}, expected {}",
-                distance, freq_idx, actual, expected
+                distance,
+                freq_idx,
+                actual,
+                expected
             );
         }
     }
@@ -746,12 +755,14 @@ mod tests {
             assert!(
                 ZERO_BIAS_MUL_YCBCR_LQ[c * 64].abs() < 1e-6,
                 "LQ DC mul for component {} should be 0, got {}",
-                c, ZERO_BIAS_MUL_YCBCR_LQ[c * 64]
+                c,
+                ZERO_BIAS_MUL_YCBCR_LQ[c * 64]
             );
             assert!(
                 ZERO_BIAS_MUL_YCBCR_HQ[c * 64].abs() < 1e-6,
                 "HQ DC mul for component {} should be 0, got {}",
-                c, ZERO_BIAS_MUL_YCBCR_HQ[c * 64]
+                c,
+                ZERO_BIAS_MUL_YCBCR_HQ[c * 64]
             );
         }
     }
@@ -807,7 +818,10 @@ mod tests {
         assert!(
             (params.mul[1] - expected).abs() < 1e-5,
             "Expected blend {} (HQ={}, LQ={}), got {}",
-            expected, hq_val, lq_val, params.mul[1]
+            expected,
+            hq_val,
+            lq_val,
+            params.mul[1]
         );
     }
 
@@ -853,7 +867,8 @@ mod tests {
         assert!(
             (params.mul[1] - expected_mul_1).abs() < 1e-4,
             "Y mul[1] at d=2.0: expected {}, got {}",
-            expected_mul_1, params.mul[1]
+            expected_mul_1,
+            params.mul[1]
         );
 
         // Offset for AC should be 0.59082 (Y component)

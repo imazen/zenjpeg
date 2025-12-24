@@ -10,8 +10,8 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use jpegli::{Encoder, PixelFormat};
 use jpegli::quant::Quality;
+use jpegli::{Encoder, PixelFormat};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

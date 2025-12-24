@@ -20,10 +20,7 @@ fn main() {
         let lib_dir = prebuilt_lib.parent().unwrap();
         let hwy_lib = jpegli_root.join("build_test/third_party/highway/libhwy.a");
 
-        println!(
-            "cargo:rustc-link-search=native={}",
-            lib_dir.display()
-        );
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!("cargo:rustc-link-lib=static=jpegli-static");
 
         if hwy_lib.exists() {

@@ -68,7 +68,13 @@ fn encode_jpegli(pixels: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8>
         .expect("jpegli encoding failed")
 }
 
-fn encode_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: f32, use_444: bool) -> Vec<u8> {
+fn encode_mozjpeg(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    quality: f32,
+    use_444: bool,
+) -> Vec<u8> {
     use mozjpeg::{ColorSpace, Compress};
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
@@ -80,7 +86,9 @@ fn encode_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: f32, use_
         comp.set_chroma_sampling_pixel_sizes((1, 1), (1, 1));
     }
 
-    let mut started = comp.start_compress(Vec::new()).expect("mozjpeg start error");
+    let mut started = comp
+        .start_compress(Vec::new())
+        .expect("mozjpeg start error");
 
     let row_stride = width * 3;
     for y in 0..height {

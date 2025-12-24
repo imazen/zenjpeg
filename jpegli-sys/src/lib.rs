@@ -157,7 +157,8 @@ pub struct jpeg_source_mgr {
     pub init_source: Option<unsafe extern "C" fn(*mut jpeg_decompress_struct)>,
     pub fill_input_buffer: Option<unsafe extern "C" fn(*mut jpeg_decompress_struct) -> boolean>,
     pub skip_input_data: Option<unsafe extern "C" fn(*mut jpeg_decompress_struct, c_long)>,
-    pub resync_to_restart: Option<unsafe extern "C" fn(*mut jpeg_decompress_struct, c_int) -> boolean>,
+    pub resync_to_restart:
+        Option<unsafe extern "C" fn(*mut jpeg_decompress_struct, c_int) -> boolean>,
     pub term_source: Option<unsafe extern "C" fn(*mut jpeg_decompress_struct)>,
 }
 
@@ -322,7 +323,11 @@ extern "C" {
     );
     pub fn jpeg_destroy_compress(cinfo: *mut jpeg_compress_struct);
     pub fn jpeg_set_defaults(cinfo: *mut jpeg_compress_struct);
-    pub fn jpeg_set_quality(cinfo: *mut jpeg_compress_struct, quality: c_int, force_baseline: boolean);
+    pub fn jpeg_set_quality(
+        cinfo: *mut jpeg_compress_struct,
+        quality: c_int,
+        force_baseline: boolean,
+    );
     pub fn jpeg_start_compress(cinfo: *mut jpeg_compress_struct, write_all_tables: boolean);
     pub fn jpeg_write_scanlines(
         cinfo: *mut jpeg_compress_struct,

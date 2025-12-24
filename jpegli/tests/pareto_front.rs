@@ -68,7 +68,8 @@ impl DiffStats {
     }
 
     fn report(&self, name: &str) {
-        println!("  {}: off-by-1={:.1}%, off-by-2={:.1}%, off-by-3+={:.1}%, max={}, avg={:.2}",
+        println!(
+            "  {}: off-by-1={:.1}%, off-by-2={:.1}%, off-by-3+={:.1}%, max={}, avg={:.2}",
             name,
             self.pct_off_by_1(),
             self.pct_off_by_2(),
@@ -342,7 +343,11 @@ fn test_quality_at_similar_size() {
     let jpegli_dssim = compute_dssim(&original, &jpegli_decoded, width, height);
 
     println!("\n=== Quality at Similar Size ===");
-    println!("jpegli Q80: {} bytes, DSSIM: {:.6}", jpegli_data.len(), jpegli_dssim);
+    println!(
+        "jpegli Q80: {} bytes, DSSIM: {:.6}",
+        jpegli_data.len(),
+        jpegli_dssim
+    );
 
     // Find mozjpeg quality that produces similar size
     let target_size = jpegli_data.len();
@@ -430,15 +435,21 @@ fn test_xyb_vs_ycbcr_vs_mozjpeg() {
 
         // File sizes
         println!("  File sizes:");
-        println!("    jpegli YCbCr: {} bytes ({:.2} bpp)",
+        println!(
+            "    jpegli YCbCr: {} bytes ({:.2} bpp)",
             jpegli_ycbcr.len(),
-            8.0 * jpegli_ycbcr.len() as f64 / (width * height) as f64);
-        println!("    jpegli XYB:   {} bytes ({:.2} bpp)",
+            8.0 * jpegli_ycbcr.len() as f64 / (width * height) as f64
+        );
+        println!(
+            "    jpegli XYB:   {} bytes ({:.2} bpp)",
             jpegli_xyb.len(),
-            8.0 * jpegli_xyb.len() as f64 / (width * height) as f64);
-        println!("    mozjpeg:      {} bytes ({:.2} bpp)",
+            8.0 * jpegli_xyb.len() as f64 / (width * height) as f64
+        );
+        println!(
+            "    mozjpeg:      {} bytes ({:.2} bpp)",
             mozjpeg_data.len(),
-            8.0 * mozjpeg_data.len() as f64 / (width * height) as f64);
+            8.0 * mozjpeg_data.len() as f64 / (width * height) as f64
+        );
 
         // Quality metrics - YCbCr vs original
         let ycbcr_dssim = compute_dssim(&original, &ycbcr_decoded, width, height);
@@ -476,17 +487,24 @@ fn test_xyb_vs_ycbcr_vs_mozjpeg() {
                 } else {
                     "mozjpeg"
                 };
-                println!("    {} (YCbCr={:.2}, XYB={:.2}, moz={:.2})",
-                    winner, ycbcr_score, xyb_score, moz_score);
+                println!(
+                    "    {} (YCbCr={:.2}, XYB={:.2}, moz={:.2})",
+                    winner, ycbcr_score, xyb_score, moz_score
+                );
 
                 // Assertions for XYB
                 assert!(
                     xyb_dssim < 0.01,
                     "XYB DSSIM too high at Q{}: {}",
-                    quality, xyb_dssim
+                    quality,
+                    xyb_dssim
                 );
             } else {
-                println!("    XYB: decode size mismatch ({} vs {})", xyb_pixels.len(), original.len());
+                println!(
+                    "    XYB: decode size mismatch ({} vs {})",
+                    xyb_pixels.len(),
+                    original.len()
+                );
             }
         } else {
             println!("    XYB: decode failed (djpegli error)");
@@ -496,12 +514,14 @@ fn test_xyb_vs_ycbcr_vs_mozjpeg() {
         assert!(
             ycbcr_dssim < 0.01,
             "YCbCr DSSIM too high at Q{}: {}",
-            quality, ycbcr_dssim
+            quality,
+            ycbcr_dssim
         );
         assert!(
             ycbcr_stats.pct_off_by_3_plus() < 50.0,
             "Too many off-by-3+ pixels in YCbCr at Q{}: {:.1}%",
-            quality, ycbcr_stats.pct_off_by_3_plus()
+            quality,
+            ycbcr_stats.pct_off_by_3_plus()
         );
 
         println!();

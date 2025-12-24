@@ -10,9 +10,9 @@ fn main() {
     for i in 0..64 {
         let x = i % 8;
         let y = i / 8;
-        rgb[i * 3] = (x * 32) as u8;      // R: 0,32,64...224
-        rgb[i * 3 + 1] = (y * 32) as u8;  // G: 0,32,64...224
-        rgb[i * 3 + 2] = 128;             // B: constant
+        rgb[i * 3] = (x * 32) as u8; // R: 0,32,64...224
+        rgb[i * 3 + 1] = (y * 32) as u8; // G: 0,32,64...224
+        rgb[i * 3 + 2] = 128; // B: constant
     }
 
     println!("=== Step 1: RGB to YCbCr ===");
@@ -31,9 +31,18 @@ fn main() {
         cr_block[i] = 128.0 + (0.5 * r - 0.418688 * g - 0.081312 * b);
     }
 
-    println!("Y block (first 8):  {:?}", &y_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>());
-    println!("Cb block (first 8): {:?}", &cb_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>());
-    println!("Cr block (first 8): {:?}", &cr_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>());
+    println!(
+        "Y block (first 8):  {:?}",
+        &y_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>()
+    );
+    println!(
+        "Cb block (first 8): {:?}",
+        &cb_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>()
+    );
+    println!(
+        "Cr block (first 8): {:?}",
+        &cr_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>()
+    );
 
     println!("\n=== Step 2: Level shift (subtract 128) ===");
     for i in 0..64 {
@@ -41,7 +50,10 @@ fn main() {
         cb_block[i] -= 128.0;
         cr_block[i] -= 128.0;
     }
-    println!("Y shifted (first 8):  {:?}", &y_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>());
+    println!(
+        "Y shifted (first 8):  {:?}",
+        &y_block[..8].iter().map(|x| *x as i32).collect::<Vec<_>>()
+    );
 
     println!("\n=== Step 3: Forward DCT ===");
     let y_dct_result = dct::forward_dct_blocks(&[y_block]);
@@ -49,8 +61,14 @@ fn main() {
     let y_dct = y_dct_result[0];
     let cb_dct = cb_dct_result[0];
 
-    println!("Y DCT (first row): {:?}", &y_dct[..8].iter().map(|x| *x as i32).collect::<Vec<_>>());
-    println!("Cb DCT (first row): {:?}", &cb_dct[..8].iter().map(|x| *x as i32).collect::<Vec<_>>());
+    println!(
+        "Y DCT (first row): {:?}",
+        &y_dct[..8].iter().map(|x| *x as i32).collect::<Vec<_>>()
+    );
+    println!(
+        "Cb DCT (first row): {:?}",
+        &cb_dct[..8].iter().map(|x| *x as i32).collect::<Vec<_>>()
+    );
 
     println!("\n=== Step 4: Quantization ===");
     let quality = Quality::Traditional(90.0);
@@ -74,13 +92,22 @@ fn main() {
         cb_quantized[i] = (cb_dct[i] / q).round() as i16;
     }
 
-    println!("Y quantized (zigzag first 16): {:?}", &zigzag_order(&y_quantized)[..16]);
-    println!("Cb quantized (zigzag first 16): {:?}", &zigzag_order(&cb_quantized)[..16]);
+    println!(
+        "Y quantized (zigzag first 16): {:?}",
+        &zigzag_order(&y_quantized)[..16]
+    );
+    println!(
+        "Cb quantized (zigzag first 16): {:?}",
+        &zigzag_order(&cb_quantized)[..16]
+    );
 
     // Count non-zero coefficients
     let y_nonzero = y_quantized.iter().filter(|&&x| x != 0).count();
     let cb_nonzero = cb_quantized.iter().filter(|&&x| x != 0).count();
-    println!("\nNon-zero coefficients: Y={}, Cb={}", y_nonzero, cb_nonzero);
+    println!(
+        "\nNon-zero coefficients: Y={}, Cb={}",
+        y_nonzero, cb_nonzero
+    );
 
     // Print DC values (these are most important for visual quality)
     println!("\n=== DC Coefficients ===");
@@ -90,14 +117,9 @@ fn main() {
 
 fn zigzag_order(block: &[i16; 64]) -> [i16; 64] {
     const ZIGZAG: [usize; 64] = [
-        0,  1,  8, 16,  9,  2,  3, 10,
-       17, 24, 32, 25, 18, 11,  4,  5,
-       12, 19, 26, 33, 40, 48, 41, 34,
-       27, 20, 13,  6,  7, 14, 21, 28,
-       35, 42, 49, 56, 57, 50, 43, 36,
-       29, 22, 15, 23, 30, 37, 44, 51,
-       58, 59, 52, 45, 38, 31, 39, 46,
-       53, 60, 61, 54, 47, 55, 62, 63
+        0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27,
+        20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+        58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
     ];
     let mut result = [0i16; 64];
     for i in 0..64 {

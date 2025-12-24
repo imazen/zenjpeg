@@ -30,13 +30,13 @@ const BASELINE: ParityBaseline = ParityBaseline {
     // - Complex photos: Rust is often SMALLER than C++
     // - Simple graphics: Rust is slightly larger
     // - Flower test image: outlier at +4%
-    flower_q90_diff_pct: 4.0,   // flower_small: C++=61,476 Rust=63,906 (+4.0%)
+    flower_q90_diff_pct: 4.0, // flower_small: C++=61,476 Rust=63,906 (+4.0%)
 
     // CID22-512 test images (different complexity levels)
-    cid22_large_diff_pct: -1.8,         // 1459534.png: C++=173,475 Rust=170,310 (Rust SMALLER!)
-    cid22_medium_large_diff_pct: -1.0,  // 2504911.png: C++=115,901 Rust=114,760 (Rust SMALLER!)
-    cid22_medium_diff_pct: 0.4,         // 3616956.png: C++=60,074 Rust=60,320 (nearly identical)
-    cid22_small_diff_pct: 2.0,          // nicubunu_Game_baddie_Policeman.png: C++=30,064 Rust=30,653
+    cid22_large_diff_pct: -1.8, // 1459534.png: C++=173,475 Rust=170,310 (Rust SMALLER!)
+    cid22_medium_large_diff_pct: -1.0, // 2504911.png: C++=115,901 Rust=114,760 (Rust SMALLER!)
+    cid22_medium_diff_pct: 0.4, // 3616956.png: C++=60,074 Rust=60,320 (nearly identical)
+    cid22_small_diff_pct: 2.0,  // nicubunu_Game_baddie_Policeman.png: C++=30,064 Rust=30,653
 
     // Allowed regression tolerance (must be very small)
     regression_tolerance_pct: 0.5,
@@ -57,9 +57,9 @@ struct ParityBaseline {
 
 /// CID22-512 test images to fetch from GitHub
 const CID22_IMAGES: &[(&str, &str)] = &[
-    ("1459534.png", "cid22_large"),           // 621KB - complex photo
-    ("2504911.png", "cid22_medium_large"),    // 459KB - typical photo
-    ("3616956.png", "cid22_medium"),          // 348KB - moderate complexity
+    ("1459534.png", "cid22_large"),        // 621KB - complex photo
+    ("2504911.png", "cid22_medium_large"), // 459KB - typical photo
+    ("3616956.png", "cid22_medium"),       // 348KB - moderate complexity
     ("nicubunu_Game_baddie_Policeman.png", "cid22_small"), // 77KB - graphics
 ];
 
@@ -197,19 +197,14 @@ struct ParityResult {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ParityStatus {
-    Improved,       // Better than baseline
-    Stable,         // Within regression tolerance
-    Regressed,      // Worse than baseline + tolerance
-    TargetReached,  // Within target (parity achieved!)
+    Improved,      // Better than baseline
+    Stable,        // Within regression tolerance
+    Regressed,     // Worse than baseline + tolerance
+    TargetReached, // Within target (parity achieved!)
 }
 
 impl ParityResult {
-    fn new(
-        image_name: &str,
-        cpp_size: usize,
-        rust_size: usize,
-        baseline_diff_pct: f64,
-    ) -> Self {
+    fn new(image_name: &str, cpp_size: usize, rust_size: usize, baseline_diff_pct: f64) -> Self {
         let diff_pct = 100.0 * (rust_size as f64 - cpp_size as f64) / cpp_size as f64;
 
         let status = if diff_pct <= BASELINE.target_diff_pct {
@@ -279,7 +274,9 @@ fn test_image(
 #[test]
 #[ignore = "requires C++ cjpegli build and test images"]
 fn test_parity_flower_q90() {
-    let png_path = std::path::PathBuf::from("/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png");
+    let png_path = std::path::PathBuf::from(
+        "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png",
+    );
 
     let result = match test_image(&png_path, "flower", 90, BASELINE.flower_q90_diff_pct) {
         Some(r) => r,
@@ -345,7 +342,12 @@ fn test_parity_cid22_medium_large() {
         }
     };
 
-    let result = match test_image(&png_path, "cid22_medium_large", 90, BASELINE.cid22_medium_large_diff_pct) {
+    let result = match test_image(
+        &png_path,
+        "cid22_medium_large",
+        90,
+        BASELINE.cid22_medium_large_diff_pct,
+    ) {
         Some(r) => r,
         None => {
             println!("Skipping: C++ cjpegli not available");
@@ -377,7 +379,12 @@ fn test_parity_cid22_medium() {
         }
     };
 
-    let result = match test_image(&png_path, "cid22_medium", 90, BASELINE.cid22_medium_diff_pct) {
+    let result = match test_image(
+        &png_path,
+        "cid22_medium",
+        90,
+        BASELINE.cid22_medium_diff_pct,
+    ) {
         Some(r) => r,
         None => {
             println!("Skipping: C++ cjpegli not available");
@@ -435,7 +442,10 @@ fn test_parity_cid22_small() {
 fn test_parity_comprehensive() {
     println!("\n=== C++ PARITY ENFORCEMENT TEST ===\n");
     println!("Settings: 4:4:4, no AQ, sequential, fixed Huffman");
-    println!("Target: <{:.1}% file size difference\n", BASELINE.target_diff_pct);
+    println!(
+        "Target: <{:.1}% file size difference\n",
+        BASELINE.target_diff_pct
+    );
 
     let mut results = Vec::new();
     let mut regressions = Vec::new();
@@ -443,7 +453,7 @@ fn test_parity_comprehensive() {
 
     // Test flower
     let flower_path = std::path::PathBuf::from(
-        "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png"
+        "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png",
     );
     if let Some(result) = test_image(&flower_path, "flower", 90, BASELINE.flower_q90_diff_pct) {
         results.push(result);
@@ -452,9 +462,21 @@ fn test_parity_comprehensive() {
     // Test CID22 images (fetch if needed)
     let cid22_tests = [
         ("1459534.png", "cid22_large", BASELINE.cid22_large_diff_pct),
-        ("2504911.png", "cid22_medium_large", BASELINE.cid22_medium_large_diff_pct),
-        ("3616956.png", "cid22_medium", BASELINE.cid22_medium_diff_pct),
-        ("nicubunu_Game_baddie_Policeman.png", "cid22_small", BASELINE.cid22_small_diff_pct),
+        (
+            "2504911.png",
+            "cid22_medium_large",
+            BASELINE.cid22_medium_large_diff_pct,
+        ),
+        (
+            "3616956.png",
+            "cid22_medium",
+            BASELINE.cid22_medium_diff_pct,
+        ),
+        (
+            "nicubunu_Game_baddie_Policeman.png",
+            "cid22_small",
+            BASELINE.cid22_small_diff_pct,
+        ),
     ];
 
     for (filename, name, baseline) in cid22_tests {
@@ -488,7 +510,11 @@ fn test_parity_comprehensive() {
     // Summary
     println!("\n--- Summary ---\n");
     println!("Total images tested: {}", results.len());
-    println!("Targets reached (<{:.1}%): {}", BASELINE.target_diff_pct, targets_reached.len());
+    println!(
+        "Targets reached (<{:.1}%): {}",
+        BASELINE.target_diff_pct,
+        targets_reached.len()
+    );
     println!("Regressions: {}", regressions.len());
 
     if !targets_reached.is_empty() {

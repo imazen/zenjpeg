@@ -28,20 +28,40 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 fn compute_ssimulacra2(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {
     // Convert RGB bytes to Rgb frame (normalized to 0-1 range)
     let orig_rgb = Rgb::new(
-        original.chunks(3).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect(),
+        original
+            .chunks(3)
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
+            .collect(),
         width,
         height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
-    ).unwrap();
+    )
+    .unwrap();
 
     let dist_rgb = Rgb::new(
-        distorted.chunks(3).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect(),
+        distorted
+            .chunks(3)
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
+            .collect(),
         width,
         height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
-    ).unwrap();
+    )
+    .unwrap();
 
     compute_frame_ssimulacra2(orig_rgb, dist_rgb).unwrap_or(-1.0)
 }
@@ -75,7 +95,7 @@ fn test_metrics_correlation() {
             let idx = (y * width + x) * 3;
             rgb[idx] = (x * 2) as u8;
             rgb[idx + 1] = (y * 2) as u8;
-            rgb[idx + 2] = ((x + y)) as u8;
+            rgb[idx + 2] = (x + y) as u8;
         }
     }
 
@@ -128,13 +148,24 @@ fn test_metrics_identical() {
     let dssim = compute_dssim(&rgb, &rgb, width, height);
     let ssim2 = compute_ssimulacra2(&rgb, &rgb, width, height);
 
-    println!("Identical image metrics: DSSIM={:.6}, SSIMULACRA2={:.4}", dssim, ssim2);
+    println!(
+        "Identical image metrics: DSSIM={:.6}, SSIMULACRA2={:.4}",
+        dssim, ssim2
+    );
 
     // DSSIM of identical images should be 0
-    assert!(dssim < 1e-10, "DSSIM of identical images should be 0, got {}", dssim);
+    assert!(
+        dssim < 1e-10,
+        "DSSIM of identical images should be 0, got {}",
+        dssim
+    );
 
     // SSIMULACRA2 of identical images should be 100
-    assert!(ssim2 > 99.9, "SSIMULACRA2 of identical images should be ~100, got {}", ssim2);
+    assert!(
+        ssim2 > 99.9,
+        "SSIMULACRA2 of identical images should be ~100, got {}",
+        ssim2
+    );
 }
 
 /// Test metrics at various distortion levels.
@@ -142,10 +173,15 @@ fn test_metrics_identical() {
 fn test_metrics_distortion_levels() {
     let width = 64usize;
     let height = 64usize;
-    let rgb: Vec<u8> = (0..width * height * 3).map(|i| ((i * 7) % 256) as u8).collect();
+    let rgb: Vec<u8> = (0..width * height * 3)
+        .map(|i| ((i * 7) % 256) as u8)
+        .collect();
 
     println!("\n=== Distortion Level Test ===");
-    println!("{:>12} {:>12} {:>14}", "Noise Level", "DSSIM", "SSIMULACRA2");
+    println!(
+        "{:>12} {:>12} {:>14}",
+        "Noise Level", "DSSIM", "SSIMULACRA2"
+    );
     println!("{}", "-".repeat(42));
 
     for noise in [0, 1, 2, 5, 10, 20, 50] {

@@ -1,7 +1,7 @@
-use jpegli::xyb::{srgb_to_scaled_xyb, rgb_buffer_to_scaled_xyb_planes};
 use jpegli::dct::forward_dct_8x8;
-use jpegli::quant::{self, Quality, quantize_block};
+use jpegli::quant::{self, quantize_block, Quality};
 use jpegli::types::ColorSpace;
+use jpegli::xyb::{rgb_buffer_to_scaled_xyb_planes, srgb_to_scaled_xyb};
 
 fn main() {
     println!("=== XYB Encoding Full Trace ===\n");
@@ -9,8 +9,8 @@ fn main() {
     // Create 8x8 solid blue block (matches top-left of test image)
     let mut rgb_data = vec![0u8; 8 * 8 * 3];
     for i in 0..64 {
-        rgb_data[i * 3] = 0;       // R = 0
-        rgb_data[i * 3 + 1] = 0;   // G = 0
+        rgb_data[i * 3] = 0; // R = 0
+        rgb_data[i * 3 + 1] = 0; // G = 0
         rgb_data[i * 3 + 2] = 128; // B = 128
     }
 
@@ -95,7 +95,11 @@ fn main() {
     println!("   B_orig = {:.1}", b_plane[0] * 255.0);
 
     println!("\n=== What djpegli should decode (approximately) ===");
-    println!("Raw XYB values in JPEG: X≈{:.0}, Y≈{:.0}, B≈{:.0}",
-             x_recon + 128.0, y_recon + 128.0, b_recon + 128.0);
+    println!(
+        "Raw XYB values in JPEG: X≈{:.0}, Y≈{:.0}, B≈{:.0}",
+        x_recon + 128.0,
+        y_recon + 128.0,
+        b_recon + 128.0
+    );
     println!("After ICC profile XYB→sRGB: should be close to (0, 0, 128)");
 }

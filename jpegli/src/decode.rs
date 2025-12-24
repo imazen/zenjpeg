@@ -23,9 +23,9 @@ use crate::consts::{
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
-use crate::icc::{extract_icc_profile, is_xyb_profile};
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::icc::apply_icc_transform;
+use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
 use crate::quant::dequantize_block;
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};

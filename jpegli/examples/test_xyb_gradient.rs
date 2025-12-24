@@ -12,9 +12,9 @@ fn main() {
         for x in 0..width {
             let i = (y * width + x) * 3;
             // Create RGB gradient
-            data[i] = (x * 255 / (width - 1)) as u8;     // R increases left to right
+            data[i] = (x * 255 / (width - 1)) as u8; // R increases left to right
             data[i + 1] = (y * 255 / (height - 1)) as u8; // G increases top to bottom
-            data[i + 2] = 128;  // B constant
+            data[i + 2] = 128; // B constant
         }
     }
 

@@ -1,8 +1,8 @@
 //! Compare DCT coefficients between C++ and Rust encoded JPEGs
 
 use std::fs;
-use std::process::Command;
 use std::io::Write;
+use std::process::Command;
 
 fn main() {
     let png_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
@@ -16,8 +16,17 @@ fn main() {
 
     let cpp_jpg = "/tmp/coeff_cpp.jpg";
     Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
-        .args(["--noadaptive_quantization", "--chroma_subsampling=444", "-p", "0",
-               "--fixed_code", ppm_path, cpp_jpg, "-q", "90"])
+        .args([
+            "--noadaptive_quantization",
+            "--chroma_subsampling=444",
+            "-p",
+            "0",
+            "--fixed_code",
+            ppm_path,
+            cpp_jpg,
+            "-q",
+            "90",
+        ])
         .output()
         .expect("Failed to run cjpegli");
 
@@ -44,11 +53,19 @@ fn main() {
     println!("=== Quantization Tables ===\n");
 
     for (idx, (cpp_qt, rust_qt)) in cpp_qtables.iter().zip(rust_qtables.iter()).enumerate() {
-        let name = match idx { 0 => "Y (Luminance)", 1 => "Cb/Cr (Chrominance)", _ => "Unknown" };
+        let name = match idx {
+            0 => "Y (Luminance)",
+            1 => "Cb/Cr (Chrominance)",
+            _ => "Unknown",
+        };
         println!("Table {} ({}):", idx, name);
 
         let mut diffs = 0;
-        for i in 0..64 { if cpp_qt[i] != rust_qt[i] { diffs += 1; } }
+        for i in 0..64 {
+            if cpp_qt[i] != rust_qt[i] {
+                diffs += 1;
+            }
+        }
 
         if diffs == 0 {
             println!("  IDENTICAL");
@@ -69,9 +86,13 @@ fn main() {
     println!("=== Scan Data (Entropy-Coded Coefficients) ===\n");
     println!("C++ scan data: {} bytes", cpp_scan_end - cpp_scan_start);
     println!("Rust scan data: {} bytes", rust_scan_end - rust_scan_start);
-    println!("Difference: {:+} bytes ({:+.2}%)",
-             (rust_scan_end - rust_scan_start) as i64 - (cpp_scan_end - cpp_scan_start) as i64,
-             100.0 * ((rust_scan_end - rust_scan_start) as f64 / (cpp_scan_end - cpp_scan_start) as f64 - 1.0));
+    println!(
+        "Difference: {:+} bytes ({:+.2}%)",
+        (rust_scan_end - rust_scan_start) as i64 - (cpp_scan_end - cpp_scan_start) as i64,
+        100.0
+            * ((rust_scan_end - rust_scan_start) as f64 / (cpp_scan_end - cpp_scan_start) as f64
+                - 1.0)
+    );
     println!();
 
     println!("=== Huffman Table Comparison ===\n");
@@ -83,11 +104,24 @@ fn main() {
         let comp = if i % 2 == 0 { "Luma" } else { "Chroma" };
 
         if cpp_ht == rust_ht {
-            println!("{} {} table: IDENTICAL ({} codes)", class, comp, cpp_ht.len());
+            println!(
+                "{} {} table: IDENTICAL ({} codes)",
+                class,
+                comp,
+                cpp_ht.len()
+            );
         } else {
             println!("{} {} table: DIFFERENT", class, comp);
-            println!("  C++:  {} codes, first 10: {:?}", cpp_ht.len(), &cpp_ht[..10.min(cpp_ht.len())]);
-            println!("  Rust: {} codes, first 10: {:?}", rust_ht.len(), &rust_ht[..10.min(rust_ht.len())]);
+            println!(
+                "  C++:  {} codes, first 10: {:?}",
+                cpp_ht.len(),
+                &cpp_ht[..10.min(cpp_ht.len())]
+            );
+            println!(
+                "  Rust: {} codes, first 10: {:?}",
+                rust_ht.len(),
+                &rust_ht[..10.min(rust_ht.len())]
+            );
         }
     }
 }
@@ -96,8 +130,8 @@ fn extract_quant_tables(data: &[u8]) -> Vec<[u16; 64]> {
     let mut tables = Vec::new();
     let mut i = 0;
     while i + 1 < data.len() {
-        if data[i] == 0xFF && data[i+1] == 0xDB {
-            let len = ((data[i+2] as usize) << 8) | data[i+3] as usize;
+        if data[i] == 0xFF && data[i + 1] == 0xDB {
+            let len = ((data[i + 2] as usize) << 8) | data[i + 3] as usize;
             let mut j = i + 4;
             while j < i + 2 + len {
                 let pq_tq = data[j];
@@ -106,15 +140,19 @@ fn extract_quant_tables(data: &[u8]) -> Vec<[u16; 64]> {
                 let mut table = [0u16; 64];
                 for k in 0..64 {
                     if precision == 0 {
-                        table[k] = data[j] as u16; j += 1;
+                        table[k] = data[j] as u16;
+                        j += 1;
                     } else {
-                        table[k] = ((data[j] as u16) << 8) | data[j+1] as u16; j += 2;
+                        table[k] = ((data[j] as u16) << 8) | data[j + 1] as u16;
+                        j += 2;
                     }
                 }
                 tables.push(table);
             }
             i = j;
-        } else { i += 1; }
+        } else {
+            i += 1;
+        }
     }
     tables
 }
@@ -123,8 +161,8 @@ fn find_scan_data(data: &[u8]) -> (usize, usize) {
     let mut i = 0;
     let mut scan_start = 0;
     while i + 1 < data.len() {
-        if data[i] == 0xFF && data[i+1] == 0xDA {
-            let len = ((data[i+2] as usize) << 8) | data[i+3] as usize;
+        if data[i] == 0xFF && data[i + 1] == 0xDA {
+            let len = ((data[i + 2] as usize) << 8) | data[i + 3] as usize;
             scan_start = i + 2 + len;
             break;
         }
@@ -133,7 +171,10 @@ fn find_scan_data(data: &[u8]) -> (usize, usize) {
     let mut scan_end = data.len();
     i = scan_start;
     while i + 1 < data.len() {
-        if data[i] == 0xFF && data[i+1] == 0xD9 { scan_end = i; break; }
+        if data[i] == 0xFF && data[i + 1] == 0xD9 {
+            scan_end = i;
+            break;
+        }
         i += 1;
     }
     (scan_start, scan_end)
@@ -143,20 +184,27 @@ fn extract_huffman_tables(data: &[u8]) -> Vec<Vec<u8>> {
     let mut tables = Vec::new();
     let mut i = 0;
     while i + 1 < data.len() {
-        if data[i] == 0xFF && data[i+1] == 0xC4 {
-            let len = ((data[i+2] as usize) << 8) | data[i+3] as usize;
+        if data[i] == 0xFF && data[i + 1] == 0xC4 {
+            let len = ((data[i + 2] as usize) << 8) | data[i + 3] as usize;
             let mut j = i + 4;
             while j < i + 2 + len {
                 j += 1;
                 let mut total_codes = 0usize;
-                for k in 0..16 { total_codes += data[j + k] as usize; }
+                for k in 0..16 {
+                    total_codes += data[j + k] as usize;
+                }
                 j += 16;
                 let mut symbols = Vec::new();
-                for _ in 0..total_codes { symbols.push(data[j]); j += 1; }
+                for _ in 0..total_codes {
+                    symbols.push(data[j]);
+                    j += 1;
+                }
                 tables.push(symbols);
             }
             i = j;
-        } else { i += 1; }
+        } else {
+            i += 1;
+        }
     }
     tables
 }

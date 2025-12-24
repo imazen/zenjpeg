@@ -3,8 +3,8 @@
 //! Usage: cargo run --release --example compare_cms --features cms-lcms2
 //!        cargo run --release --example compare_cms --features cms-moxcms
 
-use std::fs;
 use jpegli::icc;
+use std::fs;
 
 fn main() {
     // Load an XYB JPEG
@@ -15,11 +15,11 @@ fn main() {
     }
 
     let jpeg_data = fs::read(path).expect("read jpeg");
-    
+
     // Extract ICC profile
     let profile = icc::extract_icc_profile(&jpeg_data);
     println!("ICC profile: {:?}", profile.as_ref().map(|p| p.len()));
-    
+
     if let Some(ref profile) = profile {
         println!("Is XYB profile: {}", icc::is_xyb_profile(profile));
     }

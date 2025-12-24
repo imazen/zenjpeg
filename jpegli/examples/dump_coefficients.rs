@@ -11,9 +11,9 @@ fn main() {
     let mut rgb = Vec::new();
     for y in 0..8 {
         for x in 0..8 {
-            rgb.push((x * 32) as u8);      // R: 0-224
-            rgb.push((y * 32) as u8);      // G: 0-224
-            rgb.push(128u8);               // B: constant
+            rgb.push((x * 32) as u8); // R: 0-224
+            rgb.push((y * 32) as u8); // G: 0-224
+            rgb.push(128u8); // B: constant
         }
     }
 
@@ -34,10 +34,20 @@ fn main() {
     }
 
     println!("=== RGB to YCbCr Conversion ===");
-    println!("Y values (first row): {:?}",
-             y_vals[..8].iter().map(|x| format!("{:.2}", x)).collect::<Vec<_>>());
-    println!("Cb values (first row): {:?}",
-             cb_vals[..8].iter().map(|x| format!("{:.2}", x)).collect::<Vec<_>>());
+    println!(
+        "Y values (first row): {:?}",
+        y_vals[..8]
+            .iter()
+            .map(|x| format!("{:.2}", x))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "Cb values (first row): {:?}",
+        cb_vals[..8]
+            .iter()
+            .map(|x| format!("{:.2}", x))
+            .collect::<Vec<_>>()
+    );
 
     // Level shift (subtract 128)
     let mut y_shifted = [0.0f32; 64];
@@ -51,8 +61,13 @@ fn main() {
     }
 
     println!("\n=== Level Shifted (Y - 128) ===");
-    println!("Y shifted (first row): {:?}",
-             y_shifted[..8].iter().map(|x| format!("{:.2}", x)).collect::<Vec<_>>());
+    println!(
+        "Y shifted (first row): {:?}",
+        y_shifted[..8]
+            .iter()
+            .map(|x| format!("{:.2}", x))
+            .collect::<Vec<_>>()
+    );
 
     // Forward DCT
     let y_dct = dct::forward_dct_blocks(&[y_shifted])[0];
@@ -60,10 +75,20 @@ fn main() {
     let cr_dct = dct::forward_dct_blocks(&[cr_shifted])[0];
 
     println!("\n=== DCT Coefficients ===");
-    println!("Y DCT (first row): {:?}",
-             y_dct[..8].iter().map(|x| format!("{:.2}", x)).collect::<Vec<_>>());
-    println!("Cb DCT (first row): {:?}",
-             cb_dct[..8].iter().map(|x| format!("{:.2}", x)).collect::<Vec<_>>());
+    println!(
+        "Y DCT (first row): {:?}",
+        y_dct[..8]
+            .iter()
+            .map(|x| format!("{:.2}", x))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "Cb DCT (first row): {:?}",
+        cb_dct[..8]
+            .iter()
+            .map(|x| format!("{:.2}", x))
+            .collect::<Vec<_>>()
+    );
 
     // Get quantization tables
     let quality = Quality::Traditional(90.0);
@@ -111,14 +136,9 @@ fn main() {
 
 fn zigzag(block: &[i16; 64]) -> [i16; 64] {
     const ZIGZAG: [usize; 64] = [
-        0,  1,  8, 16,  9,  2,  3, 10,
-       17, 24, 32, 25, 18, 11,  4,  5,
-       12, 19, 26, 33, 40, 48, 41, 34,
-       27, 20, 13,  6,  7, 14, 21, 28,
-       35, 42, 49, 56, 57, 50, 43, 36,
-       29, 22, 15, 23, 30, 37, 44, 51,
-       58, 59, 52, 45, 38, 31, 39, 46,
-       53, 60, 61, 54, 47, 55, 62, 63
+        0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27,
+        20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+        58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
     ];
     let mut result = [0i16; 64];
     for i in 0..64 {

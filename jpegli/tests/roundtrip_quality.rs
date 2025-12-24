@@ -157,11 +157,7 @@ fn test_roundtrip_gradient() {
     );
 
     // Gradients should compress very well
-    assert!(
-        dssim < 0.002,
-        "DSSIM {} too high for gradient image",
-        dssim
-    );
+    assert!(dssim < 0.002, "DSSIM {} too high for gradient image", dssim);
 }
 
 /// Test roundtrip quality on a solid color image.
@@ -187,11 +183,7 @@ fn test_roundtrip_solid_color() {
     );
 
     // Solid colors should be nearly lossless
-    assert!(
-        dssim < 0.0001,
-        "DSSIM {} too high for solid color",
-        dssim
-    );
+    assert!(dssim < 0.0001, "DSSIM {} too high for solid color", dssim);
 }
 
 /// Test multiple quality levels.

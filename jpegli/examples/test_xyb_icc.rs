@@ -1,4 +1,3 @@
-
 #[allow(deprecated)]
 fn main() {
     use jpegli::encode::Encoder;
@@ -29,7 +28,7 @@ fn main() {
     let icc_sig = b"ICC_PROFILE\0";
     let mut found_icc = false;
     for i in 0..jpeg.len().saturating_sub(12) {
-        if &jpeg[i..i+12] == icc_sig {
+        if &jpeg[i..i + 12] == icc_sig {
             found_icc = true;
             println!("Found ICC profile at offset {}", i);
             break;
@@ -42,7 +41,7 @@ fn main() {
     } else {
         println!("ERROR: No ICC profile found");
     }
-    
+
     std::fs::write("/tmp/test_xyb_output.jpg", &jpeg).unwrap();
     println!("Saved to /tmp/test_xyb_output.jpg");
 }

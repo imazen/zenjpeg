@@ -30,7 +30,10 @@ fn main() {
 
     if args.len() < 3 {
         eprintln!("Usage: {} <cid22_dir> <output.html>", args[0]);
-        eprintln!("Example: {} /mnt/v/work/CID22/CID22 comparison.html", args[0]);
+        eprintln!(
+            "Example: {} /mnt/v/work/CID22/CID22 comparison.html",
+            args[0]
+        );
         std::process::exit(1);
     }
 
@@ -89,14 +92,14 @@ fn main() {
 
     // Convert to sorted codec data
     let colors = [
-        ("#2196F3", "jpegli-rs"),      // Blue (our encoder - placeholder)
-        ("#FF5722", "JPEG"),           // Deep Orange for mozjpeg
-        ("#9C27B0", "JPEG_XL"),        // Purple for jxl
-        ("#4CAF50", "AVIF"),           // Green for avif
-        ("#FFC107", "WEBP"),           // Amber for webp
-        ("#00BCD4", "HEIC"),           // Cyan for heic
-        ("#795548", "JPEG_2000"),      // Brown for jp2
-        ("#607D8B", "AOM"),            // Blue Gray for aom
+        ("#2196F3", "jpegli-rs"), // Blue (our encoder - placeholder)
+        ("#FF5722", "JPEG"),      // Deep Orange for mozjpeg
+        ("#9C27B0", "JPEG_XL"),   // Purple for jxl
+        ("#4CAF50", "AVIF"),      // Green for avif
+        ("#FFC107", "WEBP"),      // Amber for webp
+        ("#00BCD4", "HEIC"),      // Cyan for heic
+        ("#795548", "JPEG_2000"), // Brown for jp2
+        ("#607D8B", "AOM"),       // Blue Gray for aom
     ];
 
     let color_map: HashMap<&str, &str> = colors.iter().map(|&(c, n)| (n, c)).collect();
@@ -128,11 +131,7 @@ fn main() {
 
     println!("Loaded {} codecs from CID22 dataset:", codecs.len());
     for codec in &codecs {
-        println!(
-            "  {}: {} quality settings",
-            codec.name,
-            codec.points.len()
-        );
+        println!("  {}: {} quality settings", codec.name, codec.points.len());
     }
 
     // Generate HTML
@@ -174,7 +173,8 @@ fn generate_html_chart(codecs: &[CodecData], output_path: &str) {
     let max_mcos = max_mcos + mcos_range * 0.05;
 
     let scale_x = |bpp: f64| margin + (bpp - min_bpp) / (max_bpp - min_bpp) * plot_width;
-    let scale_y = |mcos: f64| margin + plot_height - (mcos - min_mcos) / (max_mcos - min_mcos) * plot_height;
+    let scale_y =
+        |mcos: f64| margin + plot_height - (mcos - min_mcos) / (max_mcos - min_mcos) * plot_height;
 
     let mut svg = String::new();
     svg.push_str(&format!(
@@ -202,8 +202,14 @@ fn generate_html_chart(codecs: &[CodecData], output_path: &str) {
         r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" class="axis"/>
   <line x1="{}" y1="{}" x2="{}" y2="{}" class="axis"/>
 "#,
-        margin, margin, margin, height - margin,
-        margin, height - margin, width - margin, height - margin
+        margin,
+        margin,
+        margin,
+        height - margin,
+        margin,
+        height - margin,
+        width - margin,
+        height - margin
     ));
 
     // X-axis label
@@ -228,8 +234,14 @@ fn generate_html_chart(codecs: &[CodecData], output_path: &str) {
             r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" class="grid"/>
   <line x1="{}" y1="{}" x2="{}" y2="{}" class="grid"/>
 "#,
-            x, margin, x, height - margin,
-            margin, y, width - margin, y
+            x,
+            margin,
+            x,
+            height - margin,
+            margin,
+            y,
+            width - margin,
+            y
         ));
 
         // X-axis ticks
@@ -237,7 +249,9 @@ fn generate_html_chart(codecs: &[CodecData], output_path: &str) {
         svg.push_str(&format!(
             r#"  <text x="{}" y="{}" class="label" text-anchor="middle">{:.2}</text>
 "#,
-            x, height - margin + 15.0, bpp
+            x,
+            height - margin + 15.0,
+            bpp
         ));
 
         // Y-axis ticks
@@ -245,7 +259,9 @@ fn generate_html_chart(codecs: &[CodecData], output_path: &str) {
         svg.push_str(&format!(
             r#"  <text x="{}" y="{}" class="label" text-anchor="end">{:.0}</text>
 "#,
-            margin - 5.0, y + 4.0, mcos
+            margin - 5.0,
+            y + 4.0,
+            mcos
         ));
     }
 
@@ -298,15 +314,24 @@ fn generate_html_chart(codecs: &[CodecData], output_path: &str) {
         let y = legend_y + 18.0 + 20.0 * i as f64;
         svg.push_str(&format!(
             "  <line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"2\"/>\n",
-            legend_x + 10.0, y, legend_x + 30.0, y, codec.color
+            legend_x + 10.0,
+            y,
+            legend_x + 30.0,
+            y,
+            codec.color
         ));
         svg.push_str(&format!(
             "  <circle cx=\"{}\" cy=\"{}\" r=\"3\" stroke=\"{}\" fill=\"{}\"/>\n",
-            legend_x + 20.0, y, codec.color, codec.color
+            legend_x + 20.0,
+            y,
+            codec.color,
+            codec.color
         ));
         svg.push_str(&format!(
             "  <text x=\"{}\" y=\"{}\" class=\"legend\">{}</text>\n",
-            legend_x + 40.0, y + 4.0, codec.name
+            legend_x + 40.0,
+            y + 4.0,
+            codec.name
         ));
     }
 

@@ -2,8 +2,8 @@
 //! Checks for systematic biases, per-channel errors, and spatial distribution
 
 use std::fs;
-use std::process::Command;
 use std::io::Write;
+use std::process::Command;
 
 fn main() {
     let png_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
@@ -19,8 +19,17 @@ fn main() {
     // Encode with C++
     let cpp_jpg = "/tmp/deep_cpp.jpg";
     Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
-        .args(["--noadaptive_quantization", "--chroma_subsampling=444", "-p", "0",
-               "--fixed_code", ppm_path, cpp_jpg, "-q", "90"])
+        .args([
+            "--noadaptive_quantization",
+            "--chroma_subsampling=444",
+            "-p",
+            "0",
+            "--fixed_code",
+            ppm_path,
+            cpp_jpg,
+            "-q",
+            "90",
+        ])
         .output()
         .expect("Failed to run cjpegli");
 
@@ -38,13 +47,15 @@ fn main() {
 
     let cpp_decoded = decode_jpeg(&fs::read(cpp_jpg).expect("Failed to read C++ JPEG"))
         .expect("Failed to decode C++ JPEG");
-    let rust_decoded = decode_jpeg(&rust_jpeg)
-        .expect("Failed to decode Rust JPEG");
+    let rust_decoded = decode_jpeg(&rust_jpeg).expect("Failed to decode Rust JPEG");
 
     let total = original.len();
     let num_pixels = total / 3;
 
-    println!("Image: {}x{} = {} pixels ({} bytes)", width, height, num_pixels, total);
+    println!(
+        "Image: {}x{} = {} pixels ({} bytes)",
+        width, height, num_pixels, total
+    );
     println!("C++ JPEG: {} bytes", fs::metadata(cpp_jpg).unwrap().len());
     println!("Rust JPEG: {} bytes", rust_jpeg.len());
     println!();
@@ -64,7 +75,7 @@ fn main() {
         for i in 0..num_pixels {
             let cpp_val = cpp_decoded[i * 3 + ch_offset] as i16;
             let rust_val = rust_decoded[i * 3 + ch_offset] as i16;
-            let diff = rust_val - cpp_val;  // positive = Rust brighter
+            let diff = rust_val - cpp_val; // positive = Rust brighter
 
             sum_cpp += cpp_val as i64;
             sum_rust += rust_val as i64;
@@ -72,7 +83,9 @@ fn main() {
             sum_abs_diff += diff.unsigned_abs() as u64;
             max_diff = max_diff.max(diff);
             min_diff = min_diff.min(diff);
-            if diff == 0 { exact += 1; }
+            if diff == 0 {
+                exact += 1;
+            }
         }
 
         let mean_cpp = sum_cpp as f64 / num_pixels as f64;
@@ -85,7 +98,11 @@ fn main() {
         println!("  Mean diff: {:+.4} (Rust - C++)", mean_diff);
         println!("  Mean |diff|: {:.4}", mean_abs_diff);
         println!("  Range: {} to {}", min_diff, max_diff);
-        println!("  Exact match: {} ({:.1}%)", exact, 100.0 * exact as f64 / num_pixels as f64);
+        println!(
+            "  Exact match: {} ({:.1}%)",
+            exact,
+            100.0 * exact as f64 / num_pixels as f64
+        );
         println!();
     }
 
@@ -110,9 +127,13 @@ fn main() {
             cpp_mse += (cpp_err as f64).powi(2);
             rust_mse += (rust_err as f64).powi(2);
 
-            if cpp_err < rust_err { cpp_better += 1; }
-            else if rust_err < cpp_err { rust_better += 1; }
-            else { same += 1; }
+            if cpp_err < rust_err {
+                cpp_better += 1;
+            } else if rust_err < cpp_err {
+                rust_better += 1;
+            } else {
+                same += 1;
+            }
         }
 
         cpp_mse /= num_pixels as f64;
@@ -122,12 +143,21 @@ fn main() {
         let rust_psnr = 10.0 * (255.0_f64.powi(2) / rust_mse).log10();
 
         println!("{} channel:", ch_name);
-        println!("  C++ PSNR: {:.2} dB, Rust PSNR: {:.2} dB (diff: {:+.2} dB)",
-                 cpp_psnr, rust_psnr, rust_psnr - cpp_psnr);
-        println!("  C++ better: {} ({:.1}%), Rust better: {} ({:.1}%), Same: {} ({:.1}%)",
-                 cpp_better, 100.0 * cpp_better as f64 / num_pixels as f64,
-                 rust_better, 100.0 * rust_better as f64 / num_pixels as f64,
-                 same, 100.0 * same as f64 / num_pixels as f64);
+        println!(
+            "  C++ PSNR: {:.2} dB, Rust PSNR: {:.2} dB (diff: {:+.2} dB)",
+            cpp_psnr,
+            rust_psnr,
+            rust_psnr - cpp_psnr
+        );
+        println!(
+            "  C++ better: {} ({:.1}%), Rust better: {} ({:.1}%), Same: {} ({:.1}%)",
+            cpp_better,
+            100.0 * cpp_better as f64 / num_pixels as f64,
+            rust_better,
+            100.0 * rust_better as f64 / num_pixels as f64,
+            same,
+            100.0 * same as f64 / num_pixels as f64
+        );
         println!();
     }
 
@@ -143,7 +173,8 @@ fn main() {
     println!("Diff  Count       Pct");
     for (&diff, &count) in &signed_hist {
         let pct = 100.0 * count as f64 / total as f64;
-        if pct > 0.1 {  // Only show diffs with >0.1%
+        if pct > 0.1 {
+            // Only show diffs with >0.1%
             let bar_len = (pct * 2.0).min(40.0) as usize;
             let bar = "█".repeat(bar_len);
             println!("{:>4}: {:>8} {:>5.1}%  {}", diff, count, pct, bar);
@@ -151,11 +182,13 @@ fn main() {
     }
 
     // Sum of positive vs negative differences (bias check)
-    let positive: i64 = signed_hist.iter()
+    let positive: i64 = signed_hist
+        .iter()
         .filter(|(&d, _)| d > 0)
         .map(|(&d, &c)| d as i64 * c as i64)
         .sum();
-    let negative: i64 = signed_hist.iter()
+    let negative: i64 = signed_hist
+        .iter()
         .filter(|(&d, _)| d < 0)
         .map(|(&d, &c)| d as i64 * c as i64)
         .sum();
@@ -164,7 +197,10 @@ fn main() {
     println!("  Sum of positive diffs: +{}", positive);
     println!("  Sum of negative diffs: {}", negative);
     println!("  Net bias: {:+}", positive + negative);
-    println!("  Net bias per byte: {:+.4}", (positive + negative) as f64 / total as f64);
+    println!(
+        "  Net bias per byte: {:+.4}",
+        (positive + negative) as f64 / total as f64
+    );
 
     // Spatial analysis: where are the worst differences?
     println!("\n=== Worst Differences (top 10 locations) ===\n");
@@ -174,7 +210,8 @@ fn main() {
         for x in 0..width as usize {
             let idx = (y * width as usize + x) * 3;
             for (ch_offset, ch_name) in [(0, "R"), (1, "G"), (2, "B")] {
-                let diff = rust_decoded[idx + ch_offset] as i16 - cpp_decoded[idx + ch_offset] as i16;
+                let diff =
+                    rust_decoded[idx + ch_offset] as i16 - cpp_decoded[idx + ch_offset] as i16;
                 if diff.abs() >= 10 {
                     diffs_with_loc.push((x, y, diff, ch_name));
                 }
@@ -187,12 +224,18 @@ fn main() {
     println!("  (x, y) Channel  Diff  Original  C++  Rust");
     for (x, y, diff, ch) in diffs_with_loc.iter().take(20) {
         let idx = (*y * width as usize + *x) * 3;
-        let ch_off = match *ch { "R" => 0, "G" => 1, _ => 2 };
+        let ch_off = match *ch {
+            "R" => 0,
+            "G" => 1,
+            _ => 2,
+        };
         let orig = original[idx + ch_off];
         let cpp = cpp_decoded[idx + ch_off];
         let rust = rust_decoded[idx + ch_off];
-        println!("  ({:3}, {:3}) {:>5}  {:>+4}     {:>3}     {:>3}  {:>3}",
-                 x, y, ch, diff, orig, cpp, rust);
+        println!(
+            "  ({:3}, {:3}) {:>5}  {:>+4}     {:>3}     {:>3}  {:>3}",
+            x, y, ch, diff, orig, cpp, rust
+        );
     }
 
     // Compare file sizes
@@ -201,9 +244,11 @@ fn main() {
     let rust_size = rust_jpeg.len() as u64;
     println!("C++ JPEG: {} bytes", cpp_size);
     println!("Rust JPEG: {} bytes", rust_size);
-    println!("Difference: {:+} bytes ({:+.2}%)",
-             rust_size as i64 - cpp_size as i64,
-             100.0 * (rust_size as f64 - cpp_size as f64) / cpp_size as f64);
+    println!(
+        "Difference: {:+} bytes ({:+.2}%)",
+        rust_size as i64 - cpp_size as i64,
+        100.0 * (rust_size as f64 - cpp_size as f64) / cpp_size as f64
+    );
 }
 
 fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {

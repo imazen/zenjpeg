@@ -25,11 +25,10 @@ fn main() {
     // Convert to RGB
     let rgb_data: Vec<u8> = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
-            buf[..info.buffer_size()].chunks(4)
-                .flat_map(|c| [c[0], c[1], c[2]])
-                .collect()
-        }
+        png::ColorType::Rgba => buf[..info.buffer_size()]
+            .chunks(4)
+            .flat_map(|c| [c[0], c[1], c[2]])
+            .collect(),
         _ => {
             eprintln!("Unsupported color type: {:?}", info.color_type);
             return;
@@ -37,7 +36,10 @@ fn main() {
     };
 
     println!("PNG: {}x{}, {} bytes RGB", width, height, rgb_data.len());
-    println!("First few pixels: {:?}", &rgb_data[..12.min(rgb_data.len())]);
+    println!(
+        "First few pixels: {:?}",
+        &rgb_data[..12.min(rgb_data.len())]
+    );
 
     // Encode with mozjpeg
     println!("\n=== Encoding with mozjpeg ===");
@@ -50,14 +52,32 @@ fn main() {
     let mut decoder = jpeg_decoder::Decoder::new(&moz_jpeg[..]);
     let moz_decoded = decoder.decode().expect("jpeg-decoder failed");
     let info = decoder.info().unwrap();
-    println!("jpeg-decoder: {}x{}, {} bytes", info.width, info.height, moz_decoded.len());
-    println!("First few pixels: {:?}", &moz_decoded[..12.min(moz_decoded.len())]);
+    println!(
+        "jpeg-decoder: {}x{}, {} bytes",
+        info.width,
+        info.height,
+        moz_decoded.len()
+    );
+    println!(
+        "First few pixels: {:?}",
+        &moz_decoded[..12.min(moz_decoded.len())]
+    );
 
     // Decode with jpegli-rs
     println!("\n=== Decoding mozjpeg output with jpegli-rs ===");
-    let jpegli_decoded = jpegli::Decoder::new().decode(&moz_jpeg).expect("jpegli-rs failed");
-    println!("jpegli-rs: {}x{}, {} bytes", jpegli_decoded.width, jpegli_decoded.height, jpegli_decoded.data.len());
-    println!("First few pixels: {:?}", &jpegli_decoded.data[..12.min(jpegli_decoded.data.len())]);
+    let jpegli_decoded = jpegli::Decoder::new()
+        .decode(&moz_jpeg)
+        .expect("jpegli-rs failed");
+    println!(
+        "jpegli-rs: {}x{}, {} bytes",
+        jpegli_decoded.width,
+        jpegli_decoded.height,
+        jpegli_decoded.data.len()
+    );
+    println!(
+        "First few pixels: {:?}",
+        &jpegli_decoded.data[..12.min(jpegli_decoded.data.len())]
+    );
 
     // Compare
     println!("\n=== Comparison (jpeg-decoder vs jpegli-rs on mozjpeg output) ===");
@@ -81,7 +101,12 @@ fn main() {
     match decoder.decode() {
         Ok(decoded) => {
             let info = decoder.info().unwrap();
-            println!("jpeg-decoder: {}x{}, {} bytes", info.width, info.height, decoded.len());
+            println!(
+                "jpeg-decoder: {}x{}, {} bytes",
+                info.width,
+                info.height,
+                decoded.len()
+            );
             println!("First few pixels: {:?}", &decoded[..12.min(decoded.len())]);
         }
         Err(e) => {
@@ -91,21 +116,33 @@ fn main() {
 
     // Decode our output with jpegli-rs
     println!("\n=== Decoding jpegli-rs output with jpegli-rs ===");
-    let jpegli_rt = jpegli::Decoder::new().decode(&jpegli_jpeg).expect("jpegli-rs failed");
-    println!("jpegli-rs: {}x{}, {} bytes", jpegli_rt.width, jpegli_rt.height, jpegli_rt.data.len());
-    println!("First few pixels: {:?}", &jpegli_rt.data[..12.min(jpegli_rt.data.len())]);
+    let jpegli_rt = jpegli::Decoder::new()
+        .decode(&jpegli_jpeg)
+        .expect("jpegli-rs failed");
+    println!(
+        "jpegli-rs: {}x{}, {} bytes",
+        jpegli_rt.width,
+        jpegli_rt.height,
+        jpegli_rt.data.len()
+    );
+    println!(
+        "First few pixels: {:?}",
+        &jpegli_rt.data[..12.min(jpegli_rt.data.len())]
+    );
 
     println!("\nTest files written to /tmp/test_mozjpeg.jpg and /tmp/test_jpegli.jpg");
 }
 
 fn encode_mozjpeg(rgb_data: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
-    use mozjpeg::{Compress, ColorSpace};
+    use mozjpeg::{ColorSpace, Compress};
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(width, height);
     comp.set_quality(quality as f32);
 
-    let mut started = comp.start_compress(Vec::new()).expect("mozjpeg start error");
+    let mut started = comp
+        .start_compress(Vec::new())
+        .expect("mozjpeg start error");
 
     let row_stride = width * 3;
     for y in 0..height {
@@ -144,7 +181,14 @@ fn compare_pixels(a: &[u8], b: &[u8]) {
         0.0
     };
 
-    println!("Pixels with differences: {} / {} ({:.2}%)",
-        diff_count, a.len(), 100.0 * diff_count as f64 / a.len() as f64);
-    println!("Max difference: {}, Avg difference: {:.2}", max_diff, avg_diff);
+    println!(
+        "Pixels with differences: {} / {} ({:.2}%)",
+        diff_count,
+        a.len(),
+        100.0 * diff_count as f64 / a.len() as f64
+    );
+    println!(
+        "Max difference: {}, Avg difference: {:.2}",
+        max_diff, avg_diff
+    );
 }

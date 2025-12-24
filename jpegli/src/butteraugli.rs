@@ -57,9 +57,15 @@ const NORM1_UHF_X: f64 = 5.0;
 
 #[allow(dead_code)]
 const WMUL: [f64; 9] = [
-    400.0, 1.50815703118, 0.0,
-    2150.0, 10.6195433239, 16.2176043152,
-    29.2353797994, 0.844626970982, 0.703646627719,
+    400.0,
+    1.50815703118,
+    0.0,
+    2150.0,
+    10.6195433239,
+    16.2176043152,
+    29.2353797994,
+    0.844626970982,
+    0.703646627719,
 ];
 
 /// Quality threshold for "good" (images look the same).
@@ -204,7 +210,11 @@ mod tests {
         let result = compute_butteraugli(&rgb, &rgb, width, height, &ButteraugliParams::default());
 
         // Identical images should have score 0
-        assert!(result.score < 0.001, "Identical images should have score ~0, got {}", result.score);
+        assert!(
+            result.score < 0.001,
+            "Identical images should have score ~0, got {}",
+            result.score
+        );
     }
 
     #[test]
@@ -214,10 +224,15 @@ mod tests {
         let rgb1: Vec<u8> = vec![0; width * height * 3];
         let rgb2: Vec<u8> = vec![255; width * height * 3];
 
-        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
+        let result =
+            compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
 
         // Very different images should have high score
-        assert!(result.score > 1.0, "Very different images should have score > 1, got {}", result.score);
+        assert!(
+            result.score > 1.0,
+            "Very different images should have score > 1, got {}",
+            result.score
+        );
     }
 
     #[test]

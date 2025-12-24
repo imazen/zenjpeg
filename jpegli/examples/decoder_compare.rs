@@ -22,7 +22,12 @@ fn main() {
     let jpegli_result = jpegli::Decoder::new().decode(&jpeg_data);
     let jpegli_pixels = match &jpegli_result {
         Ok(img) => {
-            println!("Decoded: {}x{}, {} bytes", img.width, img.height, img.data.len());
+            println!(
+                "Decoded: {}x{}, {} bytes",
+                img.width,
+                img.height,
+                img.data.len()
+            );
             Some(&img.data)
         }
         Err(e) => {
@@ -38,7 +43,12 @@ fn main() {
     let jpeg_decoder_pixels = match &jpeg_decoder_result {
         Ok(pixels) => {
             let info = decoder.info().unwrap();
-            println!("Decoded: {}x{}, {} bytes", info.width, info.height, pixels.len());
+            println!(
+                "Decoded: {}x{}, {} bytes",
+                info.width,
+                info.height,
+                pixels.len()
+            );
             println!("Pixel format: {:?}", info.pixel_format);
             Some(pixels)
         }
@@ -53,7 +63,11 @@ fn main() {
         println!("\n=== Comparison ===");
 
         if jpegli.len() != jpeg_dec.len() {
-            println!("Size mismatch: jpegli={}, jpeg-decoder={}", jpegli.len(), jpeg_dec.len());
+            println!(
+                "Size mismatch: jpegli={}, jpeg-decoder={}",
+                jpegli.len(),
+                jpeg_dec.len()
+            );
             return;
         }
 
@@ -79,8 +93,12 @@ fn main() {
             0.0
         };
 
-        println!("Pixels with differences: {} / {} ({:.2}%)",
-            diff_count, jpegli.len(), 100.0 * diff_count as f64 / jpegli.len() as f64);
+        println!(
+            "Pixels with differences: {} / {} ({:.2}%)",
+            diff_count,
+            jpegli.len(),
+            100.0 * diff_count as f64 / jpegli.len() as f64
+        );
         println!("Max difference: {}", max_diff);
         println!("Avg difference (of non-zero): {:.2}", avg_diff);
 
@@ -93,8 +111,14 @@ fn main() {
                     let px = i / 3;
                     let ch = i % 3;
                     let channel = ["R", "G", "B"][ch];
-                    println!("  Pixel {} {}: jpegli={}, jpeg-decoder={}, diff={}",
-                        px, channel, a, b, (a as i32 - b as i32).abs());
+                    println!(
+                        "  Pixel {} {}: jpegli={}, jpeg-decoder={}, diff={}",
+                        px,
+                        channel,
+                        a,
+                        b,
+                        (a as i32 - b as i32).abs()
+                    );
                     shown += 1;
                 }
             }
@@ -103,13 +127,21 @@ fn main() {
         // Show sample pixels from different areas
         println!("\nSample pixels (R,G,B):");
         let total_px = jpegli.len() / 3;
-        let samples = [0, total_px/4, total_px/2, 3*total_px/4, total_px-1];
+        let samples = [
+            0,
+            total_px / 4,
+            total_px / 2,
+            3 * total_px / 4,
+            total_px - 1,
+        ];
         for px in samples {
             if px * 3 + 2 < jpegli.len() {
-                let j = (jpegli[px*3], jpegli[px*3+1], jpegli[px*3+2]);
-                let d = (jpeg_dec[px*3], jpeg_dec[px*3+1], jpeg_dec[px*3+2]);
-                println!("  Pixel {:6}: jpegli=({:3},{:3},{:3}) jpeg-dec=({:3},{:3},{:3})",
-                    px, j.0, j.1, j.2, d.0, d.1, d.2);
+                let j = (jpegli[px * 3], jpegli[px * 3 + 1], jpegli[px * 3 + 2]);
+                let d = (jpeg_dec[px * 3], jpeg_dec[px * 3 + 1], jpeg_dec[px * 3 + 2]);
+                println!(
+                    "  Pixel {:6}: jpegli=({:3},{:3},{:3}) jpeg-dec=({:3},{:3},{:3})",
+                    px, j.0, j.1, j.2, d.0, d.1, d.2
+                );
             }
         }
     }

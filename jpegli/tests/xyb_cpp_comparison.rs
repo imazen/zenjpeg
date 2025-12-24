@@ -65,14 +65,8 @@ fn test_xyb_cpp_comparison() {
     fs::write(rust_jpeg_path, &rust_jpeg).expect("Failed to write Rust JPEG");
 
     // Verify both have ICC profiles
-    assert!(
-        has_icc_profile(&cpp_jpeg),
-        "C++ JPEG missing ICC profile"
-    );
-    assert!(
-        has_icc_profile(&rust_jpeg),
-        "Rust JPEG missing ICC profile"
-    );
+    assert!(has_icc_profile(&cpp_jpeg), "C++ JPEG missing ICC profile");
+    assert!(has_icc_profile(&rust_jpeg), "Rust JPEG missing ICC profile");
 
     // Extract and compare ICC profiles
     let cpp_icc = extract_icc_profile(&cpp_jpeg);
@@ -161,7 +155,11 @@ fn test_xyb_color_conversion_values() {
         let eps = 1e-5;
         assert!(x >= -eps && x <= 1.0 + eps, "X out of range: {}", x);
         assert!(y >= -eps && y <= 1.0 + eps, "Y out of range: {}", y);
-        assert!(b_out >= -eps && b_out <= 1.0 + eps, "B out of range: {}", b_out);
+        assert!(
+            b_out >= -eps && b_out <= 1.0 + eps,
+            "B out of range: {}",
+            b_out
+        );
 
         // Rough range check (exact values depend on implementation details)
         assert!(
@@ -241,5 +239,8 @@ fn test_icc_profile_embedding() {
     // Bytes 4-7 should be "jxl " (preferred CMM)
     assert_eq!(&icc_profile[4..8], b"jxl ", "ICC CMM signature mismatch");
 
-    println!("ICC profile embedding validated: {} bytes", icc_profile.len());
+    println!(
+        "ICC profile embedding validated: {} bytes",
+        icc_profile.len()
+    );
 }

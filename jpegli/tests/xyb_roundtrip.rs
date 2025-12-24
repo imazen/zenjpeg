@@ -15,7 +15,9 @@ fn test_xyb_roundtrip_comprehensive() {
     let mut total_tests = 0usize;
 
     // Test key colors: corners, edges, gray ramp
-    let test_values: Vec<u8> = vec![0, 1, 2, 4, 8, 16, 32, 64, 96, 128, 160, 192, 224, 240, 252, 254, 255];
+    let test_values: Vec<u8> = vec![
+        0, 1, 2, 4, 8, 16, 32, 64, 96, 128, 160, 192, 224, 240, 252, 254, 255,
+    ];
 
     for &r in &test_values {
         for &g in &test_values {
@@ -62,12 +64,7 @@ fn test_xyb_roundtrip_comprehensive() {
 fn test_xyb_gray_neutrality() {
     for gray in 0..=255u8 {
         let (x, _y, _b) = srgb_to_xyb(gray, gray, gray);
-        assert!(
-            x.abs() < 0.01,
-            "Gray {} has X={}, should be ~0",
-            gray,
-            x
-        );
+        assert!(x.abs() < 0.01, "Gray {} has X={}, should be ~0", gray, x);
     }
 }
 
@@ -77,11 +74,11 @@ fn test_xyb_reference_values() {
     // Reference values from C++ jpegli (approximate)
     let test_cases = [
         // (r, g, b, expected_x, expected_y, expected_b) with tolerance
-        (0u8, 0u8, 0u8, 0.0f32, 0.0f32, 0.0f32, 0.01),      // Black
+        (0u8, 0u8, 0u8, 0.0f32, 0.0f32, 0.0f32, 0.01), // Black
         (255u8, 255u8, 255u8, 0.0f32, 0.88f32, 0.82f32, 0.05), // White (approximate)
-        (255u8, 0u8, 0u8, 0.1f32, 0.55f32, 0.08f32, 0.1),   // Red
-        (0u8, 255u8, 0u8, -0.15f32, 0.7f32, 0.25f32, 0.1),  // Green
-        (0u8, 0u8, 255u8, 0.0f32, 0.3f32, 0.75f32, 0.1),    // Blue
+        (255u8, 0u8, 0u8, 0.1f32, 0.55f32, 0.08f32, 0.1), // Red
+        (0u8, 255u8, 0u8, -0.15f32, 0.7f32, 0.25f32, 0.1), // Green
+        (0u8, 0u8, 255u8, 0.0f32, 0.3f32, 0.75f32, 0.1), // Blue
     ];
 
     for (r, g, b, _exp_x, _exp_y, _exp_b, _tol) in test_cases {
@@ -125,14 +122,18 @@ fn test_xyb_buffer_roundtrip() {
     }
 
     println!("Buffer roundtrip max diff: {}", max_diff);
-    assert!(max_diff <= 2, "Buffer roundtrip max diff {} exceeds 2", max_diff);
+    assert!(
+        max_diff <= 2,
+        "Buffer roundtrip max diff {} exceeds 2",
+        max_diff
+    );
 }
 
 /// Test XYB with image encoding (if encoder supports XYB).
 #[test]
 fn test_xyb_encode_decode() {
-    use jpegli::{Encoder, PixelFormat};
     use jpegli::quant::Quality;
+    use jpegli::{Encoder, PixelFormat};
 
     let width = 64u32;
     let height = 64u32;
@@ -179,12 +180,21 @@ fn test_srgb_linear_precision() {
         let back = linear_to_srgb_u8(linear);
 
         // Check value is in valid range
-        assert!(linear >= 0.0 && linear <= 1.0, "Linear value {} out of range for input {}", linear, v);
+        assert!(
+            linear >= 0.0 && linear <= 1.0,
+            "Linear value {} out of range for input {}",
+            linear,
+            v
+        );
 
         // Allow 1-bit error due to rounding
         let error = (v as i16 - back as i16).abs();
         max_error = max_error.max(error as f32);
     }
 
-    assert!(max_error <= 1.0, "sRGB<->linear max error {} exceeds 1", max_error);
+    assert!(
+        max_error <= 1.0,
+        "sRGB<->linear max error {} exceeds 1",
+        max_error
+    );
 }

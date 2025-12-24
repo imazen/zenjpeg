@@ -12,7 +12,7 @@ use std::path::Path;
 #[derive(Debug, Default)]
 struct DiffStats {
     pixels: usize,
-    values: usize,  // pixels * 3 for RGB
+    values: usize, // pixels * 3 for RGB
     values_differing: usize,
     values_off_by_1: usize,
     values_off_by_2: usize,
@@ -63,7 +63,10 @@ impl DiffStats {
         println!("  Differing: {} ({:.2}%)", self.values_differing, pct_diff);
         println!("  Off by 1: {} ({:.2}%)", self.values_off_by_1, pct_off_1);
         println!("  Off by 2: {} ({:.2}%)", self.values_off_by_2, pct_off_2);
-        println!("  Off by 3+: {} ({:.2}%)", self.values_off_by_3_plus, pct_off_3);
+        println!(
+            "  Off by 3+: {} ({:.2}%)",
+            self.values_off_by_3_plus, pct_off_3
+        );
         println!("  Max diff: {}", self.max_diff);
         println!("  Avg diff (when differing): {:.2}", avg_diff);
     }
@@ -73,15 +76,19 @@ fn calculate_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> 
     let attr = Dssim::new();
 
     // Convert to RGBA for dssim
-    let orig_rgba: Vec<_> = orig.chunks(3)
+    let orig_rgba: Vec<_> = orig
+        .chunks(3)
         .map(|c| rgb::RGBA8::new(c[0], c[1], c[2], 255))
         .collect();
-    let decoded_rgba: Vec<_> = decoded.chunks(3)
+    let decoded_rgba: Vec<_> = decoded
+        .chunks(3)
         .map(|c| rgb::RGBA8::new(c[0], c[1], c[2], 255))
         .collect();
 
     let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
-    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+    let decoded_img = attr
+        .create_image_rgba(&decoded_rgba, width, height)
+        .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()
@@ -148,7 +155,12 @@ fn main() {
         println!();
 
         let (original, width, height) = load_png(path);
-        println!("Image size: {}x{} ({} pixels)\n", width, height, width * height);
+        println!(
+            "Image size: {}x{} ({} pixels)\n",
+            width,
+            height,
+            width * height
+        );
 
         // Encode with each method
         let jpegli_xyb = Encoder::new()
@@ -169,15 +181,21 @@ fn main() {
         let mozjpeg_out = encode_mozjpeg(&original, width, height, quality);
 
         println!("File sizes:");
-        println!("  jpegli XYB:   {} bytes ({:.2} bpp)",
+        println!(
+            "  jpegli XYB:   {} bytes ({:.2} bpp)",
             jpegli_xyb.len(),
-            8.0 * jpegli_xyb.len() as f64 / (width * height) as f64);
-        println!("  jpegli YCbCr: {} bytes ({:.2} bpp)",
+            8.0 * jpegli_xyb.len() as f64 / (width * height) as f64
+        );
+        println!(
+            "  jpegli YCbCr: {} bytes ({:.2} bpp)",
             jpegli_ycbcr.len(),
-            8.0 * jpegli_ycbcr.len() as f64 / (width * height) as f64);
-        println!("  mozjpeg:      {} bytes ({:.2} bpp)",
+            8.0 * jpegli_ycbcr.len() as f64 / (width * height) as f64
+        );
+        println!(
+            "  mozjpeg:      {} bytes ({:.2} bpp)",
             mozjpeg_out.len(),
-            8.0 * mozjpeg_out.len() as f64 / (width * height) as f64);
+            8.0 * mozjpeg_out.len() as f64 / (width * height) as f64
+        );
         println!();
 
         // Decode and compare
@@ -192,11 +210,13 @@ fn main() {
 
         // Compare jpegli YCbCr vs original
         let ycbcr_stats = DiffStats::from_pixels(&original, &ycbcr_decoded);
-        let ycbcr_dssim = calculate_dssim(&original, &ycbcr_decoded, width as usize, height as usize);
+        let ycbcr_dssim =
+            calculate_dssim(&original, &ycbcr_decoded, width as usize, height as usize);
 
         // Compare mozjpeg vs original
         let mozjpeg_stats = DiffStats::from_pixels(&original, &mozjpeg_decoded);
-        let mozjpeg_dssim = calculate_dssim(&original, &mozjpeg_decoded, width as usize, height as usize);
+        let mozjpeg_dssim =
+            calculate_dssim(&original, &mozjpeg_decoded, width as usize, height as usize);
 
         println!("--- jpegli YCbCr vs Original ---");
         println!("DSSIM: {:.6}", ycbcr_dssim);
@@ -216,24 +236,39 @@ fn main() {
 
         // Summary
         println!("=== Summary ===");
-        println!("DSSIM (lower = better): jpegli={:.6}, mozjpeg={:.6}", ycbcr_dssim, mozjpeg_dssim);
+        println!(
+            "DSSIM (lower = better): jpegli={:.6}, mozjpeg={:.6}",
+            ycbcr_dssim, mozjpeg_dssim
+        );
         if ycbcr_dssim < mozjpeg_dssim {
-            println!("  → jpegli has {:.1}% better DSSIM", 100.0 * (1.0 - ycbcr_dssim / mozjpeg_dssim));
+            println!(
+                "  → jpegli has {:.1}% better DSSIM",
+                100.0 * (1.0 - ycbcr_dssim / mozjpeg_dssim)
+            );
         } else {
-            println!("  → mozjpeg has {:.1}% better DSSIM", 100.0 * (1.0 - mozjpeg_dssim / ycbcr_dssim));
+            println!(
+                "  → mozjpeg has {:.1}% better DSSIM",
+                100.0 * (1.0 - mozjpeg_dssim / ycbcr_dssim)
+            );
         }
 
         println!("\nFile size:");
         if jpegli_ycbcr.len() < mozjpeg_out.len() {
-            println!("  → jpegli is {:.1}% smaller",
-                100.0 * (1.0 - jpegli_ycbcr.len() as f64 / mozjpeg_out.len() as f64));
+            println!(
+                "  → jpegli is {:.1}% smaller",
+                100.0 * (1.0 - jpegli_ycbcr.len() as f64 / mozjpeg_out.len() as f64)
+            );
         } else {
-            println!("  → mozjpeg is {:.1}% smaller",
-                100.0 * (1.0 - mozjpeg_out.len() as f64 / jpegli_ycbcr.len() as f64));
+            println!(
+                "  → mozjpeg is {:.1}% smaller",
+                100.0 * (1.0 - mozjpeg_out.len() as f64 / jpegli_ycbcr.len() as f64)
+            );
         }
 
-        println!("\nXYB mode note: XYB JPEG ({} bytes) requires ICC-aware decoder for comparison.",
-            jpegli_xyb.len());
+        println!(
+            "\nXYB mode note: XYB JPEG ({} bytes) requires ICC-aware decoder for comparison.",
+            jpegli_xyb.len()
+        );
 
         println!("\n{}\n", "=".repeat(60));
     }

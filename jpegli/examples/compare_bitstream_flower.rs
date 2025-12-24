@@ -37,11 +37,13 @@ fn main() {
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",
-            "-p", "0",
+            "-p",
+            "0",
             "--fixed_code",
             ppm_path,
             cpp_path,
-            "-q", "90",
+            "-q",
+            "90",
         ])
         .output()
         .expect("cjpegli failed");
@@ -58,9 +60,11 @@ fn main() {
 
     println!("C++ size: {} bytes", cpp_jpeg.len());
     println!("Rust size: {} bytes", rust_jpeg.len());
-    println!("Difference: {} bytes ({:+.1}%)",
-             rust_jpeg.len() as i64 - cpp_jpeg.len() as i64,
-             100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64);
+    println!(
+        "Difference: {} bytes ({:+.1}%)",
+        rust_jpeg.len() as i64 - cpp_jpeg.len() as i64,
+        100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64
+    );
 
     // Count segment sizes
     println!("\n=== C++ Segment Sizes ===");
@@ -72,9 +76,11 @@ fn main() {
     println!("\n=== Scan Data Comparison ===");
     println!("C++ scan data: {} bytes", cpp_scan);
     println!("Rust scan data: {} bytes", rust_scan);
-    println!("Scan difference: {} bytes ({:+.1}%)",
-             rust_scan as i64 - cpp_scan as i64,
-             100.0 * (rust_scan as f64 - cpp_scan as f64) / cpp_scan as f64);
+    println!(
+        "Scan difference: {} bytes ({:+.1}%)",
+        rust_scan as i64 - cpp_scan as i64,
+        100.0 * (rust_scan as f64 - cpp_scan as f64) / cpp_scan as f64
+    );
 
     // The scan data size is the key metric - it's pure entropy coded coefficients
 
@@ -98,7 +104,10 @@ fn measure_scan_data(data: &[u8]) -> usize {
                 0xC4 => "DHT",
                 0xDA => "SOS",
                 0xD9 => "EOI",
-                0x00 => { i += 2; continue; }
+                0x00 => {
+                    i += 2;
+                    continue;
+                }
                 _ => "?",
             };
 

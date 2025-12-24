@@ -128,11 +128,7 @@ mod simd {
     /// Process 4 RGB pixels to YCbCr using SIMD.
     /// Returns (Y[4], Cb[4], Cr[4]) as u8 arrays.
     #[inline]
-    pub fn rgb_to_ycbcr_x4(
-        r: [u8; 4],
-        g: [u8; 4],
-        b: [u8; 4],
-    ) -> ([u8; 4], [u8; 4], [u8; 4]) {
+    pub fn rgb_to_ycbcr_x4(r: [u8; 4], g: [u8; 4], b: [u8; 4]) -> ([u8; 4], [u8; 4], [u8; 4]) {
         // Convert to f32 vectors
         let rf = f32x4::from([r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32]);
         let gf = f32x4::from([g[0] as f32, g[1] as f32, g[2] as f32, g[3] as f32]);
@@ -166,19 +162,30 @@ mod simd {
         let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
 
         (
-            [clamp(y_arr[0]), clamp(y_arr[1]), clamp(y_arr[2]), clamp(y_arr[3])],
-            [clamp(cb_arr[0]), clamp(cb_arr[1]), clamp(cb_arr[2]), clamp(cb_arr[3])],
-            [clamp(cr_arr[0]), clamp(cr_arr[1]), clamp(cr_arr[2]), clamp(cr_arr[3])],
+            [
+                clamp(y_arr[0]),
+                clamp(y_arr[1]),
+                clamp(y_arr[2]),
+                clamp(y_arr[3]),
+            ],
+            [
+                clamp(cb_arr[0]),
+                clamp(cb_arr[1]),
+                clamp(cb_arr[2]),
+                clamp(cb_arr[3]),
+            ],
+            [
+                clamp(cr_arr[0]),
+                clamp(cr_arr[1]),
+                clamp(cr_arr[2]),
+                clamp(cr_arr[3]),
+            ],
         )
     }
 
     /// Process 4 YCbCr pixels to RGB using SIMD.
     #[inline]
-    pub fn ycbcr_to_rgb_x4(
-        y: [u8; 4],
-        cb: [u8; 4],
-        cr: [u8; 4],
-    ) -> ([u8; 4], [u8; 4], [u8; 4]) {
+    pub fn ycbcr_to_rgb_x4(y: [u8; 4], cb: [u8; 4], cr: [u8; 4]) -> ([u8; 4], [u8; 4], [u8; 4]) {
         // Convert to f32 vectors
         let yf = f32x4::from([y[0] as f32, y[1] as f32, y[2] as f32, y[3] as f32]);
         let cbf = f32x4::from([cb[0] as f32, cb[1] as f32, cb[2] as f32, cb[3] as f32])
@@ -212,9 +219,24 @@ mod simd {
         let clamp = |v: f32| v.round().clamp(0.0, 255.0) as u8;
 
         (
-            [clamp(r_arr[0]), clamp(r_arr[1]), clamp(r_arr[2]), clamp(r_arr[3])],
-            [clamp(g_arr[0]), clamp(g_arr[1]), clamp(g_arr[2]), clamp(g_arr[3])],
-            [clamp(b_arr[0]), clamp(b_arr[1]), clamp(b_arr[2]), clamp(b_arr[3])],
+            [
+                clamp(r_arr[0]),
+                clamp(r_arr[1]),
+                clamp(r_arr[2]),
+                clamp(r_arr[3]),
+            ],
+            [
+                clamp(g_arr[0]),
+                clamp(g_arr[1]),
+                clamp(g_arr[2]),
+                clamp(g_arr[3]),
+            ],
+            [
+                clamp(b_arr[0]),
+                clamp(b_arr[1]),
+                clamp(b_arr[2]),
+                clamp(b_arr[3]),
+            ],
         )
     }
 }

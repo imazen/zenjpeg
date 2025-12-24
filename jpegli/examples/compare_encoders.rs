@@ -14,7 +14,10 @@ fn main() {
 
     if args.len() < 3 {
         eprintln!("Usage: {} <input_dir> <output_dir> [quality]", args[0]);
-        eprintln!("Example: {} /mnt/v/work/corpus/CID22-512 ./compare_out 90", args[0]);
+        eprintln!(
+            "Example: {} /mnt/v/work/corpus/CID22-512 ./compare_out 90",
+            args[0]
+        );
         std::process::exit(1);
     }
 
@@ -23,7 +26,8 @@ fn main() {
     let quality: u8 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(90);
 
     // Create output directories
-    fs::create_dir_all(format!("{}/jpegli_rs", output_dir)).expect("Failed to create jpegli_rs dir");
+    fs::create_dir_all(format!("{}/jpegli_rs", output_dir))
+        .expect("Failed to create jpegli_rs dir");
     fs::create_dir_all(format!("{}/mozjpeg", output_dir)).expect("Failed to create mozjpeg dir");
 
     println!("Input: {}", input_dir);
@@ -36,7 +40,8 @@ fn main() {
         .expect("Failed to read input directory")
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().extension()
+            e.path()
+                .extension()
                 .map(|ext| ext.to_ascii_lowercase() == "png")
                 .unwrap_or(false)
         })
@@ -46,7 +51,10 @@ fn main() {
 
     println!("Found {} PNG files", files.len());
     println!();
-    println!("{:<40} {:>10} {:>10} {:>12} {:>12}", "File", "jpegli KB", "moz KB", "jpegli DSSIM", "moz DSSIM");
+    println!(
+        "{:<40} {:>10} {:>10} {:>12} {:>12}",
+        "File", "jpegli KB", "moz KB", "jpegli DSSIM", "moz DSSIM"
+    );
     println!("{}", "-".repeat(96));
 
     let mut jpegli_total_size = 0usize;
@@ -85,11 +93,14 @@ fn main() {
 
                 match (jpegli_dssim, moz_dssim) {
                     (Ok(jd), Ok(md)) => {
-                        println!("{:<40} {:>10.1} {:>10.1} {:>12.6} {:>12.6}",
+                        println!(
+                            "{:<40} {:>10.1} {:>10.1} {:>12.6} {:>12.6}",
                             filename,
                             jpegli_size as f64 / 1024.0,
                             moz_size as f64 / 1024.0,
-                            jd, md);
+                            jd,
+                            md
+                        );
 
                         jpegli_total_size += jpegli_size;
                         moz_total_size += moz_size;
@@ -110,16 +121,26 @@ fn main() {
     println!();
     println!("=== Summary ({} files) ===", count);
     println!("jpegli-rs:");
-    println!("  Total size: {:.1} KB ({:.2} KB avg)",
+    println!(
+        "  Total size: {:.1} KB ({:.2} KB avg)",
         jpegli_total_size as f64 / 1024.0,
-        jpegli_total_size as f64 / 1024.0 / count as f64);
-    println!("  Avg DSSIM:  {:.6} (lower is better)", jpegli_total_dssim / count as f64);
+        jpegli_total_size as f64 / 1024.0 / count as f64
+    );
+    println!(
+        "  Avg DSSIM:  {:.6} (lower is better)",
+        jpegli_total_dssim / count as f64
+    );
     println!();
     println!("mozjpeg:");
-    println!("  Total size: {:.1} KB ({:.2} KB avg)",
+    println!(
+        "  Total size: {:.1} KB ({:.2} KB avg)",
         moz_total_size as f64 / 1024.0,
-        moz_total_size as f64 / 1024.0 / count as f64);
-    println!("  Avg DSSIM:  {:.6} (lower is better)", moz_total_dssim / count as f64);
+        moz_total_size as f64 / 1024.0 / count as f64
+    );
+    println!(
+        "  Avg DSSIM:  {:.6} (lower is better)",
+        moz_total_dssim / count as f64
+    );
     println!();
 
     let size_ratio = jpegli_total_size as f64 / moz_total_size as f64;
@@ -145,10 +166,14 @@ fn load_png(path: &Path) -> Result<(Vec<u8>, usize, usize), String> {
     let png_data = fs::read(path).map_err(|e| format!("Read error: {}", e))?;
 
     let decoder = png::Decoder::new(&png_data[..]);
-    let mut reader = decoder.read_info().map_err(|e| format!("PNG decode error: {}", e))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("PNG decode error: {}", e))?;
 
     let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).map_err(|e| format!("PNG frame error: {}", e))?;
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("PNG frame error: {}", e))?;
 
     let width = info.width as usize;
     let height = info.height as usize;
@@ -192,14 +217,21 @@ fn load_png(path: &Path) -> Result<(Vec<u8>, usize, usize), String> {
     Ok((rgb_data, width, height))
 }
 
-fn encode_with_jpegli(rgb_data: &[u8], width: usize, height: usize, output: &str, quality: u8) -> Result<usize, String> {
+fn encode_with_jpegli(
+    rgb_data: &[u8],
+    width: usize,
+    height: usize,
+    output: &str,
+    quality: u8,
+) -> Result<usize, String> {
     let encoder = Encoder::new()
         .width(width as u32)
         .height(height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality as f32));
 
-    let jpeg_data = encoder.encode(rgb_data)
+    let jpeg_data = encoder
+        .encode(rgb_data)
         .map_err(|e| format!("JPEG encode error: {}", e))?;
 
     let size = jpeg_data.len();
@@ -208,15 +240,22 @@ fn encode_with_jpegli(rgb_data: &[u8], width: usize, height: usize, output: &str
     Ok(size)
 }
 
-fn encode_with_mozjpeg(rgb_data: &[u8], width: usize, height: usize, output: &str, quality: u8) -> Result<usize, String> {
-    use mozjpeg::{Compress, ColorSpace};
+fn encode_with_mozjpeg(
+    rgb_data: &[u8],
+    width: usize,
+    height: usize,
+    output: &str,
+    quality: u8,
+) -> Result<usize, String> {
+    use mozjpeg::{ColorSpace, Compress};
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(width, height);
     comp.set_quality(quality as f32);
 
     // Start compression to Vec<u8>
-    let mut started = comp.start_compress(Vec::new())
+    let mut started = comp
+        .start_compress(Vec::new())
         .map_err(|e| format!("mozjpeg start error: {}", e))?;
 
     // Write scanlines row by row
@@ -227,7 +266,8 @@ fn encode_with_mozjpeg(rgb_data: &[u8], width: usize, height: usize, output: &st
         started.write_scanlines(row);
     }
 
-    let jpeg_data = started.finish()
+    let jpeg_data = started
+        .finish()
         .map_err(|e| format!("mozjpeg finish error: {}", e))?;
 
     let size = jpeg_data.len();
@@ -244,14 +284,20 @@ fn calculate_dssim(original_path: &Path, compressed_path: &str) -> Result<f64, S
         .map_err(|e| format!("dssim execution error: {}", e))?;
 
     if !result.status.success() {
-        return Err(format!("dssim failed: {}", String::from_utf8_lossy(&result.stderr)));
+        return Err(format!(
+            "dssim failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
     }
 
     let output = String::from_utf8_lossy(&result.stdout);
     // dssim output format: "0.001234\tfilename"
-    let dssim_str = output.split_whitespace().next()
+    let dssim_str = output
+        .split_whitespace()
+        .next()
         .ok_or("Failed to parse dssim output")?;
 
-    dssim_str.parse::<f64>()
+    dssim_str
+        .parse::<f64>()
         .map_err(|e| format!("Failed to parse DSSIM value: {}", e))
 }
