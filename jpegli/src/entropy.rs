@@ -434,7 +434,11 @@ impl EntropyEncoder {
         enum Action {
             EmitEobRun(u16),
             EmitZrl(Vec<u8>), // with pending bits to emit after
-            EmitCoef { symbol: u8, sign: u32, pending: Vec<u8> },
+            EmitCoef {
+                symbol: u8,
+                sign: u32,
+                pending: Vec<u8>,
+            },
         }
         let mut actions: Vec<Action> = Vec::new();
 
@@ -549,7 +553,11 @@ impl EntropyEncoder {
                         self.writer.write_bits(bit as u32, 1);
                     }
                 }
-                Action::EmitCoef { symbol, sign, pending } => {
+                Action::EmitCoef {
+                    symbol,
+                    sign,
+                    pending,
+                } => {
                     let (code, len) = ac_table.encode(symbol);
                     self.writer.write_bits(code, len);
                     self.writer.write_bits(sign, 1);
@@ -588,11 +596,7 @@ impl EntropyEncoder {
     /// # Arguments
     /// * `tokens` - Slice of tokens to replay
     /// * `context_to_table` - Maps context IDs to table indices
-    pub fn write_dc_tokens(
-        &mut self,
-        tokens: &[Token],
-        context_to_table: &[usize],
-    ) -> Result<()> {
+    pub fn write_dc_tokens(&mut self, tokens: &[Token], context_to_table: &[usize]) -> Result<()> {
         for token in tokens {
             let table_idx = context_to_table
                 .get(token.context as usize)
@@ -615,14 +619,16 @@ impl EntropyEncoder {
                 // For DC, category 0 always exists, so we can't encode missing categories.
                 // This is a limitation - the tokenization should ensure all used symbols exist.
                 return Err(Error::InternalError {
-                    reason: "DC symbol not in Huffman table during replay - histogram may be incomplete",
+                    reason:
+                        "DC symbol not in Huffman table during replay - histogram may be incomplete",
                 });
             }
             self.writer.write_bits(code, len);
 
             // Write extra bits if any
             if token.num_extra > 0 {
-                self.writer.write_bits(token.extra_bits as u32, token.num_extra);
+                self.writer
+                    .write_bits(token.extra_bits as u32, token.num_extra);
             }
         }
 
@@ -634,11 +640,7 @@ impl EntropyEncoder {
     /// # Arguments
     /// * `tokens` - Slice of tokens to replay
     /// * `table_idx` - AC Huffman table index to use
-    pub fn write_ac_first_tokens(
-        &mut self,
-        tokens: &[Token],
-        table_idx: usize,
-    ) -> Result<()> {
+    pub fn write_ac_first_tokens(&mut self, tokens: &[Token], table_idx: usize) -> Result<()> {
         let ac_table = self.ac_tables[table_idx]
             .as_ref()
             .ok_or(Error::InternalError {
@@ -671,7 +673,8 @@ impl EntropyEncoder {
 
                 // Write extra bits if any
                 if token.num_extra > 0 {
-                    self.writer.write_bits(token.extra_bits as u32, token.num_extra);
+                    self.writer
+                        .write_bits(token.extra_bits as u32, token.num_extra);
                 }
             }
         }
@@ -946,6 +949,235 @@ impl<'a> EntropyDecoder<'a> {
     /// Returns the underlying bit reader position.
     pub fn position(&self) -> usize {
         self.reader.position()
+    }
+
+    // ===== Progressive decoding methods =====
+
+    /// Decodes DC coefficient for progressive first scan (ah=0).
+    /// Returns the shifted DC difference.
+    pub fn decode_dc_first(
+        &mut self,
+        component: usize,
+        dc_table_idx: usize,
+        al: u8,
+    ) -> Result<i16> {
+        let dc_table = self.dc_tables[dc_table_idx]
+            .clone()
+            .ok_or(Error::InternalError {
+                reason: "DC table not set",
+            })?;
+
+        let dc_cat = self.decode_huffman(&dc_table)?;
+        let dc_diff = if dc_cat == 0 {
+            0
+        } else {
+            let bits = self.reader.read_bits(dc_cat)? as u16;
+            decode_value(dc_cat, bits)
+        };
+
+        let shifted_dc = self.prev_dc[component] + dc_diff;
+        self.prev_dc[component] = shifted_dc;
+
+        // Return the unshifted value (shift left by al)
+        Ok(shifted_dc << al)
+    }
+
+    /// Decodes DC refinement bit (ah>0).
+    /// Returns the bit to add at position al.
+    pub fn decode_dc_refine(&mut self, al: u8) -> Result<i16> {
+        let bit = self.reader.read_bits(1)? as i16;
+        Ok(bit << al)
+    }
+
+    /// Decodes AC coefficients for progressive first scan (ah=0).
+    /// Writes coefficients to the provided slice in range [ss, se].
+    /// Returns the EOB run remaining after this block.
+    pub fn decode_ac_first(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        eob_run: &mut u16,
+    ) -> Result<()> {
+        let ac_table = self.ac_tables[ac_table_idx]
+            .clone()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
+
+        // If we have a pending EOB run, decrement and skip this block
+        if *eob_run > 0 {
+            *eob_run -= 1;
+            return Ok(());
+        }
+
+        let mut k = ss as usize;
+        while k <= se as usize {
+            let symbol = self.decode_huffman(&ac_table)?;
+            let run = symbol >> 4;
+            let size = symbol & 0x0F;
+
+            if size == 0 {
+                if run == 15 {
+                    // ZRL - skip 16 zeros
+                    k += 16;
+                } else {
+                    // EOB run
+                    // run=0 means EOB for this block only
+                    // run=1-14 means 2^run + extra bits count of EOBs
+                    if run == 0 {
+                        // Single EOB, we're done with this block
+                        return Ok(());
+                    } else {
+                        // EOB run: 2^run + extra_bits
+                        let extra = self.reader.read_bits(run)? as u16;
+                        *eob_run = (1 << run) + extra - 1; // -1 because this block counts as one
+                        return Ok(());
+                    }
+                }
+            } else {
+                k += run as usize;
+                if k > se as usize {
+                    return Err(Error::InvalidJpegData {
+                        reason: "AC coefficient index out of bounds",
+                    });
+                }
+
+                let bits = self.reader.read_bits(size)? as u16;
+                let value = decode_value(size, bits);
+                coeffs[k] = value << al;
+                k += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Decodes AC refinement for progressive scan (ah>0).
+    /// Updates coefficients in range [ss, se].
+    pub fn decode_ac_refine(
+        &mut self,
+        coeffs: &mut [i16; DCT_BLOCK_SIZE],
+        ac_table_idx: usize,
+        ss: u8,
+        se: u8,
+        al: u8,
+        eob_run: &mut u16,
+    ) -> Result<()> {
+        let ac_table = self.ac_tables[ac_table_idx]
+            .clone()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
+
+        let bit_val = 1i16 << al;
+
+        // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return
+        if *eob_run > 0 {
+            for k in ss as usize..=se as usize {
+                if coeffs[k] != 0 {
+                    let bit = self.reader.read_bits(1)? as i16;
+                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                        if coeffs[k] > 0 {
+                            coeffs[k] += bit_val;
+                        } else {
+                            coeffs[k] -= bit_val;
+                        }
+                    }
+                }
+            }
+            *eob_run -= 1;
+            return Ok(());
+        }
+
+        let mut k = ss as usize;
+        while k <= se as usize {
+            let symbol = self.decode_huffman(&ac_table)?;
+            let run = symbol >> 4;
+            let size = symbol & 0x0F;
+
+            let mut num_zeros_to_skip = run as usize;
+
+            if size == 0 {
+                if run == 15 {
+                    // ZRL in refinement - skip zeros that were zero in original
+                    // But first, apply refinement bits to any nonzero coeffs we encounter
+                } else {
+                    // EOB run
+                    if run == 0 {
+                        // Single EOB - apply refinement to remaining nonzero coeffs
+                        for j in k..=se as usize {
+                            if coeffs[j] != 0 {
+                                let bit = self.reader.read_bits(1)? as i16;
+                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                                    if coeffs[j] > 0 {
+                                        coeffs[j] += bit_val;
+                                    } else {
+                                        coeffs[j] -= bit_val;
+                                    }
+                                }
+                            }
+                        }
+                        return Ok(());
+                    } else {
+                        // EOB run
+                        let extra = self.reader.read_bits(run)? as u16;
+                        *eob_run = (1 << run) + extra - 1;
+                        // Apply refinement to remaining nonzero coeffs in this block
+                        for j in k..=se as usize {
+                            if coeffs[j] != 0 {
+                                let bit = self.reader.read_bits(1)? as i16;
+                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                                    if coeffs[j] > 0 {
+                                        coeffs[j] += bit_val;
+                                    } else {
+                                        coeffs[j] -= bit_val;
+                                    }
+                                }
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Skip zeros and apply refinement bits to nonzero coefficients
+            while k <= se as usize {
+                if coeffs[k] != 0 {
+                    // Apply refinement bit
+                    let bit = self.reader.read_bits(1)? as i16;
+                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                        if coeffs[k] > 0 {
+                            coeffs[k] += bit_val;
+                        } else {
+                            coeffs[k] -= bit_val;
+                        }
+                    }
+                } else if num_zeros_to_skip > 0 {
+                    num_zeros_to_skip -= 1;
+                } else {
+                    // Found our target position
+                    break;
+                }
+                k += 1;
+            }
+
+            if size != 0 && k <= se as usize {
+                // Place newly-nonzero coefficient
+                let sign_bit = self.reader.read_bits(1)? as i16;
+                if sign_bit != 0 {
+                    coeffs[k] = bit_val;
+                } else {
+                    coeffs[k] = -bit_val;
+                }
+            }
+
+            k += 1;
+        }
+
+        Ok(())
     }
 }
 

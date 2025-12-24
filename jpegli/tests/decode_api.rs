@@ -133,7 +133,6 @@ fn test_decode_various_qualities(quality: f32) {
 // ============================================================================
 
 #[test]
-#[ignore = "progressive decode has known Huffman table issue - see CLAUDE.md"]
 fn test_decode_progressive() {
     let img = generate_gradient_d(128, 128, 3);
     let encoder = Encoder::new()

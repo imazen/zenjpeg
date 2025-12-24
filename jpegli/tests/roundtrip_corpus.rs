@@ -258,7 +258,6 @@ fn test_quality_size_tradeoff() {
 // ============================================================================
 
 #[test]
-#[ignore = "progressive decode has known Huffman table issue"]
 fn test_progressive_vs_baseline_quality() {
     let img = generate_gradient_d(256, 256, 3);
 

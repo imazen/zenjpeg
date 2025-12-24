@@ -488,14 +488,18 @@ impl<'a> JpegParser<'a> {
             scan_components.push((comp_idx, dc_table, ac_table));
         }
 
-        let _ss = self.read_u8()?; // Spectral selection start
-        let _se = self.read_u8()?; // Spectral selection end
+        let ss = self.read_u8()?; // Spectral selection start
+        let se = self.read_u8()?; // Spectral selection end
         let ah_al = self.read_u8()?;
-        let _ah = ah_al >> 4;
-        let _al = ah_al & 0x0F;
+        let ah = ah_al >> 4;
+        let al = ah_al & 0x0F;
 
-        // Decode entropy-coded segment
-        self.decode_scan(&scan_components)?;
+        // Decode entropy-coded segment based on mode
+        if self.mode == JpegMode::Progressive {
+            self.decode_progressive_scan(&scan_components, ss, se, ah, al)?;
+        } else {
+            self.decode_scan(&scan_components)?;
+        }
 
         Ok(())
     }
@@ -564,6 +568,148 @@ impl<'a> JpegParser<'a> {
                                 *ac_table as usize,
                             )?;
                             self.coeffs[*comp_idx][block_idx] = coeffs;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.position += decoder.position();
+        Ok(())
+    }
+
+    fn decode_progressive_scan(
+        &mut self,
+        scan_components: &[(usize, u8, u8)],
+        ss: u8,
+        se: u8,
+        ah: u8,
+        al: u8,
+    ) -> Result<()> {
+        // Calculate max sampling factors to determine MCU structure
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+
+        // MCU dimensions in pixels
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+
+        // Number of MCUs
+        let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
+
+        // Initialize coefficient storage if not already done
+        if self.coeffs.is_empty() {
+            for i in 0..self.num_components as usize {
+                let h_samp = self.components[i].h_samp_factor as usize;
+                let v_samp = self.components[i].v_samp_factor as usize;
+                let comp_blocks_h = mcu_cols * h_samp;
+                let comp_blocks_v = mcu_rows * v_samp;
+                self.coeffs
+                    .push(vec![[0i16; DCT_BLOCK_SIZE]; comp_blocks_h * comp_blocks_v]);
+            }
+        }
+
+        // Set up entropy decoder
+        let scan_data = &self.data[self.position..];
+        let mut decoder = EntropyDecoder::new(scan_data);
+
+        for (comp_idx, dc_table, ac_table) in scan_components {
+            if let Some(table) = &self.dc_tables[*dc_table as usize] {
+                decoder.set_dc_table(*dc_table as usize, table.clone());
+            }
+            if let Some(table) = &self.ac_tables[*ac_table as usize] {
+                decoder.set_ac_table(*ac_table as usize, table.clone());
+            }
+        }
+
+        // Determine scan type
+        let is_dc_scan = ss == 0 && se == 0;
+        let is_first_scan = ah == 0;
+
+        // EOB run tracking for AC scans
+        let mut eob_run = 0u16;
+
+        if is_dc_scan {
+            // DC scan (interleaved or single component)
+            for mcu_y in 0..mcu_rows {
+                for mcu_x in 0..mcu_cols {
+                    for (comp_idx, dc_table, _ac_table) in scan_components {
+                        let h_samp = self.components[*comp_idx].h_samp_factor as usize;
+                        let v_samp = self.components[*comp_idx].v_samp_factor as usize;
+                        let comp_blocks_h = mcu_cols * h_samp;
+
+                        for v in 0..v_samp {
+                            for h in 0..h_samp {
+                                let block_x = mcu_x * h_samp + h;
+                                let block_y = mcu_y * v_samp + v;
+                                let block_idx = block_y * comp_blocks_h + block_x;
+
+                                if is_first_scan {
+                                    // DC first scan
+                                    let dc = decoder.decode_dc_first(
+                                        *comp_idx,
+                                        *dc_table as usize,
+                                        al,
+                                    )?;
+                                    self.coeffs[*comp_idx][block_idx][0] = dc;
+                                } else {
+                                    // DC refinement scan
+                                    let bit = decoder.decode_dc_refine(al)?;
+                                    self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // AC scan (single component only for progressive)
+            // Progressive AC scans can only have one component
+            if scan_components.len() != 1 {
+                return Err(Error::InvalidJpegData {
+                    reason: "progressive AC scan must have single component",
+                });
+            }
+
+            let (comp_idx, _dc_table, ac_table) = scan_components[0];
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+            let comp_blocks_h = mcu_cols * h_samp;
+
+            for mcu_y in 0..mcu_rows {
+                for mcu_x in 0..mcu_cols {
+                    for v in 0..v_samp {
+                        for h in 0..h_samp {
+                            let block_x = mcu_x * h_samp + h;
+                            let block_y = mcu_y * v_samp + v;
+                            let block_idx = block_y * comp_blocks_h + block_x;
+
+                            if is_first_scan {
+                                // AC first scan
+                                decoder.decode_ac_first(
+                                    &mut self.coeffs[comp_idx][block_idx],
+                                    ac_table as usize,
+                                    ss,
+                                    se,
+                                    al,
+                                    &mut eob_run,
+                                )?;
+                            } else {
+                                // AC refinement scan
+                                decoder.decode_ac_refine(
+                                    &mut self.coeffs[comp_idx][block_idx],
+                                    ac_table as usize,
+                                    ss,
+                                    se,
+                                    al,
+                                    &mut eob_run,
+                                )?;
+                            }
                         }
                     }
                 }
