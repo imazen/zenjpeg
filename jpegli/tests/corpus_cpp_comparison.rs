@@ -14,11 +14,55 @@ const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli/build/tools/cjpegli";
 /// Path to CID22-512 corpus
 const CORPUS_PATH: &str = "/mnt/v/work/corpus/CID22-512";
 
-/// Register Rust jpegli encoder
+/// Generic JPEG decoder using jpeg-decoder crate
+fn decode_jpeg(data: &[u8]) -> codec_eval::Result<ImageData> {
+    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let pixels = decoder.decode().map_err(|e| codec_eval::Error::Codec {
+        codec: "jpeg-decoder".to_string(),
+        message: format!("{}", e),
+    })?;
+
+    let info = decoder.info().ok_or_else(|| codec_eval::Error::Codec {
+        codec: "jpeg-decoder".to_string(),
+        message: "No image info".to_string(),
+    })?;
+
+    let width = info.width as usize;
+    let height = info.height as usize;
+
+    // Convert to RGB if needed
+    let rgb_data = match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => pixels,
+        jpeg_decoder::PixelFormat::L8 => {
+            let mut rgb = Vec::with_capacity(width * height * 3);
+            for &g in &pixels {
+                rgb.push(g);
+                rgb.push(g);
+                rgb.push(g);
+            }
+            rgb
+        }
+        _ => {
+            return Err(codec_eval::Error::Codec {
+                codec: "jpeg-decoder".to_string(),
+                message: format!("Unsupported pixel format: {:?}", info.pixel_format),
+            });
+        }
+    };
+
+    Ok(ImageData::RgbSlice {
+        data: rgb_data,
+        width,
+        height,
+    })
+}
+
+/// Register Rust jpegli encoder with decoder
 fn register_rust_jpegli(session: &mut EvalSession) {
-    session.add_codec(
+    session.add_codec_with_decode(
         "jpegli-rs",
         env!("CARGO_PKG_VERSION"),
+        // Encoder
         Box::new(|image, request| {
             let width = image.width();
             let height = image.height();
@@ -32,23 +76,24 @@ fn register_rust_jpegli(session: &mut EvalSession) {
                 .pixel_format(jpegli::PixelFormat::Rgb)
                 .quality(Quality::from_quality(quality));
 
-            let encoded = encoder.encode(&rgb_data).map_err(|e| {
-                codec_eval::Error::Codec {
-                    codec: "jpegli-rs".to_string(),
-                    message: format!("{}", e),
-                }
+            let encoded = encoder.encode(&rgb_data).map_err(|e| codec_eval::Error::Codec {
+                codec: "jpegli-rs".to_string(),
+                message: format!("{}", e),
             })?;
 
             Ok(encoded)
         }),
+        // Decoder
+        Box::new(|data| decode_jpeg(data)),
     );
 }
 
-/// Register C++ jpegli encoder (via subprocess)
+/// Register C++ jpegli encoder with decoder
 fn register_cpp_jpegli(session: &mut EvalSession) {
-    session.add_codec(
+    session.add_codec_with_decode(
         "jpegli-cpp",
         "latest",
+        // Encoder
         Box::new(|image, request| {
             let width = image.width();
             let height = image.height();
@@ -93,6 +138,8 @@ fn register_cpp_jpegli(session: &mut EvalSession) {
 
             Ok(encoded)
         }),
+        // Decoder (use same generic JPEG decoder)
+        Box::new(|data| decode_jpeg(data)),
     );
 }
 
