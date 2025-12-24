@@ -27,6 +27,38 @@ cargo test --release  # Run with optimizations
 
 This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from the JPEG XL project. The goal is a complete, idiomatic Rust implementation with method-level accuracy parity to the C++ original.
 
+## ⚠️ C++ cjpegli Default Settings (TARGET)
+
+**IMPORTANT**: The `cjpegli` tool defaults differ from the low-level library defaults.
+
+| Setting | cjpegli Tool Default | Library Default | Rust Current |
+|---------|---------------------|-----------------|--------------|
+| **Chroma subsampling** | **4:4:4** (no subsampling) | 4:2:0 | 4:4:4 ✓ |
+| **Adaptive quantization** | **ON** | ON | Constant 0.08 ⚠️ |
+| **Progressive level** | **2** (10+ scans) | 0 (sequential) | Not implemented ✗ |
+| **Huffman optimization** | **ON** | OFF (fixed tables) | ON ✓ |
+| **Quality** | **90** | 90 | 90 ✓ |
+
+**Why this matters**: The tool overrides library defaults in `lib/extras/enc/jpegli.cc`:
+```cpp
+} else if (!jpeg_settings.xyb) {
+  // Default is no chroma subsampling.
+  cinfo.comp_info[0].h_samp_factor = 1;
+  cinfo.comp_info[0].v_samp_factor = 1;
+}
+```
+
+**Rust must match tool defaults, not library defaults**, since users compare against `cjpegli` output.
+
+### Gap Analysis vs cjpegli Defaults
+
+| Feature | Impact | Status |
+|---------|--------|--------|
+| Progressive level 2 | ~2-3% smaller files | ✗ Not implemented |
+| Per-block adaptive quant | ~3-4% smaller files | ⚠️ Using constant mean value |
+| Huffman optimization | ~3-4% smaller files | ✓ Implemented |
+| 4:4:4 subsampling | Quality improvement | ✓ Implemented |
+
 ## ⚠️ MANDATORY: Port Verification Rules
 
 **These rules exist because previous work was marked "done" without actual integration or parity verification.**
