@@ -682,6 +682,7 @@ After all fixes:
 Remaining 20% difference likely due to:
 1. Edge handling differences in FuzzyErosion
 2. FastLog2f vs log2() approximation differences
+   - **Note**: `moxcms/src/math/log2fs.rs` has a good FastLog2f implementation to try
 3. Border padding handling
 
 ## Red Herrings (Investigated but NOT the cause)
