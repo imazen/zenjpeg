@@ -64,7 +64,10 @@ pub mod entropy;
 pub mod decode;
 pub mod encode;
 
-// Quality and adaptive quantization
+// Simplified adaptive quantization (NOT C++ matching - uses arbitrary thresholds)
+pub mod simplified_quant;
+
+// Adaptive quantization (placeholder for C++ matching implementation)
 pub mod adaptive_quant;
 
 // Quality metrics

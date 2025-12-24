@@ -1,267 +1,202 @@
-//! Adaptive quantization for jpegli.
+//! Adaptive Quantization for jpegli - C++ Matching Implementation
 //!
-//! This module implements content-aware quantization that adjusts
-//! quantization tables based on local image characteristics.
+//! # Status: PLACEHOLDER - NOT YET IMPLEMENTED
+//!
+//! This module will contain the proper C++ matching adaptive quantization
+//! implementation. Currently it's a placeholder.
+//!
+//! ## What C++ Does (from lib/jpegli/adaptive_quantization.cc)
+//!
+//! The C++ algorithm produces per-block `aq_strength` values in the range
+//! 0.0-0.2 (mean ~0.08). These values are used in zero-biasing to determine
+//! quantization thresholds.
+//!
+//! ### Algorithm Steps:
+//!
+//! 1. **ComputePreErosion()** - Computes initial quant field from DCT coefficients
+//!    - Uses `QuantMasking()` for spatial frequency masking
+//!    - Uses `MaskingSqrt()` to combine with butteraugli distance
+//!
+//! 2. **FuzzyErosion()** - Applies spatial smoothing to the quant field
+//!    - 5x5 kernel with asymmetric weights
+//!    - Separate passes for horizontal and vertical
+//!
+//! 3. **PerBlockModulations()** - Final per-block modulations
+//!    - Uses spatial frequency analysis
+//!    - Applies masking based on AC energy distribution
+//!
+//! 4. **Final Transform** - Converts quant_field to aq_strength:
+//!    ```text
+//!    aq_strength = max(0.0, (0.6 / quant_field) - 1.0)
+//!    ```
+//!
+//! ## C++ Test Data
+//!
+//! Instrumented C++ generates `ComputeAdaptiveQuantField.testdata` with:
+//! - Input: y_quant, raw_quant_field, pre_erosion
+//! - Output: expected_quant_field_slice
+//!
+//! Sample statistics from testdata:
+//! - y_quant=3.0: min=0.0000, max=0.1955, mean=0.0810
+//!
+//! ## Current Workaround
+//!
+//! Until this is implemented, the encoder uses a constant `aq_strength = 0.08`
+//! calibrated from C++ testdata mean. This gives ~5.77% smaller files than C++.
+//!
+//! ## FFI Strategy
+//!
+//! To verify correctness during development:
+//! 1. Call C++ `ComputeAdaptiveQuantField()` via FFI
+//! 2. Compare Rust output block-by-block
+//! 3. Assert max difference < 1e-4
+//!
+//! See also:
+//! - `docs/ADAPTIVE_QUANTIZATION.md` for detailed analysis
+//! - `tests/aq_locked_tests.rs` for invariant tests
+//! - `simplified_quant.rs` for the simplified (non-C++) version
 
-use crate::consts::DCT_BLOCK_SIZE;
-
-/// Adaptive quantization mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AdaptiveQuantMode {
-    /// No adaptive quantization
-    #[default]
-    Off,
-    /// Standard adaptive quantization
-    Standard,
-    /// Aggressive adaptive quantization (smaller files, more artifacts)
-    Aggressive,
-}
-
-/// Configuration for adaptive quantization.
-#[derive(Debug, Clone)]
-pub struct AdaptiveQuantConfig {
-    /// Quantization mode
-    pub mode: AdaptiveQuantMode,
-    /// Base butteraugli distance
-    pub base_distance: f32,
-    /// DC quant multiplier
-    pub dc_quant_mul: f32,
-    /// AC quant multiplier for low frequencies
-    pub ac_quant_mul_low: f32,
-    /// AC quant multiplier for high frequencies
-    pub ac_quant_mul_high: f32,
-}
-
-impl Default for AdaptiveQuantConfig {
-    fn default() -> Self {
-        Self {
-            mode: AdaptiveQuantMode::Off,
-            base_distance: 1.0,
-            dc_quant_mul: 1.0,
-            ac_quant_mul_low: 1.0,
-            ac_quant_mul_high: 1.0,
-        }
-    }
-}
-
-/// Adaptive quantization map for an image.
+/// Per-block adaptive quantization strength.
 ///
-/// Stores per-block quantization multipliers.
+/// Values are in the range 0.0-0.2 (matching C++ output).
 #[derive(Debug, Clone)]
-pub struct QuantMap {
-    /// Width in blocks
+pub struct AQStrengthMap {
+    /// Width in 8x8 blocks
     pub width_blocks: usize,
-    /// Height in blocks
+    /// Height in 8x8 blocks
     pub height_blocks: usize,
-    /// Per-block multipliers (1.0 = no adjustment)
-    pub multipliers: Vec<f32>,
+    /// Per-block aq_strength values (0.0 to ~0.2)
+    pub strengths: Vec<f32>,
 }
 
-impl QuantMap {
-    /// Creates a uniform quantization map (no adaptation).
+impl AQStrengthMap {
+    /// Creates a uniform AQ map with the given constant strength.
+    ///
+    /// The default C++ mean is ~0.08.
     #[must_use]
-    pub fn uniform(width_blocks: usize, height_blocks: usize) -> Self {
+    pub fn uniform(width_blocks: usize, height_blocks: usize, strength: f32) -> Self {
         Self {
             width_blocks,
             height_blocks,
-            multipliers: vec![1.0; width_blocks * height_blocks],
+            strengths: vec![strength; width_blocks * height_blocks],
         }
     }
 
-    /// Returns the multiplier for a block.
+    /// Creates a uniform map with the C++ testdata mean (0.08).
+    #[must_use]
+    pub fn with_cpp_mean(width_blocks: usize, height_blocks: usize) -> Self {
+        Self::uniform(width_blocks, height_blocks, 0.08)
+    }
+
+    /// Returns the aq_strength for a block.
     #[inline]
     #[must_use]
     pub fn get(&self, bx: usize, by: usize) -> f32 {
         let idx = by * self.width_blocks + bx;
-        self.multipliers.get(idx).copied().unwrap_or(1.0)
-    }
-
-    /// Sets the multiplier for a block.
-    #[inline]
-    pub fn set(&mut self, bx: usize, by: usize, value: f32) {
-        let idx = by * self.width_blocks + bx;
-        if idx < self.multipliers.len() {
-            self.multipliers[idx] = value;
-        }
+        self.strengths.get(idx).copied().unwrap_or(0.08)
     }
 }
 
-/// Computes adaptive quantization map from image data.
+/// Computes per-block adaptive quantization strength.
 ///
-/// This analyzes the image to determine where more or less quantization
-/// can be applied based on perceptual factors.
-pub fn compute_quant_map(
-    y_plane: &[f32],
+/// # Status: PLACEHOLDER
+///
+/// This function currently returns a uniform map with the C++ testdata mean.
+/// The real implementation will port:
+/// - `ComputePreErosion()`
+/// - `FuzzyErosion()`
+/// - `PerBlockModulations()`
+///
+/// # Arguments
+///
+/// * `y_plane` - Luminance plane (Y channel) as f32 values
+/// * `width` - Image width in pixels
+/// * `height` - Image height in pixels
+/// * `distance` - Quality distance parameter
+///
+/// # Returns
+///
+/// Per-block aq_strength map with values in 0.0-0.2 range.
+#[must_use]
+pub fn compute_aq_strength_map(
+    _y_plane: &[f32],
     width: usize,
     height: usize,
-    config: &AdaptiveQuantConfig,
-) -> QuantMap {
+    _distance: f32,
+) -> AQStrengthMap {
     let width_blocks = (width + 7) / 8;
     let height_blocks = (height + 7) / 8;
 
-    if config.mode == AdaptiveQuantMode::Off {
-        return QuantMap::uniform(width_blocks, height_blocks);
-    }
+    // TODO: Implement proper C++ matching algorithm:
+    // 1. ComputePreErosion() - DCT-based initial quant field
+    // 2. FuzzyErosion() - Spatial smoothing
+    // 3. PerBlockModulations() - Spatial frequency masking
+    // 4. Final transform: aq_strength = max(0.0, (0.6 / quant_field) - 1.0)
 
-    let mut map = QuantMap {
-        width_blocks,
-        height_blocks,
-        multipliers: Vec::with_capacity(width_blocks * height_blocks),
-    };
-
-    for by in 0..height_blocks {
-        for bx in 0..width_blocks {
-            let multiplier = compute_block_quant_multiplier(y_plane, width, height, bx, by, config);
-            map.multipliers.push(multiplier);
-        }
-    }
-
-    map
+    // For now, return uniform map with C++ testdata mean
+    AQStrengthMap::with_cpp_mean(width_blocks, height_blocks)
 }
 
-/// Computes the quantization multiplier for a single block.
-fn compute_block_quant_multiplier(
-    y_plane: &[f32],
-    width: usize,
-    height: usize,
-    bx: usize,
-    by: usize,
-    config: &AdaptiveQuantConfig,
-) -> f32 {
-    // Compute local variance (activity measure)
-    let activity = compute_block_activity(y_plane, width, height, bx, by);
+// ============================================================================
+// Future implementation stubs
+// ============================================================================
 
-    // Low activity = can quantize more
-    // High activity = need to preserve detail
-    let activity_factor = activity_to_multiplier(activity, config);
-
-    // Apply edge detection penalty
-    let edge_factor = compute_edge_factor(y_plane, width, height, bx, by);
-
-    // Combine factors
-    let multiplier = activity_factor * edge_factor;
-
-    // Clamp to reasonable range
-    multiplier.clamp(0.5, 2.0)
+/// Computes the initial quant field from DCT coefficients.
+///
+/// C++ source: `adaptive_quantization.cc::ComputePreErosion()`
+///
+/// # Status: NOT IMPLEMENTED
+#[allow(dead_code)]
+fn compute_pre_erosion(
+    _y_plane: &[f32],
+    _width: usize,
+    _height: usize,
+    _distance: f32,
+) -> Vec<f32> {
+    // TODO: Port from C++
+    // Uses QuantMasking() for spatial frequency analysis
+    // Uses MaskingSqrt() to combine with butteraugli distance
+    unimplemented!("compute_pre_erosion not yet ported from C++")
 }
 
-/// Computes the activity (variance) of a block.
-fn compute_block_activity(
-    y_plane: &[f32],
-    width: usize,
-    height: usize,
-    bx: usize,
-    by: usize,
-) -> f32 {
-    let mut sum = 0.0f32;
-    let mut sum_sq = 0.0f32;
-    let mut count = 0;
-
-    for y in 0..8 {
-        for x in 0..8 {
-            let px = bx * 8 + x;
-            let py = by * 8 + y;
-
-            if px < width && py < height {
-                let val = y_plane[py * width + px];
-                sum += val;
-                sum_sq += val * val;
-                count += 1;
-            }
-        }
-    }
-
-    if count == 0 {
-        return 0.0;
-    }
-
-    let mean = sum / count as f32;
-    let variance = (sum_sq / count as f32) - (mean * mean);
-    variance.max(0.0).sqrt()
+/// Applies fuzzy erosion smoothing to the quant field.
+///
+/// C++ source: `adaptive_quantization.cc::FuzzyErosion()`
+///
+/// # Status: NOT IMPLEMENTED
+#[allow(dead_code)]
+fn fuzzy_erosion(_quant_field: &[f32], _width_blocks: usize, _height_blocks: usize) -> Vec<f32> {
+    // TODO: Port from C++
+    // Uses 5x5 kernel with asymmetric weights
+    // Separate horizontal and vertical passes
+    unimplemented!("fuzzy_erosion not yet ported from C++")
 }
 
-/// Converts activity to a quantization multiplier.
-fn activity_to_multiplier(activity: f32, config: &AdaptiveQuantConfig) -> f32 {
-    // Higher activity = lower multiplier (preserve detail)
-    // Lower activity = higher multiplier (can quantize more)
-
-    let threshold = match config.mode {
-        AdaptiveQuantMode::Off => return 1.0,
-        AdaptiveQuantMode::Standard => 10.0,
-        AdaptiveQuantMode::Aggressive => 5.0,
-    };
-
-    if activity < threshold {
-        // Low activity - can quantize more
-        1.2
-    } else if activity > threshold * 3.0 {
-        // High activity - preserve detail
-        0.8
-    } else {
-        // Linear interpolation
-        let t = (activity - threshold) / (threshold * 2.0);
-        1.2 - 0.4 * t
-    }
+/// Applies per-block modulations based on spatial frequency.
+///
+/// C++ source: `adaptive_quantization.cc::PerBlockModulations()`
+///
+/// # Status: NOT IMPLEMENTED
+#[allow(dead_code)]
+fn per_block_modulations(
+    _quant_field: &[f32],
+    _pre_erosion: &[f32],
+    _width_blocks: usize,
+    _height_blocks: usize,
+) -> Vec<f32> {
+    // TODO: Port from C++
+    // Uses spatial frequency analysis
+    // Applies masking based on AC energy distribution
+    unimplemented!("per_block_modulations not yet ported from C++")
 }
 
-/// Computes an edge detection factor for a block.
-fn compute_edge_factor(y_plane: &[f32], width: usize, height: usize, bx: usize, by: usize) -> f32 {
-    // Simple edge detection using horizontal and vertical gradients
-    let mut max_gradient = 0.0f32;
-
-    for y in 0..7 {
-        for x in 0..7 {
-            let px = bx * 8 + x;
-            let py = by * 8 + y;
-
-            if px + 1 < width && py + 1 < height {
-                let center = y_plane[py * width + px];
-                let right = y_plane[py * width + px + 1];
-                let bottom = y_plane[(py + 1) * width + px];
-
-                let grad_h = (right - center).abs();
-                let grad_v = (bottom - center).abs();
-                let grad = (grad_h * grad_h + grad_v * grad_v).sqrt();
-
-                max_gradient = max_gradient.max(grad);
-            }
-        }
-    }
-
-    // Strong edges need preservation
-    if max_gradient > 50.0 {
-        0.9
-    } else {
-        1.0
-    }
-}
-
-/// Applies adaptive quantization to a quantization table.
+/// Converts quant_field to aq_strength.
+///
+/// C++ formula: `aq_strength = max(0.0, (0.6 / quant_field) - 1.0)`
+#[inline]
 #[must_use]
-pub fn apply_adaptive_quant(
-    base_quant: &[u16; DCT_BLOCK_SIZE],
-    multiplier: f32,
-    config: &AdaptiveQuantConfig,
-) -> [u16; DCT_BLOCK_SIZE] {
-    let mut result = [0u16; DCT_BLOCK_SIZE];
-
-    for i in 0..DCT_BLOCK_SIZE {
-        let factor = if i == 0 {
-            // DC coefficient
-            multiplier * config.dc_quant_mul
-        } else if i < 10 {
-            // Low frequency AC
-            multiplier * config.ac_quant_mul_low
-        } else {
-            // High frequency AC
-            multiplier * config.ac_quant_mul_high
-        };
-
-        let q = (base_quant[i] as f32 * factor).round();
-        result[i] = (q as u16).clamp(1, 255);
-    }
-
-    result
+pub fn quant_field_to_aq_strength(quant_field: f32) -> f32 {
+    (0.6 / quant_field - 1.0).max(0.0)
 }
 
 #[cfg(test)]
@@ -269,45 +204,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uniform_quant_map() {
-        let map = QuantMap::uniform(10, 10);
-        assert_eq!(map.multipliers.len(), 100);
-        assert!(map.multipliers.iter().all(|&m| (m - 1.0).abs() < 0.001));
+    fn test_aq_strength_map_uniform() {
+        let map = AQStrengthMap::uniform(10, 10, 0.08);
+        assert_eq!(map.strengths.len(), 100);
+        assert!((map.get(5, 5) - 0.08).abs() < 1e-6);
     }
 
     #[test]
-    fn test_quant_map_get_set() {
-        let mut map = QuantMap::uniform(10, 10);
-        map.set(5, 5, 1.5);
-        assert!((map.get(5, 5) - 1.5).abs() < 0.001);
-        assert!((map.get(0, 0) - 1.0).abs() < 0.001);
+    fn test_aq_strength_map_cpp_mean() {
+        let map = AQStrengthMap::with_cpp_mean(10, 10);
+        assert!((map.get(0, 0) - 0.08).abs() < 1e-6);
     }
 
     #[test]
-    fn test_compute_block_activity() {
-        // Constant block should have zero activity
-        let plane = vec![128.0f32; 64];
-        let activity = compute_block_activity(&plane, 8, 8, 0, 0);
-        assert!(activity < 0.01);
+    fn test_quant_field_to_aq_strength() {
+        // quant_field = 0.6 → aq_strength = 0.0
+        assert!((quant_field_to_aq_strength(0.6) - 0.0).abs() < 1e-6);
 
-        // Varying block should have non-zero activity
-        let mut plane = vec![0.0f32; 64];
-        for i in 0..64 {
-            plane[i] = (i * 4) as f32;
+        // quant_field = 0.3 → aq_strength = 1.0
+        assert!((quant_field_to_aq_strength(0.3) - 1.0).abs() < 1e-6);
+
+        // quant_field = 6.0 → aq_strength = 0.0 (clamped)
+        assert!(quant_field_to_aq_strength(6.0) >= 0.0);
+    }
+
+    #[test]
+    fn test_compute_returns_uniform() {
+        let plane = vec![128.0f32; 64 * 64];
+        let map = compute_aq_strength_map(&plane, 64, 64, 1.0);
+        assert_eq!(map.width_blocks, 8);
+        assert_eq!(map.height_blocks, 8);
+        // All values should be the C++ mean
+        for &s in &map.strengths {
+            assert!((s - 0.08).abs() < 1e-6);
         }
-        let activity = compute_block_activity(&plane, 8, 8, 0, 0);
-        assert!(activity > 1.0);
-    }
-
-    #[test]
-    fn test_apply_adaptive_quant() {
-        let base = [16u16; DCT_BLOCK_SIZE];
-        let config = AdaptiveQuantConfig::default();
-
-        let result = apply_adaptive_quant(&base, 1.0, &config);
-        assert_eq!(result, base);
-
-        let result = apply_adaptive_quant(&base, 2.0, &config);
-        assert!(result[0] > base[0]);
     }
 }

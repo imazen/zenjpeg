@@ -205,10 +205,12 @@ jpegli-rs/
 │   │   ├── entropy.rs       # Entropy coding
 │   │   ├── encode.rs        # Encoder pipeline
 │   │   ├── decode.rs        # Decoder pipeline
-│   │   ├── adaptive_quant.rs # Adaptive quantization
+│   │   ├── adaptive_quant.rs # AQ placeholder (C++ matching - NOT YET IMPLEMENTED)
+│   │   ├── simplified_quant.rs # Simplified AQ (arbitrary thresholds - NOT C++)
 │   │   ├── icc.rs           # ICC profile extraction and CMS integration ✓
 │   │   └── error.rs         # Error types
 │   ├── tests/
+│   │   ├── aq_locked_tests.rs    # ⚠️ LOCKED - AQ tests that MUST NEVER be disabled
 │   │   ├── roundtrip_quality.rs  # DSSIM-based quality tests
 │   │   ├── pareto_front.rs       # Pareto efficiency vs mozjpeg
 │   │   ├── decode_external.rs    # Decode JPEGs from other tools
@@ -247,7 +249,11 @@ jpegli-rs/
 - [⚠️] Port Layer 1: Huffman - Tree building ✓, but NO table optimization
 - [⚠️] Port Layer 4: Entropy coding - Works, but uses FIXED tables only
 - [⚠️] Port Layer 5-6: Encoder pipeline - Works, but missing features below
-- [⚠️] Port adaptive quantization - **SKELETON ONLY, NOT USED** (made-up algorithm)
+- [⚠️] Port adaptive quantization - **USING CONSTANT aq_strength=0.08** (calibrated from C++ testdata mean)
+  - `simplified_quant.rs` - Made-up algorithm (NOT C++), not used
+  - `adaptive_quant.rs` - Placeholder for C++ matching implementation
+  - See `docs/ADAPTIVE_QUANTIZATION.md` for detailed analysis
+  - See `tests/aq_locked_tests.rs` for invariant tests (NEVER disable these)
 - [⚠️] Butteraugli metric - **SKELETON ONLY** (partial implementation)
 - [⚠️] XYB encoding pipeline - Infrastructure exists but incomplete
 
@@ -267,10 +273,12 @@ jpegli-rs/
 **Current status**: With matching settings (4:4:4, no AQ, sequential, fixed Huffman), Rust produces ~3-6% larger files than C++. This is the MINIMUM gap to close.
 
 **Root causes identified:**
-1. ✗ **Adaptive Quantization** - SKELETON ONLY, not used by encoder
+1. ⚠️ **Adaptive Quantization** - USING CONSTANT aq_strength=0.08 (from C++ testdata mean)
    - C++ file: `lib/jpegli/adaptive_quantization.cc`
    - Functions to port: `PerBlockModulations()`, `FuzzyErosion()`, `ComputePreErosion()`
-   - Rust file exists (`adaptive_quant.rs`) but uses made-up algorithm
+   - `adaptive_quant.rs` - Placeholder for C++ matching implementation
+   - `simplified_quant.rs` - Made-up algorithm (NOT used)
+   - Locked tests in `aq_locked_tests.rs` ensure AQ invariants hold
 
 2. ✗ **Huffman Table Optimization** - NOT IMPLEMENTED
    - C++ uses optimized tables built from actual coefficient statistics

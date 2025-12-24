@@ -408,14 +408,62 @@ fn load_testdata(path: &str) -> Vec<ComputeAQTest> {
 
 ---
 
+## Previous Failed Port
+
+### Location
+`/home/lilith/work/jpeg-encoder/src/jpegli/adaptive_quantization.rs`
+
+### Status: FAILED - Never Successfully Troubleshooted
+
+A previous attempt was made to port the C++ AQ to Rust in a separate project. This port:
+
+**What it attempted:**
+- Ported `compute_pre_erosion_scalar` - downsampling with gamma correction
+- Ported `fuzzy_erosion_scalar` - morphological min-filter
+- Ported `per_block_modulations_scalar` - HF/gamma modulations
+- Ported `compute_mask_scalar` - perceptual masking curve
+- Ported `ratio_of_derivatives` - gamma function
+
+**Why it failed:**
+1. **Wrong algorithm structure** - Applied modulations in wrong order
+2. **Incorrect constants** - Some K_* values didn't match C++
+3. **Missing FastPow2f** - Used `exp()` instead of C++ approximation
+4. **Wrong coordinate mapping** - Pre-erosion to block level mapping errors
+5. **Output range mismatch** - Produced values in wrong range
+6. **No verification** - No testdata comparison to detect errors
+
+**Lessons learned:**
+- Must use testdata for verification at EVERY stage
+- Must match C++ algorithm structure exactly
+- Must use same approximations (FastLog2f, FastPow2f)
+- Pure functions should be tested independently first
+
+**Key code snippets that were wrong:**
+```rust
+// WRONG: Used center pixel instead of full block
+let hf_modulated_val = hf_modulation_scalar(
+    x_start + 1, y_start + 1,  // Should iterate all 8x8
+    input_scaled, width, height,
+    current_val
+);
+
+// WRONG: Mask applied after modulations instead of before
+let mask_val = compute_mask_scalar(gamma_modulated_val);
+
+// WRONG: Used ln instead of FastLog2f
+let modulation = K_GAMMA_MOD_GAMMA * log_arg.ln();
+```
+
+---
+
 ## Current Rust Implementation
 
 ### File Location
 `jpegli/src/adaptive_quant.rs`
 
-### Current Status: SKELETON - NOT MATCHING C++
+### Current Status: SIMPLIFIED - NOT PER-BLOCK
 
-The current Rust implementation uses a **completely different algorithm**:
+The current Rust implementation uses a **completely different simplified algorithm**:
 
 | Aspect | C++ | Rust |
 |--------|-----|------|
@@ -656,3 +704,94 @@ for (int y = 0; y < cinfo->max_v_samp_factor; ++y) {
 ```
 
 This transforms the modulated values (typically 0.3-0.6) to aq_strength (0.0-0.2).
+
+---
+
+## FFI Testing Strategy
+
+### Overview
+
+To ensure correctness, we can call C++ functions via FFI and compare results in real-time.
+
+### Building C++ as a Library
+
+Create `lib/jpegli/aq_ffi.cc`:
+```cpp
+extern "C" {
+    float compute_mask_ffi(float out_val);
+    float ratio_of_derivatives_ffi(float v, bool invert);
+    float fast_log2f_ffi(float x);
+    float fast_pow2f_ffi(float x);
+}
+```
+
+### CMake Integration
+
+```cmake
+add_library(jpegli_aq_ffi SHARED
+    lib/jpegli/aq_ffi.cc
+)
+target_link_libraries(jpegli_aq_ffi jpegli-static)
+```
+
+### Rust FFI Bindings
+
+```rust
+#[link(name = "jpegli_aq_ffi")]
+extern "C" {
+    fn compute_mask_ffi(out_val: f32) -> f32;
+    fn ratio_of_derivatives_ffi(v: f32, invert: bool) -> f32;
+    fn fast_log2f_ffi(x: f32) -> f32;
+    fn fast_pow2f_ffi(x: f32) -> f32;
+}
+```
+
+### Parallel Verification Test
+
+```rust
+#[test]
+fn test_compute_mask_matches_cpp() {
+    for i in 0..10000 {
+        let v = (i as f32) * 0.001;
+        let rust = compute_mask(v);
+        let cpp = unsafe { compute_mask_ffi(v) };
+        assert!(
+            (rust - cpp).abs() < 1e-6,
+            "Mismatch at v={}: rust={}, cpp={}", v, rust, cpp
+        );
+    }
+}
+```
+
+---
+
+## Locked Tests (Never Disable)
+
+### Test File Location
+`jpegli/tests/aq_locked_tests.rs`
+
+### Purpose
+These tests MUST pass before any AQ-related code is merged. They cannot be marked `#[ignore]`.
+
+### Required Tests
+
+1. **test_aq_strength_range** - Output must be in 0.0-0.3 range
+2. **test_aq_mean_matches_cpp** - Mean aq_strength within 10% of C++ testdata
+3. **test_aq_improves_quality** - Enabling AQ must not degrade DSSIM by >5%
+4. **test_aq_reduces_size** - Enabling AQ must reduce file size at Q90+
+5. **test_pure_functions_match_cpp** - ComputeMask, ratio_gamma, FastLog2f/Pow2f
+
+### Enforcement
+
+In `CLAUDE.md`:
+```markdown
+## MANDATORY: AQ Test Lock
+
+The following tests in `aq_locked_tests.rs` MUST NEVER be:
+- Marked as `#[ignore]`
+- Deleted
+- Have their assertions weakened
+
+If these tests fail, the AQ implementation is BROKEN and must be fixed
+before any other work continues.
+```
