@@ -394,13 +394,23 @@ C++ modifications for instrumentation will be maintained independently.
 
 ## Quality Metrics
 
+### ⚠️ MANDATORY: Use DSSIM, NOT PSNR
+
+**PSNR is banned for new tests.** It's statistically misleading and doesn't correlate well with perceptual quality.
+
+| ❌ DON'T | ✅ DO INSTEAD |
+|----------|---------------|
+| `PSNR = 10 * log10(255^2 / MSE)` | `dssim::Dssim::new().compare()` |
+| "PSNR is 41.8 dB" | "DSSIM is 0.00123" |
+| Compare PSNR values | Compare DSSIM values |
+
 ### Available Metrics
 
-| Metric | Crate | Description | Range |
-|--------|-------|-------------|-------|
-| DSSIM | `dssim` | Structural dissimilarity | 0 = identical, lower = better |
-| SSIMULACRA2 | `ssimulacra2` | Perceptual quality | 100 = identical, higher = better |
-| Butteraugli | `jpegli::butteraugli` | Psychovisual distance | < 1.0 = good, > 2.0 = bad |
+| Metric | Crate | Description | Range | Use For |
+|--------|-------|-------------|-------|---------|
+| DSSIM | `dssim` | Structural dissimilarity | 0 = identical, lower = better | **Primary metric** |
+| SSIMULACRA2 | `ssimulacra2` | Perceptual quality | 100 = identical, higher = better | Secondary metric |
+| Butteraugli | `jpegli::butteraugli` | Psychovisual distance | < 1.0 = good, > 2.0 = bad | XYB mode validation |
 
 ### Using Metrics in Tests
 
