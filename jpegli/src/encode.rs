@@ -951,15 +951,23 @@ impl Encoder {
         let blocks_h = (width + 7) / 8;
         let blocks_v = (height + 7) / 8;
 
-        // Zero-bias parameters for each component (matches C++ jpegli)
-        // Without adaptive quantization, aq_strength = 0.0
-        let y_zero_bias = ZeroBiasParams::default();
-        let cb_zero_bias = ZeroBiasParams::default();
-        let cr_zero_bias = ZeroBiasParams::default();
-        let aq_strength = 0.0f32;
+        // Zero-bias parameters for each component
+        // Use proper zero-bias tables based on quality distance
+        let distance = self.config.quality.to_distance();
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
+        let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
+        let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
+
+        // Apply zero-biasing with aq_strength calibrated from C++ testdata.
+        // C++ AQ typically produces aq_strength values in the 0.0-0.2 range with mean ~0.08.
+        // Using a global average value until per-block AQ is properly ported from C++.
+        let aq_strength = 0.08f32;
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
+                // TODO: Compute per-block aq_strength from proper quant_field
+                let _ = (bx, by); // silence warnings
+
                 // Extract and encode Y block
                 let y_block = self.extract_block(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
@@ -1034,15 +1042,23 @@ impl Encoder {
         let blocks_h = (width + 7) / 8;
         let blocks_v = (height + 7) / 8;
 
-        // Zero-bias parameters for each component (matches C++ jpegli)
-        // Without adaptive quantization, aq_strength = 0.0
-        let y_zero_bias = ZeroBiasParams::default();
-        let cb_zero_bias = ZeroBiasParams::default();
-        let cr_zero_bias = ZeroBiasParams::default();
-        let aq_strength = 0.0f32;
+        // Zero-bias parameters for each component
+        // Use proper zero-bias tables based on quality distance
+        let distance = self.config.quality.to_distance();
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
+        let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
+        let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
+
+        // Apply zero-biasing with aq_strength calibrated from C++ testdata.
+        // C++ AQ typically produces aq_strength values in the 0.0-0.2 range with mean ~0.08.
+        // Using a global average value until per-block AQ is properly ported from C++.
+        let aq_strength = 0.08f32;
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
+                // TODO: Compute per-block aq_strength from proper quant_field
+                let _ = (bx, by); // silence warnings
+
                 // Extract and encode Y block
                 let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);

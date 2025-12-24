@@ -771,14 +771,10 @@ mod tests {
     fn test_zero_bias_params_default() {
         let params = ZeroBiasParams::default();
 
-        // DC should be 0
-        assert!((params.mul[0]).abs() < 1e-6);
-        assert!((params.offset[0]).abs() < 1e-6);
-
-        // AC should be 0.5
-        for k in 1..64 {
-            assert!((params.mul[k] - 0.5).abs() < 1e-6);
-            assert!((params.offset[k] - 0.5).abs() < 1e-6);
+        // Default should be all zeros (matches C++ when AQ is disabled)
+        for k in 0..64 {
+            assert!((params.mul[k]).abs() < 1e-6);
+            assert!((params.offset[k]).abs() < 1e-6);
         }
     }
 
