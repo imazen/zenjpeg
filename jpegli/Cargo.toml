@@ -19,9 +19,11 @@ moxcms = { workspace = true, optional = true }
 jpeg-decoder = { workspace = true, optional = true }
 
 [dev-dependencies]
+chrono = "0.4"
 approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
+test-case = { workspace = true }
 png = { workspace = true }
 dssim = { workspace = true }
 ssimulacra2 = { workspace = true }
@@ -46,6 +48,8 @@ cms-lcms2 = ["dep:lcms2", "dep:jpeg-decoder"]
 cms-moxcms = ["dep:moxcms", "dep:jpeg-decoder"]
 # Enable debug token serialization for C++ comparison
 debug-tokens = []
+# Enable test utilities (image generation, quality verification)
+test-utils = []
 
 [[bench]]
 name = "encode"

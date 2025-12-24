@@ -80,6 +80,10 @@ pub mod error;
 // ICC color management
 pub mod icc;
 
+// Test utilities (available for tests and examples)
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 // ============================================================================
 // Re-exports for public API
 // ============================================================================
