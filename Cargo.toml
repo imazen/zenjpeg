@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "butteraugli",
     "jpegli",
     "jpegli-sys",
 ]
@@ -49,6 +50,9 @@ codec-eval = { path = "/home/lilith/work/codec-eval" }
 # FFI
 libc = "0.2"
 libloading = "0.8"
+
+# Local crates
+butteraugli = { path = "butteraugli" }
 
 # SIMD dispatch
 multiversion = "0.7"

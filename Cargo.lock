@@ -130,6 +130,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
+name = "butteraugli"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "png",
+ "wide",
+]
+
+[[package]]
 name = "byte-slice-cast"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -652,6 +661,7 @@ dependencies = [
  "approx",
  "arrayref",
  "bincode",
+ "butteraugli",
  "bytemuck",
  "chrono",
  "codec-eval",
