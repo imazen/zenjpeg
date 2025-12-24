@@ -127,12 +127,13 @@ pub struct ZeroBiasParams {
 
 impl Default for ZeroBiasParams {
     fn default() -> Self {
-        // Default: 0.5 for all non-DC, 0.0 for DC
-        let mut mul = [0.5; DCT_BLOCK_SIZE];
-        let mut offset = [0.5; DCT_BLOCK_SIZE];
-        mul[0] = 0.0;
-        offset[0] = 0.0;
-        Self { mul, offset }
+        // Default: all zeros (matches C++ when adaptive quantization is disabled)
+        // When AQ is off, C++ sets zero_bias_mul and zero_bias_offset to 0
+        // This means no coefficients are biased toward zero based on threshold
+        Self {
+            mul: [0.0; DCT_BLOCK_SIZE],
+            offset: [0.0; DCT_BLOCK_SIZE],
+        }
     }
 }
 
@@ -479,6 +480,69 @@ pub fn quantize_block(
         result[i] = quantize(coeffs[i], quant[i]);
     }
     result
+}
+
+/// Quantizes a block of DCT coefficients with zero-biasing.
+///
+/// This matches C++ jpegli's quantization behavior where small coefficients
+/// are biased toward zero to improve compression.
+///
+/// The threshold is: `offset + mul * aq_strength`
+/// - If `|coeff/quant| >= threshold`: round normally
+/// - Else: set to 0
+///
+/// For non-adaptive quantization, use aq_strength = 0.0
+/// Counter for debugging zero-bias effectiveness
+#[cfg(debug_assertions)]
+static ZERO_BIAS_DEBUG: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(debug_assertions)]
+static ZERO_BIAS_ZEROS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn quantize_block_with_zero_bias(
+    coeffs: &[f32; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    zero_bias: &ZeroBiasParams,
+    aq_strength: f32,
+) -> [i16; DCT_BLOCK_SIZE] {
+    let mut result = [0i16; DCT_BLOCK_SIZE];
+    for k in 0..DCT_BLOCK_SIZE {
+        let q = quant[k] as f32;
+        let qval = coeffs[k] / q;
+        let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
+
+        if qval.abs() >= threshold {
+            result[k] = qval.round() as i16;
+        }
+        // else result[k] stays 0
+    }
+    result
+}
+
+/// Alternative: compare with simple quantization
+pub fn quantize_block_compare(
+    coeffs: &[f32; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    zero_bias: &ZeroBiasParams,
+    aq_strength: f32,
+) -> ([i16; DCT_BLOCK_SIZE], usize) {
+    let mut result = [0i16; DCT_BLOCK_SIZE];
+    let mut zeros_from_bias = 0usize;
+    for k in 0..DCT_BLOCK_SIZE {
+        let q = quant[k] as f32;
+        let qval = coeffs[k] / q;
+        let simple_result = qval.round() as i16;
+        let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
+
+        if qval.abs() >= threshold {
+            result[k] = simple_result;
+        } else {
+            // Would have been non-zero without zero-biasing
+            if simple_result != 0 {
+                zeros_from_bias += 1;
+            }
+        }
+    }
+    (result, zeros_from_bias)
 }
 
 /// Dequantizes a block of coefficients.
