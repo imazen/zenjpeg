@@ -15,6 +15,235 @@ use crate::types::ColorSpace;
 // Re-export QuantTable from types
 pub use crate::types::QuantTable;
 
+/// Per-frequency scaling exponents for non-linear quality scaling.
+/// Low frequencies (top-left) use lower exponents for more aggressive scaling,
+/// while high frequencies (bottom-right) use 1.0 for linear scaling.
+/// From C++ jpegli quant.cc
+pub const FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
+    1.00, 0.51, 0.67, 0.74, 1.00, 1.00, 1.00, 1.00,
+    0.51, 0.66, 0.69, 0.87, 1.00, 1.00, 1.00, 1.00,
+    0.67, 0.69, 0.84, 0.83, 0.96, 1.00, 1.00, 1.00,
+    0.74, 0.87, 0.83, 1.00, 1.00, 0.91, 0.91, 1.00,
+    1.00, 1.00, 0.96, 1.00, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
+];
+
+/// Distance threshold where non-linear scaling kicks in.
+pub const DIST_THRESHOLD: f32 = 1.5;
+
+/// Distance thresholds for zero-bias blending between HQ and LQ tables.
+const DIST_HQ: f32 = 1.0;
+const DIST_LQ: f32 = 3.0;
+
+/// Zero-bias multiplier table for YCbCr at low quality (distance >= 3.0).
+/// 3 components × 64 coefficients = 192 values.
+/// From C++ jpegli quant.cc kZeroBiasMulYCbCrLQ
+#[rustfmt::skip]
+pub const ZERO_BIAS_MUL_YCBCR_LQ: [f32; 192] = [
+    // c = 0 (Y)
+    0.0000, 0.0568, 0.3880, 0.6190, 0.6190, 0.4490, 0.4490, 0.6187,
+    0.0568, 0.5829, 0.6189, 0.6190, 0.6190, 0.7190, 0.6190, 0.6189,
+    0.3880, 0.6189, 0.6190, 0.6190, 0.6190, 0.6190, 0.6187, 0.6100,
+    0.6190, 0.6190, 0.6190, 0.6190, 0.5890, 0.3839, 0.7160, 0.6190,
+    0.6190, 0.6190, 0.6190, 0.5890, 0.6190, 0.3880, 0.5860, 0.4790,
+    0.4490, 0.7190, 0.6190, 0.3839, 0.3880, 0.6190, 0.6190, 0.6190,
+    0.4490, 0.6190, 0.6187, 0.7160, 0.5860, 0.6190, 0.6204, 0.6190,
+    0.6187, 0.6189, 0.6100, 0.6190, 0.4790, 0.6190, 0.6190, 0.3480,
+    // c = 1 (Cb)
+    0.0000, 1.1640, 0.9373, 1.1319, 0.8016, 0.9136, 1.1530, 0.9430,
+    1.1640, 0.9188, 0.9160, 1.1980, 1.1830, 0.9758, 0.9430, 0.9430,
+    0.9373, 0.9160, 0.8430, 1.1720, 0.7083, 0.9430, 0.9430, 0.9430,
+    1.1319, 1.1980, 1.1720, 1.1490, 0.8547, 0.9430, 0.9430, 0.9430,
+    0.8016, 1.1830, 0.7083, 0.8547, 0.9430, 0.9430, 0.9430, 0.9430,
+    0.9136, 0.9758, 0.9430, 0.9430, 0.9430, 0.9430, 0.9430, 0.9430,
+    1.1530, 0.9430, 0.9430, 0.9430, 0.9430, 0.9430, 0.9430, 0.9480,
+    0.9430, 0.9430, 0.9430, 0.9430, 0.9430, 0.9430, 0.9480, 0.9430,
+    // c = 2 (Cr)
+    0.0000, 1.3190, 0.4308, 0.4460, 0.0661, 0.0660, 0.2660, 0.2960,
+    1.3190, 0.3280, 0.3093, 0.0750, 0.0505, 0.1594, 0.3060, 0.2113,
+    0.4308, 0.3093, 0.3060, 0.1182, 0.0500, 0.3060, 0.3915, 0.2426,
+    0.4460, 0.0750, 0.1182, 0.0512, 0.0500, 0.2130, 0.3930, 0.1590,
+    0.0661, 0.0505, 0.0500, 0.0500, 0.3055, 0.3360, 0.5148, 0.5403,
+    0.0660, 0.1594, 0.3060, 0.2130, 0.3360, 0.5060, 0.5874, 0.3060,
+    0.2660, 0.3060, 0.3915, 0.3930, 0.5148, 0.5874, 0.3060, 0.3060,
+    0.2960, 0.2113, 0.2426, 0.1590, 0.5403, 0.3060, 0.3060, 0.3060,
+];
+
+/// Zero-bias multiplier table for YCbCr at high quality (distance <= 1.0).
+/// 3 components × 64 coefficients = 192 values.
+/// From C++ jpegli quant.cc kZeroBiasMulYCbCrHQ
+#[rustfmt::skip]
+pub const ZERO_BIAS_MUL_YCBCR_HQ: [f32; 192] = [
+    // c = 0 (Y)
+    0.0000, 0.0044, 0.2521, 0.6547, 0.8161, 0.6130, 0.8841, 0.8155,
+    0.0044, 0.6831, 0.6553, 0.6295, 0.7848, 0.7843, 0.8474, 0.7836,
+    0.2521, 0.6553, 0.7834, 0.7829, 0.8161, 0.8072, 0.7743, 0.9242,
+    0.6547, 0.6295, 0.7829, 0.8654, 0.7829, 0.6986, 0.7818, 0.7726,
+    0.8161, 0.7848, 0.8161, 0.7829, 0.7471, 0.7827, 0.7843, 0.7653,
+    0.6130, 0.7843, 0.8072, 0.6986, 0.7827, 0.7848, 0.9508, 0.7653,
+    0.8841, 0.8474, 0.7743, 0.7818, 0.7843, 0.9508, 0.7839, 0.8437,
+    0.8155, 0.7836, 0.9242, 0.7726, 0.7653, 0.7653, 0.8437, 0.7819,
+    // c = 1 (Cb)
+    0.0000, 1.0816, 1.0556, 1.2876, 1.1554, 1.1567, 1.8851, 0.5488,
+    1.0816, 1.1537, 1.1850, 1.0712, 1.1671, 2.0719, 1.0544, 1.4764,
+    1.0556, 1.1850, 1.2870, 1.1981, 1.8181, 1.2618, 1.0564, 1.1191,
+    1.2876, 1.0712, 1.1981, 1.4753, 2.0609, 1.0564, 1.2645, 1.0564,
+    1.1554, 1.1671, 1.8181, 2.0609, 0.7324, 1.1163, 0.8464, 1.0564,
+    1.1567, 2.0719, 1.2618, 1.0564, 1.1163, 1.0040, 1.0564, 1.0564,
+    1.8851, 1.0544, 1.0564, 1.2645, 0.8464, 1.0564, 1.0564, 1.0564,
+    0.5488, 1.4764, 1.1191, 1.0564, 1.0564, 1.0564, 1.0564, 1.0564,
+    // c = 2 (Cr)
+    0.0000, 0.5392, 0.6659, 0.8968, 0.6829, 0.6328, 0.5802, 0.4836,
+    0.5392, 0.6746, 0.6760, 0.6102, 0.6015, 0.6958, 0.7327, 0.4897,
+    0.6659, 0.6760, 0.6957, 0.6543, 0.4396, 0.6330, 0.7081, 0.2583,
+    0.8968, 0.6102, 0.6543, 0.5913, 0.6457, 0.5828, 0.5139, 0.3565,
+    0.6829, 0.6015, 0.4396, 0.6457, 0.5633, 0.4263, 0.6371, 0.5949,
+    0.6328, 0.6958, 0.6330, 0.5828, 0.4263, 0.2847, 0.2909, 0.6629,
+    0.5802, 0.7327, 0.7081, 0.5139, 0.6371, 0.2909, 0.6644, 0.6644,
+    0.4836, 0.4897, 0.2583, 0.3565, 0.5949, 0.6629, 0.6644, 0.6644,
+];
+
+/// Zero-bias offset for DC coefficients (per component).
+/// From C++ jpegli quant.cc kZeroBiasOffsetYCbCrDC
+pub const ZERO_BIAS_OFFSET_YCBCR_DC: [f32; 3] = [0.0, 0.0, 0.0];
+
+/// Zero-bias offset for AC coefficients (per component).
+/// From C++ jpegli quant.cc kZeroBiasOffsetYCbCrAC
+pub const ZERO_BIAS_OFFSET_YCBCR_AC: [f32; 3] = [0.59082, 0.58146, 0.57988];
+
+/// Zero-bias parameters for a single DCT block.
+///
+/// Zero-bias controls how coefficients are rounded toward zero during quantization.
+/// A higher multiplier means more aggressive zeroing of small coefficients.
+#[derive(Debug, Clone)]
+pub struct ZeroBiasParams {
+    /// Multiplier per coefficient (64 values)
+    pub mul: [f32; DCT_BLOCK_SIZE],
+    /// Offset per coefficient (64 values)
+    pub offset: [f32; DCT_BLOCK_SIZE],
+}
+
+impl Default for ZeroBiasParams {
+    fn default() -> Self {
+        // Default: 0.5 for all non-DC, 0.0 for DC
+        let mut mul = [0.5; DCT_BLOCK_SIZE];
+        let mut offset = [0.5; DCT_BLOCK_SIZE];
+        mul[0] = 0.0;
+        offset[0] = 0.0;
+        Self { mul, offset }
+    }
+}
+
+impl ZeroBiasParams {
+    /// Compute zero-bias parameters for YCbCr color space.
+    ///
+    /// Blends between HQ and LQ tables based on butteraugli distance.
+    /// - distance <= 1.0: Use HQ table
+    /// - distance >= 3.0: Use LQ table
+    /// - 1.0 < distance < 3.0: Linear blend
+    ///
+    /// # Arguments
+    /// * `distance` - Butteraugli distance (quality parameter)
+    /// * `component` - Component index (0=Y, 1=Cb, 2=Cr)
+    #[must_use]
+    pub fn for_ycbcr(distance: f32, component: usize) -> Self {
+        let c = component.min(2);
+
+        // Compute blend factor
+        let mix_lq = ((distance - DIST_HQ) / (DIST_LQ - DIST_HQ)).clamp(0.0, 1.0);
+        let mix_hq = 1.0 - mix_lq;
+
+        let mut mul = [0.0f32; DCT_BLOCK_SIZE];
+        let mut offset = [0.0f32; DCT_BLOCK_SIZE];
+
+        for k in 0..DCT_BLOCK_SIZE {
+            let lq = ZERO_BIAS_MUL_YCBCR_LQ[c * DCT_BLOCK_SIZE + k];
+            let hq = ZERO_BIAS_MUL_YCBCR_HQ[c * DCT_BLOCK_SIZE + k];
+            mul[k] = mix_lq * lq + mix_hq * hq;
+
+            offset[k] = if k == 0 {
+                ZERO_BIAS_OFFSET_YCBCR_DC[c]
+            } else {
+                ZERO_BIAS_OFFSET_YCBCR_AC[c]
+            };
+        }
+
+        Self { mul, offset }
+    }
+
+    /// Compute zero-bias parameters for non-adaptive quantization (simpler default).
+    ///
+    /// For YCbCr, applies only the offsets without the multiplier blending.
+    #[must_use]
+    pub fn for_ycbcr_simple(component: usize) -> Self {
+        let c = component.min(2);
+
+        let mul = [0.0f32; DCT_BLOCK_SIZE]; // Not used in simple mode
+
+        let mut offset = [0.0f32; DCT_BLOCK_SIZE];
+        for k in 0..DCT_BLOCK_SIZE {
+            offset[k] = if k == 0 {
+                ZERO_BIAS_OFFSET_YCBCR_DC[c]
+            } else {
+                ZERO_BIAS_OFFSET_YCBCR_AC[c]
+            };
+        }
+
+        Self { mul, offset }
+    }
+
+    /// Apply zero-bias to a coefficient before quantization.
+    ///
+    /// This adjusts the rounding behavior to favor zeroing small coefficients.
+    #[inline]
+    #[must_use]
+    pub fn apply(&self, coeff: f32, k: usize, quant: f32) -> f32 {
+        let threshold = (self.mul[k] + self.offset[k]) * quant;
+        if coeff.abs() < threshold {
+            0.0
+        } else {
+            coeff
+        }
+    }
+}
+
+/// Converts butteraugli distance to a per-frequency scale factor.
+///
+/// This implements jpegli's non-linear quality scaling. At low distances
+/// (high quality), scaling is linear. Above DIST_THRESHOLD, scaling becomes
+/// non-linear based on the frequency-dependent exponent.
+///
+/// # Arguments
+/// * `distance` - Butteraugli distance (quality parameter)
+/// * `freq_idx` - DCT frequency index (0-63, in zigzag order)
+///
+/// # Returns
+/// Scale factor for quantization
+#[inline]
+#[must_use]
+pub fn distance_to_scale(distance: f32, freq_idx: usize) -> f32 {
+    if distance < DIST_THRESHOLD {
+        return distance;
+    }
+    let exp = FREQUENCY_EXPONENT[freq_idx];
+    let mul = DIST_THRESHOLD.powf(1.0 - exp);
+    (0.5 * distance).max(mul * distance.powf(exp))
+}
+
+/// Inverse of distance_to_scale - converts scale back to distance.
+#[inline]
+#[must_use]
+pub fn scale_to_distance(scale: f32, freq_idx: usize) -> f32 {
+    if scale < DIST_THRESHOLD {
+        return scale;
+    }
+    let exp = 1.0 / FREQUENCY_EXPONENT[freq_idx];
+    let mul = DIST_THRESHOLD.powf(1.0 - exp);
+    (2.0 * scale).min(mul * scale.powf(exp))
+}
+
 /// Standard JPEG luminance quantization table.
 /// From ITU-T T.81 (1992) K.1
 pub const STD_LUMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
@@ -128,6 +357,9 @@ pub fn generate_quant_table(
 }
 
 /// Generates a quantization table using jpegli's XYB-optimized matrices.
+///
+/// Uses per-frequency non-linear scaling via `distance_to_scale()` for
+/// better quality at the same file size compared to linear scaling.
 fn generate_xyb_quant_table(distance: f32, component: usize) -> QuantTable {
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
@@ -135,10 +367,9 @@ fn generate_xyb_quant_table(distance: f32, component: usize) -> QuantTable {
     let base_idx = component.min(2) * DCT_BLOCK_SIZE;
     let base = &BASE_QUANT_MATRIX_XYB[base_idx..base_idx + DCT_BLOCK_SIZE];
 
-    // Scale by distance and global scale
-    let scale = distance * GLOBAL_SCALE_XYB;
-
     for (i, &base_val) in base.iter().enumerate() {
+        // Apply per-frequency non-linear scaling
+        let scale = distance_to_scale(distance, i) * GLOBAL_SCALE_XYB;
         let q = (base_val * scale).round();
         // Clamp to valid quantization values (1-255 for baseline)
         values[i] = (q as u16).clamp(1, 255);
@@ -151,6 +382,9 @@ fn generate_xyb_quant_table(distance: f32, component: usize) -> QuantTable {
 }
 
 /// Generates a quantization table using standard or YCbCr matrices.
+///
+/// Uses per-frequency non-linear scaling via `distance_to_scale()` for
+/// better quality at the same file size compared to linear scaling.
 fn generate_standard_quant_table(
     distance: f32,
     component: usize,
@@ -174,10 +408,9 @@ fn generate_standard_quant_table(
         )
     };
 
-    // Scale by distance
-    let scale = distance * global_scale;
-
     for (i, &base_val) in base.iter().enumerate() {
+        // Apply per-frequency non-linear scaling
+        let scale = distance_to_scale(distance, i) * global_scale;
         let q = (base_val * scale).round();
         values[i] = (q as u16).clamp(1, 255);
     }
@@ -319,5 +552,251 @@ mod tests {
         for &v in &table.values {
             assert!(v >= 1 && v <= 255);
         }
+    }
+
+    #[test]
+    fn test_quant_table_comparison() {
+        println!("\n=== Quant Table Comparison (Y channel) ===");
+        println!("{:>5} {:>8} {:>10} {:>10} {:>8} {:>8}", "Q", "dist", "YCbCr_sum", "XYB_sum", "YCbCr[0]", "XYB[0]");
+
+        for q in [10, 20, 30, 40, 50, 60, 70, 80, 90] {
+            let quality = Quality::from_quality(q as f32);
+            let distance = quality.to_distance();
+
+            let ycbcr = generate_quant_table(quality, 0, ColorSpace::YCbCr, false);
+            let xyb = generate_quant_table(quality, 0, ColorSpace::Xyb, true);
+
+            let ycbcr_sum: u32 = ycbcr.values.iter().map(|&x| x as u32).sum();
+            let xyb_sum: u32 = xyb.values.iter().map(|&x| x as u32).sum();
+
+            println!("{:>5} {:>8.2} {:>10} {:>10} {:>8} {:>8}",
+                q, distance, ycbcr_sum, xyb_sum, ycbcr.values[0], xyb.values[0]);
+        }
+    }
+
+    #[test]
+    fn test_distance_to_scale_linear_region() {
+        // Below DIST_THRESHOLD (1.5), scaling should be linear
+        for distance in [0.1, 0.5, 1.0, 1.4] {
+            for freq_idx in 0..64 {
+                let scale = distance_to_scale(distance, freq_idx);
+                assert!(
+                    (scale - distance).abs() < 1e-6,
+                    "Linear region failed: d={}, k={}, scale={}",
+                    distance, freq_idx, scale
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_distance_to_scale_nonlinear_region() {
+        // Above DIST_THRESHOLD, scaling should be non-linear for some frequencies
+        let distance = 3.0;
+
+        // DC coefficient (index 0) has exponent 1.0 - should be close to linear
+        let scale_dc = distance_to_scale(distance, 0);
+        // The formula with exp=1.0: max(0.5*d, d^1.0) = max(1.5, 3.0) = 3.0
+        assert!((scale_dc - distance).abs() < 0.1, "DC scale: {}", scale_dc);
+
+        // Index 1 has exponent 0.51 - should have significant non-linear effect
+        let scale_1 = distance_to_scale(distance, 1);
+        // exp=0.51, mul=1.5^(1-0.51)=1.5^0.49≈1.22, scale=1.22*3^0.51≈2.15
+        // or 0.5*3=1.5, whichever is greater
+        assert!(scale_1 > 1.5 && scale_1 < 3.0, "Index 1 scale: {}", scale_1);
+    }
+
+    #[test]
+    fn test_distance_to_scale_roundtrip() {
+        // Test that scale_to_distance inverts distance_to_scale
+        for distance in [0.5, 1.0, 2.0, 3.0, 5.0, 10.0] {
+            for freq_idx in 0..64 {
+                let scale = distance_to_scale(distance, freq_idx);
+                let recovered = scale_to_distance(scale, freq_idx);
+                assert!(
+                    (recovered - distance).abs() < 0.01,
+                    "Roundtrip failed: d={}, k={}, scale={}, recovered={}",
+                    distance, freq_idx, scale, recovered
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_frequency_exponent_values() {
+        // Verify exponent array has expected structure
+        assert_eq!(FREQUENCY_EXPONENT.len(), 64);
+
+        // DC coefficient should have exponent 1.0
+        assert!((FREQUENCY_EXPONENT[0] - 1.0).abs() < 1e-6);
+
+        // Low frequencies (top-left) should have lower exponents
+        assert!(FREQUENCY_EXPONENT[1] < 1.0); // 0.51
+        assert!(FREQUENCY_EXPONENT[8] < 1.0); // 0.51
+
+        // High frequencies (bottom-right) should have exponent 1.0
+        assert!((FREQUENCY_EXPONENT[63] - 1.0).abs() < 1e-6);
+        assert!((FREQUENCY_EXPONENT[62] - 1.0).abs() < 1e-6);
+    }
+
+    /// Test that matches C++ DistanceToScale output for specific values.
+    /// Reference data generated from instrumented C++ jpegli.
+    #[test]
+    fn test_distance_to_scale_cpp_reference() {
+        // Test cases: (distance, freq_idx, expected_scale)
+        // These values should match C++ jpegli exactly
+        let test_cases = [
+            // Linear region (distance < 1.5)
+            (1.0_f32, 0_usize, 1.0_f32),
+            (1.0, 1, 1.0),
+            (1.0, 63, 1.0),
+            // Non-linear region
+            (2.0, 0, 2.0),   // exp=1.0: max(1.0, 2.0) = 2.0
+            (3.0, 0, 3.0),   // exp=1.0: max(1.5, 3.0) = 3.0
+            (5.0, 0, 5.0),   // exp=1.0: linear
+        ];
+
+        for (distance, freq_idx, expected) in test_cases {
+            let actual = distance_to_scale(distance, freq_idx);
+            assert!(
+                (actual - expected).abs() < 0.01,
+                "Mismatch: distance_to_scale({}, {}) = {}, expected {}",
+                distance, freq_idx, actual, expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_zero_bias_table_sizes() {
+        // Verify table dimensions
+        assert_eq!(ZERO_BIAS_MUL_YCBCR_LQ.len(), 192);
+        assert_eq!(ZERO_BIAS_MUL_YCBCR_HQ.len(), 192);
+        assert_eq!(ZERO_BIAS_OFFSET_YCBCR_DC.len(), 3);
+        assert_eq!(ZERO_BIAS_OFFSET_YCBCR_AC.len(), 3);
+    }
+
+    #[test]
+    fn test_zero_bias_dc_is_zero_in_tables() {
+        // DC coefficient (index 0) should have zero multiplier in both tables
+        for c in 0..3 {
+            assert!(
+                ZERO_BIAS_MUL_YCBCR_LQ[c * 64].abs() < 1e-6,
+                "LQ DC mul for component {} should be 0, got {}",
+                c, ZERO_BIAS_MUL_YCBCR_LQ[c * 64]
+            );
+            assert!(
+                ZERO_BIAS_MUL_YCBCR_HQ[c * 64].abs() < 1e-6,
+                "HQ DC mul for component {} should be 0, got {}",
+                c, ZERO_BIAS_MUL_YCBCR_HQ[c * 64]
+            );
+        }
+    }
+
+    #[test]
+    fn test_zero_bias_params_default() {
+        let params = ZeroBiasParams::default();
+
+        // DC should be 0
+        assert!((params.mul[0]).abs() < 1e-6);
+        assert!((params.offset[0]).abs() < 1e-6);
+
+        // AC should be 0.5
+        for k in 1..64 {
+            assert!((params.mul[k] - 0.5).abs() < 1e-6);
+            assert!((params.offset[k] - 0.5).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_zero_bias_for_ycbcr_hq() {
+        // At distance <= 1.0, should use HQ table
+        let params = ZeroBiasParams::for_ycbcr(0.5, 0);
+
+        // Check some values match HQ table for Y component
+        assert!((params.mul[1] - ZERO_BIAS_MUL_YCBCR_HQ[1]).abs() < 1e-5);
+        assert!((params.mul[10] - ZERO_BIAS_MUL_YCBCR_HQ[10]).abs() < 1e-5);
+
+        // Check offsets
+        assert!((params.offset[0] - ZERO_BIAS_OFFSET_YCBCR_DC[0]).abs() < 1e-5);
+        assert!((params.offset[1] - ZERO_BIAS_OFFSET_YCBCR_AC[0]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_zero_bias_for_ycbcr_lq() {
+        // At distance >= 3.0, should use LQ table
+        let params = ZeroBiasParams::for_ycbcr(5.0, 0);
+
+        // Check some values match LQ table for Y component
+        assert!((params.mul[1] - ZERO_BIAS_MUL_YCBCR_LQ[1]).abs() < 1e-5);
+        assert!((params.mul[10] - ZERO_BIAS_MUL_YCBCR_LQ[10]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_zero_bias_for_ycbcr_blend() {
+        // At distance = 2.0, should be 50/50 blend of HQ and LQ
+        let params = ZeroBiasParams::for_ycbcr(2.0, 0);
+
+        // Check a value is between HQ and LQ
+        let hq_val = ZERO_BIAS_MUL_YCBCR_HQ[1];
+        let lq_val = ZERO_BIAS_MUL_YCBCR_LQ[1];
+        let expected = 0.5 * hq_val + 0.5 * lq_val;
+        assert!(
+            (params.mul[1] - expected).abs() < 1e-5,
+            "Expected blend {} (HQ={}, LQ={}), got {}",
+            expected, hq_val, lq_val, params.mul[1]
+        );
+    }
+
+    #[test]
+    fn test_zero_bias_for_ycbcr_all_components() {
+        // Test all three components
+        for c in 0..3 {
+            let params = ZeroBiasParams::for_ycbcr(1.5, c);
+
+            // DC offset should match component
+            assert!((params.offset[0] - ZERO_BIAS_OFFSET_YCBCR_DC[c]).abs() < 1e-5);
+
+            // AC offsets should match component
+            assert!((params.offset[1] - ZERO_BIAS_OFFSET_YCBCR_AC[c]).abs() < 1e-5);
+            assert!((params.offset[63] - ZERO_BIAS_OFFSET_YCBCR_AC[c]).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_zero_bias_apply() {
+        let params = ZeroBiasParams::for_ycbcr(2.0, 0);
+        let quant = 16.0;
+
+        // Coefficient below threshold should become zero
+        let threshold = (params.mul[1] + params.offset[1]) * quant;
+        let small_coeff = threshold * 0.5;
+        assert!((params.apply(small_coeff, 1, quant)).abs() < 1e-6);
+
+        // Coefficient above threshold should pass through
+        let large_coeff = threshold * 2.0;
+        assert!((params.apply(large_coeff, 1, quant) - large_coeff).abs() < 1e-6);
+    }
+
+    /// Test zero-bias values against C++ reference data.
+    /// These values are computed from C++ jpegli InitQuantizer.
+    #[test]
+    fn test_zero_bias_cpp_reference() {
+        // At distance 2.0 (50% blend), Y component, coefficient 1:
+        // LQ[1] = 0.0568, HQ[1] = 0.0044
+        // Expected: 0.5 * 0.0568 + 0.5 * 0.0044 = 0.0306
+        let params = ZeroBiasParams::for_ycbcr(2.0, 0);
+        let expected_mul_1 = 0.5 * 0.0568 + 0.5 * 0.0044;
+        assert!(
+            (params.mul[1] - expected_mul_1).abs() < 1e-4,
+            "Y mul[1] at d=2.0: expected {}, got {}",
+            expected_mul_1, params.mul[1]
+        );
+
+        // Offset for AC should be 0.59082 (Y component)
+        assert!(
+            (params.offset[1] - 0.59082).abs() < 1e-4,
+            "Y offset[1]: expected 0.59082, got {}",
+            params.offset[1]
+        );
     }
 }

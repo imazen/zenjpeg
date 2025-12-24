@@ -1,6 +1,18 @@
 //! JPEG decoder implementation.
 //!
 //! This module provides the main decoder interface for reading JPEG images.
+//!
+//! # ICC Profile Support
+//!
+//! The decoder can extract and apply embedded ICC profiles, including XYB profiles
+//! used by jpegli. ICC profile support requires enabling `cms-lcms2` or `cms-moxcms` feature.
+//!
+//! ```ignore
+//! use jpegli::decode::Decoder;
+//!
+//! let decoder = Decoder::new().apply_icc(true);
+//! let decoded = decoder.decode(&jpeg_data)?;
+//! ```
 
 use crate::color;
 use crate::consts::{
@@ -11,12 +23,15 @@ use crate::consts::{
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
+use crate::icc::{extract_icc_profile, is_xyb_profile};
+#[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+use crate::icc::apply_icc_transform;
 use crate::idct::inverse_dct_8x8;
 use crate::quant::dequantize_block;
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
 /// Decoder configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DecoderConfig {
     /// Output pixel format (None = use source format)
     pub output_format: Option<PixelFormat>,
@@ -24,6 +39,20 @@ pub struct DecoderConfig {
     pub fancy_upsampling: bool,
     /// Whether to apply block smoothing
     pub block_smoothing: bool,
+    /// Whether to apply embedded ICC profile (requires cms feature)
+    pub apply_icc: bool,
+}
+
+impl Default for DecoderConfig {
+    fn default() -> Self {
+        Self {
+            output_format: None,
+            fancy_upsampling: false,
+            block_smoothing: false,
+            // Apply ICC by default when CMS is available
+            apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
+        }
+    }
 }
 
 /// Information about a decoded JPEG.
@@ -39,6 +68,10 @@ pub struct JpegInfo {
     pub num_components: u8,
     /// Encoding mode
     pub mode: JpegMode,
+    /// Whether an ICC profile is embedded
+    pub has_icc_profile: bool,
+    /// Whether the ICC profile is an XYB profile
+    pub is_xyb: bool,
 }
 
 /// JPEG decoder.
@@ -82,6 +115,20 @@ impl Decoder {
         self
     }
 
+    /// Enables ICC profile application.
+    ///
+    /// When enabled, embedded ICC profiles will be applied to convert
+    /// the image to sRGB. This is required for correct display of
+    /// XYB-encoded images.
+    ///
+    /// Note: Requires `cms-lcms2` or `cms-moxcms` feature to be enabled.
+    /// Without a CMS feature, this setting has no effect.
+    #[must_use]
+    pub fn apply_icc(mut self, enable: bool) -> Self {
+        self.config.apply_icc = enable;
+        self
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
         let mut parser = JpegParser::new(data)?;
@@ -98,7 +145,20 @@ impl Decoder {
         let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format
-        let pixels = parser.to_pixels(output_format)?;
+        let mut pixels = parser.to_pixels(output_format)?;
+
+        // Apply ICC profile if enabled and present
+        #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+        if self.config.apply_icc && output_format == PixelFormat::Rgb {
+            if let Some(ref icc_profile) = parser.icc_profile {
+                pixels = apply_icc_transform(
+                    &pixels,
+                    info.dimensions.width as usize,
+                    info.dimensions.height as usize,
+                    icc_profile,
+                )?;
+            }
+        }
 
         Ok(DecodedImage {
             width: info.dimensions.width,
@@ -153,6 +213,9 @@ struct JpegParser<'a> {
 
     // Decoded coefficient data
     coeffs: Vec<Vec<[i16; DCT_BLOCK_SIZE]>>, // Per component
+
+    // ICC profile (extracted from raw data, not during parsing)
+    icc_profile: Option<Vec<u8>>,
 }
 
 impl<'a> JpegParser<'a> {
@@ -163,6 +226,9 @@ impl<'a> JpegParser<'a> {
                 reason: "missing SOI marker",
             });
         }
+
+        // Extract ICC profile from raw data upfront
+        let icc_profile = extract_icc_profile(data);
 
         Ok(Self {
             data,
@@ -178,6 +244,7 @@ impl<'a> JpegParser<'a> {
             ac_tables: [None, None, None, None],
             restart_interval: 0,
             coeffs: Vec::new(),
+            icc_profile,
         })
     }
 
@@ -476,11 +543,19 @@ impl<'a> JpegParser<'a> {
     }
 
     fn info(&self) -> JpegInfo {
-        let color_space = match self.num_components {
-            1 => ColorSpace::Grayscale,
-            3 => ColorSpace::YCbCr,
-            4 => ColorSpace::Cmyk,
-            _ => ColorSpace::Unknown,
+        let has_icc = self.icc_profile.is_some();
+        let is_xyb = self.icc_profile.as_ref().is_some_and(|p| is_xyb_profile(p));
+
+        // Determine color space, considering XYB profile
+        let color_space = if is_xyb {
+            ColorSpace::Xyb
+        } else {
+            match self.num_components {
+                1 => ColorSpace::Grayscale,
+                3 => ColorSpace::YCbCr,
+                4 => ColorSpace::Cmyk,
+                _ => ColorSpace::Unknown,
+            }
         };
 
         JpegInfo {
@@ -489,6 +564,8 @@ impl<'a> JpegParser<'a> {
             precision: self.precision,
             num_components: self.num_components,
             mode: self.mode,
+            has_icc_profile: has_icc,
+            is_xyb,
         }
     }
 
