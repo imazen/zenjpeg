@@ -18,5 +18,9 @@ wide = { workspace = true }
 # Image I/O for testing
 png = { workspace = true }
 
+# JPEG encoding/decoding for roundtrip tests
+mozjpeg = { workspace = true }
+jpeg-decoder = { workspace = true }
+
 # Testing utilities
 approx = { workspace = true }
