@@ -73,6 +73,9 @@ pub mod butteraugli;
 // Error types
 pub mod error;
 
+// ICC color management
+pub mod icc;
+
 // ============================================================================
 // Re-exports for public API
 // ============================================================================

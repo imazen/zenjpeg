@@ -82,6 +82,10 @@ pub enum Error {
         /// Description
         reason: String,
     },
+    /// ICC color management error.
+    IccError(String),
+    /// Decode error from JPEG decoder.
+    DecodeError(String),
 }
 
 impl fmt::Display for Error {
@@ -130,6 +134,12 @@ impl fmt::Display for Error {
             }
             Self::IoError { reason } => {
                 write!(f, "I/O error: {}", reason)
+            }
+            Self::IccError(reason) => {
+                write!(f, "ICC error: {}", reason)
+            }
+            Self::DecodeError(reason) => {
+                write!(f, "decode error: {}", reason)
             }
         }
     }

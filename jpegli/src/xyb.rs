@@ -8,10 +8,16 @@
 //! 2. Apply opsin absorbance matrix (mix of LMS-like transform)
 //! 3. Cube root for perceptual uniformity
 //! 4. Final XYB matrix
+//! 5. Scale for JPEG encoding (ScaleXYBRow)
 
 use crate::consts::{
     XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT, XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX,
 };
+
+// Scaling constants for jpegli XYB encoding
+// These are used after XYB conversion to map values to ranges suitable for JPEG quantization
+pub const SCALED_XYB_OFFSET: [f32; 3] = [0.015_386_134, 0.0, 0.277_704_59];
+pub const SCALED_XYB_SCALE: [f32; 3] = [22.995_788_804, 1.183_000_077, 1.502_141_333];
 
 /// Applies sRGB gamma decoding (sRGB to linear RGB).
 #[inline]
@@ -170,6 +176,47 @@ pub fn xyb_to_srgb(x: f32, y: f32, b: f32) -> (u8, u8, u8) {
     )
 }
 
+/// Scales XYB values for JPEG encoding (matches C++ ScaleXYBRow).
+///
+/// This applies the final scaling step needed for jpegli encoding.
+/// The scaled values are suitable for DCT and quantization.
+#[inline]
+#[must_use]
+pub fn scale_xyb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
+    // Note: row2 (B) uses row1 (Y) in the calculation
+    let scaled_b = (b - y + SCALED_XYB_OFFSET[2]) * SCALED_XYB_SCALE[2];
+    let scaled_x = (x + SCALED_XYB_OFFSET[0]) * SCALED_XYB_SCALE[0];
+    let scaled_y = (y + SCALED_XYB_OFFSET[1]) * SCALED_XYB_SCALE[1];
+    (scaled_x, scaled_y, scaled_b)
+}
+
+/// Inverse of scale_xyb for decoding.
+#[inline]
+#[must_use]
+pub fn unscale_xyb(scaled_x: f32, scaled_y: f32, scaled_b: f32) -> (f32, f32, f32) {
+    let y = scaled_y / SCALED_XYB_SCALE[1] - SCALED_XYB_OFFSET[1];
+    let x = scaled_x / SCALED_XYB_SCALE[0] - SCALED_XYB_OFFSET[0];
+    let b = scaled_b / SCALED_XYB_SCALE[2] - SCALED_XYB_OFFSET[2] + y;
+    (x, y, b)
+}
+
+/// Full sRGB to scaled XYB conversion for jpegli encoding.
+///
+/// This performs the complete conversion chain:
+/// sRGB u8 -> linear RGB -> XYB -> scaled XYB
+#[must_use]
+pub fn srgb_to_scaled_xyb(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let (x, y, b_xyb) = srgb_to_xyb(r, g, b);
+    scale_xyb(x, y, b_xyb)
+}
+
+/// Inverse: scaled XYB to sRGB for decoding.
+#[must_use]
+pub fn scaled_xyb_to_srgb(scaled_x: f32, scaled_y: f32, scaled_b: f32) -> (u8, u8, u8) {
+    let (x, y, b) = unscale_xyb(scaled_x, scaled_y, scaled_b);
+    xyb_to_srgb(x, y, b)
+}
+
 /// Converts an RGB buffer to XYB planes.
 pub fn rgb_buffer_to_xyb_planes(
     rgb: &[u8],
@@ -185,6 +232,31 @@ pub fn rgb_buffer_to_xyb_planes(
 
     for i in 0..num_pixels {
         let (x, y, b) = srgb_to_xyb(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+        x_plane[i] = x;
+        y_plane[i] = y;
+        b_plane[i] = b;
+    }
+
+    (x_plane, y_plane, b_plane)
+}
+
+/// Converts an RGB buffer to scaled XYB planes for jpegli encoding.
+///
+/// This is the full conversion chain needed for XYB mode encoding.
+pub fn rgb_buffer_to_scaled_xyb_planes(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let num_pixels = width * height;
+    assert_eq!(rgb.len(), num_pixels * 3);
+
+    let mut x_plane = vec![0.0f32; num_pixels];
+    let mut y_plane = vec![0.0f32; num_pixels];
+    let mut b_plane = vec![0.0f32; num_pixels];
+
+    for i in 0..num_pixels {
+        let (x, y, b) = srgb_to_scaled_xyb(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
         x_plane[i] = x;
         y_plane[i] = y;
         b_plane[i] = b;

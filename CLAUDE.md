@@ -27,6 +27,72 @@ cargo test --release  # Run with optimizations
 
 This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from the JPEG XL project. The goal is a complete, idiomatic Rust implementation with method-level accuracy parity to the C++ original.
 
+## ⚠️ MANDATORY: Port Verification Rules
+
+**These rules exist because previous work was marked "done" without actual integration or parity verification.**
+
+### What "Ported" ACTUALLY Means
+
+A feature is **NOT ported** until ALL of these are true:
+
+1. **Code exists** - Rust implementation exists
+2. **Matches C++ algorithm** - Not a "simplified version" or "skeleton"
+3. **Integrated into encoder/decoder** - Actually USED, not just importable
+4. **Produces matching output** - Verified via `cpp_filesize_comparison` test
+5. **Has C++ reference test** - Uses instrumented C++ testdata for validation
+
+### Anti-Patterns to AVOID
+
+| ❌ DON'T | ✅ DO INSTEAD |
+|----------|---------------|
+| Create struct + unit tests = "done" | Verify encoder USES the struct |
+| Port constants only = "done" | Port constants AND wire into pipeline |
+| Make tests pass with loose thresholds | Use exact C++ values as reference |
+| Skip integration test = "done" | Run `cpp_filesize_comparison` test |
+| "Simplified version" = "done" | Match C++ algorithm exactly |
+| Default mode is Off = "done" | Default must match C++ default |
+
+### Mandatory Verification Checklist
+
+Before marking ANY feature as complete:
+
+```bash
+# 1. Generate C++ reference data
+GENERATE_RUST_TEST_DATA=1 ./build/tools/cjpegli input.png output.jpg
+
+# 2. Run parity test
+cargo test --test cpp_filesize_comparison -- --ignored --nocapture
+
+# 3. Verify file sizes within 1%
+# If >1% difference, feature is NOT done
+
+# 4. Check the feature is actually USED
+grep -r "feature_name" jpegli-rs/jpegli/src/encode.rs
+# Must find actual usage, not just imports
+```
+
+### Definition of Done
+
+A task can ONLY be marked `[x]` when:
+
+1. ✅ C++ testdata exists for the feature
+2. ✅ Rust implementation matches C++ testdata exactly
+3. ✅ Feature is called from encoder (not dead code)
+4. ✅ `cpp_filesize_comparison` test passes with <1% difference
+5. ✅ No "simplified", "skeleton", or "placeholder" comments in code
+6. ✅ Default behavior matches C++ defaults
+
+### Known Anti-Pattern Examples (From This Project)
+
+These were marked "done" but were NOT actually complete:
+
+| Claimed Done | Reality |
+|--------------|---------|
+| "Port adaptive quantization" | Skeleton with made-up thresholds, NOT USED by encoder |
+| "Port zero-bias tables" | Tables exist, but `quantize_block_with_zero_bias()` not called |
+| "Port Layer 4: Entropy coding" | Uses FIXED standard tables, no optimization |
+| "Port Huffman" | Tree building works, but no table optimization |
+
 ## Project Structure
 
 ```
@@ -66,34 +132,71 @@ jpegli-rs/
 └── jpegli-sys/         # FFI bindings (for testing)
 ```
 
-## Completed Tasks
+## Completed Tasks (Verified)
+
+**These have been verified against C++ output:**
 
 - [x] Create jpegli-rs project structure with Cargo workspace
 - [x] Port Layer 0: Constants, types, tables (zigzag, quant matrices, XYB params)
-- [x] Port Layer 1: Pure math (Huffman, quantization)
-- [x] Port Layer 2: Transforms (DCT/IDCT, color, XYB)
 - [x] Port Layer 3: Bitstream I/O
-- [x] Port Layer 4: Entropy coding
-- [x] Port Layer 5-6: Encoder and decoder pipelines
-- [x] Port adaptive quantization
 - [x] **Fix DCT/IDCT scaling** - 1/8 scaling factor for JPEG compatibility
-- [x] **XYB color space** - Full roundtrip working, < 2-bit error
-- [x] **DSSIM quality testing** - Integrated with mozjpeg comparison
-- [x] **SSIMULACRA2 metric** - Added via ssimulacra2 crate
-- [x] **Butteraugli metric** - Skeleton implementation, uses XYB internally
-- [x] **Quality mapping tests** - Find equivalent Q values across encoders
-- [x] **Pareto front validation** - Verify jpegli beats mozjpeg on quality/size
-- [x] **corpus_comparison caching** - Versioned JPEG cache for fast reruns
-- [x] **Low-Q analysis** - Per-image comparison at Q10-Q60 with SSIM2
-- [x] **XYB quant bug fix** - Disabled broken XYB-only mode (needs color conversion)
-- [x] **XYB encoding pipeline skeleton** - Basic infrastructure implemented but incomplete
-- [x] **Port DistanceToScale()** - Per-frequency non-linear quality scaling from C++
-- [x] **Port zero-bias tables** - kZeroBiasMulYCbCrLQ/HQ with blending logic
-- [x] **ICC profile support** - Extract from APP2, detect XYB, apply CMS transform
+- [x] **Quantization tables** - Match C++ exactly (verified via testdata)
+- [x] **Huffman tree building** - 61/61 test cases match C++ exactly
+- [x] **XYB color conversion** - sRGB↔linear↔XYB roundtrip working
+- [x] **ICC profile embedding** - 720-byte XYB profile matches C++
+- [x] **Port DistanceToScale()** - Per-frequency non-linear quality scaling
+- [x] **Port zero-bias tables** - Constants match C++, wired into encoder
+- [x] **ICC profile extraction** - Decoder extracts from APP2 markers
+- [x] **cpp_filesize_comparison test** - Verifies parity with C++
+
+## Partially Complete (NOT VERIFIED - DO NOT USE)
+
+**These exist but are NOT integrated or don't match C++:**
+
+- [⚠️] Port Layer 1: Huffman - Tree building ✓, but NO table optimization
+- [⚠️] Port Layer 4: Entropy coding - Works, but uses FIXED tables only
+- [⚠️] Port Layer 5-6: Encoder pipeline - Works, but missing features below
+- [⚠️] Port adaptive quantization - **SKELETON ONLY, NOT USED** (made-up algorithm)
+- [⚠️] Butteraugli metric - **SKELETON ONLY** (partial implementation)
+- [⚠️] XYB encoding pipeline - Infrastructure exists but incomplete
+
+## Test Infrastructure (Verified)
+
+- [x] DSSIM quality testing - Integrated with mozjpeg comparison
+- [x] SSIMULACRA2 metric - Added via ssimulacra2 crate
+- [x] Quality mapping tests - Find equivalent Q values
+- [x] Pareto front validation - Compare with mozjpeg
+- [x] corpus_comparison caching - Versioned JPEG cache
+- [x] C++ instrumentation - Generates .testdata files
 
 ## Pending Tasks
 
-### 1. Complete XYB Mode with ICC Profile
+### Priority 1: Close the File Size Gap (~3-6% with matching settings)
+
+**Current status**: With matching settings (4:4:4, no AQ, sequential, fixed Huffman), Rust produces ~3-6% larger files than C++. This is the MINIMUM gap to close.
+
+**Root causes identified:**
+1. ✗ **Adaptive Quantization** - SKELETON ONLY, not used by encoder
+   - C++ file: `lib/jpegli/adaptive_quantization.cc`
+   - Functions to port: `PerBlockModulations()`, `FuzzyErosion()`, `ComputePreErosion()`
+   - Rust file exists (`adaptive_quant.rs`) but uses made-up algorithm
+
+2. ✗ **Huffman Table Optimization** - NOT IMPLEMENTED
+   - C++ uses optimized tables built from actual coefficient statistics
+   - Rust uses fixed standard Huffman tables only
+   - C++ file: `lib/jpegli/huffman.cc` - table optimization section
+
+3. ✗ **Progressive JPEG** - Returns "not implemented" error
+   - C++ file: `lib/jpegli/encode.cc` - multiple scan support
+   - Rust has `ScanSpec` type but no implementation
+
+4. ? **DCT/Entropy precision** - Unknown source of ~1-2% gap
+   - May be floating-point precision differences
+   - May be subtle entropy coding differences
+
+**Verification test:** `cargo test --test parity_enforcement -- --ignored --nocapture`
+
+### Priority 2: Complete XYB Mode
 XYB color conversion is **complete** in `xyb.rs`:
 - [x] `srgb_to_linear` / `linear_to_srgb` - gamma conversion
 - [x] `linear_rgb_to_xyb` / `xyb_to_linear_rgb` - opsin matrix + cube root
@@ -109,42 +212,25 @@ Test coverage:
 - `tests/xyb_roundtrip.rs` - 5 tests (roundtrip, gray, buffer, encode/decode)
 - `tests/xyb_cpp_comparison.rs` - 3 tests (C++ comparison, ICC embedding, values)
 
-### 2. Fix Huffman Code Generation
-Current Rust uses simple binary tree that clamps code lengths (possibly invalid).
-C++ uses iterative retry with increasing `count_limit` until tree fits `tree_limit`.
-
-**Action needed:**
-- Port C++ `CreateHuffmanTree()` algorithm from `huffman.cc:156-234`
-- Use C++ instrumentation (`CreateHuffmanTree.testdata`) for validation
-
-### 3. Add SIMD Toggle Feature Flag
+### Priority 3: Add SIMD Toggle Feature Flag
 Make toggling SIMD on/off easy to:
 - Ensure SIMD and non-SIMD produce identical images
 - Max difference should be ≤1 when decoded
 - Add accuracy tests comparing SIMD vs scalar
 
-### 3. Set Up Test Image Submodule
-- Create separate git repo for test images (size conscious)
-- Add as submodule to avoid bloating main repo
-- Include: gradient, photo, graphic, edge case images
-
-### 4. Create Comparative Benchmarks (C++ vs Rust)
-- [x] Stage-by-stage C++ instrumentation (recovered from commit fe1e841f)
-- [x] Output comparison via `xyb_cpp_comparison.rs`
-- [ ] Performance benchmarks (encode/decode timing)
-- [ ] Full function-level accuracy validation using C++ test data
-
-### 5. Fix 4:2:0 Subsampling Decoder
+### Priority 4: Fix 4:2:0 Subsampling
 Currently only 4:4:4 is supported. 4:2:0 requires:
 - MCU interleaving in decoder
 - Chroma upsampling
+- C++ file: `lib/jpegli/decode.cc`
 
-### 6. Port Progressive JPEG Support
-Progressive JPEG uses multiple scans with spectral selection.
-- `ScanSpec` type already defined
-- Encoder returns "not yet implemented" error
+### Priority 5: Performance Benchmarks
+- [ ] Performance benchmarks (encode/decode timing vs C++)
+- [ ] Full function-level accuracy validation using C++ test data
+- [x] Stage-by-stage C++ instrumentation (recovered from commit fe1e841f)
+- [x] Output comparison via `xyb_cpp_comparison.rs`, `parity_enforcement.rs`
 
-### 7. Add Fuzz Testing
+### Future: Add Fuzz Testing
 Replicate fuzzing coverage from other JPEG libraries:
 - libjpeg-turbo fuzz targets
 - jpeg-decoder fuzzing
@@ -152,13 +238,18 @@ Replicate fuzzing coverage from other JPEG libraries:
 - mozjpeg fuzzing
 Critical for server-side untrusted input handling.
 
-### 8. Security Examination and Red Teaming
+### Future: Security Examination and Red Teaming
 Required for server-side deployment:
 - Memory safety review (unsafe blocks)
 - Integer overflow checks
 - Input validation (malformed JPEGs)
 - DoS resistance (large images, many components)
 - Comparison with CVEs from other JPEG libs
+
+### Future: Set Up Test Image Submodule
+- Create separate git repo for test images (size conscious)
+- Add as submodule to avoid bloating main repo
+- Include: gradient, photo, graphic, edge case images
 
 ## C++ Instrumentation for Rust Validation
 
@@ -264,6 +355,44 @@ Small test images for quick validation:
 - `flower_small.rgb.png` - Small test image
 - Various pre-encoded JPEGs for decode testing
 
+### codec-corpus (Auto-discovered)
+The corpus_comparison tools check for codec-corpus in these locations (in order):
+1. `../codec-comparison/codec-corpus` ← **Currently available at this path**
+2. `../codec-corpus`
+3. `./codec-corpus`
+4. `./codec-comparison`
+
+If no corpus is found, tools will clone it locally:
+```bash
+git clone https://github.com/AcrossTheCloud/codec-corpus.git codec-corpus
+```
+
+Available test sets in codec-corpus:
+- `kodak/` - 24 classic test images (512x768)
+- `CID22/` - Cloudinary dataset
+- `clic2025/` - CLIC challenge images
+- `mozjpeg/` - mozjpeg test images
+- `image-rs/` - Rust image crate test images
+- `pngsuite/` - PNG test suite
+- `zune/` - zune-jpeg test images
+
+Test with:
+```bash
+cargo test --test cpp_filesize_comparison -- --ignored --nocapture
+```
+
+## Comparison Outputs
+
+**Location**: `jpegli-rs/comparison_outputs/` (gitignored)
+
+When running file size comparisons between C++ and Rust, always store outputs here:
+- `rust_xyb_q{N}.jpg` - Rust XYB mode at quality N
+- `rust_ycbcr_q{N}.jpg` - Rust YCbCr mode at quality N
+- `cpp_xyb_q{N}.jpg` - C++ XYB mode at quality N
+- `cpp_ycbcr_q{N}.jpg` - C++ YCbCr mode at quality N
+
+This directory persists between sessions for easy visual inspection.
+
 ## Comparison Tools
 
 ### corpus_comparison.rs
@@ -319,10 +448,44 @@ CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_q
 - Full sRGB → linear → XYB → scaled XYB pipeline
 - ICC profile embedding (720-byte XYB profile)
 - Frequency-dependent `DistanceToScale()` with `FREQUENCY_EXPONENT[64]`
+- Huffman algorithm matches C++ exactly (61/61 test cases pass)
 
-Needs validation:
-- End-to-end quality comparison with C++ cjpegli
-- Exact value matching via instrumentation
+### C++ vs Rust File Size Comparison
+
+**Investigation Status** - Verified matching components:
+
+| Component | Status | Verified By |
+|-----------|--------|-------------|
+| Quantization tables | ✓ Match exactly | `compare_cpp_quant.rs` example |
+| Huffman tree building | ✓ Match exactly | 61/61 test cases in `huffman_cpp_comparison.rs` |
+| Color conversion formula | ✓ Match exactly | BT.601/JFIF formulas verified |
+| DCT precision | ✓ Good (round-trip error ~0.000008) | `test_dct_precision.rs` |
+| Zero-biasing | ✓ Wired in | No benefit without AQ (aq_strength=0) |
+
+**Not yet implemented** (contribute to default C++ advantage):
+| Feature | Est. Impact | C++ File |
+|---------|-------------|----------|
+| Adaptive quantization | ~3-4% | `adaptive_quantization.cc` |
+| Progressive encoding | ~2-3% | `encode.cc` |
+| Huffman optimization | ~3-4% | `huffman.cc` |
+
+**With matching settings** (4:4:4, no AQ, sequential, fixed Huffman):
+| Image | C++ | Rust | Diff |
+|-------|-----|------|------|
+| flower_small | 61,476 | 63,906 | +4.0% |
+
+**Remaining ~4% gap analysis** (with matching settings):
+- Decoded images differ by max 8 pixel values → coefficients slightly different
+- Scan data (entropy-coded coefficients) is 4% larger
+- YCbCr now uses f32 precision throughout (matches C++ approach)
+- DCT implementation verified correct via round-trip tests
+
+**Likely causes of remaining gap**:
+1. DCT implementation details (normalization, scaling, SIMD differences)
+2. Floating-point accumulation differences (f32 vs C++ float)
+3. Edge handling at image boundaries (padding strategy)
+
+**Verification test**: `cargo test --test parity_enforcement -- --ignored --nocapture`
 
 ## C++ Build Instructions
 
