@@ -2,6 +2,7 @@
 //!
 //! This module provides the main encoder interface for creating JPEG images.
 
+use crate::adaptive_quant::compute_aq_strength_map;
 use crate::color;
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, JPEG_ZIGZAG_ORDER,
@@ -1058,15 +1059,16 @@ impl Encoder {
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
 
-        // Apply zero-biasing with aq_strength calibrated from C++ testdata.
-        // C++ AQ typically produces aq_strength values in the 0.0-0.2 range with mean ~0.08.
-        // Using a global average value until per-block AQ is properly ported from C++.
-        let aq_strength = 0.08f32;
+        // Convert Y plane to f32 for AQ computation
+        let y_plane_f32: Vec<f32> = y_plane.iter().map(|&v| v as f32).collect();
+
+        // Compute per-block adaptive quantization strength from Y plane
+        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, distance);
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
-                // TODO: Compute per-block aq_strength from proper quant_field
-                let _ = (bx, by); // silence warnings
+                // Get per-block aq_strength (C++ AQ produces 0.0-0.2, mean ~0.08)
+                let aq_strength = aq_map.get(bx, by);
 
                 // Extract and encode Y block
                 let y_block = self.extract_block(y_plane, width, height, bx, by);
@@ -1143,8 +1145,8 @@ impl Encoder {
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
 
-        // Apply zero-biasing with aq_strength calibrated from C++ testdata.
-        let aq_strength = 0.08f32;
+        // Compute per-block adaptive quantization strength from Y plane
+        let aq_map = compute_aq_strength_map(y_plane, width, height, distance);
 
         let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
@@ -1152,6 +1154,9 @@ impl Encoder {
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
+                // Get per-block aq_strength
+                let aq_strength = aq_map.get(bx, by);
+
                 let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(

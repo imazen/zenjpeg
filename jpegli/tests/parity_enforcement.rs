@@ -24,7 +24,7 @@ use std::process::Command;
 /// 2. A verified regression is acknowledged
 const BASELINE: ParityBaseline = ParityBaseline {
     // Last updated: 2025-12-23
-    // Settings: 4:4:4, no AQ, sequential, fixed Huffman
+    // Settings: 4:4:4, AQ enabled, sequential, fixed Huffman
     //
     // MEASURED RESULTS (average: 0.70%):
     // - Complex photos: Rust is often SMALLER than C++
@@ -134,10 +134,10 @@ fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
     let output_path = format!("/tmp/cpp_parity_q{}.jpg", quality);
     let output = Command::new(cjpegli_path)
         .args([
-            "--noadaptive_quantization",
+            // Enable adaptive quantization (matches Rust default now)
             "--chroma_subsampling=444",
             "-p",
-            "0",
+            "0", // Sequential (no progressive)
             "--fixed_code",
             ppm_path,
             &output_path,
@@ -441,7 +441,7 @@ fn test_parity_cid22_small() {
 #[ignore = "requires C++ cjpegli build and test images"]
 fn test_parity_comprehensive() {
     println!("\n=== C++ PARITY ENFORCEMENT TEST ===\n");
-    println!("Settings: 4:4:4, no AQ, sequential, fixed Huffman");
+    println!("Settings: 4:4:4, AQ enabled, sequential, fixed Huffman");
     println!(
         "Target: <{:.1}% file size difference\n",
         BASELINE.target_diff_pct

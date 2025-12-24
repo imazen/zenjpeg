@@ -170,20 +170,15 @@ impl AQStrengthMap {
 /// Per-block aq_strength map with values in 0.0-0.2 range.
 #[must_use]
 pub fn compute_aq_strength_map(
-    _y_plane: &[f32],
+    y_plane: &[f32],
     width: usize,
     height: usize,
-    _distance: f32,
+    distance: f32,
 ) -> AQStrengthMap {
-    let width_blocks = (width + 7) / 8;
-    let height_blocks = (height + 7) / 8;
-
-    // TODO: Enable once verified against C++ testdata:
-    // let map = compute_aq_strength_map_impl(y_plane, width, height, distance);
-    // return map;
-
-    // For now, return uniform map with C++ testdata mean
-    AQStrengthMap::with_cpp_mean(width_blocks, height_blocks)
+    // Use per-block implementation
+    // Note: Produces values ~20% lower than C++, but per-block variation is valuable
+    // TODO: Tune scaling to match C++ mean exactly
+    compute_aq_strength_map_impl(y_plane, width, height, distance)
 }
 
 /// Converts quant_field to aq_strength.
