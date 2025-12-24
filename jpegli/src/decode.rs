@@ -501,14 +501,31 @@ impl<'a> JpegParser<'a> {
     }
 
     fn decode_scan(&mut self, scan_components: &[(usize, u8, u8)]) -> Result<()> {
-        // Initialize coefficient storage
-        let blocks_h = ((self.width + 7) / 8) as usize;
-        let blocks_v = ((self.height + 7) / 8) as usize;
+        // Calculate max sampling factors to determine MCU structure
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
 
+        // MCU dimensions in pixels
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+
+        // Number of MCUs
+        let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
+
+        // Initialize coefficient storage - size depends on component's sampling factor
         if self.coeffs.is_empty() {
-            for _ in 0..self.num_components {
+            for i in 0..self.num_components as usize {
+                let h_samp = self.components[i].h_samp_factor as usize;
+                let v_samp = self.components[i].v_samp_factor as usize;
+                let comp_blocks_h = mcu_cols * h_samp;
+                let comp_blocks_v = mcu_rows * v_samp;
                 self.coeffs
-                    .push(vec![[0i16; DCT_BLOCK_SIZE]; blocks_h * blocks_v]);
+                    .push(vec![[0i16; DCT_BLOCK_SIZE]; comp_blocks_h * comp_blocks_v]);
             }
         }
 
@@ -525,15 +542,30 @@ impl<'a> JpegParser<'a> {
             }
         }
 
-        // Simplified decoding (no MCU interleaving)
-        for by in 0..blocks_v {
-            for bx in 0..blocks_h {
-                let block_idx = by * blocks_h + bx;
-
+        // Decode MCUs with proper interleaving
+        for mcu_y in 0..mcu_rows {
+            for mcu_x in 0..mcu_cols {
+                // For each component in the scan
                 for (comp_idx, dc_table, ac_table) in scan_components {
-                    let coeffs =
-                        decoder.decode_block(*comp_idx, *dc_table as usize, *ac_table as usize)?;
-                    self.coeffs[*comp_idx][block_idx] = coeffs;
+                    let h_samp = self.components[*comp_idx].h_samp_factor as usize;
+                    let v_samp = self.components[*comp_idx].v_samp_factor as usize;
+                    let comp_blocks_h = mcu_cols * h_samp;
+
+                    // Decode all blocks for this component in this MCU
+                    for v in 0..v_samp {
+                        for h in 0..h_samp {
+                            let block_x = mcu_x * h_samp + h;
+                            let block_y = mcu_y * v_samp + v;
+                            let block_idx = block_y * comp_blocks_h + block_x;
+
+                            let coeffs = decoder.decode_block(
+                                *comp_idx,
+                                *dc_table as usize,
+                                *ac_table as usize,
+                            )?;
+                            self.coeffs[*comp_idx][block_idx] = coeffs;
+                        }
+                    }
                 }
             }
         }
@@ -578,10 +610,22 @@ impl<'a> JpegParser<'a> {
 
         let width = self.width as usize;
         let height = self.height as usize;
-        let blocks_h = (width + 7) / 8;
-        let blocks_v = (height + 7) / 8;
 
-        // Dequantize and IDCT all blocks
+        // Calculate max sampling factors
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+
+        // MCU dimensions
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Dequantize and IDCT all blocks, then upsample if needed
         let mut planes: Vec<Vec<u8>> = Vec::new();
 
         for comp_idx in 0..self.num_components as usize {
@@ -592,11 +636,23 @@ impl<'a> JpegParser<'a> {
                     reason: "missing quantization table",
                 })?;
 
-            let mut plane = vec![0u8; width * height];
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+            let comp_blocks_h = mcu_cols * h_samp;
+            let comp_blocks_v = mcu_rows * v_samp;
 
-            for by in 0..blocks_v {
-                for bx in 0..blocks_h {
-                    let block_idx = by * blocks_h + bx;
+            // Component plane dimensions (may be smaller than full image for subsampled)
+            let comp_width = comp_blocks_h * 8;
+            let comp_height = comp_blocks_v * 8;
+
+            let mut comp_plane = vec![0u8; comp_width * comp_height];
+
+            for by in 0..comp_blocks_v {
+                for bx in 0..comp_blocks_h {
+                    let block_idx = by * comp_blocks_h + bx;
+                    if block_idx >= self.coeffs[comp_idx].len() {
+                        continue;
+                    }
                     let coeffs = &self.coeffs[comp_idx][block_idx];
 
                     // Convert to natural order and dequantize
@@ -608,19 +664,43 @@ impl<'a> JpegParser<'a> {
                     let dequant = dequantize_block(&natural_coeffs, quant);
                     let pixels = inverse_dct_8x8(&dequant);
 
-                    // Copy to plane with level shift
+                    // Copy to component plane with level shift
                     for y in 0..DCT_SIZE {
                         for x in 0..DCT_SIZE {
                             let px = bx * DCT_SIZE + x;
                             let py = by * DCT_SIZE + y;
-                            if px < width && py < height {
+                            if px < comp_width && py < comp_height {
                                 let val = (pixels[y * DCT_SIZE + x] + 128.0).round();
-                                plane[py * width + px] = val.clamp(0.0, 255.0) as u8;
+                                comp_plane[py * comp_width + px] = val.clamp(0.0, 255.0) as u8;
                             }
                         }
                     }
                 }
             }
+
+            // Upsample if this component has lower sampling than max
+            let plane = if h_samp < max_h_samp as usize || v_samp < max_v_samp as usize {
+                let scale_x = max_h_samp as usize / h_samp;
+                let scale_y = max_v_samp as usize / v_samp;
+                let mut upsampled = vec![0u8; width * height];
+                for py in 0..height {
+                    for px in 0..width {
+                        let sx = (px / scale_x).min(comp_width - 1);
+                        let sy = (py / scale_y).min(comp_height - 1);
+                        upsampled[py * width + px] = comp_plane[sy * comp_width + sx];
+                    }
+                }
+                upsampled
+            } else {
+                // Full resolution - just clip to image dimensions
+                let mut plane = vec![0u8; width * height];
+                for py in 0..height {
+                    for px in 0..width {
+                        plane[py * width + px] = comp_plane[py * comp_width + px];
+                    }
+                }
+                plane
+            };
 
             planes.push(plane);
         }

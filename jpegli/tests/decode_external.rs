@@ -83,9 +83,9 @@ fn test_decode_444_non_interleaved() {
     assert!(dssim < 0.0001, "DSSIM {} too high", dssim);
 }
 
-/// Test that 4:2:0 decoding fails gracefully (known limitation)
+/// Test that 4:2:0 decoding works with MCU interleaving
 #[test]
-fn test_decode_420_fails_gracefully() {
+fn test_decode_420_mcu_interleaved() {
     let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower.png.im_q85_420.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
@@ -94,13 +94,17 @@ fn test_decode_420_fails_gracefully() {
 
     let jpeg_data = std::fs::read(path).expect("read file");
 
-    // 4:2:0 is not yet supported - should fail with an error, not panic
-    let result = decode_with_jpegli(&jpeg_data);
-    assert!(
-        result.is_err(),
-        "4:2:0 should fail until MCU interleaving is implemented"
-    );
-    println!("4:2:0 error (expected): {}", result.unwrap_err());
+    // 4:2:0 now works with proper MCU interleaving
+    let (jpegli_pixels, jw, jh) = decode_with_jpegli(&jpeg_data).expect("jpegli decode");
+    let (ref_pixels, rw, rh) = decode_with_jpeg_decoder(&jpeg_data);
+
+    assert_eq!((jw, jh), (rw, rh), "Dimension mismatch");
+
+    let dssim = compute_dssim(&jpegli_pixels, &ref_pixels, jw, jh);
+    println!("4:2:0 MCU interleaved DSSIM vs reference: {:.6}", dssim);
+
+    // Allow slightly higher tolerance for 4:2:0 due to chroma upsampling differences
+    assert!(dssim < 0.01, "DSSIM {} too high", dssim);
 }
 
 /// Test decoding grayscale JPEG
