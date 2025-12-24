@@ -46,6 +46,7 @@ pub mod types;
 
 // Layer 1: Pure math functions
 pub mod huffman;
+pub mod huffman_opt;
 pub mod quant;
 
 // Layer 2: Transforms

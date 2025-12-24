@@ -9,9 +9,10 @@ use crate::consts::{
     MARKER_SOF2, MARKER_SOI, MARKER_SOS, MAX_ICC_BYTES_PER_MARKER, XYB_ICC_PROFILE,
 };
 use crate::dct::forward_dct_8x8;
-use crate::entropy::EntropyEncoder;
+use crate::entropy::{self, EntropyEncoder};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanEncodeTable;
+use crate::huffman_opt::{FrequencyCounter, OptimizedHuffmanTables};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use crate::xyb::srgb_to_scaled_xyb;
@@ -51,7 +52,8 @@ impl Default for EncoderConfig {
             subsampling: Subsampling::S444,
             use_xyb: false,
             restart_interval: 0,
-            optimize_huffman: false,
+            // Match C++ jpegli default: optimize_coding = true
+            optimize_huffman: true,
         }
     }
 }
@@ -222,20 +224,40 @@ impl Encoder {
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
         let c_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
 
+        // Quantize all blocks first (needed for both standard and optimized encoding)
+        let (y_blocks, cb_blocks, cr_blocks) =
+            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &c_quant)?;
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+
         // Write JPEG structure
         self.write_header(output)?;
         self.write_quant_tables(output, &y_quant, &c_quant)?;
         self.write_frame_header(output)?;
-        self.write_huffman_tables(output)?;
 
-        if self.config.restart_interval > 0 {
-            self.write_restart_interval(output)?;
-        }
+        // For optimized Huffman, build tables from block frequencies before writing DHT
+        let scan_data = if self.config.optimize_huffman {
+            let tables = self.build_optimized_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color)?;
+            self.write_huffman_tables_optimized(output, &tables)?;
 
-        self.write_scan_header(output)?;
+            if self.config.restart_interval > 0 {
+                self.write_restart_interval(output)?;
+            }
+            self.write_scan_header(output)?;
 
-        // Encode image data using f32 pipeline for full precision
-        let scan_data = self.encode_scan_f32(&y_plane, &cb_plane, &cr_plane, &y_quant, &c_quant)?;
+            // Encode with optimized tables
+            self.encode_with_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color, &tables)?
+        } else {
+            self.write_huffman_tables(output)?;
+
+            if self.config.restart_interval > 0 {
+                self.write_restart_interval(output)?;
+            }
+            self.write_scan_header(output)?;
+
+            // Encode with standard tables
+            self.encode_blocks_standard(&y_blocks, &cb_blocks, &cr_blocks, is_color)?
+        };
+
         output.extend_from_slice(&scan_data);
 
         // Write EOI
@@ -289,27 +311,55 @@ impl Encoder {
         self.write_icc_profile(output, &XYB_ICC_PROFILE)?;
         self.write_quant_tables_xyb(output, &x_quant, &y_quant, &b_quant)?;
         self.write_frame_header_xyb(output)?;
-        self.write_huffman_tables(output)?;
 
-        if self.config.restart_interval > 0 {
-            self.write_restart_interval(output)?;
-        }
+        // For optimized Huffman, quantize all blocks first to collect frequencies
+        let scan_data = if self.config.optimize_huffman {
+            let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb(
+                &x_plane,
+                &y_plane,
+                &b_downsampled,
+                width,
+                height,
+                b_width,
+                b_height,
+                &x_quant,
+                &y_quant,
+                &b_quant,
+            );
+            let (dc_table, ac_table) =
+                self.build_optimized_tables_xyb(&x_blocks, &y_blocks, &b_blocks)?;
+            self.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
 
-        self.write_scan_header_xyb(output)?;
+            if self.config.restart_interval > 0 {
+                self.write_restart_interval(output)?;
+            }
+            self.write_scan_header_xyb(output)?;
 
-        // Encode image data with XYB MCU structure (float-based)
-        let scan_data = self.encode_scan_xyb_float(
-            &x_plane,
-            &y_plane,
-            &b_downsampled,
-            width,
-            height,
-            b_width,
-            b_height,
-            &x_quant,
-            &y_quant,
-            &b_quant,
-        )?;
+            // Encode with optimized tables
+            self.encode_with_tables_xyb(&x_blocks, &y_blocks, &b_blocks, &dc_table, &ac_table)?
+        } else {
+            self.write_huffman_tables(output)?;
+
+            if self.config.restart_interval > 0 {
+                self.write_restart_interval(output)?;
+            }
+            self.write_scan_header_xyb(output)?;
+
+            // Encode with standard tables
+            self.encode_scan_xyb_float(
+                &x_plane,
+                &y_plane,
+                &b_downsampled,
+                width,
+                height,
+                b_width,
+                b_height,
+                &x_quant,
+                &y_quant,
+                &b_quant,
+            )?
+        };
+
         output.extend_from_slice(&scan_data);
 
         // Write EOI
@@ -837,6 +887,56 @@ impl Encoder {
         Ok(())
     }
 
+    /// Writes optimized Huffman tables.
+    ///
+    /// This is used when `optimize_huffman` is enabled to write the
+    /// image-specific optimized tables to the DHT markers.
+    fn write_huffman_tables_optimized(
+        &self,
+        output: &mut Vec<u8>,
+        tables: &OptimizedHuffmanTables,
+    ) -> Result<()> {
+        // Helper to write one table
+        let write_table = |out: &mut Vec<u8>, class: u8, id: u8, bits: &[u8; 16], values: &[u8]| {
+            out.push(0xFF);
+            out.push(MARKER_DHT);
+
+            let length = 2 + 1 + 16 + values.len();
+            out.push((length >> 8) as u8);
+            out.push(length as u8);
+
+            out.push((class << 4) | id);
+            out.extend_from_slice(bits);
+            out.extend_from_slice(values);
+        };
+
+        // DC luminance (class 0, id 0)
+        write_table(output, 0, 0, &tables.dc_luma.bits, &tables.dc_luma.values);
+
+        // AC luminance (class 1, id 0)
+        write_table(output, 1, 0, &tables.ac_luma.bits, &tables.ac_luma.values);
+
+        // DC chrominance (class 0, id 1)
+        write_table(
+            output,
+            0,
+            1,
+            &tables.dc_chroma.bits,
+            &tables.dc_chroma.values,
+        );
+
+        // AC chrominance (class 1, id 1)
+        write_table(
+            output,
+            1,
+            1,
+            &tables.ac_chroma.bits,
+            &tables.ac_chroma.values,
+        );
+
+        Ok(())
+    }
+
     /// Writes restart interval.
     fn write_restart_interval(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
@@ -1013,19 +1113,209 @@ impl Encoder {
         Ok(encoder.finish())
     }
 
-    /// Encodes the scan data using f32 planes for full precision.
-    /// This matches C++ jpegli which uses float throughout the pipeline.
-    fn encode_scan_f32(
+    /// Quantizes all blocks in the image.
+    ///
+    /// This is separated from encoding to allow Huffman optimization:
+    /// 1. Quantize all blocks
+    /// 2. Collect frequencies to build optimal tables
+    /// 3. Encode with optimal tables
+    fn quantize_all_blocks(
         &self,
         y_plane: &[f32],
         cb_plane: &[f32],
         cr_plane: &[f32],
         y_quant: &QuantTable,
         c_quant: &QuantTable,
+    ) -> Result<(
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+    )> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let blocks_h = (width + 7) / 8;
+        let blocks_v = (height + 7) / 8;
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+
+        // Zero-bias parameters for each component
+        let distance = self.config.quality.to_distance();
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
+        let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
+        let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
+
+        // Apply zero-biasing with aq_strength calibrated from C++ testdata.
+        let aq_strength = 0.08f32;
+
+        let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
+        let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
+        let mut cr_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
+
+        for by in 0..blocks_v {
+            for bx in 0..blocks_h {
+                let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
+                let y_dct = forward_dct_8x8(&y_block);
+                let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
+                y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+
+                if is_color {
+                    let cb_block = self.extract_block_ycbcr_f32(cb_plane, width, height, bx, by);
+                    let cb_dct = forward_dct_8x8(&cb_block);
+                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
+                        &cb_dct,
+                        &c_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
+                    cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
+
+                    let cr_block = self.extract_block_ycbcr_f32(cr_plane, width, height, bx, by);
+                    let cr_dct = forward_dct_8x8(&cr_block);
+                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
+                        &cr_dct,
+                        &c_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
+                    cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
+                }
+            }
+        }
+
+        Ok((y_blocks, cb_blocks, cr_blocks))
+    }
+
+    /// Builds optimized Huffman tables from quantized blocks.
+    ///
+    /// Collects symbol frequencies from all blocks and generates optimal
+    /// Huffman tables with their DHT marker representations.
+    fn build_optimized_tables(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+    ) -> Result<OptimizedHuffmanTables> {
+        let mut dc_luma_freq = FrequencyCounter::new();
+        let mut dc_chroma_freq = FrequencyCounter::new();
+        let mut ac_luma_freq = FrequencyCounter::new();
+        let mut ac_chroma_freq = FrequencyCounter::new();
+
+        // Collect frequencies from all blocks
+        let mut prev_y_dc: i16 = 0;
+        let mut prev_cb_dc: i16 = 0;
+        let mut prev_cr_dc: i16 = 0;
+
+        for (i, y_block) in y_blocks.iter().enumerate() {
+            Self::collect_block_frequencies(y_block, prev_y_dc, &mut dc_luma_freq, &mut ac_luma_freq);
+            prev_y_dc = y_block[0];
+
+            if is_color {
+                Self::collect_block_frequencies(
+                    &cb_blocks[i],
+                    prev_cb_dc,
+                    &mut dc_chroma_freq,
+                    &mut ac_chroma_freq,
+                );
+                prev_cb_dc = cb_blocks[i][0];
+
+                Self::collect_block_frequencies(
+                    &cr_blocks[i],
+                    prev_cr_dc,
+                    &mut dc_chroma_freq,
+                    &mut ac_chroma_freq,
+                );
+                prev_cr_dc = cr_blocks[i][0];
+            }
+        }
+
+        // Build optimized tables with DHT data
+        let dc_luma = dc_luma_freq.generate_table_with_dht()?;
+        let ac_luma = ac_luma_freq.generate_table_with_dht()?;
+
+        let (dc_chroma, ac_chroma) = if is_color {
+            (
+                dc_chroma_freq.generate_table_with_dht()?,
+                ac_chroma_freq.generate_table_with_dht()?,
+            )
+        } else {
+            // Use standard tables for grayscale (won't be used but needed for structure)
+            use crate::huffman::{
+                STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES, STD_AC_CHROMINANCE_BITS,
+                STD_AC_CHROMINANCE_VALUES,
+            };
+            use crate::huffman_opt::OptimizedTable;
+
+            (
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_dc_chrominance(),
+                    bits: STD_DC_CHROMINANCE_BITS,
+                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+                },
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_ac_chrominance(),
+                    bits: STD_AC_CHROMINANCE_BITS,
+                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+                },
+            )
+        };
+
+        Ok(OptimizedHuffmanTables {
+            dc_luma,
+            ac_luma,
+            dc_chroma,
+            ac_chroma,
+        })
+    }
+
+    /// Encodes blocks using the provided Huffman tables.
+    fn encode_with_tables(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+        tables: &OptimizedHuffmanTables,
     ) -> Result<Vec<u8>> {
         let mut encoder = EntropyEncoder::new();
 
-        // Set up Huffman tables
+        encoder.set_dc_table(0, tables.dc_luma.table.clone());
+        encoder.set_ac_table(0, tables.ac_luma.table.clone());
+        encoder.set_dc_table(1, tables.dc_chroma.table.clone());
+        encoder.set_ac_table(1, tables.ac_chroma.table.clone());
+
+        if self.config.restart_interval > 0 {
+            encoder.set_restart_interval(self.config.restart_interval);
+        }
+
+        for (i, y_block) in y_blocks.iter().enumerate() {
+            encoder.encode_block(y_block, 0, 0, 0)?;
+
+            if is_color {
+                encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
+                encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
+            }
+
+            encoder.check_restart();
+        }
+
+        Ok(encoder.finish())
+    }
+
+    /// Encodes blocks using standard (fixed) Huffman tables - single pass.
+    fn encode_blocks_standard(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+    ) -> Result<Vec<u8>> {
+        let mut encoder = EntropyEncoder::new();
+
         encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
         encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
         encoder.set_dc_table(1, HuffmanEncodeTable::std_dc_chrominance());
@@ -1035,73 +1325,249 @@ impl Encoder {
             encoder.set_restart_interval(self.config.restart_interval);
         }
 
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
+        for (i, y_block) in y_blocks.iter().enumerate() {
+            encoder.encode_block(y_block, 0, 0, 0)?;
 
-        // 4:4:4 encoding (no subsampling)
-        let blocks_h = (width + 7) / 8;
-        let blocks_v = (height + 7) / 8;
-
-        // Zero-bias parameters for each component
-        // Use proper zero-bias tables based on quality distance
-        let distance = self.config.quality.to_distance();
-        let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
-        let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
-        let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
-
-        // Apply zero-biasing with aq_strength calibrated from C++ testdata.
-        // C++ AQ typically produces aq_strength values in the 0.0-0.2 range with mean ~0.08.
-        // Using a global average value until per-block AQ is properly ported from C++.
-        let aq_strength = 0.08f32;
-
-        for by in 0..blocks_v {
-            for bx in 0..blocks_h {
-                // TODO: Compute per-block aq_strength from proper quant_field
-                let _ = (bx, by); // silence warnings
-
-                // Extract and encode Y block
-                let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
-                let y_dct = forward_dct_8x8(&y_block);
-                let y_quant_coeffs = quant::quantize_block_with_zero_bias(
-                    &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
-                    aq_strength,
-                );
-                let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
-                encoder.encode_block(&y_zigzag, 0, 0, 0)?;
-
-                if self.config.pixel_format != PixelFormat::Gray {
-                    // Cb block
-                    let cb_block = self.extract_block_ycbcr_f32(cb_plane, width, height, bx, by);
-                    let cb_dct = forward_dct_8x8(&cb_block);
-                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
-                        &cb_dct,
-                        &c_quant.values,
-                        &cb_zero_bias,
-                        aq_strength,
-                    );
-                    let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
-                    encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
-
-                    // Cr block
-                    let cr_block = self.extract_block_ycbcr_f32(cr_plane, width, height, bx, by);
-                    let cr_dct = forward_dct_8x8(&cr_block);
-                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
-                        &cr_dct,
-                        &c_quant.values,
-                        &cr_zero_bias,
-                        aq_strength,
-                    );
-                    let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
-                    encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
-                }
-
-                encoder.check_restart();
+            if is_color {
+                encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
+                encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
             }
+
+            encoder.check_restart();
         }
 
         Ok(encoder.finish())
+    }
+
+    /// Collects symbol frequencies from a block for Huffman optimization.
+    fn collect_block_frequencies(
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        prev_dc: i16,
+        dc_freq: &mut FrequencyCounter,
+        ac_freq: &mut FrequencyCounter,
+    ) {
+        // DC coefficient - limit category to 11 for 8-bit JPEG compatibility
+        let dc_diff = coeffs[0] - prev_dc;
+        let dc_category = entropy::category(dc_diff).min(11);
+        dc_freq.count(dc_category);
+
+        // AC coefficients
+        let mut run = 0u8;
+        for i in 1..DCT_BLOCK_SIZE {
+            let ac = coeffs[i];
+
+            if ac == 0 {
+                run += 1;
+            } else {
+                // Encode runs of 16 zeros (ZRL)
+                while run >= 16 {
+                    ac_freq.count(0xF0);
+                    run -= 16;
+                }
+
+                // Encode run/size symbol
+                let ac_category = entropy::category(ac);
+                let symbol = (run << 4) | ac_category;
+                ac_freq.count(symbol);
+                run = 0;
+            }
+        }
+
+        // EOB if trailing zeros
+        if run > 0 {
+            ac_freq.count(0x00);
+        }
+    }
+
+    /// Quantizes all XYB blocks for Huffman optimization.
+    ///
+    /// Returns quantized blocks for X, Y, and B components.
+    /// B component is already downsampled (half resolution).
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_all_blocks_xyb(
+        &self,
+        x_plane: &[f32],
+        y_plane: &[f32],
+        b_plane: &[f32], // Already downsampled
+        width: usize,
+        height: usize,
+        b_width: usize,
+        b_height: usize,
+        x_quant: &QuantTable,
+        y_quant: &QuantTable,
+        b_quant: &QuantTable,
+    ) -> (
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+    ) {
+        // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
+        let mcu_cols = (width + 15) / 16;
+        let mcu_rows = (height + 15) / 16;
+        let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
+        let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
+
+        let mut x_blocks = Vec::with_capacity(num_xy_blocks);
+        let mut y_blocks = Vec::with_capacity(num_xy_blocks);
+        let mut b_blocks = Vec::with_capacity(num_b_blocks);
+
+        for mcu_y in 0..mcu_rows {
+            for mcu_x in 0..mcu_cols {
+                // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
+                for block_y in 0..2 {
+                    for block_x in 0..2 {
+                        let bx = mcu_x * 2 + block_x;
+                        let by = mcu_y * 2 + block_y;
+                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_dct = forward_dct_8x8(&x_block);
+                        let x_quant_coeffs = quant::quantize_block(&x_dct, &x_quant.values);
+                        x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
+                    }
+                }
+
+                // Process 4 Y blocks (2×2 arrangement within 16×16 MCU)
+                for block_y in 0..2 {
+                    for block_x in 0..2 {
+                        let bx = mcu_x * 2 + block_x;
+                        let by = mcu_y * 2 + block_y;
+                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_dct = forward_dct_8x8(&y_block);
+                        let y_quant_coeffs = quant::quantize_block(&y_dct, &y_quant.values);
+                        y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                    }
+                }
+
+                // Process 1 B block (from downsampled plane)
+                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_dct = forward_dct_8x8(&b_block);
+                let b_quant_coeffs = quant::quantize_block(&b_dct, &b_quant.values);
+                b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
+            }
+        }
+
+        (x_blocks, y_blocks, b_blocks)
+    }
+
+    /// Builds optimized Huffman tables for XYB mode.
+    ///
+    /// XYB uses a single shared table for all components (luminance tables).
+    /// Returns the optimized DC and AC tables.
+    fn build_optimized_tables_xyb(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ) -> Result<(crate::huffman_opt::OptimizedTable, crate::huffman_opt::OptimizedTable)> {
+        let mut dc_freq = FrequencyCounter::new();
+        let mut ac_freq = FrequencyCounter::new();
+
+        // Collect frequencies from all components
+        // Note: XYB MCU order is 4 X blocks, 4 Y blocks, 1 B block per MCU
+        // But since all share the same table, we just iterate through them
+
+        let mut prev_dc: i16 = 0;
+
+        // In XYB mode, we have interleaved blocks per MCU:
+        // [X0, X1, X2, X3, Y0, Y1, Y2, Y3, B0] per MCU
+        // DC prediction resets at each component boundary within MCU
+
+        let mcu_count = b_blocks.len();
+        for mcu_idx in 0..mcu_count {
+            // X blocks (4 per MCU)
+            let x_start = mcu_idx * 4;
+            prev_dc = 0;
+            for i in 0..4 {
+                let block = &x_blocks[x_start + i];
+                Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);
+                prev_dc = block[0];
+            }
+
+            // Y blocks (4 per MCU)
+            let y_start = mcu_idx * 4;
+            prev_dc = 0;
+            for i in 0..4 {
+                let block = &y_blocks[y_start + i];
+                Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);
+                prev_dc = block[0];
+            }
+
+            // B block (1 per MCU)
+            prev_dc = 0;
+            Self::collect_block_frequencies(&b_blocks[mcu_idx], prev_dc, &mut dc_freq, &mut ac_freq);
+        }
+
+        // Generate optimized tables
+        let dc_table = dc_freq.generate_table_with_dht()?;
+        let ac_table = ac_freq.generate_table_with_dht()?;
+
+        Ok((dc_table, ac_table))
+    }
+
+    /// Encodes XYB blocks using optimized Huffman tables.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_with_tables_xyb(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        dc_table: &crate::huffman_opt::OptimizedTable,
+        ac_table: &crate::huffman_opt::OptimizedTable,
+    ) -> Result<Vec<u8>> {
+        let mut encoder = EntropyEncoder::new();
+
+        // Use the same optimized table for all components
+        encoder.set_dc_table(0, dc_table.table.clone());
+        encoder.set_ac_table(0, ac_table.table.clone());
+
+        if self.config.restart_interval > 0 {
+            encoder.set_restart_interval(self.config.restart_interval);
+        }
+
+        let mcu_count = b_blocks.len();
+        for mcu_idx in 0..mcu_count {
+            // X blocks (4 per MCU)
+            let x_start = mcu_idx * 4;
+            for i in 0..4 {
+                encoder.encode_block(&x_blocks[x_start + i], 0, 0, 0)?;
+            }
+
+            // Y blocks (4 per MCU)
+            let y_start = mcu_idx * 4;
+            for i in 0..4 {
+                encoder.encode_block(&y_blocks[y_start + i], 1, 0, 0)?;
+            }
+
+            // B block (1 per MCU)
+            encoder.encode_block(&b_blocks[mcu_idx], 2, 0, 0)?;
+
+            encoder.check_restart();
+        }
+
+        Ok(encoder.finish())
+    }
+
+    /// Writes DHT markers for XYB optimized tables.
+    fn write_huffman_tables_xyb_optimized(
+        &self,
+        output: &mut Vec<u8>,
+        dc_table: &crate::huffman_opt::OptimizedTable,
+        ac_table: &crate::huffman_opt::OptimizedTable,
+    ) {
+        let write_table = |out: &mut Vec<u8>, class: u8, id: u8, bits: &[u8; 16], values: &[u8]| {
+            out.push(0xFF);
+            out.push(MARKER_DHT);
+            let length = 2 + 1 + 16 + values.len();
+            out.push((length >> 8) as u8);
+            out.push(length as u8);
+            out.push((class << 4) | id);
+            out.extend_from_slice(bits);
+            out.extend_from_slice(values);
+        };
+
+        // DC table (class=0, id=0)
+        write_table(output, 0, 0, &dc_table.bits, &dc_table.values);
+        // AC table (class=1, id=0)
+        write_table(output, 1, 0, &ac_table.bits, &ac_table.values);
     }
 
     /// Encodes scan data for XYB mode with float planes.
@@ -1387,5 +1853,182 @@ mod tests {
         assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
         assert_eq!(jpeg[jpeg.len() - 1], MARKER_EOI);
         println!("XYB encoded 32x32 JPEG size: {} bytes", jpeg.len());
+    }
+
+    #[test]
+    fn test_huffman_optimization_produces_valid_jpeg() {
+        // Create a gradient test image
+        let width = 64u32;
+        let height = 64u32;
+        let mut data = vec![0u8; (width * height * 3) as usize];
+
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                data[idx] = (x * 4) as u8; // R
+                data[idx + 1] = (y * 4) as u8; // G
+                data[idx + 2] = ((x + y) * 2) as u8; // B
+            }
+        }
+
+        let encoder = Encoder::new()
+            .width(width)
+            .height(height)
+            .quality(Quality::from_quality(75.0))
+            .optimize_huffman(true);
+
+        let result = encoder.encode(&data);
+        assert!(result.is_ok(), "Optimized Huffman encoding failed: {:?}", result.err());
+
+        let jpeg = result.unwrap();
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], MARKER_SOI);
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], MARKER_EOI);
+
+        // Verify it's decodable
+        let decoded = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+        assert!(decoded.is_ok(), "Optimized JPEG not decodable: {:?}", decoded.err());
+    }
+
+    #[test]
+    fn test_huffman_optimization_reduces_file_size() {
+        // Create a more complex test image that benefits from optimization
+        let width = 128u32;
+        let height = 128u32;
+        let mut data = vec![0u8; (width * height * 3) as usize];
+
+        // Create a pattern that will have non-uniform symbol frequencies
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                // Create blocks with varying content
+                let block_type = ((x / 16) + (y / 16)) % 4;
+                match block_type {
+                    0 => {
+                        // Solid color
+                        data[idx] = 180;
+                        data[idx + 1] = 180;
+                        data[idx + 2] = 180;
+                    }
+                    1 => {
+                        // Gradient
+                        data[idx] = (x * 2) as u8;
+                        data[idx + 1] = (y * 2) as u8;
+                        data[idx + 2] = 100;
+                    }
+                    2 => {
+                        // Checkerboard
+                        let checker = ((x + y) % 2) as u8 * 255;
+                        data[idx] = checker;
+                        data[idx + 1] = checker;
+                        data[idx + 2] = checker;
+                    }
+                    _ => {
+                        // Texture
+                        data[idx] = ((x * 5 + y * 3) % 256) as u8;
+                        data[idx + 1] = ((x * 3 + y * 7) % 256) as u8;
+                        data[idx + 2] = ((x * 2 + y * 2) % 256) as u8;
+                    }
+                }
+            }
+        }
+
+        // Encode without optimization
+        let jpeg_standard = Encoder::new()
+            .width(width)
+            .height(height)
+            .quality(Quality::from_quality(75.0))
+            .optimize_huffman(false)
+            .encode(&data)
+            .expect("Standard encoding failed");
+
+        // Encode with optimization
+        let jpeg_optimized = Encoder::new()
+            .width(width)
+            .height(height)
+            .quality(Quality::from_quality(75.0))
+            .optimize_huffman(true)
+            .encode(&data)
+            .expect("Optimized encoding failed");
+
+        println!(
+            "Standard size: {} bytes, Optimized size: {} bytes, Savings: {:.1}%",
+            jpeg_standard.len(),
+            jpeg_optimized.len(),
+            (1.0 - jpeg_optimized.len() as f64 / jpeg_standard.len() as f64) * 100.0
+        );
+
+        // Optimized should be smaller or equal (never larger)
+        assert!(
+            jpeg_optimized.len() <= jpeg_standard.len(),
+            "Optimized ({}) should not be larger than standard ({})",
+            jpeg_optimized.len(),
+            jpeg_standard.len()
+        );
+
+        // Verify both are decodable
+        let decoded_std = jpeg_decoder::Decoder::new(&jpeg_standard[..]).decode();
+        let decoded_opt = jpeg_decoder::Decoder::new(&jpeg_optimized[..]).decode();
+        assert!(decoded_std.is_ok(), "Standard JPEG not decodable");
+        assert!(decoded_opt.is_ok(), "Optimized JPEG not decodable");
+    }
+
+    #[test]
+    fn test_xyb_huffman_optimization() {
+        // Create test image for XYB mode
+        let width = 64u32;
+        let height = 64u32;
+        let mut data = vec![0u8; (width * height * 3) as usize];
+
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                data[idx] = (x * 4) as u8;
+                data[idx + 1] = (y * 4) as u8;
+                data[idx + 2] = ((x + y) * 2) as u8;
+            }
+        }
+
+        // Encode XYB without optimization
+        let jpeg_standard = Encoder::new()
+            .width(width)
+            .height(height)
+            .quality(Quality::from_quality(75.0))
+            .use_xyb(true)
+            .optimize_huffman(false)
+            .encode(&data)
+            .expect("Standard XYB encoding failed");
+
+        // Encode XYB with optimization
+        let jpeg_optimized = Encoder::new()
+            .width(width)
+            .height(height)
+            .quality(Quality::from_quality(75.0))
+            .use_xyb(true)
+            .optimize_huffman(true)
+            .encode(&data)
+            .expect("Optimized XYB encoding failed");
+
+        println!(
+            "XYB Standard: {} bytes, Optimized: {} bytes, Savings: {:.1}%",
+            jpeg_standard.len(),
+            jpeg_optimized.len(),
+            (1.0 - jpeg_optimized.len() as f64 / jpeg_standard.len() as f64) * 100.0
+        );
+
+        // Verify both have valid JPEG structure
+        assert_eq!(jpeg_standard[0], 0xFF);
+        assert_eq!(jpeg_standard[1], MARKER_SOI);
+        assert_eq!(jpeg_optimized[0], 0xFF);
+        assert_eq!(jpeg_optimized[1], MARKER_SOI);
+
+        // Optimized should be smaller or equal
+        assert!(
+            jpeg_optimized.len() <= jpeg_standard.len(),
+            "XYB Optimized ({}) should not be larger than standard ({})",
+            jpeg_optimized.len(),
+            jpeg_standard.len()
+        );
     }
 }
