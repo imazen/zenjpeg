@@ -46,11 +46,20 @@ pub fn decode_value(category: u8, bits: u16) -> i16 {
         return 0;
     }
 
+    // Clamp category to valid range (1-15 for JPEG)
+    // category 16+ would overflow i16
+    if category > 15 {
+        return bits as i16;
+    }
+
     let half = 1u16 << (category - 1);
     if bits >= half {
         bits as i16
     } else {
-        (bits as i16) - ((1i16 << category) - 1)
+        // Calculate (bits) - (2^category - 1) without overflow
+        // Using i32 to avoid overflow
+        let max_val = (1i32 << category) - 1;
+        ((bits as i32) - max_val) as i16
     }
 }
 
@@ -875,6 +884,26 @@ impl<'a> EntropyDecoder<'a> {
         })
     }
 
+    /// Safely gets a DC table, handling out-of-bounds indices.
+    fn get_dc_table(&self, idx: usize) -> Result<HuffmanDecodeTable> {
+        self.dc_tables
+            .get(idx)
+            .and_then(|t| t.clone())
+            .ok_or(Error::InternalError {
+                reason: "DC table not set or invalid index",
+            })
+    }
+
+    /// Safely gets an AC table, handling out-of-bounds indices.
+    fn get_ac_table(&self, idx: usize) -> Result<HuffmanDecodeTable> {
+        self.ac_tables
+            .get(idx)
+            .and_then(|t| t.clone())
+            .ok_or(Error::InternalError {
+                reason: "AC table not set or invalid index",
+            })
+    }
+
     /// Decodes a block of DCT coefficients.
     pub fn decode_block(
         &mut self,
@@ -883,16 +912,8 @@ impl<'a> EntropyDecoder<'a> {
         ac_table_idx: usize,
     ) -> Result<[i16; DCT_BLOCK_SIZE]> {
         // Clone tables to avoid borrow conflicts with self.decode_huffman()
-        let dc_table = self.dc_tables[dc_table_idx]
-            .clone()
-            .ok_or(Error::InternalError {
-                reason: "DC table not set",
-            })?;
-        let ac_table = self.ac_tables[ac_table_idx]
-            .clone()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+        let dc_table = self.get_dc_table(dc_table_idx)?;
+        let ac_table = self.get_ac_table(ac_table_idx)?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
@@ -961,11 +982,7 @@ impl<'a> EntropyDecoder<'a> {
         dc_table_idx: usize,
         al: u8,
     ) -> Result<i16> {
-        let dc_table = self.dc_tables[dc_table_idx]
-            .clone()
-            .ok_or(Error::InternalError {
-                reason: "DC table not set",
-            })?;
+        let dc_table = self.get_dc_table(dc_table_idx)?;
 
         let dc_cat = self.decode_huffman(&dc_table)?;
         let dc_diff = if dc_cat == 0 {
@@ -975,7 +992,7 @@ impl<'a> EntropyDecoder<'a> {
             decode_value(dc_cat, bits)
         };
 
-        let shifted_dc = self.prev_dc[component] + dc_diff;
+        let shifted_dc = self.prev_dc[component].wrapping_add(dc_diff);
         self.prev_dc[component] = shifted_dc;
 
         // Return the unshifted value (shift left by al)
@@ -1001,11 +1018,7 @@ impl<'a> EntropyDecoder<'a> {
         al: u8,
         eob_run: &mut u16,
     ) -> Result<()> {
-        let ac_table = self.ac_tables[ac_table_idx]
-            .clone()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+        let ac_table = self.get_ac_table(ac_table_idx)?;
 
         // If we have a pending EOB run, decrement and skip this block
         if *eob_run > 0 {
@@ -1066,11 +1079,7 @@ impl<'a> EntropyDecoder<'a> {
         al: u8,
         eob_run: &mut u16,
     ) -> Result<()> {
-        let ac_table = self.ac_tables[ac_table_idx]
-            .clone()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+        let ac_table = self.get_ac_table(ac_table_idx)?;
 
         let bit_val = 1i16 << al;
 

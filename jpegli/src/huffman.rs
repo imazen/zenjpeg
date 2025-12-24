@@ -242,12 +242,16 @@ impl HuffmanDecodeTable {
         // Build fast lookup table
         for (k, &code) in huffcode.iter().enumerate() {
             let length = huffsize[k] as usize;
-            if length <= Self::FAST_BITS {
+            if length <= Self::FAST_BITS && length > 0 {
                 let fast_code = (code as usize) << (Self::FAST_BITS - length);
                 let count = 1 << (Self::FAST_BITS - length);
                 for m in 0..count {
-                    // Store symbol in lower 8 bits, length in upper 8 bits
-                    table.fast_lookup[fast_code + m] = (values[k] as i16) | ((length as i16) << 8);
+                    let idx = fast_code + m;
+                    // Bounds check for malformed Huffman tables
+                    if idx < table.fast_lookup.len() {
+                        // Store symbol in lower 8 bits, length in upper 8 bits
+                        table.fast_lookup[idx] = (values[k] as i16) | ((length as i16) << 8);
+                    }
                 }
             }
         }

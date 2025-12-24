@@ -537,12 +537,14 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        for (comp_idx, dc_table, ac_table) in scan_components {
-            if let Some(table) = &self.dc_tables[*dc_table as usize] {
-                decoder.set_dc_table(*dc_table as usize, table.clone());
+        for (_comp_idx, dc_table, ac_table) in scan_components {
+            let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+            let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+            if let Some(table) = &self.dc_tables[dc_idx] {
+                decoder.set_dc_table(dc_idx, table.clone());
             }
-            if let Some(table) = &self.ac_tables[*ac_table as usize] {
-                decoder.set_ac_table(*ac_table as usize, table.clone());
+            if let Some(table) = &self.ac_tables[ac_idx] {
+                decoder.set_ac_table(ac_idx, table.clone());
             }
         }
 
@@ -618,12 +620,14 @@ impl<'a> JpegParser<'a> {
         let scan_data = &self.data[self.position..];
         let mut decoder = EntropyDecoder::new(scan_data);
 
-        for (comp_idx, dc_table, ac_table) in scan_components {
-            if let Some(table) = &self.dc_tables[*dc_table as usize] {
-                decoder.set_dc_table(*dc_table as usize, table.clone());
+        for (_comp_idx, dc_table, ac_table) in scan_components {
+            let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+            let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+            if let Some(table) = &self.dc_tables[dc_idx] {
+                decoder.set_dc_table(dc_idx, table.clone());
             }
-            if let Some(table) = &self.ac_tables[*ac_table as usize] {
-                decoder.set_ac_table(*ac_table as usize, table.clone());
+            if let Some(table) = &self.ac_tables[ac_idx] {
+                decoder.set_ac_table(ac_idx, table.clone());
             }
         }
 
