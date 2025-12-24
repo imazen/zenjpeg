@@ -116,15 +116,18 @@ Types: `fix`, `feat`, `refactor`, `test`, `docs`, `investigate`, `wip`
 
 ### Instrumented C++ Functions
 
-| C++ File | Function | Rust Test File |
-|----------|----------|----------------|
-| `adaptive_quantization.cc` | `PerBlockModulations()` | `tests/adaptive_quant_comparison.rs` |
-| `adaptive_quantization.cc` | `FuzzyErosion()` | `tests/adaptive_quant_comparison.rs` |
-| `adaptive_quantization.cc` | `ComputePreErosion()` | `tests/adaptive_quant_comparison.rs` |
-| `quant.cc` | `SetQuantMatrices()` | `tests/quant_comparison.rs` |
-| `quant.cc` | `InitQuantizer()` | `tests/quant_comparison.rs` |
-| `huffman.cc` | `CreateHuffmanTree()` | `tests/huffman_cpp_comparison.rs` |
-| `encode.cc` | various | `tests/cpp_filesize_comparison.rs` |
+| C++ File | Function | Testdata File | Rust Test File |
+|----------|----------|---------------|----------------|
+| `adaptive_quantization.cc` | `PerBlockModulations()` | `PerBlockModulations.testdata` | ❌ TODO |
+| `adaptive_quantization.cc` | `FuzzyErosion()` | `FuzzyErosion.testdata` | ❌ TODO |
+| `adaptive_quantization.cc` | `ComputePreErosion()` | `ComputePreErosion.testdata` | ❌ TODO |
+| `adaptive_quantization.cc` | `ComputeAdaptiveQuantField()` | `ComputeAdaptiveQuantField.testdata` | ❌ TODO |
+| `quant.cc` | `SetQuantMatrices()` | `SetQuantMatrices.testdata` | ❌ TODO |
+| `quant.cc` | `InitQuantizer()` | `InitQuantizer.testdata` | ❌ TODO |
+| `huffman.cc` | `CreateHuffmanTree()` | `CreateHuffmanTree.testdata` | ✅ `tests/huffman_cpp_comparison.rs` |
+| `encode.cc` | `PadInputBuffer()` | `PadInputBuffer.testdata` | ❌ TODO |
+
+**Note:** Only Huffman test currently implemented. Others need Rust tests that parse testdata.
 
 ### Why This Matters
 
