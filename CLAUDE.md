@@ -61,6 +61,26 @@ A feature is **NOT ported** until ALL of these are true:
 4. **Before ending a session** - NEVER leave work uncommitted
 5. **When investigation produces insights** - Commit notes/findings even if code unchanged
 
+### cargo fmt Discipline
+
+**ALWAYS run `cargo fmt` BEFORE making changes** - not after. This ensures:
+- Formatting changes are separate from functional changes
+- Reviewers can skip `style: cargo fmt` commits
+- Functional changes are easy to review without noise
+
+```bash
+# At start of work session:
+cargo fmt
+git add -A && git commit -m "style: cargo fmt"
+
+# Then make your functional changes
+# ...
+
+# Before committing functional changes:
+cargo fmt  # Should be no-op if done correctly
+git add -A && git commit -m "feat: actual change description"
+```
+
 ### Commit Message Guidelines
 
 ```
