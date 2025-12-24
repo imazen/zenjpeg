@@ -14,6 +14,10 @@ use crate::opsin::srgb_to_xyb_butteraugli;
 use crate::psycho::{separate_frequencies, PsychoImage};
 use crate::{ButteraugliParams, ButteraugliResult};
 
+/// Minimum image dimension for multi-resolution processing.
+/// Images smaller than this are handled without recursion.
+const MIN_SIZE_FOR_MULTIRESOLUTION: usize = 8;
+
 /// Converts RGB buffer to XYB Image3F using butteraugli's OpsinDynamicsImage.
 ///
 /// This uses the correct butteraugli color conversion, which is DIFFERENT
@@ -23,6 +27,118 @@ use crate::{ButteraugliParams, ButteraugliResult};
 /// 3. Includes dynamic sensitivity based on blurred image
 fn rgb_to_xyb_image(rgb: &[u8], width: usize, height: usize, intensity_target: f32) -> Image3F {
     srgb_to_xyb_butteraugli(rgb, width, height, intensity_target)
+}
+
+/// Subsamples an Image3F by 2x using box filter averaging.
+///
+/// Each 2x2 block of pixels is averaged into a single pixel.
+/// Edge cases for odd dimensions are handled by scaling the edge values.
+fn subsample_2x(input: &Image3F) -> Image3F {
+    let in_width = input.width();
+    let in_height = input.height();
+    let out_width = (in_width + 1) / 2;
+    let out_height = (in_height + 1) / 2;
+
+    let mut output = Image3F::new(out_width, out_height);
+
+    // Initialize to zero (already done by Image3F::new)
+
+    // Accumulate 2x2 blocks
+    for c in 0..3 {
+        for y in 0..in_height {
+            for x in 0..in_width {
+                let val = input.plane(c).get(x, y);
+                let ox = x / 2;
+                let oy = y / 2;
+                let prev = output.plane(c).get(ox, oy);
+                output.plane_mut(c).set(ox, oy, prev + 0.25 * val);
+            }
+        }
+
+        // Handle odd width - last column only has half the samples
+        if (in_width & 1) != 0 {
+            let last_col = out_width - 1;
+            for y in 0..out_height {
+                let prev = output.plane(c).get(last_col, y);
+                output.plane_mut(c).set(last_col, y, prev * 2.0);
+            }
+        }
+
+        // Handle odd height - last row only has half the samples
+        if (in_height & 1) != 0 {
+            let last_row = out_height - 1;
+            for x in 0..out_width {
+                let prev = output.plane(c).get(x, last_row);
+                output.plane_mut(c).set(x, last_row, prev * 2.0);
+            }
+        }
+    }
+
+    output
+}
+
+/// Subsamples an RGB buffer by 2x for multi-resolution processing.
+fn subsample_rgb_2x(rgb: &[u8], width: usize, height: usize) -> (Vec<u8>, usize, usize) {
+    let out_width = (width + 1) / 2;
+    let out_height = (height + 1) / 2;
+    let mut output = vec![0u8; out_width * out_height * 3];
+
+    // Simple averaging of 2x2 blocks
+    for oy in 0..out_height {
+        for ox in 0..out_width {
+            let mut r_sum = 0u32;
+            let mut g_sum = 0u32;
+            let mut b_sum = 0u32;
+            let mut count = 0u32;
+
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let ix = ox * 2 + dx;
+                    let iy = oy * 2 + dy;
+                    if ix < width && iy < height {
+                        let idx = (iy * width + ix) * 3;
+                        r_sum += rgb[idx] as u32;
+                        g_sum += rgb[idx + 1] as u32;
+                        b_sum += rgb[idx + 2] as u32;
+                        count += 1;
+                    }
+                }
+            }
+
+            if count > 0 {
+                let out_idx = (oy * out_width + ox) * 3;
+                output[out_idx] = (r_sum / count) as u8;
+                output[out_idx + 1] = (g_sum / count) as u8;
+                output[out_idx + 2] = (b_sum / count) as u8;
+            }
+        }
+    }
+
+    (output, out_width, out_height)
+}
+
+/// Adds a supersampled (upscaled 2x) diffmap to the destination.
+///
+/// This blends the lower-resolution analysis with the higher-resolution one
+/// using a heuristic mixing value to reduce noise from lower resolutions.
+fn add_supersampled_2x(src: &ImageF, weight: f32, dest: &mut ImageF) {
+    let width = dest.width();
+    let height = dest.height();
+
+    // Heuristic from C++: lower resolution images have less error
+    const K_HEURISTIC_MIXING_VALUE: f32 = 0.3;
+
+    for y in 0..height {
+        for x in 0..width {
+            let src_x = x / 2;
+            let src_y = y / 2;
+            let src_val = src.get(src_x.min(src.width() - 1), src_y.min(src.height() - 1));
+
+            let prev = dest.get(x, y);
+            let mixed = prev * (1.0 - K_HEURISTIC_MIXING_VALUE * weight) + weight * src_val;
+            dest.set(x, y, mixed);
+        }
+    }
 }
 
 /// L2 difference (symmetric).
@@ -347,25 +463,14 @@ fn compute_score_from_diffmap(diffmap: &ImageF) -> f64 {
     max_val * GLOBAL_SCALE as f64
 }
 
-/// Main implementation of butteraugli comparison.
-pub fn compute_butteraugli_impl(
+/// Computes the diffmap for a single resolution level.
+fn compute_diffmap_single_resolution(
     rgb1: &[u8],
     rgb2: &[u8],
     width: usize,
     height: usize,
     params: &ButteraugliParams,
-) -> ButteraugliResult {
-    assert_eq!(rgb1.len(), width * height * 3);
-    assert_eq!(rgb2.len(), width * height * 3);
-
-    // Handle identical images case
-    if rgb1 == rgb2 {
-        return ButteraugliResult {
-            score: 0.0,
-            diffmap: Some(ImageF::new(width, height)),
-        };
-    }
-
+) -> ImageF {
     // Convert to XYB using butteraugli's OpsinDynamicsImage
     let xyb1 = rgb_to_xyb_image(rgb1, width, height, params.intensity_target);
     let xyb2 = rgb_to_xyb_image(rgb2, width, height, params.intensity_target);
@@ -401,7 +506,64 @@ pub fn compute_butteraugli_impl(
     }
 
     // Combine channels to final diffmap
-    let diffmap = combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul);
+    combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul)
+}
+
+/// Recursively computes butteraugli diffmap at multiple resolutions.
+fn compute_diffmap_multiresolution(
+    rgb1: &[u8],
+    rgb2: &[u8],
+    width: usize,
+    height: usize,
+    params: &ButteraugliParams,
+) -> ImageF {
+    // Compute diffmap at current resolution
+    let mut diffmap = compute_diffmap_single_resolution(rgb1, rgb2, width, height, params);
+
+    // If image is large enough, recurse to lower resolution
+    let sub_width = (width + 1) / 2;
+    let sub_height = (height + 1) / 2;
+
+    if sub_width >= MIN_SIZE_FOR_MULTIRESOLUTION && sub_height >= MIN_SIZE_FOR_MULTIRESOLUTION {
+        // Subsample both images
+        let (sub_rgb1, sw, sh) = subsample_rgb_2x(rgb1, width, height);
+        let (sub_rgb2, _, _) = subsample_rgb_2x(rgb2, width, height);
+
+        // Recursively compute at lower resolution
+        let sub_diffmap = compute_diffmap_multiresolution(&sub_rgb1, &sub_rgb2, sw, sh, params);
+
+        // Add supersampled lower-resolution result to current
+        add_supersampled_2x(&sub_diffmap, 0.5, &mut diffmap);
+    }
+
+    diffmap
+}
+
+/// Main implementation of butteraugli comparison.
+pub fn compute_butteraugli_impl(
+    rgb1: &[u8],
+    rgb2: &[u8],
+    width: usize,
+    height: usize,
+    params: &ButteraugliParams,
+) -> ButteraugliResult {
+    assert_eq!(rgb1.len(), width * height * 3);
+    assert_eq!(rgb2.len(), width * height * 3);
+
+    // Handle identical images case
+    if rgb1 == rgb2 {
+        return ButteraugliResult {
+            score: 0.0,
+            diffmap: Some(ImageF::new(width, height)),
+        };
+    }
+
+    // Handle very small images without multi-resolution
+    let diffmap = if width < MIN_SIZE_FOR_MULTIRESOLUTION || height < MIN_SIZE_FOR_MULTIRESOLUTION {
+        compute_diffmap_single_resolution(rgb1, rgb2, width, height, params)
+    } else {
+        compute_diffmap_multiresolution(rgb1, rgb2, width, height, params)
+    };
 
     // Compute global score
     let score = compute_score_from_diffmap(&diffmap);
@@ -507,5 +669,64 @@ mod tests {
             }
         }
         assert!(sum > 0.0, "L2 diff should be non-zero for different images");
+    }
+
+    #[test]
+    fn test_subsample_rgb_2x() {
+        let width = 8;
+        let height = 8;
+        let rgb: Vec<u8> = vec![128; width * height * 3];
+
+        let (sub_rgb, sw, sh) = subsample_rgb_2x(&rgb, width, height);
+
+        assert_eq!(sw, 4);
+        assert_eq!(sh, 4);
+        assert_eq!(sub_rgb.len(), 4 * 4 * 3);
+        // Uniform input should produce uniform output
+        assert!(sub_rgb.iter().all(|&v| v == 128));
+    }
+
+    #[test]
+    fn test_subsample_rgb_2x_odd() {
+        let width = 7;
+        let height = 7;
+        let rgb: Vec<u8> = vec![128; width * height * 3];
+
+        let (sub_rgb, sw, sh) = subsample_rgb_2x(&rgb, width, height);
+
+        // (7+1)/2 = 4
+        assert_eq!(sw, 4);
+        assert_eq!(sh, 4);
+    }
+
+    #[test]
+    fn test_add_supersampled_2x() {
+        let src = ImageF::filled(4, 4, 1.0);
+        let mut dest = ImageF::filled(8, 8, 2.0);
+
+        add_supersampled_2x(&src, 0.5, &mut dest);
+
+        // Should have blended values
+        // new = old * (1 - 0.3 * 0.5) + 0.5 * 1.0 = 2.0 * 0.85 + 0.5 = 1.7 + 0.5 = 2.2
+        let val = dest.get(0, 0);
+        assert!(
+            (val - 2.2).abs() < 0.01,
+            "Expected ~2.2, got {}",
+            val
+        );
+    }
+
+    #[test]
+    fn test_multiresolution_small_image() {
+        // Very small image should not recurse
+        let width = 4;
+        let height = 4;
+        let rgb1: Vec<u8> = vec![128; width * height * 3];
+        let rgb2: Vec<u8> = vec![140; width * height * 3];
+
+        let result =
+            compute_butteraugli_impl(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
+
+        assert!(result.score > 0.0, "Should have non-zero score");
     }
 }
