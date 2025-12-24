@@ -596,6 +596,94 @@ CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_q
 
 **Verification test**: `cargo test --test parity_enforcement -- --ignored --nocapture`
 
+## Adaptive Quantization Debugging (Confirmed Bugs)
+
+### Bug 1: LIMIT Scaling (FIXED)
+
+**Location**: `adaptive_quant.rs:compute_pre_erosion_scalar`
+
+**Bug**: `let limit = LIMIT / K_INPUT_SCALING` → limit = 51.0 instead of 0.2
+
+**Problem**: `ratio_of_derivatives` returns values in range 1.6-1.9, which are ALL < 51.0. This caused every pixel to hit the `offset` branch, producing uniform pre_erosion output.
+
+**Fix**: Use `let limit = LIMIT` directly (0.2). The ratio_of_derivatives already has K_INPUT_SCALING baked into its constants.
+
+**Test confirmation**: After fix, pre_erosion values varied from 6.31-6.56 instead of uniform 4.845.
+
+### Bug 2: FuzzyErosion Global Minimum (FIXED)
+
+**Location**: `adaptive_quant.rs:fuzzy_erosion_scalar`
+
+**Bug**: Original code tracked 4 smallest values across ENTIRE row/column using `update_min4`, never resetting or using a window.
+
+**Problem**: By end of row, it found the GLOBAL minimum and assigned that to ALL cells, producing uniform output.
+
+**Fix**: Rewrite to match C++ algorithm:
+1. For each pixel, find 4 smallest in 3x3 LOCAL window
+2. Weighted sum: `0.125*min0 + 0.075*min1 + 0.06*min2 + 0.05*min3`
+3. Sum 2x2 blocks to get final values
+
+**Expected**: C++ produces quant_field mean 6.75 from pre_erosion mean 5.64
+
+### Bug 3: Missing 0.25 Scale Factor (FIXED)
+
+**Location**: `adaptive_quant.rs:compute_pre_erosion_scalar`
+
+**Bug**: After summing 4 adjacent x-values, C++ multiplies by 0.25:
+```cpp
+row_d_out[x] = (sum of 4) * 0.25f;
+```
+
+**Problem**: Without this, pre_erosion values were 4x too high (21-24 instead of 5-8).
+
+**Fix**: Added `sum * 0.25` after the 4x downsampling sum.
+
+### Bug 4: K_MASK_BASE Sign (FIXED)
+
+**Location**: `adaptive_quant.rs:K_MASK_BASE`
+
+**Bug**: `K_MASK_BASE = 0.6109318733215332` (POSITIVE)
+
+**Problem**: C++ has `kBase = -0.74174993` (NEGATIVE). This completely changed the ComputeMask output, making it positive when it should be negative.
+
+**Fix**: Changed to `K_MASK_BASE = -0.74174993`.
+
+**Impact**: This was the biggest bug. ComputeMask(6.6) changed from +0.62 to -0.38, enabling the 2^x transform to produce quant_field in the correct 0.5-0.6 range.
+
+### Bug 5: Wrong K_MUL Constants (FIXED)
+
+**Location**: `adaptive_quant.rs:compute_mask_scalar`
+
+**Bug**: Used `K_MUL4 = 0.039` instead of `K_MASK_MUL4 = 3.24` (100x difference!)
+
+**Problem**: Both constant sets existed in the file with similar names:
+- `K_MUL4 = 0.039` (wrong, ~100x smaller)
+- `K_MASK_MUL4 = 3.24` (correct C++ value)
+
+**Fix**: Changed function to use `K_MASK_MUL*` constants.
+
+### Bug 6: PerBlockModulations Scaling (FIXED)
+
+**Location**: `adaptive_quant.rs:per_block_modulations_scalar`
+
+**Bug**: Used `input_scaled` (0-1 range) but C++ uses unscaled input (0-255 range).
+
+**Problem**: HfModulation and GammaModulation constants assume 0-255 input range.
+
+**Fix**: Pass original `y_plane` (unscaled) to per_block_modulations.
+
+### Current Status
+
+After all fixes:
+- **Rust aq_strength**: min=0.00, max=0.12, mean=0.065
+- **C++ aq_strength**: min=0.00, max=0.20, mean=0.081
+- **Mean abs diff**: 0.016 (down from 0.08)
+
+Remaining 20% difference likely due to:
+1. Edge handling differences in FuzzyErosion
+2. FastLog2f vs log2() approximation differences
+3. Border padding handling
+
 ## Red Herrings (Investigated but NOT the cause)
 
 Things we investigated that looked promising but turned out not to be the issue:

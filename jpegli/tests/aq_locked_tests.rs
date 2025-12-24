@@ -39,12 +39,16 @@ fn test_zero_bias_params_valid() {
             assert!(
                 params.mul[0].abs() < 1e-6,
                 "DC mul should be 0, got {} at distance={}, component={}",
-                params.mul[0], distance, component
+                params.mul[0],
+                distance,
+                component
             );
             assert!(
                 params.offset[0].abs() < 1e-6,
                 "DC offset should be 0, got {} at distance={}, component={}",
-                params.offset[0], distance, component
+                params.offset[0],
+                distance,
+                component
             );
 
             // AC values should be finite and in reasonable range
@@ -52,23 +56,33 @@ fn test_zero_bias_params_valid() {
                 assert!(
                     params.mul[k].is_finite(),
                     "mul[{}] is not finite at distance={}, component={}",
-                    k, distance, component
+                    k,
+                    distance,
+                    component
                 );
                 assert!(
                     params.offset[k].is_finite(),
                     "offset[{}] is not finite at distance={}, component={}",
-                    k, distance, component
+                    k,
+                    distance,
+                    component
                 );
                 // C++ HQ tables have values up to ~2.1 (e.g., 2.0719 for Cb)
                 assert!(
                     params.mul[k] >= 0.0 && params.mul[k] <= 2.5,
                     "mul[{}]={} outside range [0, 2.5] at distance={}, component={}",
-                    k, params.mul[k], distance, component
+                    k,
+                    params.mul[k],
+                    distance,
+                    component
                 );
                 assert!(
                     params.offset[k] >= 0.0 && params.offset[k] <= 2.5,
                     "offset[{}]={} outside range [0, 2.5] at distance={}, component={}",
-                    k, params.offset[k], distance, component
+                    k,
+                    params.offset[k],
+                    distance,
+                    component
                 );
             }
         }
@@ -88,12 +102,16 @@ fn test_quality_distance_monotonic() {
         assert!(
             distance < prev_distance,
             "Distance not monotonically decreasing: Q{} -> {}, Q{} -> {}",
-            quality - 5, prev_distance, quality, distance
+            quality - 5,
+            prev_distance,
+            quality,
+            distance
         );
         assert!(
             distance > 0.0,
             "Distance must be positive, got {} at Q{}",
-            distance, quality
+            distance,
+            quality
         );
 
         prev_distance = distance;
@@ -121,9 +139,17 @@ fn test_encoding_with_zero_bias_valid() {
         .expect("encoding failed");
 
     // Verify output is valid JPEG
-    assert!(jpeg_data.len() > 100, "JPEG too small: {} bytes", jpeg_data.len());
+    assert!(
+        jpeg_data.len() > 100,
+        "JPEG too small: {} bytes",
+        jpeg_data.len()
+    );
     assert_eq!(&jpeg_data[0..2], &[0xFF, 0xD8], "Missing JPEG SOI marker");
-    assert_eq!(&jpeg_data[jpeg_data.len()-2..], &[0xFF, 0xD9], "Missing JPEG EOI marker");
+    assert_eq!(
+        &jpeg_data[jpeg_data.len() - 2..],
+        &[0xFF, 0xD9],
+        "Missing JPEG EOI marker"
+    );
 
     // Decode and verify pixels are reasonable
     let mut decoder = jpeg_decoder::Decoder::new(&jpeg_data[..]);
@@ -173,17 +199,20 @@ fn test_quality_affects_size() {
     assert!(
         size_q60 < size_q75,
         "Q60 ({}) should be smaller than Q75 ({})",
-        size_q60, size_q75
+        size_q60,
+        size_q75
     );
     assert!(
         size_q75 < size_q90,
         "Q75 ({}) should be smaller than Q90 ({})",
-        size_q75, size_q90
+        size_q75,
+        size_q90
     );
     assert!(
         size_q90 < size_q95,
         "Q90 ({}) should be smaller than Q95 ({})",
-        size_q90, size_q95
+        size_q90,
+        size_q95
     );
 }
 
@@ -208,7 +237,9 @@ fn test_aq_mean_matches_cpp_testdata() {
     assert!(
         (rust_aq_strength - cpp_mean).abs() < tolerance,
         "Rust aq_strength {} differs from C++ mean {} by more than {}",
-        rust_aq_strength, cpp_mean, tolerance
+        rust_aq_strength,
+        cpp_mean,
+        tolerance
     );
 }
 
