@@ -343,12 +343,7 @@ pub fn verify_output(original: &[u8], decoded: &[u8], max_rms: f64, max_diff: u8
 }
 
 /// Verify output with TestImages.
-pub fn verify_output_images(
-    original: &TestImage,
-    decoded: &TestImage,
-    max_rms: f64,
-    max_diff: u8,
-) {
+pub fn verify_output_images(original: &TestImage, decoded: &TestImage, max_rms: f64, max_diff: u8) {
     assert_eq!(original.width, decoded.width, "Width mismatch");
     assert_eq!(original.height, decoded.height, "Height mismatch");
     assert_eq!(
