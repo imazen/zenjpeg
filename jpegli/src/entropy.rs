@@ -7,6 +7,7 @@ use crate::bitstream::{BitReader, BitWriter};
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
 use crate::huffman::{HuffmanDecodeTable, HuffmanEncodeTable};
+use crate::huffman_opt::{ScanTokenInfo, Token};
 
 /// Maximum DC coefficient difference magnitude (for 8-bit samples).
 pub const MAX_DC_DIFF: i16 = 2047;
@@ -575,6 +576,216 @@ impl EntropyEncoder {
     /// Flushes the EOB run for refinement scan at the end.
     pub fn flush_refine_eob(&mut self, table_idx: usize, eob_run: u16) -> Result<()> {
         self.emit_eob_run_by_idx(table_idx, eob_run)
+    }
+
+    // ===== Token replay methods for two-pass progressive encoding =====
+
+    /// Replays DC tokens from a token buffer.
+    ///
+    /// This is used in two-pass progressive encoding to replay tokens
+    /// with optimized Huffman tables.
+    ///
+    /// # Arguments
+    /// * `tokens` - Slice of tokens to replay
+    /// * `context_to_table` - Maps context IDs to table indices
+    pub fn write_dc_tokens(
+        &mut self,
+        tokens: &[Token],
+        context_to_table: &[usize],
+    ) -> Result<()> {
+        for token in tokens {
+            let table_idx = context_to_table
+                .get(token.context as usize)
+                .copied()
+                .unwrap_or(0);
+
+            let dc_table = self.dc_tables[table_idx]
+                .as_ref()
+                .ok_or(Error::InternalError {
+                    reason: "DC table not set for token replay",
+                })?;
+
+            // Write the Huffman code for the symbol
+            let (code, len) = dc_table.encode(token.symbol);
+
+            // Handle symbol not in table (shouldn't happen if tokenization is correct)
+            if len == 0 && token.symbol != 0 {
+                // This can happen for very small images where not all DC categories appear.
+                // Fall back to encoding using a longer code that's guaranteed to exist.
+                // For DC, category 0 always exists, so we can't encode missing categories.
+                // This is a limitation - the tokenization should ensure all used symbols exist.
+                return Err(Error::InternalError {
+                    reason: "DC symbol not in Huffman table during replay - histogram may be incomplete",
+                });
+            }
+            self.writer.write_bits(code, len);
+
+            // Write extra bits if any
+            if token.num_extra > 0 {
+                self.writer.write_bits(token.extra_bits as u32, token.num_extra);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Replays AC tokens from a token buffer for a first scan (ah=0).
+    ///
+    /// # Arguments
+    /// * `tokens` - Slice of tokens to replay
+    /// * `table_idx` - AC Huffman table index to use
+    pub fn write_ac_first_tokens(
+        &mut self,
+        tokens: &[Token],
+        table_idx: usize,
+    ) -> Result<()> {
+        let ac_table = self.ac_tables[table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set for token replay",
+            })?
+            .clone();
+
+        for token in tokens {
+            // Write the Huffman code for the symbol
+            let (code, len) = ac_table.encode(token.symbol);
+
+            // Check if this is an EOB run symbol (upper nibble indicates run size)
+            let is_eob_run = (token.symbol & 0x0F) == 0 && token.symbol != 0xF0;
+
+            if len == 0 && !is_eob_run && token.symbol != 0x00 {
+                return Err(Error::InternalError {
+                    reason: "AC symbol not in Huffman table during replay",
+                });
+            }
+
+            // For missing EOB run symbols, fall back to individual EOBs
+            if len == 0 && is_eob_run {
+                let run = 1u16 << (token.symbol >> 4);
+                let (eob_code, eob_len) = ac_table.encode(0x00);
+                for _ in 0..run {
+                    self.writer.write_bits(eob_code, eob_len);
+                }
+            } else {
+                self.writer.write_bits(code, len);
+
+                // Write extra bits if any
+                if token.num_extra > 0 {
+                    self.writer.write_bits(token.extra_bits as u32, token.num_extra);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Replays AC refinement tokens from scan info.
+    ///
+    /// AC refinement scans have a more complex structure where:
+    /// - Symbols indicate newly-nonzero coefficients or EOB runs
+    /// - Refinement bits for previously-nonzero coefficients are interleaved
+    ///
+    /// # Arguments
+    /// * `scan_info` - Metadata containing ref_tokens, refbits, and eobruns
+    /// * `table_idx` - AC Huffman table index to use
+    pub fn write_ac_refinement_tokens(
+        &mut self,
+        scan_info: &ScanTokenInfo,
+        table_idx: usize,
+    ) -> Result<()> {
+        let ac_table = self.ac_tables[table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set for refinement replay",
+            })?
+            .clone();
+
+        let mut refbit_idx = 0;
+        let mut eobrun_idx = 0;
+
+        for ref_token in &scan_info.ref_tokens {
+            // Write the Huffman code for the symbol
+            let (code, len) = ac_table.encode(ref_token.symbol);
+
+            // Check if this is an EOB symbol
+            let is_eob = (ref_token.symbol & 0x0F) == 0 && ref_token.symbol != 0xF0;
+
+            if len == 0 && ref_token.symbol != 0x00 {
+                // Symbol not in table - for EOB runs, fall back to individual EOBs
+                if is_eob {
+                    let run_bits = ref_token.symbol >> 4;
+                    if run_bits > 0 {
+                        // Get the actual run value from eobruns array
+                        let run = scan_info.eobruns.get(eobrun_idx).copied().unwrap_or(1);
+                        eobrun_idx += 1;
+
+                        let (eob_code, eob_len) = ac_table.encode(0x00);
+                        for _ in 0..run {
+                            self.writer.write_bits(eob_code, eob_len);
+                        }
+                    } else {
+                        let (eob_code, eob_len) = ac_table.encode(0x00);
+                        self.writer.write_bits(eob_code, eob_len);
+                    }
+                } else {
+                    return Err(Error::InternalError {
+                        reason: "AC refinement symbol not in Huffman table",
+                    });
+                }
+            } else {
+                self.writer.write_bits(code, len);
+
+                // For EOB runs > 1, write the extra bits
+                if is_eob && (ref_token.symbol >> 4) > 0 {
+                    let run_bits = ref_token.symbol >> 4;
+                    if let Some(&run) = scan_info.eobruns.get(eobrun_idx) {
+                        let extra = run & ((1 << run_bits) - 1);
+                        self.writer.write_bits(extra as u32, run_bits);
+                        eobrun_idx += 1;
+                    }
+                }
+
+                // Write the sign bit for newly-nonzero coefficients
+                let symbol_cat = ref_token.symbol & 0x0F;
+                if symbol_cat == 1 && ref_token.symbol != 0xF0 {
+                    // This is a newly-nonzero coefficient, write sign bit
+                    if refbit_idx < scan_info.refbits.len() {
+                        let sign = scan_info.refbits[refbit_idx] as u32;
+                        self.writer.write_bits(sign, 1);
+                        refbit_idx += 1;
+                    }
+                }
+            }
+
+            // Write refinement bits that follow this token
+            for _ in 0..ref_token.refbits {
+                if refbit_idx < scan_info.refbits.len() {
+                    let bit = scan_info.refbits[refbit_idx] as u32;
+                    self.writer.write_bits(bit, 1);
+                    refbit_idx += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Writes a restart marker at the current position.
+    pub fn write_restart_marker(&mut self) {
+        self.writer.flush();
+        self.writer.write_byte_raw(0xFF);
+        self.writer.write_byte_raw(0xD0 + self.restart_num);
+        self.restart_num = (self.restart_num + 1) & 7;
+    }
+
+    /// Returns the current byte position in the output.
+    pub fn byte_position(&self) -> usize {
+        self.writer.position()
+    }
+
+    /// Returns a reference to the current output buffer.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.writer.as_bytes()
     }
 }
 

@@ -44,6 +44,8 @@ simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
 cms-lcms2 = ["dep:lcms2", "dep:jpeg-decoder"]
 cms-moxcms = ["dep:moxcms", "dep:jpeg-decoder"]
+# Enable debug token serialization for C++ comparison
+debug-tokens = []
 
 [[bench]]
 name = "encode"

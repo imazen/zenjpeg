@@ -13,7 +13,7 @@ use crate::dct::forward_dct_8x8;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanEncodeTable;
-use crate::huffman_opt::{FrequencyCounter, OptimizedHuffmanTables};
+use crate::huffman_opt::{FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use crate::xyb::srgb_to_scaled_xyb;
@@ -488,6 +488,11 @@ impl Encoder {
     /// 4. AC 3-63 refine: Ss=3, Se=63, Ah=2, Al=1 (bit 1 refinement)
     /// 5. AC 3-63 refine: Ss=3, Se=63, Ah=1, Al=0 (bit 0 refinement)
     fn encode_progressive(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Use tokenization-based approach when optimizing Huffman tables
+        if self.config.optimize_huffman {
+            return self.encode_progressive_optimized(data);
+        }
+
         let mut output = Vec::with_capacity(data.len() / 4);
 
         // Convert to YCbCr using f32 precision
@@ -507,11 +512,7 @@ impl Encoder {
         self.write_quant_tables(&mut output, &y_quant, &c_quant)?;
         self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
 
-        // For progressive, we need to write Huffman tables before all scans
-        // Note: For now, we always use standard Huffman tables for progressive encoding
-        // because optimized tables built from baseline statistics don't include all
-        // run/size combinations that progressive encoding produces (e.g., runs starting
-        // from Ss instead of 0). TODO: Implement progressive-aware Huffman optimization.
+        // For non-optimized progressive, use standard Huffman tables
         self.write_huffman_tables(&mut output)?;
         let tables: Option<OptimizedHuffmanTables> = None;
 
@@ -545,6 +546,225 @@ impl Encoder {
         output.push(MARKER_EOI);
 
         Ok(output)
+    }
+
+    /// Encodes progressive JPEG with optimized Huffman tables using two-pass tokenization.
+    ///
+    /// This approach:
+    /// 1. Tokenizes all scans first to collect actual symbol usage
+    /// 2. Builds histograms from actual tokens (not estimated baseline statistics)
+    /// 3. Clusters similar histograms to minimize table overhead
+    /// 4. Generates optimal Huffman tables from clustered histograms
+    /// 5. Replays tokens with optimized tables
+    fn encode_progressive_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut output = Vec::with_capacity(data.len() / 4);
+
+        // Convert to YCbCr using f32 precision
+        let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
+
+        // Generate quantization tables
+        let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
+        let c_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+
+        // Quantize all blocks to get full-precision coefficients
+        let (y_blocks, cb_blocks, cr_blocks) =
+            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &c_quant)?;
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+        let num_components = if is_color { 3 } else { 1 };
+
+        // Define progressive scan script
+        let scans = self.get_progressive_scan_script(is_color);
+
+        // ========== PASS 1: TOKENIZATION ==========
+        // Tokenize all scans to collect symbol statistics
+        let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
+
+        for (scan_idx, scan) in scans.iter().enumerate() {
+            // Calculate context for this scan
+            let context = if scan.ss == 0 && scan.se == 0 {
+                // DC scan: use component index as context
+                scan.components[0]
+            } else {
+                // AC scan: use num_components + scan_idx as context
+                (num_components as u8) + scan_idx as u8
+            };
+
+            if scan.ss == 0 && scan.se == 0 {
+                // DC scan
+                let blocks: Vec<&[[i16; DCT_BLOCK_SIZE]]> = scan.components
+                    .iter()
+                    .map(|&c| match c {
+                        0 => y_blocks.as_slice(),
+                        1 => cb_blocks.as_slice(),
+                        2 => cr_blocks.as_slice(),
+                        _ => &[][..],
+                    })
+                    .collect();
+                let component_indices: Vec<usize> = scan.components.iter().map(|&c| c as usize).collect();
+                token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
+            } else if scan.ah == 0 {
+                // AC first scan
+                let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
+                    0 => &y_blocks,
+                    1 => &cb_blocks,
+                    2 => &cr_blocks,
+                    _ => return Err(Error::InternalError { reason: "Invalid component" }),
+                };
+                token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
+            } else {
+                // AC refinement scan
+                let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
+                    0 => &y_blocks,
+                    1 => &cb_blocks,
+                    2 => &cr_blocks,
+                    _ => return Err(Error::InternalError { reason: "Invalid component" }),
+                };
+                token_buffer.tokenize_ac_refinement_scan(blocks, context, scan.ss, scan.se, scan.ah, scan.al);
+            }
+        }
+
+        // ========== GENERATE OPTIMIZED TABLES ==========
+        // Cluster histograms and generate tables
+        // Use 2 DC clusters (luma, chroma) and 2 AC clusters (luma, chroma)
+        let (_context_map, num_dc_tables, tables) = token_buffer.generate_optimized_tables(
+            2,                  // max DC clusters
+            2,                  // max AC clusters
+            num_components,     // num DC contexts
+        )?;
+
+        // Convert to OptimizedHuffmanTables format for compatibility
+        let opt_tables = self.build_progressive_huffman_tables(&tables, num_components, num_dc_tables)?;
+
+        // ========== WRITE JPEG STRUCTURE ==========
+        self.write_header(&mut output)?;
+        self.write_quant_tables(&mut output, &y_quant, &c_quant)?;
+        self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
+
+        // Write optimized Huffman tables
+        self.write_huffman_tables_optimized(&mut output, &opt_tables)?;
+
+        if self.config.restart_interval > 0 {
+            self.write_restart_interval(&mut output)?;
+        }
+
+        // ========== PASS 2: REPLAY TOKENS ==========
+        // Encode each scan by replaying tokens with optimized tables
+        for (scan_idx, scan) in scans.iter().enumerate() {
+            // Write SOS header
+            self.write_progressive_scan_header(&mut output, scan, is_color)?;
+
+            // Replay tokens for this scan
+            let scan_data = self.replay_progressive_scan(
+                &token_buffer,
+                scan_idx,
+                scan,
+                is_color,
+                &opt_tables,
+            )?;
+            output.extend_from_slice(&scan_data);
+        }
+
+        // Write EOI
+        output.push(0xFF);
+        output.push(MARKER_EOI);
+
+        Ok(output)
+    }
+
+    /// Builds OptimizedHuffmanTables from the clustered tables.
+    fn build_progressive_huffman_tables(
+        &self,
+        tables: &[OptimizedTable],
+        num_components: usize,
+        num_dc_tables: usize,
+    ) -> Result<OptimizedHuffmanTables> {
+        // Tables are arranged: DC clusters first, then AC clusters
+        // num_dc_tables tells us where DC ends and AC begins
+
+        let dc_luma = tables.first().cloned().unwrap_or_else(|| {
+            // Create a minimal default table
+            let mut counter = FrequencyCounter::new();
+            counter.count(0);
+            counter.generate_table_with_dht().unwrap()
+        });
+
+        // DC chroma is the second DC table if it exists
+        let dc_chroma = if num_components > 1 && num_dc_tables > 1 {
+            tables.get(1).cloned().unwrap_or_else(|| dc_luma.clone())
+        } else {
+            dc_luma.clone()
+        };
+
+        // AC tables start after DC tables
+        let ac_luma = tables.get(num_dc_tables).cloned().unwrap_or_else(|| {
+            let mut counter = FrequencyCounter::new();
+            counter.count(0);
+            counter.generate_table_with_dht().unwrap()
+        });
+
+        // AC chroma is the second AC table if it exists
+        let ac_chroma = if num_components > 1 && tables.len() > num_dc_tables + 1 {
+            tables.get(num_dc_tables + 1).cloned().unwrap_or_else(|| ac_luma.clone())
+        } else {
+            ac_luma.clone()
+        };
+
+        Ok(OptimizedHuffmanTables {
+            dc_luma,
+            ac_luma,
+            dc_chroma,
+            ac_chroma,
+        })
+    }
+
+    /// Replays tokens for a progressive scan with optimized tables.
+    fn replay_progressive_scan(
+        &self,
+        token_buffer: &ProgressiveTokenBuffer,
+        scan_idx: usize,
+        scan: &ProgressiveScan,
+        is_color: bool,
+        tables: &OptimizedHuffmanTables,
+    ) -> Result<Vec<u8>> {
+        let mut encoder = EntropyEncoder::new();
+
+        // Set up Huffman tables
+        encoder.set_dc_table(0, tables.dc_luma.table.clone());
+        encoder.set_ac_table(0, tables.ac_luma.table.clone());
+        if is_color {
+            encoder.set_dc_table(1, tables.dc_chroma.table.clone());
+            encoder.set_ac_table(1, tables.ac_chroma.table.clone());
+        }
+
+        if self.config.restart_interval > 0 {
+            encoder.set_restart_interval(self.config.restart_interval);
+        }
+
+        // Get scan info
+        let scan_info = token_buffer.scan_info.get(scan_idx).ok_or(Error::InternalError {
+            reason: "Scan info not found",
+        })?;
+
+        if scan.ss == 0 && scan.se == 0 {
+            // DC scan: replay DC tokens
+            let tokens = token_buffer.scan_tokens(scan_idx);
+            // Create context map for DC (component index -> table index)
+            let context_to_table: Vec<usize> = (0..4)
+                .map(|c| if is_color && c > 0 { 1 } else { 0 })
+                .collect();
+            encoder.write_dc_tokens(tokens, &context_to_table)?;
+        } else if scan.ah == 0 {
+            // AC first scan: replay AC tokens
+            let tokens = token_buffer.scan_tokens(scan_idx);
+            let table_idx = if is_color && scan.components[0] > 0 { 1 } else { 0 };
+            encoder.write_ac_first_tokens(tokens, table_idx)?;
+        } else {
+            // AC refinement scan: replay refinement tokens
+            let table_idx = if is_color && scan.components[0] > 0 { 1 } else { 0 };
+            encoder.write_ac_refinement_tokens(scan_info, table_idx)?;
+        }
+
+        Ok(encoder.finish())
     }
 
     /// Returns the progressive scan script for level 2.

@@ -459,6 +459,15 @@ impl Token {
             Self::new(context, symbol, extra, category)
         }
     }
+
+    /// Serializes to JSON format for C++ comparison.
+    #[cfg(feature = "debug-tokens")]
+    pub fn to_debug_json(&self) -> String {
+        format!(
+            r#"{{"context":{},"symbol":{},"extra_bits":{},"num_extra":{}}}"#,
+            self.context, self.symbol, self.extra_bits, self.num_extra
+        )
+    }
 }
 
 /// Token buffer for two-pass encoding.
@@ -471,6 +480,903 @@ pub struct TokenBuffer {
     tokens: Vec<Token>,
     /// Frequency counters per context.
     counters: Vec<FrequencyCounter>,
+}
+
+// =============================================================================
+// Progressive JPEG Tokenization Structures
+// =============================================================================
+
+/// Token for AC refinement scans in progressive JPEG.
+///
+/// Refinement scans have special encoding where:
+/// - `symbol` encodes the Huffman symbol (EOBn, ZRL, or new nonzero coefficient)
+/// - `refbits` counts how many refinement bits follow this token
+///
+/// This is more compact than `Token` (2 bytes vs 5 bytes) because refinement
+/// scans don't need extra_bits - they only emit 1-bit corrections.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RefToken {
+    /// Huffman symbol (EOB run indicator or coefficient symbol)
+    pub symbol: u8,
+    /// Number of refinement bits that follow this token
+    pub refbits: u8,
+}
+
+impl RefToken {
+    /// Creates a new refinement token.
+    #[inline]
+    pub const fn new(symbol: u8, refbits: u8) -> Self {
+        Self { symbol, refbits }
+    }
+
+    /// Creates an EOB token with the given run length.
+    ///
+    /// EOB runs are encoded as:
+    /// - Run 1: symbol = 0
+    /// - Run 2-3: symbol = 16 + (run - 2)
+    /// - Run 4-7: symbol = 32 + (run - 4)
+    /// - etc.
+    #[inline]
+    pub fn eob(run: u16, refbits: u8) -> Self {
+        let symbol = if run == 0 {
+            0
+        } else {
+            // EOB run encoding: symbol = (log2(run) << 4) | (run - 2^log2(run))
+            let log2 = 15 - run.leading_zeros() as u8;
+            (log2 << 4) | ((run - (1 << log2)) as u8 & 0x0F)
+        };
+        Self::new(symbol, refbits)
+    }
+
+    /// Serializes to JSON format for C++ comparison.
+    #[cfg(feature = "debug-tokens")]
+    pub fn to_debug_json(&self) -> String {
+        format!(
+            r#"{{"symbol":{},"refbits":{}}}"#,
+            self.symbol, self.refbits
+        )
+    }
+}
+
+/// Metadata for a single progressive scan.
+///
+/// Each scan in a progressive JPEG has different token storage needs:
+/// - DC scans and AC first scans use the main `Token` array
+/// - AC refinement scans use separate `RefToken` arrays plus refinement bits
+#[derive(Clone, Debug, Default)]
+pub struct ScanTokenInfo {
+    /// Offset into the main token array (for DC and AC first scans)
+    pub token_offset: usize,
+    /// Number of tokens for this scan
+    pub num_tokens: usize,
+    /// Tokens for AC refinement scans (empty for other scan types)
+    pub ref_tokens: Vec<RefToken>,
+    /// Refinement bits for AC refinement scans (1 bit per byte for simplicity)
+    pub refbits: Vec<u8>,
+    /// EOB run lengths for refinement scans
+    pub eobruns: Vec<u16>,
+    /// Restart marker positions (byte offsets into token stream)
+    pub restarts: Vec<usize>,
+    /// Context ID for this scan (used for histogram lookup)
+    pub context: u8,
+    /// Spectral selection start (0 for DC, 1-63 for AC)
+    pub ss: u8,
+    /// Spectral selection end
+    pub se: u8,
+    /// Successive approximation high bit (0 for first pass)
+    pub ah: u8,
+    /// Successive approximation low bit
+    pub al: u8,
+}
+
+impl ScanTokenInfo {
+    /// Creates info for a new scan.
+    pub fn new(context: u8, ss: u8, se: u8, ah: u8, al: u8) -> Self {
+        Self {
+            token_offset: 0,
+            num_tokens: 0,
+            ref_tokens: Vec::new(),
+            refbits: Vec::new(),
+            eobruns: Vec::new(),
+            restarts: Vec::new(),
+            context,
+            ss,
+            se,
+            ah,
+            al,
+        }
+    }
+
+    /// Returns true if this is an AC refinement scan.
+    #[inline]
+    pub fn is_refinement(&self) -> bool {
+        self.ss > 0 && self.ah > 0
+    }
+
+    /// Returns true if this is a DC scan.
+    #[inline]
+    pub fn is_dc(&self) -> bool {
+        self.ss == 0 && self.se == 0
+    }
+}
+
+/// Result of histogram clustering.
+#[derive(Clone, Debug)]
+pub struct ClusterResult {
+    /// Mapping from context ID to cluster (table) index
+    pub context_map: Vec<usize>,
+    /// Merged histograms for each cluster
+    pub cluster_histograms: Vec<FrequencyCounter>,
+    /// Number of clusters
+    pub num_clusters: usize,
+    /// Merge log for debugging (context pairs that were merged)
+    #[cfg(feature = "debug-tokens")]
+    pub merge_log: Vec<(usize, usize, f64)>, // (ctx_a, ctx_b, cost_delta)
+}
+
+impl ClusterResult {
+    /// Dumps the merge log to a file for debugging.
+    #[cfg(feature = "debug-tokens")]
+    pub fn dump_merge_log(&self, path: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path)?;
+        writeln!(file, "[")?;
+        for (i, (a, b, cost)) in self.merge_log.iter().enumerate() {
+            let comma = if i + 1 < self.merge_log.len() { "," } else { "" };
+            writeln!(file, r#"  {{"ctx_a":{},"ctx_b":{},"cost_delta":{:.4}}}{}"#, a, b, cost, comma)?;
+        }
+        writeln!(file, "]")?;
+        Ok(())
+    }
+}
+
+impl FrequencyCounter {
+    /// Checks if this histogram is empty (all counts are zero).
+    pub fn is_empty_histogram(&self) -> bool {
+        self.counts[..256].iter().all(|&c| c == 0)
+    }
+
+    /// Adds another histogram's counts to this one.
+    pub fn add(&mut self, other: &FrequencyCounter) {
+        for i in 0..257 {
+            self.counts[i] = self.counts[i].saturating_add(other.counts[i]);
+        }
+    }
+
+    /// Creates a new histogram that is the sum of two histograms.
+    pub fn combined(&self, other: &FrequencyCounter) -> FrequencyCounter {
+        let mut result = self.clone();
+        result.add(other);
+        result
+    }
+
+    /// Estimates the cost of encoding with this histogram.
+    ///
+    /// Cost = header_bits + data_bits
+    /// - header_bits = fixed overhead (17 bytes) + 1 byte per symbol with depth > 0
+    /// - data_bits = sum(count * depth) for all symbols
+    pub fn estimate_encoding_cost(&self) -> f64 {
+        // Generate code lengths
+        let lengths = match self.generate_lengths() {
+            Ok(l) => l,
+            Err(_) => return f64::MAX,
+        };
+
+        // Fixed header: 1 byte table class + 16 bytes for counts per length
+        let mut header_bits = (1 + 16) * 8;
+
+        // One byte per symbol in the table
+        let mut data_bits: u64 = 0;
+        for i in 0..256 {
+            if lengths[i] > 0 {
+                header_bits += 8;
+                data_bits += self.counts[i] as u64 * lengths[i] as u64;
+            }
+        }
+
+        header_bits as f64 + data_bits as f64
+    }
+}
+
+/// Clusters histograms to minimize total encoding cost.
+///
+/// This implements the C++ ClusterJpegHistograms algorithm:
+/// - For each histogram, find the best existing cluster to merge with
+/// - If merging saves bits, merge; otherwise create new cluster
+/// - Limit to max_clusters (typically 4 for baseline JPEG)
+///
+/// # Arguments
+/// * `histograms` - Slice of frequency counters (one per context)
+/// * `max_clusters` - Maximum number of clusters (4 for baseline, unlimited for progressive)
+///
+/// # Returns
+/// ClusterResult with context-to-cluster mapping and merged histograms
+pub fn cluster_histograms(histograms: &[FrequencyCounter], max_clusters: usize) -> ClusterResult {
+    let mut context_map = vec![0usize; histograms.len()];
+    let mut cluster_histograms: Vec<FrequencyCounter> = Vec::new();
+    let mut slot_costs: Vec<f64> = Vec::new();
+
+    #[cfg(feature = "debug-tokens")]
+    let mut merge_log = Vec::new();
+
+    for (ctx_idx, histo) in histograms.iter().enumerate() {
+        if histo.is_empty_histogram() {
+            // Empty histogram - just assign to cluster 0 (will be ignored)
+            context_map[ctx_idx] = 0;
+            continue;
+        }
+
+        let cur_cost = histo.estimate_encoding_cost();
+        let num_slots = cluster_histograms.len();
+
+        // Find best slot to merge with
+        let mut best_slot = num_slots; // Default: create new cluster
+        let mut best_cost = if num_slots >= max_clusters {
+            f64::MAX // Force merge if at limit
+        } else {
+            cur_cost // Cost of creating new cluster
+        };
+
+        for slot_idx in 0..num_slots {
+            let combined = cluster_histograms[slot_idx].combined(histo);
+            let combined_cost = combined.estimate_encoding_cost();
+            // Cost delta: how much does merging increase total cost?
+            let cost_delta = combined_cost - slot_costs[slot_idx];
+
+            if cost_delta < best_cost {
+                best_cost = cost_delta;
+                best_slot = slot_idx;
+            }
+        }
+
+        if best_slot == num_slots {
+            // Create new cluster
+            cluster_histograms.push(histo.clone());
+            slot_costs.push(cur_cost);
+            context_map[ctx_idx] = num_slots;
+        } else {
+            // Merge with existing cluster
+            cluster_histograms[best_slot].add(histo);
+            slot_costs[best_slot] += best_cost;
+            context_map[ctx_idx] = best_slot;
+
+            #[cfg(feature = "debug-tokens")]
+            merge_log.push((ctx_idx, best_slot, best_cost));
+        }
+    }
+
+    ClusterResult {
+        context_map,
+        num_clusters: cluster_histograms.len(),
+        cluster_histograms,
+        #[cfg(feature = "debug-tokens")]
+        merge_log,
+    }
+}
+
+/// Buffer for all tokens across all progressive scans.
+///
+/// This implements the C++ jpegli two-pass approach:
+/// 1. Tokenize all scans, collecting symbols without encoding
+/// 2. Build histograms from actual token usage
+/// 3. Optionally cluster similar histograms
+/// 4. Generate optimized Huffman tables
+/// 5. Replay tokens with optimized tables
+#[derive(Clone, Debug)]
+pub struct ProgressiveTokenBuffer {
+    /// Main token storage for DC and AC first scans
+    pub tokens: Vec<Token>,
+    /// Per-scan metadata and tokens
+    pub scan_info: Vec<ScanTokenInfo>,
+    /// Frequency counters per context
+    pub counters: Vec<FrequencyCounter>,
+    /// Number of contexts (DC components + AC scans)
+    pub num_contexts: usize,
+    /// DC predictors per component (for tokenization)
+    dc_pred: Vec<i16>,
+}
+
+impl ProgressiveTokenBuffer {
+    /// Creates a new buffer for progressive tokenization.
+    ///
+    /// # Arguments
+    /// * `num_components` - Number of color components (1 for gray, 3 for color)
+    /// * `num_scans` - Number of progressive scans
+    ///
+    /// Context mapping:
+    /// - DC contexts: 0..num_components
+    /// - AC contexts: num_components..num_components + num_ac_scans
+    pub fn new(num_components: usize, num_scans: usize) -> Self {
+        // Estimate contexts: DC (one per component) + AC (one per scan with Se > 0)
+        // We'll allocate generously and track actual usage
+        let num_contexts = num_components + num_scans;
+        Self {
+            tokens: Vec::new(),
+            scan_info: Vec::with_capacity(num_scans),
+            counters: vec![FrequencyCounter::new(); num_contexts],
+            num_contexts,
+            dc_pred: vec![0; num_components],
+        }
+    }
+
+    /// Creates a buffer with pre-estimated capacity.
+    pub fn with_capacity(num_components: usize, num_scans: usize, estimated_tokens: usize) -> Self {
+        let mut buf = Self::new(num_components, num_scans);
+        buf.tokens.reserve(estimated_tokens);
+        buf
+    }
+
+    /// Returns the number of tokens in the main buffer.
+    pub fn len(&self) -> usize {
+        self.tokens.len()
+    }
+
+    /// Returns true if the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.tokens.is_empty()
+    }
+
+    /// Resets DC predictors (call at start of each scan or restart interval).
+    pub fn reset_dc_pred(&mut self) {
+        self.dc_pred.fill(0);
+    }
+
+    /// Gets the current DC predictor for a component.
+    pub fn dc_pred(&self, component: usize) -> i16 {
+        self.dc_pred.get(component).copied().unwrap_or(0)
+    }
+
+    /// Updates the DC predictor for a component.
+    pub fn set_dc_pred(&mut self, component: usize, value: i16) {
+        if component < self.dc_pred.len() {
+            self.dc_pred[component] = value;
+        }
+    }
+
+    /// Adds a token to the main buffer and updates the frequency counter.
+    #[inline]
+    pub fn push(&mut self, token: Token) {
+        if (token.context as usize) < self.counters.len() {
+            self.counters[token.context as usize].count(token.symbol);
+        }
+        self.tokens.push(token);
+    }
+
+    /// Adds a refinement token to the current scan.
+    #[inline]
+    pub fn push_ref(&mut self, token: RefToken) {
+        if let Some(info) = self.scan_info.last_mut() {
+            // Count the symbol (masked for EOB run encoding)
+            let context = info.context as usize;
+            if context < self.counters.len() {
+                // Mask off the low 4 bits for EOB run symbols
+                self.counters[context].count(token.symbol & 0xF0);
+            }
+            info.ref_tokens.push(token);
+        }
+    }
+
+    /// Adds a refinement bit (0 or 1) to the current scan.
+    #[inline]
+    pub fn push_refbit(&mut self, bit: u8) {
+        if let Some(info) = self.scan_info.last_mut() {
+            info.refbits.push(bit & 1);
+        }
+    }
+
+    /// Starts a new scan.
+    pub fn start_scan(&mut self, context: u8, ss: u8, se: u8, ah: u8, al: u8) {
+        let mut info = ScanTokenInfo::new(context, ss, se, ah, al);
+        info.token_offset = self.tokens.len();
+        self.scan_info.push(info);
+    }
+
+    /// Finalizes the current scan, recording the token count.
+    pub fn end_scan(&mut self) {
+        if let Some(info) = self.scan_info.last_mut() {
+            info.num_tokens = self.tokens.len() - info.token_offset;
+        }
+    }
+
+    /// Marks a restart position in the current scan.
+    pub fn mark_restart(&mut self) {
+        if let Some(info) = self.scan_info.last_mut() {
+            let pos = if info.is_refinement() {
+                info.ref_tokens.len()
+            } else {
+                self.tokens.len() - info.token_offset
+            };
+            info.restarts.push(pos);
+        }
+        self.reset_dc_pred();
+    }
+
+    /// Returns the tokens for a specific scan.
+    pub fn scan_tokens(&self, scan_index: usize) -> &[Token] {
+        if let Some(info) = self.scan_info.get(scan_index) {
+            let start = info.token_offset;
+            let end = start + info.num_tokens;
+            &self.tokens[start..end]
+        } else {
+            &[]
+        }
+    }
+
+    /// Returns the frequency counter for a context.
+    pub fn counter(&self, context: usize) -> Option<&FrequencyCounter> {
+        self.counters.get(context)
+    }
+
+    /// Clusters histograms and generates optimized Huffman tables.
+    ///
+    /// This is the main entry point for two-pass progressive encoding optimization.
+    ///
+    /// # Arguments
+    /// * `max_dc_clusters` - Max DC table clusters (typically 2-4)
+    /// * `max_ac_clusters` - Max AC table clusters (typically 2-4)
+    /// * `num_dc_contexts` - Number of DC contexts (= num_components)
+    ///
+    /// # Returns
+    /// - `context_map`: Maps each context to a table index
+    /// - `num_dc_tables`: Number of DC tables (for indexing into tables array)
+    /// - `tables`: Optimized Huffman tables for each cluster (DC tables first, then AC)
+    pub fn generate_optimized_tables(
+        &self,
+        max_dc_clusters: usize,
+        max_ac_clusters: usize,
+        num_dc_contexts: usize,
+    ) -> Result<(Vec<usize>, usize, Vec<OptimizedTable>)> {
+        // Split into DC and AC histograms
+        let dc_histograms: Vec<_> = self.counters[..num_dc_contexts].to_vec();
+        let ac_histograms: Vec<_> = self.counters[num_dc_contexts..].to_vec();
+
+        // Cluster DC and AC separately
+        let dc_clusters = cluster_histograms(&dc_histograms, max_dc_clusters);
+        let ac_clusters = cluster_histograms(&ac_histograms, max_ac_clusters);
+
+        // Build context map
+        let mut context_map = Vec::with_capacity(self.num_contexts);
+
+        // DC contexts map to clusters 0..num_dc_clusters
+        for ctx in 0..num_dc_contexts {
+            context_map.push(dc_clusters.context_map[ctx]);
+        }
+
+        // AC contexts map to clusters num_dc_clusters..
+        let dc_offset = dc_clusters.num_clusters;
+        for ctx in 0..ac_histograms.len() {
+            context_map.push(dc_offset + ac_clusters.context_map[ctx]);
+        }
+
+        // Generate tables from clustered histograms
+        let mut tables = Vec::new();
+
+        // DC tables
+        for histo in &dc_clusters.cluster_histograms {
+            if histo.is_empty_histogram() {
+                // Empty histogram - use a default table
+                let mut default = FrequencyCounter::new();
+                default.count(0); // At least one symbol
+                tables.push(default.generate_table_with_dht()?);
+            } else {
+                tables.push(histo.generate_table_with_dht()?);
+            }
+        }
+
+        // AC tables
+        for histo in &ac_clusters.cluster_histograms {
+            if histo.is_empty_histogram() {
+                let mut default = FrequencyCounter::new();
+                default.count(0); // At least one symbol (EOB)
+                tables.push(default.generate_table_with_dht()?);
+            } else {
+                tables.push(histo.generate_table_with_dht()?);
+            }
+        }
+
+        Ok((context_map, dc_clusters.num_clusters, tables))
+    }
+
+    /// Dumps all tokens to a JSON file for C++ comparison.
+    #[cfg(feature = "debug-tokens")]
+    pub fn dump_tokens(&self, path: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path)?;
+        writeln!(file, "[")?;
+        for (i, token) in self.tokens.iter().enumerate() {
+            let comma = if i + 1 < self.tokens.len() { "," } else { "" };
+            writeln!(file, "  {}{}", token.to_debug_json(), comma)?;
+        }
+        writeln!(file, "]")?;
+        Ok(())
+    }
+
+    /// Dumps histograms to a JSON file for C++ comparison.
+    #[cfg(feature = "debug-tokens")]
+    pub fn dump_histograms(&self, path: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path)?;
+        writeln!(file, "{{")?;
+        for (ctx, counter) in self.counters.iter().enumerate() {
+            let total = counter.total();
+            if total == 0 {
+                continue;
+            }
+            writeln!(file, r#"  "context_{}": {{"#, ctx)?;
+            writeln!(file, r#"    "total": {},"#, total)?;
+            write!(file, r#"    "counts": ["#)?;
+            for (i, count) in (0..256).map(|s| counter.get_count(s as u8)).enumerate() {
+                if i > 0 {
+                    write!(file, ",")?;
+                }
+                write!(file, "{}", count)?;
+            }
+            writeln!(file, "]")?;
+            writeln!(file, "  }},")?;
+        }
+        writeln!(file, "}}")?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Tokenization Methods
+    // =========================================================================
+
+    /// Tokenizes a DC scan (first pass or refinement).
+    ///
+    /// For interleaved DC scans, blocks should be provided in MCU order:
+    /// `[comp0_block0, comp1_block0, comp2_block0, comp0_block1, ...]`
+    ///
+    /// # Arguments
+    /// * `blocks` - Quantized DCT blocks for each component, in MCU order
+    /// * `component_indices` - Which components are in this scan (e.g., [0, 1, 2])
+    /// * `al` - Successive approximation low bit (0 for first pass)
+    /// * `ah` - Successive approximation high bit (0 for first pass)
+    pub fn tokenize_dc_scan(
+        &mut self,
+        blocks: &[&[[i16; 64]]],
+        component_indices: &[usize],
+        al: u8,
+        ah: u8,
+    ) {
+        // Start the scan - DC uses context = component index
+        // For interleaved scans, we'll emit tokens for each component
+        self.start_scan(0, 0, 0, ah, al);
+        self.reset_dc_pred();
+
+        if ah == 0 {
+            // First DC scan: encode DC coefficients shifted by al
+            self.tokenize_dc_first(blocks, component_indices, al);
+        } else {
+            // DC refinement: just emit one bit per block
+            self.tokenize_dc_refine(blocks, component_indices, al);
+        }
+
+        self.end_scan();
+    }
+
+    /// Tokenizes DC first scan (ah == 0).
+    fn tokenize_dc_first(
+        &mut self,
+        blocks: &[&[[i16; 64]]],
+        component_indices: &[usize],
+        al: u8,
+    ) {
+        // Get the number of blocks (all components should have same count for interleaved)
+        let num_blocks = blocks.get(0).map(|b| b.len()).unwrap_or(0);
+
+        for block_idx in 0..num_blocks {
+            for (comp_offset, &comp_idx) in component_indices.iter().enumerate() {
+                if let Some(comp_blocks) = blocks.get(comp_offset) {
+                    if let Some(block) = comp_blocks.get(block_idx) {
+                        // Get DC coefficient and shift by al
+                        let dc = block[0] >> al;
+                        let prev = self.dc_pred(comp_idx);
+                        let diff = dc - prev;
+                        self.set_dc_pred(comp_idx, dc);
+
+                        // Create DC token
+                        let token = Token::dc(comp_idx as u8, diff);
+                        self.push(token);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tokenizes DC refinement scan (ah > 0).
+    fn tokenize_dc_refine(
+        &mut self,
+        blocks: &[&[[i16; 64]]],
+        component_indices: &[usize],
+        al: u8,
+    ) {
+        let num_blocks = blocks.get(0).map(|b| b.len()).unwrap_or(0);
+
+        for block_idx in 0..num_blocks {
+            for (comp_offset, &comp_idx) in component_indices.iter().enumerate() {
+                if let Some(comp_blocks) = blocks.get(comp_offset) {
+                    if let Some(block) = comp_blocks.get(block_idx) {
+                        // For DC refinement, just emit the bit at position al
+                        let bit = ((block[0] >> al) & 1) as u8;
+
+                        // DC refinement uses symbol 0 with extra bit
+                        let token = Token::new(comp_idx as u8, 0, bit as u16, 1);
+                        self.push(token);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tokenizes an AC first scan (ah == 0).
+    ///
+    /// # Arguments
+    /// * `blocks` - Quantized DCT blocks for this component
+    /// * `context` - Context ID for this scan (for histogram)
+    /// * `ss` - Spectral selection start (1-63)
+    /// * `se` - Spectral selection end (1-63)
+    /// * `al` - Successive approximation low bit
+    pub fn tokenize_ac_first_scan(
+        &mut self,
+        blocks: &[[i16; 64]],
+        context: u8,
+        ss: u8,
+        se: u8,
+        al: u8,
+    ) {
+        self.start_scan(context, ss, se, 0, al);
+
+        let mut eob_run: u16 = 0;
+
+        for block in blocks {
+            // Find last nonzero coefficient in spectral range
+            let mut last_nonzero = ss as usize;
+            for k in (ss as usize..=se as usize).rev() {
+                if (block[k] >> al) != 0 {
+                    last_nonzero = k;
+                    break;
+                }
+            }
+
+            // Check if block is all zeros in this range
+            let is_eob = (ss as usize..=se as usize).all(|k| (block[k] >> al) == 0);
+
+            if is_eob {
+                eob_run += 1;
+                // Emit EOB run when it reaches max (0x7FFF) or at end
+                if eob_run == 0x7FFF {
+                    self.emit_eob_run(context, eob_run);
+                    eob_run = 0;
+                }
+                continue;
+            }
+
+            // Emit pending EOB run
+            if eob_run > 0 {
+                self.emit_eob_run(context, eob_run);
+                eob_run = 0;
+            }
+
+            // Encode coefficients
+            let mut run = 0u8;
+            for k in ss as usize..=se as usize {
+                let coef = block[k] >> al;
+                if coef == 0 {
+                    run += 1;
+                } else {
+                    // Emit ZRL for runs >= 16
+                    while run >= 16 {
+                        let zrl = Token::new(context, 0xF0, 0, 0);
+                        self.push(zrl);
+                        run -= 16;
+                    }
+
+                    // Emit coefficient token
+                    let token = Token::ac(context, run, coef as i16);
+                    self.push(token);
+                    run = 0;
+                }
+
+                if k == last_nonzero {
+                    break;
+                }
+            }
+
+            // If we didn't reach the end, emit EOB
+            if last_nonzero < se as usize {
+                eob_run += 1;
+                if eob_run == 0x7FFF {
+                    self.emit_eob_run(context, eob_run);
+                    eob_run = 0;
+                }
+            }
+        }
+
+        // Flush remaining EOB run
+        if eob_run > 0 {
+            self.emit_eob_run(context, eob_run);
+        }
+
+        self.end_scan();
+    }
+
+    /// Emits an EOB run token.
+    fn emit_eob_run(&mut self, context: u8, run: u16) {
+        if run == 0 {
+            return;
+        }
+
+        // EOB run encoding: symbol = (log2(run) << 4) | extra
+        // For run = 1: symbol = 0 (simple EOB)
+        // For run = 2-3: symbol = 0x10 | (run - 2)
+        // For run = 4-7: symbol = 0x20 | (run - 4)
+        // etc.
+        if run == 1 {
+            let token = Token::new(context, 0x00, 0, 0);
+            self.push(token);
+        } else {
+            let log2 = 15 - run.leading_zeros() as u8;
+            let extra_bits = run - (1 << log2);
+            let symbol = log2 << 4;
+            let token = Token::new(context, symbol, extra_bits, log2);
+            self.push(token);
+        }
+    }
+
+    /// Tokenizes an AC refinement scan (ah > 0).
+    ///
+    /// This is the most complex tokenization because it must interleave:
+    /// - Symbols for newly-nonzero coefficients
+    /// - Refinement bits for previously-nonzero coefficients
+    ///
+    /// # Arguments
+    /// * `blocks` - Quantized DCT blocks for this component
+    /// * `context` - Context ID for this scan
+    /// * `ss` - Spectral selection start
+    /// * `se` - Spectral selection end
+    /// * `ah` - Successive approximation high bit (previous precision)
+    /// * `al` - Successive approximation low bit (current precision)
+    pub fn tokenize_ac_refinement_scan(
+        &mut self,
+        blocks: &[[i16; 64]],
+        context: u8,
+        ss: u8,
+        se: u8,
+        ah: u8,
+        al: u8,
+    ) {
+        self.start_scan(context, ss, se, ah, al);
+
+        let mut eob_run: u16 = 0;
+        let mut pending_refbits: Vec<u8> = Vec::new();
+
+        for block in blocks {
+            // Find if there are any newly-nonzero or previously-nonzero coefficients
+            let mut has_content = false;
+            for k in ss as usize..=se as usize {
+                let abs_coef = block[k].abs();
+                // Was previously nonzero (bits at ah position or higher)
+                let was_nonzero = (abs_coef >> ah) != 0;
+                // Is newly nonzero (bit at al position, but not at ah)
+                let newly_nonzero = !was_nonzero && ((abs_coef >> al) & 1) != 0;
+                if was_nonzero || newly_nonzero {
+                    has_content = true;
+                    break;
+                }
+            }
+
+            if !has_content {
+                // All zeros - add to EOB run
+                // First, flush any pending refbits from previous blocks
+                if !pending_refbits.is_empty() {
+                    // Emit pending EOB run with refbits
+                    if eob_run > 0 {
+                        self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                        pending_refbits.clear();
+                        eob_run = 0;
+                    }
+                }
+                eob_run += 1;
+                if eob_run == 0x7FFF {
+                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    pending_refbits.clear();
+                    eob_run = 0;
+                }
+                continue;
+            }
+
+            // Emit pending EOB run
+            if eob_run > 0 {
+                self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                pending_refbits.clear();
+                eob_run = 0;
+            }
+
+            // Process coefficients
+            let mut run = 0u8;
+            let mut block_refbits: Vec<u8> = Vec::new();
+
+            for k in ss as usize..=se as usize {
+                let coef = block[k];
+                let abs_coef = coef.abs();
+                let was_nonzero = (abs_coef >> ah) != 0;
+
+                if was_nonzero {
+                    // Previously nonzero: emit refinement bit
+                    let refbit = ((abs_coef >> al) & 1) as u8;
+                    block_refbits.push(refbit);
+                } else {
+                    // Check if newly nonzero
+                    let newly_nonzero = ((abs_coef >> al) & 1) != 0;
+                    if newly_nonzero {
+                        // Emit ZRL for runs >= 16
+                        while run >= 16 {
+                            // ZRL with pending refbits
+                            let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
+                            self.push_ref(ref_token);
+                            for &bit in &block_refbits {
+                                self.push_refbit(bit);
+                            }
+                            block_refbits.clear();
+                            run -= 16;
+                        }
+
+                        // Emit newly nonzero coefficient
+                        let sign = if coef < 0 { 0 } else { 1 };
+                        let symbol = (run << 4) | 1; // Category is always 1 for refinement
+                        let ref_token = RefToken::new(symbol, block_refbits.len() as u8);
+                        self.push_ref(ref_token);
+                        self.push_refbit(sign);
+                        for &bit in &block_refbits {
+                            self.push_refbit(bit);
+                        }
+                        block_refbits.clear();
+                        run = 0;
+                    } else {
+                        run += 1;
+                    }
+                }
+            }
+
+            // If we have trailing refbits, they go with the next EOB
+            pending_refbits = block_refbits;
+            if run > 0 || !pending_refbits.is_empty() {
+                eob_run += 1;
+            }
+        }
+
+        // Flush remaining EOB run
+        if eob_run > 0 || !pending_refbits.is_empty() {
+            self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+        }
+
+        self.end_scan();
+    }
+
+    /// Emits an EOB run token with associated refinement bits.
+    fn emit_eob_run_with_refbits(&mut self, _context: u8, run: u16, refbits: &[u8]) {
+        let symbol = if run <= 1 {
+            0x00
+        } else {
+            let log2 = 15 - run.leading_zeros() as u8;
+            log2 << 4
+        };
+
+        let ref_token = RefToken::new(symbol, refbits.len() as u8);
+        self.push_ref(ref_token);
+
+        // Store the EOB run value if > 1
+        if run > 1 {
+            if let Some(info) = self.scan_info.last_mut() {
+                info.eobruns.push(run);
+            }
+        }
+
+        for &bit in refbits {
+            self.push_refbit(bit);
+        }
+    }
 }
 
 impl TokenBuffer {
@@ -741,6 +1647,340 @@ mod tests {
         // Cost should be sum of (count * length) for all symbols
         assert!(cost > 0);
         assert!(cost < 1000); // Reasonable upper bound
+    }
+}
+
+#[cfg(test)]
+mod progressive_token_tests {
+    use super::*;
+
+    #[test]
+    fn test_ref_token_new() {
+        let token = RefToken::new(0x12, 5);
+        assert_eq!(token.symbol, 0x12);
+        assert_eq!(token.refbits, 5);
+    }
+
+    #[test]
+    fn test_ref_token_eob() {
+        // Run 0 -> symbol 0 (simple EOB)
+        let eob0 = RefToken::eob(0, 0);
+        assert_eq!(eob0.symbol, 0);
+
+        // Run 1 -> symbol should encode as log2(1)=0, with offset
+        let eob1 = RefToken::eob(1, 0);
+        assert_eq!(eob1.symbol, 0); // log2(1) = 0, 1 - 1 = 0 -> 0x00
+
+        // Run 2 -> log2(2) = 1, 2 - 2 = 0 -> symbol = (1 << 4) | 0 = 0x10
+        let eob2 = RefToken::eob(2, 0);
+        assert_eq!(eob2.symbol, 0x10);
+
+        // Run 3 -> log2(3) = 1, 3 - 2 = 1 -> symbol = (1 << 4) | 1 = 0x11
+        let eob3 = RefToken::eob(3, 0);
+        assert_eq!(eob3.symbol, 0x11);
+
+        // Run 4 -> log2(4) = 2, 4 - 4 = 0 -> symbol = (2 << 4) | 0 = 0x20
+        let eob4 = RefToken::eob(4, 0);
+        assert_eq!(eob4.symbol, 0x20);
+    }
+
+    #[test]
+    fn test_scan_token_info() {
+        let info = ScanTokenInfo::new(4, 1, 63, 0, 2);
+        assert_eq!(info.context, 4);
+        assert_eq!(info.ss, 1);
+        assert_eq!(info.se, 63);
+        assert_eq!(info.ah, 0);
+        assert_eq!(info.al, 2);
+        assert!(!info.is_refinement()); // ah = 0
+        assert!(!info.is_dc()); // ss = 1
+    }
+
+    #[test]
+    fn test_scan_token_info_dc() {
+        let info = ScanTokenInfo::new(0, 0, 0, 0, 1);
+        assert!(info.is_dc());
+        assert!(!info.is_refinement());
+    }
+
+    #[test]
+    fn test_scan_token_info_refinement() {
+        let info = ScanTokenInfo::new(4, 1, 63, 2, 1);
+        assert!(info.is_refinement()); // ss > 0 && ah > 0
+        assert!(!info.is_dc());
+    }
+
+    #[test]
+    fn test_progressive_token_buffer_new() {
+        let buf = ProgressiveTokenBuffer::new(3, 4);
+        assert_eq!(buf.num_contexts, 7); // 3 DC + 4 scans
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_progressive_token_buffer_push() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 2);
+
+        // Start a DC scan
+        buf.start_scan(0, 0, 0, 0, 0);
+
+        // Push a DC token
+        let token = Token::dc(0, 100);
+        buf.push(token);
+
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.counter(0).unwrap().total(), 1);
+
+        buf.end_scan();
+        assert_eq!(buf.scan_info.len(), 1);
+        assert_eq!(buf.scan_info[0].num_tokens, 1);
+    }
+
+    #[test]
+    fn test_progressive_token_buffer_dc_pred() {
+        let mut buf = ProgressiveTokenBuffer::new(3, 1);
+
+        // Initial DC predictors should be 0
+        assert_eq!(buf.dc_pred(0), 0);
+        assert_eq!(buf.dc_pred(1), 0);
+        assert_eq!(buf.dc_pred(2), 0);
+
+        // Update predictor
+        buf.set_dc_pred(1, 512);
+        assert_eq!(buf.dc_pred(1), 512);
+
+        // Reset
+        buf.reset_dc_pred();
+        assert_eq!(buf.dc_pred(1), 0);
+    }
+
+    #[test]
+    fn test_progressive_token_buffer_scan_tokens() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 2);
+
+        // First scan
+        buf.start_scan(0, 0, 0, 0, 0);
+        buf.push(Token::dc(0, 50));
+        buf.push(Token::dc(0, 60));
+        buf.end_scan();
+
+        // Second scan
+        buf.start_scan(1, 1, 63, 0, 0);
+        buf.push(Token::ac(1, 0, 10));
+        buf.push(Token::ac(1, 2, 5));
+        buf.push(Token::ac(1, 0, 0)); // EOB
+        buf.end_scan();
+
+        // Check scan tokens
+        let scan0 = buf.scan_tokens(0);
+        assert_eq!(scan0.len(), 2);
+
+        let scan1 = buf.scan_tokens(1);
+        assert_eq!(scan1.len(), 3);
+    }
+
+    #[test]
+    fn test_progressive_token_buffer_refinement() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 2);
+
+        // Start a refinement scan
+        buf.start_scan(4, 1, 63, 2, 1);
+
+        // Push refinement tokens
+        buf.push_ref(RefToken::new(0x11, 3));
+        buf.push_refbit(1);
+        buf.push_refbit(0);
+        buf.push_refbit(1);
+
+        buf.end_scan();
+
+        // Check refinement data stored correctly
+        let info = &buf.scan_info[0];
+        assert!(info.is_refinement());
+        assert_eq!(info.ref_tokens.len(), 1);
+        assert_eq!(info.refbits.len(), 3);
+        assert_eq!(info.refbits, vec![1, 0, 1]);
+    }
+
+    #[test]
+    fn test_progressive_token_buffer_restart() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 1);
+
+        buf.start_scan(0, 0, 0, 0, 0);
+        buf.set_dc_pred(0, 100);
+
+        buf.push(Token::dc(0, 50));
+        buf.mark_restart();
+
+        // DC pred should be reset
+        assert_eq!(buf.dc_pred(0), 0);
+
+        // Restart position should be recorded
+        assert_eq!(buf.scan_info[0].restarts.len(), 1);
+        assert_eq!(buf.scan_info[0].restarts[0], 1); // After 1 token
+
+        buf.push(Token::dc(0, 60));
+        buf.end_scan();
+    }
+
+    #[test]
+    fn test_tokenize_dc_first_single_component() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 1);
+
+        // Create test blocks with known DC values
+        let blocks: [[i16; 64]; 3] = [
+            { let mut b = [0i16; 64]; b[0] = 100; b },
+            { let mut b = [0i16; 64]; b[0] = 120; b },
+            { let mut b = [0i16; 64]; b[0] = 80; b },
+        ];
+
+        let block_refs: &[[i16; 64]] = &blocks;
+        buf.tokenize_dc_scan(&[block_refs], &[0], 0, 0);
+
+        // Should have 3 tokens
+        assert_eq!(buf.len(), 3);
+
+        // Check differential encoding:
+        // Block 0: diff = 100 - 0 = 100
+        // Block 1: diff = 120 - 100 = 20
+        // Block 2: diff = 80 - 120 = -40
+        let tokens: Vec<_> = buf.tokens.iter().collect();
+
+        // First token: diff = 100, category = 7 (needs 7 bits)
+        assert_eq!(tokens[0].context, 0);
+        assert_eq!(tokens[0].symbol, 7); // category(100) = 7
+
+        // Second token: diff = 20, category = 5
+        assert_eq!(tokens[1].symbol, 5); // category(20) = 5
+
+        // Third token: diff = -40, category = 6
+        assert_eq!(tokens[2].symbol, 6); // category(-40) = 6
+    }
+
+    #[test]
+    fn test_tokenize_dc_interleaved() {
+        let mut buf = ProgressiveTokenBuffer::new(3, 1);
+
+        // Create blocks for 3 components
+        let y_blocks: [[i16; 64]; 2] = [
+            { let mut b = [0i16; 64]; b[0] = 512; b },
+            { let mut b = [0i16; 64]; b[0] = 520; b },
+        ];
+        let cb_blocks: [[i16; 64]; 2] = [
+            { let mut b = [0i16; 64]; b[0] = 0; b },
+            { let mut b = [0i16; 64]; b[0] = 10; b },
+        ];
+        let cr_blocks: [[i16; 64]; 2] = [
+            { let mut b = [0i16; 64]; b[0] = -5; b },
+            { let mut b = [0i16; 64]; b[0] = 5; b },
+        ];
+
+        let blocks: &[&[[i16; 64]]] = &[&y_blocks, &cb_blocks, &cr_blocks];
+        buf.tokenize_dc_scan(blocks, &[0, 1, 2], 0, 0);
+
+        // Should have 6 tokens (2 blocks × 3 components)
+        assert_eq!(buf.len(), 6);
+
+        // Check context assignment
+        assert_eq!(buf.tokens[0].context, 0); // Y
+        assert_eq!(buf.tokens[1].context, 1); // Cb
+        assert_eq!(buf.tokens[2].context, 2); // Cr
+        assert_eq!(buf.tokens[3].context, 0); // Y
+        assert_eq!(buf.tokens[4].context, 1); // Cb
+        assert_eq!(buf.tokens[5].context, 2); // Cr
+    }
+
+    #[test]
+    fn test_tokenize_dc_with_al() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 1);
+
+        // Create blocks with DC values that will be shifted
+        let blocks: [[i16; 64]; 2] = [
+            { let mut b = [0i16; 64]; b[0] = 100; b },  // 100 >> 1 = 50
+            { let mut b = [0i16; 64]; b[0] = 120; b },  // 120 >> 1 = 60
+        ];
+
+        let block_refs: &[[i16; 64]] = &blocks;
+        buf.tokenize_dc_scan(&[block_refs], &[0], 1, 0);  // al = 1
+
+        // First token: diff = 50 - 0 = 50, category = 6
+        assert_eq!(buf.tokens[0].symbol, 6);
+
+        // Second token: diff = 60 - 50 = 10, category = 4
+        assert_eq!(buf.tokens[1].symbol, 4);
+    }
+
+    #[test]
+    fn test_tokenize_ac_first_simple() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 2);
+
+        // Create a block with some non-zero AC coefficients
+        let mut block = [0i16; 64];
+        block[1] = 10;  // Position 1
+        block[5] = -5;  // Position 5
+        // Positions 2, 3, 4 are zeros (run of 3)
+
+        let blocks = [block];
+        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
+
+        // Should have tokens for:
+        // - Coef at position 1 (run=0, value=10)
+        // - Coef at position 5 (run=3, value=-5)
+        // - EOB
+        assert!(buf.len() >= 2);
+
+        // First token: run=0, category=4 (for value 10)
+        let t0 = &buf.tokens[0];
+        assert_eq!(t0.context, 4);
+        assert_eq!(t0.symbol, (0 << 4) | 4); // run=0, cat=4
+
+        // Second token: run=3, category=3 (for value -5)
+        let t1 = &buf.tokens[1];
+        assert_eq!(t1.symbol, (3 << 4) | 3); // run=3, cat=3
+    }
+
+    #[test]
+    fn test_tokenize_ac_eob_run() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 2);
+
+        // Create multiple empty blocks
+        let blocks: Vec<[i16; 64]> = vec![[0i16; 64]; 5];
+        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
+
+        // Should have one EOB run token for 5 blocks
+        assert!(!buf.is_empty());
+
+        // The EOB run encoding for 5:
+        // log2(5) = 2, 5 - 4 = 1 -> symbol = 0x20, extra = 1
+        let t = &buf.tokens[0];
+        assert_eq!(t.symbol, 0x20); // log2(5) << 4 = 2 << 4 = 0x20
+        assert_eq!(t.extra_bits, 1); // 5 - 4 = 1
+        assert_eq!(t.num_extra, 2); // 2 bits for the run value
+    }
+
+    #[test]
+    fn test_tokenize_ac_zrl() {
+        let mut buf = ProgressiveTokenBuffer::new(1, 2);
+
+        // Create a block with a run > 16
+        let mut block = [0i16; 64];
+        block[20] = 7; // Position 20, with 19 zeros before (positions 1-19)
+
+        let blocks = [block];
+        buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
+
+        // Should have:
+        // - ZRL (16 zeros)
+        // - Coefficient (run=3, value=7)
+        // - EOB
+        assert!(buf.len() >= 2);
+
+        // First token should be ZRL
+        assert_eq!(buf.tokens[0].symbol, 0xF0);
+
+        // Second token: run=3, category=3
+        assert_eq!(buf.tokens[1].symbol, (3 << 4) | 3);
     }
 }
 
