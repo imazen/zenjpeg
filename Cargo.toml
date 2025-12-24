@@ -43,6 +43,7 @@ ssimulacra2 = "0.5"
 approx = "0.5"
 proptest = "1.4"
 criterion = "0.5"
+codec-eval = { path = "/home/lilith/work/codec-eval" }
 
 # FFI
 libc = "0.2"

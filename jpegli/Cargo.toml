@@ -35,6 +35,9 @@ jpeg-decoder = { workspace = true }
 # For FFI comparison testing
 jpegli-sys = { path = "../jpegli-sys" }
 
+# For corpus comparison
+codec-eval = { workspace = true }
+
 [features]
 default = ["simd"]
 simd = []
