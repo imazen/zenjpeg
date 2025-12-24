@@ -305,9 +305,56 @@ impl Default for HuffmanDecodeTable {
     }
 }
 
+/// A node in the Huffman tree.
+#[derive(Clone)]
+struct HuffmanNode {
+    /// Total count (frequency)
+    total_count: u32,
+    /// Left child index (-1 for leaf nodes)
+    index_left: i16,
+    /// Right child or symbol value (for leaf nodes, the symbol index)
+    index_right_or_value: i16,
+}
+
+impl HuffmanNode {
+    fn new_leaf(count: u32, symbol: i16) -> Self {
+        Self {
+            total_count: count,
+            index_left: -1,
+            index_right_or_value: symbol,
+        }
+    }
+
+    fn is_leaf(&self) -> bool {
+        self.index_left < 0
+    }
+}
+
+/// Set depths recursively from a tree node.
+fn set_depth(tree: &[HuffmanNode], node_idx: usize, depth: &mut [u8], level: u8) {
+    let node = &tree[node_idx];
+    if node.is_leaf() {
+        depth[node.index_right_or_value as usize] = level;
+    } else {
+        set_depth(tree, node.index_left as usize, depth, level + 1);
+        set_depth(tree, node.index_right_or_value as usize, depth, level + 1);
+    }
+}
+
+/// Compare nodes for sorting: by count ascending, then by value descending.
+fn compare_nodes(a: &HuffmanNode, b: &HuffmanNode) -> std::cmp::Ordering {
+    match a.total_count.cmp(&b.total_count) {
+        std::cmp::Ordering::Equal => b.index_right_or_value.cmp(&a.index_right_or_value),
+        other => other,
+    }
+}
+
 /// Builds optimal Huffman code lengths from symbol frequencies.
 ///
-/// Uses the package-merge algorithm to find optimal length-limited codes.
+/// This is a port of jpegli's CreateHuffmanTree algorithm which:
+/// 1. Builds a Huffman tree with a minimum count threshold
+/// 2. If tree exceeds max_length, retries with higher threshold
+/// 3. Guarantees all codes fit within max_length bits
 ///
 /// # Arguments
 /// * `freqs` - Frequency of each symbol (index = symbol value)
@@ -316,90 +363,119 @@ impl Default for HuffmanDecodeTable {
 /// # Returns
 /// Array of code lengths for each symbol (0 = symbol not present)
 pub fn build_code_lengths(freqs: &[u64], max_length: u8) -> Vec<u8> {
-    let _max_len = max_length as usize;
+    let length = freqs.len();
+    let tree_limit = max_length as usize;
+    let mut depth = vec![0u8; length];
 
-    // Find non-zero symbols
-    let mut symbols: Vec<(usize, u64)> = freqs
-        .iter()
-        .enumerate()
-        .filter(|(_, &f)| f > 0)
-        .map(|(i, &f)| (i, f))
-        .collect();
+    // Retry loop with increasing count_limit until tree fits
+    let mut count_limit: u32 = 1;
+    loop {
+        // Build leaf nodes with clamped frequencies
+        let mut tree: Vec<HuffmanNode> = Vec::with_capacity(2 * length + 1);
 
-    if symbols.is_empty() {
-        return vec![0; freqs.len()];
-    }
-
-    if symbols.len() == 1 {
-        // Single symbol gets length 1
-        let mut lengths = vec![0u8; freqs.len()];
-        lengths[symbols[0].0] = 1;
-        return lengths;
-    }
-
-    // Sort by frequency
-    symbols.sort_by_key(|&(_, f)| f);
-
-    // Use package-merge algorithm for optimal length-limited codes
-    let _n = symbols.len();
-    let mut lengths = vec![0u8; freqs.len()];
-
-    // Simple Huffman tree for now (will implement package-merge for optimal)
-    // This is a simplified version that produces valid but possibly suboptimal codes
-
-    // Build a simple binary tree
-    let mut tree_freqs: Vec<u64> = symbols.iter().map(|&(_, f)| f).collect();
-    let mut tree_indices: Vec<Vec<usize>> = symbols.iter().map(|&(i, _)| vec![i]).collect();
-
-    while tree_freqs.len() > 1 {
-        // Find two smallest
-        let mut min1_idx = 0;
-        let mut min2_idx = 1;
-        if tree_freqs[min2_idx] < tree_freqs[min1_idx] {
-            std::mem::swap(&mut min1_idx, &mut min2_idx);
-        }
-        for i in 2..tree_freqs.len() {
-            if tree_freqs[i] < tree_freqs[min1_idx] {
-                min2_idx = min1_idx;
-                min1_idx = i;
-            } else if tree_freqs[i] < tree_freqs[min2_idx] {
-                min2_idx = i;
+        // Add leaves in reverse order (C++ iterates from length-1 down to 0)
+        for i in (0..length).rev() {
+            if freqs[i] > 0 {
+                let count = (freqs[i] as u32).max(count_limit.saturating_sub(1));
+                tree.push(HuffmanNode::new_leaf(count, i as i16));
             }
         }
 
-        // Merge
-        let new_freq = tree_freqs[min1_idx] + tree_freqs[min2_idx];
-        let mut new_indices = tree_indices[min1_idx].clone();
-        new_indices.extend(&tree_indices[min2_idx]);
+        let n = tree.len();
 
-        // Increment lengths for merged symbols
-        for &idx in &new_indices {
-            lengths[idx] += 1;
+        if n == 0 {
+            return depth;
         }
 
-        // Remove larger index first to avoid index shift issues
-        let (remove_first, remove_second) = if min1_idx > min2_idx {
-            (min1_idx, min2_idx)
-        } else {
-            (min2_idx, min1_idx)
+        if n == 1 {
+            // Single symbol gets depth 1
+            depth[tree[0].index_right_or_value as usize] = 1;
+            return depth;
+        }
+
+        // Sort by count ascending, then by value descending
+        tree.sort_by(compare_nodes);
+
+        // Add sentinel nodes (max count, for algorithm termination)
+        let sentinel = HuffmanNode {
+            total_count: u32::MAX,
+            index_left: -1,
+            index_right_or_value: -1,
         };
-        tree_freqs.remove(remove_first);
-        tree_freqs.remove(remove_second);
-        tree_indices.remove(remove_first);
-        tree_indices.remove(remove_second);
+        tree.push(sentinel.clone());
+        tree.push(sentinel);
 
-        tree_freqs.push(new_freq);
-        tree_indices.push(new_indices);
-    }
+        // Build tree using two-pointer merge
+        // i: index into sorted leaves
+        // j: index into internal nodes (starts at n+1)
+        let mut i = 0;
+        let mut j = n + 1;
 
-    // Limit code lengths if necessary
-    for len in &mut lengths {
-        if *len > max_length {
-            *len = max_length;
+        for _k in (1..n).rev() {
+            // Find two smallest nodes
+            let left = if tree[i].total_count <= tree[j].total_count {
+                let l = i;
+                i += 1;
+                l
+            } else {
+                let l = j;
+                j += 1;
+                l
+            };
+
+            let right = if tree[i].total_count <= tree[j].total_count {
+                let r = i;
+                i += 1;
+                r
+            } else {
+                let r = j;
+                j += 1;
+                r
+            };
+
+            // Create parent node at the end (replacing sentinel)
+            let j_end = tree.len() - 1;
+            tree[j_end].total_count = tree[left].total_count.saturating_add(tree[right].total_count);
+            tree[j_end].index_left = left as i16;
+            tree[j_end].index_right_or_value = right as i16;
+
+            // Add new sentinel
+            tree.push(HuffmanNode {
+                total_count: u32::MAX,
+                index_left: -1,
+                index_right_or_value: -1,
+            });
+        }
+
+        // Tree root is at index 2*n - 1
+        let root_idx = 2 * n - 1;
+
+        // Reset depths and compute from tree
+        for d in &mut depth {
+            *d = 0;
+        }
+        set_depth(&tree, root_idx, &mut depth, 0);
+
+        // Check if we need to retry
+        let max_depth = *depth.iter().max().unwrap_or(&0) as usize;
+        if max_depth <= tree_limit {
+            break;
+        }
+
+        // Retry with higher count_limit
+        count_limit = count_limit.saturating_mul(2);
+        if count_limit > u32::MAX / 2 {
+            // Safety limit - just clamp and break
+            for d in &mut depth {
+                if *d > max_length {
+                    *d = max_length;
+                }
+            }
+            break;
         }
     }
 
-    lengths
+    depth
 }
 
 /// Converts code lengths to JPEG-format bits and values arrays.
