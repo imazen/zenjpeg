@@ -103,6 +103,43 @@ Types: `fix`, `feat`, `refactor`, `test`, `docs`, `investigate`, `wip`
 | Leave examples uncommitted | Examples ARE deliverables, commit them |
 | Forget to commit at end of session | Always `git status` before stopping |
 
+## ⚠️ MANDATORY: C++ Instrumentation Preservation
+
+**C++ instrumentation code must NEVER be removed.** It was previously lost during an upstream cherry-pick and had to be recovered from git history.
+
+### Rules
+
+1. **Never delete instrumentation** - Even if it seems unused
+2. **Hide behind flags, don't remove** - Use `#if ENABLE_RUST_TEST_INSTRUMENTATION`
+3. **Reference from Rust tests** - Every instrumented function should have a Rust test that parses its output
+4. **Document in CLAUDE.md** - List all instrumented functions and their test files
+
+### Instrumented C++ Functions
+
+| C++ File | Function | Rust Test File |
+|----------|----------|----------------|
+| `adaptive_quantization.cc` | `PerBlockModulations()` | `tests/adaptive_quant_comparison.rs` |
+| `adaptive_quantization.cc` | `FuzzyErosion()` | `tests/adaptive_quant_comparison.rs` |
+| `adaptive_quantization.cc` | `ComputePreErosion()` | `tests/adaptive_quant_comparison.rs` |
+| `quant.cc` | `SetQuantMatrices()` | `tests/quant_comparison.rs` |
+| `quant.cc` | `InitQuantizer()` | `tests/quant_comparison.rs` |
+| `huffman.cc` | `CreateHuffmanTree()` | `tests/huffman_cpp_comparison.rs` |
+| `encode.cc` | various | `tests/cpp_filesize_comparison.rs` |
+
+### Why This Matters
+
+- Instrumentation generates `.testdata` files with intermediate values
+- Rust tests parse these to verify algorithm correctness
+- Without instrumentation, we can only compare final outputs (less precise)
+- Recovering lost instrumentation from git history is error-prone
+
+### If Upstream Conflicts
+
+When cherry-picking upstream commits that touch instrumented files:
+1. **Preserve instrumentation blocks** - Manually re-add if stripped
+2. **Test that instrumentation still works** - `GENERATE_RUST_TEST_DATA=1 ./build/tools/cjpegli ...`
+3. **Verify Rust tests still pass** - `cargo test --test huffman_cpp_comparison`
+
 ### Mandatory Verification Checklist
 
 Before marking ANY feature as complete:
