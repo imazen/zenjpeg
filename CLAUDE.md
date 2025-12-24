@@ -49,6 +49,7 @@ jpegli-rs/
 │   │   ├── encode.rs        # Encoder pipeline
 │   │   ├── decode.rs        # Decoder pipeline
 │   │   ├── adaptive_quant.rs # Adaptive quantization
+│   │   ├── icc.rs           # ICC profile extraction and CMS integration ✓
 │   │   └── error.rs         # Error types
 │   ├── tests/
 │   │   ├── roundtrip_quality.rs  # DSSIM-based quality tests
@@ -86,27 +87,37 @@ jpegli-rs/
 - [x] **Low-Q analysis** - Per-image comparison at Q10-Q60 with SSIM2
 - [x] **XYB quant bug fix** - Disabled broken XYB-only mode (needs color conversion)
 - [x] **XYB encoding pipeline skeleton** - Basic infrastructure implemented but incomplete
+- [x] **Port DistanceToScale()** - Per-frequency non-linear quality scaling from C++
+- [x] **Port zero-bias tables** - kZeroBiasMulYCbCrLQ/HQ with blending logic
+- [x] **ICC profile support** - Extract from APP2, detect XYB, apply CMS transform
 
 ## Pending Tasks
 
 ### 1. Complete XYB Mode with ICC Profile
-XYB mode is partially implemented but marked deprecated. Full implementation requires:
-- **RGB → Linear RGB → XYB conversion** using `LinearRGBRowToXYB()` (port from C++)
-- **XYB value scaling** using `ScaleXYBRow()`
-- **ICC profile embedding** - XYB ICC profile so decoders interpret colors correctly
-- **Frequency-dependent quant scaling** - `DistanceToScale()` with per-frequency exponents
+XYB color conversion is **complete** in `xyb.rs`:
+- [x] `srgb_to_linear` / `linear_to_srgb` - gamma conversion
+- [x] `linear_rgb_to_xyb` / `xyb_to_linear_rgb` - opsin matrix + cube root
+- [x] `scale_xyb` / `unscale_xyb` - jpegli scaling for JPEG
+- [x] ICC profile embedding (720-byte XYB profile)
+- [x] `DistanceToScale()` with `FREQUENCY_EXPONENT[64]`
 
-Current state:
-- Encoding pipeline produces valid JPEGs (R/G/B component IDs, 2×2/2×2/1×1 sampling)
-- Missing color conversion causes quality degradation
-- `use_xyb()` is deprecated with warning until complete
+**Remaining work:**
+- [ ] End-to-end XYB encode/decode quality validation against C++
+- [ ] Verify scaled XYB values match C++ exactly (instrumentation needed)
 
-Reference files:
-- `lib/extras/enc/jpegli.cc` - High-level XYB encoding with color conversion + ICC
-- `lib/extras/xyb_transform.cc` - XYB color conversion
-- `lib/jpegli/quant.cc` - `DistanceToScale()` and frequency exponents
+Test coverage:
+- `tests/xyb_roundtrip.rs` - 5 tests (roundtrip, gray, buffer, encode/decode)
+- `tests/xyb_cpp_comparison.rs` - 3 tests (C++ comparison, ICC embedding, values)
 
-### 2. Add SIMD Toggle Feature Flag
+### 2. Fix Huffman Code Generation
+Current Rust uses simple binary tree that clamps code lengths (possibly invalid).
+C++ uses iterative retry with increasing `count_limit` until tree fits `tree_limit`.
+
+**Action needed:**
+- Port C++ `CreateHuffmanTree()` algorithm from `huffman.cc:156-234`
+- Use C++ instrumentation (`CreateHuffmanTree.testdata`) for validation
+
+### 3. Add SIMD Toggle Feature Flag
 Make toggling SIMD on/off easy to:
 - Ensure SIMD and non-SIMD produce identical images
 - Max difference should be ≤1 when decoded
@@ -164,6 +175,7 @@ upstream clang-tidy cleanup (c9c2be2d). Instrumentation has been restored.
 | `adaptive_quantization.cc` | `ComputePreErosion()` | TBD |
 | `quant.cc` | `SetQuantMatrices()` | Quant table outputs |
 | `quant.cc` | `InitQuantizer()` | Quantizer state |
+| `huffman.cc` | `CreateHuffmanTree()` | `CreateHuffmanTreeTest` |
 | `encode.cc` | Various | Encoding pipeline state |
 
 ### Using Instrumentation
@@ -185,6 +197,7 @@ upstream clang-tidy cleanup (c9c2be2d). Instrumentation has been restored.
    - `PerBlockModulations.testdata`
    - `FuzzyErosion.testdata`
    - `SetQuantMatrices.testdata`
+   - `CreateHuffmanTree.testdata`
    - etc.
 
 ### How It Works
@@ -302,9 +315,14 @@ CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_q
 - mozjpeg Q90 → jpegli ~Q89
 
 ### XYB Mode Status
-**Currently disabled** - XYB quantization tables without XYB color conversion
-produces severe block artifacts. Will be re-enabled once full XYB color
-pipeline is ported.
+**Functional but not validated** - XYB color conversion is complete in `xyb.rs`:
+- Full sRGB → linear → XYB → scaled XYB pipeline
+- ICC profile embedding (720-byte XYB profile)
+- Frequency-dependent `DistanceToScale()` with `FREQUENCY_EXPONENT[64]`
+
+Needs validation:
+- End-to-end quality comparison with C++ cjpegli
+- Exact value matching via instrumentation
 
 ## C++ Build Instructions
 
