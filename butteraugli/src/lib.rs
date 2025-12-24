@@ -49,7 +49,9 @@ mod blur;
 mod consts;
 mod diff;
 mod image;
+mod malta;
 mod mask;
+pub mod opsin;
 mod psycho;
 pub mod xyb;
 

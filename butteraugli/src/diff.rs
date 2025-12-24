@@ -8,115 +8,259 @@ use crate::consts::{
     W_HF_MALTA_X, W_MF_MALTA, W_MF_MALTA_X, W_UHF_MALTA, W_UHF_MALTA_X,
 };
 use crate::image::{Image3F, ImageF};
+use crate::malta::malta_diff_map;
 use crate::mask::{combine_channels_for_masking, fuzzy_erosion};
+use crate::opsin::srgb_to_xyb_butteraugli;
 use crate::psycho::{separate_frequencies, PsychoImage};
-use crate::xyb::srgb_to_xyb;
 use crate::{ButteraugliParams, ButteraugliResult};
 
-/// Converts RGB buffer to XYB Image3F.
-fn rgb_to_xyb_image(rgb: &[u8], width: usize, height: usize) -> Image3F {
-    let mut xyb = Image3F::new(width, height);
-
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y * width + x;
-            let (vx, vy, vb) = srgb_to_xyb(rgb[idx * 3], rgb[idx * 3 + 1], rgb[idx * 3 + 2]);
-            xyb.plane_mut(0).set(x, y, vx);
-            xyb.plane_mut(1).set(x, y, vy);
-            xyb.plane_mut(2).set(x, y, vb);
-        }
-    }
-
-    xyb
+/// Converts RGB buffer to XYB Image3F using butteraugli's OpsinDynamicsImage.
+///
+/// This uses the correct butteraugli color conversion, which is DIFFERENT
+/// from jpegli's XYB color space. Key differences:
+/// 1. Different OpsinAbsorbance matrix coefficients
+/// 2. Uses Gamma function (FastLog2f based), not cube root
+/// 3. Includes dynamic sensitivity based on blurred image
+fn rgb_to_xyb_image(rgb: &[u8], width: usize, height: usize, intensity_target: f32) -> Image3F {
+    srgb_to_xyb_butteraugli(rgb, width, height, intensity_target)
 }
 
-/// Computes per-pixel difference between two frequency bands.
-fn compute_band_diff(band0: &ImageF, band1: &ImageF, weight: f64, norm: f64, out: &mut ImageF) {
-    let width = band0.width();
-    let height = band0.height();
-    let w = (weight / norm).sqrt() as f32;
+/// L2 difference (symmetric).
+///
+/// Computes squared difference weighted by w and adds to diffmap.
+fn l2_diff(i0: &ImageF, i1: &ImageF, w: f32, diffmap: &mut ImageF) {
+    let width = i0.width();
+    let height = i0.height();
 
     for y in 0..height {
-        let row0 = band0.row(y);
-        let row1 = band1.row(y);
-        let row_out = out.row_mut(y);
+        let row0 = i0.row(y);
+        let row1 = i1.row(y);
+        let row_diff = diffmap.row_mut(y);
+
         for x in 0..width {
-            let diff = (row0[x] - row1[x]) * w;
-            row_out[x] += diff * diff;
+            let diff = row0[x] - row1[x];
+            row_diff[x] += diff * diff * w;
         }
     }
 }
 
-/// Computes difference between two PsychoImages.
-fn compute_psycho_diff(ps0: &PsychoImage, ps1: &PsychoImage, xmul: f32) -> ImageF {
+/// L2 difference asymmetric.
+///
+/// This penalizes artifacts (original < reconstructed) more than blur
+/// (original > reconstructed). Based on C++ L2DiffAsymmetric.
+///
+/// # Arguments
+/// * `i0` - Original image
+/// * `i1` - Reconstructed image
+/// * `w_0gt1` - Weight when original > reconstructed (penalize blur)
+/// * `w_0lt1` - Weight when original < reconstructed (penalize artifacts)
+/// * `diffmap` - Output difference map (accumulated)
+fn l2_diff_asymmetric(i0: &ImageF, i1: &ImageF, w_0gt1: f32, w_0lt1: f32, diffmap: &mut ImageF) {
+    if w_0gt1 == 0.0 && w_0lt1 == 0.0 {
+        return;
+    }
+
+    let width = i0.width();
+    let height = i0.height();
+    let vw_0gt1 = w_0gt1 * 0.8;
+    let vw_0lt1 = w_0lt1 * 0.8;
+
+    for y in 0..height {
+        let row0 = i0.row(y);
+        let row1 = i1.row(y);
+        let row_diff = diffmap.row_mut(y);
+
+        for x in 0..width {
+            let val0 = row0[x];
+            let val1 = row1[x];
+
+            // Primary symmetric quadratic objective
+            let diff = val0 - val1;
+            let mut total = row_diff[x] + diff * diff * vw_0gt1;
+
+            // Secondary half-open quadratic objectives
+            let fabs0 = val0.abs();
+            let too_small = 0.4 * fabs0;
+            let too_big = fabs0;
+
+            let v = if val0 < 0.0 {
+                if val1 > -too_small {
+                    val1 + too_small
+                } else if val1 < -too_big {
+                    -val1 - too_big
+                } else {
+                    0.0
+                }
+            } else {
+                if val1 < too_small {
+                    too_small - val1
+                } else if val1 > too_big {
+                    val1 - too_big
+                } else {
+                    0.0
+                }
+            };
+
+            total += vw_0lt1 * v * v;
+            row_diff[x] = total;
+        }
+    }
+}
+
+/// Weight multipliers for L2 differences (from C++ wmul array).
+const WMUL: [f32; 9] = [
+    400.0,   // HF X
+    1.50,    // HF Y
+    0.0,     // HF B (not used)
+    2.0,     // MF X
+    0.35,    // MF Y
+    0.01,    // MF B
+    18.0,    // LF X
+    2.50,    // LF Y
+    0.15,    // LF B
+];
+
+/// Computes difference between two PsychoImages using Malta filter.
+///
+/// This is the core butteraugli algorithm that applies:
+/// 1. Malta edge-aware filter for UHF, HF, MF differences
+/// 2. L2DiffAsymmetric for HF channels
+/// 3. L2Diff for MF and LF channels
+fn compute_psycho_diff_malta(
+    ps0: &PsychoImage,
+    ps1: &PsychoImage,
+    hf_asymmetry: f32,
+    xmul: f32,
+) -> Image3F {
     let width = ps0.width();
     let height = ps0.height();
-    let mut diff = ImageF::new(width, height);
 
-    // UHF differences (X and Y channels)
-    compute_band_diff(
+    // Block diff AC accumulates Malta and L2 differences
+    let mut block_diff_ac = Image3F::new(width, height);
+
+    // Apply Malta filter for UHF (uses full Malta, not LF variant)
+    // UHF Y channel
+    let uhf_y_diff = malta_diff_map(
+        &ps0.uhf[1],
+        &ps1.uhf[1],
+        W_UHF_MALTA * hf_asymmetry as f64,
+        W_UHF_MALTA / hf_asymmetry as f64,
+        NORM1_UHF,
+        false, // use full Malta
+    );
+    for y in 0..height {
+        for x in 0..width {
+            let v = block_diff_ac.plane(1).get(x, y) + uhf_y_diff.get(x, y);
+            block_diff_ac.plane_mut(1).set(x, y, v);
+        }
+    }
+
+    // UHF X channel
+    let uhf_x_diff = malta_diff_map(
         &ps0.uhf[0],
         &ps1.uhf[0],
-        W_UHF_MALTA_X * xmul as f64,
+        W_UHF_MALTA_X * hf_asymmetry as f64,
+        W_UHF_MALTA_X / hf_asymmetry as f64,
         NORM1_UHF_X,
-        &mut diff,
+        false,
     );
-    compute_band_diff(&ps0.uhf[1], &ps1.uhf[1], W_UHF_MALTA, NORM1_UHF, &mut diff);
+    for y in 0..height {
+        for x in 0..width {
+            let v = block_diff_ac.plane(0).get(x, y) + uhf_x_diff.get(x, y);
+            block_diff_ac.plane_mut(0).set(x, y, v);
+        }
+    }
 
-    // HF differences
-    compute_band_diff(
+    // Apply Malta LF filter for HF
+    let sqrt_hf_asym = hf_asymmetry.sqrt();
+
+    // HF Y channel
+    let hf_y_diff = malta_diff_map(
+        &ps0.hf[1],
+        &ps1.hf[1],
+        W_HF_MALTA * sqrt_hf_asym as f64,
+        W_HF_MALTA / sqrt_hf_asym as f64,
+        NORM1_HF,
+        true, // use LF Malta
+    );
+    for y in 0..height {
+        for x in 0..width {
+            let v = block_diff_ac.plane(1).get(x, y) + hf_y_diff.get(x, y);
+            block_diff_ac.plane_mut(1).set(x, y, v);
+        }
+    }
+
+    // HF X channel
+    let hf_x_diff = malta_diff_map(
         &ps0.hf[0],
         &ps1.hf[0],
-        W_HF_MALTA_X * xmul as f64,
+        W_HF_MALTA_X * sqrt_hf_asym as f64,
+        W_HF_MALTA_X / sqrt_hf_asym as f64,
         NORM1_HF_X,
-        &mut diff,
+        true,
     );
-    compute_band_diff(&ps0.hf[1], &ps1.hf[1], W_HF_MALTA, NORM1_HF, &mut diff);
+    for y in 0..height {
+        for x in 0..width {
+            let v = block_diff_ac.plane(0).get(x, y) + hf_x_diff.get(x, y);
+            block_diff_ac.plane_mut(0).set(x, y, v);
+        }
+    }
 
-    // MF differences (all three channels)
-    compute_band_diff(
-        ps0.mf.plane(0),
-        ps1.mf.plane(0),
-        W_MF_MALTA_X * xmul as f64,
-        NORM1_MF_X,
-        &mut diff,
-    );
-    compute_band_diff(
+    // Apply Malta LF filter for MF
+    // MF Y channel
+    let mf_y_diff = malta_diff_map(
         ps0.mf.plane(1),
         ps1.mf.plane(1),
         W_MF_MALTA,
+        W_MF_MALTA,
         NORM1_MF,
-        &mut diff,
+        true,
     );
-    // B channel gets lower weight
-    compute_band_diff(
-        ps0.mf.plane(2),
-        ps1.mf.plane(2),
-        W_MF_MALTA * 0.1,
-        NORM1_MF,
-        &mut diff,
-    );
-
-    // LF differences (squared difference directly)
     for y in 0..height {
         for x in 0..width {
-            for c in 0..3 {
-                let d = ps0.lf.plane(c).get(x, y) - ps1.lf.plane(c).get(x, y);
-                let weight = if c == 0 { xmul } else { 1.0 };
-                diff.set(x, y, diff.get(x, y) + d * d * weight * 0.001);
-            }
+            let v = block_diff_ac.plane(1).get(x, y) + mf_y_diff.get(x, y);
+            block_diff_ac.plane_mut(1).set(x, y, v);
         }
     }
 
-    // Take sqrt to get actual difference magnitude
+    // MF X channel
+    let mf_x_diff = malta_diff_map(
+        ps0.mf.plane(0),
+        ps1.mf.plane(0),
+        W_MF_MALTA_X,
+        W_MF_MALTA_X,
+        NORM1_MF_X,
+        true,
+    );
     for y in 0..height {
-        let row = diff.row_mut(y);
         for x in 0..width {
-            row[x] = row[x].sqrt();
+            let v = block_diff_ac.plane(0).get(x, y) + mf_x_diff.get(x, y);
+            block_diff_ac.plane_mut(0).set(x, y, v);
         }
     }
 
-    diff
+    // Add L2DiffAsymmetric for HF channels (X and Y, no blue)
+    l2_diff_asymmetric(
+        &ps0.hf[0],
+        &ps1.hf[0],
+        WMUL[0] * hf_asymmetry,
+        WMUL[0] / hf_asymmetry,
+        block_diff_ac.plane_mut(0),
+    );
+    l2_diff_asymmetric(
+        &ps0.hf[1],
+        &ps1.hf[1],
+        WMUL[1] * hf_asymmetry,
+        WMUL[1] / hf_asymmetry,
+        block_diff_ac.plane_mut(1),
+    );
+
+    // Add L2Diff for MF channels (all three)
+    l2_diff(ps0.mf.plane(0), ps1.mf.plane(0), WMUL[3], block_diff_ac.plane_mut(0));
+    l2_diff(ps0.mf.plane(1), ps1.mf.plane(1), WMUL[4], block_diff_ac.plane_mut(1));
+    l2_diff(ps0.mf.plane(2), ps1.mf.plane(2), WMUL[5], block_diff_ac.plane_mut(2));
+
+    block_diff_ac
 }
 
 /// Computes the mask from a PsychoImage.
@@ -135,39 +279,49 @@ fn compute_mask(ps: &PsychoImage) -> ImageF {
     eroded
 }
 
-/// Applies masking to the difference map.
-fn apply_mask_to_diff(diff: &ImageF, mask0: &ImageF, mask1: &ImageF) -> ImageF {
-    let width = diff.width();
-    let height = diff.height();
-    let mut masked = ImageF::new(width, height);
+/// Combines channels to produce final diffmap.
+///
+/// Applies masking and combines X, Y, B channels with appropriate weights.
+fn combine_channels_to_diffmap(
+    mask: &ImageF,
+    block_diff_dc: &Image3F,
+    block_diff_ac: &Image3F,
+    xmul: f32,
+) -> ImageF {
+    let width = mask.width();
+    let height = mask.height();
+    let mut diffmap = ImageF::new(width, height);
 
     for y in 0..height {
-        let row_diff = diff.row(y);
-        let row_m0 = mask0.row(y);
-        let row_m1 = mask1.row(y);
-        let row_out = masked.row_mut(y);
-
         for x in 0..width {
-            // Use average of both masks
-            let avg_mask = (row_m0[x] + row_m1[x]) * 0.5;
-            // Higher mask value means less visible difference
-            let masking_factor = 1.0 / (1.0 + avg_mask * 0.1);
-            row_out[x] = row_diff[x] * masking_factor;
+            let mask_val = mask.get(x, y);
+
+            // Combine AC differences from all channels
+            let ac_x = block_diff_ac.plane(0).get(x, y) * xmul;
+            let ac_y = block_diff_ac.plane(1).get(x, y);
+            let ac_b = block_diff_ac.plane(2).get(x, y);
+
+            // Combine DC differences
+            let dc_x = block_diff_dc.plane(0).get(x, y) * xmul;
+            let dc_y = block_diff_dc.plane(1).get(x, y);
+            let dc_b = block_diff_dc.plane(2).get(x, y);
+
+            // Total difference
+            let total = (ac_x + ac_y + ac_b + dc_x + dc_y + dc_b).sqrt();
+
+            // Apply masking (higher mask = more masking = lower perceived difference)
+            let masking_factor = 1.0 / (1.0 + mask_val * 0.1);
+
+            diffmap.set(x, y, total * masking_factor);
         }
     }
 
-    masked
+    diffmap
 }
-
-/// Calibration factor to map our simplified implementation to expected butteraugli range.
-/// Derived empirically: Q90 JPEG should score ~0.5-0.8 (good), Q20 should score ~2-4 (bad).
-/// Our raw scores are ~1000× too low due to simplified XYB conversion and masking.
-const CALIBRATION_FACTOR: f64 = 1000.0;
 
 /// Computes the global score from a difference map.
 ///
 /// C++ butteraugli uses the maximum diffmap value as the score.
-/// See DIFFERENCES.md for implementation differences.
 fn compute_score_from_diffmap(diffmap: &ImageF) -> f64 {
     let width = diffmap.width();
     let height = diffmap.height();
@@ -189,9 +343,8 @@ fn compute_score_from_diffmap(diffmap: &ImageF) -> f64 {
         }
     }
 
-    // Apply global scale and calibration factor
-    // The calibration factor compensates for our simplified implementation
-    max_val * GLOBAL_SCALE as f64 * CALIBRATION_FACTOR
+    // Apply global scale
+    max_val * GLOBAL_SCALE as f64
 }
 
 /// Main implementation of butteraugli comparison.
@@ -213,30 +366,49 @@ pub fn compute_butteraugli_impl(
         };
     }
 
-    // Convert to XYB
-    let xyb1 = rgb_to_xyb_image(rgb1, width, height);
-    let xyb2 = rgb_to_xyb_image(rgb2, width, height);
+    // Convert to XYB using butteraugli's OpsinDynamicsImage
+    let xyb1 = rgb_to_xyb_image(rgb1, width, height, params.intensity_target);
+    let xyb2 = rgb_to_xyb_image(rgb2, width, height, params.intensity_target);
 
     // Perform frequency decomposition
     let ps1 = separate_frequencies(&xyb1);
     let ps2 = separate_frequencies(&xyb2);
 
-    // Compute masks
+    // Compute masks from both images
     let mask1 = compute_mask(&ps1);
     let mask2 = compute_mask(&ps2);
 
-    // Compute raw difference
-    let raw_diff = compute_psycho_diff(&ps1, &ps2, params.xmul);
+    // Average the masks
+    let mut mask = ImageF::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            mask.set(x, y, (mask1.get(x, y) + mask2.get(x, y)) * 0.5);
+        }
+    }
 
-    // Apply masking
-    let masked_diff = apply_mask_to_diff(&raw_diff, &mask1, &mask2);
+    // Compute AC differences using Malta filter
+    let block_diff_ac = compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry, params.xmul);
+
+    // Compute DC (LF) differences
+    let mut block_diff_dc = Image3F::new(width, height);
+    for c in 0..3 {
+        for y in 0..height {
+            for x in 0..width {
+                let d = ps1.lf.plane(c).get(x, y) - ps2.lf.plane(c).get(x, y);
+                block_diff_dc.plane_mut(c).set(x, y, d * d * WMUL[6 + c]);
+            }
+        }
+    }
+
+    // Combine channels to final diffmap
+    let diffmap = combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul);
 
     // Compute global score
-    let score = compute_score_from_diffmap(&masked_diff);
+    let score = compute_score_from_diffmap(&diffmap);
 
     ButteraugliResult {
         score,
-        diffmap: Some(masked_diff),
+        diffmap: Some(diffmap),
     }
 }
 
@@ -276,7 +448,7 @@ mod tests {
 
         // Small difference should have low score
         assert!(
-            result.score < 1.0,
+            result.score < 2.0,
             "Small difference should have low score, got {}",
             result.score
         );
@@ -315,5 +487,25 @@ mod tests {
         let diffmap = result.diffmap.unwrap();
         assert_eq!(diffmap.width(), width);
         assert_eq!(diffmap.height(), height);
+    }
+
+    #[test]
+    fn test_l2_diff_asymmetric() {
+        let width = 16;
+        let height = 16;
+        let i0 = ImageF::filled(width, height, 1.0);
+        let i1 = ImageF::filled(width, height, 0.5);
+        let mut diffmap = ImageF::new(width, height);
+
+        l2_diff_asymmetric(&i0, &i1, 1.0, 1.0, &mut diffmap);
+
+        // Should have non-zero difference
+        let mut sum = 0.0;
+        for y in 0..height {
+            for x in 0..width {
+                sum += diffmap.get(x, y);
+            }
+        }
+        assert!(sum > 0.0, "L2 diff should be non-zero for different images");
     }
 }
