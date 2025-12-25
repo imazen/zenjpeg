@@ -1,8 +1,8 @@
 # Fuzzing artifacts
 target/
-corpus/
 artifacts/
 coverage/
 
-# Keep seed corpus
+# Ignore corpus except seed
+corpus/*
 !corpus/seed/
