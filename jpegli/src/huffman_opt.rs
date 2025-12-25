@@ -1026,53 +1026,28 @@ impl ProgressiveTokenBuffer {
 
         // AC tables: need to identify which contexts are luma vs chroma
         // AC contexts start at num_dc_contexts
-        // Context assignment: context = num_components + scan_idx
-        // For scans: DC is scan 0, then AC Y is scan 1, AC Cb is scan 2, AC Cr is scan 3
-        // So: AC Y context = num_dc_contexts + 1 = 4 (for 3 components)
-        //     AC Cb context = num_dc_contexts + 2 = 5
-        //     AC Cr context = num_dc_contexts + 3 = 6
         //
-        // But we need to handle the offset: ac_histograms = counters[num_dc_contexts..]
-        // So AC Y is at counters[num_dc_contexts + 1], which is ac_histograms[1]
-        //
-        // Actually, contexts are assigned as:
-        // - DC interleaved scan (scan 0): uses component indices 0,1,2 as contexts
-        // - AC Y scan (scan 1): uses context = 3 + 1 = 4
-        // - AC Cb scan (scan 2): uses context = 3 + 2 = 5
-        // - AC Cr scan (scan 3): uses context = 3 + 3 = 6
-        //
-        // counters[3] is unused (gap between DC contexts 0-2 and AC contexts 4-6)
-        // ac_histograms[0] = counters[3] (empty)
-        // ac_histograms[1] = counters[4] (Y)
-        // ac_histograms[2] = counters[5] (Cb)
-        // ac_histograms[3] = counters[6] (Cr)
+        // Context assignment: context = num_components + component_index
+        // This ensures consistent table assignment regardless of scan order:
+        // - AC Y (component 0): context = 3 + 0 = 3 → counters[3] = ac_histograms[0]
+        // - AC Cb (component 1): context = 3 + 1 = 4 → counters[4] = ac_histograms[1]
+        // - AC Cr (component 2): context = 3 + 2 = 5 → counters[5] = ac_histograms[2]
 
         let ac_start = num_dc_contexts;
         let ac_histograms = &self.counters[ac_start..];
 
-        // Find Y's histogram - it's at index 1 in ac_histograms (context 4 for 3-component)
-        // Actually, the AC context for component C at scan S is: num_components + S
-        // For Y (component 0), scan index is 1 (after DC scan 0)
-        // So Y's AC context = 3 + 1 = 4, which is counters[4] = ac_histograms[1]
-        //
-        // For Cb (component 1), scan index is 2
-        // So Cb's AC context = 3 + 2 = 5, which is counters[5] = ac_histograms[2]
-        //
-        // For Cr (component 2), scan index is 3
-        // So Cr's AC context = 3 + 3 = 6, which is counters[6] = ac_histograms[3]
-
-        // AC luma = context (num_dc_contexts + 1) = ac_histograms[1]
-        let ac_luma_idx = 1;
+        // AC luma = component 0 = context num_dc_contexts = ac_histograms[0]
+        let ac_luma_idx = 0;
         let ac_luma = if ac_luma_idx < ac_histograms.len() {
             &ac_histograms[ac_luma_idx]
         } else {
-            // Fallback for grayscale
-            &ac_histograms[0]
+            // Fallback for grayscale - should not happen
+            &self.counters[0]
         };
 
-        // AC chroma = combined contexts (num_dc_contexts + 2) and (num_dc_contexts + 3)
+        // AC chroma = components 1, 2 = contexts num_dc_contexts+1, num_dc_contexts+2
         let mut ac_chroma = FrequencyCounter::new();
-        for idx in 2..ac_histograms.len() {
+        for idx in 1..ac_histograms.len() {
             ac_chroma.add(&ac_histograms[idx]);
         }
 

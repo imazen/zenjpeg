@@ -570,14 +570,17 @@ impl Encoder {
         // Tokenize all scans to collect symbol statistics
         let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
 
-        for (scan_idx, scan) in scans.iter().enumerate() {
+        for (_scan_idx, scan) in scans.iter().enumerate() {
             // Calculate context for this scan
+            // Context determines which Huffman table histogram to use
             let context = if scan.ss == 0 && scan.se == 0 {
-                // DC scan: use component index as context
+                // DC scan: use component index as context (0=Y, 1=Cb, 2=Cr)
                 scan.components[0]
             } else {
-                // AC scan: use num_components + scan_idx as context
-                (num_components as u8) + scan_idx as u8
+                // AC scan: use num_components + component_index as context
+                // This ensures Y always uses luma table, Cb/Cr use chroma table
+                // regardless of scan order (which varies with subsampling mode)
+                (num_components as u8) + scan.components[0]
             };
 
             if scan.ss == 0 && scan.se == 0 {
