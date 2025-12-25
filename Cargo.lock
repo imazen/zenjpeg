@@ -138,6 +138,7 @@ dependencies = [
  "jpegli-sys",
  "mozjpeg",
  "png",
+ "proptest",
  "wide",
 ]
 
