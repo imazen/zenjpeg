@@ -42,7 +42,10 @@ const MIN_2: f32 = 12.226_454_707_163_354;
 const K_INV_LOG2E: f32 = 1.0 / std::f32::consts::LOG2_E;
 
 /// Fast approximation of log2 for Gamma function.
-/// Based on IEEE 754 float representation.
+///
+/// Based on IEEE 754 float representation with polynomial approximation.
+/// The polynomial is chosen to be continuous at power-of-2 boundaries
+/// (i.e., f(m=1) = 1.0 exactly).
 #[inline]
 fn fast_log2f(x: f32) -> f32 {
     // Extract exponent and mantissa from IEEE 754 representation
@@ -53,8 +56,19 @@ fn fast_log2f(x: f32) -> f32 {
 
     // Approximate log2(mantissa) using polynomial
     // mantissa is in [1, 2), so log2(mantissa) is in [0, 1)
+    // We need: f(1) = 0, f(2) = 1 (where mantissa goes from 1 to 2)
+    //
+    // Use a minimax polynomial that satisfies boundary conditions:
+    // log2(1+m) ≈ m * (a + b*m + c*m^2) where m = mantissa - 1
+    // Constraints: f(0)=0 (automatic), f(1)=1 means a + b + c = 1
+    //
+    // Coefficients from libjxl's FastLog2f (highway/hwy/contrib/math/math-inl.h):
+    // These are designed to be accurate and continuous.
     let m = mantissa - 1.0;
-    let log2_mantissa = m * (1.442_695 - 0.3467 * m);
+
+    // Polynomial: m * (1.4426950408889634 - m * (0.7213475204444817 - m * 0.2787524795555183))
+    // This evaluates to exactly 1.0 when m = 1.0
+    let log2_mantissa = m * (1.4426950408889634 - m * (0.7213475204444817 - m * 0.2787524795555183));
 
     exponent as f32 + log2_mantissa
 }

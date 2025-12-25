@@ -305,3 +305,30 @@ mod tests {
         assert!((weights_sum - 1.0).abs() < 0.001);
     }
 }
+
+    #[test]
+    fn test_mask_y_cpp_values() {
+        // Verify MaskY matches C++ implementation
+        // C++ calculation for delta=1.0:
+        // c = 2.5485944793 / (0.451936922203 * 1.0 + 0.829591754942) = 1.989
+        // retval = 0.0709 * (1.0 + 1.989) = 0.2119
+        // return 0.2119^2 = 0.0449
+        
+        let result = mask_y(1.0);
+        println!("MaskY(1.0) = {}", result);
+        
+        // Calculate expected value
+        let offset = 0.829591754942;
+        let scaler = 0.451936922203;
+        let mul = 2.5485944793;
+        let global_scale = 1.0 / (17.83 * 0.790799174);
+        
+        let c = mul / (scaler * 1.0 + offset);
+        let retval = global_scale * (1.0 + c);
+        let expected = retval * retval;
+        
+        println!("Expected: {}, c={}, retval={}, global_scale={}", expected, c, retval, global_scale);
+        
+        assert!((result - expected).abs() < 1e-6, 
+                "MaskY(1.0) = {}, expected {}", result, expected);
+    }
