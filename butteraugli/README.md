@@ -143,6 +143,15 @@ The implementation includes 195 synthetic test cases validated against the C++ l
 - [JPEG XL (libjxl)](https://github.com/libjxl/libjxl) - Contains the reference implementation
 - [Butteraugli paper](https://github.com/google/butteraugli/blob/master/doc/butteraugli-theory.pdf)
 
+## AI-Generated Code Notice
+
+This crate was developed with significant assistance from Claude (Anthropic). While the code has been tested against the C++ libjxl butteraugli implementation and passes 195 synthetic test cases with exact numerical parity, **not all code has been manually reviewed or human-audited**.
+
+Before using in production:
+- Review critical code paths for your use case
+- Run your own validation against expected outputs
+- Consider the test suite coverage for your specific requirements
+
 ## License
 
 BSD-3-Clause, same as the original libjxl implementation.
