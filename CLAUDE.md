@@ -96,6 +96,21 @@ A feature is **NOT ported** until ALL of these are true:
 3. **After adding/modifying examples or tests** - These are valuable artifacts
 4. **Before ending a session** - NEVER leave work uncommitted
 5. **When investigation produces insights** - Commit notes/findings even if code unchanged
+6. **Commit failing tests BEFORE the fix** - Write the test, commit it failing, THEN fix
+
+### Failing Tests First
+
+When fixing a bug or adding a feature with tests:
+1. Write the test that exposes the bug/validates the feature
+2. Commit the failing test: `test: Add failing test for X`
+3. Implement the fix
+4. Commit the fix: `fix: Resolve X by doing Y`
+
+**Why this matters:**
+- Proves the test actually catches the bug (not a tautology)
+- Documents the broken state for future reference
+- Enables `git bisect` to find regressions
+- Shows test was written independently of the fix
 
 ### cargo fmt Discipline
 
