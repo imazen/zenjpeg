@@ -238,18 +238,19 @@ impl Encoder {
         // Convert to YCbCr using f32 precision throughout (matches C++ jpegli)
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
-        // Generate quantization tables
+        // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
-        let c_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cb_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cr_quant = quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks first (needed for both standard and optimized encoding)
         let (y_blocks, cb_blocks, cr_blocks) =
-            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &c_quant)?;
+            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant)?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Write JPEG structure
         self.write_header(output)?;
-        self.write_quant_tables(output, &y_quant, &c_quant)?;
+        self.write_quant_tables(output, &y_quant, &cb_quant, &cr_quant)?;
         self.write_frame_header(output)?;
 
         // For optimized Huffman, build tables from block frequencies before writing DHT
@@ -501,18 +502,19 @@ impl Encoder {
         // Convert to YCbCr using f32 precision
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
-        // Generate quantization tables
+        // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
-        let c_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cb_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cr_quant = quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks to get full-precision coefficients
         let (y_blocks, cb_blocks, cr_blocks) =
-            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &c_quant)?;
+            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant)?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Write JPEG structure
         self.write_header(&mut output)?;
-        self.write_quant_tables(&mut output, &y_quant, &c_quant)?;
+        self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
         self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
 
         // For non-optimized progressive, use standard Huffman tables
@@ -560,13 +562,14 @@ impl Encoder {
         // Convert to YCbCr using f32 precision
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
-        // Generate quantization tables
+        // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
-        let c_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cb_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cr_quant = quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks to get full-precision coefficients
         let (y_blocks, cb_blocks, cr_blocks) =
-            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &c_quant)?;
+            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant)?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
 
@@ -644,7 +647,7 @@ impl Encoder {
 
         // ========== WRITE JPEG STRUCTURE ==========
         self.write_header(&mut output)?;
-        self.write_quant_tables(&mut output, &y_quant, &c_quant)?;
+        self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
         self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
 
         // Write optimized Huffman tables
@@ -1305,32 +1308,38 @@ impl Encoder {
         Ok(())
     }
 
-    /// Writes quantization tables.
+    /// Writes quantization tables (3 separate tables for Y, Cb, Cr).
+    /// This matches C++ jpegli behavior with add_two_chroma_tables=true.
     fn write_quant_tables(
         &self,
         output: &mut Vec<u8>,
         y_quant: &QuantTable,
-        c_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
     ) -> Result<()> {
-        // DQT for Y (table 0) - values must be written in zigzag order
+        // Write all 3 tables in one DQT segment
+        // Length = 2 + 3 * (1 + 64) = 197 bytes
         output.push(0xFF);
         output.push(MARKER_DQT);
         output.push(0x00);
-        output.push(0x43); // Length: 67 bytes
+        output.push(0xC5); // Length: 197 bytes
+
+        // Table 0 (Y) - values must be written in zigzag order
         output.push(0x00); // 8-bit precision, table 0
         for i in 0..DCT_BLOCK_SIZE {
-            // For zigzag position i, output the quant value for natural position JPEG_NATURAL_ORDER[i]
             output.push(y_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
         }
 
-        // DQT for C (table 1) - values must be written in zigzag order
-        output.push(0xFF);
-        output.push(MARKER_DQT);
-        output.push(0x00);
-        output.push(0x43);
+        // Table 1 (Cb)
         output.push(0x01); // 8-bit precision, table 1
         for i in 0..DCT_BLOCK_SIZE {
-            output.push(c_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
+            output.push(cb_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
+        }
+
+        // Table 2 (Cr)
+        output.push(0x02); // 8-bit precision, table 2
+        for i in 0..DCT_BLOCK_SIZE {
+            output.push(cr_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
         }
 
         Ok(())
@@ -1424,7 +1433,7 @@ impl Encoder {
 
             output.push(3); // Component ID = 3 (Cr)
             output.push(0x11); // 1x1 sampling
-            output.push(1); // Quant table 1
+            output.push(2); // Quant table 2 (separate Cr table like C++ cjpegli)
         }
 
         Ok(())
@@ -1764,7 +1773,8 @@ impl Encoder {
         cb_plane: &[f32],
         cr_plane: &[f32],
         y_quant: &QuantTable,
-        c_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
     ) -> Result<(
         Vec<[i16; DCT_BLOCK_SIZE]>,
         Vec<[i16; DCT_BLOCK_SIZE]>,
@@ -1809,7 +1819,7 @@ impl Encoder {
                     let cb_dct = forward_dct_8x8(&cb_block);
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
-                        &c_quant.values,
+                        &cb_quant.values,
                         &cb_zero_bias,
                         aq_strength,
                     );
@@ -1819,7 +1829,7 @@ impl Encoder {
                     let cr_dct = forward_dct_8x8(&cr_block);
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
-                        &c_quant.values,
+                        &cr_quant.values,
                         &cr_zero_bias,
                         aq_strength,
                     );
