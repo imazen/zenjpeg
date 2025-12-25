@@ -69,12 +69,36 @@ cargo run --release --example roundtrip_corpus -- /path/to/images
 
 ## Debug Tools
 
-Current debugging tools (may be moved to `_archive/` when resolved):
-
 | Example | Description |
 |---------|-------------|
+| `jpegli_debug` | **Unified debug CLI** - replaces 27 individual scripts |
 | `debug_aq_values` | Debug adaptive quantization strength values |
 | `debug_quant_field` | Debug quant_field computation |
+
+### jpegli_debug Commands
+
+```bash
+# Show help
+cargo run --example jpegli_debug -- help
+
+# Trace encoding pipeline for an image
+cargo run --release --example jpegli_debug -- trace image.png
+
+# Compare Rust vs C++ encoding at Q100
+cargo run --release --example jpegli_debug -- compare image.png 100
+
+# Dump JPEG structure (markers, tables)
+cargo run --release --example jpegli_debug -- dump image.jpg
+
+# Analyze quality metrics
+cargo run --release --example jpegli_debug -- analyze original.png encoded.jpg
+
+# Show quant tables at quality level
+cargo run --release --example jpegli_debug -- quant 90
+
+# Analyze single block patterns
+cargo run --release --example jpegli_debug -- block gradient
+```
 
 ## Utilities
 
