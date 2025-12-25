@@ -75,6 +75,30 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]
+// Allow C++ constant formats (ported from libjxl with exact values)
+#![allow(clippy::unreadable_literal)]
+#![allow(clippy::inconsistent_digit_grouping)]
+#![allow(clippy::excessive_precision)]
+// Allow mul_add style from C++ (may affect numerical parity)
+#![allow(clippy::suboptimal_flops)]
+// Allow common patterns in numerical code ported from C++
+#![allow(clippy::many_single_char_names)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::manual_saturating_arithmetic)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::cast_possible_wrap)]
+// These are nice-to-have but not critical for initial release
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::missing_const_for_fn)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::imprecise_flops)]
+#![allow(clippy::implicit_saturating_sub)]
+#![allow(clippy::useless_let_if_seq)]
 
 // Module structure - expose all for testing parity with C++
 pub mod blur;
