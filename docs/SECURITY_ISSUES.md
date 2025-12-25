@@ -92,12 +92,12 @@ int num_refinement_scans[DCTSIZE2];
 | Field | Value |
 |-------|-------|
 | **C++ Commit** | `0e1976eb` |
-| **Rust Status** | ❌ **Vulnerable** - Same issue possible |
+| **Rust Status** | ✅ **Fixed** - `50b104ee` |
 | **Component** | Image allocation |
 
 **Root Cause**: Unsigned integer multiplication overflow on 32-bit systems during image allocation.
 
-**Rust Status**: We have the same issue. See `SECURITY.md` P0-3 for fix using `checked_mul`.
+**Rust Fix**: All size calculations now use `checked_size_2d()` and `checked_size()` from `alloc.rs` which return `Error::SizeOverflow` on overflow instead of panicking or wrapping.
 
 ---
 
@@ -106,12 +106,16 @@ int num_refinement_scans[DCTSIZE2];
 | Field | Value |
 |-------|-------|
 | **C++ Commit** | `8740dc2f` |
-| **Rust Status** | ❌ **Vulnerable** - Same issue |
+| **Rust Status** | ✅ **Fixed** - `50b104ee` |
 | **Component** | Plane allocation |
 
 **Root Cause**: `Plane<T>` allocation failures not propagated, causing crashes.
 
-**Rust Status**: We use `vec![]` which panics on OOM. See `SECURITY.md` P0-1 for fix using `try_reserve`.
+**Rust Fix**: All allocations now use fallible `try_alloc_*` functions from `alloc.rs` that return `Error::AllocationFailed` instead of panicking on OOM. This includes:
+- `try_alloc_zeroed()` for u8 buffers
+- `try_alloc_zeroed_f32()` for f32 buffers
+- `try_alloc_filled()` for non-zero initialized buffers
+- `try_alloc_dct_blocks()` for DCT coefficient arrays
 
 ---
 
@@ -170,11 +174,13 @@ int num_refinement_scans[DCTSIZE2];
 | CVE-2024-11403 Huffman OOB | `f510b589` | ✅ Not vulnerable |
 | Chroma refinement overflow | `c0dfce4c` | ⚠️ Review needed |
 | Refinement bits assertion | `403631c7` | ✅ Not vulnerable |
-| i386 integer overflow | `0e1976eb` | ❌ Vulnerable |
-| Allocation failure crash | `8740dc2f` | ❌ Vulnerable |
+| i386 integer overflow | `0e1976eb` | ✅ Fixed (`50b104ee`) |
+| Allocation failure crash | `8740dc2f` | ✅ Fixed (`50b104ee`) |
 | Memory tracking bypass | `eeb331ce` | ❌ Missing feature |
 | MSAN subsampling error | `39a47b34` | ⚠️ Review needed |
 | Decoder malformed input | N/A | ✅ Fixed (`7e9ec31a`) |
+| CVE-2019-2201 int overflow | N/A | ✅ Fixed (`50b104ee`) |
+| CVE-2020-14152 mem exhaustion | N/A | ✅ Fixed (`50b104ee`) |
 
 ---
 
@@ -243,11 +249,11 @@ These CVEs affect libjpeg-turbo and may inform our security posture.
 | **CVE** | [CVE-2019-2201](https://nvd.nist.gov/vuln/detail/CVE-2019-2201) |
 | **CVSS** | 7.8 (High) |
 | **Affected** | libjpeg-turbo < 2.0.3 |
-| **Rust Status** | ❌ **Potentially Vulnerable** - Similar patterns exist |
+| **Rust Status** | ✅ **Fixed** - `50b104ee` |
 
 **Root Cause**: Integer overflow handling gigapixel images in `turbojpeg.c`, causing heap corruption.
 
-**Rust Analysis**: We have similar unchecked multiplications. See `SECURITY.md` P0-3.
+**Rust Fix**: All size calculations use `checked_size_2d()` with `Error::SizeOverflow` on overflow. Additionally, `validate_dimensions()` enforces `JPEG_MAX_DIMENSION` (65500) and configurable `max_pixels` limits.
 
 ---
 
@@ -258,11 +264,11 @@ These CVEs affect libjpeg-turbo and may inform our security posture.
 | **CVE** | [CVE-2018-20330](https://nvd.nist.gov/vuln/detail/CVE-2018-20330) |
 | **CVSS** | 8.8 (High) |
 | **Affected** | libjpeg-turbo 2.0.1 |
-| **Rust Status** | ❌ **Potentially Vulnerable** - Same class of bug |
+| **Rust Status** | ✅ **Fixed** - `50b104ee` |
 
 **Root Cause**: Integer overflow from `pitch * height` multiplication in BMP loading.
 
-**Rust Analysis**: We have `width * height * bpp` without overflow checking.
+**Rust Fix**: All `width * height * bpp` calculations use `checked_size()` which returns `Error::SizeOverflow` on overflow.
 
 ---
 
@@ -322,11 +328,11 @@ Original IJG libjpeg vulnerabilities.
 | **CVE** | [CVE-2020-14152](https://nvd.nist.gov/vuln/detail/CVE-2020-14152) |
 | **CVSS** | 7.1 (High) |
 | **Affected** | libjpeg < 9d |
-| **Rust Status** | ❌ **Vulnerable** - No memory limits |
+| **Rust Status** | ✅ **Fixed** - `50b104ee` |
 
 **Root Cause**: `jpeg_mem_available()` in jmemnobs.c doesn't honor `max_memory_to_use`.
 
-**Rust Analysis**: We have no memory limiting. See `SECURITY.md` P1-1.
+**Rust Fix**: DecoderConfig supports `max_pixels()` configuration (default 100MP). `validate_dimensions()` enforces both `JPEG_MAX_DIMENSION` (65500) and `max_pixels` limits, rejecting excessively large images before allocation.
 
 ---
 
@@ -349,11 +355,12 @@ Original IJG libjpeg vulnerabilities.
 
 | Vulnerability Class | libjpeg-turbo | mozjpeg | IJG | jpegli-rs Status |
 |---------------------|---------------|---------|-----|------------------|
-| Integer overflow in size calc | CVE-2019-2201, CVE-2018-20330 | CVE-2020-1895 | - | ❌ Vulnerable |
+| Integer overflow in size calc | CVE-2019-2201, CVE-2018-20330 | CVE-2020-1895 | - | ✅ Fixed (`50b104ee`) |
 | Heap overflow (12-bit) | CVE-2023-2804 | - | - | ✅ N/A (8-bit only) |
 | PPM/BMP reader bugs | CVE-2020-13790, CVE-2018-14498 | same | - | ✅ N/A (no readers) |
-| Memory exhaustion | - | - | CVE-2020-14152 | ❌ Vulnerable |
+| Memory exhaustion | - | - | CVE-2020-14152 | ✅ Fixed (`50b104ee`) |
 | Huffman table OOB | CVE-2024-11403 (via jpegli) | - | - | ✅ Not vulnerable |
+| Allocation failure crash | N/A | N/A | N/A | ✅ Fixed (`50b104ee`) |
 
 ---
 
@@ -380,3 +387,4 @@ Original IJG libjpeg vulnerabilities.
 | 2024-12-25 | Added CVE-2024-11403 analysis |
 | 2024-12-25 | Mapped C++ fixes to Rust status |
 | 2024-12-25 | Added libjpeg-turbo, mozjpeg, IJG libjpeg CVE catalog |
+| 2024-12-25 | Fixed integer overflow, allocation crash, and memory exhaustion issues (`50b104ee`) |
