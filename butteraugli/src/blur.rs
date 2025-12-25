@@ -2,12 +2,16 @@
 //!
 //! Butteraugli uses Gaussian blurs at various scales to separate
 //! frequency bands. The blur is implemented as a separable convolution.
+//!
+//! The C++ butteraugli uses clamp-to-edge boundary handling with
+//! re-normalization for border pixels. This module matches that behavior.
 
 use crate::image::ImageF;
 
 /// Computes a 1D Gaussian kernel for the given sigma.
 ///
-/// The kernel is normalized so the weights sum to 1.0.
+/// Unlike C++ which returns un-normalized weights, we return normalized
+/// weights for the interior case. Border handling re-normalizes as needed.
 #[must_use]
 pub fn compute_kernel(sigma: f32) -> Vec<f32> {
     const M: f32 = 2.25; // Accuracy increases when m is increased
@@ -23,7 +27,7 @@ pub fn compute_kernel(sigma: f32) -> Vec<f32> {
         sum += weight;
     }
 
-    // Normalize
+    // Normalize for interior pixels (border pixels re-normalize)
     let inv_sum = 1.0 / sum;
     for k in &mut kernel {
         *k *= inv_sum;
@@ -32,7 +36,10 @@ pub fn compute_kernel(sigma: f32) -> Vec<f32> {
     kernel
 }
 
-/// Performs horizontal convolution on a single row.
+/// Performs horizontal convolution on a single row with clamp boundary handling.
+///
+/// This matches C++ butteraugli: clamp to edge values and re-normalize
+/// the kernel weights for border pixels.
 fn convolve_row(input: &[f32], kernel: &[f32], output: &mut [f32]) {
     let width = input.len();
     if width == 0 {
@@ -41,29 +48,30 @@ fn convolve_row(input: &[f32], kernel: &[f32], output: &mut [f32]) {
     let half = kernel.len() / 2;
 
     for x in 0..width {
+        // Determine the valid range of kernel elements
+        let minx = if x < half { 0 } else { x - half };
+        let maxx = (x + half).min(width - 1);
+
+        // For border pixels, re-normalize based on which kernel elements are used
+        let mut weight_sum = 0.0f32;
         let mut sum = 0.0f32;
-        for (k_idx, &k_val) in kernel.iter().enumerate() {
-            let src_x = x as i32 + k_idx as i32 - half as i32;
-            // Mirror at boundaries with clamp
-            let src_x = if src_x < 0 {
-                ((-src_x) as usize).min(width - 1)
-            } else if src_x >= width as i32 {
-                let mirrored = 2 * (width as i32) - 2 - src_x;
-                if mirrored < 0 {
-                    0
-                } else {
-                    (mirrored as usize).min(width - 1)
-                }
-            } else {
-                src_x as usize
-            };
-            sum += input[src_x] * k_val;
+
+        for j in minx..=maxx {
+            let k_idx = j + half - x;
+            let k_val = kernel[k_idx];
+            weight_sum += k_val;
+            sum += input[j] * k_val;
         }
-        output[x] = sum;
+
+        // Re-normalize for border pixels (C++ approach)
+        output[x] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
     }
 }
 
-/// Performs vertical convolution on a single column.
+/// Performs vertical convolution on a single column with clamp boundary handling.
+///
+/// This matches C++ butteraugli: clamp to edge values and re-normalize
+/// the kernel weights for border pixels.
 fn convolve_column(image: &ImageF, x: usize, kernel: &[f32], output: &mut [f32]) {
     let height = image.height();
     if height == 0 {
@@ -72,25 +80,23 @@ fn convolve_column(image: &ImageF, x: usize, kernel: &[f32], output: &mut [f32])
     let half = kernel.len() / 2;
 
     for y in 0..height {
+        // Determine the valid range of kernel elements
+        let miny = if y < half { 0 } else { y - half };
+        let maxy = (y + half).min(height - 1);
+
+        // For border pixels, re-normalize based on which kernel elements are used
+        let mut weight_sum = 0.0f32;
         let mut sum = 0.0f32;
-        for (k_idx, &k_val) in kernel.iter().enumerate() {
-            let src_y = y as i32 + k_idx as i32 - half as i32;
-            // Mirror at boundaries with clamp
-            let src_y = if src_y < 0 {
-                ((-src_y) as usize).min(height - 1)
-            } else if src_y >= height as i32 {
-                let mirrored = 2 * (height as i32) - 2 - src_y;
-                if mirrored < 0 {
-                    0
-                } else {
-                    (mirrored as usize).min(height - 1)
-                }
-            } else {
-                src_y as usize
-            };
-            sum += image.get(x, src_y) * k_val;
+
+        for j in miny..=maxy {
+            let k_idx = j + half - y;
+            let k_val = kernel[k_idx];
+            weight_sum += k_val;
+            sum += image.get(x, j) * k_val;
         }
-        output[y] = sum;
+
+        // Re-normalize for border pixels (C++ approach)
+        output[y] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
     }
 }
 
@@ -151,6 +157,7 @@ pub fn gaussian_blur_inplace(image: &mut ImageF, sigma: f32) {
 /// Fast blur for small sigma values (optimized 5x5 kernel).
 ///
 /// This is faster than the general blur for sigma ~= 1.0.
+/// Uses clamp-and-renormalize boundary handling like the general blur.
 pub fn blur_5x5(input: &ImageF, weights: &[f32; 3]) -> ImageF {
     let width = input.width();
     let height = input.height();
@@ -160,32 +167,47 @@ pub fn blur_5x5(input: &ImageF, weights: &[f32; 3]) -> ImageF {
     let w0 = weights[0];
     let w1 = weights[1];
     let w2 = weights[2];
+    let kernel = [w2, w1, w0, w1, w2];
 
     // Temporary for horizontal pass
     let mut temp = ImageF::new(width, height);
 
-    // Horizontal pass
+    // Horizontal pass with clamp-and-renormalize
     for y in 0..height {
         let row = input.row(y);
         let out = temp.row_mut(y);
         for x in 0..width {
-            let get = |dx: i32| -> f32 {
-                let idx = (x as i32 + dx).clamp(0, width as i32 - 1) as usize;
-                row[idx]
-            };
-            out[x] = w2 * get(-2) + w1 * get(-1) + w0 * get(0) + w1 * get(1) + w2 * get(2);
+            let minx = x.saturating_sub(2);
+            let maxx = (x + 2).min(width - 1);
+
+            let mut sum = 0.0f32;
+            let mut weight_sum = 0.0f32;
+            for j in minx..=maxx {
+                let k_idx = j + 2 - x;
+                let k_val = kernel[k_idx];
+                weight_sum += k_val;
+                sum += row[j] * k_val;
+            }
+            out[x] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
         }
     }
 
-    // Vertical pass
+    // Vertical pass with clamp-and-renormalize
     for y in 0..height {
         let out = output.row_mut(y);
         for x in 0..width {
-            let get = |dy: i32| -> f32 {
-                let iy = (y as i32 + dy).clamp(0, height as i32 - 1) as usize;
-                temp.get(x, iy)
-            };
-            out[x] = w2 * get(-2) + w1 * get(-1) + w0 * get(0) + w1 * get(1) + w2 * get(2);
+            let miny = y.saturating_sub(2);
+            let maxy = (y + 2).min(height - 1);
+
+            let mut sum = 0.0f32;
+            let mut weight_sum = 0.0f32;
+            for j in miny..=maxy {
+                let k_idx = j + 2 - y;
+                let k_val = kernel[k_idx];
+                weight_sum += k_val;
+                sum += temp.get(x, j) * k_val;
+            }
+            out[x] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
         }
     }
 

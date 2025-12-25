@@ -515,7 +515,10 @@ fn compute_diffmap_single_resolution(
     combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul)
 }
 
-/// Recursively computes butteraugli diffmap at multiple resolutions.
+/// Computes butteraugli diffmap with optional single-level multiresolution.
+///
+/// Matches C++ ButteraugliInterfaceInPlace: only ONE level of subsampling,
+/// not recursive. For images >= 15x15, compute at half resolution and add.
 fn compute_diffmap_multiresolution(
     rgb1: &[u8],
     rgb2: &[u8],
@@ -523,23 +526,27 @@ fn compute_diffmap_multiresolution(
     height: usize,
     params: &ButteraugliParams,
 ) -> ImageF {
-    // Compute diffmap at current resolution
-    let mut diffmap = compute_diffmap_single_resolution(rgb1, rgb2, width, height, params);
+    // C++ uses 15 as threshold for multiresolution
+    const MIN_SIZE_FOR_SUBSAMPLE: usize = 15;
 
-    // If image is large enough, recurse to lower resolution
-    let sub_width = (width + 1) / 2;
-    let sub_height = (height + 1) / 2;
-
-    if sub_width >= MIN_SIZE_FOR_MULTIRESOLUTION && sub_height >= MIN_SIZE_FOR_MULTIRESOLUTION {
-        // Subsample both images
+    // First compute subdiffmap at half resolution (if image is large enough)
+    let mut sub_diffmap = None;
+    if width >= MIN_SIZE_FOR_SUBSAMPLE && height >= MIN_SIZE_FOR_SUBSAMPLE {
         let (sub_rgb1, sw, sh) = subsample_rgb_2x(rgb1, width, height);
         let (sub_rgb2, _, _) = subsample_rgb_2x(rgb2, width, height);
 
-        // Recursively compute at lower resolution
-        let sub_diffmap = compute_diffmap_multiresolution(&sub_rgb1, &sub_rgb2, sw, sh, params);
+        // Single level only, not recursive (matches C++)
+        sub_diffmap = Some(compute_diffmap_single_resolution(
+            &sub_rgb1, &sub_rgb2, sw, sh, params,
+        ));
+    }
 
-        // Add supersampled lower-resolution result to current
-        add_supersampled_2x(&sub_diffmap, 0.5, &mut diffmap);
+    // Compute diffmap at full resolution
+    let mut diffmap = compute_diffmap_single_resolution(rgb1, rgb2, width, height, params);
+
+    // Add supersampled subdiffmap if we computed one
+    if let Some(sub) = sub_diffmap {
+        add_supersampled_2x(&sub, 0.5, &mut diffmap);
     }
 
     diffmap
