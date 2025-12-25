@@ -348,7 +348,10 @@ Scores are empirically calibrated. &lt;1.0 = imperceptible, 1-2 = noticeable, &g
         }
 
         let bpp: Vec<String> = filtered.iter().map(|r| format!("{:.3}", r.bpp)).collect();
-        let butter: Vec<String> = filtered.iter().map(|r| format!("{:.4}", r.butteraugli)).collect();
+        let butter: Vec<String> = filtered
+            .iter()
+            .map(|r| format!("{:.4}", r.butteraugli))
+            .collect();
         let labels: Vec<String> = filtered
             .iter()
             .map(|r| format!("'Q{}'", r.quality))

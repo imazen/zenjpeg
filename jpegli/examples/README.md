@@ -1,0 +1,89 @@
+# jpegli Examples
+
+Debugging and comparison tools for jpegli development.
+
+## C++ Parity Comparison
+
+These tools compare Rust output against C++ jpegli for parity validation:
+
+| Example | Description |
+|---------|-------------|
+| `compare_cpp_quant` | Compare quantization tables against C++ |
+| `compare_dct` | Compare DCT implementations |
+| `compare_coefficients` | Compare DCT coefficients between encoded JPEGs |
+| `compare_decoded` | Compare decoded pixels |
+| `quality_comparison` | Quality comparison between Rust and C++ |
+
+```bash
+cargo run --release --example compare_cpp_quant
+cargo run --release --example compare_coefficients
+```
+
+## Encoder Comparison
+
+Compare jpegli against other encoders (mozjpeg, etc.):
+
+| Example | Description |
+|---------|-------------|
+| `compare_encoders` | Compare against mozjpeg |
+| `compare_quality` | Quality/size comparison at various Q levels |
+| `corpus_comparison` | Corpus-wide comparison with DSSIM/SSIMULACRA2 |
+| `multi_codec_comparison` | Compare against CID22 dataset encoders |
+
+```bash
+cargo run --release --example corpus_comparison -- /path/to/images output.html
+MAX_FILES=50 cargo run --release --example corpus_comparison -- /path/to/images output.html
+```
+
+## Decoder Validation
+
+| Example | Description |
+|---------|-------------|
+| `decoder_compare` | Compare jpegli decoder vs jpeg-decoder |
+| `validate_jpeg` | Validate JPEGs with third-party decoders |
+| `compare_to_original` | Compare decoded output to original |
+
+## XYB Mode
+
+| Example | Description |
+|---------|-------------|
+| `xyb_comparison` | Compare XYB vs YCbCr with ICC handling |
+| `compare_cms` | Compare lcms2 vs moxcms ICC transforms |
+
+## Corpus Testing
+
+| Example | Description |
+|---------|-------------|
+| `roundtrip_corpus` | Roundtrip test for corpus images |
+| `huffman_corpus_validation` | Validate Huffman optimization on corpus |
+
+```bash
+cargo run --release --example roundtrip_corpus -- /path/to/images
+```
+
+## Reports
+
+| Example | Description |
+|---------|-------------|
+| `low_q_report` | Generate low-quality comparison report |
+
+## Debug Tools
+
+Current debugging tools (may be moved to `_archive/` when resolved):
+
+| Example | Description |
+|---------|-------------|
+| `debug_aq_values` | Debug adaptive quantization strength values |
+| `debug_quant_field` | Debug quant_field computation |
+
+## Utilities
+
+| Example | Description |
+|---------|-------------|
+| `create_test_jpeg` | Create test JPEG with mozjpeg |
+
+## Archived
+
+Old/obsolete debugging tools (27 files) were removed in commit that added this
+README. They can be recovered from git history if needed. These were one-off
+debugging sessions for investigating specific issues.
