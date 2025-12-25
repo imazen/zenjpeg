@@ -1693,17 +1693,20 @@ impl Encoder {
         let blocks_v = (height + 7) / 8;
 
         // Zero-bias parameters for each component
-        // Use proper zero-bias tables based on quality distance
-        let distance = self.config.quality.to_distance();
-        let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
-        let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
-        let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
+        // Use effective distance inferred from quant tables (like C++ QuantValsToDistance)
+        // For YCbCr mode, Cb and Cr share the same quant table (c_quant)
+        let input_distance = self.config.quality.to_distance();
+        let effective_distance = quant::quant_vals_to_distance(y_quant, c_quant, c_quant);
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
+        let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
+        let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
         // Convert Y plane to f32 for AQ computation
         let y_plane_f32: Vec<f32> = y_plane.iter().map(|&v| v as f32).collect();
 
         // Compute per-block adaptive quantization strength from Y plane
-        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, distance);
+        // Use input distance for AQ computation (same as C++)
+        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, input_distance);
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
@@ -1781,13 +1784,17 @@ impl Encoder {
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Zero-bias parameters for each component
-        let distance = self.config.quality.to_distance();
-        let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
-        let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
-        let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
+        // Use effective distance inferred from quant tables (like C++ QuantValsToDistance)
+        // This is important at Q100 where quant values are all 1s but input distance is 0.01
+        let input_distance = self.config.quality.to_distance();
+        let effective_distance = quant::quant_vals_to_distance(y_quant, cb_quant, cr_quant);
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
+        let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
+        let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
         // Compute per-block adaptive quantization strength from Y plane
-        let aq_map = compute_aq_strength_map(y_plane, width, height, distance);
+        // Use input distance for AQ computation (same as C++)
+        let aq_map = compute_aq_strength_map(y_plane, width, height, input_distance);
 
         let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });

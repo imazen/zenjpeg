@@ -795,6 +795,46 @@ let scale = 1.0 / 64.0;
 
 **Test created**: `test_dc_bias.rs`
 
+### ⚠️ Zero-Bias Threshold Scaling (COMPLEX - INVESTIGATE CAREFULLY)
+
+**Status**: UNDER INVESTIGATION - the C++ and Rust pipelines have complex scaling differences.
+
+**Key Findings** (2025-12-25):
+
+1. **DCT Output Range is Same**: Both C++ and Rust DCT produce values in [-1024, 1016] range
+   - Verified: Rust DCT of uniform 127 block gives DC = 1016 = 8 * 127 ✓
+   - C++ comment confirms: "[-128*8, 127*8]"
+
+2. **C++ DC Handling is Different**:
+   ```cpp
+   // C++ dct-inl.h lines 252-260
+   static constexpr float kDCBias = 128.0f;
+   const float dc = (dct[0] - kDCBias) * qmc[0];  // Special DC handling!
+   ```
+   C++ subtracts 128 from DC AFTER DCT, then multiplies by qmc.
+   Rust level-shifts pixels BEFORE DCT.
+
+3. **qval Calculation Differs**:
+   - C++ qval = dct * (8/quant) = dct * 8 / quant
+   - Rust qval = dct / quant
+   - These differ by 8× for same dct value
+
+4. **Current Behavior**:
+   - Without *8 fix: Rust produces 10-17% SMALLER files, 42% WORSE DSSIM (more zeros)
+   - With *8 fix: Rust produces 10-18% LARGER files, 6% BETTER DSSIM (fewer zeros)
+
+**The Mystery**: If both DCT outputs are the same, C++ qval would be 8× larger than Rust qval,
+and threshold comparison would behave differently. But both encoders produce decoder-compatible
+JPEGs, suggesting the stored coefficients must match somehow.
+
+**Next Steps**:
+1. Decode both C++ and Rust JPEGs and compare actual stored DCT coefficients
+2. Trace through C++ DC level-shift handling more carefully
+3. Check if C++ IDCT has compensating scaling
+
+**DO NOT** apply /8 or *8 scaling without understanding the full picture. Both directions
+cause divergence from C++ behavior in different ways.
+
 ## C++ Build Instructions
 
 ### Ubuntu 22.04

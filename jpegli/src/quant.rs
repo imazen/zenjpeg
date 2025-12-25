@@ -241,6 +241,72 @@ pub fn scale_to_distance(scale: f32, freq_idx: usize) -> f32 {
     (2.0 * scale).min(mul * scale.powf(exp))
 }
 
+/// Infers the butteraugli distance from quantization table values.
+///
+/// This matches C++ jpegli's `QuantValsToDistance` function.
+/// It finds the distance that would produce the given quant tables
+/// when using jpegli's quantization formula.
+///
+/// This is used to compute zero-bias parameters appropriate for the
+/// actual quant values, rather than the input distance (which may differ
+/// at extreme quality levels where values are clamped to 1).
+#[must_use]
+pub fn quant_vals_to_distance(
+    y_quant: &QuantTable,
+    cb_quant: &QuantTable,
+    cr_quant: &QuantTable,
+) -> f32 {
+    use crate::consts::{BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_YCBCR};
+
+    const DIST_MAX: f32 = 10000.0;
+    const QUANT_MAX: u16 = 255; // baseline JPEG
+
+    let global_scale = GLOBAL_SCALE_YCBCR;
+
+    let mut dist_min = 0.0f32;
+    let mut dist_max = DIST_MAX;
+
+    // Process all three components
+    let quant_tables = [y_quant, cb_quant, cr_quant];
+
+    for (c, quant) in quant_tables.iter().enumerate() {
+        let base_idx = c * DCT_BLOCK_SIZE;
+        let base_qm = &BASE_QUANT_MATRIX_YCBCR[base_idx..base_idx + DCT_BLOCK_SIZE];
+
+        for k in 0..DCT_BLOCK_SIZE {
+            let mut dmin = 0.0f32;
+            let mut dmax = DIST_MAX;
+            let invq = 1.0 / base_qm[k] / global_scale;
+            let qval = quant.values[k];
+
+            if qval > 1 {
+                let scale_min = (qval as f32 - 0.5) * invq;
+                dmin = scale_to_distance(scale_min, k);
+            }
+            if qval < QUANT_MAX {
+                let scale_max = (qval as f32 + 0.5) * invq;
+                dmax = scale_to_distance(scale_max, k);
+            }
+
+            if dmin <= dist_max {
+                dist_min = dist_min.max(dmin);
+            }
+            if dmax >= dist_min {
+                dist_max = dist_max.min(dmax);
+            }
+        }
+    }
+
+    // Return the appropriate distance
+    if dist_min == 0.0 {
+        dist_max
+    } else if dist_max >= DIST_MAX {
+        dist_min
+    } else {
+        0.5 * (dist_min + dist_max)
+    }
+}
+
 /// Standard JPEG luminance quantization table.
 /// From ITU-T T.81 (1992) K.1
 pub const STD_LUMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
@@ -501,6 +567,7 @@ pub fn quantize_block_with_zero_bias(
     aq_strength: f32,
 ) -> [i16; DCT_BLOCK_SIZE] {
     let mut result = [0i16; DCT_BLOCK_SIZE];
+
     for k in 0..DCT_BLOCK_SIZE {
         let q = quant[k] as f32;
         let qval = coeffs[k] / q;
