@@ -5,13 +5,14 @@
 
 use crate::adaptive_quant::compute_aq_field;
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
+use crate::consts::DCTSIZE2;
 use crate::dct::{forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_trellis, quantize_block_int};
 use crate::entropy::{EntropyEncoder, SymbolCounter};
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
 use crate::quant::QuantTableSet;
 use crate::strategy::{select_strategy, SelectedStrategy};
-use crate::trellis::{trellis_quantize_block, TrellisConfig};
+use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
 use crate::types::{EncodingStrategy, PixelFormat, Quality, Subsampling};
 use crate::Result;
 
@@ -20,6 +21,46 @@ use crate::Result;
 fn get_std_ac_derived() -> DerivedTable {
     let htbl = std_ac_luma();
     DerivedTable::from_huff_table(&htbl, false).expect("Standard AC table should be valid")
+}
+
+/// Standard DC luma derived table for DC trellis rate estimation.
+fn get_std_dc_derived() -> DerivedTable {
+    let htbl = std_dc_luma();
+    DerivedTable::from_huff_table(&htbl, true).expect("Standard DC table should be valid")
+}
+
+/// Run DC trellis optimization row by row (matching C mozjpeg behavior).
+///
+/// C mozjpeg processes DC trellis one block row at a time, with each row
+/// forming an independent chain. This matches the actual JPEG encoding order.
+fn run_dc_trellis_by_row(
+    raw_blocks: &[[i32; DCTSIZE2]],
+    quantized_blocks: &mut [[i16; DCTSIZE2]],
+    dc_quantval: u16,
+    dc_table: &DerivedTable,
+    lambda_log_scale1: f32,
+    lambda_log_scale2: f32,
+    block_rows: usize,
+    block_cols: usize,
+) {
+    // Process each block row independently
+    for row in 0..block_rows {
+        // Generate indices for this row (simple row-major order for 4:4:4)
+        let start_idx = row * block_cols;
+        let indices: Vec<usize> = (0..block_cols).map(|col| start_idx + col).collect();
+
+        // Each row starts with last_dc = 0 (C mozjpeg behavior for trellis pass)
+        dc_trellis_optimize_indexed(
+            raw_blocks,
+            quantized_blocks,
+            &indices,
+            dc_quantval,
+            dc_table,
+            0, // last_dc = 0 for each row
+            lambda_log_scale1,
+            lambda_log_scale2,
+        );
+    }
 }
 
 /// JPEG encoder with configurable quality and encoding strategy
@@ -192,9 +233,9 @@ impl Encoder {
         let q = self.quality.value() as u8;
         let quant_tables = QuantTableSet::standard(q);
 
-        // Create standard AC derived table for trellis rate estimation
-        // mozjpeg uses standard tables for this - they work well enough
+        // Create standard derived tables for trellis rate estimation
         let ac_derived = get_std_ac_derived();
+        let dc_derived = get_std_dc_derived();
 
         // Compute adaptive quantization field if enabled
         let aq_field = if strategy.adaptive_quant.enabled {
@@ -207,44 +248,125 @@ impl Encoder {
         let height_blocks = (height + 7) / 8;
         let total_blocks = width_blocks * height_blocks;
 
-        // Quantize all blocks first (needed for both standard and optimized paths)
-        let mut all_coeffs: Vec<[i16; 64]> = Vec::with_capacity(total_blocks * 3);
+        // Check if DC trellis is enabled
+        let dc_trellis_enabled = strategy.trellis.ac_enabled && strategy.trellis.dc_enabled;
+
+        // Storage for raw DCT coefficients (needed for DC trellis)
+        let mut y_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+            Some(vec![[0i32; DCTSIZE2]; total_blocks])
+        } else {
+            None
+        };
+        let mut cb_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+            Some(vec![[0i32; DCTSIZE2]; total_blocks])
+        } else {
+            None
+        };
+        let mut cr_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+            Some(vec![[0i32; DCTSIZE2]; total_blocks])
+        } else {
+            None
+        };
+
+        // Separate storage for each component (needed for DC trellis row optimization)
+        let mut y_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
+        let mut cb_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
+        let mut cr_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
 
         for by in 0..height_blocks {
             for bx in 0..width_blocks {
+                let block_idx = by * width_blocks + bx;
+
                 // Y block
                 let y_block = extract_block(y_plane, width, height, bx, by);
-                let y_coeffs = self.quantize_block_impl(
+                let (y_quant, y_raw) = self.quantize_block_with_raw(
                     &y_block,
                     &quant_tables.luma.values,
                     aq_field.get(bx, by),
                     strategy,
                     &ac_derived,
                 );
-                all_coeffs.push(y_coeffs);
+                y_coeffs.push(y_quant);
+                if let Some(ref mut raw) = y_raw_dct {
+                    raw[block_idx] = y_raw;
+                }
 
                 // Cb block
                 let cb_block = extract_block(cb_plane, width, height, bx, by);
-                let cb_coeffs = self.quantize_block_impl(
+                let (cb_quant, cb_raw) = self.quantize_block_with_raw(
                     &cb_block,
                     &quant_tables.chroma.values,
                     1.0,
                     strategy,
                     &ac_derived,
                 );
-                all_coeffs.push(cb_coeffs);
+                cb_coeffs.push(cb_quant);
+                if let Some(ref mut raw) = cb_raw_dct {
+                    raw[block_idx] = cb_raw;
+                }
 
                 // Cr block
                 let cr_block = extract_block(cr_plane, width, height, bx, by);
-                let cr_coeffs = self.quantize_block_impl(
+                let (cr_quant, cr_raw) = self.quantize_block_with_raw(
                     &cr_block,
                     &quant_tables.chroma.values,
                     1.0,
                     strategy,
                     &ac_derived,
                 );
-                all_coeffs.push(cr_coeffs);
+                cr_coeffs.push(cr_quant);
+                if let Some(ref mut raw) = cr_raw_dct {
+                    raw[block_idx] = cr_raw;
+                }
             }
+        }
+
+        // Run DC trellis optimization if enabled
+        if dc_trellis_enabled {
+            if let Some(ref y_raw) = y_raw_dct {
+                run_dc_trellis_by_row(
+                    y_raw,
+                    &mut y_coeffs,
+                    quant_tables.luma.values[0],
+                    &dc_derived,
+                    strategy.trellis.lambda_log_scale1,
+                    strategy.trellis.lambda_log_scale2,
+                    height_blocks,
+                    width_blocks,
+                );
+            }
+            if let Some(ref cb_raw) = cb_raw_dct {
+                run_dc_trellis_by_row(
+                    cb_raw,
+                    &mut cb_coeffs,
+                    quant_tables.chroma.values[0],
+                    &dc_derived,
+                    strategy.trellis.lambda_log_scale1,
+                    strategy.trellis.lambda_log_scale2,
+                    height_blocks,
+                    width_blocks,
+                );
+            }
+            if let Some(ref cr_raw) = cr_raw_dct {
+                run_dc_trellis_by_row(
+                    cr_raw,
+                    &mut cr_coeffs,
+                    quant_tables.chroma.values[0],
+                    &dc_derived,
+                    strategy.trellis.lambda_log_scale1,
+                    strategy.trellis.lambda_log_scale2,
+                    height_blocks,
+                    width_blocks,
+                );
+            }
+        }
+
+        // Interleave coefficients back into MCU order (Y, Cb, Cr per block)
+        let mut all_coeffs: Vec<[i16; 64]> = Vec::with_capacity(total_blocks * 3);
+        for i in 0..total_blocks {
+            all_coeffs.push(y_coeffs[i]);
+            all_coeffs.push(cb_coeffs[i]);
+            all_coeffs.push(cr_coeffs[i]);
         }
 
         // Get Huffman tables (optimized or standard)
@@ -338,21 +460,52 @@ impl Encoder {
         let q = self.quality.value() as u8;
         let quant_table = crate::quant::QuantTable::luma_standard(q);
 
-        // Create standard AC derived table for trellis rate estimation
+        // Create standard derived tables for trellis rate estimation
         let ac_derived = get_std_ac_derived();
+        let dc_derived = get_std_dc_derived();
 
         let width_blocks = (width + 7) / 8;
         let height_blocks = (height + 7) / 8;
         let total_blocks = width_blocks * height_blocks;
 
+        // Check if DC trellis is enabled
+        let dc_trellis_enabled = strategy.trellis.ac_enabled && strategy.trellis.dc_enabled;
+
+        // Storage for raw DCT coefficients (needed for DC trellis)
+        let mut raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+            Some(vec![[0i32; DCTSIZE2]; total_blocks])
+        } else {
+            None
+        };
+
         // Quantize all blocks first
         let mut all_coeffs: Vec<[i16; 64]> = Vec::with_capacity(total_blocks);
         for by in 0..height_blocks {
             for bx in 0..width_blocks {
+                let block_idx = by * width_blocks + bx;
                 let block = extract_block(y_plane, width, height, bx, by);
-                let coeffs =
-                    self.quantize_block_impl(&block, &quant_table.values, 1.0, strategy, &ac_derived);
+                let (coeffs, raw) =
+                    self.quantize_block_with_raw(&block, &quant_table.values, 1.0, strategy, &ac_derived);
                 all_coeffs.push(coeffs);
+                if let Some(ref mut raw_storage) = raw_dct {
+                    raw_storage[block_idx] = raw;
+                }
+            }
+        }
+
+        // Run DC trellis optimization if enabled
+        if dc_trellis_enabled {
+            if let Some(ref raw) = raw_dct {
+                run_dc_trellis_by_row(
+                    raw,
+                    &mut all_coeffs,
+                    quant_table.values[0],
+                    &dc_derived,
+                    strategy.trellis.lambda_log_scale1,
+                    strategy.trellis.lambda_log_scale2,
+                    height_blocks,
+                    width_blocks,
+                );
             }
         }
 
@@ -511,6 +664,22 @@ impl Encoder {
         strategy: &SelectedStrategy,
         ac_derived: &DerivedTable,
     ) -> [i16; 64] {
+        let (quantized, _) = self.quantize_block_with_raw(block, quant, aq_mult, strategy, ac_derived);
+        quantized
+    }
+
+    /// Quantize a single 8x8 block and return both quantized and raw DCT coefficients.
+    ///
+    /// The raw DCT coefficients are needed for DC trellis optimization.
+    /// They are stored scaled by 8 (matching mozjpeg's convention).
+    fn quantize_block_with_raw(
+        &self,
+        block: &[u8; 64],
+        quant: &[u16; 64],
+        aq_mult: f32,
+        strategy: &SelectedStrategy,
+        ac_derived: &DerivedTable,
+    ) -> ([i16; 64], [i32; DCTSIZE2]) {
         // Apply AQ to quantization table
         let effective_quant = if aq_mult != 1.0 {
             crate::adaptive_quant::apply_aq_to_quant(quant, aq_mult)
@@ -523,13 +692,15 @@ impl Encoder {
         let mut dct_coeffs = [0i16; 64];
         forward_dct_8x8_int(&shifted, &mut dct_coeffs);
 
+        // Convert to i32 for trellis/quantization and store raw DCT
+        let mut dct_i32 = [0i32; DCTSIZE2];
+        scale_for_trellis(&dct_coeffs, &mut dct_i32);
+        let raw_dct = dct_i32; // Copy for DC trellis
+
         // Quantize (with optional trellis)
-        if strategy.trellis.ac_enabled {
+        let quantized = if strategy.trellis.ac_enabled {
             // Trellis path: pass 8x-scaled DCT directly
             // Trellis internally multiplies qtable by 8 to match
-            let mut dct_i32 = [0i32; 64];
-            scale_for_trellis(&dct_coeffs, &mut dct_i32);
-
             let mut quantized = [0i16; 64];
             trellis_quantize_block(
                 &dct_i32,
@@ -547,7 +718,9 @@ impl Encoder {
             let mut quantized = [0i16; 64];
             quantize_block_int(&dct_descaled, &effective_quant, &mut quantized);
             quantized
-        }
+        };
+
+        (quantized, raw_dct)
     }
 }
 

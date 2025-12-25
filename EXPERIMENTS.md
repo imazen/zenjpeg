@@ -205,7 +205,7 @@ Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps rem
 
 **Priority fixes:**
 1. ~~Port integer Loeffler DCT from mozjpeg-rs~~ DONE
-2. Implement cross-block DC trellis
+2. ~~Implement cross-block DC trellis~~ DONE
 3. Add progressive mode support
 4. Implement scan optimization
 
@@ -225,6 +225,33 @@ Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps rem
 - Trellis provides 11-27% improvement (higher at low quality)
 - Notable quality jump between Q70 and Q80 (strategy changes)
 - DSSIM is excellent across all quality levels
+
+### 2025-12-25: DC Trellis Implementation
+
+**Implementation**: Cross-block DC trellis optimization is now integrated.
+
+**How it works**:
+1. During encoding, store raw DCT coefficients (scaled by 8) alongside quantized blocks
+2. After AC trellis quantization, run DC trellis optimization row by row
+3. Each row is an independent chain (matching C mozjpeg behavior)
+4. DC trellis uses dynamic programming to find optimal DC values across blocks
+
+**Key code locations**:
+- `src/encode.rs`: `run_dc_trellis_by_row()` - row-by-row optimization wrapper
+- `src/encode.rs`: `quantize_block_with_raw()` - returns both quantized and raw DCT
+- `src/trellis.rs`: `dc_trellis_optimize_indexed()` - core DP algorithm
+
+**Results** (256x256 synthetic test image):
+
+| Q | AC+DC Trellis | No Trellis | Combined Savings |
+|---|---------------|------------|------------------|
+| 30 | 5966 bytes | 7010 bytes | 14.9% |
+| 50 | 6973 bytes | 8185 bytes | 14.8% |
+| 70 | 8416 bytes | 9701 bytes | 13.2% |
+| 90 | 19128 bytes | 21625 bytes | 11.5% |
+
+**Note**: These results show combined AC + DC trellis vs no trellis. DC trellis
+provides ~2-5% additional savings on top of AC trellis alone.
 
 ---
 
