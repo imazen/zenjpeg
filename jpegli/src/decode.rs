@@ -14,6 +14,10 @@
 //! let decoded = decoder.decode(&jpeg_data)?;
 //! ```
 
+use crate::alloc::{
+    checked_size_2d, try_alloc_dct_blocks, try_alloc_vec, try_alloc_zeroed, validate_dimensions,
+    DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION,
+};
 use crate::color;
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
@@ -41,6 +45,9 @@ pub struct DecoderConfig {
     pub block_smoothing: bool,
     /// Whether to apply embedded ICC profile (requires cms feature)
     pub apply_icc: bool,
+    /// Maximum pixels allowed (for DoS protection).
+    /// Default is 100 megapixels. Set to 0 for unlimited.
+    pub max_pixels: u64,
 }
 
 impl Default for DecoderConfig {
@@ -51,6 +58,7 @@ impl Default for DecoderConfig {
             block_smoothing: false,
             // Apply ICC by default when CMS is available
             apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
+            max_pixels: DEFAULT_MAX_PIXELS,
         }
     }
 }
@@ -129,16 +137,25 @@ impl Decoder {
         self
     }
 
+    /// Sets the maximum number of pixels allowed (for DoS protection).
+    ///
+    /// Default is 100 megapixels. Set to 0 for unlimited.
+    #[must_use]
+    pub fn max_pixels(mut self, pixels: u64) -> Self {
+        self.config.max_pixels = pixels;
+        self
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
-        let mut parser = JpegParser::new(data)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
         parser.read_header()?;
         Ok(parser.info())
     }
 
     /// Decodes a JPEG image.
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
-        let mut parser = JpegParser::new(data)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
         parser.decode()?;
 
         let info = parser.info();
@@ -216,10 +233,13 @@ struct JpegParser<'a> {
 
     // ICC profile (extracted from raw data, not during parsing)
     icc_profile: Option<Vec<u8>>,
+
+    // Security limits
+    max_pixels: u64,
 }
 
 impl<'a> JpegParser<'a> {
-    fn new(data: &'a [u8]) -> Result<Self> {
+    fn new(data: &'a [u8], max_pixels: u64) -> Result<Self> {
         // Check for SOI
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
             return Err(Error::InvalidJpegData {
@@ -245,6 +265,7 @@ impl<'a> JpegParser<'a> {
             restart_interval: 0,
             coeffs: Vec::new(),
             icc_profile,
+            max_pixels,
         })
     }
 
@@ -327,17 +348,14 @@ impl<'a> JpegParser<'a> {
         self.height = self.read_u16()? as u32;
         self.width = self.read_u16()? as u32;
 
-        // Validate dimensions are non-zero
-        if self.height == 0 {
-            return Err(Error::InvalidJpegData {
-                reason: "image height is zero",
-            });
-        }
-        if self.width == 0 {
-            return Err(Error::InvalidJpegData {
-                reason: "image width is zero",
-            });
-        }
+        // Validate dimensions against security limits
+        // max_pixels == 0 means unlimited
+        let effective_max = if self.max_pixels == 0 {
+            u64::MAX
+        } else {
+            self.max_pixels
+        };
+        validate_dimensions(self.width, self.height, effective_max)?;
 
         self.num_components = self.read_u8()?;
 
@@ -668,10 +686,11 @@ impl<'a> JpegParser<'a> {
             for i in 0..self.num_components as usize {
                 let h_samp = self.components[i].h_samp_factor as usize;
                 let v_samp = self.components[i].v_samp_factor as usize;
-                let comp_blocks_h = mcu_cols * h_samp;
-                let comp_blocks_v = mcu_rows * v_samp;
+                let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
+                let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
+                let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
                 self.coeffs
-                    .push(vec![[0i16; DCT_BLOCK_SIZE]; comp_blocks_h * comp_blocks_v]);
+                    .push(try_alloc_dct_blocks(num_blocks, "allocating DCT coefficients")?);
             }
         }
 
@@ -751,10 +770,11 @@ impl<'a> JpegParser<'a> {
             for i in 0..self.num_components as usize {
                 let h_samp = self.components[i].h_samp_factor as usize;
                 let v_samp = self.components[i].v_samp_factor as usize;
-                let comp_blocks_h = mcu_cols * h_samp;
-                let comp_blocks_v = mcu_rows * v_samp;
+                let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
+                let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
+                let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
                 self.coeffs
-                    .push(vec![[0i16; DCT_BLOCK_SIZE]; comp_blocks_h * comp_blocks_v]);
+                    .push(try_alloc_dct_blocks(num_blocks, "allocating DCT coefficients")?);
             }
         }
 
@@ -934,10 +954,11 @@ impl<'a> JpegParser<'a> {
             let comp_blocks_v = mcu_rows * v_samp;
 
             // Component plane dimensions (may be smaller than full image for subsampled)
-            let comp_width = comp_blocks_h * 8;
-            let comp_height = comp_blocks_v * 8;
+            let comp_width = checked_size_2d(comp_blocks_h, 8)?;
+            let comp_height = checked_size_2d(comp_blocks_v, 8)?;
 
-            let mut comp_plane = vec![0u8; comp_width * comp_height];
+            let comp_plane_size = checked_size_2d(comp_width, comp_height)?;
+            let mut comp_plane = try_alloc_zeroed(comp_plane_size, "allocating component plane")?;
 
             for by in 0..comp_blocks_v {
                 for bx in 0..comp_blocks_h {
@@ -971,10 +992,11 @@ impl<'a> JpegParser<'a> {
             }
 
             // Upsample if this component has lower sampling than max
+            let output_size = checked_size_2d(width, height)?;
             let plane = if h_samp < max_h_samp as usize || v_samp < max_v_samp as usize {
                 let scale_x = max_h_samp as usize / h_samp;
                 let scale_y = max_v_samp as usize / v_samp;
-                let mut upsampled = vec![0u8; width * height];
+                let mut upsampled = try_alloc_zeroed(output_size, "allocating upsampled plane")?;
                 for py in 0..height {
                     for px in 0..width {
                         let sx = (px / scale_x).min(comp_width - 1);
@@ -985,7 +1007,7 @@ impl<'a> JpegParser<'a> {
                 upsampled
             } else {
                 // Full resolution - just clip to image dimensions
-                let mut plane = vec![0u8; width * height];
+                let mut plane = try_alloc_zeroed(output_size, "allocating output plane")?;
                 for py in 0..height {
                     for px in 0..width {
                         plane[py * width + px] = comp_plane[py * comp_width + px];
@@ -1001,7 +1023,9 @@ impl<'a> JpegParser<'a> {
         match (self.num_components, format) {
             (1, PixelFormat::Gray) => Ok(planes[0].clone()),
             (1, PixelFormat::Rgb) => {
-                let mut rgb = vec![0u8; width * height * 3];
+                let rgb_size = checked_size_2d(width, height)
+                    .and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb = try_alloc_zeroed(rgb_size, "allocating RGB output")?;
                 for (i, &y) in planes[0].iter().enumerate() {
                     rgb[i * 3] = y;
                     rgb[i * 3 + 1] = y;

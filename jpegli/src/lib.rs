@@ -80,6 +80,9 @@ pub use butteraugli;
 // Error types
 pub mod error;
 
+// Safe allocation helpers
+pub mod alloc;
+
 // ICC color management
 pub mod icc;
 

@@ -88,6 +88,32 @@ pub enum Error {
     DecodeError(String),
     /// Invalid scan script for progressive encoding.
     InvalidScanScript(String),
+    /// Memory allocation failed (OOM or limit exceeded).
+    AllocationFailed {
+        /// Number of bytes requested
+        bytes: usize,
+        /// Context where allocation failed
+        context: &'static str,
+    },
+    /// Size calculation overflowed.
+    SizeOverflow {
+        /// Context where overflow occurred
+        context: &'static str,
+    },
+    /// Image exceeds maximum pixel limit.
+    ImageTooLarge {
+        /// Total pixels in image
+        pixels: u64,
+        /// Maximum allowed pixels
+        limit: u64,
+    },
+    /// Too many progressive scans.
+    TooManyScans {
+        /// Number of scans encountered
+        count: usize,
+        /// Maximum allowed
+        limit: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -145,6 +171,26 @@ impl fmt::Display for Error {
             }
             Self::InvalidScanScript(reason) => {
                 write!(f, "invalid scan script: {}", reason)
+            }
+            Self::AllocationFailed { bytes, context } => {
+                write!(f, "allocation of {} bytes failed while {}", bytes, context)
+            }
+            Self::SizeOverflow { context } => {
+                write!(f, "size calculation overflow while {}", context)
+            }
+            Self::ImageTooLarge { pixels, limit } => {
+                write!(
+                    f,
+                    "image too large: {} pixels exceeds limit of {}",
+                    pixels, limit
+                )
+            }
+            Self::TooManyScans { count, limit } => {
+                write!(
+                    f,
+                    "too many scans: {} exceeds limit of {}",
+                    count, limit
+                )
             }
         }
     }
