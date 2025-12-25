@@ -244,13 +244,49 @@ pub fn srgb_to_xyb_butteraugli(
 
 /// sRGB transfer function (gamma decoding)
 #[inline]
-fn srgb_to_linear(v: u8) -> f32 {
+pub fn srgb_to_linear(v: u8) -> f32 {
     let v = v as f32 / 255.0;
     if v <= 0.04045 {
         v / 12.92
     } else {
         ((v + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Converts linear RGB f32 interleaved data to butteraugli XYB.
+///
+/// This matches the C++ butteraugli API which expects linear RGB float input.
+///
+/// # Arguments
+/// * `rgb` - Linear RGB image data (f32, 3 values per pixel, row-major, 0.0-1.0 range)
+/// * `width` - Image width
+/// * `height` - Image height
+/// * `intensity_target` - Nits for 1.0 value (default 80.0)
+///
+/// # Returns
+/// XYB image (3 planes)
+pub fn linear_rgb_to_xyb_butteraugli(
+    rgb: &[f32],
+    width: usize,
+    height: usize,
+    intensity_target: f32,
+) -> Image3F {
+    assert_eq!(rgb.len(), width * height * 3);
+
+    // Convert interleaved linear RGB to planar Image3F
+    let mut linear = Image3F::new(width, height);
+
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            linear.plane_mut(0).set(x, y, rgb[idx]);
+            linear.plane_mut(1).set(x, y, rgb[idx + 1]);
+            linear.plane_mut(2).set(x, y, rgb[idx + 2]);
+        }
+    }
+
+    // Apply OpsinDynamicsImage
+    opsin_dynamics_image(&linear, intensity_target)
 }
 
 #[cfg(test)]

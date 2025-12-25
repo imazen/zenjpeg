@@ -122,6 +122,7 @@ pub use crate::image::{Image3F, ImageF};
 
 /// Error type for butteraugli operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ButteraugliError {
     /// Image dimensions don't match.
     DimensionMismatch {
@@ -315,6 +316,71 @@ pub fn compute_butteraugli(
     }
 
     Ok(diff::compute_butteraugli_impl(rgb1, rgb2, width, height, params))
+}
+
+/// Computes butteraugli score between two linear RGB images.
+///
+/// This function matches the C++ butteraugli API which expects linear RGB float
+/// input. Use this for higher bit depths (16-bit, HDR) or when you already have
+/// linear RGB data.
+///
+/// # Arguments
+/// * `rgb1` - First image (linear RGB f32, 3 floats per pixel, row-major, 0.0-1.0 range)
+/// * `rgb2` - Second image (linear RGB f32, 3 floats per pixel, row-major, 0.0-1.0 range)
+/// * `width` - Image width in pixels
+/// * `height` - Image height in pixels
+/// * `params` - Comparison parameters
+///
+/// # Returns
+/// Butteraugli score and optional per-pixel difference map.
+///
+/// # Color Space
+/// Input must be **linear RGB** (NOT gamma-encoded sRGB). Values should be in
+/// the range 0.0 to 1.0. If your input is sRGB, either:
+/// - Use [`compute_butteraugli`] which handles the conversion automatically
+/// - Apply gamma decoding yourself: `linear = ((srgb + 0.055) / 1.055).powf(2.4)`
+///
+/// # Errors
+/// Returns an error if:
+/// - Buffer sizes don't match expected dimensions
+/// - Images are smaller than 8x8 pixels
+pub fn compute_butteraugli_linear(
+    rgb1: &[f32],
+    rgb2: &[f32],
+    width: usize,
+    height: usize,
+    params: &ButteraugliParams,
+) -> Result<ButteraugliResult, ButteraugliError> {
+    let expected_size = width * height * 3;
+
+    if width < 8 || height < 8 {
+        return Err(ButteraugliError::InvalidDimensions { width, height });
+    }
+
+    if rgb1.len() != expected_size {
+        return Err(ButteraugliError::InvalidBufferSize {
+            expected: expected_size,
+            actual: rgb1.len(),
+        });
+    }
+
+    if rgb2.len() != expected_size {
+        return Err(ButteraugliError::InvalidBufferSize {
+            expected: expected_size,
+            actual: rgb2.len(),
+        });
+    }
+
+    Ok(diff::compute_butteraugli_linear_impl(rgb1, rgb2, width, height, params))
+}
+
+/// Converts sRGB u8 value to linear RGB f32.
+///
+/// Apply this to each channel when converting sRGB images to linear RGB
+/// for use with [`compute_butteraugli_linear`].
+#[must_use]
+pub fn srgb_to_linear(v: u8) -> f32 {
+    opsin::srgb_to_linear(v)
 }
 
 /// Converts butteraugli score to quality percentage (0-100).

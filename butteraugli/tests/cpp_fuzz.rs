@@ -135,7 +135,7 @@ proptest! {
 
         // Rust butteraugli
         let params = ButteraugliParams::default();
-        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params);
+        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params).expect("valid input");
 
         // C++ butteraugli
         let mut linear1 = vec![0.0f32; srgb1.len()];
@@ -200,7 +200,7 @@ proptest! {
 
         // Rust butteraugli
         let params = ButteraugliParams::default();
-        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params);
+        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params).expect("valid input");
 
         // C++ butteraugli
         let mut linear1 = vec![0.0f32; srgb1.len()];
@@ -270,7 +270,7 @@ proptest! {
 
         // Rust butteraugli
         let params = ButteraugliParams::default();
-        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params);
+        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params).expect("valid input");
 
         // C++ butteraugli
         let mut linear1 = vec![0.0f32; srgb1.len()];

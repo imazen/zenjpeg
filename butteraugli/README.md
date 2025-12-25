@@ -33,18 +33,21 @@ Add to your `Cargo.toml`:
 butteraugli-oxide = "0.1"
 ```
 
-### Input Requirements
+### Input Formats
 
-| Property | Requirement |
-|----------|-------------|
-| **Bit depth** | 8-bit (u8) |
-| **Color space** | sRGB (gamma-encoded) |
-| **Channel order** | RGB (red, green, blue) |
-| **Layout** | Row-major, interleaved (RGBRGBRGB...) |
-| **Minimum size** | 8×8 pixels |
+Two input APIs are provided:
 
-The function internally converts sRGB to linear RGB for perceptual comparison.
-For 16-bit or HDR content, convert to 8-bit sRGB first (higher bit depth API planned).
+| Function | Input Type | Color Space | Use Case |
+|----------|------------|-------------|----------|
+| `compute_butteraugli` | `&[u8]` | sRGB (gamma-encoded) | Standard 8-bit images |
+| `compute_butteraugli_linear` | `&[f32]` | Linear RGB (0.0-1.0) | HDR, 16-bit, float pipelines |
+
+Both APIs require:
+- **Channel order**: RGB (red, green, blue)
+- **Layout**: Row-major, interleaved (RGBRGBRGB...)
+- **Minimum size**: 8×8 pixels
+
+The sRGB function internally applies gamma decoding before comparison.
 
 ### Basic Example
 
@@ -81,19 +84,36 @@ if let Some(diffmap) = result.diffmap {
 }
 ```
 
+### Linear RGB Example (HDR/16-bit)
+
+```rust
+use butteraugli_oxide::{compute_butteraugli_linear, ButteraugliParams, srgb_to_linear};
+
+// Convert 16-bit image to linear f32
+let original_16bit: &[u16] = &[/* 16-bit RGB data */];
+let original_linear: Vec<f32> = original_16bit.iter()
+    .map(|&v| v as f32 / 65535.0)  // Assuming already linear
+    .collect();
+
+// Or convert 8-bit sRGB manually
+let original_srgb: &[u8] = &[/* sRGB data */];
+let original_linear: Vec<f32> = original_srgb.iter()
+    .map(|&v| srgb_to_linear(v))
+    .collect();
+
+let result = compute_butteraugli_linear(&original_linear, &compressed_linear, width, height, &ButteraugliParams::default())
+    .expect("valid image data");
+```
+
 ### Custom Parameters
 
 ```rust
 use butteraugli_oxide::ButteraugliParams;
 
-let params = ButteraugliParams {
-    // Penalize new high-frequency artifacts more than blurring (1.0 = neutral)
-    hf_asymmetry: 1.0,
-    // Multiplier for X channel differences (1.0 = neutral)
-    xmul: 1.0,
-    // Display intensity in nits (affects absolute thresholds)
-    intensity_target: 80.0,
-};
+let params = ButteraugliParams::new()
+    .with_hf_asymmetry(1.5)      // Penalize new artifacts more than blurring
+    .with_xmul(1.0)              // X channel multiplier (1.0 = neutral)
+    .with_intensity_target(250.0); // HDR display brightness in nits
 ```
 
 ### Helper Functions
@@ -128,14 +148,28 @@ The implementation includes 195 synthetic test cases validated against the C++ l
 | `butteraugli` | FFI wrapper | Wraps C++ butteraugli library |
 | `butteraugli-sys` | FFI bindings | Low-level C++ bindings |
 
-### API Differences from C++ libjxl
+### API Comparison with C++ libjxl
 
 | Feature | C++ butteraugli | butteraugli-oxide |
 |---------|-----------------|-------------------|
-| Input format | Linear RGB float | sRGB u8 (converts internally) |
-| Bit depth | Any (via float) | 8-bit only |
-| Color space | Linear (caller converts) | sRGB (auto-converted) |
-| HDR support | Yes (via float) | Not yet |
+| Input format | Linear RGB float | sRGB u8 or linear RGB f32 |
+| Bit depth | Any (via float) | 8-bit u8 or f32 |
+| Color space | Linear RGB only | sRGB (auto-converted) or linear RGB |
+| HDR support | Yes | Yes (via `compute_butteraugli_linear`) |
+| Channel layout | Planar (separate R, G, B arrays) | Interleaved (RGBRGB...) |
+
+### XYB Color Space Note
+
+**Butteraugli's internal XYB is NOT the same as jpegli's XYB.**
+
+| Aspect | Butteraugli XYB | jpegli XYB |
+|--------|-----------------|------------|
+| Nonlinearity | Gamma (FastLog2f-based) | Cube root |
+| Opsin matrix | Different coefficients | Different coefficients |
+| Dynamic sensitivity | Yes (blur-based adaptation) | No |
+| XY formula | X = L - M, Y = L + M | X = (L-M)/2, Y = (L+M)/2 |
+
+This crate does NOT accept XYB input directly because there are multiple incompatible XYB definitions. Always provide RGB input and let butteraugli perform its own internal conversion.
 
 ## References
 

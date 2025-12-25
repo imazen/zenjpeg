@@ -12,7 +12,7 @@ use crate::malta::malta_diff_map;
 use crate::mask::{
     combine_channels_for_masking, compute_mask as compute_mask_from_images, mask_dc_y, mask_y,
 };
-use crate::opsin::srgb_to_xyb_butteraugli;
+use crate::opsin::{linear_rgb_to_xyb_butteraugli, srgb_to_xyb_butteraugli};
 use crate::psycho::{separate_frequencies, PsychoImage};
 use crate::{ButteraugliParams, ButteraugliResult};
 
@@ -20,15 +20,25 @@ use crate::{ButteraugliParams, ButteraugliResult};
 /// Images smaller than this are handled without recursion.
 const MIN_SIZE_FOR_MULTIRESOLUTION: usize = 8;
 
-/// Converts RGB buffer to XYB Image3F using butteraugli's OpsinDynamicsImage.
+/// Converts sRGB u8 buffer to XYB Image3F using butteraugli's OpsinDynamicsImage.
 ///
 /// This uses the correct butteraugli color conversion, which is DIFFERENT
 /// from jpegli's XYB color space. Key differences:
 /// 1. Different OpsinAbsorbance matrix coefficients
 /// 2. Uses Gamma function (FastLog2f based), not cube root
 /// 3. Includes dynamic sensitivity based on blurred image
-fn rgb_to_xyb_image(rgb: &[u8], width: usize, height: usize, intensity_target: f32) -> Image3F {
+fn srgb_to_xyb_image(rgb: &[u8], width: usize, height: usize, intensity_target: f32) -> Image3F {
     srgb_to_xyb_butteraugli(rgb, width, height, intensity_target)
+}
+
+/// Converts linear RGB f32 buffer to XYB Image3F using butteraugli's OpsinDynamicsImage.
+fn linear_rgb_to_xyb_image(
+    rgb: &[f32],
+    width: usize,
+    height: usize,
+    intensity_target: f32,
+) -> Image3F {
+    linear_rgb_to_xyb_butteraugli(rgb, width, height, intensity_target)
 }
 
 /// Subsamples an Image3F by 2x using box filter averaging.
@@ -502,8 +512,8 @@ fn compute_diffmap_single_resolution(
     params: &ButteraugliParams,
 ) -> ImageF {
     // Convert to XYB using butteraugli's OpsinDynamicsImage
-    let xyb1 = rgb_to_xyb_image(rgb1, width, height, params.intensity_target());
-    let xyb2 = rgb_to_xyb_image(rgb2, width, height, params.intensity_target());
+    let xyb1 = srgb_to_xyb_image(rgb1, width, height, params.intensity_target());
+    let xyb2 = srgb_to_xyb_image(rgb2, width, height, params.intensity_target());
 
     // Perform frequency decomposition
     let ps1 = separate_frequencies(&xyb1);
@@ -570,7 +580,119 @@ fn compute_diffmap_multiresolution(
     diffmap
 }
 
-/// Main implementation of butteraugli comparison.
+/// Subsamples linear RGB f32 buffer by 2x for multi-resolution processing.
+fn subsample_linear_rgb_2x(rgb: &[f32], width: usize, height: usize) -> (Vec<f32>, usize, usize) {
+    let out_width = (width + 1) / 2;
+    let out_height = (height + 1) / 2;
+    let mut output = vec![0.0f32; out_width * out_height * 3];
+
+    // Simple averaging of 2x2 blocks
+    for oy in 0..out_height {
+        for ox in 0..out_width {
+            let mut r_sum = 0.0f32;
+            let mut g_sum = 0.0f32;
+            let mut b_sum = 0.0f32;
+            let mut count = 0.0f32;
+
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let ix = ox * 2 + dx;
+                    let iy = oy * 2 + dy;
+                    if ix < width && iy < height {
+                        let idx = (iy * width + ix) * 3;
+                        r_sum += rgb[idx];
+                        g_sum += rgb[idx + 1];
+                        b_sum += rgb[idx + 2];
+                        count += 1.0;
+                    }
+                }
+            }
+
+            if count > 0.0 {
+                let out_idx = (oy * out_width + ox) * 3;
+                output[out_idx] = r_sum / count;
+                output[out_idx + 1] = g_sum / count;
+                output[out_idx + 2] = b_sum / count;
+            }
+        }
+    }
+
+    (output, out_width, out_height)
+}
+
+/// Computes the diffmap for a single resolution level (linear RGB input).
+fn compute_diffmap_single_resolution_linear(
+    rgb1: &[f32],
+    rgb2: &[f32],
+    width: usize,
+    height: usize,
+    params: &ButteraugliParams,
+) -> ImageF {
+    // Convert to XYB using butteraugli's OpsinDynamicsImage
+    let xyb1 = linear_rgb_to_xyb_image(rgb1, width, height, params.intensity_target());
+    let xyb2 = linear_rgb_to_xyb_image(rgb2, width, height, params.intensity_target());
+
+    // Perform frequency decomposition
+    let ps1 = separate_frequencies(&xyb1);
+    let ps2 = separate_frequencies(&xyb2);
+
+    // Compute AC differences using Malta filter
+    let mut block_diff_ac =
+        compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry(), params.xmul());
+
+    // Compute mask from both PsychoImages (also accumulates some AC differences)
+    let mask = mask_psycho_image(&ps1, &ps2, Some(block_diff_ac.plane_mut(1)));
+
+    // Compute DC (LF) differences
+    let mut block_diff_dc = Image3F::new(width, height);
+    for c in 0..3 {
+        for y in 0..height {
+            for x in 0..width {
+                let d = ps1.lf.plane(c).get(x, y) - ps2.lf.plane(c).get(x, y);
+                block_diff_dc
+                    .plane_mut(c)
+                    .set(x, y, d * d * WMUL[6 + c] as f32);
+            }
+        }
+    }
+
+    // Combine channels to final diffmap using MaskY/MaskDcY
+    combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul())
+}
+
+/// Computes butteraugli diffmap with multiresolution (linear RGB input).
+fn compute_diffmap_multiresolution_linear(
+    rgb1: &[f32],
+    rgb2: &[f32],
+    width: usize,
+    height: usize,
+    params: &ButteraugliParams,
+) -> ImageF {
+    const MIN_SIZE_FOR_SUBSAMPLE: usize = 15;
+
+    // First compute subdiffmap at half resolution (if image is large enough)
+    let mut sub_diffmap = None;
+    if width >= MIN_SIZE_FOR_SUBSAMPLE && height >= MIN_SIZE_FOR_SUBSAMPLE {
+        let (sub_rgb1, sw, sh) = subsample_linear_rgb_2x(rgb1, width, height);
+        let (sub_rgb2, _, _) = subsample_linear_rgb_2x(rgb2, width, height);
+
+        sub_diffmap = Some(compute_diffmap_single_resolution_linear(
+            &sub_rgb1, &sub_rgb2, sw, sh, params,
+        ));
+    }
+
+    // Compute diffmap at full resolution
+    let mut diffmap = compute_diffmap_single_resolution_linear(rgb1, rgb2, width, height, params);
+
+    // Add supersampled subdiffmap if we computed one
+    if let Some(sub) = sub_diffmap {
+        add_supersampled_2x(&sub, 0.5, &mut diffmap);
+    }
+
+    diffmap
+}
+
+/// Main implementation of butteraugli comparison (sRGB u8 input).
 pub fn compute_butteraugli_impl(
     rgb1: &[u8],
     rgb2: &[u8],
@@ -594,6 +716,43 @@ pub fn compute_butteraugli_impl(
         compute_diffmap_single_resolution(rgb1, rgb2, width, height, params)
     } else {
         compute_diffmap_multiresolution(rgb1, rgb2, width, height, params)
+    };
+
+    // Compute global score
+    let score = compute_score_from_diffmap(&diffmap);
+
+    ButteraugliResult {
+        score,
+        diffmap: Some(diffmap),
+    }
+}
+
+/// Main implementation of butteraugli comparison (linear RGB f32 input).
+///
+/// This matches the C++ butteraugli API which expects linear RGB float input.
+pub fn compute_butteraugli_linear_impl(
+    rgb1: &[f32],
+    rgb2: &[f32],
+    width: usize,
+    height: usize,
+    params: &ButteraugliParams,
+) -> ButteraugliResult {
+    assert_eq!(rgb1.len(), width * height * 3);
+    assert_eq!(rgb2.len(), width * height * 3);
+
+    // Handle identical images case
+    if rgb1 == rgb2 {
+        return ButteraugliResult {
+            score: 0.0,
+            diffmap: Some(ImageF::new(width, height)),
+        };
+    }
+
+    // Handle very small images without multi-resolution
+    let diffmap = if width < MIN_SIZE_FOR_MULTIRESOLUTION || height < MIN_SIZE_FOR_MULTIRESOLUTION {
+        compute_diffmap_single_resolution_linear(rgb1, rgb2, width, height, params)
+    } else {
+        compute_diffmap_multiresolution_linear(rgb1, rgb2, width, height, params)
     };
 
     // Compute global score

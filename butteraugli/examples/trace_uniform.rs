@@ -126,7 +126,7 @@ fn main() {
     let rgb1: Vec<u8> = vec![128; width * height * 3];
     let rgb2: Vec<u8> = vec![138; width * height * 3];
 
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
     println!("Uniform 128 vs 138 (64x64): score = {:.6}", result.score);
 
     if let Some(dm) = result.diffmap.as_ref() {
@@ -180,7 +180,7 @@ fn main() {
     for diff in [1u8, 2, 5, 10, 20, 50] {
         let rgb1: Vec<u8> = vec![128; width * height * 3];
         let rgb2: Vec<u8> = vec![128 + diff; width * height * 3];
-        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
         println!("Gray 128 vs {}: score = {:.4}", 128 + diff, result.score);
     }
 
