@@ -374,7 +374,7 @@ Reduce test corpus size while maintaining coverage of unique encoding behaviors.
 ### Method
 
 1. Encode each image in corpus at Q = [20, 40, 60, 80, 95]
-2. For each image, compute curve: `[(Q, bpp, SSIM2), ...]`
+2. For each image, compute curve: `[(Q, bpp, DSSIM), ...]`
 3. Cluster images by curve similarity
 4. From each cluster, keep the **smallest** image that produces the same curve shape
 5. Result: minimal corpus that covers all unique encoding behaviors
@@ -386,13 +386,39 @@ Reduce test corpus size while maintaining coverage of unique encoding behaviors.
 - Same coverage of edge cases
 - Representative samples for each "image type"
 
-### Implementation Notes
+### Implementation
+
+**Tool**: `examples/corpus_reduction.rs`
+
+**Usage**:
+```bash
+cargo run --release --example corpus_reduction -- <corpus_dir> [output_dir]
+```
+
+**Example**:
+```bash
+cargo run --release --example corpus_reduction -- ../codec-eval/codec-corpus/kodak reduced_corpus
+```
+
+### Results (Kodak corpus)
+
+| Original | Reduced | Size Reduction |
+|----------|---------|----------------|
+| 24 images | 9 representatives | 63.3% |
+
+**Clusters found**:
+- Cluster 1: Low BPP images (20.png, 12.png, 3.png)
+- Cluster 2: Medium-low BPP (16.png, 15.png, 2.png, 4.png)
+- Cluster 6: Medium-high BPP (6.png, 11.png, 19.png, 21.png, 22.png)
+- Cluster 7: High BPP (14.png, 1.png, 18.png, 24.png)
+- Cluster 8: Very high BPP (5.png, 8.png)
+
+### Curve Similarity Metric
 
 ```
-Curve similarity metric:
-  sum over Q: |bpp1(Q) - bpp2(Q)| / avg_bpp + |ssim1(Q) - ssim2(Q)| / avg_ssim
+distance = mean over Q: |bpp1 - bpp2| / avg_bpp + |dssim1 - dssim2| / avg_dssim
 
-Threshold for "same curve": < 0.05 (5% normalized difference)
+Threshold: < 0.10 (10% normalized difference)
 ```
 
 ---
