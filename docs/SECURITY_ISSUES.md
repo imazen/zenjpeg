@@ -178,13 +178,197 @@ int num_refinement_scans[DCTSIZE2];
 
 ---
 
+## libjpeg-turbo CVEs (Reference)
+
+These CVEs affect libjpeg-turbo and may inform our security posture.
+
+### CVE-2023-2804: Heap Buffer Overflow in Merged Upsampling
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2023-2804](https://nvd.nist.gov/vuln/detail/CVE-2023-2804) |
+| **CVSS** | 6.5 (Medium) |
+| **Affected** | libjpeg-turbo < 2.1.90 |
+| **Rust Status** | ✅ **Not Vulnerable** - No 12-bit support |
+
+**Root Cause**: Heap overflow in `h2v2_merged_upsample_internal()` when processing 12-bit lossless JPEG with out-of-range sample data.
+
+**Rust Analysis**: jpegli-rs only supports 8-bit precision. 12-bit mode not implemented.
+
+---
+
+### CVE-2021-46822: Heap Overflow in PPM Reader
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2021-46822](https://nvd.nist.gov/vuln/detail/CVE-2021-46822) |
+| **CVSS** | 5.5 (Medium) |
+| **Affected** | libjpeg-turbo < 2.1.0 |
+| **Rust Status** | ✅ **Not Applicable** - No PPM reader |
+
+**Root Cause**: Heap overflow in `get_word_rgb_row()` in rdppm.c when loading 16-bit PPM/PGM files.
+
+---
+
+### CVE-2020-17541: Stack Buffer Overflow in Transform
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2020-17541](https://nvd.nist.gov/vuln/detail/CVE-2020-17541) |
+| **CVSS** | 8.8 (High) |
+| **Affected** | libjpeg-turbo < 2.0.5 |
+| **Rust Status** | ✅ **Not Applicable** - No transform component |
+
+**Root Cause**: Local buffer overrun in `jchuff.c` during transform operations.
+
+---
+
+### CVE-2020-13790: Heap Over-read in PPM Reader
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2020-13790](https://nvd.nist.gov/vuln/detail/CVE-2020-13790) |
+| **CVSS** | 8.1 (High) |
+| **Affected** | libjpeg-turbo 2.0.4, mozjpeg 4.0.0 |
+| **Rust Status** | ✅ **Not Applicable** - No PPM reader |
+
+**Root Cause**: Heap over-read in `get_rgb_row()` in rdppm.c via malformed PPM input.
+
+---
+
+### CVE-2019-2201: Integer Overflow / Heap Corruption
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2019-2201](https://nvd.nist.gov/vuln/detail/CVE-2019-2201) |
+| **CVSS** | 7.8 (High) |
+| **Affected** | libjpeg-turbo < 2.0.3 |
+| **Rust Status** | ❌ **Potentially Vulnerable** - Similar patterns exist |
+
+**Root Cause**: Integer overflow handling gigapixel images in `turbojpeg.c`, causing heap corruption.
+
+**Rust Analysis**: We have similar unchecked multiplications. See `SECURITY.md` P0-3.
+
+---
+
+### CVE-2018-20330: Integer Overflow in tjLoadImage
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2018-20330](https://nvd.nist.gov/vuln/detail/CVE-2018-20330) |
+| **CVSS** | 8.8 (High) |
+| **Affected** | libjpeg-turbo 2.0.1 |
+| **Rust Status** | ❌ **Potentially Vulnerable** - Same class of bug |
+
+**Root Cause**: Integer overflow from `pitch * height` multiplication in BMP loading.
+
+**Rust Analysis**: We have `width * height * bpp` without overflow checking.
+
+---
+
+### CVE-2018-14498: Heap Over-read in BMP Reader
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2018-14498](https://nvd.nist.gov/vuln/detail/CVE-2018-14498) |
+| **CVSS** | 6.5 (Medium) |
+| **Affected** | libjpeg-turbo < 2.0.0, mozjpeg < 3.3.1 |
+| **Rust Status** | ✅ **Not Applicable** - No BMP reader |
+
+**Root Cause**: `get_8bit_row()` in rdbmp.c allows out-of-range color indices.
+
+---
+
+### CVE-2018-11813: Infinite Loop in Targa Reader
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2018-11813](https://nvd.nist.gov/vuln/detail/CVE-2018-11813) |
+| **CVSS** | 7.5 (High) |
+| **Affected** | libjpeg-turbo < 2.0.0 |
+| **Rust Status** | ✅ **Not Applicable** - No Targa reader |
+
+**Root Cause**: `read_pixel()` in rdtarga.c mishandles EOF, causing infinite loop.
+
+---
+
+## mozjpeg CVEs (Reference)
+
+mozjpeg shares codebase with libjpeg-turbo; most CVEs are inherited.
+
+### CVE-2020-1895: Instagram Integer Overflow (RCE)
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2020-1895](https://research.checkpoint.com/2020/instagram_rce-code-execution-vulnerability-in-instagram-app-for-android-and-ios/) |
+| **CVSS** | 7.8 (High) |
+| **Affected** | mozjpeg (via Instagram) |
+| **Rust Status** | ⚠️ **Review Needed** |
+
+**Root Cause**: Integer overflow in `read_jpg_copy_loop()` during decompression leads to heap buffer overflow. Exploited for RCE in Instagram.
+
+**Rust Analysis**: Need to audit our decode loop for similar integer overflow patterns.
+
+---
+
+## IJG libjpeg CVEs (Reference)
+
+Original IJG libjpeg vulnerabilities.
+
+### CVE-2020-14152: Memory Exhaustion
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2020-14152](https://nvd.nist.gov/vuln/detail/CVE-2020-14152) |
+| **CVSS** | 7.1 (High) |
+| **Affected** | libjpeg < 9d |
+| **Rust Status** | ❌ **Vulnerable** - No memory limits |
+
+**Root Cause**: `jpeg_mem_available()` in jmemnobs.c doesn't honor `max_memory_to_use`.
+
+**Rust Analysis**: We have no memory limiting. See `SECURITY.md` P1-1.
+
+---
+
+### CVE-2018-11212: Divide by Zero
+
+| Field | Value |
+|-------|-------|
+| **CVE** | [CVE-2018-11212](https://nvd.nist.gov/vuln/detail/CVE-2018-11212) |
+| **CVSS** | 6.5 (Medium) |
+| **Affected** | libjpeg 9a, 9d |
+| **Rust Status** | ⚠️ **Review Needed** |
+
+**Root Cause**: `alloc_sarray()` in jmemmgr.c allows divide-by-zero via crafted file.
+
+**Rust Analysis**: Need to check for division operations in allocation paths.
+
+---
+
+## Vulnerability Class Summary
+
+| Vulnerability Class | libjpeg-turbo | mozjpeg | IJG | jpegli-rs Status |
+|---------------------|---------------|---------|-----|------------------|
+| Integer overflow in size calc | CVE-2019-2201, CVE-2018-20330 | CVE-2020-1895 | - | ❌ Vulnerable |
+| Heap overflow (12-bit) | CVE-2023-2804 | - | - | ✅ N/A (8-bit only) |
+| PPM/BMP reader bugs | CVE-2020-13790, CVE-2018-14498 | same | - | ✅ N/A (no readers) |
+| Memory exhaustion | - | - | CVE-2020-14152 | ❌ Vulnerable |
+| Huffman table OOB | CVE-2024-11403 (via jpegli) | - | - | ✅ Not vulnerable |
+
+---
+
 ## References
 
-- [libjxl Security Policy](https://github.com/libjpeg-turbo/libjpeg-turbo/security/policy)
+- [libjpeg-turbo CVE List](https://www.cvedetails.com/vulnerability-list/vendor_id-17075/product_id-40849/Libjpeg-turbo-Libjpeg-turbo.html)
+- [mozjpeg CVE List](https://www.cvedetails.com/vulnerability-list/vendor_id-452/product_id-52301/Mozilla-Mozjpeg.html)
+- [IJG libjpeg CVE List](https://www.cvedetails.com/vulnerability-list/vendor_id-17990/product_id-46165/IJG-Libjpeg.html)
+- [Gentoo GLSA 202405-20](https://security.gentoo.org/glsa/202405-20) - libjpeg-turbo multiple vulnerabilities
 - [CVE-2024-11403 Details](https://www.wiz.io/vulnerability-database/cve/cve-2024-11403)
 - [Gentoo GLSA 202210-36](https://security.gentoo.org/glsa/202210-36)
 - [Debian DSA 5958-1](https://lists.debian.org/debian-security-announce/2025/msg00122.html)
 - [Brunsli Huffman Fix Video](https://www.youtube.com/watch?v=_ACCK0AUQ8Q&t=696s)
+- [Instagram RCE via mozjpeg](https://research.checkpoint.com/2020/instagram_rce-code-execution-vulnerability-in-instagram-app-for-android-and-ios/)
+- [Ubuntu libjpeg-turbo Changelog](https://launchpad.net/ubuntu/+source/libjpeg-turbo/+changelog)
 
 ---
 
@@ -195,3 +379,4 @@ int num_refinement_scans[DCTSIZE2];
 | 2024-12-25 | Initial security analysis and document creation |
 | 2024-12-25 | Added CVE-2024-11403 analysis |
 | 2024-12-25 | Mapped C++ fixes to Rust status |
+| 2024-12-25 | Added libjpeg-turbo, mozjpeg, IJG libjpeg CVE catalog |
