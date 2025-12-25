@@ -982,6 +982,119 @@ impl ProgressiveTokenBuffer {
         Ok((context_map, dc_clusters.num_clusters, tables))
     }
 
+    /// Generates optimized Huffman tables with explicit luma/chroma grouping.
+    ///
+    /// This method creates exactly 2 DC tables and 2 AC tables by explicitly
+    /// grouping luma (component 0) vs chroma (components 1+) rather than
+    /// using automatic clustering. This ensures the table assignment matches
+    /// what the replay code expects.
+    ///
+    /// # Arguments
+    /// * `num_dc_contexts` - Number of DC contexts (= num_components)
+    ///
+    /// # Returns
+    /// - `num_dc_tables`: Always 2 (luma + chroma)
+    /// - `tables`: [DC luma, DC chroma, AC luma, AC chroma]
+    pub fn generate_luma_chroma_tables(
+        &self,
+        num_dc_contexts: usize,
+    ) -> Result<(usize, Vec<OptimizedTable>)> {
+        let mut tables = Vec::with_capacity(4);
+
+        // DC tables: luma = context 0, chroma = contexts 1+
+        let dc_luma = &self.counters[0];
+        let mut dc_chroma = FrequencyCounter::new();
+        for ctx in 1..num_dc_contexts {
+            dc_chroma.add(&self.counters[ctx]);
+        }
+
+        // Generate DC luma table
+        if dc_luma.is_empty_histogram() {
+            let mut default = FrequencyCounter::new();
+            default.count(0);
+            tables.push(default.generate_table_with_dht()?);
+        } else {
+            tables.push(dc_luma.generate_table_with_dht()?);
+        }
+
+        // Generate DC chroma table
+        if dc_chroma.is_empty_histogram() {
+            tables.push(tables[0].clone()); // Use luma table as fallback
+        } else {
+            tables.push(dc_chroma.generate_table_with_dht()?);
+        }
+
+        // AC tables: need to identify which contexts are luma vs chroma
+        // AC contexts start at num_dc_contexts
+        // Context assignment: context = num_components + scan_idx
+        // For scans: DC is scan 0, then AC Y is scan 1, AC Cb is scan 2, AC Cr is scan 3
+        // So: AC Y context = num_dc_contexts + 1 = 4 (for 3 components)
+        //     AC Cb context = num_dc_contexts + 2 = 5
+        //     AC Cr context = num_dc_contexts + 3 = 6
+        //
+        // But we need to handle the offset: ac_histograms = counters[num_dc_contexts..]
+        // So AC Y is at counters[num_dc_contexts + 1], which is ac_histograms[1]
+        //
+        // Actually, contexts are assigned as:
+        // - DC interleaved scan (scan 0): uses component indices 0,1,2 as contexts
+        // - AC Y scan (scan 1): uses context = 3 + 1 = 4
+        // - AC Cb scan (scan 2): uses context = 3 + 2 = 5
+        // - AC Cr scan (scan 3): uses context = 3 + 3 = 6
+        //
+        // counters[3] is unused (gap between DC contexts 0-2 and AC contexts 4-6)
+        // ac_histograms[0] = counters[3] (empty)
+        // ac_histograms[1] = counters[4] (Y)
+        // ac_histograms[2] = counters[5] (Cb)
+        // ac_histograms[3] = counters[6] (Cr)
+
+        let ac_start = num_dc_contexts;
+        let ac_histograms = &self.counters[ac_start..];
+
+        // Find Y's histogram - it's at index 1 in ac_histograms (context 4 for 3-component)
+        // Actually, the AC context for component C at scan S is: num_components + S
+        // For Y (component 0), scan index is 1 (after DC scan 0)
+        // So Y's AC context = 3 + 1 = 4, which is counters[4] = ac_histograms[1]
+        //
+        // For Cb (component 1), scan index is 2
+        // So Cb's AC context = 3 + 2 = 5, which is counters[5] = ac_histograms[2]
+        //
+        // For Cr (component 2), scan index is 3
+        // So Cr's AC context = 3 + 3 = 6, which is counters[6] = ac_histograms[3]
+
+        // AC luma = context (num_dc_contexts + 1) = ac_histograms[1]
+        let ac_luma_idx = 1;
+        let ac_luma = if ac_luma_idx < ac_histograms.len() {
+            &ac_histograms[ac_luma_idx]
+        } else {
+            // Fallback for grayscale
+            &ac_histograms[0]
+        };
+
+        // AC chroma = combined contexts (num_dc_contexts + 2) and (num_dc_contexts + 3)
+        let mut ac_chroma = FrequencyCounter::new();
+        for idx in 2..ac_histograms.len() {
+            ac_chroma.add(&ac_histograms[idx]);
+        }
+
+        // Generate AC luma table
+        if ac_luma.is_empty_histogram() {
+            let mut default = FrequencyCounter::new();
+            default.count(0); // EOB
+            tables.push(default.generate_table_with_dht()?);
+        } else {
+            tables.push(ac_luma.generate_table_with_dht()?);
+        }
+
+        // Generate AC chroma table
+        if ac_chroma.is_empty_histogram() {
+            tables.push(tables[2].clone()); // Use AC luma as fallback
+        } else {
+            tables.push(ac_chroma.generate_table_with_dht()?);
+        }
+
+        Ok((2, tables)) // Always 2 DC tables
+    }
+
     /// Dumps all tokens to a JSON file for C++ comparison.
     #[cfg(feature = "debug-tokens")]
     pub fn dump_tokens(&self, path: &str) -> std::io::Result<()> {

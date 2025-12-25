@@ -634,13 +634,9 @@ impl Encoder {
         }
 
         // ========== GENERATE OPTIMIZED TABLES ==========
-        // Cluster histograms and generate tables
-        // Use 2 DC clusters (luma, chroma) and 2 AC clusters (luma, chroma)
-        let (_context_map, num_dc_tables, tables) = token_buffer.generate_optimized_tables(
-            2,              // max DC clusters
-            2,              // max AC clusters
-            num_components, // num DC contexts
-        )?;
+        // Use explicit luma/chroma grouping to ensure table assignment matches
+        // what the replay code expects (luma=0, chroma=1)
+        let (num_dc_tables, tables) = token_buffer.generate_luma_chroma_tables(num_components)?;
 
         // Convert to OptimizedHuffmanTables format for compatibility
         let opt_tables =
