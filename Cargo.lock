@@ -135,6 +135,7 @@ version = "0.1.0"
 dependencies = [
  "approx",
  "jpeg-decoder",
+ "jpegli-sys",
  "mozjpeg",
  "png",
  "wide",

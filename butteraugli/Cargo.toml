@@ -24,3 +24,6 @@ jpeg-decoder = { workspace = true }
 
 # Testing utilities
 approx = { workspace = true }
+
+# FFI bindings for C++ comparison
+jpegli-sys = { path = "../jpegli-sys", features = ["butteraugli"] }

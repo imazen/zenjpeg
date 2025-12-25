@@ -48,7 +48,7 @@ const K_INV_LOG2E: f32 = 1.0 / std::f32::consts::LOG2_E;
 /// with range reduction to [-1/3, 1/3].
 /// L1 error ~3.9E-6.
 #[inline]
-fn fast_log2f(x: f32) -> f32 {
+pub fn fast_log2f(x: f32) -> f32 {
     // (2,2) rational polynomial coefficients from C++
     const P0: f32 = -1.8503833400518310E-06;
     const P1: f32 = 1.4287160470083755;

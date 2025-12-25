@@ -7,6 +7,10 @@ description = "FFI bindings to jpegli C++ for comparison testing"
 links = "jpegli_ffi"
 build = "build.rs"
 
+[features]
+default = []
+butteraugli = []
+
 [dependencies]
 libc = { workspace = true }
 

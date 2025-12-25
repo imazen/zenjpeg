@@ -390,6 +390,138 @@ macro_rules! jpeg_create_decompress {
     };
 }
 
+// ============================================================================
+// Butteraugli FFI bindings
+// ============================================================================
+
+/// Butteraugli error codes
+pub const BUTTERAUGLI_OK: c_int = 0;
+pub const BUTTERAUGLI_ERROR_MEMORY: c_int = 1;
+pub const BUTTERAUGLI_ERROR_INVALID_INPUT: c_int = 2;
+pub const BUTTERAUGLI_ERROR_INTERNAL: c_int = 3;
+
+extern "C" {
+    /// Compute butteraugli score between two linear RGB images.
+    ///
+    /// Both images must be linear RGB (not sRGB) with values in [0, 1].
+    /// Data layout: row-major, 3 channels interleaved (RGBRGBRGB...).
+    ///
+    /// # Parameters
+    /// - `rgb0`, `rgb1`: Linear RGB image data, width * height * 3 floats each
+    /// - `width`, `height`: Image dimensions
+    /// - `intensity_target`: Nits corresponding to 1.0 (default 80.0)
+    /// - `out_score`: Output butteraugli score (max of diffmap)
+    ///
+    /// # Returns
+    /// `BUTTERAUGLI_OK` on success.
+    pub fn butteraugli_compare(
+        rgb0: *const f32,
+        rgb1: *const f32,
+        width: size_t,
+        height: size_t,
+        intensity_target: f32,
+        out_score: *mut f64,
+    ) -> c_int;
+
+    /// Compute butteraugli score with full parameters.
+    ///
+    /// # Parameters
+    /// - `rgb0`, `rgb1`: Linear RGB image data
+    /// - `width`, `height`: Image dimensions
+    /// - `hf_asymmetry`: High-frequency asymmetry (default 1.0)
+    /// - `xmul`: X channel multiplier (default 1.0)
+    /// - `intensity_target`: Nits for 1.0 (default 80.0)
+    /// - `out_score`: Output butteraugli score
+    /// - `out_diffmap`: Optional output diffmap (width * height floats, or null)
+    ///
+    /// # Returns
+    /// `BUTTERAUGLI_OK` on success.
+    pub fn butteraugli_compare_full(
+        rgb0: *const f32,
+        rgb1: *const f32,
+        width: size_t,
+        height: size_t,
+        hf_asymmetry: f32,
+        xmul: f32,
+        intensity_target: f32,
+        out_score: *mut f64,
+        out_diffmap: *mut f32,
+    ) -> c_int;
+
+    /// Convert sRGB u8 to linear RGB for butteraugli input.
+    ///
+    /// # Parameters
+    /// - `srgb`: Input sRGB data (width * height * 3 bytes)
+    /// - `width`, `height`: Image dimensions
+    /// - `out_linear`: Output linear RGB (width * height * 3 floats, pre-allocated)
+    pub fn butteraugli_srgb_to_linear(
+        srgb: *const u8,
+        width: size_t,
+        height: size_t,
+        out_linear: *mut f32,
+    );
+
+    /// Compute butteraugli Gamma function value (for testing FastLog2f).
+    pub fn butteraugli_gamma(v: f32) -> f32;
+
+    /// Compute butteraugli FastLog2f (for testing).
+    pub fn butteraugli_fast_log2f(v: f32) -> f32;
+}
+
+/// Safe wrapper to compute butteraugli score between two sRGB images.
+///
+/// This handles the sRGB to linear conversion and calls the C++ butteraugli.
+///
+/// # Safety
+/// The input slices must have length `width * height * 3`.
+#[cfg(feature = "butteraugli")]
+pub unsafe fn compute_butteraugli_cpp(
+    srgb0: &[u8],
+    srgb1: &[u8],
+    width: usize,
+    height: usize,
+    intensity_target: f32,
+) -> Result<f64, c_int> {
+    let num_pixels = width * height;
+    assert_eq!(srgb0.len(), num_pixels * 3);
+    assert_eq!(srgb1.len(), num_pixels * 3);
+
+    // Allocate buffers for linear RGB
+    let mut linear0 = vec![0.0f32; num_pixels * 3];
+    let mut linear1 = vec![0.0f32; num_pixels * 3];
+
+    // Convert sRGB to linear
+    butteraugli_srgb_to_linear(
+        srgb0.as_ptr(),
+        width,
+        height,
+        linear0.as_mut_ptr(),
+    );
+    butteraugli_srgb_to_linear(
+        srgb1.as_ptr(),
+        width,
+        height,
+        linear1.as_mut_ptr(),
+    );
+
+    // Compute butteraugli
+    let mut score = 0.0f64;
+    let result = butteraugli_compare(
+        linear0.as_ptr(),
+        linear1.as_ptr(),
+        width,
+        height,
+        intensity_target,
+        &mut score,
+    );
+
+    if result == BUTTERAUGLI_OK {
+        Ok(score)
+    } else {
+        Err(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
