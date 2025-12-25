@@ -145,3 +145,33 @@ pub const INTERNAL_GOOD_QUALITY_THRESHOLD: f32 = 17.83 * INTENSITY_TARGET_NORMAL
 
 /// Global scale factor.
 pub const GLOBAL_SCALE: f32 = 1.0 / INTERNAL_GOOD_QUALITY_THRESHOLD;
+
+// ============================================================================
+// Mask Function Constants (from C++ butteraugli.cc lines 1220-1282)
+// ============================================================================
+
+/// Multiplier for DiffPrecompute.
+pub const MASK_MUL: f32 = 6.19424080439;
+/// Bias for DiffPrecompute.
+pub const MASK_BIAS: f32 = 12.61050594197;
+/// Blur radius for masking.
+pub const MASK_RADIUS: f32 = 2.7;
+/// Multiplier for mask-to-error in Mask function.
+pub const MASK_TO_ERROR_MUL: f32 = 10.0;
+
+/// MaskY offset constant.
+pub const MASK_Y_OFFSET: f64 = 0.829591754942;
+/// MaskY scaler constant.
+pub const MASK_Y_SCALER: f64 = 0.451936922203;
+/// MaskY mul constant.
+pub const MASK_Y_MUL: f64 = 2.5485944793;
+
+/// MaskDcY offset constant.
+pub const MASK_DC_Y_OFFSET: f64 = 0.20025578522;
+/// MaskDcY scaler constant.
+pub const MASK_DC_Y_SCALER: f64 = 3.87449418804;
+/// MaskDcY mul constant.
+pub const MASK_DC_Y_MUL: f64 = 0.505054525019;
+
+/// Multipliers for CombineChannelsForMasking.
+pub const COMBINE_CHANNELS_MULS: [f32; 3] = [2.5, 0.4, 0.4];

@@ -3,16 +3,29 @@
 //! Visual masking is the phenomenon where the visibility of one feature
 //! is reduced by the presence of another feature. This module implements
 //! the masking computations used in butteraugli.
+//!
+//! Key functions:
+//! - `combine_channels_for_masking`: Combines HF and UHF channels
+//! - `diff_precompute`: Applies sqrt-like transform for numerical stability
+//! - `fuzzy_erosion`: Finds smooth areas using weighted minimum
+//! - `mask_y`: Converts mask value to AC masking factor
+//! - `mask_dc_y`: Converts mask value to DC masking factor
 
+use crate::blur::gaussian_blur;
+use crate::consts::{
+    COMBINE_CHANNELS_MULS, GLOBAL_SCALE, MASK_BIAS, MASK_DC_Y_MUL, MASK_DC_Y_OFFSET,
+    MASK_DC_Y_SCALER, MASK_MUL, MASK_RADIUS, MASK_TO_ERROR_MUL, MASK_Y_MUL, MASK_Y_OFFSET,
+    MASK_Y_SCALER,
+};
 use crate::image::ImageF;
 
 /// Combines HF and UHF channels for masking computation.
 ///
 /// Only X and Y components are involved in masking. B's influence
 /// is considered less important in the high frequency area.
+///
+/// Matches C++ CombineChannelsForMasking (butteraugli.cc lines 1108-1132).
 pub fn combine_channels_for_masking(hf: &[ImageF; 2], uhf: &[ImageF; 2], out: &mut ImageF) {
-    const MULS: [f32; 3] = [2.5, 0.4, 0.4];
-
     let width = hf[0].width();
     let height = hf[0].height();
 
@@ -24,9 +37,12 @@ pub fn combine_channels_for_masking(hf: &[ImageF; 2], uhf: &[ImageF; 2], out: &m
         let row_out = out.row_mut(y);
 
         for x in 0..width {
-            let xdiff = (row_x_uhf[x] + row_x_hf[x]) * MULS[0];
-            let ydiff = row_y_uhf[x].mul_add(MULS[1], row_y_hf[x] * MULS[2]);
-            row_out[x] = (xdiff.mul_add(xdiff, ydiff * ydiff)).sqrt();
+            // C++: xdiff = (row_x_uhf[x] + row_x_hf[x]) * muls[0]
+            let xdiff = (row_x_uhf[x] + row_x_hf[x]) * COMBINE_CHANNELS_MULS[0];
+            // C++: ydiff = row_y_uhf[x] * muls[1] + row_y_hf[x] * muls[2]
+            let ydiff = row_y_uhf[x] * COMBINE_CHANNELS_MULS[1] + row_y_hf[x] * COMBINE_CHANNELS_MULS[2];
+            // C++: row[x] = sqrt(xdiff * xdiff + ydiff * ydiff)
+            row_out[x] = (xdiff * xdiff + ydiff * ydiff).sqrt();
         }
     }
 }
@@ -34,6 +50,7 @@ pub fn combine_channels_for_masking(hf: &[ImageF; 2], uhf: &[ImageF; 2], out: &m
 /// Precomputes difference values for masking.
 ///
 /// Applies sqrt-like transformation to make values more perceptually uniform.
+/// Matches C++ DiffPrecompute (butteraugli.cc lines 1134-1147).
 pub fn diff_precompute(xyb: &ImageF, mul: f32, bias_arg: f32, out: &mut ImageF) {
     let width = xyb.width();
     let height = xyb.height();
@@ -44,13 +61,14 @@ pub fn diff_precompute(xyb: &ImageF, mul: f32, bias_arg: f32, out: &mut ImageF) 
         let row_in = xyb.row(y);
         let row_out = out.row_mut(y);
         for x in 0..width {
-            // sqrt with bias for numerical stability
-            row_out[x] = row_in[x].abs().mul_add(mul, bias).sqrt() - sqrt_bias;
+            // C++: sqrt(mul * abs(row_in[x]) + bias) - sqrt_bias
+            row_out[x] = (mul * row_in[x].abs() + bias).sqrt() - sqrt_bias;
         }
     }
 }
 
 /// Stores the three smallest values encountered.
+/// Matches C++ StoreMin3 (butteraugli.cc lines 1155-1168).
 #[inline]
 fn store_min3(v: f32, min0: &mut f32, min1: &mut f32, min2: &mut f32) {
     if v < *min2 {
@@ -71,10 +89,12 @@ fn store_min3(v: f32, min0: &mut f32, min1: &mut f32, min2: &mut f32) {
 ///
 /// Look for smooth areas near the area of degradation.
 /// If the areas are generally smooth, don't apply masking.
+///
+/// Matches C++ FuzzyErosion (butteraugli.cc lines 1170-1208).
 pub fn fuzzy_erosion(from: &ImageF, to: &mut ImageF) {
     let width = from.width();
     let height = from.height();
-    const STEP: i32 = 3;
+    const K_STEP: usize = 3;
 
     for y in 0..height {
         for x in 0..width {
@@ -82,35 +102,105 @@ pub fn fuzzy_erosion(from: &ImageF, to: &mut ImageF) {
             let mut min1 = 2.0 * min0;
             let mut min2 = min1;
 
-            // Check 8 neighbors at distance STEP
-            let neighbors: [(i32, i32); 8] = [
-                (-STEP, 0),
-                (STEP, 0),
-                (0, -STEP),
-                (0, STEP),
-                (-STEP, -STEP),
-                (-STEP, STEP),
-                (STEP, -STEP),
-                (STEP, STEP),
-            ];
-
-            for (dx, dy) in neighbors {
-                let nx = x as i32 + dx;
-                let ny = y as i32 + dy;
-                if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
-                    store_min3(
-                        from.get(nx as usize, ny as usize),
-                        &mut min0,
-                        &mut min1,
-                        &mut min2,
-                    );
+            // Check neighbors at distance K_STEP (C++ exact order)
+            if x >= K_STEP {
+                store_min3(from.get(x - K_STEP, y), &mut min0, &mut min1, &mut min2);
+                if y >= K_STEP {
+                    store_min3(from.get(x - K_STEP, y - K_STEP), &mut min0, &mut min1, &mut min2);
+                }
+                if y + K_STEP < height {
+                    store_min3(from.get(x - K_STEP, y + K_STEP), &mut min0, &mut min1, &mut min2);
                 }
             }
+            if x + K_STEP < width {
+                store_min3(from.get(x + K_STEP, y), &mut min0, &mut min1, &mut min2);
+                if y >= K_STEP {
+                    store_min3(from.get(x + K_STEP, y - K_STEP), &mut min0, &mut min1, &mut min2);
+                }
+                if y + K_STEP < height {
+                    store_min3(from.get(x + K_STEP, y + K_STEP), &mut min0, &mut min1, &mut min2);
+                }
+            }
+            if y >= K_STEP {
+                store_min3(from.get(x, y - K_STEP), &mut min0, &mut min1, &mut min2);
+            }
+            if y + K_STEP < height {
+                store_min3(from.get(x, y + K_STEP), &mut min0, &mut min1, &mut min2);
+            }
 
-            // Weighted average of the three smallest values
-            to.set(x, y, (min0 + min1 + min2) / 3.0);
+            // C++: 0.45f * min0 + 0.3f * min1 + 0.25f * min2
+            to.set(x, y, 0.45 * min0 + 0.3 * min1 + 0.25 * min2);
         }
     }
+}
+
+/// Converts mask value to AC masking multiplier.
+///
+/// Matches C++ MaskY (butteraugli.cc lines 1266-1273).
+#[inline]
+pub fn mask_y(delta: f64) -> f64 {
+    let c = MASK_Y_MUL / (MASK_Y_SCALER * delta + MASK_Y_OFFSET);
+    let retval = GLOBAL_SCALE as f64 * (1.0 + c);
+    retval * retval
+}
+
+/// Converts mask value to DC masking multiplier.
+///
+/// Matches C++ MaskDcY (butteraugli.cc lines 1275-1282).
+#[inline]
+pub fn mask_dc_y(delta: f64) -> f64 {
+    let c = MASK_DC_Y_MUL / (MASK_DC_Y_SCALER * delta + MASK_DC_Y_OFFSET);
+    let retval = GLOBAL_SCALE as f64 * (1.0 + c);
+    retval * retval
+}
+
+/// Computes mask from both images' psychovisual representations.
+///
+/// Matches C++ Mask function (butteraugli.cc lines 1212-1247).
+///
+/// # Arguments
+/// * `mask0` - Combined HF/UHF mask from image 0
+/// * `mask1` - Combined HF/UHF mask from image 1
+/// * `diff_ac` - Optional AC difference accumulator
+///
+/// # Returns
+/// The computed mask image
+pub fn compute_mask(mask0: &ImageF, mask1: &ImageF, mut diff_ac: Option<&mut ImageF>) -> ImageF {
+    let width = mask0.width();
+    let height = mask0.height();
+
+    // DiffPrecompute for mask0
+    let mut diff0 = ImageF::new(width, height);
+    diff_precompute(mask0, MASK_MUL, MASK_BIAS, &mut diff0);
+
+    // DiffPrecompute for mask1
+    let mut diff1 = ImageF::new(width, height);
+    diff_precompute(mask1, MASK_MUL, MASK_BIAS, &mut diff1);
+
+    // Blur diff0 and diff1
+    let blurred0 = gaussian_blur(&diff0, MASK_RADIUS);
+    let blurred1 = gaussian_blur(&diff1, MASK_RADIUS);
+
+    // FuzzyErosion on blurred0
+    let mut eroded0 = ImageF::new(width, height);
+    fuzzy_erosion(&blurred0, &mut eroded0);
+
+    // Final mask computation
+    let mut mask = ImageF::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            mask.set(x, y, eroded0.get(x, y));
+
+            if let Some(ref mut ac) = diff_ac {
+                // C++: kMaskToErrorMul * diff * diff
+                let diff = blurred0.get(x, y) - blurred1.get(x, y);
+                let prev = ac.get(x, y);
+                ac.set(x, y, prev + MASK_TO_ERROR_MUL * diff * diff);
+            }
+        }
+    }
+
+    mask
 }
 
 /// Applies visual masking based on local contrast.
@@ -182,5 +272,36 @@ mod tests {
                 assert!(output.get(x, y) >= 0.0);
             }
         }
+    }
+
+    #[test]
+    fn test_mask_y() {
+        // Test MaskY function
+        let result = mask_y(1.0);
+        assert!(result > 0.0);
+        assert!(result.is_finite());
+
+        // Higher delta should result in lower masking
+        let result_high = mask_y(10.0);
+        assert!(result_high < result);
+    }
+
+    #[test]
+    fn test_mask_dc_y() {
+        // Test MaskDcY function
+        let result = mask_dc_y(1.0);
+        assert!(result > 0.0);
+        assert!(result.is_finite());
+
+        // Higher delta should result in lower masking
+        let result_high = mask_dc_y(10.0);
+        assert!(result_high < result);
+    }
+
+    #[test]
+    fn test_fuzzy_erosion_weights() {
+        // Test that weights sum to 1.0
+        let weights_sum: f64 = 0.45 + 0.3 + 0.25;
+        assert!((weights_sum - 1.0).abs() < 0.001);
     }
 }

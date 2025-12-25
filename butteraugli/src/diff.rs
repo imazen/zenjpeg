@@ -4,12 +4,12 @@
 //! perceptual difference between two images.
 
 use crate::consts::{
-    GLOBAL_SCALE, NORM1_HF, NORM1_HF_X, NORM1_MF, NORM1_MF_X, NORM1_UHF, NORM1_UHF_X, W_HF_MALTA,
-    W_HF_MALTA_X, W_MF_MALTA, W_MF_MALTA_X, W_UHF_MALTA, W_UHF_MALTA_X,
+    NORM1_HF, NORM1_HF_X, NORM1_MF, NORM1_MF_X, NORM1_UHF, NORM1_UHF_X, W_HF_MALTA, W_HF_MALTA_X,
+    W_MF_MALTA, W_MF_MALTA_X, W_UHF_MALTA, W_UHF_MALTA_X, WMUL,
 };
 use crate::image::{Image3F, ImageF};
 use crate::malta::malta_diff_map;
-use crate::mask::{combine_channels_for_masking, fuzzy_erosion};
+use crate::mask::{combine_channels_for_masking, compute_mask as compute_mask_from_images, mask_dc_y, mask_y};
 use crate::opsin::srgb_to_xyb_butteraugli;
 use crate::psycho::{separate_frequencies, PsychoImage};
 use crate::{ButteraugliParams, ButteraugliResult};
@@ -223,18 +223,10 @@ fn l2_diff_asymmetric(i0: &ImageF, i1: &ImageF, w_0gt1: f32, w_0lt1: f32, diffma
     }
 }
 
-/// Weight multipliers for L2 differences (from C++ wmul array).
-const WMUL: [f32; 9] = [
-    400.0,   // HF X
-    1.50,    // HF Y
-    0.0,     // HF B (not used)
-    2.0,     // MF X
-    0.35,    // MF Y
-    0.01,    // MF B
-    18.0,    // LF X
-    2.50,    // LF Y
-    0.15,    // LF B
-];
+// WMUL weights are imported from crate::consts
+// These match C++ butteraugli.cc:
+// [HF_X, HF_Y, HF_B, MF_X, MF_Y, MF_B, LF_X, LF_Y, LF_B]
+// Note: WMUL is f64 array, but we need f32 for pixel operations
 
 /// Computes difference between two PsychoImages using Malta filter.
 ///
@@ -359,45 +351,52 @@ fn compute_psycho_diff_malta(
     l2_diff_asymmetric(
         &ps0.hf[0],
         &ps1.hf[0],
-        WMUL[0] * hf_asymmetry,
-        WMUL[0] / hf_asymmetry,
+        WMUL[0] as f32 * hf_asymmetry,
+        WMUL[0] as f32 / hf_asymmetry,
         block_diff_ac.plane_mut(0),
     );
     l2_diff_asymmetric(
         &ps0.hf[1],
         &ps1.hf[1],
-        WMUL[1] * hf_asymmetry,
-        WMUL[1] / hf_asymmetry,
+        WMUL[1] as f32 * hf_asymmetry,
+        WMUL[1] as f32 / hf_asymmetry,
         block_diff_ac.plane_mut(1),
     );
 
     // Add L2Diff for MF channels (all three)
-    l2_diff(ps0.mf.plane(0), ps1.mf.plane(0), WMUL[3], block_diff_ac.plane_mut(0));
-    l2_diff(ps0.mf.plane(1), ps1.mf.plane(1), WMUL[4], block_diff_ac.plane_mut(1));
-    l2_diff(ps0.mf.plane(2), ps1.mf.plane(2), WMUL[5], block_diff_ac.plane_mut(2));
+    l2_diff(ps0.mf.plane(0), ps1.mf.plane(0), WMUL[3] as f32, block_diff_ac.plane_mut(0));
+    l2_diff(ps0.mf.plane(1), ps1.mf.plane(1), WMUL[4] as f32, block_diff_ac.plane_mut(1));
+    l2_diff(ps0.mf.plane(2), ps1.mf.plane(2), WMUL[5] as f32, block_diff_ac.plane_mut(2));
 
     block_diff_ac
 }
 
-/// Computes the mask from a PsychoImage.
-fn compute_mask(ps: &PsychoImage) -> ImageF {
-    let width = ps.width();
-    let height = ps.height();
-    let mut mask = ImageF::new(width, height);
+/// Computes the mask from two PsychoImages.
+///
+/// Matches C++ MaskPsychoImage (butteraugli.cc lines 1250-1264).
+/// Returns the computed mask and optionally accumulates AC differences.
+fn mask_psycho_image(
+    ps0: &PsychoImage,
+    ps1: &PsychoImage,
+    diff_ac: Option<&mut ImageF>,
+) -> ImageF {
+    let width = ps0.width();
+    let height = ps0.height();
 
-    // Combine HF and UHF for masking
-    combine_channels_for_masking(&ps.hf, &ps.uhf, &mut mask);
+    // Combine HF and UHF channels for masking
+    let mut mask0 = ImageF::new(width, height);
+    let mut mask1 = ImageF::new(width, height);
+    combine_channels_for_masking(&ps0.hf, &ps0.uhf, &mut mask0);
+    combine_channels_for_masking(&ps1.hf, &ps1.uhf, &mut mask1);
 
-    // Apply fuzzy erosion to find smooth areas
-    let mut eroded = ImageF::new(width, height);
-    fuzzy_erosion(&mask, &mut eroded);
-
-    eroded
+    // Compute mask using DiffPrecompute, blur, and FuzzyErosion
+    compute_mask_from_images(&mask0, &mask1, diff_ac)
 }
 
 /// Combines channels to produce final diffmap.
 ///
-/// Applies masking and combines X, Y, B channels with appropriate weights.
+/// Matches C++ CombineChannelsToDiffmap (butteraugli.cc lines 1289-1315).
+/// Applies MaskY for AC differences and MaskDcY for DC differences.
 fn combine_channels_to_diffmap(
     mask: &ImageF,
     block_diff_dc: &Image3F,
@@ -410,25 +409,38 @@ fn combine_channels_to_diffmap(
 
     for y in 0..height {
         for x in 0..width {
-            let mask_val = mask.get(x, y);
+            let val = mask.get(x, y) as f64;
 
-            // Combine AC differences from all channels
-            let ac_x = block_diff_ac.plane(0).get(x, y) * xmul;
-            let ac_y = block_diff_ac.plane(1).get(x, y);
-            let ac_b = block_diff_ac.plane(2).get(x, y);
+            // Compute masking factors from the mask value
+            // MaskY is used for AC, MaskDcY is used for DC
+            let maskval = mask_y(val) as f32;
+            let dc_maskval = mask_dc_y(val) as f32;
 
-            // Combine DC differences
-            let dc_x = block_diff_dc.plane(0).get(x, y) * xmul;
-            let dc_y = block_diff_dc.plane(1).get(x, y);
-            let dc_b = block_diff_dc.plane(2).get(x, y);
+            // Get difference values for each channel
+            let diff_dc = [
+                block_diff_dc.plane(0).get(x, y),
+                block_diff_dc.plane(1).get(x, y),
+                block_diff_dc.plane(2).get(x, y),
+            ];
+            let diff_ac = [
+                block_diff_ac.plane(0).get(x, y),
+                block_diff_ac.plane(1).get(x, y),
+                block_diff_ac.plane(2).get(x, y),
+            ];
 
-            // Total difference
-            let total = (ac_x + ac_y + ac_b + dc_x + dc_y + dc_b).sqrt();
+            // Apply xmul to X channel (index 0)
+            let diff_ac_scaled = [diff_ac[0] * xmul, diff_ac[1], diff_ac[2]];
+            let diff_dc_scaled = [diff_dc[0] * xmul, diff_dc[1], diff_dc[2]];
 
-            // Apply masking (higher mask = more masking = lower perceived difference)
-            let masking_factor = 1.0 / (1.0 + mask_val * 0.1);
+            // MaskColor: sum of all channels multiplied by mask
+            // C++: color[0] * mask + color[1] * mask + color[2] * mask
+            let dc_masked =
+                diff_dc_scaled[0] * dc_maskval + diff_dc_scaled[1] * dc_maskval + diff_dc_scaled[2] * dc_maskval;
+            let ac_masked =
+                diff_ac_scaled[0] * maskval + diff_ac_scaled[1] * maskval + diff_ac_scaled[2] * maskval;
 
-            diffmap.set(x, y, total * masking_factor);
+            // Final diffmap value is sqrt of sum
+            diffmap.set(x, y, (dc_masked + ac_masked).sqrt());
         }
     }
 
@@ -437,7 +449,9 @@ fn combine_channels_to_diffmap(
 
 /// Computes the global score from a difference map.
 ///
-/// C++ butteraugli uses the maximum diffmap value as the score.
+/// C++ ButteraugliScoreFromDiffmap (butteraugli.cc lines 1952-1962)
+/// returns the maximum value in the diffmap. The diffmap already has
+/// the global scaling applied via MaskY/MaskDcY.
 fn compute_score_from_diffmap(diffmap: &ImageF) -> f64 {
     let width = diffmap.width();
     let height = diffmap.height();
@@ -448,19 +462,19 @@ fn compute_score_from_diffmap(diffmap: &ImageF) -> f64 {
     }
 
     // Find maximum difference value (C++ butteraugli approach)
-    let mut max_val = 0.0f64;
+    let mut max_val = 0.0f32;
 
     for y in 0..height {
         for x in 0..width {
-            let v = diffmap.get(x, y) as f64;
+            let v = diffmap.get(x, y);
             if v > max_val {
                 max_val = v;
             }
         }
     }
 
-    // Apply global scale
-    max_val * GLOBAL_SCALE as f64
+    // No additional scaling needed - MaskY/MaskDcY already include GLOBAL_SCALE
+    max_val as f64
 }
 
 /// Computes the diffmap for a single resolution level.
@@ -479,20 +493,12 @@ fn compute_diffmap_single_resolution(
     let ps1 = separate_frequencies(&xyb1);
     let ps2 = separate_frequencies(&xyb2);
 
-    // Compute masks from both images
-    let mask1 = compute_mask(&ps1);
-    let mask2 = compute_mask(&ps2);
-
-    // Average the masks
-    let mut mask = ImageF::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            mask.set(x, y, (mask1.get(x, y) + mask2.get(x, y)) * 0.5);
-        }
-    }
-
     // Compute AC differences using Malta filter
-    let block_diff_ac = compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry, params.xmul);
+    let mut block_diff_ac = compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry, params.xmul);
+
+    // Compute mask from both PsychoImages (also accumulates some AC differences)
+    // This matches C++ MaskPsychoImage which calls CombineChannelsForMasking + Mask
+    let mask = mask_psycho_image(&ps1, &ps2, Some(block_diff_ac.plane_mut(1)));
 
     // Compute DC (LF) differences
     let mut block_diff_dc = Image3F::new(width, height);
@@ -500,12 +506,12 @@ fn compute_diffmap_single_resolution(
         for y in 0..height {
             for x in 0..width {
                 let d = ps1.lf.plane(c).get(x, y) - ps2.lf.plane(c).get(x, y);
-                block_diff_dc.plane_mut(c).set(x, y, d * d * WMUL[6 + c]);
+                block_diff_dc.plane_mut(c).set(x, y, d * d * WMUL[6 + c] as f32);
             }
         }
     }
 
-    // Combine channels to final diffmap
+    // Combine channels to final diffmap using MaskY/MaskDcY
     combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul)
 }
 
