@@ -17,6 +17,11 @@ simd = []  # Enable SIMD intrinsics
 bytemuck = { version = "1.14", features = ["derive"] }
 wide = "0.7"
 
+# Image analysis for auto-picking encoding strategy
+evalchroma = "1.0"
+imgref = "1.10"
+rgb = "0.8"
+
 # Reference implementations (for comparison and fallback)
 mozjpeg-oxide = { path = "../mozjpeg-rs" }
 jpegli = { path = "../jpegli/jpegli-rs/jpegli" }

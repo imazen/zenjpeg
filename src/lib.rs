@@ -34,6 +34,7 @@
 //!   perceptual quality (SSIMULACRA2 score)
 
 // Core modules
+pub mod analysis;
 mod consts;
 mod consts_moz;
 mod error;

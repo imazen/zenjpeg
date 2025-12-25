@@ -1,0 +1,274 @@
+# zenjpeg Experiments & Research Log
+
+## Goal
+
+Create a JPEG encoder that:
+1. **Auto-selects** between trellis (mozjpeg) and AQ (jpegli) based on image + quality
+2. **Maps quality** to produce linear SSIMULACRA2 or Butteraugli curves
+3. Achieves **Pareto-optimal** compression across all quality levels
+
+---
+
+## Timeline
+
+### 2025-12-25: Initial Setup
+
+**Status**: Modules integrated, trellis not yet wired to encoder
+
+**Hypothesis 1**: Quality crossover point exists where trellis vs AQ trade off
+- mozjpeg literature suggests trellis helps more at low quality (Q < 70)
+- jpegli literature suggests AQ helps more at high quality (Q >= 70)
+- Current strategy.rs uses Q=50/70/80 thresholds - need validation
+
+**Next steps**:
+1. Wire trellis into encoder
+2. Run comparison: trellis ON vs OFF across Q 10-95
+3. Measure SSIMULACRA2 and file size for each
+4. Plot Pareto fronts
+
+---
+
+### 2025-12-25: Found jpegli quality-to-distance formula
+
+**Location**: `/home/lilith/work/jpegli/jpegli-rs/jpegli/src/consts.rs:246`
+
+```rust
+pub fn quality_to_distance(quality: i32) -> f32 {
+    if quality >= 100 {
+        0.01
+    } else if quality >= 30 {
+        0.1 + (100 - quality) as f32 * 0.09  // Linear from Q30-Q100
+    } else {
+        // Quadratic for Q0-Q30
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
+    }
+}
+```
+
+**Key insight**: Distance ~1.0 is "visually lossless", lower = higher quality
+
+### 2025-12-25: Found evalchroma crate for image analysis
+
+**Location**: `evalchroma` crate (used by imageflow)
+
+This crate analyzes images and recommends:
+- Optimal chroma subsampling (4:4:4, 4:2:2, 4:2:0)
+- Adjusted chroma quality based on image content
+- Sharpness metrics (horiz, vert, peak)
+
+**Key formula for threshold**:
+```rust
+let threshold = (130.0 - chroma_quality * 1.21).powf(1.56) as u32;
+```
+
+**Sharpness scaling by image size**:
+- Tiny images (< 100px): sharpness *= 2 (need more detail)
+- Large images (> 1920px): sharpness /= 2 (will be displayed scaled)
+
+**Proposed use**: Use evalchroma sharpness to decide trellis vs AQ
+
+---
+
+## Quality Mapping Research
+
+### Problem
+
+Standard JPEG quality (1-100) does NOT map linearly to perceptual quality:
+- Q90 vs Q95 is almost imperceptible
+- Q30 vs Q40 is huge difference
+- Users expect "Q50 = half quality" but that's not what happens
+
+### Goal
+
+Create quality mapping where:
+```
+linear_quality(x) → encoder_settings → constant_ssim2_delta
+```
+
+So Q50 produces roughly "halfway" perceptual quality between Q0 and Q100.
+
+### Approach Options
+
+**Option A: Butteraugli distance target**
+- jpegli uses "distance" (Butteraugli-derived) internally
+- Map Q to distance: `distance = f(quality)`
+- Need to find the right curve
+
+**Option B: Binary search to SSIMULACRA2 target**
+- Given target SSIM2 score, binary search for quality
+- Slow but accurate
+- Could cache mapping per image category
+
+**Option C: Learned quality curve**
+- Run many encodes across image corpus
+- Fit curve: `effective_quality = g(nominal_quality, image_features)`
+- Use this for prediction
+
+### jpegli's Approach (reference)
+
+jpegli maps quality to "distance":
+```
+distance = quality_to_distance(quality)
+// distance 0 = lossless, higher = more lossy
+```
+
+The exact mapping is in jpegli source. We could adopt or tune it.
+
+---
+
+## Auto-Selection Heuristics
+
+### Image Characteristics to Consider
+
+1. **Complexity/Entropy**
+   - Simple images (logos, text) → trellis helps more
+   - Complex images (photos) → AQ may help more
+
+2. **Edge density**
+   - High edges → preserve with AQ
+   - Smooth gradients → trellis handles well
+
+3. **Noise level**
+   - Noisy images → trellis can remove noise (good or bad)
+   - Clean images → AQ preserves detail
+
+4. **Color distribution**
+   - High saturation → chroma matters more
+   - Grayscale-ish → luma dominates
+
+### Proposed Metrics
+
+From imageflow's chromaeval or similar:
+- DCT coefficient distribution (how many zeros naturally)
+- Block variance histogram
+- Edge detection score
+- Histogram entropy
+
+### Decision Tree Hypothesis
+
+```
+if quality < 50:
+    use_trellis = True
+    use_aq = False
+elif quality < 70:
+    # Hybrid zone - decide based on image
+    if image_is_simple():
+        use_trellis = True
+    else:
+        use_aq = moderate_strength
+else:
+    use_trellis = False  # hurts at high Q
+    use_aq = True
+```
+
+---
+
+## Experiments To Run
+
+### Experiment 1: Trellis Impact by Quality
+
+**Hypothesis**: Trellis improves compression more at low quality
+
+**Method**:
+1. Select 20 diverse images from codec-corpus
+2. Encode each at Q = [20, 30, 40, 50, 60, 70, 80, 90]
+3. For each: trellis ON vs OFF
+4. Measure: file size, SSIMULACRA2, encode time
+
+**Expected**: Trellis saves 10-20% at Q30, <5% at Q80
+
+**Results**: (pending)
+
+---
+
+### Experiment 2: AQ Impact by Image Type
+
+**Hypothesis**: AQ helps more on complex textures
+
+**Method**:
+1. Categorize images: simple, gradient, texture, photo
+2. Encode at Q75 with AQ strengths [0, 0.5, 1.0]
+3. Measure SSIMULACRA2
+
+**Expected**: Photos benefit from AQ, simple images may not
+
+**Results**: (pending)
+
+---
+
+### Experiment 3: Quality Curve Linearization
+
+**Hypothesis**: Can find mapping for linear SSIM2 response
+
+**Method**:
+1. Encode test image at Q = 10, 20, ..., 100
+2. Measure SSIMULACRA2 for each
+3. Fit inverse: Q = f(target_ssim2)
+4. Validate on other images
+
+**Expected**: Need exponential or similar mapping
+
+**Results**: (pending)
+
+---
+
+## Red Herrings & Failed Approaches
+
+### [Date] - Description
+
+(Space for documenting things that didn't work and why)
+
+---
+
+## References
+
+- mozjpeg: trellis quantization paper/code
+- jpegli: https://github.com/libjxl/libjxl (jpegli component)
+- SSIMULACRA2: perceptual quality metric
+- Butteraugli: Google's perceptual distance metric
+- codec-corpus: test image collection
+- imageflow chromaeval: image analysis for encoding decisions
+
+---
+
+---
+
+## Corpus Reduction Strategy
+
+### Goal
+
+Reduce test corpus size while maintaining coverage of unique encoding behaviors.
+
+### Method
+
+1. Encode each image in corpus at Q = [20, 40, 60, 80, 95]
+2. For each image, compute curve: `[(Q, bpp, SSIM2), ...]`
+3. Cluster images by curve similarity
+4. From each cluster, keep the **smallest** image that produces the same curve shape
+5. Result: minimal corpus that covers all unique encoding behaviors
+
+### Benefits
+
+- Faster benchmarks
+- Less storage
+- Same coverage of edge cases
+- Representative samples for each "image type"
+
+### Implementation Notes
+
+```
+Curve similarity metric:
+  sum over Q: |bpp1(Q) - bpp2(Q)| / avg_bpp + |ssim1(Q) - ssim2(Q)| / avg_ssim
+
+Threshold for "same curve": < 0.05 (5% normalized difference)
+```
+
+---
+
+## Code Locations
+
+- Strategy selection: `src/strategy.rs`
+- Trellis: `src/trellis.rs`
+- AQ: `src/adaptive_quant.rs`
+- Quality types: `src/types.rs` (Quality enum)
+- Encoder: `src/encode.rs`
