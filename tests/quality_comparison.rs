@@ -62,7 +62,6 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
 }
 
 #[test]
-#[ignore] // TODO: Enable once encoder produces valid decodable JPEGs
 fn test_quality_vs_dssim() {
     let width = 128;
     let height = 128;
@@ -118,7 +117,6 @@ fn test_quality_vs_dssim() {
 }
 
 #[test]
-#[ignore] // TODO: Enable once encoder produces valid decodable JPEGs
 fn test_high_quality_dssim_threshold() {
     let width = 128;
     let height = 128;
@@ -145,7 +143,6 @@ fn test_high_quality_dssim_threshold() {
 }
 
 #[test]
-#[ignore] // TODO: Enable once encoder produces valid decodable JPEGs
 fn test_strategy_selection_affects_quality() {
     let width = 128;
     let height = 128;
@@ -159,12 +156,14 @@ fn test_strategy_selection_affects_quality() {
     let high_jpeg = high_encoder.encode_rgb(&original, width, height).unwrap();
 
     // Decode both
-    let low_decoded = jpeg_decoder::Decoder::new(&low_jpeg[..])
-        .decode()
-        .unwrap();
-    let high_decoded = jpeg_decoder::Decoder::new(&high_jpeg[..])
-        .decode()
-        .unwrap();
+    let low_decoded = {
+        let mut decoder = jpeg_decoder::Decoder::new(&low_jpeg[..]);
+        decoder.decode().unwrap()
+    };
+    let high_decoded = {
+        let mut decoder = jpeg_decoder::Decoder::new(&high_jpeg[..]);
+        decoder.decode().unwrap()
+    };
 
     let low_dssim = compute_dssim(&original, &low_decoded, width, height);
     let high_dssim = compute_dssim(&original, &high_decoded, width, height);

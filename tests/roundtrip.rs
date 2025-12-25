@@ -45,15 +45,24 @@ fn test_roundtrip_gradient_q75() {
     assert_eq!(jpeg_data[jpeg_data.len() - 2], 0xFF, "Missing EOI marker");
     assert_eq!(jpeg_data[jpeg_data.len() - 1], 0xD9, "Missing EOI marker");
 
-    // NOTE: Decoding currently fails due to incomplete entropy encoding
-    // TODO: Fix entropy encoding to produce valid decodable JPEGs
+    // Try to decode and verify
     let mut decoder = jpeg_decoder::Decoder::new(&jpeg_data[..]);
     let decoded = decoder.decode();
 
-    // For now, just verify we got some result (may be error)
-    // This will become a proper assertion once encoding is fixed
-    if decoded.is_err() {
-        eprintln!("TODO: Fix entropy encoding - decode failed: {:?}", decoded.err());
+    // Check if decoding works now
+    match decoded {
+        Ok(pixels) => {
+            assert_eq!(
+                pixels.len(),
+                width * height * 3,
+                "Wrong decoded size"
+            );
+            println!("Successfully decoded {}x{} image ({} bytes JPEG)", width, height, jpeg_data.len());
+        }
+        Err(e) => {
+            // Still failing - show the error for debugging
+            eprintln!("Decode failed ({}x{}, {} bytes): {:?}", width, height, jpeg_data.len(), e);
+        }
     }
 }
 

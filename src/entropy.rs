@@ -2,6 +2,7 @@
 //!
 //! Handles Huffman encoding of quantized DCT coefficients.
 
+use crate::consts::ZIGZAG;
 use crate::huffman::{compute_category, HuffmanTable};
 
 /// Bitstream writer for entropy encoding
@@ -70,7 +71,8 @@ pub struct EntropyEncoder {
     writer: BitWriter,
     dc_table: HuffmanTable,
     ac_table: HuffmanTable,
-    last_dc: i16,
+    /// Last DC values for each component (up to 4)
+    last_dc: [i16; 4],
 }
 
 impl EntropyEncoder {
@@ -80,15 +82,16 @@ impl EntropyEncoder {
             writer: BitWriter::new(),
             dc_table,
             ac_table,
-            last_dc: 0,
+            last_dc: [0; 4],
         }
     }
 
     /// Encode a single 8x8 block of quantized coefficients
-    pub fn encode_block(&mut self, coefficients: &[i16; 64]) {
-        // DC coefficient (difference from previous block)
-        let dc_diff = coefficients[0] - self.last_dc;
-        self.last_dc = coefficients[0];
+    /// component: 0 = Y, 1 = Cb, 2 = Cr
+    pub fn encode_block(&mut self, coefficients: &[i16; 64], component: usize) {
+        // DC coefficient (difference from previous block of same component)
+        let dc_diff = coefficients[0] - self.last_dc[component];
+        self.last_dc[component] = coefficients[0];
 
         let dc_cat = compute_category(dc_diff);
         let (code, size) = self.dc_table.encode(dc_cat);
@@ -103,10 +106,12 @@ impl EntropyEncoder {
             self.writer.write_bits(dc_val as u32, dc_cat);
         }
 
-        // AC coefficients (in zigzag order)
+        // AC coefficients (accessed in zigzag order)
         let mut run = 0u8;
         for k in 1..64 {
-            let ac = coefficients[k];
+            // ZIGZAG[k] maps zigzag position to natural (row-major) position
+            let nat_pos = ZIGZAG[k];
+            let ac = coefficients[nat_pos];
 
             if ac == 0 {
                 run += 1;

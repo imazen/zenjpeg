@@ -19,7 +19,7 @@ pub struct AdaptiveQuantConfig {
 impl Default for AdaptiveQuantConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false, // Disabled by default until properly tuned
             strength: 1.0,
         }
     }

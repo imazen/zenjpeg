@@ -208,11 +208,9 @@ impl Encoder {
         // SOF0 marker (baseline DCT)
         self.write_sof0(&mut output, width as u16, height as u16);
 
-        // DHT markers
-        self.write_dht_dc(&mut output, 0); // DC luma
-        self.write_dht_ac(&mut output, 0); // AC luma
-        self.write_dht_dc(&mut output, 1); // DC chroma
-        self.write_dht_ac(&mut output, 1); // AC chroma
+        // DHT markers (use luma tables for all components - simpler baseline encoder)
+        self.write_dht_dc(&mut output, 0); // DC table 0
+        self.write_dht_ac(&mut output, 0); // AC table 0
 
         // SOS marker and entropy-coded data
         self.write_sos(&mut output);
@@ -377,10 +375,10 @@ impl Encoder {
         output.push(0x00); // Y: DC table 0, AC table 0
 
         output.push(0x02); // Cb: component 2
-        output.push(0x11); // Cb: DC table 1, AC table 1
+        output.push(0x00); // Cb: DC table 0, AC table 0
 
         output.push(0x03); // Cr: component 3
-        output.push(0x11); // Cr: DC table 1, AC table 1
+        output.push(0x00); // Cr: DC table 0, AC table 0
 
         output.push(0x00); // Ss
         output.push(0x3F); // Se
@@ -432,19 +430,19 @@ impl Encoder {
                     aq_field.get(bx, by),
                     strategy,
                 );
-                encoder.encode_block(&y_coeffs);
+                encoder.encode_block(&y_coeffs, 0); // Y component
 
                 // Cb block
                 let cb_block = extract_block(cb_plane, width, height, bx, by);
                 let cb_coeffs =
                     self.encode_block(&cb_block, &quant_tables.chroma.values, 1.0, strategy);
-                encoder.encode_block(&cb_coeffs);
+                encoder.encode_block(&cb_coeffs, 1); // Cb component
 
                 // Cr block
                 let cr_block = extract_block(cr_plane, width, height, bx, by);
                 let cr_coeffs =
                     self.encode_block(&cr_block, &quant_tables.chroma.values, 1.0, strategy);
-                encoder.encode_block(&cr_coeffs);
+                encoder.encode_block(&cr_coeffs, 2); // Cr component
             }
         }
 
@@ -472,7 +470,7 @@ impl Encoder {
             for bx in 0..width_blocks {
                 let block = extract_block(y_plane, width, height, bx, by);
                 let coeffs = self.encode_block(&block, &quant_table.values, 1.0, strategy);
-                encoder.encode_block(&coeffs);
+                encoder.encode_block(&coeffs, 0); // Y component
             }
         }
 

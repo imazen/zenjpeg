@@ -68,8 +68,9 @@ fn jpegli_strategy(quality: &Quality) -> SelectedStrategy {
             dc_enabled: false,
             lambda_base: 1.0,
         },
+        // TODO: Re-enable AQ once properly tuned
         adaptive_quant: AdaptiveQuantConfig {
-            enabled: true,
+            enabled: false,
             strength: compute_aq_strength_for_quality(quality),
         },
         progressive: false, // jpegli uses sequential by default
@@ -79,7 +80,7 @@ fn jpegli_strategy(quality: &Quality) -> SelectedStrategy {
 
 /// Hybrid encoding (try both, use best)
 fn hybrid_strategy(quality: &Quality) -> SelectedStrategy {
-    // For hybrid, we enable both but with reduced strength
+    // For hybrid, we enable trellis (AQ disabled until properly tuned)
     SelectedStrategy {
         approach: EncodingApproach::Hybrid,
         trellis: TrellisConfig {
@@ -87,8 +88,9 @@ fn hybrid_strategy(quality: &Quality) -> SelectedStrategy {
             dc_enabled: false, // DC trellis less effective with AQ
             lambda_base: compute_lambda_for_quality(quality) * 0.5,
         },
+        // TODO: Re-enable AQ once properly tuned
         adaptive_quant: AdaptiveQuantConfig {
-            enabled: true,
+            enabled: false,
             strength: compute_aq_strength_for_quality(quality) * 0.7,
         },
         progressive: quality.value() < 80.0,
@@ -159,7 +161,8 @@ mod tests {
     fn test_auto_strategy_high_quality() {
         let strategy = select_strategy(&Quality::Standard(90), EncodingStrategy::Auto);
         assert_eq!(strategy.approach, EncodingApproach::Jpegli);
-        assert!(strategy.adaptive_quant.enabled);
+        // AQ currently disabled until properly tuned
+        assert!(!strategy.adaptive_quant.enabled);
     }
 
     #[test]
@@ -167,6 +170,7 @@ mod tests {
         let strategy = select_strategy(&Quality::Standard(60), EncodingStrategy::Hybrid);
         assert_eq!(strategy.approach, EncodingApproach::Hybrid);
         assert!(strategy.trellis.ac_enabled);
-        assert!(strategy.adaptive_quant.enabled);
+        // AQ currently disabled until properly tuned
+        assert!(!strategy.adaptive_quant.enabled);
     }
 }
