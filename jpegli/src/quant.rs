@@ -571,6 +571,11 @@ pub fn quantize_block_with_zero_bias(
     for k in 0..DCT_BLOCK_SIZE {
         let q = quant[k] as f32;
         let qval = coeffs[k] / q;
+
+        // Note on scaling: C++ DCT uses 1/64 scaling total, Rust uses 1/8.
+        // C++ compensates by using quant_mul = 8/quant in quantization.
+        // Net effect: both produce qval = dct_normalized / quant for storage.
+        // For threshold comparison, both compare |qval| vs threshold directly.
         let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
 
         if qval.abs() >= threshold {

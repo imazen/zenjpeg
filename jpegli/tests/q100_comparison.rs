@@ -79,7 +79,7 @@ fn test_q100_rust_vs_cpp() {
     println!("\n=== Q100 Rust vs C++ Comparison ===");
     println!("Image: {}x{}", width, height);
 
-    // Rust Q100 encoding - PROGRESSIVE mode
+    // Rust Q100 encoding - BASELINE (sequential) mode
     let rust_start = Instant::now();
     let rust_jpeg = Encoder::new()
         .width(width)
@@ -87,12 +87,12 @@ fn test_q100_rust_vs_cpp() {
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(100.0))
         .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
+        .mode(JpegMode::Baseline)
         .encode(&rgb)
         .expect("encode");
     let rust_time = rust_start.elapsed();
 
-    // C++ Q100 encoding - PROGRESSIVE mode
+    // C++ Q100 encoding - BASELINE (sequential) mode
     let tmp_png = "/tmp/q100_test_input.png";
     std::fs::write(tmp_png, &png_data).unwrap();
     let cpp_out = "/tmp/q100_cpp_output.jpg";
@@ -102,7 +102,7 @@ fn test_q100_rust_vs_cpp() {
             tmp_png,
             cpp_out,
             "-q", "100",
-            "--progressive_level=2"
+            "--progressive_level=0"
         ])
         .output()
         .unwrap();

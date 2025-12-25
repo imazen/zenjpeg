@@ -168,17 +168,23 @@ impl AQStrengthMap {
 /// # Returns
 ///
 /// Per-block aq_strength map with values in 0.0-0.2 range.
+///
+/// # Arguments
+/// * `y_plane` - Luminance plane (0-255 range)
+/// * `width` - Image width in pixels
+/// * `height` - Image height in pixels
+/// * `y_quant_01` - Y quantization table value at position 1 (first AC coefficient)
+///                  This is what C++ uses for the dampen calculation.
 #[must_use]
 pub fn compute_aq_strength_map(
     y_plane: &[f32],
     width: usize,
     height: usize,
-    distance: f32,
+    y_quant_01: u16,
 ) -> AQStrengthMap {
     // Use per-block implementation
-    // Note: Produces values ~20% lower than C++, but per-block variation is valuable
-    // TODO: Tune scaling to match C++ mean exactly
-    compute_aq_strength_map_impl(y_plane, width, height, distance)
+    // y_quant_01 is the actual quant table value, matching C++ behavior
+    compute_aq_strength_map_impl(y_plane, width, height, y_quant_01 as f32)
 }
 
 /// Converts quant_field to aq_strength.
@@ -206,7 +212,7 @@ pub fn compute_aq_strength_map_impl(
     y_plane: &[f32],
     width: usize,
     height: usize,
-    distance: f32,
+    y_quant_01: f32,
 ) -> AQStrengthMap {
     let width_blocks = (width + 7) / 8;
     let height_blocks = (height + 7) / 8;
@@ -249,9 +255,8 @@ pub fn compute_aq_strength_map_impl(
     }
 
     // 3. PerBlockModulations
-    // C++ uses UNSCALED input (0-255), not input_scaled (0-1)
-    // y_quant_01 is related to quality setting (testdata shows 3.0)
-    let y_quant_01 = 1.0 / distance; // Rough approximation
+    // C++ uses y_quant_01 = quant_table[1] (first AC coefficient)
+    // This is passed in directly from the quant table, NOT computed from distance
     per_block_modulations_scalar(
         y_quant_01,
         y_plane, // Use original unscaled input, not input_scaled
@@ -806,7 +811,7 @@ mod tests {
     #[test]
     fn test_compute_returns_uniform() {
         let plane = vec![128.0f32; 64 * 64];
-        let map = compute_aq_strength_map(&plane, 64, 64, 1.0);
+        let map = compute_aq_strength_map(&plane, 64, 64, 1);
         assert_eq!(map.width_blocks, 8);
         assert_eq!(map.height_blocks, 8);
 

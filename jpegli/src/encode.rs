@@ -1705,8 +1705,9 @@ impl Encoder {
         let y_plane_f32: Vec<f32> = y_plane.iter().map(|&v| v as f32).collect();
 
         // Compute per-block adaptive quantization strength from Y plane
-        // Use input distance for AQ computation (same as C++)
-        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, input_distance);
+        // C++ uses y_quant_01 = quant_table[1] for dampen calculation
+        let y_quant_01 = y_quant.values[1];
+        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
@@ -1793,8 +1794,9 @@ impl Encoder {
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
         // Compute per-block adaptive quantization strength from Y plane
-        // Use input distance for AQ computation (same as C++)
-        let aq_map = compute_aq_strength_map(y_plane, width, height, input_distance);
+        // C++ uses y_quant_01 = quant_table[1] for dampen calculation
+        let y_quant_01 = y_quant.values[1];
+        let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
 
         let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
