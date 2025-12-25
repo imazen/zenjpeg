@@ -50,6 +50,7 @@ mod quant;
 
 // Advanced features
 pub mod adaptive_quant;
+mod progressive;
 mod trellis;
 
 // Strategy selection

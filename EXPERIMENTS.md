@@ -197,7 +197,7 @@ Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps rem
 | DCT Implementation | Float reference | Integer Loeffler + SIMD | +5-8% |
 | Quantization | Float-based | Integer-based | +3-5% |
 | Trellis | AC only | Full with cross-block DC | +5-10% |
-| Progressive Mode | Not implemented | Full support | +10-15% |
+| Progressive Mode | Implemented (minimal) | Full support | +10-15% |
 | Huffman Optimization | Basic | Advanced with scan opt | +5-10% |
 | Deringing | None | Enabled by default | +2-3% |
 
@@ -206,7 +206,7 @@ Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps rem
 **Priority fixes:**
 1. ~~Port integer Loeffler DCT from mozjpeg-rs~~ DONE
 2. ~~Implement cross-block DC trellis~~ DONE
-3. Add progressive mode support
+3. ~~Add progressive mode support~~ DONE
 4. Implement scan optimization
 
 ### 2025-12-25: Quality Sweep Results
@@ -252,6 +252,40 @@ Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps rem
 
 **Note**: These results show combined AC + DC trellis vs no trellis. DC trellis
 provides ~2-5% additional savings on top of AC trellis alone.
+
+### 2025-12-25: Progressive Mode Implementation
+
+**Implementation**: Minimal progressive scan script is now integrated.
+
+**How it works**:
+1. Uses SOF2 marker instead of SOF0 for progressive DCT
+2. Generates scan script with `generate_minimal_progressive_scans()`
+3. DC scan encodes all components interleaved
+4. AC scans encode each component separately (1-63)
+5. Uses ProgressiveEncoder for DC/AC first scans
+
+**Key code locations**:
+- `src/progressive.rs`: ScanInfo type and scan generation functions
+- `src/entropy.rs`: ProgressiveEncoder for DC/AC encoding
+- `src/encode.rs`: `encode_progressive_ycbcr()` and `encode_progressive_gray()`
+
+**Scan script (minimal progressive)**:
+1. DC scan: All 3 components, Ss=0, Se=0, Ah=0, Al=0
+2. AC scan Y: Component 0, Ss=1, Se=63, Ah=0, Al=0
+3. AC scan Cb: Component 1, Ss=1, Se=63, Ah=0, Al=0
+4. AC scan Cr: Component 2, Ss=1, Se=63, Ah=0, Al=0
+
+**Usage**:
+```rust
+let encoder = Encoder::new()
+    .quality(Quality::Standard(75))
+    .progressive(true);
+```
+
+**Next steps**:
+- Implement successive approximation for better progressive loading
+- Add scan optimization (custom scan scripts)
+- Measure compression impact vs baseline
 
 ---
 

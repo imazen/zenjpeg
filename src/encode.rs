@@ -7,9 +7,10 @@ use crate::adaptive_quant::compute_aq_field;
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
 use crate::consts::DCTSIZE2;
 use crate::dct::{forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_trellis, quantize_block_int};
-use crate::entropy::{EntropyEncoder, SymbolCounter};
+use crate::entropy::{EntropyEncoder, ProgressiveEncoder, SymbolCounter};
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
+use crate::progressive::{generate_minimal_progressive_scans, ScanInfo};
 use crate::quant::QuantTableSet;
 use crate::strategy::{select_strategy, SelectedStrategy};
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
@@ -397,6 +398,9 @@ impl Encoder {
         let ac_dtbl = DerivedTable::from_huff_table(&ac_htbl, false)
             .expect("Failed to build AC derived table");
 
+        // Check if progressive mode is enabled
+        let use_progressive = self.progressive.unwrap_or(false);
+
         // Build output buffer with JPEG markers
         let mut output = Vec::with_capacity(width * height);
 
@@ -410,23 +414,42 @@ impl Encoder {
         self.write_dqt(&mut output, &quant_tables.luma);
         self.write_dqt(&mut output, &quant_tables.chroma);
 
-        // SOF0 marker (baseline DCT)
-        self.write_sof0(&mut output, width as u16, height as u16);
+        if use_progressive {
+            // SOF2 marker (progressive DCT)
+            self.write_sof2(&mut output, width as u16, height as u16);
 
-        // DHT markers
-        self.write_dht(&mut output, 0x00, &dc_htbl); // DC table 0
-        self.write_dht(&mut output, 0x10, &ac_htbl); // AC table 0
+            // DHT markers
+            self.write_dht(&mut output, 0x00, &dc_htbl); // DC table 0
+            self.write_dht(&mut output, 0x10, &ac_htbl); // AC table 0
 
-        // SOS marker
-        self.write_sos(&mut output);
+            // Encode progressive scans
+            self.encode_progressive_ycbcr(
+                &mut output,
+                &y_coeffs,
+                &cb_coeffs,
+                &cr_coeffs,
+                &dc_htbl,
+                &ac_htbl,
+            );
+        } else {
+            // SOF0 marker (baseline DCT)
+            self.write_sof0(&mut output, width as u16, height as u16);
 
-        // Encode blocks with derived tables
-        let mut encoder = EntropyEncoder::new(dc_dtbl, ac_dtbl);
-        for (i, coeffs) in all_coeffs.iter().enumerate() {
-            let component = i % 3;
-            encoder.encode_block(coeffs, component);
+            // DHT markers
+            self.write_dht(&mut output, 0x00, &dc_htbl); // DC table 0
+            self.write_dht(&mut output, 0x10, &ac_htbl); // AC table 0
+
+            // SOS marker
+            self.write_sos(&mut output);
+
+            // Encode blocks with derived tables
+            let mut encoder = EntropyEncoder::new(dc_dtbl, ac_dtbl);
+            for (i, coeffs) in all_coeffs.iter().enumerate() {
+                let component = i % 3;
+                encoder.encode_block(coeffs, component);
+            }
+            output.extend_from_slice(&encoder.finish());
         }
-        output.extend_from_slice(&encoder.finish());
 
         // EOI marker
         output.extend_from_slice(&[0xFF, 0xD9]);
@@ -532,23 +555,34 @@ impl Encoder {
         let ac_dtbl = DerivedTable::from_huff_table(&ac_htbl, false)
             .expect("Failed to build AC derived table");
 
+        // Check if progressive mode is enabled
+        let use_progressive = self.progressive.unwrap_or(false);
+
         // Build output
         let mut output = Vec::with_capacity(width * height);
 
         output.extend_from_slice(&[0xFF, 0xD8]); // SOI
         self.write_app0(&mut output);
         self.write_dqt(&mut output, &quant_table);
-        self.write_sof0_gray(&mut output, width as u16, height as u16);
-        self.write_dht(&mut output, 0x00, &dc_htbl); // DC table 0
-        self.write_dht(&mut output, 0x10, &ac_htbl); // AC table 0
-        self.write_sos_gray(&mut output);
 
-        // Encode all blocks
-        let mut encoder = EntropyEncoder::new(dc_dtbl, ac_dtbl);
-        for coeffs in &all_coeffs {
-            encoder.encode_block(coeffs, 0);
+        if use_progressive {
+            self.write_sof2_gray(&mut output, width as u16, height as u16);
+            self.write_dht(&mut output, 0x00, &dc_htbl);
+            self.write_dht(&mut output, 0x10, &ac_htbl);
+            self.encode_progressive_gray(&mut output, &all_coeffs, &dc_htbl, &ac_htbl);
+        } else {
+            self.write_sof0_gray(&mut output, width as u16, height as u16);
+            self.write_dht(&mut output, 0x00, &dc_htbl);
+            self.write_dht(&mut output, 0x10, &ac_htbl);
+            self.write_sos_gray(&mut output);
+
+            // Encode all blocks
+            let mut encoder = EntropyEncoder::new(dc_dtbl, ac_dtbl);
+            for coeffs in &all_coeffs {
+                encoder.encode_block(coeffs, 0);
+            }
+            output.extend_from_slice(&encoder.finish());
         }
-        output.extend_from_slice(&encoder.finish());
 
         output.extend_from_slice(&[0xFF, 0xD9]); // EOI
 
@@ -653,6 +687,67 @@ impl Encoder {
         output.push(0x00); // Ah/Al
     }
 
+    /// Write SOF2 marker (progressive DCT, 3 components)
+    fn write_sof2(&self, output: &mut Vec<u8>, width: u16, height: u16) {
+        output.extend_from_slice(&[0xFF, 0xC2]); // SOF2
+        output.extend_from_slice(&[0x00, 0x11]); // Length = 17
+        output.push(0x08); // 8-bit precision
+        output.extend_from_slice(&height.to_be_bytes());
+        output.extend_from_slice(&width.to_be_bytes());
+        output.push(0x03); // 3 components
+
+        // Y component
+        output.push(0x01); // Component ID
+        output.push(0x11); // Sampling factors (1x1)
+        output.push(0x00); // Quant table 0
+
+        // Cb component
+        output.push(0x02);
+        output.push(0x11);
+        output.push(0x01);
+
+        // Cr component
+        output.push(0x03);
+        output.push(0x11);
+        output.push(0x01);
+    }
+
+    /// Write SOF2 marker (progressive DCT, 1 component for grayscale)
+    fn write_sof2_gray(&self, output: &mut Vec<u8>, width: u16, height: u16) {
+        output.extend_from_slice(&[0xFF, 0xC2]); // SOF2
+        output.extend_from_slice(&[0x00, 0x0B]); // Length = 11
+        output.push(0x08); // 8-bit precision
+        output.extend_from_slice(&height.to_be_bytes());
+        output.extend_from_slice(&width.to_be_bytes());
+        output.push(0x01); // 1 component
+
+        output.push(0x01); // Component ID
+        output.push(0x11); // Sampling factors
+        output.push(0x00); // Quant table 0
+    }
+
+    /// Write SOS marker for a progressive scan
+    fn write_sos_progressive(&self, output: &mut Vec<u8>, scan: &ScanInfo) {
+        let num_comps = scan.comps_in_scan as usize;
+        let length = 6 + 2 * num_comps;
+
+        output.extend_from_slice(&[0xFF, 0xDA]); // SOS
+        output.extend_from_slice(&(length as u16).to_be_bytes());
+        output.push(scan.comps_in_scan);
+
+        // Write component selectors and table assignments
+        for i in 0..num_comps {
+            let comp_id = scan.component_index[i] + 1; // JPEG component IDs start at 1
+            output.push(comp_id);
+            // For simplicity, use table 0 for all (DC table 0, AC table 0)
+            output.push(0x00);
+        }
+
+        output.push(scan.ss); // Spectral selection start
+        output.push(scan.se); // Spectral selection end
+        output.push((scan.ah << 4) | scan.al); // Successive approximation
+    }
+
     /// Quantize a single 8x8 block (DCT + quantization)
     ///
     /// Uses integer Loeffler DCT for better precision and compression.
@@ -721,6 +816,109 @@ impl Encoder {
         };
 
         (quantized, raw_dct)
+    }
+}
+
+impl Encoder {
+    /// Encode YCbCr coefficients using progressive mode.
+    ///
+    /// This writes multiple scans with progressive encoding:
+    /// - DC scan for all components
+    /// - AC scans for each component
+    fn encode_progressive_ycbcr(
+        &self,
+        output: &mut Vec<u8>,
+        y_coeffs: &[[i16; 64]],
+        cb_coeffs: &[[i16; 64]],
+        cr_coeffs: &[[i16; 64]],
+        dc_htbl: &HuffTable,
+        ac_htbl: &HuffTable,
+    ) {
+        let scans = generate_minimal_progressive_scans(3);
+
+        // Convert to derived tables
+        let dc_dtbl = DerivedTable::from_huff_table(dc_htbl, true)
+            .expect("Failed to build DC derived table");
+        let ac_dtbl = DerivedTable::from_huff_table(ac_htbl, false)
+            .expect("Failed to build AC derived table");
+
+        for scan in &scans {
+            // Write SOS marker for this scan
+            self.write_sos_progressive(output, scan);
+
+            // Create encoder for this scan
+            let mut encoder = ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
+
+            // Get coefficients for the components in this scan
+            let num_blocks = y_coeffs.len();
+
+            if scan.is_dc_scan() {
+                // DC scan: encode DC for all components
+                for block_idx in 0..num_blocks {
+                    for comp_idx in 0..scan.comps_in_scan as usize {
+                        let coeffs = match scan.component_index[comp_idx] {
+                            0 => &y_coeffs[block_idx],
+                            1 => &cb_coeffs[block_idx],
+                            2 => &cr_coeffs[block_idx],
+                            _ => continue,
+                        };
+                        encoder.encode_dc_first(coeffs, comp_idx, scan.al);
+                    }
+                }
+            } else {
+                // AC scan: encode AC for single component
+                let comp_idx = scan.component_index[0] as usize;
+                let coeffs_slice = match comp_idx {
+                    0 => y_coeffs,
+                    1 => cb_coeffs,
+                    2 => cr_coeffs,
+                    _ => y_coeffs,
+                };
+
+                for coeffs in coeffs_slice {
+                    encoder.encode_ac_first(coeffs, scan.ss, scan.se, scan.al);
+                }
+            }
+
+            // Finish scan and append data
+            encoder.finish_scan();
+            output.extend_from_slice(&encoder.finish());
+        }
+    }
+
+    /// Encode grayscale coefficients using progressive mode.
+    fn encode_progressive_gray(
+        &self,
+        output: &mut Vec<u8>,
+        coeffs: &[[i16; 64]],
+        dc_htbl: &HuffTable,
+        ac_htbl: &HuffTable,
+    ) {
+        let scans = generate_minimal_progressive_scans(1);
+
+        let dc_dtbl = DerivedTable::from_huff_table(dc_htbl, true)
+            .expect("Failed to build DC derived table");
+        let ac_dtbl = DerivedTable::from_huff_table(ac_htbl, false)
+            .expect("Failed to build AC derived table");
+
+        for scan in &scans {
+            self.write_sos_progressive(output, scan);
+
+            let mut encoder = ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
+
+            if scan.is_dc_scan() {
+                for block_coeffs in coeffs {
+                    encoder.encode_dc_first(block_coeffs, 0, scan.al);
+                }
+            } else {
+                for block_coeffs in coeffs {
+                    encoder.encode_ac_first(block_coeffs, scan.ss, scan.se, scan.al);
+                }
+            }
+
+            encoder.finish_scan();
+            output.extend_from_slice(&encoder.finish());
+        }
     }
 }
 

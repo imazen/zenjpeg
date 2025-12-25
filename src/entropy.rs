@@ -260,6 +260,430 @@ impl SymbolCounter {
     }
 }
 
+// =============================================================================
+// Progressive Entropy Encoder
+// =============================================================================
+
+/// Progressive entropy encoder for multi-scan JPEG encoding.
+///
+/// Progressive JPEG uses:
+/// - DC scans: encode DC coefficients with optional successive approximation
+/// - AC scans: encode AC coefficients in spectral bands (Ss..Se) for one component
+/// - Refinement scans: encode additional bits of previously-coded coefficients
+pub struct ProgressiveEncoder {
+    writer: BitWriter,
+    dc_table: DerivedTable,
+    ac_table: DerivedTable,
+    /// Last DC values for each component
+    last_dc: [i16; 4],
+    /// End-of-block run count (for EOBRUN encoding)
+    eobrun: u16,
+    /// Whether to allow extended EOBRUN (requires optimized Huffman tables)
+    allow_eobrun: bool,
+}
+
+impl ProgressiveEncoder {
+    /// Create a new progressive encoder.
+    pub fn new(dc_table: DerivedTable, ac_table: DerivedTable) -> Self {
+        Self {
+            writer: BitWriter::new(),
+            dc_table,
+            ac_table,
+            last_dc: [0; 4],
+            eobrun: 0,
+            allow_eobrun: true,
+        }
+    }
+
+    /// Create a progressive encoder for use with standard Huffman tables.
+    ///
+    /// Standard tables only include EOB (0x00), not extended EOBRUN symbols.
+    pub fn new_standard_tables(dc_table: DerivedTable, ac_table: DerivedTable) -> Self {
+        Self {
+            writer: BitWriter::new(),
+            dc_table,
+            ac_table,
+            last_dc: [0; 4],
+            eobrun: 0,
+            allow_eobrun: false,
+        }
+    }
+
+    /// Reset state for a new scan.
+    pub fn reset(&mut self) {
+        self.last_dc = [0; 4];
+        self.eobrun = 0;
+    }
+
+    /// Encode a DC first scan (Ah=0).
+    ///
+    /// # Arguments
+    /// * `coefficients` - DCT coefficients in natural order
+    /// * `component` - Component index for DC prediction
+    /// * `al` - Point transform (successive approximation low bit)
+    pub fn encode_dc_first(&mut self, coefficients: &[i16; 64], component: usize, al: u8) {
+        // Get DC coefficient with point transform
+        let dc = coefficients[0] >> al;
+
+        // Calculate difference from last DC
+        let diff = dc.wrapping_sub(self.last_dc[component]);
+        self.last_dc[component] = dc;
+
+        // Encode difference
+        let nbits = compute_category(diff);
+        let (code, size) = self.dc_table.get_code(nbits);
+        self.writer.write_bits(code, size);
+
+        // Emit the value bits
+        if nbits > 0 {
+            let value = if diff < 0 {
+                diff + (1 << nbits) - 1
+            } else {
+                diff
+            };
+            self.writer.write_bits(value as u32, nbits);
+        }
+    }
+
+    /// Encode a DC refinement scan (Ah != 0).
+    ///
+    /// Just outputs a single bit for each block.
+    pub fn encode_dc_refine(&mut self, coefficients: &[i16; 64], al: u8) {
+        // Output the next bit of DC coefficient
+        let bit = ((coefficients[0] >> al) & 1) as u32;
+        self.writer.write_bits(bit, 1);
+    }
+
+    /// Encode an AC first scan (Ah=0).
+    ///
+    /// # Arguments
+    /// * `coefficients` - DCT coefficients in natural order
+    /// * `ss` - Spectral selection start (1..63)
+    /// * `se` - Spectral selection end (1..63)
+    /// * `al` - Point transform (successive approximation low bit)
+    pub fn encode_ac_first(&mut self, coefficients: &[i16; 64], ss: u8, se: u8, al: u8) {
+        // Find last non-zero coefficient in this band
+        let mut k = se;
+        while k >= ss {
+            let nat_pos = ZIGZAG[k as usize];
+            if (coefficients[nat_pos] >> al) != 0 {
+                break;
+            }
+            if k == ss {
+                break;
+            }
+            k -= 1;
+        }
+        let kex = k;
+
+        let mut run = 0u32;
+
+        for k in ss..=se {
+            let nat_pos = ZIGZAG[k as usize];
+            let coef = coefficients[nat_pos] >> al;
+
+            if coef == 0 {
+                run += 1;
+                continue;
+            }
+
+            // Flush any pending EOBRUN
+            if self.eobrun > 0 {
+                self.flush_eobrun();
+            }
+
+            // Emit ZRL codes for runs of 16+ zeros
+            while run >= 16 {
+                let (code, size) = self.ac_table.get_code(0xF0);
+                self.writer.write_bits(code, size);
+                run -= 16;
+            }
+
+            // Calculate category (number of bits needed)
+            let nbits = compute_category(coef);
+
+            // Symbol = (run << 4) | nbits
+            let symbol = ((run as u8) << 4) | nbits;
+            let (code, size) = self.ac_table.get_code(symbol);
+            self.writer.write_bits(code, size);
+
+            // Emit value bits (sign bit first for negative)
+            if coef < 0 {
+                let value = coef + (1 << nbits) - 1;
+                self.writer.write_bits(value as u32, nbits);
+            } else {
+                self.writer.write_bits(coef as u32, nbits);
+            }
+
+            run = 0;
+
+            // Check if we've reached the last non-zero coefficient
+            if k == kex {
+                break;
+            }
+        }
+
+        // Emit EOB if we didn't encode all coefficients in the band
+        let last_nat_pos = ZIGZAG[se as usize];
+        if (coefficients[last_nat_pos] >> al) == 0 || kex < se {
+            self.eobrun += 1;
+            if !self.allow_eobrun || self.eobrun == 0x7FFF {
+                self.flush_eobrun();
+            }
+        }
+    }
+
+    /// Encode an AC refinement scan (Ah != 0).
+    ///
+    /// This is more complex because we need to:
+    /// 1. Output correction bits for previously non-zero coefficients
+    /// 2. Output new non-zero coefficients with their correction bits
+    pub fn encode_ac_refine(&mut self, coefficients: &[i16; 64], ss: u8, se: u8, al: u8) {
+        let mut run = 0u32;
+        let mut pending_bits: Vec<u32> = Vec::new();
+
+        for k in ss..=se {
+            let nat_pos = ZIGZAG[k as usize];
+            let coef = coefficients[nat_pos];
+            let abs_coef = coef.unsigned_abs();
+
+            // Check if this is a previously-coded non-zero coefficient
+            if (abs_coef >> al) > 1 {
+                // Already coded - just queue the refinement bit
+                pending_bits.push(((abs_coef >> al) & 1) as u32);
+            } else if (abs_coef >> al) == 1 {
+                // New non-zero coefficient
+                // Flush EOBRUN if needed
+                if self.eobrun > 0 {
+                    self.flush_eobrun();
+                    for &bit in &pending_bits {
+                        self.writer.write_bits(bit, 1);
+                    }
+                    pending_bits.clear();
+                }
+
+                // Emit ZRL for runs of 16
+                while run >= 16 {
+                    let (code, size) = self.ac_table.get_code(0xF0);
+                    self.writer.write_bits(code, size);
+                    for &bit in &pending_bits {
+                        self.writer.write_bits(bit, 1);
+                    }
+                    pending_bits.clear();
+                    run -= 16;
+                }
+
+                // Emit the coefficient
+                let symbol = ((run as u8) << 4) | 1;
+                let (code, size) = self.ac_table.get_code(symbol);
+                self.writer.write_bits(code, size);
+
+                // Sign bit (1 for positive, 0 for negative)
+                let sign_bit = if coef < 0 { 0u32 } else { 1u32 };
+                self.writer.write_bits(sign_bit, 1);
+
+                // Output pending correction bits
+                for &bit in &pending_bits {
+                    self.writer.write_bits(bit, 1);
+                }
+                pending_bits.clear();
+                run = 0;
+            } else {
+                // Zero coefficient - increment run
+                run += 1;
+            }
+        }
+
+        // Handle remaining run (EOB)
+        if run > 0 || !pending_bits.is_empty() {
+            self.eobrun += 1;
+            if !self.allow_eobrun || self.eobrun == 0x7FFF {
+                self.flush_eobrun();
+                for &bit in &pending_bits {
+                    self.writer.write_bits(bit, 1);
+                }
+            }
+        }
+    }
+
+    /// Flush the EOB run to the bitstream.
+    fn flush_eobrun(&mut self) {
+        if self.eobrun == 0 {
+            return;
+        }
+
+        // Calculate EOBn symbol (n = floor(log2(EOBRUN)))
+        // EOB0: EOBRUN=1 (nbits=0)
+        // EOB1: EOBRUN=2-3 (nbits=1, 1 extra bit)
+        // EOB2: EOBRUN=4-7 (nbits=2, 2 extra bits)
+        // etc.
+        let nbits = 15 - self.eobrun.leading_zeros() as u8;
+
+        // Symbol for EOBn is nbits << 4 (run=0)
+        let symbol = nbits << 4;
+        let (code, size) = self.ac_table.get_code(symbol);
+        self.writer.write_bits(code, size);
+
+        // Output additional bits for EOBRUN
+        if nbits > 0 {
+            let mask = (1u16 << nbits) - 1;
+            let extra = self.eobrun & mask;
+            self.writer.write_bits(extra as u32, nbits);
+        }
+
+        self.eobrun = 0;
+    }
+
+    /// Finish the current scan, flushing any pending EOBRUN.
+    pub fn finish_scan(&mut self) {
+        self.flush_eobrun();
+        self.writer.flush();
+    }
+
+    /// Finish encoding and return the encoded bytes.
+    pub fn finish(mut self) -> Vec<u8> {
+        self.flush_eobrun();
+        self.writer.into_bytes()
+    }
+}
+
+// =============================================================================
+// Progressive Symbol Counter (for Huffman optimization)
+// =============================================================================
+
+/// Count symbol frequencies for progressive JPEG scans.
+pub struct ProgressiveSymbolCounter {
+    /// Last DC value for each component
+    last_dc: [i16; 4],
+    /// Accumulated EOB run count
+    eobrun: u16,
+}
+
+impl Default for ProgressiveSymbolCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProgressiveSymbolCounter {
+    /// Create a new progressive symbol counter.
+    pub fn new() -> Self {
+        Self {
+            last_dc: [0; 4],
+            eobrun: 0,
+        }
+    }
+
+    /// Reset state for a new scan.
+    pub fn reset(&mut self) {
+        self.last_dc = [0; 4];
+        self.eobrun = 0;
+    }
+
+    /// Count DC symbols for a first scan (Ah=0).
+    pub fn count_dc_first(
+        &mut self,
+        coefficients: &[i16; 64],
+        component: usize,
+        al: u8,
+        dc_counter: &mut FrequencyCounter,
+    ) {
+        let dc = coefficients[0] >> al;
+        let diff = dc.wrapping_sub(self.last_dc[component]);
+        self.last_dc[component] = dc;
+
+        let nbits = compute_category(diff);
+        dc_counter.count(nbits);
+    }
+
+    /// Count AC symbols for a first scan (Ah=0).
+    pub fn count_ac_first(
+        &mut self,
+        coefficients: &[i16; 64],
+        ss: u8,
+        se: u8,
+        al: u8,
+        ac_counter: &mut FrequencyCounter,
+    ) {
+        // Find last non-zero coefficient in this band
+        let mut k = se;
+        while k >= ss {
+            let nat_pos = ZIGZAG[k as usize];
+            if (coefficients[nat_pos] >> al) != 0 {
+                break;
+            }
+            if k == ss {
+                break;
+            }
+            k -= 1;
+        }
+        let kex = k;
+
+        let mut run = 0u32;
+
+        for k in ss..=se {
+            let nat_pos = ZIGZAG[k as usize];
+            let coef = coefficients[nat_pos] >> al;
+
+            if coef == 0 {
+                run += 1;
+                continue;
+            }
+
+            // Flush any pending EOBRUN
+            if self.eobrun > 0 {
+                self.flush_eobrun_count(ac_counter);
+            }
+
+            // Count ZRL codes for runs of 16+ zeros
+            while run >= 16 {
+                ac_counter.count(0xF0);
+                run -= 16;
+            }
+
+            // Symbol = (run << 4) | nbits
+            let nbits = compute_category(coef);
+            let symbol = ((run as u8) << 4) | nbits;
+            ac_counter.count(symbol);
+
+            run = 0;
+
+            if k == kex {
+                break;
+            }
+        }
+
+        // Accumulate EOB
+        let last_nat_pos = ZIGZAG[se as usize];
+        if (coefficients[last_nat_pos] >> al) == 0 || kex < se {
+            self.eobrun += 1;
+            if self.eobrun == 0x7FFF {
+                self.flush_eobrun_count(ac_counter);
+            }
+        }
+    }
+
+    /// Flush and count the EOBRUN symbol.
+    fn flush_eobrun_count(&mut self, ac_counter: &mut FrequencyCounter) {
+        if self.eobrun == 0 {
+            return;
+        }
+
+        let nbits = 15 - self.eobrun.leading_zeros() as u8;
+        let symbol = nbits << 4;
+        ac_counter.count(symbol);
+
+        self.eobrun = 0;
+    }
+
+    /// Finish counting for a scan.
+    pub fn finish_scan(&mut self, ac_counter: Option<&mut FrequencyCounter>) {
+        if let Some(counter) = ac_counter {
+            self.flush_eobrun_count(counter);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
