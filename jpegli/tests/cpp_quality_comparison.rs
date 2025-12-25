@@ -74,7 +74,7 @@ fn test_cpp_quality_comparison() {
         "", "", "", "", "", ""
     );
 
-    for q in [3, 10, 30, 50, 70, 85, 95] {
+    for q in [3, 10, 30, 50, 70, 80, 85, 95] {
         // Rust encoding (progressive + optimized)
         let rust_jpeg = Encoder::new()
             .width(width)
