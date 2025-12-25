@@ -47,7 +47,7 @@ mod huffman;
 mod quant;
 
 // Advanced features
-mod adaptive_quant;
+pub mod adaptive_quant;
 mod trellis;
 
 // Strategy selection

@@ -40,7 +40,12 @@ criterion = "0.5"
 tempfile = "3"
 rgb = "0.8"
 imgref = "1.10"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+libc = "0.2"
+
+# C mozjpeg for comparison
+mozjpeg-sys = "2.0"
 
 # Benchmarks (uncomment when benches/ directory is created)
 # [[bench]]
