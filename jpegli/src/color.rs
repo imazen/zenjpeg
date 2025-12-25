@@ -7,11 +7,13 @@
 //!
 //! SIMD optimization is available via the `simd` feature (enabled by default).
 
+use crate::alloc::{checked_size, checked_size_2d, try_alloc_zeroed};
 use crate::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_CB_TO_B, YCBCR_CB_TO_G, YCBCR_CB_TO_R,
     YCBCR_CR_TO_B, YCBCR_CR_TO_G, YCBCR_CR_TO_R, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y, YCBCR_Y_TO_B, YCBCR_Y_TO_G, YCBCR_Y_TO_R,
 };
+use crate::error::Result;
 use crate::types::PixelFormat;
 
 #[cfg(feature = "simd")]
@@ -244,14 +246,23 @@ mod simd {
 /// Converts RGB to separate Y, Cb, Cr planes.
 ///
 /// Uses SIMD optimization when the `simd` feature is enabled.
+///
+/// # Errors
+///
+/// Returns an error if memory allocation fails.
 #[cfg(feature = "simd")]
-pub fn rgb_to_ycbcr_planes(rgb: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let num_pixels = width * height;
-    assert_eq!(rgb.len(), num_pixels * 3);
+pub fn rgb_to_ycbcr_planes(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let num_pixels = checked_size_2d(width, height)?;
+    let expected_len = checked_size(width, height, 3)?;
+    assert_eq!(rgb.len(), expected_len);
 
-    let mut y_plane = vec![0u8; num_pixels];
-    let mut cb_plane = vec![0u8; num_pixels];
-    let mut cr_plane = vec![0u8; num_pixels];
+    let mut y_plane = try_alloc_zeroed(num_pixels, "YCbCr Y plane")?;
+    let mut cb_plane = try_alloc_zeroed(num_pixels, "YCbCr Cb plane")?;
+    let mut cr_plane = try_alloc_zeroed(num_pixels, "YCbCr Cr plane")?;
 
     // Process 4 pixels at a time with SIMD
     let chunks = num_pixels / 4;
@@ -293,18 +304,27 @@ pub fn rgb_to_ycbcr_planes(rgb: &[u8], width: usize, height: usize) -> (Vec<u8>,
         cr_plane[i] = cr;
     }
 
-    (y_plane, cb_plane, cr_plane)
+    Ok((y_plane, cb_plane, cr_plane))
 }
 
 /// Converts RGB to separate Y, Cb, Cr planes (scalar version).
+///
+/// # Errors
+///
+/// Returns an error if memory allocation fails.
 #[cfg(not(feature = "simd"))]
-pub fn rgb_to_ycbcr_planes(rgb: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let num_pixels = width * height;
-    assert_eq!(rgb.len(), num_pixels * 3);
+pub fn rgb_to_ycbcr_planes(
+    rgb: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let num_pixels = checked_size_2d(width, height)?;
+    let expected_len = checked_size(width, height, 3)?;
+    assert_eq!(rgb.len(), expected_len);
 
-    let mut y_plane = vec![0u8; num_pixels];
-    let mut cb_plane = vec![0u8; num_pixels];
-    let mut cr_plane = vec![0u8; num_pixels];
+    let mut y_plane = try_alloc_zeroed(num_pixels, "YCbCr Y plane")?;
+    let mut cb_plane = try_alloc_zeroed(num_pixels, "YCbCr Cb plane")?;
+    let mut cr_plane = try_alloc_zeroed(num_pixels, "YCbCr Cr plane")?;
 
     for i in 0..num_pixels {
         let (y, cb, cr) = rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
@@ -313,12 +333,16 @@ pub fn rgb_to_ycbcr_planes(rgb: &[u8], width: usize, height: usize) -> (Vec<u8>,
         cr_plane[i] = cr;
     }
 
-    (y_plane, cb_plane, cr_plane)
+    Ok((y_plane, cb_plane, cr_plane))
 }
 
 /// Converts separate Y, Cb, Cr planes to RGB.
 ///
 /// Uses SIMD optimization when the `simd` feature is enabled.
+///
+/// # Errors
+///
+/// Returns an error if memory allocation fails.
 #[cfg(feature = "simd")]
 pub fn ycbcr_planes_to_rgb(
     y_plane: &[u8],
@@ -326,13 +350,14 @@ pub fn ycbcr_planes_to_rgb(
     cr_plane: &[u8],
     width: usize,
     height: usize,
-) -> Vec<u8> {
-    let num_pixels = width * height;
+) -> Result<Vec<u8>> {
+    let num_pixels = checked_size_2d(width, height)?;
     assert_eq!(y_plane.len(), num_pixels);
     assert_eq!(cb_plane.len(), num_pixels);
     assert_eq!(cr_plane.len(), num_pixels);
 
-    let mut rgb = vec![0u8; num_pixels * 3];
+    let rgb_size = checked_size(width, height, 3)?;
+    let mut rgb = try_alloc_zeroed(rgb_size, "RGB output buffer")?;
 
     // Process 4 pixels at a time with SIMD
     let chunks = num_pixels / 4;
@@ -384,10 +409,14 @@ pub fn ycbcr_planes_to_rgb(
         rgb[i * 3 + 2] = b;
     }
 
-    rgb
+    Ok(rgb)
 }
 
 /// Converts separate Y, Cb, Cr planes to RGB (scalar version).
+///
+/// # Errors
+///
+/// Returns an error if memory allocation fails.
 #[cfg(not(feature = "simd"))]
 pub fn ycbcr_planes_to_rgb(
     y_plane: &[u8],
@@ -395,13 +424,14 @@ pub fn ycbcr_planes_to_rgb(
     cr_plane: &[u8],
     width: usize,
     height: usize,
-) -> Vec<u8> {
-    let num_pixels = width * height;
+) -> Result<Vec<u8>> {
+    let num_pixels = checked_size_2d(width, height)?;
     assert_eq!(y_plane.len(), num_pixels);
     assert_eq!(cb_plane.len(), num_pixels);
     assert_eq!(cr_plane.len(), num_pixels);
 
-    let mut rgb = vec![0u8; num_pixels * 3];
+    let rgb_size = checked_size(width, height, 3)?;
+    let mut rgb = try_alloc_zeroed(rgb_size, "RGB output buffer")?;
 
     for i in 0..num_pixels {
         let (r, g, b) = ycbcr_to_rgb(y_plane[i], cb_plane[i], cr_plane[i]);
@@ -410,7 +440,7 @@ pub fn ycbcr_planes_to_rgb(
         rgb[i * 3 + 2] = b;
     }
 
-    rgb
+    Ok(rgb)
 }
 
 /// Converts BGR to RGB.
@@ -476,16 +506,20 @@ pub fn rgb_to_cmyk(r: u8, g: u8, b: u8) -> (u8, u8, u8, u8) {
 }
 
 /// Extracts a single channel from a pixel buffer.
-pub fn extract_channel(data: &[u8], format: PixelFormat, channel: usize) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns an error if memory allocation fails.
+pub fn extract_channel(data: &[u8], format: PixelFormat, channel: usize) -> Result<Vec<u8>> {
     let bpp = format.bytes_per_pixel();
     let num_pixels = data.len() / bpp;
-    let mut result = vec![0u8; num_pixels];
+    let mut result = try_alloc_zeroed(num_pixels, "channel extraction buffer")?;
 
     for i in 0..num_pixels {
         result[i] = data[i * bpp + channel];
     }
 
-    result
+    Ok(result)
 }
 
 #[cfg(test)]

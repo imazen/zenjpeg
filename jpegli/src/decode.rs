@@ -1033,9 +1033,9 @@ impl<'a> JpegParser<'a> {
                 }
                 Ok(rgb)
             }
-            (3, PixelFormat::Rgb) => Ok(color::ycbcr_planes_to_rgb(
+            (3, PixelFormat::Rgb) => color::ycbcr_planes_to_rgb(
                 &planes[0], &planes[1], &planes[2], width, height,
-            )),
+            ),
             _ => Err(Error::UnsupportedFeature {
                 feature: "unsupported color conversion",
             }),

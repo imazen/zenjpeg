@@ -162,6 +162,27 @@ pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[
     Ok(v)
 }
 
+/// Allocate a Vec filled with a specific value using fallible allocation.
+#[inline]
+pub fn try_alloc_filled<T: Clone>(
+    count: usize,
+    value: T,
+    context: &'static str,
+) -> Result<Vec<T>> {
+    let byte_size = count
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+    v.resize(count, value);
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +231,12 @@ mod tests {
         let v: Vec<u8> = try_with_capacity(1000, "test").unwrap();
         assert_eq!(v.capacity(), 1000);
         assert_eq!(v.len(), 0);
+    }
+
+    #[test]
+    fn test_try_alloc_filled() {
+        let v: Vec<u8> = try_alloc_filled(1000, 128u8, "test").unwrap();
+        assert_eq!(v.len(), 1000);
+        assert!(v.iter().all(|&x| x == 128));
     }
 }

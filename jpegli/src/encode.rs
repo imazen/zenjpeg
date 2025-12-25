@@ -3,6 +3,9 @@
 //! This module provides the main encoder interface for creating JPEG images.
 
 use crate::adaptive_quant::compute_aq_strength_map;
+use crate::alloc::{
+    checked_size_2d, try_alloc_filled, try_alloc_zeroed_f32, validate_dimensions, DEFAULT_MAX_PIXELS,
+};
 use crate::color;
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, JPEG_ZIGZAG_ORDER,
@@ -178,22 +181,8 @@ impl Encoder {
 
     /// Validates the configuration.
     fn validate(&self) -> Result<()> {
-        if self.config.width == 0 || self.config.height == 0 {
-            return Err(Error::InvalidDimensions {
-                width: self.config.width,
-                height: self.config.height,
-                reason: "dimensions cannot be zero",
-            });
-        }
-
-        if self.config.width > 65535 || self.config.height > 65535 {
-            return Err(Error::InvalidDimensions {
-                width: self.config.width,
-                height: self.config.height,
-                reason: "dimensions exceed maximum (65535)",
-            });
-        }
-
+        // Use validate_dimensions for comprehensive checks (zero, max dimension, max pixels)
+        validate_dimensions(self.config.width, self.config.height, DEFAULT_MAX_PIXELS)?;
         Ok(())
     }
 
@@ -201,9 +190,9 @@ impl Encoder {
     pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
         self.validate()?;
 
-        let expected_size = self.config.width as usize
-            * self.config.height as usize
-            * self.config.pixel_format.bytes_per_pixel();
+        // Calculate expected size with overflow checking
+        let expected_size = checked_size_2d(self.config.width as usize, self.config.height as usize)?;
+        let expected_size = checked_size_2d(expected_size, self.config.pixel_format.bytes_per_pixel())?;
 
         if data.len() != expected_size {
             return Err(Error::InvalidBufferSize {
@@ -301,7 +290,7 @@ impl Encoder {
         let (x_plane, y_plane, b_plane) = self.convert_to_scaled_xyb(data)?;
 
         // Downsample B channel (XYB subsamples B to 1/4 resolution)
-        let b_downsampled = self.downsample_2x2_f32(&b_plane, width, height);
+        let b_downsampled = self.downsample_2x2_f32(&b_plane, width, height)?;
         let b_width = (width + 1) / 2;
         let b_height = (height + 1) / 2;
 
@@ -396,11 +385,11 @@ impl Encoder {
     fn convert_to_scaled_xyb(&self, data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
-        let num_pixels = width * height;
+        let num_pixels = checked_size_2d(width, height)?;
 
-        let mut x_plane = vec![0.0f32; num_pixels];
-        let mut y_plane = vec![0.0f32; num_pixels];
-        let mut b_plane = vec![0.0f32; num_pixels];
+        let mut x_plane = try_alloc_zeroed_f32(num_pixels, "allocating XYB X plane")?;
+        let mut y_plane = try_alloc_zeroed_f32(num_pixels, "allocating XYB Y plane")?;
+        let mut b_plane = try_alloc_zeroed_f32(num_pixels, "allocating XYB B plane")?;
 
         match self.config.pixel_format {
             PixelFormat::Rgb => {
@@ -459,10 +448,11 @@ impl Encoder {
     }
 
     /// Downsamples a float plane by 2x2 (box filter averaging).
-    fn downsample_2x2_f32(&self, plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+    fn downsample_2x2_f32(&self, plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
         let new_width = (width + 1) / 2;
         let new_height = (height + 1) / 2;
-        let mut result = vec![0.0f32; new_width * new_height];
+        let result_size = checked_size_2d(new_width, new_height)?;
+        let mut result = try_alloc_zeroed_f32(result_size, "allocating downsampled plane")?;
 
         for y in 0..new_height {
             for x in 0..new_width {
@@ -480,7 +470,7 @@ impl Encoder {
             }
         }
 
-        result
+        Ok(result)
     }
 
     /// Encodes as progressive JPEG (level 2, matching cjpegli default).
@@ -1117,36 +1107,37 @@ impl Encoder {
     fn convert_to_ycbcr(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
+        let num_pixels = checked_size_2d(width, height)?;
 
         match self.config.pixel_format {
             PixelFormat::Gray => {
                 let y = data.to_vec();
-                let cb = vec![128u8; width * height];
-                let cr = vec![128u8; width * height];
+                let cb = try_alloc_filled(num_pixels, 128u8, "YCbCr Cb plane")?;
+                let cr = try_alloc_filled(num_pixels, 128u8, "YCbCr Cr plane")?;
                 Ok((y, cb, cr))
             }
-            PixelFormat::Rgb => Ok(color::rgb_to_ycbcr_planes(data, width, height)),
+            PixelFormat::Rgb => color::rgb_to_ycbcr_planes(data, width, height),
             PixelFormat::Rgba => {
                 // Strip alpha and convert
                 let rgb: Vec<u8> = data
                     .chunks(4)
                     .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
                     .collect();
-                Ok(color::rgb_to_ycbcr_planes(&rgb, width, height))
+                color::rgb_to_ycbcr_planes(&rgb, width, height)
             }
             PixelFormat::Bgr => {
                 let rgb: Vec<u8> = data
                     .chunks(3)
                     .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
                     .collect();
-                Ok(color::rgb_to_ycbcr_planes(&rgb, width, height))
+                color::rgb_to_ycbcr_planes(&rgb, width, height)
             }
             PixelFormat::Bgra => {
                 let rgb: Vec<u8> = data
                     .chunks(4)
                     .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
                     .collect();
-                Ok(color::rgb_to_ycbcr_planes(&rgb, width, height))
+                color::rgb_to_ycbcr_planes(&rgb, width, height)
             }
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
                 feature: "CMYK encoding",
@@ -1160,11 +1151,11 @@ impl Encoder {
     fn convert_to_ycbcr_f32(&self, data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
-        let num_pixels = width * height;
+        let num_pixels = checked_size_2d(width, height)?;
 
-        let mut y_plane = vec![0.0f32; num_pixels];
-        let mut cb_plane = vec![0.0f32; num_pixels];
-        let mut cr_plane = vec![0.0f32; num_pixels];
+        let mut y_plane = try_alloc_zeroed_f32(num_pixels, "YCbCr Y plane f32")?;
+        let mut cb_plane = try_alloc_zeroed_f32(num_pixels, "YCbCr Cb plane f32")?;
+        let mut cr_plane = try_alloc_zeroed_f32(num_pixels, "YCbCr Cr plane f32")?;
 
         match self.config.pixel_format {
             PixelFormat::Gray => {
