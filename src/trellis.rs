@@ -75,10 +75,28 @@ impl TrellisConfig {
 ///
 /// This is the core rate-distortion optimization algorithm matching mozjpeg.
 ///
+/// # ⚠️ CRITICAL: DCT SCALING REQUIREMENT ⚠️
+///
+/// **The `src` coefficients MUST be scaled by 8!**
+///
+/// This function multiplies `qtable` by 8 internally (matching mozjpeg's integer
+/// optimization). If you pass unscaled DCT coefficients, you will get 8x
+/// over-quantization and catastrophically bad quality (DSSIM 0.4 instead of <0.01).
+///
+/// **Correct usage:**
+/// ```ignore
+/// // Scale DCT by 8 before calling trellis
+/// let mut dct_scaled = [0i32; 64];
+/// for i in 0..64 {
+///     dct_scaled[i] = (dct[i] * 8.0).round() as i32;
+/// }
+/// trellis_quantize_block(&dct_scaled, &mut quantized, ...);
+/// ```
+///
 /// # Arguments
-/// * `src` - Raw DCT coefficients (scaled by 8, before any division)
+/// * `src` - DCT coefficients **SCALED BY 8** (not raw DCT values!)
 /// * `quantized` - Output buffer for quantized coefficients
-/// * `qtable` - Quantization table values
+/// * `qtable` - Quantization table values (NOT scaled - function handles this)
 /// * `ac_table` - Derived Huffman table for AC coefficients (for rate estimation)
 /// * `config` - Trellis configuration
 #[allow(clippy::needless_range_loop)]

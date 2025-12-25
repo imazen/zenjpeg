@@ -11,9 +11,16 @@ use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
 use crate::quant::QuantTableSet;
 use crate::strategy::{select_strategy, SelectedStrategy};
-use crate::trellis::trellis_quantize_block;
+use crate::trellis::{trellis_quantize_block, TrellisConfig};
 use crate::types::{EncodingStrategy, PixelFormat, Quality, Subsampling};
 use crate::Result;
+
+/// Standard AC luma derived table for trellis rate estimation.
+/// Created once and reused - mozjpeg uses standard tables for trellis.
+fn get_std_ac_derived() -> DerivedTable {
+    let htbl = std_ac_luma();
+    DerivedTable::from_huff_table(&htbl, false).expect("Standard AC table should be valid")
+}
 
 /// JPEG encoder with configurable quality and encoding strategy
 #[derive(Clone)]
@@ -185,6 +192,10 @@ impl Encoder {
         let q = self.quality.value() as u8;
         let quant_tables = QuantTableSet::standard(q);
 
+        // Create standard AC derived table for trellis rate estimation
+        // mozjpeg uses standard tables for this - they work well enough
+        let ac_derived = get_std_ac_derived();
+
         // Compute adaptive quantization field if enabled
         let aq_field = if strategy.adaptive_quant.enabled {
             compute_aq_field(y_plane, width, height, &strategy.adaptive_quant)
@@ -208,19 +219,30 @@ impl Encoder {
                     &quant_tables.luma.values,
                     aq_field.get(bx, by),
                     strategy,
+                    &ac_derived,
                 );
                 all_coeffs.push(y_coeffs);
 
                 // Cb block
                 let cb_block = extract_block(cb_plane, width, height, bx, by);
-                let cb_coeffs =
-                    self.quantize_block_impl(&cb_block, &quant_tables.chroma.values, 1.0, strategy);
+                let cb_coeffs = self.quantize_block_impl(
+                    &cb_block,
+                    &quant_tables.chroma.values,
+                    1.0,
+                    strategy,
+                    &ac_derived,
+                );
                 all_coeffs.push(cb_coeffs);
 
                 // Cr block
                 let cr_block = extract_block(cr_plane, width, height, bx, by);
-                let cr_coeffs =
-                    self.quantize_block_impl(&cr_block, &quant_tables.chroma.values, 1.0, strategy);
+                let cr_coeffs = self.quantize_block_impl(
+                    &cr_block,
+                    &quant_tables.chroma.values,
+                    1.0,
+                    strategy,
+                    &ac_derived,
+                );
                 all_coeffs.push(cr_coeffs);
             }
         }
@@ -316,6 +338,9 @@ impl Encoder {
         let q = self.quality.value() as u8;
         let quant_table = crate::quant::QuantTable::luma_standard(q);
 
+        // Create standard AC derived table for trellis rate estimation
+        let ac_derived = get_std_ac_derived();
+
         let width_blocks = (width + 7) / 8;
         let height_blocks = (height + 7) / 8;
         let total_blocks = width_blocks * height_blocks;
@@ -325,7 +350,8 @@ impl Encoder {
         for by in 0..height_blocks {
             for bx in 0..width_blocks {
                 let block = extract_block(y_plane, width, height, bx, by);
-                let coeffs = self.quantize_block_impl(&block, &quant_table.values, 1.0, strategy);
+                let coeffs =
+                    self.quantize_block_impl(&block, &quant_table.values, 1.0, strategy, &ac_derived);
                 all_coeffs.push(coeffs);
             }
         }
@@ -481,6 +507,7 @@ impl Encoder {
         quant: &[u16; 64],
         aq_mult: f32,
         strategy: &SelectedStrategy,
+        ac_derived: &DerivedTable,
     ) -> [i16; 64] {
         // Apply AQ to quantization table
         let effective_quant = if aq_mult != 1.0 {
@@ -494,13 +521,26 @@ impl Encoder {
         let dct = forward_dct_8x8(&shifted);
 
         // Quantize (with optional trellis)
-        // Note: trellis requires a DerivedTable for rate estimation
-        // For now, use simple quantization until we wire up the tables properly
         if strategy.trellis.ac_enabled {
-            // TODO: Wire up trellis with proper Huffman table for rate estimation
-            // For now, fall back to simple quantization
-            // trellis_quantize_block requires DerivedTable which we don't have here
-            quantize_block(&dct, &effective_quant)
+            // Use trellis quantization with standard table for rate estimation
+            // This is what mozjpeg does - standard tables work well enough
+            let mut quantized = [0i16; 64];
+
+            // Convert DCT to i32 for trellis, scaled by 8
+            // Trellis expects DCT values scaled by 8 (multiplies qtable by 8 internally)
+            let mut dct_scaled = [0i32; 64];
+            for i in 0..64 {
+                dct_scaled[i] = (dct[i] * 8.0).round() as i32;
+            }
+
+            trellis_quantize_block(
+                &dct_scaled,
+                &mut quantized,
+                &effective_quant,
+                ac_derived,
+                &strategy.trellis,
+            );
+            quantized
         } else {
             quantize_block(&dct, &effective_quant)
         }

@@ -212,11 +212,69 @@ else:
 
 ---
 
+## Critical Implementation Notes
+
+### The 8x DCT Scaling Factor (CRITICAL - READ THIS)
+
+**Date**: 2025-12-25
+
+**Problem**: Trellis quantization produces catastrophically bad quality (DSSIM 0.42 instead of <0.01).
+
+**Root Cause**: mozjpeg's trellis expects DCT coefficients "scaled by 8". This means:
+
+```
+mozjpeg trellis formula:
+  q = 8 * qtable[z]           // Quantizer is multiplied by 8
+  qval = (dct_coeff + q/2) / q  // Division by 8*qtable
+```
+
+If you pass unscaled DCT coefficients, you get:
+- Effective quantization = DCT / (8 * qtable)
+- This is 8x stronger than intended!
+- Results in ~8x over-quantization, destroying image quality
+
+**Solution**: Scale DCT by 8 before passing to trellis:
+
+```rust
+// CORRECT - scale DCT by 8 for trellis
+for i in 0..64 {
+    dct_scaled[i] = (dct[i] * 8.0).round() as i32;
+}
+trellis_quantize_block(&dct_scaled, ...);
+```
+
+**Why mozjpeg does this**: It's an integer optimization. By pre-scaling DCT values and using
+integer arithmetic throughout, mozjpeg avoids floating-point division in the inner loop.
+The `8 * qtable` in the formula exactly cancels out the 8x scaling of the DCT.
+
+**Symptoms if you get this wrong**:
+- DSSIM of 0.4+ instead of <0.01 at Q70
+- Files that are way too small (over-compressed)
+- Images that look terrible but technically decode
+- BOTH trellis and non-trellis paths produce identical bad output (because the
+  8x is baked into the quant formula, not the table)
+
+**How to verify you have it right**:
+1. Encode a test image at Q70 with trellis enabled
+2. DSSIM should be < 0.05 (ideally < 0.01)
+3. If DSSIM > 0.1, you probably have the scaling wrong
+
+---
+
 ## Red Herrings & Failed Approaches
 
-### [Date] - Description
+### 2025-12-25 - Initial trellis integration used wrong DCT scale
 
-(Space for documenting things that didn't work and why)
+**Hypothesis**: Just convert f32 DCT to i32 and pass to trellis.
+
+**What we tried**: `dct_i32[i] = dct[i] as i32`
+
+**Result**: DSSIM of 0.42 at Q70 (catastrophic quality loss)
+
+**Root cause**: mozjpeg trellis expects DCT * 8. See "The 8x DCT Scaling Factor" above.
+
+**Lesson**: When porting code that uses fixed-point arithmetic, ALWAYS check the scaling
+factors. Comments like "scaled by 8" are CRITICAL implementation details, not noise.
 
 ---
 
