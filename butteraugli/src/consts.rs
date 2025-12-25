@@ -137,11 +137,11 @@ pub const SUPPRESS_S: f64 = 0.653020556257;
 // Scoring Constants
 // ============================================================================
 
-/// Normalization hack for intensity target.
-pub const INTENSITY_TARGET_NORMALIZATION_HACK: f32 = 0.790_799_17; // ln(80) / ln(255)
+/// Normalization factor for intensity target: ln(80) / ln(255).
+pub const INTENSITY_TARGET_NORMALIZATION: f32 = 0.790_799_17;
 
 /// Internal good quality threshold.
-pub const INTERNAL_GOOD_QUALITY_THRESHOLD: f32 = 17.83 * INTENSITY_TARGET_NORMALIZATION_HACK;
+pub const INTERNAL_GOOD_QUALITY_THRESHOLD: f32 = 17.83 * INTENSITY_TARGET_NORMALIZATION;
 
 /// Global scale factor.
 pub const GLOBAL_SCALE: f32 = 1.0 / INTERNAL_GOOD_QUALITY_THRESHOLD;

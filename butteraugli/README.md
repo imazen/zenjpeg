@@ -97,7 +97,6 @@ let class = butteraugli_fuzzy_class(1.5);  // ~1.25
 ## Features
 
 - **`simd`** (default): Enable SIMD optimizations via the `wide` crate
-- **`cpp-parity`**: Enable C++ comparison tests (development only, requires `jpegli-sys`)
 
 ## Performance
 

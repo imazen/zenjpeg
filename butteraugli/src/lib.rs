@@ -118,7 +118,6 @@ pub mod reference_data;
 
 // Re-export main types and functions
 pub use crate::image::{Image3F, ImageF};
-pub use crate::psycho::PsychoImage;
 
 /// Butteraugli comparison parameters.
 #[derive(Debug, Clone)]
