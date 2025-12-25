@@ -1,0 +1,51 @@
+[package]
+name = "zenjpeg"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+license = "BSD-3-Clause"
+description = "High-quality JPEG encoder combining mozjpeg and jpegli approaches for Pareto-optimal compression"
+keywords = ["jpeg", "encoder", "compression", "image", "perceptual"]
+categories = ["encoding", "multimedia::images"]
+
+[features]
+default = []
+simd = []  # Enable SIMD intrinsics
+
+[dependencies]
+# Core utilities
+bytemuck = { version = "1.14", features = ["derive"] }
+wide = "0.7"
+
+# Reference implementations (for comparison and fallback)
+mozjpeg-oxide = { path = "../mozjpeg-rs" }
+jpegli = { path = "../jpegli/jpegli-rs/jpegli" }
+
+[dev-dependencies]
+# Image I/O
+png = "0.17"
+jpeg-decoder = "0.3"
+
+# Quality metrics
+dssim = "3.2"
+ssimulacra2 = "0.5"
+butteraugli-oxide = { path = "../jpegli/jpegli-rs/butteraugli" }
+
+# Codec evaluation
+codec-eval = { path = "../codec-eval" }
+
+# Testing
+proptest = "1.4"
+criterion = "0.5"
+tempfile = "3"
+rgb = "0.8"
+imgref = "1.10"
+
+# Benchmarks (uncomment when benches/ directory is created)
+# [[bench]]
+# name = "encode"
+# harness = false
+#
+# [[bench]]
+# name = "pareto"
+# harness = false

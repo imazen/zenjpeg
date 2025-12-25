@@ -1,0 +1,72 @@
+//! # zenjpeg - High-Quality JPEG Encoder
+//!
+//! zenjpeg combines the best techniques from mozjpeg and jpegli to achieve
+//! Pareto-optimal compression across both low and high quality settings.
+//!
+//! ## Key Features
+//!
+//! - **Adaptive quality selection**: Automatically chooses the best encoding
+//!   strategy based on target quality
+//! - **Trellis quantization** (from mozjpeg): Rate-distortion optimized
+//!   coefficient selection, especially effective at low quality
+//! - **Adaptive quantization** (from jpegli): Content-aware bit allocation
+//!   based on perceptual importance
+//! - **Perceptual optimization**: Uses Butteraugli/SSIMULACRA2 for quality
+//!   assessment and tuning
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use zenjpeg::{Encoder, Quality};
+//!
+//! let encoder = Encoder::new()
+//!     .quality(Quality::Perceptual(85.0))
+//!     .optimize_for_web(true);
+//!
+//! let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
+//! ```
+//!
+//! ## Quality Modes
+//!
+//! - `Quality::Low(q)`: Uses mozjpeg-style trellis for best low-bitrate results
+//! - `Quality::High(q)`: Uses jpegli-style adaptive quantization for high quality
+//! - `Quality::Perceptual(target)`: Automatically selects strategy to hit target
+//!   perceptual quality (SSIMULACRA2 score)
+
+// Core modules
+mod consts;
+mod error;
+mod types;
+
+// Encoding pipeline
+mod color;
+mod dct;
+mod encode;
+mod entropy;
+mod huffman;
+mod quant;
+
+// Advanced features
+mod adaptive_quant;
+mod trellis;
+
+// Strategy selection
+mod strategy;
+
+// Public API
+pub use encode::Encoder;
+pub use error::Error;
+pub use types::{ColorSpace, PixelFormat, Quality, Subsampling};
+
+/// Result type for zenjpeg operations
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_encode() {
+        // Placeholder test - will be implemented with actual encoder
+    }
+}
