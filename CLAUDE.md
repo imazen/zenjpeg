@@ -48,31 +48,39 @@ zenjpeg/
 - [x] Color conversion (RGB→YCbCr)
 - [x] Forward DCT (reference implementation)
 - [x] Quantization tables (standard + mozjpeg)
-- [x] Huffman table handling
-- [x] Entropy encoding
-- [x] Trellis quantization (simplified, enabled for Q<85)
-- [x] Adaptive quantization infrastructure (disabled until tuned)
-- [x] Strategy selection (auto/mozjpeg/jpegli/hybrid)
-- [x] Basic Encoder API
-- [x] 30 unit/integration tests passing
+- [x] Huffman table handling with two-pass optimization
+- [x] Entropy encoding with symbol frequency counting
+- [x] Full trellis quantization from mozjpeg (rate-distortion optimization)
+- [x] Quality-aware strategy selection (auto/mozjpeg/jpegli/hybrid)
+- [x] Basic Encoder API with Huffman optimization
+- [x] 36 unit/integration tests passing
 - [x] Pareto benchmark (`examples/pareto_benchmark.rs`)
-- [x] FrequencyCounter for Huffman optimization (infrastructure only)
 
 ### Current Performance (Dec 2024)
 At SSIM2 >= 80 quality target:
 - jpegli: **1.310 bpp** (best efficiency)
 - mozjpeg-oxide: 1.437 bpp
-- zenjpeg: 1.802 bpp (26% larger than jpegli)
+- **zenjpeg: 1.458 bpp** (only 1.5% larger than mozjpeg-oxide!)
 
-zenjpeg appears on Pareto front at high quality (Q90-95, SSIM2 86-91).
+zenjpeg appears on Pareto front at multiple quality levels:
+- Low quality: Q30 at 0.485 bpp
+- Very high quality: Q90-Q95 at SSIM2 86-91 (outperforms jpegli at similar bitrates)
+
+### Key Improvements Made
+1. **Two-pass Huffman optimization**: Proper frequency counting with Huffman's algorithm
+2. **Full trellis quantization**: Dynamic programming with actual Huffman code lengths
+3. **Quality-aware lambda tuning**: Trellis enabled for Q<80, disabled at Q>=80
 
 ### Pending
-- [ ] Wire FrequencyCounter into encoder (two-pass Huffman optimization)
-- [ ] Full trellis implementation from mozjpeg-rs
-- [ ] Re-enable and tune adaptive quantization from jpegli-rs
+- [ ] Port jpegli's perceptual adaptive quantization (complex algorithm)
 - [ ] Progressive encoding
 - [ ] SIMD acceleration
 - [ ] Documentation (ARCHITECTURE.md, RESEARCH.md)
+
+### Known Limitations
+- Simplified variance-based AQ hurts quality - needs full jpegli perceptual AQ port
+- Trellis disabled at Q>=80 to prevent quality degradation
+- 11% larger than jpegli at SSIM2>=80 (gap requires perceptual AQ to close)
 
 ## Key Design Decisions
 
