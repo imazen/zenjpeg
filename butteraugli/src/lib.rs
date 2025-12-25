@@ -262,17 +262,26 @@ pub struct ButteraugliResult {
     pub diffmap: Option<ImageF>,
 }
 
-/// Computes butteraugli score between two RGB images.
+/// Computes butteraugli score between two sRGB images.
+///
+/// This function accepts 8-bit sRGB data and internally converts to linear RGB
+/// for perceptual comparison. For higher bit depths (16-bit, HDR), use
+/// [`compute_butteraugli_linear`] instead.
 ///
 /// # Arguments
-/// * `rgb1` - First image (sRGB u8, 3 bytes per pixel, row-major)
-/// * `rgb2` - Second image (sRGB u8, 3 bytes per pixel, row-major)
+/// * `rgb1` - First image (sRGB u8, 3 bytes per pixel, row-major RGB order)
+/// * `rgb2` - Second image (sRGB u8, 3 bytes per pixel, row-major RGB order)
 /// * `width` - Image width in pixels
 /// * `height` - Image height in pixels
 /// * `params` - Comparison parameters
 ///
 /// # Returns
 /// Butteraugli score and optional per-pixel difference map.
+///
+/// # Color Space
+/// Input is assumed to be **sRGB** (gamma-encoded). The function applies the
+/// sRGB transfer function internally to convert to linear RGB before comparison.
+/// If your input is already linear RGB, use [`compute_butteraugli_linear`].
 ///
 /// # Errors
 /// Returns an error if:

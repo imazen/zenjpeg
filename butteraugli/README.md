@@ -33,6 +33,19 @@ Add to your `Cargo.toml`:
 butteraugli-oxide = "0.1"
 ```
 
+### Input Requirements
+
+| Property | Requirement |
+|----------|-------------|
+| **Bit depth** | 8-bit (u8) |
+| **Color space** | sRGB (gamma-encoded) |
+| **Channel order** | RGB (red, green, blue) |
+| **Layout** | Row-major, interleaved (RGBRGBRGB...) |
+| **Minimum size** | 8×8 pixels |
+
+The function internally converts sRGB to linear RGB for perceptual comparison.
+For 16-bit or HDR content, convert to 8-bit sRGB first (higher bit depth API planned).
+
 ### Basic Example
 
 ```rust
@@ -114,6 +127,15 @@ The implementation includes 195 synthetic test cases validated against the C++ l
 | `butteraugli-oxide` | Pure Rust | Full implementation, no C++ dependency |
 | `butteraugli` | FFI wrapper | Wraps C++ butteraugli library |
 | `butteraugli-sys` | FFI bindings | Low-level C++ bindings |
+
+### API Differences from C++ libjxl
+
+| Feature | C++ butteraugli | butteraugli-oxide |
+|---------|-----------------|-------------------|
+| Input format | Linear RGB float | sRGB u8 (converts internally) |
+| Bit depth | Any (via float) | 8-bit only |
+| Color space | Linear (caller converts) | sRGB (auto-converted) |
+| HDR support | Yes (via float) | Not yet |
 
 ## References
 
