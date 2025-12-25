@@ -133,69 +133,145 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
     Ok(())
 }
 
-/// Test that XYB values match C++ implementation.
+/// Test that XYB values match C++ implementation via FFI.
+/// This test uses the actual C++ jpegli code to compute expected values.
 #[test]
 fn test_xyb_color_conversion_values() {
     use jpegli::xyb::{srgb_to_scaled_xyb, SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
 
-    // Test known values - these should match C++ jpegli's XYB conversion
-    let test_cases = [
-        // (r, g, b) -> expected scaled (x, y, b) ranges
-        ((0, 0, 0), (0.35, 0.0, 0.41)),
-        ((255, 255, 255), (0.35, 1.0, 0.42)),
-        ((255, 0, 0), (0.95, 0.55, 0.35)),
-        ((0, 255, 0), (0.05, 0.80, 0.05)),
-        ((0, 0, 255), (0.35, 0.30, 0.95)),
+    // Test colors: sRGB values
+    let test_colors: &[(u8, u8, u8)] = &[
+        (0, 0, 0),       // Black
+        (255, 255, 255), // White
+        (255, 0, 0),     // Red
+        (0, 255, 0),     // Green
+        (0, 0, 255),     // Blue
+        (128, 128, 128), // Gray
+        (255, 128, 0),   // Orange
+        (128, 0, 255),   // Purple
     ];
 
-    for ((r, g, b), (exp_x, exp_y, exp_b)) in test_cases {
-        let (x, y, b_out) = srgb_to_scaled_xyb(r, g, b);
+    // For each color, compute Rust result and C++ result via FFI
+    for &(r, g, b) in test_colors {
+        // Rust implementation
+        let (rust_x, rust_y, rust_b) = srgb_to_scaled_xyb(r, g, b);
 
-        // Values should be approximately in [0, 1] range (allow small floating point tolerance)
+        // C++ implementation via FFI
+        let srgb = [r, g, b];
+        let mut cpp_xyb = [0.0f32; 3];
+        unsafe {
+            jpegli_sys::jpegli_srgb_to_scaled_xyb(
+                srgb.as_ptr(),
+                1,
+                1,
+                255.0,
+                cpp_xyb.as_mut_ptr(),
+            );
+        }
+        let (cpp_x, cpp_y, cpp_b) = (cpp_xyb[0], cpp_xyb[1], cpp_xyb[2]);
+
+        // Values should be in [0, 1] range (with small tolerance)
         let eps = 1e-5;
-        assert!(x >= -eps && x <= 1.0 + eps, "X out of range: {}", x);
-        assert!(y >= -eps && y <= 1.0 + eps, "Y out of range: {}", y);
+        assert!(rust_x >= -eps && rust_x <= 1.0 + eps, "X out of range: {}", rust_x);
+        assert!(rust_y >= -eps && rust_y <= 1.0 + eps, "Y out of range: {}", rust_y);
+        assert!(rust_b >= -eps && rust_b <= 1.0 + eps, "B out of range: {}", rust_b);
+
+        // STRICT CHECK: Must match C++ within floating-point precision
+        const XYB_TOLERANCE: f32 = 1e-5;
         assert!(
-            b_out >= -eps && b_out <= 1.0 + eps,
-            "B out of range: {}",
-            b_out
+            (rust_x - cpp_x).abs() < XYB_TOLERANCE,
+            "X mismatch for ({}, {}, {}): Rust={}, C++={} (diff: {})",
+            r, g, b, rust_x, cpp_x, (rust_x - cpp_x).abs()
+        );
+        assert!(
+            (rust_y - cpp_y).abs() < XYB_TOLERANCE,
+            "Y mismatch for ({}, {}, {}): Rust={}, C++={} (diff: {})",
+            r, g, b, rust_y, cpp_y, (rust_y - cpp_y).abs()
+        );
+        assert!(
+            (rust_b - cpp_b).abs() < XYB_TOLERANCE,
+            "B mismatch for ({}, {}, {}): Rust={}, C++={} (diff: {})",
+            r, g, b, rust_b, cpp_b, (rust_b - cpp_b).abs()
         );
 
-        // Rough range check (exact values depend on implementation details)
-        assert!(
-            (x - exp_x).abs() < 0.15,
-            "X mismatch for ({}, {}, {}): got {}, expected ~{}",
-            r,
-            g,
-            b,
-            x,
-            exp_x
-        );
-        assert!(
-            (y - exp_y).abs() < 0.15,
-            "Y mismatch for ({}, {}, {}): got {}, expected ~{}",
-            r,
-            g,
-            b,
-            y,
-            exp_y
-        );
-        assert!(
-            (b_out - exp_b).abs() < 0.15,
-            "B mismatch for ({}, {}, {}): got {}, expected ~{}",
-            r,
-            g,
-            b,
-            b_out,
-            exp_b
+        println!(
+            "({:3},{:3},{:3}) -> Rust: ({:.6}, {:.6}, {:.6}), C++: ({:.6}, {:.6}, {:.6})",
+            r, g, b, rust_x, rust_y, rust_b, cpp_x, cpp_y, cpp_b
         );
     }
 
-    println!("Scaled XYB conversion values validated");
+    println!("\nScaled XYB conversion matches C++ exactly!");
     println!(
         "Scale factors: {:?}, Offsets: {:?}",
         SCALED_XYB_SCALE, SCALED_XYB_OFFSET
     );
+}
+
+/// Test that XYB constants match C++.
+#[test]
+fn test_xyb_constants_match_cpp() {
+    use jpegli::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
+    use jpegli::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
+
+    // Get C++ constants via FFI
+    let (cpp_matrix, cpp_bias, cpp_offset, cpp_scale) = jpegli_sys::cpp_get_xyb_constants();
+
+    println!("C++ Opsin Matrix:");
+    for i in 0..3 {
+        println!("  [{:.6}, {:.6}, {:.6}]", cpp_matrix[i*3], cpp_matrix[i*3+1], cpp_matrix[i*3+2]);
+    }
+    println!("C++ Opsin Bias: {:?}", cpp_bias);
+    println!("C++ Scaled XYB Offset: {:?}", cpp_offset);
+    println!("C++ Scaled XYB Scale: {:?}", cpp_scale);
+
+    println!("\nRust Opsin Matrix:");
+    for i in 0..3 {
+        println!("  [{:.6}, {:.6}, {:.6}]", XYB_OPSIN_ABSORBANCE_MATRIX[i*3], XYB_OPSIN_ABSORBANCE_MATRIX[i*3+1], XYB_OPSIN_ABSORBANCE_MATRIX[i*3+2]);
+    }
+    println!("Rust Opsin Bias: {:?}", XYB_OPSIN_ABSORBANCE_BIAS);
+    println!("Rust Scaled XYB Offset: {:?}", SCALED_XYB_OFFSET);
+    println!("Rust Scaled XYB Scale: {:?}", SCALED_XYB_SCALE);
+
+    // Compare
+    const EPS: f32 = 1e-6;
+
+    // Compare matrix
+    for i in 0..9 {
+        assert!(
+            (cpp_matrix[i] - XYB_OPSIN_ABSORBANCE_MATRIX[i]).abs() < EPS,
+            "Opsin matrix[{}] mismatch: C++={}, Rust={}",
+            i, cpp_matrix[i], XYB_OPSIN_ABSORBANCE_MATRIX[i]
+        );
+    }
+
+    // Compare bias
+    for i in 0..3 {
+        assert!(
+            (cpp_bias[i] - XYB_OPSIN_ABSORBANCE_BIAS[i]).abs() < EPS,
+            "Opsin bias[{}] mismatch: C++={}, Rust={}",
+            i, cpp_bias[i], XYB_OPSIN_ABSORBANCE_BIAS[i]
+        );
+    }
+
+    // Compare scaled XYB offset
+    for i in 0..3 {
+        assert!(
+            (cpp_offset[i] - SCALED_XYB_OFFSET[i]).abs() < EPS,
+            "Scaled XYB offset[{}] mismatch: C++={}, Rust={}",
+            i, cpp_offset[i], SCALED_XYB_OFFSET[i]
+        );
+    }
+
+    // Compare scaled XYB scale
+    for i in 0..3 {
+        assert!(
+            (cpp_scale[i] - SCALED_XYB_SCALE[i]).abs() < EPS,
+            "Scaled XYB scale[{}] mismatch: C++={}, Rust={}",
+            i, cpp_scale[i], SCALED_XYB_SCALE[i]
+        );
+    }
+
+    println!("\nAll XYB constants match C++ exactly!");
 }
 
 /// Test ICC profile embedding

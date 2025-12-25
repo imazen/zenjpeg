@@ -608,6 +608,124 @@ pub unsafe fn compute_butteraugli_cpp(
     }
 }
 
+// ============================================================================
+// XYB Color Conversion FFI
+// ============================================================================
+
+extern "C" {
+    /// Convert sRGB u8 to linear RGB float [0, 1]
+    pub fn jpegli_srgb_to_linear(
+        srgb: *const u8,
+        width: size_t,
+        height: size_t,
+        out_linear: *mut f32,
+    );
+
+    /// Convert linear RGB to XYB (unscaled, as used in butteraugli)
+    pub fn jpegli_linear_to_xyb(
+        linear_rgb: *const f32,
+        width: size_t,
+        height: size_t,
+        intensity_target: f32,
+        out_xyb: *mut f32,
+    );
+
+    /// Convert XYB to scaled XYB [0, 1] range (as stored in JPEG)
+    pub fn jpegli_scale_xyb(xyb: *mut f32, width: size_t, height: size_t);
+
+    /// All-in-one: sRGB u8 -> scaled XYB
+    pub fn jpegli_srgb_to_scaled_xyb(
+        srgb: *const u8,
+        width: size_t,
+        height: size_t,
+        intensity_target: f32,
+        out_scaled_xyb: *mut f32,
+    );
+
+    /// Get XYB constants for verification
+    pub fn jpegli_get_xyb_constants(
+        opsin_matrix: *mut f32,
+        opsin_bias: *mut f32,
+        scaled_xyb_offset: *mut f32,
+        scaled_xyb_scale: *mut f32,
+    );
+
+    /// PQ EOTF (display from encoded)
+    pub fn jpegli_pq_eotf(encoded: f32) -> f32;
+
+    /// PQ inverse EOTF (encoded from display)
+    pub fn jpegli_pq_inv_eotf(display: f32) -> f32;
+
+    /// HLG EOTF (display from encoded)
+    pub fn jpegli_hlg_eotf(encoded: f32) -> f32;
+
+    /// HLG inverse EOTF (encoded from display)
+    pub fn jpegli_hlg_inv_eotf(display: f32) -> f32;
+
+    /// sRGB to linear (single value)
+    pub fn jpegli_srgb_to_linear_single(srgb: f32) -> f32;
+
+    /// Linear to sRGB (single value)
+    pub fn jpegli_linear_to_srgb_single(linear: f32) -> f32;
+
+    /// Rec2408 tone mapping
+    pub fn jpegli_rec2408_tone_map(
+        source_nits: f32,
+        target_nits: f32,
+        luminances: *const f32,
+        rgb: *mut f32,
+    );
+
+    /// HLG OOTF
+    pub fn jpegli_hlg_ootf(
+        source_nits: f32,
+        target_nits: f32,
+        luminances: *const f32,
+        rgb: *mut f32,
+    );
+
+    /// Gamut mapping
+    pub fn jpegli_gamut_map(preserve_saturation: f32, luminances: *const f32, rgb: *mut f32);
+}
+
+// ============================================================================
+// Safe Rust wrappers for XYB conversion
+// ============================================================================
+
+/// Safe wrapper for C++ sRGB to scaled XYB conversion.
+#[cfg(feature = "butteraugli")]
+pub fn cpp_srgb_to_scaled_xyb(
+    srgb: &[u8],
+    width: usize,
+    height: usize,
+    intensity_target: f32,
+) -> Vec<f32> {
+    assert_eq!(srgb.len(), width * height * 3);
+    let mut out = vec![0.0f32; width * height * 3];
+    unsafe {
+        jpegli_srgb_to_scaled_xyb(srgb.as_ptr(), width, height, intensity_target, out.as_mut_ptr());
+    }
+    out
+}
+
+/// Safe wrapper to get XYB constants from C++.
+#[cfg(feature = "butteraugli")]
+pub fn cpp_get_xyb_constants() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+    let mut opsin_matrix = vec![0.0f32; 9];
+    let mut opsin_bias = vec![0.0f32; 3];
+    let mut scaled_xyb_offset = vec![0.0f32; 3];
+    let mut scaled_xyb_scale = vec![0.0f32; 3];
+    unsafe {
+        jpegli_get_xyb_constants(
+            opsin_matrix.as_mut_ptr(),
+            opsin_bias.as_mut_ptr(),
+            scaled_xyb_offset.as_mut_ptr(),
+            scaled_xyb_scale.as_mut_ptr(),
+        );
+    }
+    (opsin_matrix, opsin_bias, scaled_xyb_offset, scaled_xyb_scale)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
