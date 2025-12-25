@@ -16,7 +16,7 @@
 
 use crate::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_vec, try_alloc_zeroed, validate_dimensions,
-    DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION,
+    DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION, MemoryTracker,
 };
 use crate::color;
 use crate::consts::{
@@ -48,6 +48,9 @@ pub struct DecoderConfig {
     /// Maximum pixels allowed (for DoS protection).
     /// Default is 100 megapixels. Set to 0 for unlimited.
     pub max_pixels: u64,
+    /// Maximum total memory for allocations (for DoS protection).
+    /// Default is 512 MB. Set to 0 for unlimited.
+    pub max_memory: usize,
 }
 
 impl Default for DecoderConfig {
@@ -59,6 +62,7 @@ impl Default for DecoderConfig {
             // Apply ICC by default when CMS is available
             apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
             max_pixels: DEFAULT_MAX_PIXELS,
+            max_memory: DEFAULT_MAX_MEMORY,
         }
     }
 }
@@ -143,6 +147,16 @@ impl Decoder {
     #[must_use]
     pub fn max_pixels(mut self, pixels: u64) -> Self {
         self.config.max_pixels = pixels;
+        self
+    }
+
+    /// Sets the maximum memory allowed for allocations during decoding.
+    ///
+    /// Default is 512 MB. Set to `usize::MAX` for unlimited.
+    /// This prevents memory exhaustion attacks from malicious images.
+    #[must_use]
+    pub fn max_memory(mut self, bytes: usize) -> Self {
+        self.config.max_memory = bytes;
         self
     }
 

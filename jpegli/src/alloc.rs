@@ -23,6 +23,91 @@ pub const MAX_SCANS: usize = 256;
 /// Maximum ICC profile size (16 MB).
 pub const MAX_ICC_PROFILE_SIZE: usize = 16 * 1024 * 1024;
 
+/// Default maximum memory for decode operations (512 MB).
+/// This limits total allocations during a single decode operation.
+pub const DEFAULT_MAX_MEMORY: usize = 512 * 1024 * 1024;
+
+/// Tracks cumulative memory allocations during decode operations.
+///
+/// This prevents DoS attacks where many small allocations (each under limit)
+/// combine to exhaust memory. Used to enforce a global memory budget.
+#[derive(Debug, Clone)]
+pub struct MemoryTracker {
+    /// Total bytes allocated so far
+    pub allocated: usize,
+    /// Maximum bytes allowed
+    pub limit: usize,
+}
+
+impl MemoryTracker {
+    /// Creates a new tracker with the specified limit.
+    #[must_use]
+    pub fn new(limit: usize) -> Self {
+        Self {
+            allocated: 0,
+            limit,
+        }
+    }
+
+    /// Creates a new tracker with default limit (512 MB).
+    #[must_use]
+    pub fn with_default_limit() -> Self {
+        Self::new(DEFAULT_MAX_MEMORY)
+    }
+
+    /// Creates an unlimited tracker (for testing or trusted inputs).
+    #[must_use]
+    pub fn unlimited() -> Self {
+        Self::new(usize::MAX)
+    }
+
+    /// Attempts to allocate bytes, returning error if limit exceeded.
+    pub fn try_alloc(&mut self, bytes: usize, context: &'static str) -> Result<()> {
+        let new_total = self
+            .allocated
+            .checked_add(bytes)
+            .ok_or(Error::SizeOverflow { context })?;
+
+        if new_total > self.limit {
+            return Err(Error::AllocationFailed {
+                bytes,
+                context,
+            });
+        }
+
+        self.allocated = new_total;
+        Ok(())
+    }
+
+    /// Frees previously allocated bytes.
+    pub fn free(&mut self, bytes: usize) {
+        self.allocated = self.allocated.saturating_sub(bytes);
+    }
+
+    /// Returns remaining available bytes.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.limit.saturating_sub(self.allocated)
+    }
+
+    /// Returns current allocation total.
+    #[must_use]
+    pub fn current(&self) -> usize {
+        self.allocated
+    }
+
+    /// Resets the tracker for reuse.
+    pub fn reset(&mut self) {
+        self.allocated = 0;
+    }
+}
+
+impl Default for MemoryTracker {
+    fn default() -> Self {
+        Self::with_default_limit()
+    }
+}
+
 /// Calculate size with overflow checking.
 ///
 /// Returns an error if the multiplication would overflow.
@@ -238,5 +323,72 @@ mod tests {
         let v: Vec<u8> = try_alloc_filled(1000, 128u8, "test").unwrap();
         assert_eq!(v.len(), 1000);
         assert!(v.iter().all(|&x| x == 128));
+    }
+
+    #[test]
+    fn test_memory_tracker_basic() {
+        let mut tracker = MemoryTracker::new(1000);
+        assert_eq!(tracker.remaining(), 1000);
+        assert_eq!(tracker.current(), 0);
+
+        // Allocate some bytes
+        tracker.try_alloc(400, "test1").unwrap();
+        assert_eq!(tracker.current(), 400);
+        assert_eq!(tracker.remaining(), 600);
+
+        // Allocate more
+        tracker.try_alloc(300, "test2").unwrap();
+        assert_eq!(tracker.current(), 700);
+        assert_eq!(tracker.remaining(), 300);
+    }
+
+    #[test]
+    fn test_memory_tracker_limit() {
+        let mut tracker = MemoryTracker::new(1000);
+
+        // Allocate up to limit
+        tracker.try_alloc(500, "test1").unwrap();
+        tracker.try_alloc(500, "test2").unwrap();
+        assert_eq!(tracker.current(), 1000);
+        assert_eq!(tracker.remaining(), 0);
+
+        // Exceed limit
+        let result = tracker.try_alloc(1, "test3");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_memory_tracker_free() {
+        let mut tracker = MemoryTracker::new(1000);
+        tracker.try_alloc(800, "test").unwrap();
+
+        // Free some
+        tracker.free(300);
+        assert_eq!(tracker.current(), 500);
+        assert_eq!(tracker.remaining(), 500);
+
+        // Can allocate again
+        tracker.try_alloc(400, "test2").unwrap();
+        assert_eq!(tracker.current(), 900);
+    }
+
+    #[test]
+    fn test_memory_tracker_reset() {
+        let mut tracker = MemoryTracker::new(1000);
+        tracker.try_alloc(800, "test").unwrap();
+
+        tracker.reset();
+        assert_eq!(tracker.current(), 0);
+        assert_eq!(tracker.remaining(), 1000);
+    }
+
+    #[test]
+    fn test_memory_tracker_overflow() {
+        let mut tracker = MemoryTracker::new(usize::MAX);
+        tracker.try_alloc(usize::MAX - 10, "test1").unwrap();
+
+        // This would overflow
+        let result = tracker.try_alloc(100, "test2");
+        assert!(result.is_err());
     }
 }

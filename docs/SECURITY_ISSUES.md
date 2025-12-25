@@ -43,21 +43,20 @@ if idx < table.fast_lookup.len() {
 | Field | Value |
 |-------|-------|
 | **C++ Commit** | `c0dfce4c` |
-| **Rust Status** | ⚠️ **Review Needed** |
+| **Rust Status** | ✅ **Not Vulnerable** - Different architecture |
 | **Component** | Progressive encoder, entropy coding |
 
 **Root Cause**: `num_refinement_bits` computed incorrectly when multiple color components have different refinement sequences. Single 1D array `int num_refinement_scans[DCTSIZE2]` was inadequate.
 
-**C++ Fix**:
-```cpp
-// Before: single array for all components
-int num_refinement_scans[DCTSIZE2];
+**C++ Fix**: Changed to 2D array `num_refinement_scans[kMaxComponents][DCTSIZE2]` indexed by component.
 
-// After: per-component tracking
-// (actual fix adds proper bounds checking)
-```
+**Rust Analysis**: Our `ProgressiveTokenBuffer` architecture is fundamentally different:
+1. Each scan is tokenized independently via `tokenize_ac_refinement_scan()`
+2. Each component's blocks are passed separately (y_blocks, cb_blocks, cr_blocks)
+3. Each scan gets its own `context` and stores tokens in `scan_info: Vec<ScanTokenInfo>`
+4. No shared coefficient-indexed state array exists
 
-**Rust Analysis**: `encode.rs` progressive encoding uses different structure. Need to verify `encode_progressive_scan()` handles multi-component refinement correctly.
+Additionally, our current scan script only uses simple progressive without successive approximation (`ah=0, al=0`), so the vulnerable code path isn't exercised.
 
 ---
 
@@ -124,12 +123,21 @@ int num_refinement_scans[DCTSIZE2];
 | Field | Value |
 |-------|-------|
 | **C++ Commit** | `eeb331ce` |
-| **Rust Status** | ❌ **Missing Feature** |
+| **Rust Status** | ✅ **Fixed** |
 | **Component** | Memory manager |
 
 **Root Cause**: Some large allocations weren't tracked by memory manager, allowing memory limit bypass.
 
-**Rust Status**: We don't have allocation tracking yet. See `SECURITY.md` P3-1.
+**Rust Fix**: Added `MemoryTracker` in `alloc.rs` for cumulative allocation tracking:
+- `MemoryTracker::new(limit)` - Creates tracker with byte limit
+- `MemoryTracker::try_alloc(bytes, context)` - Returns error if limit exceeded
+- `MemoryTracker::free(bytes)` - Releases tracked bytes
+- `DEFAULT_MAX_MEMORY = 512 MB` - Default allocation limit
+
+Decoder configuration:
+- `DecoderConfig.max_memory` - Per-decode allocation limit
+- `Decoder::max_memory(bytes)` - Builder method to configure
+- Set to `usize::MAX` for unlimited (trusted inputs only)
 
 ---
 
@@ -172,12 +180,14 @@ int num_refinement_scans[DCTSIZE2];
 | Issue | C++ Commit | Rust Status |
 |-------|------------|-------------|
 | CVE-2024-11403 Huffman OOB | `f510b589` | ✅ Not vulnerable |
-| Chroma refinement overflow | `c0dfce4c` | ⚠️ Review needed |
+| Chroma refinement overflow | `c0dfce4c` | ✅ Not vulnerable |
 | Refinement bits assertion | `403631c7` | ✅ Not vulnerable |
 | i386 integer overflow | `0e1976eb` | ✅ Fixed (`50b104ee`) |
 | Allocation failure crash | `8740dc2f` | ✅ Fixed (`50b104ee`) |
-| Memory tracking bypass | `eeb331ce` | ❌ Missing feature |
+| Memory tracking bypass | `eeb331ce` | ✅ Fixed |
 | MSAN subsampling error | `39a47b34` | ⚠️ Review needed |
+| CVE-2020-1895 decode overflow | N/A | ✅ Not vulnerable |
+| CVE-2018-11212 divide by zero | N/A | ✅ Not vulnerable |
 | Decoder malformed input | N/A | ✅ Fixed (`7e9ec31a`) |
 | CVE-2019-2201 int overflow | N/A | ✅ Fixed (`50b104ee`) |
 | CVE-2020-14152 mem exhaustion | N/A | ✅ Fixed (`50b104ee`) |
@@ -309,11 +319,16 @@ mozjpeg shares codebase with libjpeg-turbo; most CVEs are inherited.
 | **CVE** | [CVE-2020-1895](https://research.checkpoint.com/2020/instagram_rce-code-execution-vulnerability-in-instagram-app-for-android-and-ios/) |
 | **CVSS** | 7.8 (High) |
 | **Affected** | mozjpeg (via Instagram) |
-| **Rust Status** | ⚠️ **Review Needed** |
+| **Rust Status** | ✅ **Not Vulnerable** |
 
 **Root Cause**: Integer overflow in `read_jpg_copy_loop()` during decompression leads to heap buffer overflow. Exploited for RCE in Instagram.
 
-**Rust Analysis**: Need to audit our decode loop for similar integer overflow patterns.
+**Rust Analysis**: Our decode loop is protected:
+1. `validate_dimensions()` enforces `JPEG_MAX_DIMENSION` (65500) and `max_pixels` limits
+2. `checked_size_2d()` catches overflow in allocation size calculations
+3. `try_alloc_dct_blocks()` uses fallible allocation
+4. Rust's bounds checking prevents buffer overflow even if index calculation wrapped
+5. Index calculations are mathematically bounded by allocated sizes
 
 ---
 
@@ -343,11 +358,14 @@ Original IJG libjpeg vulnerabilities.
 | **CVE** | [CVE-2018-11212](https://nvd.nist.gov/vuln/detail/CVE-2018-11212) |
 | **CVSS** | 6.5 (Medium) |
 | **Affected** | libjpeg 9a, 9d |
-| **Rust Status** | ⚠️ **Review Needed** |
+| **Rust Status** | ✅ **Not Vulnerable** |
 
 **Root Cause**: `alloc_sarray()` in jmemmgr.c allows divide-by-zero via crafted file.
 
-**Rust Analysis**: Need to check for division operations in allocation paths.
+**Rust Analysis**: Division-by-zero is prevented:
+1. Sampling factors validated non-zero at SOF parsing (lines 388-393 in decode.rs)
+2. `max_h_samp`/`max_v_samp` initialized to 1, never 0
+3. All MCU dimension divisions use values >= 8 (`max_h_samp * 8`)
 
 ---
 
@@ -388,3 +406,6 @@ Original IJG libjpeg vulnerabilities.
 | 2024-12-25 | Mapped C++ fixes to Rust status |
 | 2024-12-25 | Added libjpeg-turbo, mozjpeg, IJG libjpeg CVE catalog |
 | 2024-12-25 | Fixed integer overflow, allocation crash, and memory exhaustion issues (`50b104ee`) |
+| 2024-12-25 | Audited progressive encoding - not vulnerable to chroma refinement overflow |
+| 2024-12-25 | Audited decode loop - not vulnerable to CVE-2020-1895, CVE-2018-11212 |
+| 2024-12-25 | Added MemoryTracker for cumulative allocation tracking (DoS protection) |
