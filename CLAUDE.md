@@ -741,18 +741,40 @@ row_d_out[x] = (sum of 4) * 0.25f;
 
 **Fix**: Pass original `y_plane` (unscaled) to per_block_modulations.
 
+### Bug 7: y_quant_01 Computed from Distance Instead of Quant Table (FIXED)
+
+**Location**: `adaptive_quant.rs:compute_aq_strength_map` and `encode.rs`
+
+**Bug**: `y_quant_01 = 1.0 / distance` instead of `y_quant_01 = quant_table[1]`
+
+**Problem**: C++ uses `y_quant_01 = cinfo->quant_tbl_ptrs[y_comp->quant_tbl_no]->quantval[1]`
+which is the actual quant table value at position 1 (first AC coefficient).
+
+At Q100 with all-1s quant tables:
+- **C++ y_quant_01 = 1** → dampen = 0.97 → preserves AQ variation
+- **Rust y_quant_01 = 1/0.01 = 100** → dampen = 0 → destroys all variation
+
+This caused aq_strength to be uniform 0.486 for all blocks (6× too high).
+
+**Fix**: Changed function signature to take `y_quant_01: u16` directly from the quant table:
+```rust
+// In encode.rs:
+let y_quant_01 = y_quant.values[1];
+let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
+```
+
+**Result**: Q100 now matches C++ within 0.1% for both file size and quality (DSSIM).
+
 ### Current Status
 
-After all fixes:
-- **Rust aq_strength**: min=0.00, max=0.12, mean=0.065
-- **C++ aq_strength**: min=0.00, max=0.20, mean=0.081
-- **Mean abs diff**: 0.016 (down from 0.08)
+After Bug 7 fix:
+- **Rust Q100**: 226,421 bytes, DSSIM 0.000031
+- **C++ Q100**: 226,267 bytes, DSSIM 0.000031
+- **Difference**: 0.1% (essentially identical)
 
-Remaining 20% difference likely due to:
-1. Edge handling differences in FuzzyErosion
-2. FastLog2f vs log2() approximation differences
-   - **Note**: `moxcms/src/math/log2fs.rs` has a good FastLog2f implementation to try
-3. Border padding handling
+**aq_strength statistics** (flower_small at Q100):
+- min: 0.00, max: 0.41, mean: 0.089
+- Good variation across blocks (not uniform)
 
 ## Red Herrings (Investigated but NOT the cause)
 
