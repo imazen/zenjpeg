@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo run --example trace_detailed
 
-use butteraugli::opsin::srgb_to_xyb_butteraugli;
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 
 mod consts {
     pub const SIGMA_LF: f32 = 7.15593339443;
@@ -14,9 +14,15 @@ mod consts {
     pub const BMUL_LF_TO_VALS: f32 = 49.87984651440;
     pub const Y_TO_B_MUL_LF_TO_VALS: f32 = -0.362267051518;
     pub const WMUL: [f64; 9] = [
-        400.0, 1.50815703118, 0.0,
-        2150.0, 10.6195433239, 16.2176043152,
-        29.2353797994, 0.844626970982, 0.703646627719,
+        400.0,
+        1.50815703118,
+        0.0,
+        2150.0,
+        10.6195433239,
+        16.2176043152,
+        29.2353797994,
+        0.844626970982,
+        0.703646627719,
     ];
     pub const GLOBAL_SCALE: f32 = 1.0 / (17.83 * 0.790799174);
     pub const MASK_DC_Y_OFFSET: f64 = 0.20025578522;
@@ -87,20 +93,32 @@ fn main() {
         let val_y2 = y2 * YMUL_LF_TO_VALS;
         let val_b2 = (Y_TO_B_MUL_LF_TO_VALS * y2 + b2) * BMUL_LF_TO_VALS;
 
-        println!("LF Vals1: x={:.4}, y={:.4}, b={:.4}", val_x1, val_y1, val_b1);
-        println!("LF Vals2: x={:.4}, y={:.4}, b={:.4}", val_x2, val_y2, val_b2);
+        println!(
+            "LF Vals1: x={:.4}, y={:.4}, b={:.4}",
+            val_x1, val_y1, val_b1
+        );
+        println!(
+            "LF Vals2: x={:.4}, y={:.4}, b={:.4}",
+            val_x2, val_y2, val_b2
+        );
 
         let d_val_x = val_x2 - val_x1;
         let d_val_y = val_y2 - val_y1;
         let d_val_b = val_b2 - val_b1;
-        println!("dVals: dX={:.6}, dY={:.6}, dB={:.6}", d_val_x, d_val_y, d_val_b);
+        println!(
+            "dVals: dX={:.6}, dY={:.6}, dB={:.6}",
+            d_val_x, d_val_y, d_val_b
+        );
 
         // block_diff_dc = sum of (diff^2 * WMUL[6+c])
         let dc_x = d_val_x * d_val_x * WMUL[6] as f32;
         let dc_y = d_val_y * d_val_y * WMUL[7] as f32;
         let dc_b = d_val_b * d_val_b * WMUL[8] as f32;
         let dc_total = dc_x + dc_y + dc_b;
-        println!("DC diff: X={:.4}, Y={:.4}, B={:.4}, total={:.4}", dc_x, dc_y, dc_b, dc_total);
+        println!(
+            "DC diff: X={:.4}, Y={:.4}, B={:.4}, total={:.4}",
+            dc_x, dc_y, dc_b, dc_total
+        );
 
         // For uniform images, mask should be 0 (no HF/UHF content)
         let mask = 0.0;
@@ -118,14 +136,23 @@ fn main() {
 
         if let Some(dm) = result.diffmap.as_ref() {
             // Check if diffmap is uniform
-            let min = (0..height).flat_map(|y| (0..width).map(move |x| dm.get(x, y))).fold(f32::MAX, f32::min);
-            let max = (0..height).flat_map(|y| (0..width).map(move |x| dm.get(x, y))).fold(f32::MIN, f32::max);
+            let min = (0..height)
+                .flat_map(|y| (0..width).map(move |x| dm.get(x, y)))
+                .fold(f32::MAX, f32::min);
+            let max = (0..height)
+                .flat_map(|y| (0..width).map(move |x| dm.get(x, y)))
+                .fold(f32::MIN, f32::max);
             println!("Diffmap min={:.6}, max={:.6}", min, max);
 
             // If not uniform, check corners
             if (max - min).abs() > 0.01 {
-                println!("Diffmap corners: [0,0]={:.4}, [w-1,0]={:.4}, [0,h-1]={:.4}, [w-1,h-1]={:.4}",
-                         dm.get(0, 0), dm.get(width-1, 0), dm.get(0, height-1), dm.get(width-1, height-1));
+                println!(
+                    "Diffmap corners: [0,0]={:.4}, [w-1,0]={:.4}, [0,h-1]={:.4}, [w-1,h-1]={:.4}",
+                    dm.get(0, 0),
+                    dm.get(width - 1, 0),
+                    dm.get(0, height - 1),
+                    dm.get(width - 1, height - 1)
+                );
             }
         }
     }
@@ -156,9 +183,16 @@ fn main() {
     println!("Gradient +5: score = {:.6}", result.score);
 
     if let Some(dm) = result.diffmap.as_ref() {
-        let min = (0..height).flat_map(|y| (0..width).map(move |x| dm.get(x, y))).fold(f32::MAX, f32::min);
-        let max = (0..height).flat_map(|y| (0..width).map(move |x| dm.get(x, y))).fold(f32::MIN, f32::max);
-        let center = dm.get(width/2, height/2);
-        println!("Diffmap min={:.6}, max={:.6}, center={:.6}", min, max, center);
+        let min = (0..height)
+            .flat_map(|y| (0..width).map(move |x| dm.get(x, y)))
+            .fold(f32::MAX, f32::min);
+        let max = (0..height)
+            .flat_map(|y| (0..width).map(move |x| dm.get(x, y)))
+            .fold(f32::MIN, f32::max);
+        let center = dm.get(width / 2, height / 2);
+        println!(
+            "Diffmap min={:.6}, max={:.6}, center={:.6}",
+            min, max, center
+        );
     }
 }

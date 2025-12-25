@@ -55,6 +55,9 @@ pub mod opsin;
 pub mod psycho;
 pub mod xyb;
 
+// C++ reference data for regression testing (auto-generated)
+pub mod reference_data;
+
 // Re-export main types and functions
 pub use crate::image::{Image3F, ImageF};
 pub use crate::psycho::PsychoImage;
@@ -78,6 +81,36 @@ impl Default for ButteraugliParams {
             xmul: 1.0,
             intensity_target: 80.0,
         }
+    }
+}
+
+impl ButteraugliParams {
+    /// Creates a new `ButteraugliParams` with default values.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the intensity target (display brightness in nits).
+    #[must_use]
+    pub fn with_intensity_target(mut self, intensity_target: f32) -> Self {
+        self.intensity_target = intensity_target;
+        self
+    }
+
+    /// Sets the HF asymmetry multiplier.
+    /// Values > 1.0 penalize new high-frequency artifacts more than blurring.
+    #[must_use]
+    pub fn with_hf_asymmetry(mut self, hf_asymmetry: f32) -> Self {
+        self.hf_asymmetry = hf_asymmetry;
+        self
+    }
+
+    /// Sets the X channel multiplier.
+    #[must_use]
+    pub fn with_xmul(mut self, xmul: f32) -> Self {
+        self.xmul = xmul;
+        self
     }
 }
 

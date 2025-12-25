@@ -52,7 +52,7 @@ libc = "0.2"
 libloading = "0.8"
 
 # Local crates
-butteraugli = { path = "butteraugli" }
+butteraugli-oxide = { path = "butteraugli" }
 
 # SIMD dispatch
 multiversion = "0.7"

@@ -1,7 +1,7 @@
 //! Test butteraugli without multiresolution to understand base score
 
-use butteraugli::consts::WMUL;
-use butteraugli::mask::{mask_dc_y, mask_y};
+use butteraugli_oxide::consts::WMUL;
+use butteraugli_oxide::mask::{mask_dc_y, mask_y};
 
 fn main() {
     // For uniform 128 vs 138 gray:
@@ -63,8 +63,14 @@ fn main() {
     println!("  Factor: {:.4}", l3 / s);
 
     // Let's verify by computing what factor we'd expect for 16x16 vs 64x64
-    println!("\nFor 16x16 uniform: factor = 1.35, expected score = {:.4}", s * 1.35);
-    println!("For 64x64 uniform: factor ≈ 1.9, expected score = {:.4}", s * 1.9);
+    println!(
+        "\nFor 16x16 uniform: factor = 1.35, expected score = {:.4}",
+        s * 1.35
+    );
+    println!(
+        "For 64x64 uniform: factor ≈ 1.9, expected score = {:.4}",
+        s * 1.9
+    );
 
     println!("\nConclusion: For uniform images, the butteraugli score increases");
     println!("with image size due to multi-resolution blending. This is expected!");

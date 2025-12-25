@@ -64,7 +64,11 @@ fn convolve_row(input: &[f32], kernel: &[f32], output: &mut [f32]) {
         }
 
         // Re-normalize for border pixels (C++ approach)
-        output[x] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
+        output[x] = if weight_sum > 0.0 {
+            sum / weight_sum
+        } else {
+            0.0
+        };
     }
 }
 
@@ -96,7 +100,11 @@ fn convolve_column(image: &ImageF, x: usize, kernel: &[f32], output: &mut [f32])
         }
 
         // Re-normalize for border pixels (C++ approach)
-        output[y] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
+        output[y] = if weight_sum > 0.0 {
+            sum / weight_sum
+        } else {
+            0.0
+        };
     }
 }
 
@@ -188,7 +196,11 @@ pub fn blur_5x5(input: &ImageF, weights: &[f32; 3]) -> ImageF {
                 weight_sum += k_val;
                 sum += row[j] * k_val;
             }
-            out[x] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
+            out[x] = if weight_sum > 0.0 {
+                sum / weight_sum
+            } else {
+                0.0
+            };
         }
     }
 
@@ -207,7 +219,11 @@ pub fn blur_5x5(input: &ImageF, weights: &[f32; 3]) -> ImageF {
                 weight_sum += k_val;
                 sum += temp.get(x, j) * k_val;
             }
-            out[x] = if weight_sum > 0.0 { sum / weight_sum } else { 0.0 };
+            out[x] = if weight_sum > 0.0 {
+                sum / weight_sum
+            } else {
+                0.0
+            };
         }
     }
 

@@ -1,10 +1,10 @@
 //! Trace full diff computation to find where extra score comes from
 
-use butteraugli::consts::WMUL;
-use butteraugli::mask::{mask_dc_y, mask_y};
-use butteraugli::opsin::srgb_to_xyb_butteraugli;
-use butteraugli::psycho::separate_frequencies;
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::consts::WMUL;
+use butteraugli_oxide::mask::{mask_dc_y, mask_y};
+use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
+use butteraugli_oxide::psycho::separate_frequencies;
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 
 fn main() {
     let width = 16;
@@ -33,7 +33,13 @@ fn main() {
         let d = ps1.lf.plane(c).get(cx, cy) - ps2.lf.plane(c).get(cx, cy);
         let d2w = d * d * WMUL[6 + c] as f32;
         dc_total += d2w;
-        println!("  LF[{}]: d={:.4}, d^2*w={:.4} (w={:.4})", c, d, d2w, WMUL[6 + c]);
+        println!(
+            "  LF[{}]: d={:.4}, d^2*w={:.4} (w={:.4})",
+            c,
+            d,
+            d2w,
+            WMUL[6 + c]
+        );
     }
     println!("  DC total = {:.4}", dc_total);
 
@@ -44,7 +50,13 @@ fn main() {
         let d = ps1.mf.plane(c).get(cx, cy) - ps2.mf.plane(c).get(cx, cy);
         let d2w = d * d * WMUL[3 + c] as f32;
         mf_total += d2w;
-        println!("  MF[{}]: d={:.6}, d^2*w={:.9} (w={:.4})", c, d, d2w, WMUL[3 + c]);
+        println!(
+            "  MF[{}]: d={:.6}, d^2*w={:.9} (w={:.4})",
+            c,
+            d,
+            d2w,
+            WMUL[3 + c]
+        );
     }
     println!("  MF total = {:.9}", mf_total);
 
@@ -63,7 +75,12 @@ fn main() {
     println!("\n=== Expected Score (DC only) ===");
     println!("  DC * MaskDcY = {:.4}", dc_masked);
     println!("  MF * MaskY = {:.9}", ac_masked);
-    println!("  Expected diffmap = sqrt({:.4} + {:.9}) = {:.4}", dc_masked, ac_masked, (dc_masked + ac_masked).sqrt());
+    println!(
+        "  Expected diffmap = sqrt({:.4} + {:.9}) = {:.4}",
+        dc_masked,
+        ac_masked,
+        (dc_masked + ac_masked).sqrt()
+    );
 
     // Actual butteraugli
     let params = ButteraugliParams::default();
@@ -80,5 +97,8 @@ fn main() {
     println!("  Ratio: {:.4}", actual / expected);
 
     println!("\nNote: For uniform images, AC should contribute 0.");
-    println!("The {} gap suggests extra AC contributions.", (actual / expected - 1.0) * 100.0);
+    println!(
+        "The {} gap suggests extra AC contributions.",
+        (actual / expected - 1.0) * 100.0
+    );
 }

@@ -2,7 +2,7 @@
 //! Uses jpegli-rs decoder for YCbCr, Python/Pillow for XYB (ICC handling)
 //! Compares both DSSIM and Butteraugli metrics
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
 use rgb::RGBA8;
 use std::fs;

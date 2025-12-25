@@ -22,24 +22,18 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     // Convert to RGB if needed
     let rgb = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
-        png::ColorType::Rgba => {
-            buf[..info.buffer_size()]
-                .chunks(4)
-                .flat_map(|c| [c[0], c[1], c[2]])
-                .collect()
-        }
-        png::ColorType::Grayscale => {
-            buf[..info.buffer_size()]
-                .iter()
-                .flat_map(|&g| [g, g, g])
-                .collect()
-        }
-        png::ColorType::GrayscaleAlpha => {
-            buf[..info.buffer_size()]
-                .chunks(2)
-                .flat_map(|c| [c[0], c[0], c[0]])
-                .collect()
-        }
+        png::ColorType::Rgba => buf[..info.buffer_size()]
+            .chunks(4)
+            .flat_map(|c| [c[0], c[1], c[2]])
+            .collect(),
+        png::ColorType::Grayscale => buf[..info.buffer_size()]
+            .iter()
+            .flat_map(|&g| [g, g, g])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
+            .chunks(2)
+            .flat_map(|c| [c[0], c[0], c[0]])
+            .collect(),
         _ => return None,
     };
 
@@ -108,10 +102,15 @@ fn compare_image(
     let rust_dssim = compute_dssim(rgb, &rust_decoded, width as usize, height as usize);
 
     // Rust butteraugli
-    let bfly_params = butteraugli::ButteraugliParams::default();
-    let rust_butteraugli = butteraugli::compute_butteraugli(
-        rgb, &rust_decoded, width as usize, height as usize, &bfly_params
-    ).score;
+    let bfly_params = butteraugli_oxide::ButteraugliParams::default();
+    let rust_butteraugli = butteraugli_oxide::compute_butteraugli(
+        rgb,
+        &rust_decoded,
+        width as usize,
+        height as usize,
+        &bfly_params,
+    )
+    .score;
 
     // C++ encoding with timing
     let cpp_out = format!("/tmp/cpp_compare_q{}.jpg", quality);
@@ -120,8 +119,9 @@ fn compare_image(
         .args([
             png_path.to_str().unwrap(),
             &cpp_out,
-            "-q", &quality.to_string(),
-            "--progressive_level=2"
+            "-q",
+            &quality.to_string(),
+            "--progressive_level=2",
         ])
         .output()
         .ok()?;
@@ -139,9 +139,14 @@ fn compare_image(
     let cpp_dssim = compute_dssim(rgb, &cpp_decoded, width as usize, height as usize);
 
     // C++ butteraugli
-    let cpp_butteraugli = butteraugli::compute_butteraugli(
-        rgb, &cpp_decoded, width as usize, height as usize, &bfly_params
-    ).score;
+    let cpp_butteraugli = butteraugli_oxide::compute_butteraugli(
+        rgb,
+        &cpp_decoded,
+        width as usize,
+        height as usize,
+        &bfly_params,
+    )
+    .score;
 
     // Cleanup
     let _ = fs::remove_file(&cpp_out);
@@ -165,7 +170,8 @@ fn find_cjpegli() -> Option<std::path::PathBuf> {
         "../../../build/tools/cjpegli",
         "../../build/tools/cjpegli",
     ];
-    paths.iter()
+    paths
+        .iter()
         .map(std::path::PathBuf::from)
         .find(|p| p.exists())
 }
@@ -241,7 +247,12 @@ fn test_comprehensive_cpp_comparison() {
 
     for (img_idx, img_path) in images.iter().enumerate() {
         let img_name = img_path.file_name().unwrap().to_str().unwrap();
-        println!("[{}/{}] Processing: {}", img_idx + 1, images.len(), img_name);
+        println!(
+            "[{}/{}] Processing: {}",
+            img_idx + 1,
+            images.len(),
+            img_name
+        );
 
         let (rgb, width, height) = match load_png(img_path) {
             Some(data) => data,
@@ -263,9 +274,9 @@ fn test_comprehensive_cpp_comparison() {
         }
 
         for &q in &qualities {
-            if let Some(result) = compare_image(
-                &rgb, width, height, q, &cjpegli_path, Path::new(&tmp_png)
-            ) {
+            if let Some(result) =
+                compare_image(&rgb, width, height, q, &cjpegli_path, Path::new(&tmp_png))
+            {
                 aggregated.entry(q).or_default().push(result);
             }
         }
@@ -280,10 +291,19 @@ fn test_comprehensive_cpp_comparison() {
 
     println!(
         "{:>4} | {:>10} {:>10} {:>7} | {:>8} {:>8} {:>7} | {:>8} {:>8} {:>7} | {:>8} {:>8} {:>7}",
-        "Q", "Rust Size", "C++ Size", "Δ%",
-        "Rust ms", "C++ ms", "Δ%",
-        "Rust DSSIM", "C++ DSSIM", "Δ%",
-        "Rust Bfly", "C++ Bfly", "Δ%"
+        "Q",
+        "Rust Size",
+        "C++ Size",
+        "Δ%",
+        "Rust ms",
+        "C++ ms",
+        "Δ%",
+        "Rust DSSIM",
+        "C++ DSSIM",
+        "Δ%",
+        "Rust Bfly",
+        "C++ Bfly",
+        "Δ%"
     );
     println!("{:-<140}", "");
 
@@ -341,14 +361,31 @@ fn test_comprehensive_cpp_comparison() {
     let avg_bfly_diff: f64 = all_bfly_diffs.iter().sum::<f64>() / all_bfly_diffs.len() as f64;
 
     println!("\nOVERALL AVERAGES:");
-    println!("  Size difference:       {:>+.2}% (positive = Rust larger)", avg_size_diff);
-    println!("  DSSIM difference:      {:>+.2}% (positive = Rust worse)", avg_dssim_diff);
-    println!("  Butteraugli difference: {:>+.2}% (positive = Rust worse)", avg_bfly_diff);
+    println!(
+        "  Size difference:       {:>+.2}% (positive = Rust larger)",
+        avg_size_diff
+    );
+    println!(
+        "  DSSIM difference:      {:>+.2}% (positive = Rust worse)",
+        avg_dssim_diff
+    );
+    println!(
+        "  Butteraugli difference: {:>+.2}% (positive = Rust worse)",
+        avg_bfly_diff
+    );
 
     // Quality parity assessment
     println!("\nQUALITY PARITY ASSESSMENT:");
     let dssim_match_count = all_dssim_diffs.iter().filter(|d| d.abs() < 5.0).count();
     let bfly_match_count = all_bfly_diffs.iter().filter(|d| d.abs() < 5.0).count();
-    println!("  DSSIM within 5%: {}/{} quality levels", dssim_match_count, all_dssim_diffs.len());
-    println!("  Butteraugli within 5%: {}/{} quality levels", bfly_match_count, all_bfly_diffs.len());
+    println!(
+        "  DSSIM within 5%: {}/{} quality levels",
+        dssim_match_count,
+        all_dssim_diffs.len()
+    );
+    println!(
+        "  Butteraugli within 5%: {}/{} quality levels",
+        bfly_match_count,
+        all_bfly_diffs.len()
+    );
 }

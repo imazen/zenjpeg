@@ -174,7 +174,8 @@ pub fn opsin_dynamics_image(rgb: &Image3F, intensity_target: f32) -> Image3F {
             let blurred_b_val = blurred_b.get(x, y) * intensity_target;
 
             // Step 2: Calculate sensitivity based on blurred image
-            let (pre0, pre1, pre2) = opsin_absorbance(blurred_r_val, blurred_g_val, blurred_b_val, true);
+            let (pre0, pre1, pre2) =
+                opsin_absorbance(blurred_r_val, blurred_g_val, blurred_b_val, true);
             let pre0 = pre0.max(min_val);
             let pre1 = pre1.max(min_val);
             let pre2 = pre2.max(min_val);

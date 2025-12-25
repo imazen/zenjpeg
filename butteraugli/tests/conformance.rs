@@ -4,7 +4,7 @@
 //! The goal is to ensure the Rust butteraugli implementation provides meaningful
 //! perceptual quality scores.
 
-use butteraugli::{compute_butteraugli, ButteraugliParams, BUTTERAUGLI_BAD, BUTTERAUGLI_GOOD};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, BUTTERAUGLI_BAD, BUTTERAUGLI_GOOD};
 use std::fs;
 use std::path::Path;
 
@@ -150,14 +150,20 @@ fn test_score_monotonicity_with_quality() {
         let decoded = decode_jpeg(&jpeg_data);
 
         if decoded.len() != original.len() {
-            eprintln!("Size mismatch after roundtrip, skipping quality {}", quality);
+            eprintln!(
+                "Size mismatch after roundtrip, skipping quality {}",
+                quality
+            );
             continue;
         }
 
         let params = ButteraugliParams::default();
         let result = compute_butteraugli(&original, &decoded, width, height, &params);
 
-        println!("Quality {}: butteraugli score = {:.4}", quality, result.score);
+        println!(
+            "Quality {}: butteraugli score = {:.4}",
+            quality, result.score
+        );
 
         // Higher quality should give lower score
         if quality > 50 {
@@ -307,7 +313,9 @@ fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     comp.set_size(width as usize, height as usize);
     comp.set_quality(quality as f32);
 
-    let mut started = comp.start_compress(Cursor::new(&mut output)).expect("start compress");
+    let mut started = comp
+        .start_compress(Cursor::new(&mut output))
+        .expect("start compress");
 
     // Write scanlines row by row
     let row_stride = width as usize * 3;

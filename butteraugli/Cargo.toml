@@ -1,10 +1,29 @@
 [package]
-name = "butteraugli"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-description = "Butteraugli perceptual image quality metric - Rust port from libjxl"
+name = "butteraugli-oxide"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+repository = "https://github.com/imazen/jpegli-rs"
+documentation = "https://docs.rs/butteraugli-oxide"
+readme = "README.md"
+description = "Pure Rust implementation of Google's butteraugli perceptual image quality metric from libjxl"
+keywords = ["image", "quality", "perceptual", "metric", "butteraugli"]
+categories = ["multimedia::images", "algorithms", "graphics"]
+authors = ["Lilith River <lilith@imazen.io>"]
+rust-version = "1.70"
+exclude = [
+    # Tests/examples that require jpegli-sys (local C++ FFI, not on crates.io)
+    "tests/cpp_parity.rs",
+    "tests/cpp_fuzz.rs",
+    "tests/intermediate_values.rs",
+    "tests/step_by_step_comparison.rs",
+    "examples/capture_cpp_reference.rs",
+    "examples/trace_*.rs",
+    "examples/debug_values.rs",
+    "examples/analyze_score.rs",
+    "examples/test_uniform.rs",
+    "examples/butteraugli_debug.rs",
+]
 
 [features]
 default = ["simd"]
@@ -12,21 +31,29 @@ simd = []
 
 [dependencies]
 # SIMD support
-wide = { workspace = true }
+wide = "0.7"
 
 [dev-dependencies]
 # Image I/O for testing
-png = { workspace = true }
+png = "0.17"
 
 # JPEG encoding/decoding for roundtrip tests
-mozjpeg = { workspace = true }
-jpeg-decoder = { workspace = true }
+mozjpeg = "0.10"
+jpeg-decoder = "0.3"
 
 # Testing utilities
-approx = { workspace = true }
+approx = "0.5"
 
 # Property-based testing
-proptest = { workspace = true }
+proptest = "1.4"
 
-# FFI bindings for C++ comparison
+# Date/time for reference data generation
+chrono = "0.4"
+
+# FFI bindings for C++ comparison (local development only)
+# This is a path dependency that won't resolve when built from crates.io,
+# but the tests that need it are excluded from the published package.
 jpegli-sys = { path = "../jpegli-sys", features = ["butteraugli"] }
+
+[lints]
+workspace = true

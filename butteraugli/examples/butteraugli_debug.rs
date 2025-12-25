@@ -13,7 +13,7 @@
 //! cargo run --release --example butteraugli_debug -- uniform 128 128 128
 //! ```
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -132,7 +132,7 @@ fn cmd_compare(args: &[String]) {
     analyze_pixels(&rgb1, &rgb2);
 }
 
-fn analyze_diffmap(diffmap: &butteraugli::image::ImageF) {
+fn analyze_diffmap(diffmap: &butteraugli_oxide::image::ImageF) {
     let mut max = 0.0f32;
     let mut sum = 0.0f64;
     let mut histogram = [0usize; 10];

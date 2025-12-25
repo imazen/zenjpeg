@@ -1,6 +1,6 @@
 //! Analyze butteraugli scores in detail.
 
-use butteraugli::{compute_butteraugli, ButteraugliParams, ImageF};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, ImageF};
 use std::fs;
 use std::path::Path;
 
@@ -60,7 +60,11 @@ fn analyze_diffmap(diffmap: &ImageF) {
     println!("    min: {:.6}", min_val);
     println!("    max: {:.6}", max_val);
     println!("    mean: {:.6}", mean);
-    println!("    nonzero pixels: {} ({:.1}%)", nonzero_count, 100.0 * nonzero_count as f64 / (width * height) as f64);
+    println!(
+        "    nonzero pixels: {} ({:.1}%)",
+        nonzero_count,
+        100.0 * nonzero_count as f64 / (width * height) as f64
+    );
 }
 
 fn main() {
@@ -75,8 +79,16 @@ fn main() {
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 3;
-            let v1 = if (x / 8 + y / 8) % 2 == 0 { 200u8 } else { 50u8 };
-            let v2 = if (x / 8 + y / 8) % 2 == 1 { 200u8 } else { 50u8 };
+            let v1 = if (x / 8 + y / 8) % 2 == 0 {
+                200u8
+            } else {
+                50u8
+            };
+            let v2 = if (x / 8 + y / 8) % 2 == 1 {
+                200u8
+            } else {
+                50u8
+            };
             rgb1[idx] = v1;
             rgb1[idx + 1] = v1;
             rgb1[idx + 2] = v1;
@@ -195,7 +207,9 @@ fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     comp.set_size(width as usize, height as usize);
     comp.set_quality(quality as f32);
 
-    let mut started = comp.start_compress(Cursor::new(&mut output)).expect("start");
+    let mut started = comp
+        .start_compress(Cursor::new(&mut output))
+        .expect("start");
     let row_stride = width as usize * 3;
     for row in rgb.chunks(row_stride) {
         started.write_scanlines(row).expect("write");
@@ -205,5 +219,7 @@ fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    jpeg_decoder::Decoder::new(data).decode().unwrap_or_default()
+    jpeg_decoder::Decoder::new(data)
+        .decode()
+        .unwrap_or_default()
 }

@@ -40,7 +40,8 @@ pub fn combine_channels_for_masking(hf: &[ImageF; 2], uhf: &[ImageF; 2], out: &m
             // C++: xdiff = (row_x_uhf[x] + row_x_hf[x]) * muls[0]
             let xdiff = (row_x_uhf[x] + row_x_hf[x]) * COMBINE_CHANNELS_MULS[0];
             // C++: ydiff = row_y_uhf[x] * muls[1] + row_y_hf[x] * muls[2]
-            let ydiff = row_y_uhf[x] * COMBINE_CHANNELS_MULS[1] + row_y_hf[x] * COMBINE_CHANNELS_MULS[2];
+            let ydiff =
+                row_y_uhf[x] * COMBINE_CHANNELS_MULS[1] + row_y_hf[x] * COMBINE_CHANNELS_MULS[2];
             // C++: row[x] = sqrt(xdiff * xdiff + ydiff * ydiff)
             row_out[x] = (xdiff * xdiff + ydiff * ydiff).sqrt();
         }
@@ -106,19 +107,39 @@ pub fn fuzzy_erosion(from: &ImageF, to: &mut ImageF) {
             if x >= K_STEP {
                 store_min3(from.get(x - K_STEP, y), &mut min0, &mut min1, &mut min2);
                 if y >= K_STEP {
-                    store_min3(from.get(x - K_STEP, y - K_STEP), &mut min0, &mut min1, &mut min2);
+                    store_min3(
+                        from.get(x - K_STEP, y - K_STEP),
+                        &mut min0,
+                        &mut min1,
+                        &mut min2,
+                    );
                 }
                 if y + K_STEP < height {
-                    store_min3(from.get(x - K_STEP, y + K_STEP), &mut min0, &mut min1, &mut min2);
+                    store_min3(
+                        from.get(x - K_STEP, y + K_STEP),
+                        &mut min0,
+                        &mut min1,
+                        &mut min2,
+                    );
                 }
             }
             if x + K_STEP < width {
                 store_min3(from.get(x + K_STEP, y), &mut min0, &mut min1, &mut min2);
                 if y >= K_STEP {
-                    store_min3(from.get(x + K_STEP, y - K_STEP), &mut min0, &mut min1, &mut min2);
+                    store_min3(
+                        from.get(x + K_STEP, y - K_STEP),
+                        &mut min0,
+                        &mut min1,
+                        &mut min2,
+                    );
                 }
                 if y + K_STEP < height {
-                    store_min3(from.get(x + K_STEP, y + K_STEP), &mut min0, &mut min1, &mut min2);
+                    store_min3(
+                        from.get(x + K_STEP, y + K_STEP),
+                        &mut min0,
+                        &mut min1,
+                        &mut min2,
+                    );
                 }
             }
             if y >= K_STEP {
@@ -306,29 +327,36 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_mask_y_cpp_values() {
-        // Verify MaskY matches C++ implementation
-        // C++ calculation for delta=1.0:
-        // c = 2.5485944793 / (0.451936922203 * 1.0 + 0.829591754942) = 1.989
-        // retval = 0.0709 * (1.0 + 1.989) = 0.2119
-        // return 0.2119^2 = 0.0449
-        
-        let result = mask_y(1.0);
-        println!("MaskY(1.0) = {}", result);
-        
-        // Calculate expected value
-        let offset = 0.829591754942;
-        let scaler = 0.451936922203;
-        let mul = 2.5485944793;
-        let global_scale = 1.0 / (17.83 * 0.790799174);
-        
-        let c = mul / (scaler * 1.0 + offset);
-        let retval = global_scale * (1.0 + c);
-        let expected = retval * retval;
-        
-        println!("Expected: {}, c={}, retval={}, global_scale={}", expected, c, retval, global_scale);
-        
-        assert!((result - expected).abs() < 1e-6, 
-                "MaskY(1.0) = {}, expected {}", result, expected);
-    }
+#[test]
+fn test_mask_y_cpp_values() {
+    // Verify MaskY matches C++ implementation
+    // C++ calculation for delta=1.0:
+    // c = 2.5485944793 / (0.451936922203 * 1.0 + 0.829591754942) = 1.989
+    // retval = 0.0709 * (1.0 + 1.989) = 0.2119
+    // return 0.2119^2 = 0.0449
+
+    let result = mask_y(1.0);
+    println!("MaskY(1.0) = {}", result);
+
+    // Calculate expected value
+    let offset = 0.829591754942;
+    let scaler = 0.451936922203;
+    let mul = 2.5485944793;
+    let global_scale = 1.0 / (17.83 * 0.790799174);
+
+    let c = mul / (scaler * 1.0 + offset);
+    let retval = global_scale * (1.0 + c);
+    let expected = retval * retval;
+
+    println!(
+        "Expected: {}, c={}, retval={}, global_scale={}",
+        expected, c, retval, global_scale
+    );
+
+    assert!(
+        (result - expected).abs() < 1e-6,
+        "MaskY(1.0) = {}, expected {}",
+        result,
+        expected
+    );
+}

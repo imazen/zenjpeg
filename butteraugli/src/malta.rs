@@ -146,51 +146,19 @@ pub fn malta_unit(data: &ImageF, x: usize, y: usize) -> f32 {
     retval += sum * sum;
 
     // Pattern 9: steep diagonal (2:1 slope)
-    let sum = sum7(&[
-        (-2, -3),
-        (-1, -2),
-        (-1, -1),
-        (0, 0),
-        (1, 1),
-        (1, 2),
-        (2, 3),
-    ]);
+    let sum = sum7(&[(-2, -3), (-1, -2), (-1, -1), (0, 0), (1, 1), (1, 2), (2, 3)]);
     retval += sum * sum;
 
     // Pattern 10: steep diagonal other way
-    let sum = sum7(&[
-        (2, -3),
-        (1, -2),
-        (1, -1),
-        (0, 0),
-        (-1, 1),
-        (-1, 2),
-        (-2, 3),
-    ]);
+    let sum = sum7(&[(2, -3), (1, -2), (1, -1), (0, 0), (-1, 1), (-1, 2), (-2, 3)]);
     retval += sum * sum;
 
     // Pattern 11: shallow diagonal (1:2 slope)
-    let sum = sum7(&[
-        (-3, -2),
-        (-2, -1),
-        (-1, -1),
-        (0, 0),
-        (1, 1),
-        (2, 1),
-        (3, 2),
-    ]);
+    let sum = sum7(&[(-3, -2), (-2, -1), (-1, -1), (0, 0), (1, 1), (2, 1), (3, 2)]);
     retval += sum * sum;
 
     // Pattern 12: shallow diagonal other way
-    let sum = sum7(&[
-        (3, -2),
-        (2, -1),
-        (1, -1),
-        (0, 0),
-        (-1, 1),
-        (-2, 1),
-        (-3, 2),
-    ]);
+    let sum = sum7(&[(3, -2), (2, -1), (1, -1), (0, 0), (-1, 1), (-2, 1), (-3, 2)]);
     retval += sum * sum;
 
     // Pattern 13: curved line pattern
@@ -381,7 +349,11 @@ pub fn malta_diff_map(
     const K_WEIGHT0: f64 = 0.5;
     const K_WEIGHT1: f64 = 0.33;
     const LEN: f64 = 3.75;
-    let mulli = if use_lf { 0.611612573796 } else { 0.39905817637 };
+    let mulli = if use_lf {
+        0.611612573796
+    } else {
+        0.39905817637
+    };
 
     let w_pre0gt1 = mulli * (K_WEIGHT0 * w_0gt1).sqrt() / (LEN * 2.0 + 1.0);
     let w_pre0lt1 = mulli * (K_WEIGHT1 * w_0lt1).sqrt() / (LEN * 2.0 + 1.0);

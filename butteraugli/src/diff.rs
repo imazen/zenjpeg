@@ -4,12 +4,14 @@
 //! perceptual difference between two images.
 
 use crate::consts::{
-    NORM1_HF, NORM1_HF_X, NORM1_MF, NORM1_MF_X, NORM1_UHF, NORM1_UHF_X, W_HF_MALTA, W_HF_MALTA_X,
-    W_MF_MALTA, W_MF_MALTA_X, W_UHF_MALTA, W_UHF_MALTA_X, WMUL,
+    NORM1_HF, NORM1_HF_X, NORM1_MF, NORM1_MF_X, NORM1_UHF, NORM1_UHF_X, WMUL, W_HF_MALTA,
+    W_HF_MALTA_X, W_MF_MALTA, W_MF_MALTA_X, W_UHF_MALTA, W_UHF_MALTA_X,
 };
 use crate::image::{Image3F, ImageF};
 use crate::malta::malta_diff_map;
-use crate::mask::{combine_channels_for_masking, compute_mask as compute_mask_from_images, mask_dc_y, mask_y};
+use crate::mask::{
+    combine_channels_for_masking, compute_mask as compute_mask_from_images, mask_dc_y, mask_y,
+};
 use crate::opsin::srgb_to_xyb_butteraugli;
 use crate::psycho::{separate_frequencies, PsychoImage};
 use crate::{ButteraugliParams, ButteraugliResult};
@@ -364,9 +366,24 @@ fn compute_psycho_diff_malta(
     );
 
     // Add L2Diff for MF channels (all three)
-    l2_diff(ps0.mf.plane(0), ps1.mf.plane(0), WMUL[3] as f32, block_diff_ac.plane_mut(0));
-    l2_diff(ps0.mf.plane(1), ps1.mf.plane(1), WMUL[4] as f32, block_diff_ac.plane_mut(1));
-    l2_diff(ps0.mf.plane(2), ps1.mf.plane(2), WMUL[5] as f32, block_diff_ac.plane_mut(2));
+    l2_diff(
+        ps0.mf.plane(0),
+        ps1.mf.plane(0),
+        WMUL[3] as f32,
+        block_diff_ac.plane_mut(0),
+    );
+    l2_diff(
+        ps0.mf.plane(1),
+        ps1.mf.plane(1),
+        WMUL[4] as f32,
+        block_diff_ac.plane_mut(1),
+    );
+    l2_diff(
+        ps0.mf.plane(2),
+        ps1.mf.plane(2),
+        WMUL[5] as f32,
+        block_diff_ac.plane_mut(2),
+    );
 
     block_diff_ac
 }
@@ -375,11 +392,7 @@ fn compute_psycho_diff_malta(
 ///
 /// Matches C++ MaskPsychoImage (butteraugli.cc lines 1250-1264).
 /// Returns the computed mask and optionally accumulates AC differences.
-fn mask_psycho_image(
-    ps0: &PsychoImage,
-    ps1: &PsychoImage,
-    diff_ac: Option<&mut ImageF>,
-) -> ImageF {
+fn mask_psycho_image(ps0: &PsychoImage, ps1: &PsychoImage, diff_ac: Option<&mut ImageF>) -> ImageF {
     let width = ps0.width();
     let height = ps0.height();
 
@@ -434,10 +447,12 @@ fn combine_channels_to_diffmap(
 
             // MaskColor: sum of all channels multiplied by mask
             // C++: color[0] * mask + color[1] * mask + color[2] * mask
-            let dc_masked =
-                diff_dc_scaled[0] * dc_maskval + diff_dc_scaled[1] * dc_maskval + diff_dc_scaled[2] * dc_maskval;
-            let ac_masked =
-                diff_ac_scaled[0] * maskval + diff_ac_scaled[1] * maskval + diff_ac_scaled[2] * maskval;
+            let dc_masked = diff_dc_scaled[0] * dc_maskval
+                + diff_dc_scaled[1] * dc_maskval
+                + diff_dc_scaled[2] * dc_maskval;
+            let ac_masked = diff_ac_scaled[0] * maskval
+                + diff_ac_scaled[1] * maskval
+                + diff_ac_scaled[2] * maskval;
 
             // Final diffmap value is sqrt of sum
             diffmap.set(x, y, (dc_masked + ac_masked).sqrt());
@@ -506,7 +521,9 @@ fn compute_diffmap_single_resolution(
         for y in 0..height {
             for x in 0..width {
                 let d = ps1.lf.plane(c).get(x, y) - ps2.lf.plane(c).get(x, y);
-                block_diff_dc.plane_mut(c).set(x, y, d * d * WMUL[6 + c] as f32);
+                block_diff_dc
+                    .plane_mut(c)
+                    .set(x, y, d * d * WMUL[6 + c] as f32);
             }
         }
     }
@@ -722,11 +739,7 @@ mod tests {
         // Should have blended values
         // new = old * (1 - 0.3 * 0.5) + 0.5 * 1.0 = 2.0 * 0.85 + 0.5 = 1.7 + 0.5 = 2.2
         let val = dest.get(0, 0);
-        assert!(
-            (val - 2.2).abs() < 0.01,
-            "Expected ~2.2, got {}",
-            val
-        );
+        assert!((val - 2.2).abs() < 0.01, "Expected ~2.2, got {}", val);
     }
 
     #[test]

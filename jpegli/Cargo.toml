@@ -17,7 +17,7 @@ multiversion = { workspace = true }
 lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
 jpeg-decoder = { workspace = true, optional = true }
-butteraugli = { workspace = true }
+butteraugli-oxide = { workspace = true }
 
 [dev-dependencies]
 chrono = "0.4"

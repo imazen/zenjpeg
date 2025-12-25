@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo run --example trace_uniform
 
-use butteraugli::opsin::{gamma, opsin_absorbance, srgb_to_xyb_butteraugli};
-use butteraugli::{compute_butteraugli, ButteraugliParams, ImageF, PsychoImage};
+use butteraugli_oxide::opsin::{gamma, opsin_absorbance, srgb_to_xyb_butteraugli};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, ImageF, PsychoImage};
 
 /// sRGB transfer function (gamma decoding)
 fn srgb_to_linear(v: u8) -> f32 {
@@ -41,15 +41,24 @@ fn main() {
 
     let (o0_128, o1_128, o2_128) = opsin_absorbance(r128, r128, r128, true);
     let (o0_138, o1_138, o2_138) = opsin_absorbance(r138, r138, r138, true);
-    println!("OpsinAbsorbance(gray128): [{:.6}, {:.6}, {:.6}]", o0_128, o1_128, o2_128);
-    println!("OpsinAbsorbance(gray138): [{:.6}, {:.6}, {:.6}]", o0_138, o1_138, o2_138);
+    println!(
+        "OpsinAbsorbance(gray128): [{:.6}, {:.6}, {:.6}]",
+        o0_128, o1_128, o2_128
+    );
+    println!(
+        "OpsinAbsorbance(gray138): [{:.6}, {:.6}, {:.6}]",
+        o0_138, o1_138, o2_138
+    );
 
     // Compute sensitivity
     let min_val = 1e-4_f32;
     let sens0_128 = (gamma(o0_128) / o0_128).max(min_val);
     let sens1_128 = (gamma(o1_128) / o1_128).max(min_val);
     let sens2_128 = (gamma(o2_128) / o2_128).max(min_val);
-    println!("Sensitivity(gray128): [{:.6}, {:.6}, {:.6}]", sens0_128, sens1_128, sens2_128);
+    println!(
+        "Sensitivity(gray128): [{:.6}, {:.6}, {:.6}]",
+        sens0_128, sens1_128, sens2_128
+    );
 
     // Apply sensitivity and convert to XYB
     let cur0_128 = o0_128 * sens0_128;
@@ -58,7 +67,10 @@ fn main() {
     let x_128 = cur0_128 - cur1_128;
     let y_128 = cur0_128 + cur1_128;
     let b_128 = cur2_128;
-    println!("XYB(gray128): X={:.6}, Y={:.6}, B={:.6}", x_128, y_128, b_128);
+    println!(
+        "XYB(gray128): X={:.6}, Y={:.6}, B={:.6}",
+        x_128, y_128, b_128
+    );
 
     let sens0_138 = (gamma(o0_138) / o0_138).max(min_val);
     let sens1_138 = (gamma(o1_138) / o1_138).max(min_val);
@@ -69,10 +81,17 @@ fn main() {
     let x_138 = cur0_138 - cur1_138;
     let y_138 = cur0_138 + cur1_138;
     let b_138 = cur2_138;
-    println!("XYB(gray138): X={:.6}, Y={:.6}, B={:.6}", x_138, y_138, b_138);
+    println!(
+        "XYB(gray138): X={:.6}, Y={:.6}, B={:.6}",
+        x_138, y_138, b_138
+    );
 
-    println!("\nXYB difference: dX={:.6}, dY={:.6}, dB={:.6}",
-             x_138 - x_128, y_138 - y_128, b_138 - b_128);
+    println!(
+        "\nXYB difference: dX={:.6}, dY={:.6}, dB={:.6}",
+        x_138 - x_128,
+        y_138 - y_128,
+        b_138 - b_128
+    );
 
     // Test actual XYB conversion
     println!("\n--- Full XYB conversion test (single pixel) ---");
@@ -84,14 +103,18 @@ fn main() {
     let xyb128 = srgb_to_xyb_butteraugli(&rgb128, width, height, intensity_target);
     let xyb138 = srgb_to_xyb_butteraugli(&rgb138, width, height, intensity_target);
 
-    println!("srgb_to_xyb_butteraugli(gray128)[0,0]: X={:.6}, Y={:.6}, B={:.6}",
-             xyb128.plane(0).get(0, 0),
-             xyb128.plane(1).get(0, 0),
-             xyb128.plane(2).get(0, 0));
-    println!("srgb_to_xyb_butteraugli(gray138)[0,0]: X={:.6}, Y={:.6}, B={:.6}",
-             xyb138.plane(0).get(0, 0),
-             xyb138.plane(1).get(0, 0),
-             xyb138.plane(2).get(0, 0));
+    println!(
+        "srgb_to_xyb_butteraugli(gray128)[0,0]: X={:.6}, Y={:.6}, B={:.6}",
+        xyb128.plane(0).get(0, 0),
+        xyb128.plane(1).get(0, 0),
+        xyb128.plane(2).get(0, 0)
+    );
+    println!(
+        "srgb_to_xyb_butteraugli(gray138)[0,0]: X={:.6}, Y={:.6}, B={:.6}",
+        xyb138.plane(0).get(0, 0),
+        xyb138.plane(1).get(0, 0),
+        xyb138.plane(2).get(0, 0)
+    );
 
     // Full butteraugli computation
     println!("\n--- Full butteraugli computation ---");
@@ -143,8 +166,13 @@ fn main() {
     }
 
     for mask_val in [0.0, 0.5, 1.0, 2.0, 5.0] {
-        println!("MaskY({:.1}) = {:.6}, MaskDcY({:.1}) = {:.6}",
-                 mask_val, mask_y(mask_val), mask_val, mask_dc_y(mask_val));
+        println!(
+            "MaskY({:.1}) = {:.6}, MaskDcY({:.1}) = {:.6}",
+            mask_val,
+            mask_y(mask_val),
+            mask_val,
+            mask_dc_y(mask_val)
+        );
     }
 
     // Compare different gray levels

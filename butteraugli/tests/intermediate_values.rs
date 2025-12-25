@@ -3,8 +3,8 @@
 //! Uses synthetic test images stored as constants for reproducibility.
 //! Compares intermediate pipeline stages between Rust and C++ implementations.
 
-use butteraugli::opsin::srgb_to_xyb_butteraugli;
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 use jpegli_sys::{
     butteraugli_compare_full, butteraugli_opsin_dynamics, butteraugli_srgb_to_linear,
     BUTTERAUGLI_OK,
@@ -80,7 +80,9 @@ const COLOR_GRADIENT_16X16: [u8; 768] = generate_color_gradient_16x16();
 fn generate_random_32x32(seed: u64) -> Vec<u8> {
     let mut state = seed;
     let lcg_next = |s: &mut u64| -> u8 {
-        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((*s >> 33) as u8).saturating_add(32).min(224)
     };
 
@@ -170,13 +172,8 @@ fn test_diffmap_uniform_gray() {
 
     let params = ButteraugliParams::default();
     let rust_result = compute_butteraugli(&img1, &img2, width, height, &params);
-    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(
-        &img1,
-        &img2,
-        width,
-        height,
-        params.intensity_target,
-    );
+    let (cpp_score, cpp_diffmap) =
+        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, params.intensity_target);
 
     let rust_diffmap = rust_result.diffmap.expect("Rust should produce diffmap");
 
@@ -210,8 +207,14 @@ fn test_diffmap_uniform_gray() {
     let (r_min, r_max, r_mean, _) = stats(&rust_flat);
     let (c_min, c_max, c_mean, _) = stats(&cpp_diffmap);
 
-    println!("  Rust diffmap: min={:.4} max={:.4} mean={:.4}", r_min, r_max, r_mean);
-    println!("  C++ diffmap:  min={:.4} max={:.4} mean={:.4}", c_min, c_max, c_mean);
+    println!(
+        "  Rust diffmap: min={:.4} max={:.4} mean={:.4}",
+        r_min, r_max, r_mean
+    );
+    println!(
+        "  C++ diffmap:  min={:.4} max={:.4} mean={:.4}",
+        c_min, c_max, c_mean
+    );
     println!("  Max pixel diff: {:.6}", max_pixel_diff);
 
     // STRICT CHECK: C++ parity required within 5% relative difference
@@ -239,13 +242,8 @@ fn test_diffmap_gradient() {
 
     let params = ButteraugliParams::default();
     let rust_result = compute_butteraugli(&img1, &img2, width, height, &params);
-    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(
-        &img1,
-        &img2,
-        width,
-        height,
-        params.intensity_target,
-    );
+    let (cpp_score, cpp_diffmap) =
+        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, params.intensity_target);
 
     let rust_diffmap = rust_result.diffmap.expect("Rust should produce diffmap");
 
@@ -309,13 +307,8 @@ fn test_diffmap_checkerboard() {
 
     let params = ButteraugliParams::default();
     let rust_result = compute_butteraugli(&img1, &img2, width, height, &params);
-    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(
-        &img1,
-        &img2,
-        width,
-        height,
-        params.intensity_target,
-    );
+    let (cpp_score, cpp_diffmap) =
+        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, params.intensity_target);
 
     let score_diff = (rust_result.score - cpp_score).abs();
     let score_rel = if cpp_score > 0.001 {
@@ -350,13 +343,8 @@ fn test_diffmap_color_gradient() {
 
     let params = ButteraugliParams::default();
     let rust_result = compute_butteraugli(&img1, &img2, width, height, &params);
-    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(
-        &img1,
-        &img2,
-        width,
-        height,
-        params.intensity_target,
-    );
+    let (cpp_score, cpp_diffmap) =
+        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, params.intensity_target);
 
     let score_diff = (rust_result.score - cpp_score).abs();
     let score_rel = if cpp_score > 0.001 {
@@ -394,13 +382,8 @@ fn test_diffmap_random_32x32() {
 
     let params = ButteraugliParams::default();
     let rust_result = compute_butteraugli(&img1, &img2, width, height, &params);
-    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(
-        &img1,
-        &img2,
-        width,
-        height,
-        params.intensity_target,
-    );
+    let (cpp_score, cpp_diffmap) =
+        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, params.intensity_target);
 
     let rust_diffmap = rust_result.diffmap.expect("Rust should produce diffmap");
 
@@ -436,7 +419,10 @@ fn test_diffmap_random_32x32() {
     println!("  Diff: {:.6} ({:.2}%)", score_diff, score_rel * 100.0);
     println!("  Top 5 pixel differences:");
     for (x, y, r, c, d) in diffs.iter().take(5) {
-        println!("    ({:2},{:2}): Rust={:.4} C++={:.4} diff={:.4}", x, y, r, c, d);
+        println!(
+            "    ({:2},{:2}): Rust={:.4} C++={:.4} diff={:.4}",
+            x, y, r, c, d
+        );
     }
 
     // STRICT CHECK: C++ parity required within 15% for random (complex case)
@@ -470,13 +456,7 @@ fn test_opsin_dynamics_uniform() {
     // C++ OpsinDynamicsImage (via simplified wrapper)
     let mut cpp_xyb = vec![0.0f32; width * height * 3];
     let result = unsafe {
-        butteraugli_opsin_dynamics(
-            linear.as_ptr(),
-            width,
-            height,
-            80.0,
-            cpp_xyb.as_mut_ptr(),
-        )
+        butteraugli_opsin_dynamics(linear.as_ptr(), width, height, 80.0, cpp_xyb.as_mut_ptr())
     };
 
     if result != BUTTERAUGLI_OK {
@@ -521,13 +501,7 @@ fn test_opsin_dynamics_gradient() {
 
     let mut cpp_xyb = vec![0.0f32; width * height * 3];
     let result = unsafe {
-        butteraugli_opsin_dynamics(
-            linear.as_ptr(),
-            width,
-            height,
-            80.0,
-            cpp_xyb.as_mut_ptr(),
-        )
+        butteraugli_opsin_dynamics(linear.as_ptr(), width, height, 80.0, cpp_xyb.as_mut_ptr())
     };
 
     if result != BUTTERAUGLI_OK {
@@ -568,13 +542,8 @@ fn test_divergence_investigation() {
 
     let params = ButteraugliParams::default();
     let rust_result = compute_butteraugli(&img1, &img2, width, height, &params);
-    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(
-        &img1,
-        &img2,
-        width,
-        height,
-        params.intensity_target,
-    );
+    let (cpp_score, cpp_diffmap) =
+        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, params.intensity_target);
 
     let rust_diffmap = rust_result.diffmap.expect("diffmap");
 
@@ -608,15 +577,30 @@ fn test_divergence_investigation() {
     }
 
     println!("Divergence analysis (32x32 random):");
-    println!("  Score: Rust={:.4} C++={:.4} diff={:.2}%",
-             rust_result.score, cpp_score,
-             (rust_result.score - cpp_score).abs() / cpp_score * 100.0);
-    println!("  Corner sum: Rust={:.2} C++={:.2} diff={:.2}",
-             corner_rust, corner_cpp, (corner_rust - corner_cpp).abs());
-    println!("  Edge sum: Rust={:.2} C++={:.2} diff={:.2}",
-             edge_rust, edge_cpp, (edge_rust - edge_cpp).abs());
-    println!("  Center sum: Rust={:.2} C++={:.2} diff={:.2}",
-             center_rust, center_cpp, (center_rust - center_cpp).abs());
+    println!(
+        "  Score: Rust={:.4} C++={:.4} diff={:.2}%",
+        rust_result.score,
+        cpp_score,
+        (rust_result.score - cpp_score).abs() / cpp_score * 100.0
+    );
+    println!(
+        "  Corner sum: Rust={:.2} C++={:.2} diff={:.2}",
+        corner_rust,
+        corner_cpp,
+        (corner_rust - corner_cpp).abs()
+    );
+    println!(
+        "  Edge sum: Rust={:.2} C++={:.2} diff={:.2}",
+        edge_rust,
+        edge_cpp,
+        (edge_rust - edge_cpp).abs()
+    );
+    println!(
+        "  Center sum: Rust={:.2} C++={:.2} diff={:.2}",
+        center_rust,
+        center_cpp,
+        (center_rust - center_cpp).abs()
+    );
 }
 
 // ============================================================================
@@ -643,7 +627,13 @@ fn test_divergence_by_content_type() {
         })
         .collect();
     let h_gradient_shifted: Vec<u8> = h_gradient.iter().map(|&v| v.saturating_add(10)).collect();
-    test_pair("Horizontal Gradient", &h_gradient, &h_gradient_shifted, 64, 64);
+    test_pair(
+        "Horizontal Gradient",
+        &h_gradient,
+        &h_gradient_shifted,
+        64,
+        64,
+    );
 
     // Vertical gradient
     let v_gradient: Vec<u8> = (0..64)
@@ -655,7 +645,13 @@ fn test_divergence_by_content_type() {
         })
         .collect();
     let v_gradient_shifted: Vec<u8> = v_gradient.iter().map(|&v| v.saturating_add(10)).collect();
-    test_pair("Vertical Gradient", &v_gradient, &v_gradient_shifted, 64, 64);
+    test_pair(
+        "Vertical Gradient",
+        &v_gradient,
+        &v_gradient_shifted,
+        64,
+        64,
+    );
 
     // Diagonal gradient
     let d_gradient: Vec<u8> = (0..64)
@@ -667,7 +663,13 @@ fn test_divergence_by_content_type() {
         })
         .collect();
     let d_gradient_shifted: Vec<u8> = d_gradient.iter().map(|&v| v.saturating_add(10)).collect();
-    test_pair("Diagonal Gradient", &d_gradient, &d_gradient_shifted, 64, 64);
+    test_pair(
+        "Diagonal Gradient",
+        &d_gradient,
+        &d_gradient_shifted,
+        64,
+        64,
+    );
 
     // Checkerboard (high frequency)
     let checker: Vec<u8> = (0..64)

@@ -1,8 +1,8 @@
 //! Trace AC components for uniform images to debug high scores
 
-use butteraugli::opsin::srgb_to_xyb_butteraugli;
-use butteraugli::psycho::separate_frequencies;
-use butteraugli::{compute_butteraugli, ButteraugliParams, ImageF};
+use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
+use butteraugli_oxide::psycho::separate_frequencies;
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, ImageF};
 
 fn check_range(img: &ImageF, name: &str) {
     let mut min = f32::MAX;

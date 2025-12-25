@@ -3,10 +3,10 @@
 //! This test traces through each stage of the butteraugli algorithm
 //! comparing intermediate values to locate where divergence occurs.
 
-use butteraugli::blur::gaussian_blur;
-use butteraugli::image::ImageF;
-use butteraugli::opsin::srgb_to_xyb_butteraugli;
-use butteraugli::psycho::separate_frequencies;
+use butteraugli_oxide::blur::gaussian_blur;
+use butteraugli_oxide::image::ImageF;
+use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
+use butteraugli_oxide::psycho::separate_frequencies;
 use jpegli_sys::{
     butteraugli_blur, butteraugli_compare_full, butteraugli_opsin_dynamics,
     butteraugli_separate_frequencies, BUTTERAUGLI_OK,

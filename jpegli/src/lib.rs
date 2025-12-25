@@ -74,8 +74,8 @@ pub mod simplified_quant;
 // Adaptive quantization (placeholder for C++ matching implementation)
 pub mod adaptive_quant;
 
-// Quality metrics - re-export from the butteraugli crate
-pub use butteraugli;
+// Quality metrics - re-export from the butteraugli-oxide crate
+pub use butteraugli_oxide;
 
 // Error types
 pub mod error;

@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --example trace_opsin
 
-use butteraugli::opsin::{gamma, opsin_absorbance};
+use butteraugli_oxide::opsin::{gamma, opsin_absorbance};
 
 /// sRGB transfer function (gamma decoding)
 fn srgb_to_linear(v: u8) -> f32 {
@@ -22,7 +22,9 @@ fn main() {
     println!("Gray Level | Linear | Opsin0   | Gamma(O) | Sens0    | Cur0     | Y");
     println!("{}", "-".repeat(80));
 
-    for gray in [126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140] {
+    for gray in [
+        126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
+    ] {
         let linear = srgb_to_linear(gray);
         let scaled = linear * intensity_target;
 
@@ -59,7 +61,7 @@ fn main() {
 
     // For a uniform image of size 16x16, the blur should NOT change the values
     // because every pixel is the same. Let's verify this.
-    use butteraugli::opsin::srgb_to_xyb_butteraugli;
+    use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
 
     for gray in [128u8, 133, 138] {
         let width = 4;
@@ -69,14 +71,18 @@ fn main() {
 
         // Check corner vs center values
         println!("Gray {}: ", gray);
-        println!("  XYB[0,0]: X={:.4}, Y={:.4}, B={:.4}",
-                 xyb.plane(0).get(0, 0),
-                 xyb.plane(1).get(0, 0),
-                 xyb.plane(2).get(0, 0));
-        println!("  XYB[1,1]: X={:.4}, Y={:.4}, B={:.4}",
-                 xyb.plane(0).get(1, 1),
-                 xyb.plane(1).get(1, 1),
-                 xyb.plane(2).get(1, 1));
+        println!(
+            "  XYB[0,0]: X={:.4}, Y={:.4}, B={:.4}",
+            xyb.plane(0).get(0, 0),
+            xyb.plane(1).get(0, 0),
+            xyb.plane(2).get(0, 0)
+        );
+        println!(
+            "  XYB[1,1]: X={:.4}, Y={:.4}, B={:.4}",
+            xyb.plane(0).get(1, 1),
+            xyb.plane(1).get(1, 1),
+            xyb.plane(2).get(1, 1)
+        );
 
         // Also check what raw opsin values would give
         let linear = srgb_to_linear(gray);
@@ -135,10 +141,14 @@ fn main() {
         let y = cur0 + cur1;
         let b = cur2;
 
-        println!("Gray {}: opsin=[{:.4}, {:.4}, {:.4}], sens=[{:.4}, {:.4}, {:.4}]",
-                 gray, o0, o1, o2, s0, s1, s2);
-        println!("        cur=[{:.4}, {:.4}, {:.4}], XYB=[{:.4}, {:.4}, {:.4}]",
-                 cur0, cur1, cur2, x, y, b);
+        println!(
+            "Gray {}: opsin=[{:.4}, {:.4}, {:.4}], sens=[{:.4}, {:.4}, {:.4}]",
+            gray, o0, o1, o2, s0, s1, s2
+        );
+        println!(
+            "        cur=[{:.4}, {:.4}, {:.4}], XYB=[{:.4}, {:.4}, {:.4}]",
+            cur0, cur1, cur2, x, y, b
+        );
         println!();
     }
 }

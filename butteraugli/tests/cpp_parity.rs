@@ -3,7 +3,7 @@
 //! These tests compare the Rust butteraugli implementation against the C++
 //! implementation via FFI bindings to verify mathematical parity.
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 use jpegli_sys::{
     butteraugli_compare, butteraugli_fast_log2f, butteraugli_gamma, butteraugli_srgb_to_linear,
     BUTTERAUGLI_OK,
@@ -103,7 +103,7 @@ fn test_srgb_to_linear_parity() {
 /// Test FastLog2f parity.
 #[test]
 fn test_fast_log2f_parity() {
-    use butteraugli::opsin::fast_log2f;
+    use butteraugli_oxide::opsin::fast_log2f;
 
     // Test a range of values
     let test_values: Vec<f32> = (1..=1000)
@@ -140,7 +140,7 @@ fn test_fast_log2f_parity() {
 /// Test Gamma function parity.
 #[test]
 fn test_gamma_parity() {
-    use butteraugli::opsin::gamma;
+    use butteraugli_oxide::opsin::gamma;
 
     // Test a range of values
     let test_values: Vec<f32> = (0..=100)
@@ -410,12 +410,7 @@ fn test_real_image_score_parity() {
         let mut linear_orig = vec![0.0f32; original.len()];
         let mut linear_dec = vec![0.0f32; decoded.len()];
         unsafe {
-            butteraugli_srgb_to_linear(
-                original.as_ptr(),
-                width,
-                height,
-                linear_orig.as_mut_ptr(),
-            );
+            butteraugli_srgb_to_linear(original.as_ptr(), width, height, linear_orig.as_mut_ptr());
             butteraugli_srgb_to_linear(decoded.as_ptr(), width, height, linear_dec.as_mut_ptr());
         }
 

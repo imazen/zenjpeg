@@ -3,8 +3,8 @@
 //! These tests use proptest to generate random inputs and verify that
 //! the Rust implementation matches the C++ implementation.
 
-use butteraugli::opsin::{fast_log2f, gamma};
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use butteraugli_oxide::opsin::{fast_log2f, gamma};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 use jpegli_sys::{
     butteraugli_compare, butteraugli_fast_log2f, butteraugli_gamma, butteraugli_srgb_to_linear,
     BUTTERAUGLI_OK,
