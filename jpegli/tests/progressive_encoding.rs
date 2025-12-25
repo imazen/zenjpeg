@@ -813,3 +813,38 @@ fn test_progressive_quality_various_content() {
         }
     }
 }
+
+/// Test extreme low quality (Q3) progressive encoding.
+#[test]
+fn test_progressive_extreme_low_quality() {
+    let width = 64u32;
+    let height = 64u32;
+    
+    // Photo-like content
+    let data: Vec<u8> = (0..height).flat_map(|y| {
+        (0..width).flat_map(move |x| {
+            let r = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) % 256) as u8;
+            let g = ((x.wrapping_mul(13) ^ y.wrapping_mul(23)) % 256) as u8;
+            let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(19)) % 256) as u8;
+            [r, g, b]
+        })
+    }).collect();
+    
+    for q in [1.0, 2.0, 3.0, 5.0, 7.0, 10.0] {
+        let jpeg_data = Encoder::new()
+            .width(width)
+            .height(height)
+            .pixel_format(PixelFormat::Rgb)
+            .quality(Quality::from_quality(q))
+            .optimize_huffman(true)
+            .mode(JpegMode::Progressive)
+            .encode(&data)
+            .expect(&format!("Q{} encoding should succeed", q));
+        
+        jpeg_decoder::Decoder::new(&jpeg_data[..])
+            .decode()
+            .expect(&format!("Q{} should decode", q));
+        
+        println!("Q{}: {} bytes", q, jpeg_data.len());
+    }
+}
