@@ -50,7 +50,8 @@ fn test_identical_images_score_zero() {
     let rgb: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb, &rgb, width, height, &params);
+    let result = compute_butteraugli(&rgb, &rgb, width, height, &params)
+        .expect("valid input");
 
     assert!(
         result.score < 0.001,
@@ -75,7 +76,7 @@ fn test_small_difference_low_score() {
     }
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
 
     // Small differences should be below the "good" threshold
     assert!(
@@ -118,7 +119,7 @@ fn test_large_difference_nonzero_score() {
     }
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
 
     // Inverse checkerboards should produce visible difference
     // Note: exact threshold depends on implementation
@@ -160,7 +161,7 @@ fn test_score_monotonicity_with_quality() {
         }
 
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&original, &decoded, width, height, &params);
+        let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
 
         println!(
             "Quality {}: butteraugli score = {:.4}",
@@ -193,8 +194,8 @@ fn test_score_symmetry() {
         .collect();
 
     let params = ButteraugliParams::default();
-    let result1 = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
-    let result2 = compute_butteraugli(&rgb2, &rgb1, width, height, &params);
+    let result1 = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
+    let result2 = compute_butteraugli(&rgb2, &rgb1, width, height, &params).expect("valid input");
 
     // Scores should be identical or very close
     let diff = (result1.score - result2.score).abs();
@@ -215,7 +216,7 @@ fn test_diffmap_dimensions() {
     let rgb2: Vec<u8> = vec![150; width * height * 3];
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
 
     let diffmap = result.diffmap.expect("Should produce diffmap");
     assert_eq!(diffmap.width(), width);
@@ -245,7 +246,7 @@ fn test_jpegli_roundtrip_butteraugli() {
         }
 
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&original, &decoded, width, height, &params);
+        let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
 
         println!(
             "Q{}: size={} bytes, butteraugli={:.4}",
@@ -289,7 +290,7 @@ fn test_cpp_butteraugli_comparison() {
     let decoded = decode_jpeg(&jpeg_data);
 
     let params = ButteraugliParams::default();
-    let rust_result = compute_butteraugli(&original, &decoded, width, height, &params);
+    let rust_result = compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
     println!("Rust butteraugli: {:.4}", rust_result.score);
 
     // TODO: Call C++ butteraugli for comparison

@@ -502,15 +502,15 @@ fn compute_diffmap_single_resolution(
     params: &ButteraugliParams,
 ) -> ImageF {
     // Convert to XYB using butteraugli's OpsinDynamicsImage
-    let xyb1 = rgb_to_xyb_image(rgb1, width, height, params.intensity_target);
-    let xyb2 = rgb_to_xyb_image(rgb2, width, height, params.intensity_target);
+    let xyb1 = rgb_to_xyb_image(rgb1, width, height, params.intensity_target());
+    let xyb2 = rgb_to_xyb_image(rgb2, width, height, params.intensity_target());
 
     // Perform frequency decomposition
     let ps1 = separate_frequencies(&xyb1);
     let ps2 = separate_frequencies(&xyb2);
 
     // Compute AC differences using Malta filter
-    let mut block_diff_ac = compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry, params.xmul);
+    let mut block_diff_ac = compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry(), params.xmul());
 
     // Compute mask from both PsychoImages (also accumulates some AC differences)
     // This matches C++ MaskPsychoImage which calls CombineChannelsForMasking + Mask
@@ -530,7 +530,7 @@ fn compute_diffmap_single_resolution(
     }
 
     // Combine channels to final diffmap using MaskY/MaskDcY
-    combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul)
+    combine_channels_to_diffmap(&mask, &block_diff_dc, &block_diff_ac, params.xmul())
 }
 
 /// Computes butteraugli diffmap with optional single-level multiresolution.

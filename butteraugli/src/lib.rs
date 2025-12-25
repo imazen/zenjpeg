@@ -27,7 +27,7 @@
 //! let rgb2 = rgb1.clone(); // Identical images
 //!
 //! let params = ButteraugliParams::default();
-//! let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+//! let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).unwrap();
 //!
 //! // Identical images should have score ~0
 //! assert!(result.score < 0.01);
@@ -54,7 +54,8 @@
 //!     .map(|&v| v.saturating_add(10))
 //!     .collect();
 //!
-//! let result = compute_butteraugli(&original, &distorted, width, height, &ButteraugliParams::default());
+//! let result = compute_butteraugli(&original, &distorted, width, height, &ButteraugliParams::default())
+//!     .expect("valid image data");
 //!
 //! if result.score < BUTTERAUGLI_GOOD {
 //!     println!("Images appear identical to humans");
@@ -119,16 +120,73 @@ pub mod reference_data;
 // Re-export main types and functions
 pub use crate::image::{Image3F, ImageF};
 
+/// Error type for butteraugli operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ButteraugliError {
+    /// Image dimensions don't match.
+    DimensionMismatch {
+        /// First image dimensions (width, height).
+        first: (usize, usize),
+        /// Second image dimensions (width, height).
+        second: (usize, usize),
+    },
+    /// Buffer size doesn't match expected size for dimensions.
+    InvalidBufferSize {
+        /// Expected buffer size.
+        expected: usize,
+        /// Actual buffer size.
+        actual: usize,
+    },
+    /// Image dimensions are invalid (zero or too small).
+    InvalidDimensions {
+        /// Width provided.
+        width: usize,
+        /// Height provided.
+        height: usize,
+    },
+}
+
+impl std::fmt::Display for ButteraugliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DimensionMismatch { first, second } => {
+                write!(
+                    f,
+                    "image dimensions don't match: {}x{} vs {}x{}",
+                    first.0, first.1, second.0, second.1
+                )
+            }
+            Self::InvalidBufferSize { expected, actual } => {
+                write!(
+                    f,
+                    "buffer size {} doesn't match expected size {}",
+                    actual, expected
+                )
+            }
+            Self::InvalidDimensions { width, height } => {
+                write!(f, "invalid dimensions: {}x{} (minimum 8x8)", width, height)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ButteraugliError {}
+
 /// Butteraugli comparison parameters.
+///
+/// Use the builder pattern to construct:
+/// ```rust
+/// use butteraugli_oxide::ButteraugliParams;
+///
+/// let params = ButteraugliParams::new()
+///     .with_intensity_target(250.0)  // HDR display
+///     .with_hf_asymmetry(1.5);       // Penalize new artifacts more
+/// ```
 #[derive(Debug, Clone)]
 pub struct ButteraugliParams {
-    /// Multiplier for penalizing new HF artifacts more than blurring.
-    /// 1.0 = neutral.
-    pub hf_asymmetry: f32,
-    /// Multiplier for psychovisual difference in X channel.
-    pub xmul: f32,
-    /// Number of nits corresponding to 1.0 input values.
-    pub intensity_target: f32,
+    hf_asymmetry: f32,
+    xmul: f32,
+    intensity_target: f32,
 }
 
 impl Default for ButteraugliParams {
@@ -169,6 +227,24 @@ impl ButteraugliParams {
         self.xmul = xmul;
         self
     }
+
+    /// Returns the HF asymmetry multiplier.
+    #[must_use]
+    pub fn hf_asymmetry(&self) -> f32 {
+        self.hf_asymmetry
+    }
+
+    /// Returns the X channel multiplier.
+    #[must_use]
+    pub fn xmul(&self) -> f32 {
+        self.xmul
+    }
+
+    /// Returns the intensity target in nits.
+    #[must_use]
+    pub fn intensity_target(&self) -> f32 {
+        self.intensity_target
+    }
 }
 
 /// Quality threshold for "good" (images look the same).
@@ -198,16 +274,38 @@ pub struct ButteraugliResult {
 /// # Returns
 /// Butteraugli score and optional per-pixel difference map.
 ///
-/// # Panics
-/// Panics if the input buffers don't have the expected size (width * height * 3).
+/// # Errors
+/// Returns an error if:
+/// - Buffer sizes don't match expected dimensions
+/// - Images are smaller than 8x8 pixels
 pub fn compute_butteraugli(
     rgb1: &[u8],
     rgb2: &[u8],
     width: usize,
     height: usize,
     params: &ButteraugliParams,
-) -> ButteraugliResult {
-    diff::compute_butteraugli_impl(rgb1, rgb2, width, height, params)
+) -> Result<ButteraugliResult, ButteraugliError> {
+    let expected_size = width * height * 3;
+
+    if width < 8 || height < 8 {
+        return Err(ButteraugliError::InvalidDimensions { width, height });
+    }
+
+    if rgb1.len() != expected_size {
+        return Err(ButteraugliError::InvalidBufferSize {
+            expected: expected_size,
+            actual: rgb1.len(),
+        });
+    }
+
+    if rgb2.len() != expected_size {
+        return Err(ButteraugliError::InvalidBufferSize {
+            expected: expected_size,
+            actual: rgb2.len(),
+        });
+    }
+
+    Ok(diff::compute_butteraugli_impl(rgb1, rgb2, width, height, params))
 }
 
 /// Converts butteraugli score to quality percentage (0-100).
@@ -242,7 +340,8 @@ mod tests {
         let height = 16;
         let rgb: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-        let result = compute_butteraugli(&rgb, &rgb, width, height, &ButteraugliParams::default());
+        let result = compute_butteraugli(&rgb, &rgb, width, height, &ButteraugliParams::default())
+            .expect("valid input");
 
         // Identical images should have score 0
         assert!(
@@ -260,7 +359,8 @@ mod tests {
         let rgb2: Vec<u8> = vec![255; width * height * 3];
 
         let result =
-            compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
+            compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default())
+                .expect("valid input");
 
         // Different images should have non-zero score
         // Note: uniform images (all black vs all white) don't have much frequency content
@@ -269,6 +369,24 @@ mod tests {
             "Different images should have non-zero score, got {}",
             result.score
         );
+    }
+
+    #[test]
+    fn test_invalid_buffer_size() {
+        let width = 16;
+        let height = 16;
+        let rgb1: Vec<u8> = vec![0; width * height * 3];
+        let rgb2: Vec<u8> = vec![0; 10]; // Wrong size
+
+        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
+        assert!(matches!(result, Err(ButteraugliError::InvalidBufferSize { .. })));
+    }
+
+    #[test]
+    fn test_too_small_dimensions() {
+        let rgb: Vec<u8> = vec![0; 4 * 4 * 3];
+        let result = compute_butteraugli(&rgb, &rgb, 4, 4, &ButteraugliParams::default());
+        assert!(matches!(result, Err(ButteraugliError::InvalidDimensions { .. })));
     }
 
     #[test]

@@ -705,7 +705,8 @@ fn test_reference_case(case: &reference_data::ReferenceCase, tolerance: f64) {
 
     let params = ButteraugliParams::default()
         .with_intensity_target(reference_data::REFERENCE_INTENSITY_TARGET);
-    let result = compute_butteraugli(&img_a, &img_b, case.width, case.height, &params);
+    let result = compute_butteraugli(&img_a, &img_b, case.width, case.height, &params)
+        .expect("valid test input");
 
     let score_diff = (result.score - case.expected_score).abs();
     let score_rel = if case.expected_score > 0.001 {
@@ -742,7 +743,8 @@ fn test_all_reference_cases_loose() {
         let (img_a, img_b) = generate_image_pair(case.name, case.width, case.height).unwrap();
         let params = ButteraugliParams::default()
             .with_intensity_target(reference_data::REFERENCE_INTENSITY_TARGET);
-        let result = compute_butteraugli(&img_a, &img_b, case.width, case.height, &params);
+        let result = compute_butteraugli(&img_a, &img_b, case.width, case.height, &params)
+            .expect("valid test input");
 
         let score_diff = (result.score - case.expected_score).abs();
         let score_rel = if case.expected_score > 0.001 {

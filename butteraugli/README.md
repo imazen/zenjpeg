@@ -46,7 +46,8 @@ let height = 480;
 
 // Compare images
 let params = ButteraugliParams::default();
-let result = compute_butteraugli(original, compressed, width, height, &params);
+let result = compute_butteraugli(original, compressed, width, height, &params)
+    .expect("valid image data");
 
 println!("Butteraugli score: {:.4}", result.score);
 
