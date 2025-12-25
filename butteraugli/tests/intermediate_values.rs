@@ -3,7 +3,7 @@
 //! Uses synthetic test images stored as constants for reproducibility.
 //! Compares intermediate pipeline stages between Rust and C++ implementations.
 
-use butteraugli::opsin::{fast_log2f, gamma, opsin_dynamics_image, srgb_to_xyb_butteraugli};
+use butteraugli::opsin::srgb_to_xyb_butteraugli;
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use jpegli_sys::{
     butteraugli_compare_full, butteraugli_opsin_dynamics, butteraugli_srgb_to_linear,
@@ -575,4 +575,195 @@ fn test_divergence_investigation() {
              edge_rust, edge_cpp, (edge_rust - edge_cpp).abs());
     println!("  Center sum: Rust={:.2} C++={:.2} diff={:.2}",
              center_rust, center_cpp, (center_rust - center_cpp).abs());
+}
+
+// ============================================================================
+// Detailed divergence analysis tests
+// ============================================================================
+
+/// Analyze divergence by image content type
+#[test]
+fn test_divergence_by_content_type() {
+    println!("\n=== Divergence Analysis by Content Type ===\n");
+
+    // Uniform gray - baseline
+    let uniform = vec![128u8; 64 * 64 * 3];
+    let uniform_shifted: Vec<u8> = uniform.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Uniform Gray", &uniform, &uniform_shifted, 64, 64);
+
+    // Horizontal gradient
+    let h_gradient: Vec<u8> = (0..64)
+        .flat_map(|_y| {
+            (0..64).flat_map(|x| {
+                let v = (x * 255 / 63) as u8;
+                [v, v, v]
+            })
+        })
+        .collect();
+    let h_gradient_shifted: Vec<u8> = h_gradient.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Horizontal Gradient", &h_gradient, &h_gradient_shifted, 64, 64);
+
+    // Vertical gradient
+    let v_gradient: Vec<u8> = (0..64)
+        .flat_map(|y| {
+            (0..64).flat_map(move |_x| {
+                let v = (y * 255 / 63) as u8;
+                [v, v, v]
+            })
+        })
+        .collect();
+    let v_gradient_shifted: Vec<u8> = v_gradient.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Vertical Gradient", &v_gradient, &v_gradient_shifted, 64, 64);
+
+    // Diagonal gradient
+    let d_gradient: Vec<u8> = (0..64)
+        .flat_map(|y| {
+            (0..64).flat_map(move |x| {
+                let v = ((x + y) * 255 / 126) as u8;
+                [v, v, v]
+            })
+        })
+        .collect();
+    let d_gradient_shifted: Vec<u8> = d_gradient.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Diagonal Gradient", &d_gradient, &d_gradient_shifted, 64, 64);
+
+    // Checkerboard (high frequency)
+    let checker: Vec<u8> = (0..64)
+        .flat_map(|y| {
+            (0..64).flat_map(move |x| {
+                let v = if (x + y) % 2 == 0 { 50u8 } else { 200u8 };
+                [v, v, v]
+            })
+        })
+        .collect();
+    let checker_shifted: Vec<u8> = checker.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Checkerboard", &checker, &checker_shifted, 64, 64);
+
+    // Edge - half black, half white
+    let edge: Vec<u8> = (0..64)
+        .flat_map(|_y| {
+            (0..64).flat_map(|x| {
+                let v = if x < 32 { 50u8 } else { 200u8 };
+                [v, v, v]
+            })
+        })
+        .collect();
+    let edge_shifted: Vec<u8> = edge.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Sharp Edge", &edge, &edge_shifted, 64, 64);
+
+    // Smooth sinusoid
+    let sine: Vec<u8> = (0..64)
+        .flat_map(|y| {
+            (0..64).flat_map(move |x| {
+                let fx = (x as f32 / 64.0 * std::f32::consts::PI * 4.0).sin();
+                let fy = (y as f32 / 64.0 * std::f32::consts::PI * 4.0).sin();
+                let v = ((fx + fy + 2.0) / 4.0 * 200.0 + 28.0) as u8;
+                [v, v, v]
+            })
+        })
+        .collect();
+    let sine_shifted: Vec<u8> = sine.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Sinusoid", &sine, &sine_shifted, 64, 64);
+
+    // Random noise
+    let noise = generate_random_32x32(99999);
+    let noise_shifted: Vec<u8> = noise.iter().map(|&v| v.saturating_add(10)).collect();
+    test_pair("Random Noise", &noise, &noise_shifted, 32, 32);
+}
+
+fn test_pair(name: &str, img1: &[u8], img2: &[u8], width: usize, height: usize) {
+    let params = ButteraugliParams::default();
+    let rust_result = compute_butteraugli(img1, img2, width, height, &params);
+    let (cpp_score, _) =
+        cpp_butteraugli_with_diffmap(img1, img2, width, height, params.intensity_target);
+
+    let score_diff = (rust_result.score - cpp_score).abs();
+    let score_rel = if cpp_score > 0.001 {
+        score_diff / cpp_score * 100.0
+    } else {
+        score_diff * 100.0
+    };
+
+    println!(
+        "{:20} Rust={:7.4} C++={:7.4} diff={:5.2}%",
+        name, rust_result.score, cpp_score, score_rel
+    );
+}
+
+/// Test with varying shift amounts to understand divergence pattern
+#[test]
+fn test_divergence_vs_shift_amount() {
+    println!("\n=== Divergence vs Shift Amount ===\n");
+
+    let width = 64;
+    let height = 64;
+
+    // Gradient test image
+    let base: Vec<u8> = (0..height)
+        .flat_map(|y| {
+            (0..width).flat_map(move |x| {
+                let v = ((x + y) * 255 / (width + height - 2)) as u8;
+                [v, v, v]
+            })
+        })
+        .collect();
+
+    let params = ButteraugliParams::default();
+
+    for shift in [1, 2, 5, 10, 20, 30, 50] {
+        let shifted: Vec<u8> = base.iter().map(|&v| v.saturating_add(shift)).collect();
+
+        let rust_result = compute_butteraugli(&base, &shifted, width, height, &params);
+        let (cpp_score, _) =
+            cpp_butteraugli_with_diffmap(&base, &shifted, width, height, params.intensity_target);
+
+        let score_diff = (rust_result.score - cpp_score).abs();
+        let score_rel = if cpp_score > 0.001 {
+            score_diff / cpp_score * 100.0
+        } else {
+            score_diff * 100.0
+        };
+
+        println!(
+            "Shift {:2}: Rust={:7.4} C++={:7.4} diff={:5.2}%",
+            shift, rust_result.score, cpp_score, score_rel
+        );
+    }
+}
+
+/// Test with varying image sizes to see if divergence is size-dependent
+#[test]
+fn test_divergence_vs_image_size() {
+    println!("\n=== Divergence vs Image Size ===\n");
+
+    let params = ButteraugliParams::default();
+
+    for size in [16, 32, 64, 128] {
+        // Create gradient
+        let base: Vec<u8> = (0..size)
+            .flat_map(|y| {
+                (0..size).flat_map(move |x| {
+                    let v = ((x + y) * 255 / (2 * size - 2)) as u8;
+                    [v, v, v]
+                })
+            })
+            .collect();
+        let shifted: Vec<u8> = base.iter().map(|&v| v.saturating_add(10)).collect();
+
+        let rust_result = compute_butteraugli(&base, &shifted, size, size, &params);
+        let (cpp_score, _) =
+            cpp_butteraugli_with_diffmap(&base, &shifted, size, size, params.intensity_target);
+
+        let score_diff = (rust_result.score - cpp_score).abs();
+        let score_rel = if cpp_score > 0.001 {
+            score_diff / cpp_score * 100.0
+        } else {
+            score_diff * 100.0
+        };
+
+        println!(
+            "Size {:3}x{:3}: Rust={:7.4} C++={:7.4} diff={:5.2}%",
+            size, size, rust_result.score, cpp_score, score_rel
+        );
+    }
 }

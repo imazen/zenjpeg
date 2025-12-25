@@ -476,6 +476,10 @@ extern "C" {
         intensity_target: f32,
         out_xyb: *mut f32,
     ) -> c_int;
+
+    // NOTE: butteraugli_opsin_dynamics_exact and butteraugli_separate_frequencies
+    // would require exposing internal Highway-namespaced functions, which is complex.
+    // For now, we compare using butteraugli_compare_full with diffmap output.
 }
 
 /// Safe wrapper to compute butteraugli score between two sRGB images.
