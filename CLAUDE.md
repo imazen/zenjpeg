@@ -251,7 +251,6 @@ jpegli-rs/
 │   │   ├── idct.rs          # Inverse DCT ✓
 │   │   ├── color.rs         # RGB/YCbCr conversion
 │   │   ├── xyb.rs           # XYB perceptual color space ✓
-│   │   ├── butteraugli.rs   # Butteraugli quality metric (skeleton)
 │   │   ├── bitstream.rs     # Bitstream I/O
 │   │   ├── entropy.rs       # Entropy coding
 │   │   ├── encode.rs        # Encoder pipeline
@@ -260,7 +259,7 @@ jpegli-rs/
 │   │   ├── simplified_quant.rs # Simplified AQ (arbitrary thresholds - NOT C++)
 │   │   ├── icc.rs           # ICC profile extraction and CMS integration ✓
 │   │   └── error.rs         # Error types
-│   ├── tests/
+│   └── tests/
 │   │   ├── aq_locked_tests.rs    # ⚠️ LOCKED - AQ tests that MUST NEVER be disabled
 │   │   ├── roundtrip_quality.rs  # DSSIM-based quality tests
 │   │   ├── pareto_front.rs       # Pareto efficiency vs mozjpeg
@@ -273,7 +272,24 @@ jpegli-rs/
 │       ├── corpus_comparison.rs   # HTML chart: jpegli vs mozjpeg
 │       ├── multi_codec_comparison.rs # Compare with CID22 dataset
 │       └── compare_quality.rs     # Quality comparison tool
-└── jpegli-sys/         # FFI bindings (for testing)
+├── butteraugli/            # Butteraugli perceptual metric crate (3,500+ lines)
+│   ├── src/
+│   │   ├── lib.rs           # Main API: butteraugli_distance()
+│   │   ├── blur.rs          # Gaussian blur
+│   │   ├── consts.rs        # Constants matching C++
+│   │   ├── diff.rs          # Difference computation
+│   │   ├── image.rs         # Image types (Image3F, ImageF)
+│   │   ├── malta.rs         # Malta filter
+│   │   ├── mask.rs          # Masking functions
+│   │   ├── opsin.rs         # Opsin color conversion
+│   │   ├── psycho.rs        # Psychovisual model
+│   │   └── xyb.rs           # XYB color space
+│   └── tests/
+│       ├── conformance.rs       # Basic conformance tests
+│       ├── cpp_fuzz.rs          # Property-based C++ parity
+│       ├── cpp_parity.rs        # Direct C++ comparison
+│       └── intermediate_values.rs # Step-by-step C++ matching
+└── jpegli-sys/         # FFI bindings (for C++ parity testing)
 ```
 
 ## Completed Tasks (Verified)
@@ -305,7 +321,7 @@ jpegli-rs/
   - `adaptive_quant.rs` - Placeholder for C++ matching implementation
   - See `docs/ADAPTIVE_QUANTIZATION.md` for detailed analysis
   - See `tests/aq_locked_tests.rs` for invariant tests (NEVER disable these)
-- [⚠️] Butteraugli metric - **SKELETON ONLY** (partial implementation)
+- [✓] Butteraugli metric - **FULL RUST IMPLEMENTATION** (3,500+ lines, C++ parity tests)
 - [⚠️] XYB encoding pipeline - Infrastructure exists but incomplete
 
 ## Test Infrastructure (Verified)
