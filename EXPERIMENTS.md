@@ -204,10 +204,27 @@ Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps rem
 **Total potential gap: 30-50%** (we're seeing 80%, suggesting bugs or format overhead)
 
 **Priority fixes:**
-1. Port integer Loeffler DCT from mozjpeg-rs
+1. ~~Port integer Loeffler DCT from mozjpeg-rs~~ DONE
 2. Implement cross-block DC trellis
 3. Add progressive mode support
 4. Implement scan optimization
+
+### 2025-12-25: Quality Sweep Results
+
+| Q | Size | DSSIM | BPP | Trellis Improvement |
+|---|------|-------|-----|---------------------|
+| 20 | 4277 | 0.007664 | 0.52 | - |
+| 30 | 5985 | 0.003979 | 0.73 | 27.0% |
+| 50 | 6973 | 0.002463 | 0.85 | 14.8% |
+| 70 | 8416 | 0.002319 | 1.03 | 13.2% |
+| 80 | 14678 | 0.000348 | 1.79 | - |
+| 90 | 19128 | 0.000156 | 2.34 | 11.5% |
+| 95 | 26405 | 0.000073 | 3.22 | - |
+
+**Observations:**
+- Trellis provides 11-27% improvement (higher at low quality)
+- Notable quality jump between Q70 and Q80 (strategy changes)
+- DSSIM is excellent across all quality levels
 
 ---
 

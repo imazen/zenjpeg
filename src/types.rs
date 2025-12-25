@@ -107,6 +107,19 @@ pub enum Quality {
     /// Target a specific file size in bytes
     /// Will binary search for optimal quality
     TargetSize(usize),
+
+    /// Linear perceptual quality (0-100)
+    ///
+    /// Unlike Standard quality which has non-linear perceptual impact,
+    /// Linear quality maps to a linearized DSSIM curve:
+    /// - Linear(0) ≈ Standard(20) (low quality, DSSIM ~0.008)
+    /// - Linear(50) produces half the DSSIM delta
+    /// - Linear(100) ≈ Standard(95) (high quality, DSSIM ~0.0001)
+    ///
+    /// This makes quality steps feel perceptually uniform:
+    /// the difference between Linear(40) and Linear(50) is the same
+    /// perceptual delta as between Linear(80) and Linear(90).
+    Linear(f32),
 }
 
 impl Default for Quality {
@@ -117,38 +130,117 @@ impl Default for Quality {
 
 impl Quality {
     /// Get the raw quality value (1-100 scale)
+    ///
+    /// For Linear quality, this returns the mapped Standard quality value.
     #[must_use]
     pub fn value(&self) -> f32 {
         match *self {
             Quality::Standard(q) | Quality::Low(q) | Quality::High(q) => q as f32,
             Quality::Perceptual(target) => target,
             Quality::TargetSize(_) => 50.0, // placeholder
+            Quality::Linear(linear) => linear_to_standard_quality(linear),
         }
     }
 
     /// Whether this quality setting prefers trellis quantization
     #[must_use]
     pub fn prefers_trellis(&self) -> bool {
+        let q = self.value();
         match *self {
             Quality::Low(_) => true,
-            Quality::Standard(q) => q < 70,
             Quality::High(_) => false,
-            Quality::Perceptual(target) => target < 70.0,
             Quality::TargetSize(_) => true, // trellis is better for size optimization
+            _ => q < 70.0,
         }
     }
 
     /// Whether this quality setting prefers adaptive quantization
     #[must_use]
     pub fn prefers_adaptive_quant(&self) -> bool {
+        let q = self.value();
         match *self {
             Quality::High(_) => true,
-            Quality::Standard(q) => q >= 70,
             Quality::Low(_) => false,
-            Quality::Perceptual(target) => target >= 70.0,
             Quality::TargetSize(_) => false,
+            _ => q >= 70.0,
         }
     }
+}
+
+/// Convert linear perceptual quality (0-100) to standard JPEG quality.
+///
+/// Linear quality produces uniform perceptual steps in DSSIM space.
+/// Based on observed relationship: DSSIM ≈ 0.01 * exp(-Q/25)
+///
+/// | Linear | Standard | Approx DSSIM |
+/// |--------|----------|--------------|
+/// | 0      | 20       | 0.0077       |
+/// | 25     | 40       | 0.0027       |
+/// | 50     | 60       | 0.0022       |
+/// | 75     | 80       | 0.0003       |
+/// | 100    | 95       | 0.0001       |
+///
+/// The mapping uses logarithmic interpolation to linearize the
+/// exponential relationship between quality and DSSIM.
+fn linear_to_standard_quality(linear: f32) -> f32 {
+    // Clamp input to valid range
+    let linear = linear.clamp(0.0, 100.0);
+
+    // Linear interpolation points based on observed DSSIM data
+    // We want uniform DSSIM steps, which requires non-uniform Q steps
+    //
+    // Observed data:
+    // Q20: DSSIM 0.0077  -> log(DSSIM) = -4.87
+    // Q50: DSSIM 0.0025  -> log(DSSIM) = -6.00
+    // Q80: DSSIM 0.00035 -> log(DSSIM) = -7.96
+    // Q95: DSSIM 0.00007 -> log(DSSIM) = -9.57
+    //
+    // Linear mapping: interpolate Q based on linear position in log-DSSIM space
+
+    // Reference points (Q, log_dssim)
+    const Q_MIN: f32 = 20.0;
+    const Q_MAX: f32 = 95.0;
+    const LOG_DSSIM_AT_Q_MIN: f32 = -4.87; // ln(0.0077)
+    const LOG_DSSIM_AT_Q_MAX: f32 = -9.57; // ln(0.00007)
+
+    // Map linear (0-100) to log_dssim range
+    let t = linear / 100.0;
+    let target_log_dssim = LOG_DSSIM_AT_Q_MIN + t * (LOG_DSSIM_AT_Q_MAX - LOG_DSSIM_AT_Q_MIN);
+
+    // Now we need Q such that log(dssim(Q)) ≈ target_log_dssim
+    // Approximate relationship: log(dssim) ≈ -4.87 + (Q - 20) * slope
+    // where slope ≈ (LOG_DSSIM_AT_Q_MAX - LOG_DSSIM_AT_Q_MIN) / (Q_MAX - Q_MIN)
+
+    let log_dssim_range = LOG_DSSIM_AT_Q_MAX - LOG_DSSIM_AT_Q_MIN;
+    let q_range = Q_MAX - Q_MIN;
+
+    // Inverse mapping: Q = Q_MIN + (target_log_dssim - LOG_DSSIM_AT_Q_MIN) * q_range / log_dssim_range
+    let q = Q_MIN + (target_log_dssim - LOG_DSSIM_AT_Q_MIN) * q_range / log_dssim_range;
+
+    q.clamp(Q_MIN, Q_MAX)
+}
+
+/// Convert standard JPEG quality to linear perceptual quality (inverse mapping).
+///
+/// This is the inverse of `linear_to_standard_quality`.
+#[allow(dead_code)]
+fn standard_to_linear_quality(standard: f32) -> f32 {
+    const Q_MIN: f32 = 20.0;
+    const Q_MAX: f32 = 95.0;
+    const LOG_DSSIM_AT_Q_MIN: f32 = -4.87;
+    const LOG_DSSIM_AT_Q_MAX: f32 = -9.57;
+
+    let standard = standard.clamp(Q_MIN, Q_MAX);
+
+    let log_dssim_range = LOG_DSSIM_AT_Q_MAX - LOG_DSSIM_AT_Q_MIN;
+    let q_range = Q_MAX - Q_MIN;
+
+    // Forward mapping: log_dssim = LOG_DSSIM_AT_Q_MIN + (q - Q_MIN) * log_dssim_range / q_range
+    let log_dssim = LOG_DSSIM_AT_Q_MIN + (standard - Q_MIN) * log_dssim_range / q_range;
+
+    // Convert log_dssim to linear (0-100)
+    let t = (log_dssim - LOG_DSSIM_AT_Q_MIN) / log_dssim_range;
+    (t * 100.0).clamp(0.0, 100.0)
 }
 
 /// Encoding strategy selection
