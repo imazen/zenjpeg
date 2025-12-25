@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+/// Result type for zenjpeg operations
+pub type Result<T> = std::result::Result<T, Error>;
+
 /// Error type for zenjpeg operations
 #[derive(Debug)]
 #[non_exhaustive]
@@ -30,6 +33,10 @@ pub enum Error {
     },
     /// Internal encoder error
     Internal(&'static str),
+    /// Invalid Huffman table structure
+    InvalidHuffmanTable,
+    /// Huffman code length exceeds maximum (16 bits)
+    HuffmanCodeLengthOverflow,
 }
 
 impl fmt::Display for Error {
@@ -48,6 +55,10 @@ impl fmt::Display for Error {
                 write!(f, "Encoding failed at {}: {}", stage, reason)
             }
             Error::Internal(msg) => write!(f, "Internal error: {}", msg),
+            Error::InvalidHuffmanTable => write!(f, "Invalid Huffman table structure"),
+            Error::HuffmanCodeLengthOverflow => {
+                write!(f, "Huffman code length exceeds maximum (16 bits)")
+            }
         }
     }
 }

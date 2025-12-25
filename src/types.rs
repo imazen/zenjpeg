@@ -170,7 +170,6 @@ impl Default for EncodingStrategy {
     }
 }
 
-// TrellisConfig is defined in trellis.rs
-// AdaptiveQuantConfig is defined in adaptive_quant.rs
-pub use crate::trellis::TrellisConfig;
+// Re-export configuration types
 pub use crate::adaptive_quant::AdaptiveQuantConfig;
+pub use crate::trellis::TrellisConfig;

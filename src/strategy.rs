@@ -119,7 +119,8 @@ fn compute_trellis_config_for_quality(q: f32, aggressive: bool) -> TrellisConfig
         TrellisConfig {
             ac_enabled: true,
             dc_enabled: aggressive,
-            lambda_log_scale1: 14.5,  // Conservative: mozjpeg uses ~14.75
+            eob_opt: true,
+            lambda_log_scale1: 14.5, // Conservative: mozjpeg uses ~14.75
             lambda_log_scale2: 16.5,
         }
     } else if q < 70.0 {
@@ -127,6 +128,7 @@ fn compute_trellis_config_for_quality(q: f32, aggressive: bool) -> TrellisConfig
         TrellisConfig {
             ac_enabled: true,
             dc_enabled: false,
+            eob_opt: true,
             lambda_log_scale1: 13.5,
             lambda_log_scale2: 16.5,
         }
@@ -135,7 +137,8 @@ fn compute_trellis_config_for_quality(q: f32, aggressive: bool) -> TrellisConfig
         TrellisConfig {
             ac_enabled: true,
             dc_enabled: false,
-            lambda_log_scale1: 12.5,  // Lower lambda = preserve more detail
+            eob_opt: false,
+            lambda_log_scale1: 12.5, // Lower lambda = preserve more detail
             lambda_log_scale2: 16.5,
         }
     } else {
@@ -144,6 +147,7 @@ fn compute_trellis_config_for_quality(q: f32, aggressive: bool) -> TrellisConfig
         TrellisConfig {
             ac_enabled: false,
             dc_enabled: false,
+            eob_opt: false,
             lambda_log_scale1: 11.5,
             lambda_log_scale2: 16.5,
         }

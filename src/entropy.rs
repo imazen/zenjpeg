@@ -3,7 +3,32 @@
 //! Handles Huffman encoding of quantized DCT coefficients.
 
 use crate::consts::ZIGZAG;
-use crate::huffman::{compute_category, HuffmanTable};
+use crate::huffman::{DerivedTable, FrequencyCounter, HuffTable};
+
+/// Compute the number of bits needed to represent a value (JPEG category).
+///
+/// For value `v`, returns the minimum number of bits needed to represent |v|.
+/// This is used for both DC difference and AC coefficient encoding.
+///
+/// Returns 0 for v=0, 1 for v in [-1,1], 2 for v in [-3,-2,2,3], etc.
+#[inline]
+pub fn jpeg_nbits(v: i16) -> u8 {
+    let v = v.unsigned_abs();
+    if v == 0 {
+        0
+    } else {
+        16 - v.leading_zeros() as u8
+    }
+}
+
+/// Alias for backwards compatibility
+#[inline]
+pub fn compute_category(v: i16) -> u8 {
+    jpeg_nbits(v)
+}
+
+/// Legacy HuffmanTable wrapper for backwards compatibility
+pub type HuffmanTable = DerivedTable;
 
 /// Bitstream writer for entropy encoding
 pub struct BitWriter {
@@ -69,15 +94,15 @@ impl Default for BitWriter {
 /// Entropy encoder for a single scan
 pub struct EntropyEncoder {
     writer: BitWriter,
-    dc_table: HuffmanTable,
-    ac_table: HuffmanTable,
+    dc_table: DerivedTable,
+    ac_table: DerivedTable,
     /// Last DC values for each component (up to 4)
     last_dc: [i16; 4],
 }
 
 impl EntropyEncoder {
     /// Create a new entropy encoder
-    pub fn new(dc_table: HuffmanTable, ac_table: HuffmanTable) -> Self {
+    pub fn new(dc_table: DerivedTable, ac_table: DerivedTable) -> Self {
         Self {
             writer: BitWriter::new(),
             dc_table,
@@ -94,7 +119,7 @@ impl EntropyEncoder {
         self.last_dc[component] = coefficients[0];
 
         let dc_cat = compute_category(dc_diff);
-        let (code, size) = self.dc_table.encode(dc_cat);
+        let (code, size) = self.dc_table.get_code(dc_cat);
         self.writer.write_bits(code, size);
 
         if dc_cat > 0 {
@@ -118,7 +143,7 @@ impl EntropyEncoder {
             } else {
                 // Emit ZRL (0xF0) for runs of 16 zeros
                 while run >= 16 {
-                    let (code, size) = self.ac_table.encode(0xF0);
+                    let (code, size) = self.ac_table.get_code(0xF0);
                     self.writer.write_bits(code, size);
                     run -= 16;
                 }
@@ -126,7 +151,7 @@ impl EntropyEncoder {
                 // Encode run/size and value
                 let ac_cat = compute_category(ac);
                 let rs = (run << 4) | ac_cat;
-                let (code, size) = self.ac_table.encode(rs);
+                let (code, size) = self.ac_table.get_code(rs);
                 self.writer.write_bits(code, size);
 
                 let ac_val = if ac < 0 {
@@ -142,7 +167,7 @@ impl EntropyEncoder {
 
         // EOB if not all 64 coefficients used
         if run > 0 {
-            let (code, size) = self.ac_table.encode(0x00);
+            let (code, size) = self.ac_table.get_code(0x00);
             self.writer.write_bits(code, size);
         }
     }
@@ -156,8 +181,6 @@ impl EntropyEncoder {
 // =============================================================================
 // Symbol Frequency Counting (for Huffman optimization)
 // =============================================================================
-
-use crate::huffman::FrequencyCounter;
 
 /// Count symbol frequencies from quantized blocks for Huffman table optimization.
 ///

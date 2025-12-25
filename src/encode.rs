@@ -3,16 +3,16 @@
 //! Provides the public Encoder API that combines mozjpeg and jpegli approaches
 //! for Pareto-optimal JPEG compression.
 
-use crate::adaptive_quant::{compute_aq_field, AdaptiveQuantConfig};
+use crate::adaptive_quant::compute_aq_field;
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
 use crate::dct::{forward_dct_8x8, level_shift, quantize_block};
 use crate::entropy::{EntropyEncoder, SymbolCounter};
 use crate::error::Error;
-use crate::huffman::{std_ac_luma, std_dc_luma, FrequencyCounter, HuffmanTable};
+use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
 use crate::quant::QuantTableSet;
 use crate::strategy::{select_strategy, SelectedStrategy};
-use crate::trellis::{trellis_quantize_ac, TrellisConfig};
-use crate::types::{ColorSpace, EncodingStrategy, PixelFormat, Quality, Subsampling};
+use crate::trellis::trellis_quantize_block;
+use crate::types::{EncodingStrategy, PixelFormat, Quality, Subsampling};
 use crate::Result;
 
 /// JPEG encoder with configurable quality and encoding strategy
@@ -226,7 +226,7 @@ impl Encoder {
         }
 
         // Get Huffman tables (optimized or standard)
-        let (dc_table, ac_table) = if self.optimize_huffman {
+        let (dc_htbl, ac_htbl) = if self.optimize_huffman {
             // Two-pass encoding: count symbol frequencies, then generate optimal tables
             let mut dc_counter = FrequencyCounter::new();
             let mut ac_counter = FrequencyCounter::new();
@@ -239,13 +239,19 @@ impl Encoder {
             }
 
             // Generate optimal tables from frequency counts
-            let dc_table = dc_counter.generate_table();
-            let ac_table = ac_counter.generate_table();
+            let dc_table = dc_counter.generate_table().unwrap_or_else(|_| std_dc_luma());
+            let ac_table = ac_counter.generate_table().unwrap_or_else(|_| std_ac_luma());
             (dc_table, ac_table)
         } else {
             // Use standard tables
             (std_dc_luma(), std_ac_luma())
         };
+
+        // Convert to derived tables for entropy encoding
+        let dc_dtbl = DerivedTable::from_huff_table(&dc_htbl, true)
+            .expect("Failed to build DC derived table");
+        let ac_dtbl = DerivedTable::from_huff_table(&ac_htbl, false)
+            .expect("Failed to build AC derived table");
 
         // Build output buffer with JPEG markers
         let mut output = Vec::with_capacity(width * height);
@@ -264,14 +270,14 @@ impl Encoder {
         self.write_sof0(&mut output, width as u16, height as u16);
 
         // DHT markers
-        self.write_dht(&mut output, 0x00, &dc_table); // DC table 0
-        self.write_dht(&mut output, 0x10, &ac_table); // AC table 0
+        self.write_dht(&mut output, 0x00, &dc_htbl); // DC table 0
+        self.write_dht(&mut output, 0x10, &ac_htbl); // AC table 0
 
         // SOS marker
         self.write_sos(&mut output);
 
-        // Encode blocks with (possibly optimized) tables
-        let mut encoder = EntropyEncoder::new(dc_table.clone(), ac_table.clone());
+        // Encode blocks with derived tables
+        let mut encoder = EntropyEncoder::new(dc_dtbl, ac_dtbl);
         for (i, coeffs) in all_coeffs.iter().enumerate() {
             let component = i % 3;
             encoder.encode_block(coeffs, component);
@@ -285,14 +291,18 @@ impl Encoder {
     }
 
     /// Write DHT marker for a Huffman table
-    fn write_dht(&self, output: &mut Vec<u8>, table_info: u8, table: &HuffmanTable) {
-        let len = 2 + 1 + 16 + table.values.len();
+    fn write_dht(&self, output: &mut Vec<u8>, table_info: u8, table: &HuffTable) {
+        // Count actual symbols
+        let num_symbols: usize = table.bits[1..=16].iter().map(|&x| x as usize).sum();
+        let len = 2 + 1 + 16 + num_symbols;
         output.extend_from_slice(&[0xFF, 0xC4]); // DHT marker
         output.extend_from_slice(&(len as u16).to_be_bytes());
         output.push(table_info); // table class and ID
 
-        output.extend_from_slice(&table.bits);
-        output.extend_from_slice(&table.values);
+        // Write bits[1..=16] (skip bits[0])
+        output.extend_from_slice(&table.bits[1..=16]);
+        // Write symbol values
+        output.extend_from_slice(&table.huffval[..num_symbols]);
     }
 
     /// Encode grayscale plane to JPEG
@@ -321,7 +331,7 @@ impl Encoder {
         }
 
         // Get Huffman tables (optimized or standard)
-        let (dc_table, ac_table) = if self.optimize_huffman {
+        let (dc_htbl, ac_htbl) = if self.optimize_huffman {
             let mut dc_counter = FrequencyCounter::new();
             let mut ac_counter = FrequencyCounter::new();
             let mut symbol_counter = SymbolCounter::new();
@@ -330,10 +340,18 @@ impl Encoder {
                 symbol_counter.count_block(coeffs, 0, &mut dc_counter, &mut ac_counter);
             }
 
-            (dc_counter.generate_table(), ac_counter.generate_table())
+            let dc_table = dc_counter.generate_table().unwrap_or_else(|_| std_dc_luma());
+            let ac_table = ac_counter.generate_table().unwrap_or_else(|_| std_ac_luma());
+            (dc_table, ac_table)
         } else {
             (std_dc_luma(), std_ac_luma())
         };
+
+        // Convert to derived tables for entropy encoding
+        let dc_dtbl = DerivedTable::from_huff_table(&dc_htbl, true)
+            .expect("Failed to build DC derived table");
+        let ac_dtbl = DerivedTable::from_huff_table(&ac_htbl, false)
+            .expect("Failed to build AC derived table");
 
         // Build output
         let mut output = Vec::with_capacity(width * height);
@@ -342,12 +360,12 @@ impl Encoder {
         self.write_app0(&mut output);
         self.write_dqt(&mut output, &quant_table);
         self.write_sof0_gray(&mut output, width as u16, height as u16);
-        self.write_dht(&mut output, 0x00, &dc_table); // DC table 0
-        self.write_dht(&mut output, 0x10, &ac_table); // AC table 0
+        self.write_dht(&mut output, 0x00, &dc_htbl); // DC table 0
+        self.write_dht(&mut output, 0x10, &ac_htbl); // AC table 0
         self.write_sos_gray(&mut output);
 
         // Encode all blocks
-        let mut encoder = EntropyEncoder::new(dc_table.clone(), ac_table.clone());
+        let mut encoder = EntropyEncoder::new(dc_dtbl, ac_dtbl);
         for coeffs in &all_coeffs {
             encoder.encode_block(coeffs, 0);
         }
@@ -475,9 +493,14 @@ impl Encoder {
         let shifted = level_shift(block);
         let dct = forward_dct_8x8(&shifted);
 
-        // Quantize (with optional trellis - enabled for all approaches when configured)
+        // Quantize (with optional trellis)
+        // Note: trellis requires a DerivedTable for rate estimation
+        // For now, use simple quantization until we wire up the tables properly
         if strategy.trellis.ac_enabled {
-            trellis_quantize_ac(&dct, &effective_quant, &strategy.trellis)
+            // TODO: Wire up trellis with proper Huffman table for rate estimation
+            // For now, fall back to simple quantization
+            // trellis_quantize_block requires DerivedTable which we don't have here
+            quantize_block(&dct, &effective_quant)
         } else {
             quantize_block(&dct, &effective_quant)
         }

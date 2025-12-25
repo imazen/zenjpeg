@@ -3,7 +3,24 @@
 //! This module contains standard JPEG tables as well as optimized tables
 //! from mozjpeg and jpegli.
 
-/// Standard JPEG zigzag ordering
+/// DCT block size (8x8 = 64)
+pub const DCTSIZE2: usize = 64;
+
+/// Zigzag scan order: maps zigzag position to natural (row-major) position.
+/// Use this when iterating in zigzag order to access coefficients.
+/// Example: natural_pos = JPEG_NATURAL_ORDER[zigzag_pos]
+pub const JPEG_NATURAL_ORDER: [usize; 64] = [
+    0,  1,  8,  16, 9,  2,  3,  10,
+    17, 24, 32, 25, 18, 11, 4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13, 6,  7,  14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
+];
+
+/// Alias for backwards compatibility
 pub const ZIGZAG: [usize; 64] = [
     0,  1,  8,  16, 9,  2,  3,  10,
     17, 24, 32, 25, 18, 11, 4,  5,
@@ -86,3 +103,10 @@ pub const QUALITY_CROSSOVER: u8 = 70;
 
 /// Default quality for perceptual encoding
 pub const DEFAULT_QUALITY: u8 = 85;
+
+// Re-export Huffman tables and quantization tables from consts_moz
+pub use crate::consts_moz::{
+    AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES,
+    DC_CHROMINANCE_BITS, DC_CHROMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES,
+    STD_CHROMINANCE_QUANT_TBL, STD_LUMINANCE_QUANT_TBL,
+};
