@@ -146,12 +146,21 @@ Decoder configuration:
 | Field | Value |
 |-------|-------|
 | **C++ Commit** | `39a47b34` |
-| **Rust Status** | ⚠️ **Review Needed** |
+| **Rust Status** | ✅ **Not Vulnerable** |
 | **Component** | Decoder, subsampling |
 
-**Root Cause**: Uninitialized memory read with images having both 4x and 2x subsampled channels.
+**Root Cause**: C++ used `raw_height_[c] = total_iMCU_rows * cheight` to compute component heights. With mixed subsampling (e.g., v_sampling = {4, 2, 1}), this gave incorrect heights for some components, causing MSAN to detect uninitialized memory reads.
 
-**Rust Analysis**: Need to verify `decode.rs` subsampling handling initializes all buffers.
+**C++ Fix**: Changed to `comp.height_in_blocks * scaled_dct_size[c]` for accurate per-component heights.
+
+**Rust Analysis**: Our implementation is not vulnerable:
+1. **Zero initialization**: `try_alloc_dct_blocks()` zero-initializes all coefficient blocks
+2. **Consistent formula**: We use `mcu_rows * v_samp` inline everywhere (allocation and iteration)
+3. **All blocks decoded**: The MCU decoding loop fills every allocated slot (lines 727-747)
+4. **Bounds checks**: Explicit check at line 980 (`if block_idx >= self.coeffs[comp_idx].len()`)
+5. **Clamping**: Upsampling uses `.min(comp_width - 1)` and `.min(comp_height - 1)` (lines 1016-1017)
+
+We don't cache a `raw_height` that could become inconsistent with actual allocations.
 
 ---
 
@@ -185,7 +194,7 @@ Decoder configuration:
 | i386 integer overflow | `0e1976eb` | ✅ Fixed (`50b104ee`) |
 | Allocation failure crash | `8740dc2f` | ✅ Fixed (`50b104ee`) |
 | Memory tracking bypass | `eeb331ce` | ✅ Fixed |
-| MSAN subsampling error | `39a47b34` | ⚠️ Review needed |
+| MSAN subsampling error | `39a47b34` | ✅ Not vulnerable |
 | CVE-2020-1895 decode overflow | N/A | ✅ Not vulnerable |
 | CVE-2018-11212 divide by zero | N/A | ✅ Not vulnerable |
 | Decoder malformed input | N/A | ✅ Fixed (`7e9ec31a`) |
@@ -409,3 +418,4 @@ Original IJG libjpeg vulnerabilities.
 | 2024-12-25 | Audited progressive encoding - not vulnerable to chroma refinement overflow |
 | 2024-12-25 | Audited decode loop - not vulnerable to CVE-2020-1895, CVE-2018-11212 |
 | 2024-12-25 | Added MemoryTracker for cumulative allocation tracking (DoS protection) |
+| 2024-12-25 | Audited MSAN mixed subsampling issue - not vulnerable (zero-init + bounds checks) |
