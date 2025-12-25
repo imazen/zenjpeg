@@ -7,9 +7,9 @@ fn main() {
     println!("=== Test 1: Simple case ===");
     let mut freq = [0i64; 257];
     freq[0] = 100; // symbol 0
-    freq[1] = 50;  // symbol 1
-    freq[2] = 25;  // symbol 2
-    freq[3] = 10;  // symbol 3
+    freq[1] = 50; // symbol 1
+    freq[2] = 25; // symbol 2
+    freq[3] = 10; // symbol 3
 
     match generate_optimal_table(&mut freq) {
         Ok((bits, values)) => {
@@ -23,10 +23,18 @@ fn main() {
     // Test with a FrequencyCounter
     println!("\n=== Test 2: FrequencyCounter ===");
     let mut counter = FrequencyCounter::new();
-    for _ in 0..100 { counter.count(0); }
-    for _ in 0..50 { counter.count(1); }
-    for _ in 0..25 { counter.count(2); }
-    for _ in 0..10 { counter.count(3); }
+    for _ in 0..100 {
+        counter.count(0);
+    }
+    for _ in 0..50 {
+        counter.count(1);
+    }
+    for _ in 0..25 {
+        counter.count(2);
+    }
+    for _ in 0..10 {
+        counter.count(3);
+    }
 
     match counter.generate_table_with_dht() {
         Ok(table) => {
@@ -56,7 +64,11 @@ fn validate_huffman(bits: &[u8; 16], values: &[u8]) {
     }
 
     println!("Kraft sum: {} (should be <= 1.0)", kraft_sum);
-    println!("Total symbols: {} (from bits), {} (from values)", total_symbols, values.len());
+    println!(
+        "Total symbols: {} (from bits), {} (from values)",
+        total_symbols,
+        values.len()
+    );
 
     if total_symbols != values.len() {
         println!("ERROR: Symbol count mismatch!");
@@ -74,8 +86,12 @@ fn validate_huffman(bits: &[u8; 16], values: &[u8]) {
         // After assigning 'count' codes at this length, shift to next length
         code += count as u32;
         if code > (1u32 << length) {
-            println!("ERROR at length {}: {} codes assigned but only {} possible",
-                     length, code, 1u32 << length);
+            println!(
+                "ERROR at length {}: {} codes assigned but only {} possible",
+                length,
+                code,
+                1u32 << length
+            );
             valid = false;
         }
         code <<= 1;

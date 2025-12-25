@@ -13,7 +13,9 @@ use crate::dct::forward_dct_8x8;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanEncodeTable;
-use crate::huffman_opt::{FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer};
+use crate::huffman_opt::{
+    FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer,
+};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use crate::xyb::srgb_to_scaled_xyb;
@@ -252,7 +254,8 @@ impl Encoder {
 
         // For optimized Huffman, build tables from block frequencies before writing DHT
         let scan_data = if self.config.optimize_huffman {
-            let tables = self.build_optimized_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color)?;
+            let tables =
+                self.build_optimized_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color)?;
             self.write_huffman_tables_optimized(output, &tables)?;
 
             if self.config.restart_interval > 0 {
@@ -531,12 +534,7 @@ impl Encoder {
 
             // Encode the scan data
             let scan_data = self.encode_progressive_scan(
-                &y_blocks,
-                &cb_blocks,
-                &cr_blocks,
-                scan,
-                is_color,
-                &tables,
+                &y_blocks, &cb_blocks, &cr_blocks, scan, is_color, &tables,
             )?;
             output.extend_from_slice(&scan_data);
         }
@@ -591,7 +589,8 @@ impl Encoder {
 
             if scan.ss == 0 && scan.se == 0 {
                 // DC scan
-                let blocks: Vec<&[[i16; DCT_BLOCK_SIZE]]> = scan.components
+                let blocks: Vec<&[[i16; DCT_BLOCK_SIZE]]> = scan
+                    .components
                     .iter()
                     .map(|&c| match c {
                         0 => y_blocks.as_slice(),
@@ -600,7 +599,8 @@ impl Encoder {
                         _ => &[][..],
                     })
                     .collect();
-                let component_indices: Vec<usize> = scan.components.iter().map(|&c| c as usize).collect();
+                let component_indices: Vec<usize> =
+                    scan.components.iter().map(|&c| c as usize).collect();
                 token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
             } else if scan.ah == 0 {
                 // AC first scan
@@ -608,7 +608,11 @@ impl Encoder {
                     0 => &y_blocks,
                     1 => &cb_blocks,
                     2 => &cr_blocks,
-                    _ => return Err(Error::InternalError { reason: "Invalid component" }),
+                    _ => {
+                        return Err(Error::InternalError {
+                            reason: "Invalid component",
+                        })
+                    }
                 };
                 token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
             } else {
@@ -617,9 +621,15 @@ impl Encoder {
                     0 => &y_blocks,
                     1 => &cb_blocks,
                     2 => &cr_blocks,
-                    _ => return Err(Error::InternalError { reason: "Invalid component" }),
+                    _ => {
+                        return Err(Error::InternalError {
+                            reason: "Invalid component",
+                        })
+                    }
                 };
-                token_buffer.tokenize_ac_refinement_scan(blocks, context, scan.ss, scan.se, scan.ah, scan.al);
+                token_buffer.tokenize_ac_refinement_scan(
+                    blocks, context, scan.ss, scan.se, scan.ah, scan.al,
+                );
             }
         }
 
@@ -627,13 +637,14 @@ impl Encoder {
         // Cluster histograms and generate tables
         // Use 2 DC clusters (luma, chroma) and 2 AC clusters (luma, chroma)
         let (_context_map, num_dc_tables, tables) = token_buffer.generate_optimized_tables(
-            2,                  // max DC clusters
-            2,                  // max AC clusters
-            num_components,     // num DC contexts
+            2,              // max DC clusters
+            2,              // max AC clusters
+            num_components, // num DC contexts
         )?;
 
         // Convert to OptimizedHuffmanTables format for compatibility
-        let opt_tables = self.build_progressive_huffman_tables(&tables, num_components, num_dc_tables)?;
+        let opt_tables =
+            self.build_progressive_huffman_tables(&tables, num_components, num_dc_tables)?;
 
         // ========== WRITE JPEG STRUCTURE ==========
         self.write_header(&mut output)?;
@@ -654,13 +665,8 @@ impl Encoder {
             self.write_progressive_scan_header(&mut output, scan, is_color)?;
 
             // Replay tokens for this scan
-            let scan_data = self.replay_progressive_scan(
-                &token_buffer,
-                scan_idx,
-                scan,
-                is_color,
-                &opt_tables,
-            )?;
+            let scan_data =
+                self.replay_progressive_scan(&token_buffer, scan_idx, scan, is_color, &opt_tables)?;
             output.extend_from_slice(&scan_data);
         }
 
@@ -704,7 +710,10 @@ impl Encoder {
 
         // AC chroma is the second AC table if it exists
         let ac_chroma = if num_components > 1 && tables.len() > num_dc_tables + 1 {
-            tables.get(num_dc_tables + 1).cloned().unwrap_or_else(|| ac_luma.clone())
+            tables
+                .get(num_dc_tables + 1)
+                .cloned()
+                .unwrap_or_else(|| ac_luma.clone())
         } else {
             ac_luma.clone()
         };
@@ -741,9 +750,12 @@ impl Encoder {
         }
 
         // Get scan info
-        let scan_info = token_buffer.scan_info.get(scan_idx).ok_or(Error::InternalError {
-            reason: "Scan info not found",
-        })?;
+        let scan_info = token_buffer
+            .scan_info
+            .get(scan_idx)
+            .ok_or(Error::InternalError {
+                reason: "Scan info not found",
+            })?;
 
         if scan.ss == 0 && scan.se == 0 {
             // DC scan: replay DC tokens
@@ -756,11 +768,19 @@ impl Encoder {
         } else if scan.ah == 0 {
             // AC first scan: replay AC tokens
             let tokens = token_buffer.scan_tokens(scan_idx);
-            let table_idx = if is_color && scan.components[0] > 0 { 1 } else { 0 };
+            let table_idx = if is_color && scan.components[0] > 0 {
+                1
+            } else {
+                0
+            };
             encoder.write_ac_first_tokens(tokens, table_idx)?;
         } else {
             // AC refinement scan: replay refinement tokens
-            let table_idx = if is_color && scan.components[0] > 0 { 1 } else { 0 };
+            let table_idx = if is_color && scan.components[0] > 0 {
+                1
+            } else {
+                0
+            };
             encoder.write_ac_refinement_tokens(scan_info, table_idx)?;
         }
 
@@ -1837,7 +1857,12 @@ impl Encoder {
         let mut prev_cr_dc: i16 = 0;
 
         for (i, y_block) in y_blocks.iter().enumerate() {
-            Self::collect_block_frequencies(y_block, prev_y_dc, &mut dc_luma_freq, &mut ac_luma_freq);
+            Self::collect_block_frequencies(
+                y_block,
+                prev_y_dc,
+                &mut dc_luma_freq,
+                &mut ac_luma_freq,
+            );
             prev_y_dc = y_block[0];
 
             if is_color {
@@ -1871,8 +1896,8 @@ impl Encoder {
         } else {
             // Use standard tables for grayscale (won't be used but needed for structure)
             use crate::huffman::{
-                STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES, STD_AC_CHROMINANCE_BITS,
-                STD_AC_CHROMINANCE_VALUES,
+                STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
+                STD_DC_CHROMINANCE_VALUES,
             };
             use crate::huffman_opt::OptimizedTable;
 
@@ -2083,7 +2108,10 @@ impl Encoder {
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         b_blocks: &[[i16; DCT_BLOCK_SIZE]],
-    ) -> Result<(crate::huffman_opt::OptimizedTable, crate::huffman_opt::OptimizedTable)> {
+    ) -> Result<(
+        crate::huffman_opt::OptimizedTable,
+        crate::huffman_opt::OptimizedTable,
+    )> {
         let mut dc_freq = FrequencyCounter::new();
         let mut ac_freq = FrequencyCounter::new();
 
@@ -2119,7 +2147,12 @@ impl Encoder {
 
             // B block (1 per MCU)
             prev_dc = 0;
-            Self::collect_block_frequencies(&b_blocks[mcu_idx], prev_dc, &mut dc_freq, &mut ac_freq);
+            Self::collect_block_frequencies(
+                &b_blocks[mcu_idx],
+                prev_dc,
+                &mut dc_freq,
+                &mut ac_freq,
+            );
         }
 
         // Generate optimized tables
@@ -2504,7 +2537,11 @@ mod tests {
             .optimize_huffman(true);
 
         let result = encoder.encode(&data);
-        assert!(result.is_ok(), "Optimized Huffman encoding failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Optimized Huffman encoding failed: {:?}",
+            result.err()
+        );
 
         let jpeg = result.unwrap();
         assert_eq!(jpeg[0], 0xFF);
@@ -2514,7 +2551,11 @@ mod tests {
 
         // Verify it's decodable
         let decoded = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
-        assert!(decoded.is_ok(), "Optimized JPEG not decodable: {:?}", decoded.err());
+        assert!(
+            decoded.is_ok(),
+            "Optimized JPEG not decodable: {:?}",
+            decoded.err()
+        );
     }
 
     #[test]

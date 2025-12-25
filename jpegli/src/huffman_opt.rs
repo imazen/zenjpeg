@@ -531,10 +531,7 @@ impl RefToken {
     /// Serializes to JSON format for C++ comparison.
     #[cfg(feature = "debug-tokens")]
     pub fn to_debug_json(&self) -> String {
-        format!(
-            r#"{{"symbol":{},"refbits":{}}}"#,
-            self.symbol, self.refbits
-        )
+        format!(r#"{{"symbol":{},"refbits":{}}}"#, self.symbol, self.refbits)
     }
 }
 
@@ -622,8 +619,16 @@ impl ClusterResult {
         let mut file = std::fs::File::create(path)?;
         writeln!(file, "[")?;
         for (i, (a, b, cost)) in self.merge_log.iter().enumerate() {
-            let comma = if i + 1 < self.merge_log.len() { "," } else { "" };
-            writeln!(file, r#"  {{"ctx_a":{},"ctx_b":{},"cost_delta":{:.4}}}{}"#, a, b, cost, comma)?;
+            let comma = if i + 1 < self.merge_log.len() {
+                ","
+            } else {
+                ""
+            };
+            writeln!(
+                file,
+                r#"  {{"ctx_a":{},"ctx_b":{},"cost_delta":{:.4}}}{}"#,
+                a, b, cost, comma
+            )?;
         }
         writeln!(file, "]")?;
         Ok(())
@@ -1056,12 +1061,7 @@ impl ProgressiveTokenBuffer {
     }
 
     /// Tokenizes DC first scan (ah == 0).
-    fn tokenize_dc_first(
-        &mut self,
-        blocks: &[&[[i16; 64]]],
-        component_indices: &[usize],
-        al: u8,
-    ) {
+    fn tokenize_dc_first(&mut self, blocks: &[&[[i16; 64]]], component_indices: &[usize], al: u8) {
         // Get the number of blocks (all components should have same count for interleaved)
         let num_blocks = blocks.get(0).map(|b| b.len()).unwrap_or(0);
 
@@ -1085,12 +1085,7 @@ impl ProgressiveTokenBuffer {
     }
 
     /// Tokenizes DC refinement scan (ah > 0).
-    fn tokenize_dc_refine(
-        &mut self,
-        blocks: &[&[[i16; 64]]],
-        component_indices: &[usize],
-        al: u8,
-    ) {
+    fn tokenize_dc_refine(&mut self, blocks: &[&[[i16; 64]]], component_indices: &[usize], al: u8) {
         let num_blocks = blocks.get(0).map(|b| b.len()).unwrap_or(0);
 
         for block_idx in 0..num_blocks {
@@ -1435,10 +1430,7 @@ impl TokenBuffer {
 
     /// Generates optimized Huffman tables for all contexts.
     pub fn generate_tables(&self) -> Result<Vec<HuffmanEncodeTable>> {
-        self.counters
-            .iter()
-            .map(|c| c.generate_table())
-            .collect()
+        self.counters.iter().map(|c| c.generate_table()).collect()
     }
 
     /// Estimates total encoded size in bits using given tables.
@@ -1533,7 +1525,10 @@ mod tests {
         let (_, len2) = table.encode(2);
         let (_, len3) = table.encode(3);
 
-        assert!(len0 <= len1, "More frequent symbol should have shorter code");
+        assert!(
+            len0 <= len1,
+            "More frequent symbol should have shorter code"
+        );
         assert!(len1 <= len2);
         assert!(len2 <= len3);
     }
@@ -1622,12 +1617,7 @@ mod tests {
         // All codes should be <= 16 bits
         for i in 0..30 {
             let (_, len) = table.encode(i);
-            assert!(
-                len <= 16,
-                "Symbol {} has length {} > 16",
-                i,
-                len
-            );
+            assert!(len <= 16, "Symbol {} has length {} > 16", i, len);
         }
     }
 
@@ -1830,9 +1820,21 @@ mod progressive_token_tests {
 
         // Create test blocks with known DC values
         let blocks: [[i16; 64]; 3] = [
-            { let mut b = [0i16; 64]; b[0] = 100; b },
-            { let mut b = [0i16; 64]; b[0] = 120; b },
-            { let mut b = [0i16; 64]; b[0] = 80; b },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 100;
+                b
+            },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 120;
+                b
+            },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 80;
+                b
+            },
         ];
 
         let block_refs: &[[i16; 64]] = &blocks;
@@ -1864,16 +1866,40 @@ mod progressive_token_tests {
 
         // Create blocks for 3 components
         let y_blocks: [[i16; 64]; 2] = [
-            { let mut b = [0i16; 64]; b[0] = 512; b },
-            { let mut b = [0i16; 64]; b[0] = 520; b },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 512;
+                b
+            },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 520;
+                b
+            },
         ];
         let cb_blocks: [[i16; 64]; 2] = [
-            { let mut b = [0i16; 64]; b[0] = 0; b },
-            { let mut b = [0i16; 64]; b[0] = 10; b },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 0;
+                b
+            },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 10;
+                b
+            },
         ];
         let cr_blocks: [[i16; 64]; 2] = [
-            { let mut b = [0i16; 64]; b[0] = -5; b },
-            { let mut b = [0i16; 64]; b[0] = 5; b },
+            {
+                let mut b = [0i16; 64];
+                b[0] = -5;
+                b
+            },
+            {
+                let mut b = [0i16; 64];
+                b[0] = 5;
+                b
+            },
         ];
 
         let blocks: &[&[[i16; 64]]] = &[&y_blocks, &cb_blocks, &cr_blocks];
@@ -1897,12 +1923,20 @@ mod progressive_token_tests {
 
         // Create blocks with DC values that will be shifted
         let blocks: [[i16; 64]; 2] = [
-            { let mut b = [0i16; 64]; b[0] = 100; b },  // 100 >> 1 = 50
-            { let mut b = [0i16; 64]; b[0] = 120; b },  // 120 >> 1 = 60
+            {
+                let mut b = [0i16; 64];
+                b[0] = 100;
+                b
+            }, // 100 >> 1 = 50
+            {
+                let mut b = [0i16; 64];
+                b[0] = 120;
+                b
+            }, // 120 >> 1 = 60
         ];
 
         let block_refs: &[[i16; 64]] = &blocks;
-        buf.tokenize_dc_scan(&[block_refs], &[0], 1, 0);  // al = 1
+        buf.tokenize_dc_scan(&[block_refs], &[0], 1, 0); // al = 1
 
         // First token: diff = 50 - 0 = 50, category = 6
         assert_eq!(buf.tokens[0].symbol, 6);
@@ -1917,9 +1951,9 @@ mod progressive_token_tests {
 
         // Create a block with some non-zero AC coefficients
         let mut block = [0i16; 64];
-        block[1] = 10;  // Position 1
-        block[5] = -5;  // Position 5
-        // Positions 2, 3, 4 are zeros (run of 3)
+        block[1] = 10; // Position 1
+        block[5] = -5; // Position 5
+                       // Positions 2, 3, 4 are zeros (run of 3)
 
         let blocks = [block];
         buf.tokenize_ac_first_scan(&blocks, 4, 1, 63, 0);
@@ -2046,12 +2080,8 @@ mod cpp_comparison_tests {
             let exact = (0..256).all(|i| result[i] == expected[i]);
 
             // Calculate bit costs
-            let cost_result: i64 = (0..256)
-                .map(|i| input[i] * result[i] as i64)
-                .sum();
-            let cost_expected: i64 = (0..256)
-                .map(|i| input[i] * expected[i] as i64)
-                .sum();
+            let cost_result: i64 = (0..256).map(|i| input[i] * result[i] as i64).sum();
+            let cost_expected: i64 = (0..256).map(|i| input[i] * expected[i] as i64).sum();
 
             if exact {
                 exact_match += 1;

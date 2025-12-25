@@ -76,10 +76,12 @@ fn register_rust_jpegli(session: &mut EvalSession) {
                 .pixel_format(jpegli::PixelFormat::Rgb)
                 .quality(Quality::from_quality(quality));
 
-            let encoded = encoder.encode(&rgb_data).map_err(|e| codec_eval::Error::Codec {
-                codec: "jpegli-rs".to_string(),
-                message: format!("{}", e),
-            })?;
+            let encoded = encoder
+                .encode(&rgb_data)
+                .map_err(|e| codec_eval::Error::Codec {
+                    codec: "jpegli-rs".to_string(),
+                    message: format!("{}", e),
+                })?;
 
             Ok(encoded)
         }),
@@ -153,10 +155,12 @@ fn load_png(path: &Path) -> Result<ImageData, codec_eval::Error> {
     })?;
 
     let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).map_err(|e| codec_eval::Error::Codec {
-        codec: "png".to_string(),
-        message: format!("PNG frame error: {}", e),
-    })?;
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| codec_eval::Error::Codec {
+            codec: "png".to_string(),
+            message: format!("PNG frame error: {}", e),
+        })?;
 
     let width = info.width as usize;
     let height = info.height as usize;

@@ -22,9 +22,9 @@ fn load_png(path: &str) -> (u32, u32, Vec<u8>) {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/mnt/v/work/corpus/CID22-512/1044329.png".to_string()
-    });
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "/mnt/v/work/corpus/CID22-512/1044329.png".to_string());
 
     println!("Loading: {}", path);
     let (w, h, pixels) = load_png(&path);
@@ -54,8 +54,12 @@ fn main() {
             let num_symbols: usize = bits.iter().map(|&b| b as usize).sum();
             let values = &jpeg[i + 21..i + 21 + num_symbols];
 
-            println!("\n  {} table {} (len={}):",
-                     if tc == 0 { "DC" } else { "AC" }, th, len);
+            println!(
+                "\n  {} table {} (len={}):",
+                if tc == 0 { "DC" } else { "AC" },
+                th,
+                len
+            );
             println!("    bits: {:?}", bits);
             println!("    num_symbols: {}", num_symbols);
             if num_symbols <= 20 {
@@ -71,8 +75,12 @@ fn main() {
                 let length = len_idx + 1;
                 total_codes = (total_codes + count as u32) << 1;
                 if total_codes > (1u32 << length) {
-                    println!("    ERROR: overflow at length {}: {} codes but max is {}",
-                             length, total_codes >> 1, 1u32 << (length - 1));
+                    println!(
+                        "    ERROR: overflow at length {}: {} codes but max is {}",
+                        length,
+                        total_codes >> 1,
+                        1u32 << (length - 1)
+                    );
                     valid = false;
                 }
             }

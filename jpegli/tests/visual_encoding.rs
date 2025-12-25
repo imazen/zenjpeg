@@ -71,7 +71,10 @@ fn test_visual_encoding_quality_levels() {
 
     let output_dir = get_output_dir();
 
-    println!("Encoding {}x{} image at various quality levels...", width, height);
+    println!(
+        "Encoding {}x{} image at various quality levels...",
+        width, height
+    );
 
     // Encode at various quality levels
     let quality_levels = [30, 50, 70, 85, 95];

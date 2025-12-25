@@ -265,15 +265,17 @@ fn separate_hf_and_uhf(hf: &mut [ImageF; 2], uhf: &mut [ImageF; 2]) {
 
             for x in 0..width {
                 let hf_val = row_hf[x];
-                let uhf_val = row_uhf[x] - hf_val;
 
                 if i == 0 {
-                    // X channel
+                    // X channel: compute UHF before any clamping
+                    let uhf_val = row_uhf[x] - hf_val;
                     row_hf[x] = remove_range_around_zero(hf_val, REMOVE_HF_RANGE as f32);
                     row_uhf[x] = remove_range_around_zero(uhf_val, REMOVE_UHF_RANGE as f32);
                 } else {
-                    // Y channel
+                    // Y channel: C++ clamps HF BEFORE computing UHF
+                    // This is critical - the subtraction uses the clamped value
                     let hf_clamped = maximum_clamp(hf_val, MAXCLAMP_HF as f32);
+                    let uhf_val = row_uhf[x] - hf_clamped; // Use CLAMPED HF
                     let uhf_clamped = maximum_clamp(uhf_val, MAXCLAMP_UHF as f32);
 
                     row_uhf[x] = uhf_clamped * MUL_Y_UHF as f32;

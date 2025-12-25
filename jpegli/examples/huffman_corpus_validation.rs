@@ -23,19 +23,9 @@ fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), Box<dyn std::
     // Convert to RGB if needed
     let pixels = match info.color_type {
         png::ColorType::Rgb => buf,
-        png::ColorType::Rgba => {
-            buf.chunks(4)
-                .flat_map(|c| [c[0], c[1], c[2]])
-                .collect()
-        }
-        png::ColorType::Grayscale => {
-            buf.iter().flat_map(|&g| [g, g, g]).collect()
-        }
-        png::ColorType::GrayscaleAlpha => {
-            buf.chunks(2)
-                .flat_map(|c| [c[0], c[0], c[0]])
-                .collect()
-        }
+        png::ColorType::Rgba => buf.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
+        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),
+        png::ColorType::GrayscaleAlpha => buf.chunks(2).flat_map(|c| [c[0], c[0], c[0]]).collect(),
         _ => return Err("Unsupported color type".into()),
     };
 
@@ -181,10 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Files processed: {}", files.len());
     println!("  Decode failures: {}", decode_failures);
     println!("  Size regressions: {}", size_regressions);
-    println!(
-        "  Average savings: {:.1}%",
-        total_savings
-    );
+    println!("  Average savings: {:.1}%", total_savings);
 
     if decode_failures > 0 {
         eprintln!("\n⚠️  WARNING: {} files failed to decode!", decode_failures);

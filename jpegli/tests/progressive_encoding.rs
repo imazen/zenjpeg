@@ -3,9 +3,9 @@
 //! These tests verify that progressive JPEG encoding produces valid output
 //! that can be decoded by standard decoders.
 
-use jpegli::{Encoder, PixelFormat};
 use jpegli::quant::Quality;
 use jpegli::types::JpegMode;
+use jpegli::{Encoder, PixelFormat};
 use std::process::Command;
 
 /// Test that progressive encoding of a grayscale gradient produces valid output.
@@ -29,7 +29,9 @@ fn test_progressive_grayscale_gradient() {
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
-    let jpeg_data = encoder.encode(&data).expect("Progressive encoding should succeed");
+    let jpeg_data = encoder
+        .encode(&data)
+        .expect("Progressive encoding should succeed");
 
     // Verify the file is a valid JPEG by checking markers
     assert!(jpeg_data.len() > 100, "JPEG should be at least 100 bytes");
@@ -78,12 +80,14 @@ fn test_progressive_solid_gray() {
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
-    let jpeg_data = encoder.encode(&data).expect("Progressive encoding should succeed");
+    let jpeg_data = encoder
+        .encode(&data)
+        .expect("Progressive encoding should succeed");
 
     // Basic validation
     assert!(jpeg_data.len() > 50);
     assert_eq!(&jpeg_data[0..2], &[0xFF, 0xD8]); // SOI
-    assert_eq!(&jpeg_data[jpeg_data.len()-2..], &[0xFF, 0xD9]); // EOI
+    assert_eq!(&jpeg_data[jpeg_data.len() - 2..], &[0xFF, 0xD9]); // EOI
 }
 
 /// Test that progressive encoding of RGB image produces valid output.
@@ -96,9 +100,9 @@ fn test_progressive_rgb() {
     // Create a simple gradient
     for y in 0..height {
         for x in 0..width {
-            data.push((x * 16) as u8);  // R
-            data.push((y * 16) as u8);  // G
-            data.push(128);              // B
+            data.push((x * 16) as u8); // R
+            data.push((y * 16) as u8); // G
+            data.push(128); // B
         }
     }
 
@@ -110,7 +114,9 @@ fn test_progressive_rgb() {
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
-    let jpeg_data = encoder.encode(&data).expect("Progressive RGB encoding should succeed");
+    let jpeg_data = encoder
+        .encode(&data)
+        .expect("Progressive RGB encoding should succeed");
 
     // Verify SOF2 marker for progressive
     let mut found_sof2 = false;
@@ -154,7 +160,11 @@ fn test_progressive_has_multiple_scans() {
     }
 
     // Progressive JPEG should have at least 2 scans (DC + AC)
-    assert!(sos_count >= 2, "Progressive JPEG should have at least 2 scans, found {}", sos_count);
+    assert!(
+        sos_count >= 2,
+        "Progressive JPEG should have at least 2 scans, found {}",
+        sos_count
+    );
 }
 
 /// Test that optimized Huffman tables produce smaller or equal size files.
@@ -168,8 +178,8 @@ fn test_progressive_optimized_smaller() {
     for y in 0..height {
         for x in 0..width {
             let val = ((x * 13 + y * 17) % 256) as u8;
-            data.push(val);           // R
-            data.push(255 - val);     // G
+            data.push(val); // R
+            data.push(255 - val); // G
             data.push((val / 2) + 64); // B
         }
     }
@@ -183,7 +193,9 @@ fn test_progressive_optimized_smaller() {
         .optimize_huffman(false)
         .mode(JpegMode::Progressive);
 
-    let no_opt_data = encoder_no_opt.encode(&data).expect("Non-optimized encoding should succeed");
+    let no_opt_data = encoder_no_opt
+        .encode(&data)
+        .expect("Non-optimized encoding should succeed");
 
     // Encode with optimization
     let encoder_opt = Encoder::new()
@@ -194,7 +206,9 @@ fn test_progressive_optimized_smaller() {
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
-    let opt_data = encoder_opt.encode(&data).expect("Optimized encoding should succeed");
+    let opt_data = encoder_opt
+        .encode(&data)
+        .expect("Optimized encoding should succeed");
 
     // Both should be valid JPEGs
     assert_eq!(&no_opt_data[0..2], &[0xFF, 0xD8]);
@@ -210,7 +224,9 @@ fn test_progressive_optimized_smaller() {
     assert!(
         size_diff >= -tolerance,
         "Optimized should not be much larger: no_opt={}, opt={}, diff={}",
-        no_opt_data.len(), opt_data.len(), size_diff
+        no_opt_data.len(),
+        opt_data.len(),
+        size_diff
     );
 }
 
@@ -239,7 +255,7 @@ fn test_progressive_optimized_external_decode() {
 
     // Verify it's a valid JPEG structure
     assert_eq!(&jpeg_data[0..2], &[0xFF, 0xD8]); // SOI
-    assert_eq!(&jpeg_data[jpeg_data.len()-2..], &[0xFF, 0xD9]); // EOI
+    assert_eq!(&jpeg_data[jpeg_data.len() - 2..], &[0xFF, 0xD9]); // EOI
 
     // Verify it has DHT and SOF2 markers
     let mut found_dht = false;
@@ -277,9 +293,9 @@ fn test_progressive_optimized_larger_image() {
             // Mix of gradients and noise-like patterns
             let base = ((x as f32 / width as f32) * 255.0) as u8;
             let noise = ((x * 7 + y * 13) % 64) as u8;
-            data.push(base.wrapping_add(noise));      // R
-            data.push(255u8.wrapping_sub(base));       // G
-            data.push(((y * 255) / height) as u8);     // B
+            data.push(base.wrapping_add(noise)); // R
+            data.push(255u8.wrapping_sub(base)); // G
+            data.push(((y * 255) / height) as u8); // B
         }
     }
 
@@ -330,9 +346,7 @@ fn test_progressive_optimized_solid_color() {
     let width = 64u32;
     let height = 64u32;
     // Solid red
-    let data: Vec<u8> = (0..(width * height))
-        .flat_map(|_| [255u8, 0, 0])
-        .collect();
+    let data: Vec<u8> = (0..(width * height)).flat_map(|_| [255u8, 0, 0]).collect();
 
     let jpeg_data = Encoder::new()
         .width(width)
@@ -456,7 +470,7 @@ fn test_progressive_optimized_single_block() {
 
     // Should still be valid
     assert_eq!(&jpeg_data[0..2], &[0xFF, 0xD8]);
-    assert_eq!(&jpeg_data[jpeg_data.len()-2..], &[0xFF, 0xD9]);
+    assert_eq!(&jpeg_data[jpeg_data.len() - 2..], &[0xFF, 0xD9]);
 
     jpeg_decoder::Decoder::new(&jpeg_data[..])
         .decode()
@@ -497,9 +511,7 @@ fn test_progressive_optimized_grayscale_sizes() {
 fn test_progressive_optimized_scan_structure() {
     let width = 32u32;
     let height = 32u32;
-    let data: Vec<u8> = (0..(width * height * 3))
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let data: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
     let jpeg_data = Encoder::new()
         .width(width)
@@ -534,7 +546,10 @@ fn test_progressive_optimized_scan_structure() {
     assert_eq!(sof2_count, 1, "Should have exactly 1 SOF2 marker");
     assert!(dht_count >= 1, "Should have at least 1 DHT marker");
     assert!(dqt_count >= 1, "Should have at least 1 DQT marker");
-    assert!(sos_count >= 2, "Progressive should have at least 2 SOS markers");
+    assert!(
+        sos_count >= 2,
+        "Progressive should have at least 2 SOS markers"
+    );
 }
 
 /// Test non-square image dimensions.
@@ -652,7 +667,9 @@ fn test_baseline_still_works() {
         .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline);
 
-    let jpeg_data = encoder.encode(&data).expect("Baseline encoding should succeed");
+    let jpeg_data = encoder
+        .encode(&data)
+        .expect("Baseline encoding should succeed");
 
     // Verify SOF0 marker for baseline (not SOF2)
     let mut found_sof0 = false;

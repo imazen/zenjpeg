@@ -134,6 +134,8 @@ name = "butteraugli"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "jpeg-decoder",
+ "mozjpeg",
  "png",
  "wide",
 ]

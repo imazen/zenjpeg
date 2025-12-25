@@ -22,9 +22,9 @@ fn load_png(path: &str) -> (u32, u32, Vec<u8>) {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/mnt/v/work/corpus/CID22-512/1044329.png".to_string()
-    });
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "/mnt/v/work/corpus/CID22-512/1044329.png".to_string());
 
     println!("Loading: {}", path);
     let (w, h, pixels) = load_png(&path);

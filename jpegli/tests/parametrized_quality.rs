@@ -116,7 +116,10 @@ fn test_various_sizes_roundtrip(width: u32, height: u32) {
 #[test_case(TestPattern::SolidColor, "solid")]
 fn test_pattern_roundtrip(pattern: TestPattern, name: &str) {
     let (rms, max_diff, size) = roundtrip_quality(128, 128, pattern, 90.0);
-    println!("{}: RMS={:.2}, max_diff={}, size={}", name, rms, max_diff, size);
+    println!(
+        "{}: RMS={:.2}, max_diff={}, size={}",
+        name, rms, max_diff, size
+    );
 
     // All patterns should roundtrip reasonably well at Q90
     assert!(
