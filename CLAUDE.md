@@ -50,24 +50,29 @@ zenjpeg/
 - [x] Quantization tables (standard + mozjpeg)
 - [x] Huffman table handling
 - [x] Entropy encoding
-- [x] Trellis quantization (simplified)
-- [x] Adaptive quantization (simplified)
+- [x] Trellis quantization (simplified, enabled for Q<85)
+- [x] Adaptive quantization infrastructure (disabled until tuned)
 - [x] Strategy selection (auto/mozjpeg/jpegli/hybrid)
 - [x] Basic Encoder API
-- [x] 20 unit tests passing
+- [x] 30 unit/integration tests passing
+- [x] Pareto benchmark (`examples/pareto_benchmark.rs`)
+- [x] FrequencyCounter for Huffman optimization (infrastructure only)
 
-### In Progress
-- [ ] Documentation (ARCHITECTURE.md, RESEARCH.md)
-- [ ] Integration with codec-eval for benchmarking
+### Current Performance (Dec 2024)
+At SSIM2 >= 80 quality target:
+- jpegli: **1.310 bpp** (best efficiency)
+- mozjpeg-oxide: 1.437 bpp
+- zenjpeg: 1.802 bpp (26% larger than jpegli)
+
+zenjpeg appears on Pareto front at high quality (Q90-95, SSIM2 86-91).
 
 ### Pending
+- [ ] Wire FrequencyCounter into encoder (two-pass Huffman optimization)
 - [ ] Full trellis implementation from mozjpeg-rs
-- [ ] Full adaptive quantization from jpegli-rs
+- [ ] Re-enable and tune adaptive quantization from jpegli-rs
 - [ ] Progressive encoding
-- [ ] Huffman table optimization
 - [ ] SIMD acceleration
-- [ ] Pareto front benchmarking
-- [ ] Quality tuning
+- [ ] Documentation (ARCHITECTURE.md, RESEARCH.md)
 
 ## Key Design Decisions
 
@@ -137,8 +142,12 @@ cargo test -- --nocapture     # Show output
 
 ### Benchmarking
 ```bash
-# Run Pareto comparison (TBD)
-cargo run --release --example pareto_comparison
+# Run Pareto comparison (uses Kodak corpus)
+cargo run --release --example pareto_benchmark
+
+# Results written to comparison_outputs/
+# - pareto_front.json   # Pareto-optimal points
+# - all_points.csv      # All quality/size data points
 ```
 
 ## Quality Metrics
