@@ -408,31 +408,215 @@ pub fn read_test_data_required(filename: &str) -> Vec<u8> {
 // Quality Thresholds (from C++ tests)
 // ============================================================================
 
-/// Quality thresholds matching C++ jpegli test expectations.
+/// Quality thresholds matching C++ jpegli test expectations EXACTLY.
+/// These values are from lib/jpegli/*_test.cc and lib/extras/jpegli_test.cc
 pub mod thresholds {
-    /// Maximum RMS for Q50 encoding
+    // ========================================================================
+    // RMS Thresholds by Quality Level (from encode_api_test.cc)
+    // ========================================================================
+
+    /// Maximum RMS for Q50 encoding (4:4:4)
     pub const Q50_MAX_RMS: f64 = 20.0;
-    /// Maximum RMS for Q75 encoding
+    /// Maximum RMS for Q75 encoding (4:4:4)
     pub const Q75_MAX_RMS: f64 = 10.0;
-    /// Maximum RMS for Q85 encoding
-    pub const Q85_MAX_RMS: f64 = 5.0;
-    /// Maximum RMS for Q90 encoding
-    pub const Q90_MAX_RMS: f64 = 3.0;
-    /// Maximum RMS for Q95 encoding
+    /// Maximum RMS for Q85 encoding (4:4:4)
+    pub const Q85_MAX_RMS: f64 = 8.0;
+    /// Maximum RMS for Q90 encoding (4:4:4)
+    pub const Q90_MAX_RMS: f64 = 4.0;
+    /// Maximum RMS for Q95 encoding (4:4:4)
     pub const Q95_MAX_RMS: f64 = 2.1;
 
-    /// Butteraugli threshold for XYB encoding
-    pub const XYB_BUTTERAUGLI: f64 = 1.84;
-    /// Butteraugli threshold for large smooth areas
+    /// Compute max RMS threshold based on quality and sampling factors.
+    /// Matches C++ encode_api_test.cc max_rms lambda.
+    #[inline]
+    pub fn max_rms_for_quality(quality: u8, h_samp: u8, v_samp: u8) -> f64 {
+        let subsample_factor = (h_samp as f64) * (v_samp as f64);
+        let base = if quality >= 95 {
+            2.1
+        } else if quality >= 90 {
+            4.0
+        } else if quality >= 85 {
+            8.0
+        } else {
+            20.0
+        };
+        base * subsample_factor
+    }
+
+    // ========================================================================
+    // RMS Thresholds by Test Type (from various *_test.cc)
+    // ========================================================================
+
+    /// source_manager_test.cc baseline RMS
+    pub const SOURCE_MANAGER_MAX_RMS: f64 = 1.0;
+
+    /// output_suspension_test.cc pixel data RMS
+    pub const OUTPUT_SUSPENSION_PIXEL_MAX_RMS: f64 = 2.5;
+    /// output_suspension_test.cc raw data RMS
+    pub const OUTPUT_SUSPENSION_RAW_MAX_RMS: f64 = 3.5;
+
+    /// streaming_test.cc max RMS
+    pub const STREAMING_MAX_RMS: f64 = 3.8;
+
+    /// decode_api_test.cc reuse test RMS
+    pub const DECODE_REUSE_MAX_RMS: f64 = 2.35;
+    /// decode_api_test.cc coefficient mode RMS (exact match)
+    pub const DECODE_COEFFICIENTS_MAX_RMS: f64 = 0.0;
+    /// decode_api_test.cc libjpeg compat (no fancy upsampling)
+    pub const DECODE_LIBJPEG_COMPAT_MAX_RMS: f64 = 5.0;
+
+    /// input_suspension_test.cc baseline RMS
+    pub const INPUT_SUSPENSION_BASE_MAX_RMS: f64 = 1.0;
+    /// input_suspension_test.cc no subsampling RMS
+    pub const INPUT_SUSPENSION_NO_SUBSAMPLE_MAX_RMS: f64 = 1.75;
+    /// input_suspension_test.cc with subsampling RMS
+    pub const INPUT_SUSPENSION_SUBSAMPLE_MAX_RMS: f64 = 3.0;
+    /// input_suspension_test.cc progressive RMS
+    pub const INPUT_SUSPENSION_PROGRESSIVE_MAX_RMS: f64 = 8.0;
+
+    // ========================================================================
+    // Butteraugli Thresholds (from jpegli_test.cc)
+    // ========================================================================
+
+    /// JpegliXYBEncodeTest: XYB mode quality threshold
+    pub const XYB_BUTTERAUGLI: f64 = 1.32;
+    /// JpegliXYBEncodeTest: XYB mode bits per pixel threshold
+    pub const XYB_MAX_BPP: f64 = 1.45;
+
+    /// JpegliDecodeTestLargeSmoothArea: smooth area handling
     pub const SMOOTH_BUTTERAUGLI: f64 = 3.0;
-    /// Butteraugli threshold for YUV encoding
-    pub const YUV_BUTTERAUGLI: f64 = 1.85;
-    /// Butteraugli threshold for YUV with chroma subsampling
+
+    /// JpegliYUVEncodeTest: YUV 4:4:4 quality threshold
+    pub const YUV_BUTTERAUGLI: f64 = 1.32;
+    /// JpegliYUVEncodeTest: YUV 4:4:4 bits per pixel threshold
+    pub const YUV_MAX_BPP: f64 = 1.7;
+
+    /// JpegliYUVChromaSubsamplingEncodeTest: YUV subsampled quality
     pub const YUV_SUBSAMPLE_BUTTERAUGLI: f64 = 1.82;
-    /// Butteraugli threshold for YUV without AQ
-    pub const YUV_NO_AQ_BUTTERAUGLI: f64 = 2.2;
-    /// Butteraugli threshold for HDR roundtrip
-    pub const HDR_BUTTERAUGLI: f64 = 1.5;
+    /// JpegliYUVChromaSubsamplingEncodeTest: YUV subsampled BPP
+    pub const YUV_SUBSAMPLE_MAX_BPP: f64 = 1.55;
+
+    /// JpegliYUVEncodeTestNoAq: YUV without adaptive quantization
+    pub const YUV_NO_AQ_BUTTERAUGLI: f64 = 1.25;
+    /// JpegliYUVEncodeTestNoAq: YUV no AQ bits per pixel
+    pub const YUV_NO_AQ_MAX_BPP: f64 = 1.85;
+
+    /// JpegliHDRRoundtripTest: HDR 16-bit roundtrip
+    pub const HDR_BUTTERAUGLI: f64 = 1.05;
+    /// JpegliHDRRoundtripTest: HDR bits per pixel
+    pub const HDR_MAX_BPP: f64 = 2.95;
+
+    // ========================================================================
+    // Max Pixel Difference Thresholds
+    // ========================================================================
+
+    /// Default max pixel difference (most tests)
+    pub const DEFAULT_MAX_DIFF: u8 = 255;
+    /// Strict max pixel difference for high quality
+    pub const STRICT_MAX_DIFF: u8 = 35;
+
+    // ========================================================================
+    // Tone Mapping / Transfer Function Error Thresholds
+    // ========================================================================
+
+    /// TestRec2408ToneMap absolute error threshold
+    pub const REC2408_TONE_MAP_ERROR: f64 = 2.75e-5;
+    /// TestHlgOotfApply absolute error threshold
+    pub const HLG_OOTF_ERROR: f64 = 7.2e-7;
+    /// TestGamutMap absolute error threshold
+    pub const GAMUT_MAP_ERROR: f64 = 1e-10;
+
+    /// TestPqEncodedFromDisplay absolute error threshold
+    pub const PQ_ENCODE_ERROR: f64 = 6e-7;
+    /// TestHlgEncodedFromDisplay absolute error threshold
+    pub const HLG_ENCODE_ERROR: f64 = 4e-7;
+    /// TestPqDisplayFromEncoded absolute error threshold
+    pub const PQ_DECODE_ERROR: f64 = 3e-6;
+    /// TestHlgDisplayFromEncoded absolute error threshold
+    pub const HLG_DECODE_ERROR: f64 = 6e-7;
+}
+
+// ============================================================================
+// Testdata Sparse Checkout Helper
+// ============================================================================
+
+/// Ensures testdata is available, doing a sparse checkout if needed.
+/// Returns the path to the testdata directory.
+pub fn ensure_testdata() -> Option<PathBuf> {
+    let testdata_dir = get_testdata_dir();
+    if testdata_dir.exists() {
+        return Some(testdata_dir);
+    }
+
+    // Try to do a sparse checkout of just the files we need
+    eprintln!("Testdata not found at {:?}, attempting sparse checkout...", testdata_dir);
+
+    // Check if we're in the jpegli repo
+    let jpegli_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf());
+
+    if let Some(root) = jpegli_root {
+        let testdata_in_root = root.join("testdata");
+        if testdata_in_root.exists() {
+            return Some(testdata_in_root);
+        }
+
+        // Try to initialize and update the submodule
+        let status = std::process::Command::new("git")
+            .args(["submodule", "update", "--init", "--depth", "1", "testdata"])
+            .current_dir(&root)
+            .status();
+
+        if status.is_ok() && testdata_in_root.exists() {
+            return Some(testdata_in_root);
+        }
+    }
+
+    eprintln!("Could not find or checkout testdata. Some tests will be skipped.");
+    None
+}
+
+/// List of essential test files needed for jpegli tests.
+pub const ESSENTIAL_TEST_FILES: &[&str] = &[
+    // Primary test images
+    "jxl/flower/flower_small.rgb.depth8.ppm",
+    "jxl/flower/flower_small.g.depth8.pgm",
+    "jxl/hdr_room.png",
+    // JPEG test variants
+    "jxl/flower/flower.png.im_q85_444.jpg",
+    "jxl/flower/flower.png.im_q85_420.jpg",
+    "jxl/flower/flower.png.im_q85_420_progr.jpg",
+    "jxl/flower/flower.png.im_q85_420_R13B.jpg",
+    "jxl/flower/flower.png.im_q85_422.jpg",
+    "jxl/flower/flower.png.im_q85_440.jpg",
+    "jxl/flower/flower.png.im_q85_444_1x2.jpg",
+    "jxl/flower/flower.png.im_q85_asymmetric.jpg",
+    "jxl/flower/flower.png.im_q85_gray.jpg",
+    "jxl/flower/flower.png.im_q85_luma_subsample.jpg",
+    "jxl/flower/flower.png.im_q85_rgb.jpg",
+    "jxl/flower/flower.png.im_q85_rgb_subsample_blue.jpg",
+    "jxl/flower/flower_small.cmyk.jpg",
+    "jxl/flower/flower_small.q85_444_non_interleaved.jpg",
+    "jxl/flower/flower_small.q85_420_non_interleaved.jpg",
+    "jxl/flower/flower_small.q85_444_partially_interleaved.jpg",
+    "jxl/flower/flower_small.q85_420_partially_interleaved.jpg",
+    // Scan scripts
+    "jxl/flower/non_interleaved_scan.txt",
+    "jxl/flower/partially_interleaved_scan.txt",
+    // ICC profiles
+    "jxl/color_management/sRGB-D2700.icc",
+];
+
+/// Check if a specific test file exists.
+pub fn has_test_file(filename: &str) -> bool {
+    get_test_data_path(filename).exists()
+}
+
+/// Check if all essential test files are available.
+pub fn has_essential_test_files() -> bool {
+    ESSENTIAL_TEST_FILES.iter().all(|f| has_test_file(f))
 }
 
 // ============================================================================

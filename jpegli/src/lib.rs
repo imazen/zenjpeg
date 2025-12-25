@@ -53,10 +53,13 @@ pub mod quant;
 pub mod color;
 pub mod dct;
 pub mod idct;
+pub mod tone_mapping;
+pub mod transfer_functions;
 pub mod xyb;
 
 // Layer 3: Bitstream I/O
 pub mod bitstream;
+pub mod scan_script;
 
 // Layer 4: Stateful components
 pub mod entropy;

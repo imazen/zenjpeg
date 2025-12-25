@@ -86,6 +86,8 @@ pub enum Error {
     IccError(String),
     /// Decode error from JPEG decoder.
     DecodeError(String),
+    /// Invalid scan script for progressive encoding.
+    InvalidScanScript(String),
 }
 
 impl fmt::Display for Error {
@@ -140,6 +142,9 @@ impl fmt::Display for Error {
             }
             Self::DecodeError(reason) => {
                 write!(f, "decode error: {}", reason)
+            }
+            Self::InvalidScanScript(reason) => {
+                write!(f, "invalid scan script: {}", reason)
             }
         }
     }
