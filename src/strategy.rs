@@ -62,7 +62,8 @@ fn jpegli_strategy(quality: &Quality) -> SelectedStrategy {
     SelectedStrategy {
         approach: EncodingApproach::Jpegli,
         trellis: compute_trellis_config_for_quality(q, false),
-        // TODO: Re-enable AQ once properly tuned
+        // AQ disabled - the simplified variance-based implementation hurts quality
+        // TODO: Port jpegli's perceptual AQ algorithm for proper high-quality optimization
         adaptive_quant: AdaptiveQuantConfig {
             enabled: false,
             strength: compute_aq_strength_for_quality(quality),
@@ -181,7 +182,7 @@ mod tests {
     fn test_auto_strategy_high_quality() {
         let strategy = select_strategy(&Quality::Standard(90), EncodingStrategy::Auto);
         assert_eq!(strategy.approach, EncodingApproach::Jpegli);
-        // AQ currently disabled until properly tuned
+        // AQ disabled - simplified variance-based version hurts quality
         assert!(!strategy.adaptive_quant.enabled);
         // Trellis disabled at very high quality (Q>=80) where it hurts
         assert!(!strategy.trellis.ac_enabled);
