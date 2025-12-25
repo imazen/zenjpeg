@@ -54,12 +54,10 @@ impl Rec2408ToneMapper {
         let pq_mastering_range = pq_mastering_max - pq_mastering_min;
         let inv_pq_mastering_range = 1.0 / pq_mastering_range;
 
-        let min_lum =
-            (pq.encoded_from_display(target_range[0] as f64) as f32 - pq_mastering_min)
-                * inv_pq_mastering_range;
-        let max_lum =
-            (pq.encoded_from_display(target_range[1] as f64) as f32 - pq_mastering_min)
-                * inv_pq_mastering_range;
+        let min_lum = (pq.encoded_from_display(target_range[0] as f64) as f32 - pq_mastering_min)
+            * inv_pq_mastering_range;
+        let max_lum = (pq.encoded_from_display(target_range[1] as f64) as f32 - pq_mastering_min)
+            * inv_pq_mastering_range;
 
         let ks = 1.5 * max_lum - 0.5;
         let inv_one_minus_ks = 1.0 / (1.0 - ks).max(1e-6);

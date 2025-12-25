@@ -92,7 +92,10 @@ fn cmd_compare(args: &[String]) {
     };
 
     if w1 != w2 || h1 != h2 {
-        eprintln!("Image dimensions don't match: {}x{} vs {}x{}", w1, h1, w2, h2);
+        eprintln!(
+            "Image dimensions don't match: {}x{} vs {}x{}",
+            w1, h1, w2, h2
+        );
         return;
     }
 
@@ -179,8 +182,11 @@ fn analyze_pixels(a: &[u8], b: &[u8]) {
     println!("\nPixel difference:");
     println!("  Max: {}", max_diff);
     println!("  Mean: {:.3}", mean);
-    println!("  Identical pixels: {} ({:.1}%)",
-        histogram[0], histogram[0] as f64 / a.len() as f64 * 100.0);
+    println!(
+        "  Identical pixels: {} ({:.1}%)",
+        histogram[0],
+        histogram[0] as f64 / a.len() as f64 * 100.0
+    );
 }
 
 // ============================================================================
@@ -262,7 +268,10 @@ fn cmd_sweep(args: &[String]) {
     println!("=== QUALITY SWEEP ===");
     println!("Image: {} ({}x{})", path, width, height);
     println!();
-    println!("{:>4} {:>10} {:>8} {:>10}", "Q", "Size", "BPP", "Butteraugli");
+    println!(
+        "{:>4} {:>10} {:>8} {:>10}",
+        "Q", "Size", "BPP", "Butteraugli"
+    );
     println!("{:-<4} {:-<10} {:-<8} {:-<10}", "", "", "", "");
 
     for q in (50..=100).step_by(5) {
@@ -277,7 +286,13 @@ fn cmd_sweep(args: &[String]) {
         let params = ButteraugliParams::default();
         let result = compute_butteraugli(&original, &decoded, width, height, &params);
 
-        println!("{:>4} {:>10} {:>8.3} {:>10.4}", q, jpeg_data.len(), bpp, result.score);
+        println!(
+            "{:>4} {:>10} {:>8.3} {:>10.4}",
+            q,
+            jpeg_data.len(),
+            bpp,
+            result.score
+        );
     }
 }
 
@@ -300,7 +315,13 @@ fn cmd_uniform(args: &[String]) {
 
     // Create slightly different image (±1 per channel)
     let img2: Vec<u8> = (0..size * size)
-        .flat_map(|_| [r.saturating_add(1), g.saturating_add(1), b.saturating_add(1)])
+        .flat_map(|_| {
+            [
+                r.saturating_add(1),
+                g.saturating_add(1),
+                b.saturating_add(1),
+            ]
+        })
         .collect();
 
     // Compare identical
@@ -319,10 +340,16 @@ fn cmd_uniform(args: &[String]) {
 
         if decoded.len() == img1.len() {
             let result = compute_butteraugli(&img1, &decoded, size, size, &params);
-            let max_diff = img1.iter().zip(decoded.iter())
+            let max_diff = img1
+                .iter()
+                .zip(decoded.iter())
                 .map(|(&a, &b)| (a as i16 - b as i16).unsigned_abs())
-                .max().unwrap_or(0);
-            println!("JPEG Q{}: butteraugli={:.6}, max_pixel_diff={}", q, result.score, max_diff);
+                .max()
+                .unwrap_or(0);
+            println!(
+                "JPEG Q{}: butteraugli={:.6}, max_pixel_diff={}",
+                q, result.score, max_diff
+            );
         }
     }
 }
@@ -347,10 +374,9 @@ fn load_image(path: &str) -> Option<(Vec<u8>, usize, usize)> {
                         .chunks(4)
                         .flat_map(|c| [c[0], c[1], c[2]])
                         .collect(),
-                    png::ColorType::Grayscale => buf[..w * h]
-                        .iter()
-                        .flat_map(|&g| [g, g, g])
-                        .collect(),
+                    png::ColorType::Grayscale => {
+                        buf[..w * h].iter().flat_map(|&g| [g, g, g]).collect()
+                    }
                     _ => return None,
                 };
                 return Some((rgb, w, h));
@@ -376,7 +402,9 @@ fn encode_mozjpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
     comp.set_size(width as usize, height as usize);
     comp.set_quality(quality as f32);
-    let mut started = comp.start_compress(Cursor::new(&mut output)).expect("start");
+    let mut started = comp
+        .start_compress(Cursor::new(&mut output))
+        .expect("start");
     let row_stride = width as usize * 3;
     for row in rgb.chunks(row_stride) {
         started.write_scanlines(row).expect("write");

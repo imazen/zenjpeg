@@ -324,10 +324,10 @@ pub fn parse_scan_script_text(text: &str) -> Result<Vec<ScanInfo>> {
         scans.push(ScanInfo::new(
             count as u8,
             components,
-            0,  // Ss
-            0,  // Se (DC only for simple scripts)
-            0,  // Ah
-            0,  // Al
+            0, // Ss
+            0, // Se (DC only for simple scripts)
+            0, // Ah
+            0, // Al
         ));
     }
 
@@ -452,7 +452,7 @@ mod tests {
     fn test_invalid_spectral_gap() {
         // Encode DC (0-1) then (2-63) - gap at coefficient 1
         let scans = vec![
-            make_scan(&[0], 0, 1, 0, 0), // 0-1
+            make_scan(&[0], 0, 1, 0, 0),  // 0-1
             make_scan(&[0], 2, 63, 0, 0), // 2-63, but 1 is in first scan as AC
         ];
         // Actually DC is only 0-0, so 0-1 would include AC coef 1

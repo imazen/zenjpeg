@@ -4,7 +4,9 @@
 //! The goal is to ensure the Rust butteraugli implementation provides meaningful
 //! perceptual quality scores.
 
-use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, BUTTERAUGLI_BAD, BUTTERAUGLI_GOOD};
+use butteraugli_oxide::{
+    compute_butteraugli, ButteraugliParams, BUTTERAUGLI_BAD, BUTTERAUGLI_GOOD,
+};
 use std::fs;
 use std::path::Path;
 

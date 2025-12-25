@@ -160,38 +160,59 @@ fn test_xyb_color_conversion_values() {
         let srgb = [r, g, b];
         let mut cpp_xyb = [0.0f32; 3];
         unsafe {
-            jpegli_sys::jpegli_srgb_to_scaled_xyb(
-                srgb.as_ptr(),
-                1,
-                1,
-                255.0,
-                cpp_xyb.as_mut_ptr(),
-            );
+            jpegli_sys::jpegli_srgb_to_scaled_xyb(srgb.as_ptr(), 1, 1, 255.0, cpp_xyb.as_mut_ptr());
         }
         let (cpp_x, cpp_y, cpp_b) = (cpp_xyb[0], cpp_xyb[1], cpp_xyb[2]);
 
         // Values should be in [0, 1] range (with small tolerance)
         let eps = 1e-5;
-        assert!(rust_x >= -eps && rust_x <= 1.0 + eps, "X out of range: {}", rust_x);
-        assert!(rust_y >= -eps && rust_y <= 1.0 + eps, "Y out of range: {}", rust_y);
-        assert!(rust_b >= -eps && rust_b <= 1.0 + eps, "B out of range: {}", rust_b);
+        assert!(
+            rust_x >= -eps && rust_x <= 1.0 + eps,
+            "X out of range: {}",
+            rust_x
+        );
+        assert!(
+            rust_y >= -eps && rust_y <= 1.0 + eps,
+            "Y out of range: {}",
+            rust_y
+        );
+        assert!(
+            rust_b >= -eps && rust_b <= 1.0 + eps,
+            "B out of range: {}",
+            rust_b
+        );
 
         // STRICT CHECK: Must match C++ within floating-point precision
         const XYB_TOLERANCE: f32 = 1e-5;
         assert!(
             (rust_x - cpp_x).abs() < XYB_TOLERANCE,
             "X mismatch for ({}, {}, {}): Rust={}, C++={} (diff: {})",
-            r, g, b, rust_x, cpp_x, (rust_x - cpp_x).abs()
+            r,
+            g,
+            b,
+            rust_x,
+            cpp_x,
+            (rust_x - cpp_x).abs()
         );
         assert!(
             (rust_y - cpp_y).abs() < XYB_TOLERANCE,
             "Y mismatch for ({}, {}, {}): Rust={}, C++={} (diff: {})",
-            r, g, b, rust_y, cpp_y, (rust_y - cpp_y).abs()
+            r,
+            g,
+            b,
+            rust_y,
+            cpp_y,
+            (rust_y - cpp_y).abs()
         );
         assert!(
             (rust_b - cpp_b).abs() < XYB_TOLERANCE,
             "B mismatch for ({}, {}, {}): Rust={}, C++={} (diff: {})",
-            r, g, b, rust_b, cpp_b, (rust_b - cpp_b).abs()
+            r,
+            g,
+            b,
+            rust_b,
+            cpp_b,
+            (rust_b - cpp_b).abs()
         );
 
         println!(
@@ -218,7 +239,12 @@ fn test_xyb_constants_match_cpp() {
 
     println!("C++ Opsin Matrix:");
     for i in 0..3 {
-        println!("  [{:.6}, {:.6}, {:.6}]", cpp_matrix[i*3], cpp_matrix[i*3+1], cpp_matrix[i*3+2]);
+        println!(
+            "  [{:.6}, {:.6}, {:.6}]",
+            cpp_matrix[i * 3],
+            cpp_matrix[i * 3 + 1],
+            cpp_matrix[i * 3 + 2]
+        );
     }
     println!("C++ Opsin Bias: {:?}", cpp_bias);
     println!("C++ Scaled XYB Offset: {:?}", cpp_offset);
@@ -226,7 +252,12 @@ fn test_xyb_constants_match_cpp() {
 
     println!("\nRust Opsin Matrix:");
     for i in 0..3 {
-        println!("  [{:.6}, {:.6}, {:.6}]", XYB_OPSIN_ABSORBANCE_MATRIX[i*3], XYB_OPSIN_ABSORBANCE_MATRIX[i*3+1], XYB_OPSIN_ABSORBANCE_MATRIX[i*3+2]);
+        println!(
+            "  [{:.6}, {:.6}, {:.6}]",
+            XYB_OPSIN_ABSORBANCE_MATRIX[i * 3],
+            XYB_OPSIN_ABSORBANCE_MATRIX[i * 3 + 1],
+            XYB_OPSIN_ABSORBANCE_MATRIX[i * 3 + 2]
+        );
     }
     println!("Rust Opsin Bias: {:?}", XYB_OPSIN_ABSORBANCE_BIAS);
     println!("Rust Scaled XYB Offset: {:?}", SCALED_XYB_OFFSET);
@@ -240,7 +271,9 @@ fn test_xyb_constants_match_cpp() {
         assert!(
             (cpp_matrix[i] - XYB_OPSIN_ABSORBANCE_MATRIX[i]).abs() < EPS,
             "Opsin matrix[{}] mismatch: C++={}, Rust={}",
-            i, cpp_matrix[i], XYB_OPSIN_ABSORBANCE_MATRIX[i]
+            i,
+            cpp_matrix[i],
+            XYB_OPSIN_ABSORBANCE_MATRIX[i]
         );
     }
 
@@ -249,7 +282,9 @@ fn test_xyb_constants_match_cpp() {
         assert!(
             (cpp_bias[i] - XYB_OPSIN_ABSORBANCE_BIAS[i]).abs() < EPS,
             "Opsin bias[{}] mismatch: C++={}, Rust={}",
-            i, cpp_bias[i], XYB_OPSIN_ABSORBANCE_BIAS[i]
+            i,
+            cpp_bias[i],
+            XYB_OPSIN_ABSORBANCE_BIAS[i]
         );
     }
 
@@ -258,7 +293,9 @@ fn test_xyb_constants_match_cpp() {
         assert!(
             (cpp_offset[i] - SCALED_XYB_OFFSET[i]).abs() < EPS,
             "Scaled XYB offset[{}] mismatch: C++={}, Rust={}",
-            i, cpp_offset[i], SCALED_XYB_OFFSET[i]
+            i,
+            cpp_offset[i],
+            SCALED_XYB_OFFSET[i]
         );
     }
 
@@ -267,7 +304,9 @@ fn test_xyb_constants_match_cpp() {
         assert!(
             (cpp_scale[i] - SCALED_XYB_SCALE[i]).abs() < EPS,
             "Scaled XYB scale[{}] mismatch: C++={}, Rust={}",
-            i, cpp_scale[i], SCALED_XYB_SCALE[i]
+            i,
+            cpp_scale[i],
+            SCALED_XYB_SCALE[i]
         );
     }
 

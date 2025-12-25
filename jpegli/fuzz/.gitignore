@@ -3,6 +3,8 @@ target/
 artifacts/
 coverage/
 
-# Ignore corpus except seed
+# Ignore corpus except manually-created seed JPEGs
 corpus/*
 !corpus/seed/
+corpus/seed/*
+!corpus/seed/*.jpg

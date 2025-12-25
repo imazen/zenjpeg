@@ -2,11 +2,11 @@
 //!
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
 
-use jpegli::{Encoder, Quality};
 use jpegli::types::{JpegMode, PixelFormat};
+use jpegli::{Encoder, Quality};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
-use std::path::PathBuf;
 
 fn find_cjpegli() -> Option<PathBuf> {
     let paths = [
@@ -14,9 +14,7 @@ fn find_cjpegli() -> Option<PathBuf> {
         "../../../build/tools/cjpegli",
         "../../build/tools/cjpegli",
     ];
-    paths.iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
+    paths.iter().map(PathBuf::from).find(|p| p.exists())
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
@@ -33,10 +31,20 @@ fn compute_dssim(orig: &[u8], w1: u32, h1: u32, comp: &[u8], w2: u32, h2: u32) -
         return f64::MAX;
     }
     let attr = dssim::Dssim::new();
-    let orig_rgba: Vec<RGBA<u8>> = orig.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
-    let comp_rgba: Vec<RGBA<u8>> = comp.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
-    let orig_img = attr.create_image_rgba(&orig_rgba, w1 as usize, h1 as usize).unwrap();
-    let comp_img = attr.create_image_rgba(&comp_rgba, w2 as usize, h2 as usize).unwrap();
+    let orig_rgba: Vec<RGBA<u8>> = orig
+        .chunks(3)
+        .map(|c| RGBA::new(c[0], c[1], c[2], 255))
+        .collect();
+    let comp_rgba: Vec<RGBA<u8>> = comp
+        .chunks(3)
+        .map(|c| RGBA::new(c[0], c[1], c[2], 255))
+        .collect();
+    let orig_img = attr
+        .create_image_rgba(&orig_rgba, w1 as usize, h1 as usize)
+        .unwrap();
+    let comp_img = attr
+        .create_image_rgba(&comp_rgba, w2 as usize, h2 as usize)
+        .unwrap();
     attr.compare(&orig_img, comp_img).0.into()
 }
 
@@ -98,18 +106,16 @@ fn test_q100_rust_vs_cpp() {
     let cpp_out = "/tmp/q100_cpp_output.jpg";
     let cpp_start = Instant::now();
     let status = Command::new(&cjpegli_path)
-        .args([
-            tmp_png,
-            cpp_out,
-            "-q", "100",
-            "--progressive_level=0"
-        ])
+        .args([tmp_png, cpp_out, "-q", "100", "--progressive_level=0"])
         .output()
         .unwrap();
     let cpp_time = cpp_start.elapsed();
 
     if !status.status.success() {
-        println!("C++ encoding failed: {}", String::from_utf8_lossy(&status.stderr));
+        println!(
+            "C++ encoding failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
         return;
     }
     let cpp_jpeg = std::fs::read(cpp_out).unwrap();
@@ -125,15 +131,37 @@ fn test_q100_rust_vs_cpp() {
     let size_diff = (rust_jpeg.len() as f64 / cpp_jpeg.len() as f64 - 1.0) * 100.0;
     let dssim_diff = (rust_dssim / cpp_dssim - 1.0) * 100.0;
 
-    println!("\n  Rust: {:6} bytes, DSSIM {:.6}, {:3.1}ms", 
-             rust_jpeg.len(), rust_dssim, rust_time.as_secs_f64() * 1000.0);
-    println!("  C++:  {:6} bytes, DSSIM {:.6}, {:3.1}ms", 
-             cpp_jpeg.len(), cpp_dssim, cpp_time.as_secs_f64() * 1000.0);
-    println!("\n  Size diff:  {:+.1}% (Rust {} C++)", 
-             size_diff, if size_diff > 0.0 { "larger than" } else { "smaller than" });
-    println!("  DSSIM diff: {:+.1}% (Rust {} C++)",
-             dssim_diff, if dssim_diff > 0.0 { "worse than" } else { "better than" });
-    
+    println!(
+        "\n  Rust: {:6} bytes, DSSIM {:.6}, {:3.1}ms",
+        rust_jpeg.len(),
+        rust_dssim,
+        rust_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  C++:  {:6} bytes, DSSIM {:.6}, {:3.1}ms",
+        cpp_jpeg.len(),
+        cpp_dssim,
+        cpp_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "\n  Size diff:  {:+.1}% (Rust {} C++)",
+        size_diff,
+        if size_diff > 0.0 {
+            "larger than"
+        } else {
+            "smaller than"
+        }
+    );
+    println!(
+        "  DSSIM diff: {:+.1}% (Rust {} C++)",
+        dssim_diff,
+        if dssim_diff > 0.0 {
+            "worse than"
+        } else {
+            "better than"
+        }
+    );
+
     // Save for manual inspection
     std::fs::write("/tmp/q100_rust_output.jpg", &rust_jpeg).unwrap();
     println!("\n  Saved: /tmp/q100_rust_output.jpg, /tmp/q100_cpp_output.jpg");

@@ -21,12 +21,18 @@ fn main() {
     // When butteraugli is enabled, prefer build/ since build_test/ doesn't have extras
     let prebuilt_lib = if butteraugli_enabled {
         // Need jxl_extras-internal which is only in build/
-        if jpegli_root.join("build/lib/libjxl_extras-internal.a").exists() {
+        if jpegli_root
+            .join("build/lib/libjxl_extras-internal.a")
+            .exists()
+        {
             Some(jpegli_root.join("build"))
         } else {
             None
         }
-    } else if jpegli_root.join("build_test/lib/libjpegli-static.a").exists() {
+    } else if jpegli_root
+        .join("build_test/lib/libjpegli-static.a")
+        .exists()
+    {
         Some(jpegli_root.join("build_test"))
     } else if jpegli_root.join("build/lib/libjpegli-static.a").exists() {
         Some(jpegli_root.join("build"))

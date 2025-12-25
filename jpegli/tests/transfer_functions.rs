@@ -265,7 +265,10 @@ fn test_unbounded_inputs() {
     let e_neg = pq.encoded_from_display(d_neg);
     assert!(e_neg < 0.0, "PQ should preserve negative sign");
     let d_back = pq.display_from_encoded(e_neg);
-    assert!((d_neg - d_back).abs() < 1e-10, "PQ negative roundtrip failed");
+    assert!(
+        (d_neg - d_back).abs() < 1e-10,
+        "PQ negative roundtrip failed"
+    );
 
     // HLG negative
     let e_hlg_neg = hlg_encoded_from_display(-0.5);

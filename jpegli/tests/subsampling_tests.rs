@@ -57,7 +57,10 @@ fn test_444_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
     let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, Subsampling::S444);
 
-    println!("4:4:4: RMS={:.2}, max_diff={}, size={}", rms, max_diff, size);
+    println!(
+        "4:4:4: RMS={:.2}, max_diff={}, size={}",
+        rms, max_diff, size
+    );
 
     // 4:4:4 should have best quality (no chroma subsampling)
     assert!(rms < 5.0, "4:4:4 RMS too high");
@@ -72,7 +75,10 @@ fn test_422_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
     let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, Subsampling::S422);
 
-    println!("4:2:2: RMS={:.2}, max_diff={}, size={}", rms, max_diff, size);
+    println!(
+        "4:2:2: RMS={:.2}, max_diff={}, size={}",
+        rms, max_diff, size
+    );
 }
 
 #[test]
@@ -81,7 +87,10 @@ fn test_420_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
     let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, Subsampling::S420);
 
-    println!("4:2:0: RMS={:.2}, max_diff={}, size={}", rms, max_diff, size);
+    println!(
+        "4:2:0: RMS={:.2}, max_diff={}, size={}",
+        rms, max_diff, size
+    );
 }
 
 // ============================================================================
@@ -385,7 +394,11 @@ fn test_444_filesize_reasonable() {
 
     // Gradient is simple content - efficient compression is expected
     // Just verify it's in a sane range
-    assert!(bpp > 0.1 && bpp < 10.0, "BPP {:.2} outside expected range", bpp);
+    assert!(
+        bpp > 0.1 && bpp < 10.0,
+        "BPP {:.2} outside expected range",
+        bpp
+    );
 }
 
 // ============================================================================

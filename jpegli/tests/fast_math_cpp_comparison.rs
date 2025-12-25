@@ -85,8 +85,9 @@ fn test_fast_pow2f_vs_std_exp2() {
     println!("\n=== Comparing C++ FastPow2f vs Rust std exp2 ===\n");
 
     // Test values that appear in AQ (exponents from log calculations)
-    let test_values: Vec<f32> =
-        vec![-8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    let test_values: Vec<f32> = vec![
+        -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+    ];
 
     let mut max_abs_diff = 0.0f32;
     let mut max_rel_diff = 0.0f32;
@@ -141,7 +142,7 @@ fn test_fast_powf_vs_std_powf() {
 
     // Test combinations relevant to AQ
     let test_cases: Vec<(f32, f32)> = vec![
-        (2.0, 0.5),    // sqrt
+        (2.0, 0.5), // sqrt
         (2.0, 1.5),
         (10.0, 0.333), // cube root approx
         (100.0, 0.25),
@@ -191,8 +192,9 @@ fn test_compute_mask_comparison() {
     println!("\n=== Comparing C++ ComputeMask vs Rust compute_mask_scalar ===\n");
 
     // Values that go through ComputeMask in AQ pipeline
-    let test_values: Vec<f32> =
-        vec![0.1, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 30.0, 50.0];
+    let test_values: Vec<f32> = vec![
+        0.1, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 30.0, 50.0,
+    ];
 
     // Rust implementation constants (from adaptive_quant.rs)
     const K_MASK_BASE: f32 = -0.74174993;
@@ -279,7 +281,9 @@ fn test_masking_sqrt_comparison() {
 fn test_ratio_of_derivatives_comparison() {
     println!("\n=== Comparing C++ RatioOfDerivatives vs Rust ===\n");
 
-    let test_values: Vec<f32> = vec![0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 200.0, 255.0];
+    let test_values: Vec<f32> = vec![
+        0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 200.0, 255.0,
+    ];
 
     println!(
         "{:>10} {:>14} {:>14}",
@@ -357,9 +361,7 @@ fn test_ratio_of_derivatives_rust_vs_cpp() {
 
     // Test values in typical AQ input range (scaled 0-1 inputs)
     // The function expects input already scaled by K_INPUT_SCALING (1/255)
-    let test_values: Vec<f32> = vec![
-        0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
-    ];
+    let test_values: Vec<f32> = vec![0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
     // Rust implementation constants (from adaptive_quant.rs)
     const K_INPUT_SCALING: f32 = 1.0 / 255.0;
@@ -465,7 +467,10 @@ fn test_brute_force_fast_pow2f_comparison() {
     }
 
     println!("Tested {} values from -5.0 to 5.0", count);
-    println!("Max absolute diff: {:.10} at x={:.4}", max_diff, max_diff_at);
+    println!(
+        "Max absolute diff: {:.10} at x={:.4}",
+        max_diff, max_diff_at
+    );
 
     if !large_diffs.is_empty() {
         println!("\nLarge differences (>0.0001):");

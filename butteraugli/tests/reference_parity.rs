@@ -398,7 +398,13 @@ fn generate_image_pair(name: &str, width: usize, height: usize) -> Option<(Vec<u
             .and_then(|i| parts.get(i + 1))
             .and_then(|s| s.parse().ok())?;
         let a = gen_uniform(width, height, 128, 128, 128);
-        let b = gen_uniform(width, height, (128 + shift) as u8, (128 + shift) as u8, (128 + shift) as u8);
+        let b = gen_uniform(
+            width,
+            height,
+            (128 + shift) as u8,
+            (128 + shift) as u8,
+            (128 + shift) as u8,
+        );
         return Some((a, b));
     }
 
@@ -733,8 +739,7 @@ fn test_all_reference_cases_loose() {
             continue;
         }
 
-        let (img_a, img_b) =
-            generate_image_pair(case.name, case.width, case.height).unwrap();
+        let (img_a, img_b) = generate_image_pair(case.name, case.width, case.height).unwrap();
         let params = ButteraugliParams::default()
             .with_intensity_target(reference_data::REFERENCE_INTENSITY_TARGET);
         let result = compute_butteraugli(&img_a, &img_b, case.width, case.height, &params);

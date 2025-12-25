@@ -22,9 +22,7 @@ fn test_s440_progressive_roundtrip() {
     let height = 255u32;
 
     // Generate test pixels
-    let pixels: Vec<u8> = (0..(width * height * 3))
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
     let encoder = Encoder::new()
         .width(width)
@@ -63,9 +61,7 @@ fn test_all_subsampling_progressive() {
         let width = 64u32;
         let height = 64u32;
 
-        let pixels: Vec<u8> = (0..(width * height * 3))
-            .map(|i| (i % 256) as u8)
-            .collect();
+        let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
         let encoder = Encoder::new()
             .width(width)
@@ -98,13 +94,7 @@ fn test_all_subsampling_progressive() {
 fn test_progressive_subsampling_various_sizes() {
     // Use MCU-aligned sizes (multiples of 16) to focus on the Huffman table bug
     // Odd dimensions have separate edge case issues unrelated to this fix
-    let sizes = [
-        (16, 16),
-        (32, 32),
-        (64, 64),
-        (128, 96),
-        (256, 256),
-    ];
+    let sizes = [(16, 16), (32, 32), (64, 64), (128, 96), (256, 256)];
 
     let subsamplings = [
         (Subsampling::S422, "S422"),
@@ -131,9 +121,9 @@ fn test_progressive_subsampling_various_sizes() {
                 .unwrap_or_else(|e| panic!("{}x{} {} encode failed: {:?}", width, height, name, e));
 
             let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-            let decoded = decoder.decode(&encoded).unwrap_or_else(|e| {
-                panic!("{}x{} {} decode failed: {:?}", width, height, name, e)
-            });
+            let decoded = decoder
+                .decode(&encoded)
+                .unwrap_or_else(|e| panic!("{}x{} {} decode failed: {:?}", width, height, name, e));
 
             assert_eq!(decoded.width as usize, width);
             assert_eq!(decoded.height as usize, height);

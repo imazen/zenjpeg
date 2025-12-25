@@ -186,11 +186,7 @@ impl fmt::Display for Error {
                 )
             }
             Self::TooManyScans { count, limit } => {
-                write!(
-                    f,
-                    "too many scans: {} exceeds limit of {}",
-                    count, limit
-                )
+                write!(f, "too many scans: {} exceeds limit of {}", count, limit)
             }
         }
     }

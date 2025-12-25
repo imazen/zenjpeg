@@ -74,10 +74,7 @@ fn test_invalid_scan_script_4_duplicate_component() {
 fn test_invalid_scan_script_5_wrong_order() {
     let scans = vec![scan(&[1, 0], 0, 63, 0, 0)];
     let result = validate_scan_script(&scans, 2);
-    assert!(
-        result.is_err(),
-        "Components in wrong order should fail"
-    );
+    assert!(result.is_err(), "Components in wrong order should fail");
 }
 
 /// InvalidScanScript6: Se = 64 (max is 63)
@@ -221,10 +218,7 @@ fn test_invalid_scan_script_12_first_pass_ah_nonzero() {
         scan(&[0], 1, 63, 0, 0), // AC
     ];
     let result = validate_scan_script(&scans, 1);
-    assert!(
-        result.is_err(),
-        "First DC scan with Ah != 0 should fail"
-    );
+    assert!(result.is_err(), "First DC scan with Ah != 0 should fail");
 }
 
 /// InvalidScanScript13: Successive approximation Ah mismatch
@@ -241,9 +235,9 @@ fn test_invalid_scan_script_12_first_pass_ah_nonzero() {
 #[test]
 fn test_invalid_scan_script_13_ah_mismatch() {
     let scans = vec![
-        scan(&[0], 0, 0, 0, 2), // DC first, Al=2
-        scan(&[0], 0, 0, 1, 0), // DC refinement, Ah=1 but previous Al was 2!
-        scan(&[0], 0, 0, 2, 1), // This won't be reached
+        scan(&[0], 0, 0, 0, 2),  // DC first, Al=2
+        scan(&[0], 0, 0, 1, 0),  // DC refinement, Ah=1 but previous Al was 2!
+        scan(&[0], 0, 0, 2, 1),  // This won't be reached
         scan(&[0], 1, 63, 0, 0), // AC
     ];
     let result = validate_scan_script(&scans, 1);
@@ -262,7 +256,11 @@ fn test_invalid_scan_script_13_ah_mismatch() {
 fn test_valid_baseline_grayscale() {
     let scans = vec![scan(&[0], 0, 63, 0, 0)];
     let result = validate_scan_script(&scans, 1);
-    assert!(result.is_ok(), "Valid baseline script should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Valid baseline script should pass: {:?}",
+        result
+    );
 }
 
 /// Test valid baseline RGB
@@ -270,7 +268,11 @@ fn test_valid_baseline_grayscale() {
 fn test_valid_baseline_rgb() {
     let scans = vec![scan(&[0, 1, 2], 0, 63, 0, 0)];
     let result = validate_scan_script(&scans, 3);
-    assert!(result.is_ok(), "Valid RGB baseline should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Valid RGB baseline should pass: {:?}",
+        result
+    );
 }
 
 /// Test valid progressive DC + AC
@@ -283,7 +285,11 @@ fn test_valid_progressive_simple() {
         scan(&[2], 1, 63, 0, 0),      // AC for Cr
     ];
     let result = validate_scan_script(&scans, 3);
-    assert!(result.is_ok(), "Valid progressive should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Valid progressive should pass: {:?}",
+        result
+    );
 }
 
 /// Test valid progressive with successive approximation
@@ -311,17 +317,25 @@ fn test_valid_non_interleaved() {
         scan(&[2], 0, 63, 0, 0),
     ];
     let result = validate_scan_script(&scans, 3);
-    assert!(result.is_ok(), "Valid non-interleaved should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Valid non-interleaved should pass: {:?}",
+        result
+    );
 }
 
 /// Test valid spectral split
 #[test]
 fn test_valid_spectral_split() {
     let scans = vec![
-        scan(&[0], 0, 0, 0, 0),   // DC
-        scan(&[0], 1, 5, 0, 0),   // AC 1-5
-        scan(&[0], 6, 63, 0, 0),  // AC 6-63
+        scan(&[0], 0, 0, 0, 0),  // DC
+        scan(&[0], 1, 5, 0, 0),  // AC 1-5
+        scan(&[0], 6, 63, 0, 0), // AC 6-63
     ];
     let result = validate_scan_script(&scans, 1);
-    assert!(result.is_ok(), "Valid spectral split should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Valid spectral split should pass: {:?}",
+        result
+    );
 }

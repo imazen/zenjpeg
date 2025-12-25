@@ -101,7 +101,13 @@ fn test_cpp_quality_comparison() {
         // C++ encoding with progressive level 2
         let cpp_out = format!("/tmp/cpp_q{}.jpg", q);
         let status = Command::new(&cjpegli_path)
-            .args([png_path, &cpp_out, "-q", &q.to_string(), "--progressive_level=2"])
+            .args([
+                png_path,
+                &cpp_out,
+                "-q",
+                &q.to_string(),
+                "--progressive_level=2",
+            ])
             .output()
             .expect("Failed to run cjpegli");
 

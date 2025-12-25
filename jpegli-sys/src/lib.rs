@@ -577,18 +577,8 @@ pub unsafe fn compute_butteraugli_cpp(
     let mut linear1 = vec![0.0f32; num_pixels * 3];
 
     // Convert sRGB to linear
-    butteraugli_srgb_to_linear(
-        srgb0.as_ptr(),
-        width,
-        height,
-        linear0.as_mut_ptr(),
-    );
-    butteraugli_srgb_to_linear(
-        srgb1.as_ptr(),
-        width,
-        height,
-        linear1.as_mut_ptr(),
-    );
+    butteraugli_srgb_to_linear(srgb0.as_ptr(), width, height, linear0.as_mut_ptr());
+    butteraugli_srgb_to_linear(srgb1.as_ptr(), width, height, linear1.as_mut_ptr());
 
     // Compute butteraugli
     let mut score = 0.0f64;
@@ -725,7 +715,13 @@ pub fn cpp_srgb_to_scaled_xyb(
     assert_eq!(srgb.len(), width * height * 3);
     let mut out = vec![0.0f32; width * height * 3];
     unsafe {
-        jpegli_srgb_to_scaled_xyb(srgb.as_ptr(), width, height, intensity_target, out.as_mut_ptr());
+        jpegli_srgb_to_scaled_xyb(
+            srgb.as_ptr(),
+            width,
+            height,
+            intensity_target,
+            out.as_mut_ptr(),
+        );
     }
     out
 }
@@ -745,7 +741,12 @@ pub fn cpp_get_xyb_constants() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
             scaled_xyb_scale.as_mut_ptr(),
         );
     }
-    (opsin_matrix, opsin_bias, scaled_xyb_offset, scaled_xyb_scale)
+    (
+        opsin_matrix,
+        opsin_bias,
+        scaled_xyb_offset,
+        scaled_xyb_scale,
+    )
 }
 
 #[cfg(test)]

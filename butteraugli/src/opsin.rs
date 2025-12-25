@@ -9,7 +9,7 @@
 //! 3. Includes dynamic sensitivity based on blurred image
 
 use crate::blur::gaussian_blur;
-use crate::image::{Image3F, ImageF};
+use crate::image::Image3F;
 
 // ============================================================================
 // OpsinAbsorbance coefficients (C++ butteraugli.cc lines 1428-1439)

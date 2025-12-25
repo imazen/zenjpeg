@@ -658,18 +658,12 @@ fn test_mutate_single_bytes() {
 #[test]
 fn test_all_zeros() {
     let zeros = vec![0u8; COMPRESSED_0.len()];
-    assert!(
-        !parse_compressed(&zeros),
-        "Should reject all-zeros data"
-    );
+    assert!(!parse_compressed(&zeros), "Should reject all-zeros data");
 }
 
 /// Test with all 0xFF bytes.
 #[test]
 fn test_all_0xff() {
     let ones = vec![0xffu8; COMPRESSED_0.len()];
-    assert!(
-        !parse_compressed(&ones),
-        "Should reject all-0xFF data"
-    );
+    assert!(!parse_compressed(&ones), "Should reject all-0xFF data");
 }

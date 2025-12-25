@@ -16,7 +16,7 @@
 
 use crate::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_vec, try_alloc_zeroed, validate_dimensions,
-    DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION, MemoryTracker,
+    MemoryTracker, DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION,
 };
 use crate::color;
 use crate::consts::{
@@ -703,8 +703,10 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs
-                    .push(try_alloc_dct_blocks(num_blocks, "allocating DCT coefficients")?);
+                self.coeffs.push(try_alloc_dct_blocks(
+                    num_blocks,
+                    "allocating DCT coefficients",
+                )?);
             }
         }
 
@@ -787,8 +789,10 @@ impl<'a> JpegParser<'a> {
                 let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
                 let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
-                self.coeffs
-                    .push(try_alloc_dct_blocks(num_blocks, "allocating DCT coefficients")?);
+                self.coeffs.push(try_alloc_dct_blocks(
+                    num_blocks,
+                    "allocating DCT coefficients",
+                )?);
             }
         }
 
@@ -1037,8 +1041,8 @@ impl<'a> JpegParser<'a> {
         match (self.num_components, format) {
             (1, PixelFormat::Gray) => Ok(planes[0].clone()),
             (1, PixelFormat::Rgb) => {
-                let rgb_size = checked_size_2d(width, height)
-                    .and_then(|s| checked_size_2d(s, 3))?;
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
                 let mut rgb = try_alloc_zeroed(rgb_size, "allocating RGB output")?;
                 for (i, &y) in planes[0].iter().enumerate() {
                     rgb[i * 3] = y;
@@ -1047,9 +1051,9 @@ impl<'a> JpegParser<'a> {
                 }
                 Ok(rgb)
             }
-            (3, PixelFormat::Rgb) => color::ycbcr_planes_to_rgb(
-                &planes[0], &planes[1], &planes[2], width, height,
-            ),
+            (3, PixelFormat::Rgb) => {
+                color::ycbcr_planes_to_rgb(&planes[0], &planes[1], &planes[2], width, height)
+            }
             _ => Err(Error::UnsupportedFeature {
                 feature: "unsupported color conversion",
             }),

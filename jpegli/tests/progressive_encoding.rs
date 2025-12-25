@@ -693,7 +693,7 @@ fn test_baseline_still_works() {
 fn test_progressive_all_quality_levels() {
     let width = 64u32;
     let height = 64u32;
-    
+
     // Test image with varied content
     let mut data = Vec::with_capacity((width * height * 3) as usize);
     for y in 0..height {
@@ -704,9 +704,9 @@ fn test_progressive_all_quality_levels() {
             data.push(128u8.wrapping_add(noise));
         }
     }
-    
+
     let mut prev_size = 0usize;
-    
+
     // Test quality levels from 10 to 100 in steps of 5
     for q in (10..=100).step_by(5) {
         let jpeg_data = Encoder::new()
@@ -718,24 +718,27 @@ fn test_progressive_all_quality_levels() {
             .mode(JpegMode::Progressive)
             .encode(&data)
             .expect(&format!("Q{} encoding should succeed", q));
-        
+
         let size = jpeg_data.len();
-        
+
         // Verify it decodes
         jpeg_decoder::Decoder::new(&jpeg_data[..])
             .decode()
             .expect(&format!("Q{} should decode", q));
-        
+
         // Check size progression (higher Q should generally be >= lower Q - 500 bytes tolerance)
         if prev_size > 0 {
             assert!(
                 size >= prev_size.saturating_sub(500),
                 "Q{} ({} bytes) should not be much smaller than Q{} ({} bytes)",
-                q, size, q - 5, prev_size
+                q,
+                size,
+                q - 5,
+                prev_size
             );
         }
         prev_size = size;
-        
+
         println!("Q{}: {} bytes - OK", q, size);
     }
 }
@@ -749,51 +752,82 @@ fn test_progressive_quality_various_content() {
         height: u32,
         generator: fn(u32, u32) -> Vec<u8>,
     }
-    
+
     fn solid_red(w: u32, h: u32) -> Vec<u8> {
-        (0..w*h).flat_map(|_| [255, 0, 0]).collect()
+        (0..w * h).flat_map(|_| [255, 0, 0]).collect()
     }
-    
+
     fn gradient(w: u32, h: u32) -> Vec<u8> {
-        (0..h).flat_map(|y| {
-            (0..w).flat_map(move |x| {
-                [(x * 255 / w) as u8, (y * 255 / h) as u8, 128]
-            })
-        }).collect()
+        (0..h)
+            .flat_map(|y| (0..w).flat_map(move |x| [(x * 255 / w) as u8, (y * 255 / h) as u8, 128]))
+            .collect()
     }
-    
+
     fn checkerboard(w: u32, h: u32) -> Vec<u8> {
-        (0..h).flat_map(|y| {
-            (0..w).flat_map(move |x| {
-                if (x / 8 + y / 8) % 2 == 0 { [0, 0, 0] } else { [255, 255, 255] }
+        (0..h)
+            .flat_map(|y| {
+                (0..w).flat_map(move |x| {
+                    if (x / 8 + y / 8) % 2 == 0 {
+                        [0, 0, 0]
+                    } else {
+                        [255, 255, 255]
+                    }
+                })
             })
-        }).collect()
+            .collect()
     }
-    
+
     fn photo_like(w: u32, h: u32) -> Vec<u8> {
-        (0..h).flat_map(|y| {
-            (0..w).flat_map(move |x| {
-                let r = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) % 256) as u8;
-                let g = ((x.wrapping_mul(13) ^ y.wrapping_mul(23)) % 256) as u8;
-                let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(19)) % 256) as u8;
-                [r, g, b]
+        (0..h)
+            .flat_map(|y| {
+                (0..w).flat_map(move |x| {
+                    let r = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) % 256) as u8;
+                    let g = ((x.wrapping_mul(13) ^ y.wrapping_mul(23)) % 256) as u8;
+                    let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(19)) % 256) as u8;
+                    [r, g, b]
+                })
             })
-        }).collect()
+            .collect()
     }
-    
+
     let test_cases = [
-        TestCase { name: "solid_red", width: 32, height: 32, generator: solid_red },
-        TestCase { name: "gradient", width: 64, height: 64, generator: gradient },
-        TestCase { name: "checkerboard", width: 48, height: 48, generator: checkerboard },
-        TestCase { name: "photo_like", width: 128, height: 96, generator: photo_like },
-        TestCase { name: "photo_like_odd", width: 127, height: 95, generator: photo_like },
+        TestCase {
+            name: "solid_red",
+            width: 32,
+            height: 32,
+            generator: solid_red,
+        },
+        TestCase {
+            name: "gradient",
+            width: 64,
+            height: 64,
+            generator: gradient,
+        },
+        TestCase {
+            name: "checkerboard",
+            width: 48,
+            height: 48,
+            generator: checkerboard,
+        },
+        TestCase {
+            name: "photo_like",
+            width: 128,
+            height: 96,
+            generator: photo_like,
+        },
+        TestCase {
+            name: "photo_like_odd",
+            width: 127,
+            height: 95,
+            generator: photo_like,
+        },
     ];
-    
+
     let quality_levels = [30.0, 50.0, 75.0, 85.0, 95.0];
-    
+
     for tc in &test_cases {
         let data = (tc.generator)(tc.width, tc.height);
-        
+
         for &q in &quality_levels {
             let jpeg_data = Encoder::new()
                 .width(tc.width)
@@ -804,12 +838,19 @@ fn test_progressive_quality_various_content() {
                 .mode(JpegMode::Progressive)
                 .encode(&data)
                 .expect(&format!("{} Q{} encoding should succeed", tc.name, q));
-            
+
             jpeg_decoder::Decoder::new(&jpeg_data[..])
                 .decode()
                 .expect(&format!("{} Q{} should decode", tc.name, q));
-            
-            println!("{} {}x{} Q{}: {} bytes", tc.name, tc.width, tc.height, q, jpeg_data.len());
+
+            println!(
+                "{} {}x{} Q{}: {} bytes",
+                tc.name,
+                tc.width,
+                tc.height,
+                q,
+                jpeg_data.len()
+            );
         }
     }
 }
@@ -819,17 +860,19 @@ fn test_progressive_quality_various_content() {
 fn test_progressive_extreme_low_quality() {
     let width = 64u32;
     let height = 64u32;
-    
+
     // Photo-like content
-    let data: Vec<u8> = (0..height).flat_map(|y| {
-        (0..width).flat_map(move |x| {
-            let r = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) % 256) as u8;
-            let g = ((x.wrapping_mul(13) ^ y.wrapping_mul(23)) % 256) as u8;
-            let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(19)) % 256) as u8;
-            [r, g, b]
+    let data: Vec<u8> = (0..height)
+        .flat_map(|y| {
+            (0..width).flat_map(move |x| {
+                let r = ((x.wrapping_mul(17) ^ y.wrapping_mul(31)) % 256) as u8;
+                let g = ((x.wrapping_mul(13) ^ y.wrapping_mul(23)) % 256) as u8;
+                let b = ((x.wrapping_mul(11) ^ y.wrapping_mul(19)) % 256) as u8;
+                [r, g, b]
+            })
         })
-    }).collect();
-    
+        .collect();
+
     for q in [1.0, 2.0, 3.0, 5.0, 7.0, 10.0] {
         let jpeg_data = Encoder::new()
             .width(width)
@@ -840,11 +883,11 @@ fn test_progressive_extreme_low_quality() {
             .mode(JpegMode::Progressive)
             .encode(&data)
             .expect(&format!("Q{} encoding should succeed", q));
-        
+
         jpeg_decoder::Decoder::new(&jpeg_data[..])
             .decode()
             .expect(&format!("Q{} should decode", q));
-        
+
         println!("Q{}: {} bytes", q, jpeg_data.len());
     }
 }

@@ -549,7 +549,10 @@ pub fn ensure_testdata() -> Option<PathBuf> {
     }
 
     // Try to do a sparse checkout of just the files we need
-    eprintln!("Testdata not found at {:?}, attempting sparse checkout...", testdata_dir);
+    eprintln!(
+        "Testdata not found at {:?}, attempting sparse checkout...",
+        testdata_dir
+    );
 
     // Check if we're in the jpegli repo
     let jpegli_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

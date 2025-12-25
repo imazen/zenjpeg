@@ -35,6 +35,7 @@ fn rgb_to_xyb_image(rgb: &[u8], width: usize, height: usize, intensity_target: f
 ///
 /// Each 2x2 block of pixels is averaged into a single pixel.
 /// Edge cases for odd dimensions are handled by scaling the edge values.
+#[allow(dead_code)]
 fn subsample_2x(input: &Image3F) -> Image3F {
     let in_width = input.width();
     let in_height = input.height();
@@ -240,7 +241,7 @@ fn compute_psycho_diff_malta(
     ps0: &PsychoImage,
     ps1: &PsychoImage,
     hf_asymmetry: f32,
-    xmul: f32,
+    _xmul: f32,
 ) -> Image3F {
     let width = ps0.width();
     let height = ps0.height();

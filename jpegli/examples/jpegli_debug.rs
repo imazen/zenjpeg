@@ -118,9 +118,12 @@ fn cmd_trace(args: &[String]) {
 
     println!("Image size: {}x{}", width, height);
     println!("Total pixels: {}", width * height);
-    println!("Total blocks: {}x{} = {}",
-        (width + 7) / 8, (height + 7) / 8,
-        ((width + 7) / 8) * ((height + 7) / 8));
+    println!(
+        "Total blocks: {}x{} = {}",
+        (width + 7) / 8,
+        (height + 7) / 8,
+        ((width + 7) / 8) * ((height + 7) / 8)
+    );
     println!();
 
     // Trace first block
@@ -245,8 +248,12 @@ fn trace_block(rgb: &[u8], width: usize, quality: f32, bx: usize, by: usize) {
     // Count zeros
     let zeros = y_quantized.iter().filter(|&&x| x == 0).count();
     let nonzeros = 64 - zeros;
-    println!("\n   Zeros: {}/64 ({:.1}%), Non-zeros: {}",
-        zeros, zeros as f32 / 64.0 * 100.0, nonzeros);
+    println!(
+        "\n   Zeros: {}/64 ({:.1}%), Non-zeros: {}",
+        zeros,
+        zeros as f32 / 64.0 * 100.0,
+        nonzeros
+    );
 }
 
 // ============================================================================
@@ -274,7 +281,11 @@ fn cmd_dump(args: &[String]) {
     };
 
     println!("=== JPEG DUMP: {} ===", path);
-    println!("File size: {} bytes ({:.1} KB)", data.len(), data.len() as f32 / 1024.0);
+    println!(
+        "File size: {} bytes ({:.1} KB)",
+        data.len(),
+        data.len() as f32 / 1024.0
+    );
     println!();
 
     // Parse markers
@@ -345,8 +356,12 @@ fn dump_dqt(data: &[u8]) {
     }
     let pq = (data[0] >> 4) & 0x0F;
     let tq = data[0] & 0x0F;
-    println!("       Table {}: precision={} ({})",
-        tq, pq, if pq == 0 { "8-bit" } else { "16-bit" });
+    println!(
+        "       Table {}: precision={} ({})",
+        tq,
+        pq,
+        if pq == 0 { "8-bit" } else { "16-bit" }
+    );
 
     if pq == 0 && data.len() >= 65 {
         print!("       Values: ");
@@ -438,8 +453,16 @@ fn cmd_compare(args: &[String]) {
 
     // Compare sizes
     println!("\n=== FILE SIZE ===");
-    println!("  Rust: {:>8} bytes ({:.1} KB)", rust_jpeg.len(), rust_jpeg.len() as f32 / 1024.0);
-    println!("  C++:  {:>8} bytes ({:.1} KB)", cpp_jpeg.len(), cpp_jpeg.len() as f32 / 1024.0);
+    println!(
+        "  Rust: {:>8} bytes ({:.1} KB)",
+        rust_jpeg.len(),
+        rust_jpeg.len() as f32 / 1024.0
+    );
+    println!(
+        "  C++:  {:>8} bytes ({:.1} KB)",
+        cpp_jpeg.len(),
+        cpp_jpeg.len() as f32 / 1024.0
+    );
     let diff = rust_jpeg.len() as f64 / cpp_jpeg.len() as f64 - 1.0;
     println!("  Diff: {:+.2}%", diff * 100.0);
 
@@ -461,8 +484,8 @@ fn cmd_compare(args: &[String]) {
 }
 
 fn encode_rust(rgb: &[u8], width: usize, height: usize, quality: u8) -> Result<Vec<u8>, String> {
-    use jpegli::{Encoder, Quality};
     use jpegli::types::PixelFormat;
+    use jpegli::{Encoder, Quality};
 
     Encoder::new()
         .width(width as u32)
@@ -502,13 +525,22 @@ fn encode_cpp(input_path: &str, quality: u8) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())?;
 
     if !cmd_output.status.success() {
-        return Err(format!("cjpegli failed: {}", String::from_utf8_lossy(&cmd_output.stderr)));
+        return Err(format!(
+            "cjpegli failed: {}",
+            String::from_utf8_lossy(&cmd_output.stderr)
+        ));
     }
 
     fs::read(output).map_err(|e| e.to_string())
 }
 
-fn compare_quality(original: &[u8], width: usize, height: usize, rust_jpeg: &[u8], cpp_jpeg: &[u8]) {
+fn compare_quality(
+    original: &[u8],
+    width: usize,
+    height: usize,
+    rust_jpeg: &[u8],
+    cpp_jpeg: &[u8],
+) {
     // Decode both JPEGs
     let rust_decoded = decode_jpeg(rust_jpeg);
     let cpp_decoded = decode_jpeg(cpp_jpeg);
@@ -549,23 +581,32 @@ fn max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {
         .unwrap_or(0)
 }
 
-fn compute_dssim(original: &[u8], width: usize, height: usize, decoded: &[u8]) -> Result<f64, String> {
+fn compute_dssim(
+    original: &[u8],
+    width: usize,
+    height: usize,
+    decoded: &[u8],
+) -> Result<f64, String> {
     use dssim::Dssim;
     use rgb::RGBA8;
 
     let attr = Dssim::new();
 
     // Convert to RGBA for dssim
-    let orig_rgba: Vec<RGBA8> = original.chunks(3)
+    let orig_rgba: Vec<RGBA8> = original
+        .chunks(3)
         .map(|rgb| RGBA8::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let dec_rgba: Vec<RGBA8> = decoded.chunks(3)
+    let dec_rgba: Vec<RGBA8> = decoded
+        .chunks(3)
         .map(|rgb| RGBA8::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
 
-    let orig_img = attr.create_image_rgba(&orig_rgba, width, height)
+    let orig_img = attr
+        .create_image_rgba(&orig_rgba, width, height)
         .ok_or("Failed to create original image")?;
-    let dec_img = attr.create_image_rgba(&dec_rgba, width, height)
+    let dec_img = attr
+        .create_image_rgba(&dec_rgba, width, height)
         .ok_or("Failed to create decoded image")?;
 
     let (dssim, _) = attr.compare(&orig_img, dec_img);
@@ -626,18 +667,31 @@ fn cmd_analyze(args: &[String]) {
     let ratio = orig_size as f64 / jpeg_size as f64;
 
     println!("=== SIZE ===");
-    println!("  Original: {} bytes ({:.1} KB)", orig_size, orig_size as f32 / 1024.0);
-    println!("  JPEG:     {} bytes ({:.1} KB)", jpeg_size, jpeg_size as f32 / 1024.0);
+    println!(
+        "  Original: {} bytes ({:.1} KB)",
+        orig_size,
+        orig_size as f32 / 1024.0
+    );
+    println!(
+        "  JPEG:     {} bytes ({:.1} KB)",
+        jpeg_size,
+        jpeg_size as f32 / 1024.0
+    );
     println!("  Ratio:    {:.1}:1", ratio);
-    println!("  BPP:      {:.3}", jpeg_size as f64 * 8.0 / (width * height) as f64);
+    println!(
+        "  BPP:      {:.3}",
+        jpeg_size as f64 * 8.0 / (width * height) as f64
+    );
 
     // Quality analysis
     println!("\n=== QUALITY ===");
     let max_diff = max_pixel_diff(&original, &decoded);
-    let mean_diff: f64 = original.iter()
+    let mean_diff: f64 = original
+        .iter()
         .zip(decoded.iter())
         .map(|(&a, &b)| (a as i16 - b as i16).abs() as f64)
-        .sum::<f64>() / original.len() as f64;
+        .sum::<f64>()
+        / original.len() as f64;
 
     println!("  Max pixel diff:  {}", max_diff);
     println!("  Mean pixel diff: {:.3}", mean_diff);
@@ -729,8 +783,16 @@ fn cmd_quant(args: &[String]) {
     let c_sum: u32 = c_table.values.iter().map(|&x| x as u32).sum();
 
     println!("\nStatistics:");
-    println!("  Y table sum:  {:5} (mean: {:.1})", y_sum, y_sum as f32 / 64.0);
-    println!("  C table sum:  {:5} (mean: {:.1})", c_sum, c_sum as f32 / 64.0);
+    println!(
+        "  Y table sum:  {:5} (mean: {:.1})",
+        y_sum,
+        y_sum as f32 / 64.0
+    );
+    println!(
+        "  C table sum:  {:5} (mean: {:.1})",
+        c_sum,
+        c_sum as f32 / 64.0
+    );
     println!("  Y DC quant:   {}", y_table.values[0]);
     println!("  Y AC[1]:      {}", y_table.values[1]);
 }
@@ -738,14 +800,9 @@ fn cmd_quant(args: &[String]) {
 fn print_quant_table(table: &[u16; 64]) {
     // Print in 8x8 grid (natural order, not zigzag)
     let zigzag_to_natural = [
-        0, 1, 8, 16, 9, 2, 3, 10,
-        17, 24, 32, 25, 18, 11, 4, 5,
-        12, 19, 26, 33, 40, 48, 41, 34,
-        27, 20, 13, 6, 7, 14, 21, 28,
-        35, 42, 49, 56, 57, 50, 43, 36,
-        29, 22, 15, 23, 30, 37, 44, 51,
-        58, 59, 52, 45, 38, 31, 39, 46,
-        53, 60, 61, 54, 47, 55, 62, 63,
+        0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27,
+        20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+        58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
     ];
 
     let mut natural = [0u16; 64];

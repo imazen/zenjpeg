@@ -69,10 +69,7 @@ impl MemoryTracker {
             .ok_or(Error::SizeOverflow { context })?;
 
         if new_total > self.limit {
-            return Err(Error::AllocationFailed {
-                bytes,
-                context,
-            });
+            return Err(Error::AllocationFailed { bytes, context });
         }
 
         self.allocated = new_total;
@@ -178,10 +175,11 @@ pub fn try_alloc_vec<T: Default + Clone>(count: usize, context: &'static str) ->
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
-    v.try_reserve_exact(count).map_err(|_| Error::AllocationFailed {
-        bytes: byte_size,
-        context,
-    })?;
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
     v.resize(count, T::default());
     Ok(v)
 }
@@ -202,7 +200,9 @@ pub fn try_alloc_zeroed(count: usize, context: &'static str) -> Result<Vec<u8>> 
 /// Allocate a Vec of f32 zeros with fallible allocation.
 #[inline]
 pub fn try_alloc_zeroed_f32(count: usize, context: &'static str) -> Result<Vec<f32>> {
-    let byte_size = count.checked_mul(4).ok_or(Error::SizeOverflow { context })?;
+    let byte_size = count
+        .checked_mul(4)
+        .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -249,11 +249,7 @@ pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[
 
 /// Allocate a Vec filled with a specific value using fallible allocation.
 #[inline]
-pub fn try_alloc_filled<T: Clone>(
-    count: usize,
-    value: T,
-    context: &'static str,
-) -> Result<Vec<T>> {
+pub fn try_alloc_filled<T: Clone>(count: usize, value: T, context: &'static str) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(std::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;

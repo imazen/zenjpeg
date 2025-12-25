@@ -265,10 +265,7 @@ fn test_hlg_ootf_gamma() {
     let mut rgb: Color = [0.5, 0.5, 0.5];
     let original = rgb[0];
     ootf.apply(&mut rgb);
-    println!(
-        "HLG OOTF (100->1000): input {} output {}",
-        original, rgb[0]
-    );
+    println!("HLG OOTF (100->1000): input {} output {}", original, rgb[0]);
     // Just verify output is reasonable
     assert!(rgb[0].is_finite());
 
@@ -277,10 +274,7 @@ fn test_hlg_ootf_gamma() {
     let mut rgb: Color = [0.5, 0.5, 0.5];
     let original = rgb[0];
     ootf.apply(&mut rgb);
-    println!(
-        "HLG OOTF (1000->100): input {} output {}",
-        original, rgb[0]
-    );
+    println!("HLG OOTF (1000->100): input {} output {}", original, rgb[0]);
     assert!(rgb[0].is_finite());
 }
 

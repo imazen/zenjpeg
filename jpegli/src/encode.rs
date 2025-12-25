@@ -4,7 +4,8 @@
 
 use crate::adaptive_quant::compute_aq_strength_map;
 use crate::alloc::{
-    checked_size_2d, try_alloc_filled, try_alloc_zeroed_f32, validate_dimensions, DEFAULT_MAX_PIXELS,
+    checked_size_2d, try_alloc_filled, try_alloc_zeroed_f32, validate_dimensions,
+    DEFAULT_MAX_PIXELS,
 };
 use crate::color;
 use crate::consts::{
@@ -191,8 +192,10 @@ impl Encoder {
         self.validate()?;
 
         // Calculate expected size with overflow checking
-        let expected_size = checked_size_2d(self.config.width as usize, self.config.height as usize)?;
-        let expected_size = checked_size_2d(expected_size, self.config.pixel_format.bytes_per_pixel())?;
+        let expected_size =
+            checked_size_2d(self.config.width as usize, self.config.height as usize)?;
+        let expected_size =
+            checked_size_2d(expected_size, self.config.pixel_format.bytes_per_pixel())?;
 
         if data.len() != expected_size {
             return Err(Error::InvalidBufferSize {
@@ -229,12 +232,15 @@ impl Encoder {
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
-        let cb_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
-        let cr_quant = quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
+        let cb_quant =
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cr_quant =
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks first (needed for both standard and optimized encoding)
-        let (y_blocks, cb_blocks, cr_blocks) =
-            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant)?;
+        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
+            &y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant,
+        )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Write JPEG structure
@@ -494,12 +500,15 @@ impl Encoder {
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
-        let cb_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
-        let cr_quant = quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
+        let cb_quant =
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cr_quant =
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks to get full-precision coefficients
-        let (y_blocks, cb_blocks, cr_blocks) =
-            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant)?;
+        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
+            &y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant,
+        )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Write JPEG structure
@@ -554,12 +563,15 @@ impl Encoder {
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
-        let cb_quant = quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
-        let cr_quant = quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
+        let cb_quant =
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+        let cr_quant =
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks to get full-precision coefficients
-        let (y_blocks, cb_blocks, cr_blocks) =
-            self.quantize_all_blocks(&y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant)?;
+        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
+            &y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant,
+        )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
 

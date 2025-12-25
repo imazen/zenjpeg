@@ -17,17 +17,49 @@
 //!
 //! ## Example
 //!
-//! ```rust,ignore
-//! use butteraugli::{compute_butteraugli, ButteraugliParams};
+//! ```rust
+//! use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 //!
-//! let rgb1: &[u8] = &[/* first image RGB data */];
-//! let rgb2: &[u8] = &[/* second image RGB data */];
+//! // Create two 8x8 RGB images (must be 8x8 minimum)
+//! let width = 8;
+//! let height = 8;
+//! let rgb1: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+//! let rgb2 = rgb1.clone(); // Identical images
 //!
 //! let params = ButteraugliParams::default();
-//! let result = compute_butteraugli(rgb1, rgb2, 640, 480, &params);
+//! let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
 //!
-//! if result.score < 1.0 {
-//!     println!("Images look identical!");
+//! // Identical images should have score ~0
+//! assert!(result.score < 0.01);
+//! ```
+//!
+//! ## Comparing Different Images
+//!
+//! ```rust
+//! use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, BUTTERAUGLI_GOOD, BUTTERAUGLI_BAD};
+//!
+//! let width = 16;
+//! let height = 16;
+//!
+//! // Original image - gradient
+//! let original: Vec<u8> = (0..width * height)
+//!     .flat_map(|i| {
+//!         let x = i % width;
+//!         [(x * 16) as u8, 128, 128]
+//!     })
+//!     .collect();
+//!
+//! // Distorted image - add noise
+//! let distorted: Vec<u8> = original.iter()
+//!     .map(|&v| v.saturating_add(10))
+//!     .collect();
+//!
+//! let result = compute_butteraugli(&original, &distorted, width, height, &ButteraugliParams::default());
+//!
+//! if result.score < BUTTERAUGLI_GOOD {
+//!     println!("Images appear identical to humans");
+//! } else if result.score > BUTTERAUGLI_BAD {
+//!     println!("Visible difference detected");
 //! }
 //! ```
 //!
@@ -56,6 +88,8 @@ pub mod psycho;
 pub mod xyb;
 
 // C++ reference data for regression testing (auto-generated)
+// Hidden from docs as this is internal test infrastructure
+#[doc(hidden)]
 pub mod reference_data;
 
 // Re-export main types and functions
