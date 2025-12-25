@@ -504,6 +504,13 @@ impl<'a> JpegParser<'a> {
 
             length -= 17 + num_values as i32;
 
+            // Validate that we didn't read past the marker length
+            if length < 0 {
+                return Err(Error::InvalidJpegData {
+                    reason: "DHT marker length mismatch",
+                });
+            }
+
             let table = HuffmanDecodeTable::from_bits_values(&bits, &values)?;
 
             if table_class == 0 {
