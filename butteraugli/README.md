@@ -44,10 +44,31 @@ Two input APIs are provided:
 
 Both APIs require:
 - **Channel order**: RGB (red, green, blue)
-- **Layout**: Row-major, interleaved (RGBRGBRGB...)
+- **Layout**: Row-major, interleaved (see below)
 - **Minimum size**: 8×8 pixels
 
 The sRGB function internally applies gamma decoding before comparison.
+
+### Pixel Layout
+
+Data is **row-major, interleaved RGB**:
+
+```
+Index:  0   1   2   3   4   5   6   7   8  ...
+Data:  [R0, G0, B0, R1, G1, B1, R2, G2, B2, ...]
+        └─pixel 0─┘  └─pixel 1─┘  └─pixel 2─┘
+```
+
+For a 3×2 image:
+```
+Row 0: [R00, G00, B00, R01, G01, B01, R02, G02, B02]
+Row 1: [R10, G10, B10, R11, G11, B11, R12, G12, B12]
+
+Memory: [R00, G00, B00, R01, G01, B01, R02, G02, B02, R10, G10, B10, ...]
+         └────────────── row 0 ──────────────────┘  └──── row 1 ────...
+```
+
+To access pixel at (x, y): `index = (y * width + x) * 3`
 
 ### Basic Example
 

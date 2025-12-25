@@ -7,6 +7,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors that can occur during JPEG encoding/decoding.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     /// Invalid input dimensions (zero or too large).
     InvalidDimensions {
