@@ -44,12 +44,12 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]
 
-// Module structure
-mod blur;
+// Module structure - expose all for testing parity with C++
+pub mod blur;
 pub mod consts;
 mod diff;
-mod image;
-mod malta;
+pub mod image;
+pub mod malta;
 pub mod mask;
 pub mod opsin;
 pub mod psycho;

@@ -317,22 +317,79 @@ impl<'a> JpegParser<'a> {
         }
 
         self.precision = self.read_u8()?;
+        // Validate precision: must be 8 for baseline JPEG, 8 or 12 for extended
+        if self.precision != 8 && self.precision != 12 {
+            return Err(Error::InvalidJpegData {
+                reason: "invalid data precision (must be 8 or 12)",
+            });
+        }
+
         self.height = self.read_u16()? as u32;
         self.width = self.read_u16()? as u32;
+
+        // Validate dimensions are non-zero
+        if self.height == 0 {
+            return Err(Error::InvalidJpegData {
+                reason: "image height is zero",
+            });
+        }
+        if self.width == 0 {
+            return Err(Error::InvalidJpegData {
+                reason: "image width is zero",
+            });
+        }
+
         self.num_components = self.read_u8()?;
 
+        // Validate num_components
+        if self.num_components == 0 {
+            return Err(Error::InvalidJpegData {
+                reason: "number of components is zero",
+            });
+        }
         if self.num_components > MAX_COMPONENTS as u8 {
             return Err(Error::UnsupportedFeature {
                 feature: "more than 4 components",
             });
         }
 
+        // Validate marker length matches expected size
+        let expected_length = 8 + 3 * self.num_components as u16;
+        if length != expected_length {
+            return Err(Error::InvalidJpegData {
+                reason: "SOF marker length mismatch",
+            });
+        }
+
         for i in 0..self.num_components as usize {
             self.components[i].id = self.read_u8()?;
             let sampling = self.read_u8()?;
-            self.components[i].h_samp_factor = sampling >> 4;
-            self.components[i].v_samp_factor = sampling & 0x0F;
-            self.components[i].quant_table_idx = self.read_u8()?;
+            let h_samp = sampling >> 4;
+            let v_samp = sampling & 0x0F;
+
+            // Validate sampling factors are non-zero and <= 4
+            if h_samp == 0 || v_samp == 0 {
+                return Err(Error::InvalidJpegData {
+                    reason: "sampling factor is zero",
+                });
+            }
+            if h_samp > 4 || v_samp > 4 {
+                return Err(Error::InvalidJpegData {
+                    reason: "sampling factor exceeds maximum (4)",
+                });
+            }
+
+            self.components[i].h_samp_factor = h_samp;
+            self.components[i].v_samp_factor = v_samp;
+
+            let quant_idx = self.read_u8()?;
+            // Validate quant table index
+            if quant_idx as usize >= MAX_QUANT_TABLES {
+                return Err(Error::InvalidJpegData {
+                    reason: "quantization table index out of range",
+                });
+            }
+            self.components[i].quant_table_idx = quant_idx;
         }
 
         Ok(())
@@ -345,6 +402,14 @@ impl<'a> JpegParser<'a> {
             let info = self.read_u8()?;
             let precision = info >> 4;
             let table_idx = (info & 0x0F) as usize;
+
+            // Validate precision (0 = 8-bit, 1 = 16-bit)
+            if precision > 1 {
+                return Err(Error::InvalidQuantTable {
+                    table_idx: table_idx as u8,
+                    reason: "invalid precision (must be 0 or 1)",
+                });
+            }
 
             if table_idx >= MAX_QUANT_TABLES {
                 return Err(Error::InvalidQuantTable {
@@ -359,15 +424,36 @@ impl<'a> JpegParser<'a> {
             if precision == 0 {
                 // 8-bit values
                 for i in 0..DCT_BLOCK_SIZE {
-                    zigzag_values[i] = self.read_u8()? as u16;
+                    let val = self.read_u8()? as u16;
+                    if val == 0 {
+                        return Err(Error::InvalidQuantTable {
+                            table_idx: table_idx as u8,
+                            reason: "quantization value is zero",
+                        });
+                    }
+                    zigzag_values[i] = val;
                 }
                 length -= 65;
             } else {
                 // 16-bit values
                 for i in 0..DCT_BLOCK_SIZE {
-                    zigzag_values[i] = self.read_u16()?;
+                    let val = self.read_u16()?;
+                    if val == 0 {
+                        return Err(Error::InvalidQuantTable {
+                            table_idx: table_idx as u8,
+                            reason: "quantization value is zero",
+                        });
+                    }
+                    zigzag_values[i] = val;
                 }
                 length -= 129;
+            }
+
+            // Validate DQT marker length consistency
+            if length < 0 {
+                return Err(Error::InvalidJpegData {
+                    reason: "DQT marker length mismatch",
+                });
             }
 
             // Convert from zigzag order to natural order for dequantization
@@ -389,6 +475,14 @@ impl<'a> JpegParser<'a> {
             let info = self.read_u8()?;
             let table_class = info >> 4; // 0 = DC, 1 = AC
             let table_idx = (info & 0x0F) as usize;
+
+            // Validate table class (must be 0 for DC or 1 for AC)
+            if table_class > 1 {
+                return Err(Error::InvalidHuffmanTable {
+                    table_idx: table_idx as u8,
+                    reason: "invalid table class (must be 0 or 1)",
+                });
+            }
 
             if table_idx >= MAX_HUFFMAN_TABLES {
                 return Err(Error::InvalidHuffmanTable {
@@ -469,6 +563,23 @@ impl<'a> JpegParser<'a> {
         let _length = self.read_u16()?;
         let num_components = self.read_u8()?;
 
+        // Validate num_components in scan
+        if num_components == 0 {
+            return Err(Error::InvalidJpegData {
+                reason: "SOS num_components is zero",
+            });
+        }
+        if num_components > self.num_components {
+            return Err(Error::InvalidJpegData {
+                reason: "SOS num_components exceeds frame components",
+            });
+        }
+        if num_components > MAX_COMPONENTS as u8 {
+            return Err(Error::InvalidJpegData {
+                reason: "SOS num_components too large",
+            });
+        }
+
         let mut scan_components = Vec::with_capacity(num_components as usize);
 
         for _ in 0..num_components {
@@ -476,6 +587,18 @@ impl<'a> JpegParser<'a> {
             let tables = self.read_u8()?;
             let dc_table = tables >> 4;
             let ac_table = tables & 0x0F;
+
+            // Validate Huffman table indexes
+            if dc_table as usize >= MAX_HUFFMAN_TABLES {
+                return Err(Error::InvalidJpegData {
+                    reason: "SOS DC Huffman table index out of range",
+                });
+            }
+            if ac_table as usize >= MAX_HUFFMAN_TABLES {
+                return Err(Error::InvalidJpegData {
+                    reason: "SOS AC Huffman table index out of range",
+                });
+            }
 
             // Find component index
             let comp_idx = self.components[..self.num_components as usize]
@@ -493,6 +616,18 @@ impl<'a> JpegParser<'a> {
         let ah_al = self.read_u8()?;
         let ah = ah_al >> 4;
         let al = ah_al & 0x0F;
+
+        // Validate spectral selection (must be 0-63)
+        if ss > 63 {
+            return Err(Error::InvalidJpegData {
+                reason: "SOS Ss (spectral start) out of range",
+            });
+        }
+        if se > 63 {
+            return Err(Error::InvalidJpegData {
+                reason: "SOS Se (spectral end) out of range",
+            });
+        }
 
         // Decode entropy-coded segment based on mode
         if self.mode == JpegMode::Progressive {

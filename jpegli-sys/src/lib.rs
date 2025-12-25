@@ -477,9 +477,81 @@ extern "C" {
         out_xyb: *mut f32,
     ) -> c_int;
 
-    // NOTE: butteraugli_opsin_dynamics_exact and butteraugli_separate_frequencies
-    // would require exposing internal Highway-namespaced functions, which is complex.
-    // For now, we compare using butteraugli_compare_full with diffmap output.
+    // ========================================================================
+    // Step-by-step intermediate value extraction for divergence debugging
+    // ========================================================================
+
+    /// Compute Gaussian blur on a single plane.
+    ///
+    /// # Parameters
+    /// - `input`: Input plane data (width * height floats)
+    /// - `width`, `height`: Image dimensions
+    /// - `sigma`: Blur sigma
+    /// - `out_blurred`: Pre-allocated output (width * height floats)
+    pub fn butteraugli_blur(
+        input: *const f32,
+        width: size_t,
+        height: size_t,
+        sigma: f32,
+        out_blurred: *mut f32,
+    ) -> c_int;
+
+    /// Compute frequency separation on XYB image.
+    ///
+    /// Returns LF, MF, HF (X,Y), UHF (X,Y) planes.
+    ///
+    /// # Parameters
+    /// - `xyb`: Input XYB data (width * height * 3 floats, interleaved)
+    /// - `width`, `height`: Image dimensions
+    /// - `intensity_target`: Nits for 1.0
+    /// - `out_*`: Pre-allocated output planes (width * height floats each)
+    pub fn butteraugli_separate_frequencies(
+        xyb: *const f32,
+        width: size_t,
+        height: size_t,
+        intensity_target: f32,
+        out_lf_x: *mut f32,
+        out_lf_y: *mut f32,
+        out_lf_b: *mut f32,
+        out_mf_x: *mut f32,
+        out_mf_y: *mut f32,
+        out_mf_b: *mut f32,
+        out_hf_x: *mut f32,
+        out_hf_y: *mut f32,
+        out_uhf_x: *mut f32,
+        out_uhf_y: *mut f32,
+    ) -> c_int;
+
+    /// Compute Malta filter on a single plane.
+    ///
+    /// # Parameters
+    /// - `input`: Input plane data (width * height floats)
+    /// - `width`, `height`: Image dimensions
+    /// - `use_lf`: If non-zero, use MaltaUnitLF; otherwise use MaltaUnit
+    /// - `out_malta`: Pre-allocated output (width * height floats)
+    pub fn butteraugli_malta(
+        input: *const f32,
+        width: size_t,
+        height: size_t,
+        use_lf: c_int,
+        out_malta: *mut f32,
+    ) -> c_int;
+
+    /// Compute mask from HF/UHF channels.
+    ///
+    /// # Parameters
+    /// - `hf_x`, `hf_y`, `uhf_x`, `uhf_y`: Input frequency planes
+    /// - `width`, `height`: Image dimensions
+    /// - `out_mask`: Pre-allocated output (width * height floats)
+    pub fn butteraugli_compute_mask(
+        hf_x: *const f32,
+        hf_y: *const f32,
+        uhf_x: *const f32,
+        uhf_y: *const f32,
+        width: size_t,
+        height: size_t,
+        out_mask: *mut f32,
+    ) -> c_int;
 }
 
 /// Safe wrapper to compute butteraugli score between two sRGB images.
