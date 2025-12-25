@@ -153,6 +153,90 @@ impl EntropyEncoder {
     }
 }
 
+// =============================================================================
+// Symbol Frequency Counting (for Huffman optimization)
+// =============================================================================
+
+use crate::huffman::FrequencyCounter;
+
+/// Count symbol frequencies from quantized blocks for Huffman table optimization.
+///
+/// This is used in the first pass of 2-pass encoding to gather statistics
+/// that will be used to generate optimal Huffman tables.
+pub struct SymbolCounter {
+    /// Last DC value for each component (for differential coding)
+    last_dc: [i16; 4],
+}
+
+impl Default for SymbolCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SymbolCounter {
+    /// Create a new symbol counter.
+    pub fn new() -> Self {
+        Self { last_dc: [0; 4] }
+    }
+
+    /// Reset DC predictions.
+    pub fn reset(&mut self) {
+        self.last_dc = [0; 4];
+    }
+
+    /// Count symbols in a block, updating frequency counters.
+    ///
+    /// # Arguments
+    /// * `block` - Quantized DCT coefficients (in natural order, not zigzag)
+    /// * `component` - Component index for DC prediction (0=Y, 1=Cb, 2=Cr)
+    /// * `dc_counter` - Frequency counter for DC symbols
+    /// * `ac_counter` - Frequency counter for AC symbols
+    pub fn count_block(
+        &mut self,
+        coefficients: &[i16; 64],
+        component: usize,
+        dc_counter: &mut FrequencyCounter,
+        ac_counter: &mut FrequencyCounter,
+    ) {
+        // Count DC symbol
+        let dc = coefficients[0];
+        let diff = dc.wrapping_sub(self.last_dc[component]);
+        self.last_dc[component] = dc;
+
+        let nbits = compute_category(diff);
+        dc_counter.count(nbits);
+
+        // Count AC symbols (in zigzag order)
+        let mut run = 0u8;
+
+        for k in 1..64 {
+            let nat_pos = ZIGZAG[k];
+            let coef = coefficients[nat_pos];
+
+            if coef == 0 {
+                run += 1;
+            } else {
+                // Count ZRL codes for runs of 16+ zeros
+                while run >= 16 {
+                    ac_counter.count(0xF0); // ZRL
+                    run -= 16;
+                }
+
+                let nbits = compute_category(coef);
+                let symbol = (run << 4) | nbits;
+                ac_counter.count(symbol);
+                run = 0;
+            }
+        }
+
+        // Count EOB if there are trailing zeros
+        if run > 0 {
+            ac_counter.count(0x00); // EOB
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,9 +6,9 @@
 use crate::adaptive_quant::{compute_aq_field, AdaptiveQuantConfig};
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
 use crate::dct::{forward_dct_8x8, level_shift, quantize_block};
-use crate::entropy::EntropyEncoder;
+use crate::entropy::{EntropyEncoder, SymbolCounter};
 use crate::error::Error;
-use crate::huffman::{std_ac_luma, std_dc_luma};
+use crate::huffman::{std_ac_luma, std_dc_luma, FrequencyCounter, HuffmanTable};
 use crate::quant::QuantTableSet;
 use crate::strategy::{select_strategy, SelectedStrategy};
 use crate::trellis::{trellis_quantize_ac, TrellisConfig};
@@ -192,6 +192,61 @@ impl Encoder {
             crate::adaptive_quant::AqField::uniform((width + 7) / 8, (height + 7) / 8)
         };
 
+        let width_blocks = (width + 7) / 8;
+        let height_blocks = (height + 7) / 8;
+        let total_blocks = width_blocks * height_blocks;
+
+        // Quantize all blocks first (needed for both standard and optimized paths)
+        let mut all_coeffs: Vec<[i16; 64]> = Vec::with_capacity(total_blocks * 3);
+
+        for by in 0..height_blocks {
+            for bx in 0..width_blocks {
+                // Y block
+                let y_block = extract_block(y_plane, width, height, bx, by);
+                let y_coeffs = self.quantize_block_impl(
+                    &y_block,
+                    &quant_tables.luma.values,
+                    aq_field.get(bx, by),
+                    strategy,
+                );
+                all_coeffs.push(y_coeffs);
+
+                // Cb block
+                let cb_block = extract_block(cb_plane, width, height, bx, by);
+                let cb_coeffs =
+                    self.quantize_block_impl(&cb_block, &quant_tables.chroma.values, 1.0, strategy);
+                all_coeffs.push(cb_coeffs);
+
+                // Cr block
+                let cr_block = extract_block(cr_plane, width, height, bx, by);
+                let cr_coeffs =
+                    self.quantize_block_impl(&cr_block, &quant_tables.chroma.values, 1.0, strategy);
+                all_coeffs.push(cr_coeffs);
+            }
+        }
+
+        // Get Huffman tables (optimized or standard)
+        let (dc_table, ac_table) = if self.optimize_huffman {
+            // Two-pass encoding: count symbol frequencies, then generate optimal tables
+            let mut dc_counter = FrequencyCounter::new();
+            let mut ac_counter = FrequencyCounter::new();
+            let mut symbol_counter = SymbolCounter::new();
+
+            // Count symbols in all blocks
+            for (i, coeffs) in all_coeffs.iter().enumerate() {
+                let component = i % 3; // Y=0, Cb=1, Cr=2
+                symbol_counter.count_block(coeffs, component, &mut dc_counter, &mut ac_counter);
+            }
+
+            // Generate optimal tables from frequency counts
+            let dc_table = dc_counter.generate_table();
+            let ac_table = ac_counter.generate_table();
+            (dc_table, ac_table)
+        } else {
+            // Use standard tables
+            (std_dc_luma(), std_ac_luma())
+        };
+
         // Build output buffer with JPEG markers
         let mut output = Vec::with_capacity(width * height);
 
@@ -208,30 +263,36 @@ impl Encoder {
         // SOF0 marker (baseline DCT)
         self.write_sof0(&mut output, width as u16, height as u16);
 
-        // DHT markers (use luma tables for all components - simpler baseline encoder)
-        self.write_dht_dc(&mut output, 0); // DC table 0
-        self.write_dht_ac(&mut output, 0); // AC table 0
+        // DHT markers
+        self.write_dht(&mut output, 0x00, &dc_table); // DC table 0
+        self.write_dht(&mut output, 0x10, &ac_table); // AC table 0
 
-        // SOS marker and entropy-coded data
+        // SOS marker
         self.write_sos(&mut output);
 
-        // Encode blocks
-        let entropy_data = self.encode_all_blocks(
-            y_plane,
-            cb_plane,
-            cr_plane,
-            width,
-            height,
-            &quant_tables,
-            &aq_field,
-            strategy,
-        );
-        output.extend_from_slice(&entropy_data);
+        // Encode blocks with (possibly optimized) tables
+        let mut encoder = EntropyEncoder::new(dc_table.clone(), ac_table.clone());
+        for (i, coeffs) in all_coeffs.iter().enumerate() {
+            let component = i % 3;
+            encoder.encode_block(coeffs, component);
+        }
+        output.extend_from_slice(&encoder.finish());
 
         // EOI marker
         output.extend_from_slice(&[0xFF, 0xD9]);
 
         Ok(output)
+    }
+
+    /// Write DHT marker for a Huffman table
+    fn write_dht(&self, output: &mut Vec<u8>, table_info: u8, table: &HuffmanTable) {
+        let len = 2 + 1 + 16 + table.values.len();
+        output.extend_from_slice(&[0xFF, 0xC4]); // DHT marker
+        output.extend_from_slice(&(len as u16).to_be_bytes());
+        output.push(table_info); // table class and ID
+
+        output.extend_from_slice(&table.bits);
+        output.extend_from_slice(&table.values);
     }
 
     /// Encode grayscale plane to JPEG
@@ -245,6 +306,35 @@ impl Encoder {
         let q = self.quality.value() as u8;
         let quant_table = crate::quant::QuantTable::luma_standard(q);
 
+        let width_blocks = (width + 7) / 8;
+        let height_blocks = (height + 7) / 8;
+        let total_blocks = width_blocks * height_blocks;
+
+        // Quantize all blocks first
+        let mut all_coeffs: Vec<[i16; 64]> = Vec::with_capacity(total_blocks);
+        for by in 0..height_blocks {
+            for bx in 0..width_blocks {
+                let block = extract_block(y_plane, width, height, bx, by);
+                let coeffs = self.quantize_block_impl(&block, &quant_table.values, 1.0, strategy);
+                all_coeffs.push(coeffs);
+            }
+        }
+
+        // Get Huffman tables (optimized or standard)
+        let (dc_table, ac_table) = if self.optimize_huffman {
+            let mut dc_counter = FrequencyCounter::new();
+            let mut ac_counter = FrequencyCounter::new();
+            let mut symbol_counter = SymbolCounter::new();
+
+            for coeffs in &all_coeffs {
+                symbol_counter.count_block(coeffs, 0, &mut dc_counter, &mut ac_counter);
+            }
+
+            (dc_counter.generate_table(), ac_counter.generate_table())
+        } else {
+            (std_dc_luma(), std_ac_luma())
+        };
+
         // Build output
         let mut output = Vec::with_capacity(width * height);
 
@@ -252,13 +342,16 @@ impl Encoder {
         self.write_app0(&mut output);
         self.write_dqt(&mut output, &quant_table);
         self.write_sof0_gray(&mut output, width as u16, height as u16);
-        self.write_dht_dc(&mut output, 0);
-        self.write_dht_ac(&mut output, 0);
+        self.write_dht(&mut output, 0x00, &dc_table); // DC table 0
+        self.write_dht(&mut output, 0x10, &ac_table); // AC table 0
         self.write_sos_gray(&mut output);
 
-        // Encode Y blocks only
-        let entropy_data = self.encode_y_blocks(y_plane, width, height, &quant_table, strategy);
-        output.extend_from_slice(&entropy_data);
+        // Encode all blocks
+        let mut encoder = EntropyEncoder::new(dc_table.clone(), ac_table.clone());
+        for coeffs in &all_coeffs {
+            encoder.encode_block(coeffs, 0);
+        }
+        output.extend_from_slice(&encoder.finish());
 
         output.extend_from_slice(&[0xFF, 0xD9]); // EOI
 
@@ -329,42 +422,6 @@ impl Encoder {
         output.push(0x00); // Quant table 0
     }
 
-    /// Write DHT marker for DC table
-    fn write_dht_dc(&self, output: &mut Vec<u8>, table_class: u8) {
-        let bits = if table_class == 0 {
-            &crate::huffman::STD_DC_LUMA_BITS
-        } else {
-            &crate::huffman::STD_DC_CHROMA_BITS
-        };
-        let values = if table_class == 0 {
-            &crate::huffman::STD_DC_LUMA_VALUES[..]
-        } else {
-            &crate::huffman::STD_DC_CHROMA_VALUES[..]
-        };
-
-        let len = 2 + 1 + 16 + values.len();
-        output.extend_from_slice(&[0xFF, 0xC4]);
-        output.extend_from_slice(&(len as u16).to_be_bytes());
-        output.push(table_class); // DC table, class
-
-        output.extend_from_slice(bits);
-        output.extend_from_slice(values);
-    }
-
-    /// Write DHT marker for AC table
-    fn write_dht_ac(&self, output: &mut Vec<u8>, table_class: u8) {
-        let bits = &crate::huffman::STD_AC_LUMA_BITS;
-        let values = &crate::huffman::STD_AC_LUMA_VALUES[..];
-
-        let len = 2 + 1 + 16 + values.len();
-        output.extend_from_slice(&[0xFF, 0xC4]);
-        output.extend_from_slice(&(len as u16).to_be_bytes());
-        output.push(0x10 | table_class); // AC table
-
-        output.extend_from_slice(bits);
-        output.extend_from_slice(values);
-    }
-
     /// Write SOS marker (3 components)
     fn write_sos(&self, output: &mut Vec<u8>) {
         output.extend_from_slice(&[0xFF, 0xDA]); // SOS
@@ -399,86 +456,8 @@ impl Encoder {
         output.push(0x00); // Ah/Al
     }
 
-    /// Encode all blocks for 3-component image
-    fn encode_all_blocks(
-        &self,
-        y_plane: &[u8],
-        cb_plane: &[u8],
-        cr_plane: &[u8],
-        width: usize,
-        height: usize,
-        quant_tables: &QuantTableSet,
-        aq_field: &crate::adaptive_quant::AqField,
-        strategy: &SelectedStrategy,
-    ) -> Vec<u8> {
-        let dc_luma = std_dc_luma();
-        let ac_luma = std_ac_luma();
-
-        let mut encoder = EntropyEncoder::new(dc_luma, ac_luma);
-
-        let width_blocks = (width + 7) / 8;
-        let height_blocks = (height + 7) / 8;
-
-        // Encode Y, Cb, Cr in interleaved order
-        for by in 0..height_blocks {
-            for bx in 0..width_blocks {
-                // Y block
-                let y_block = extract_block(y_plane, width, height, bx, by);
-                let y_coeffs = self.encode_block(
-                    &y_block,
-                    &quant_tables.luma.values,
-                    aq_field.get(bx, by),
-                    strategy,
-                );
-                encoder.encode_block(&y_coeffs, 0); // Y component
-
-                // Cb block
-                let cb_block = extract_block(cb_plane, width, height, bx, by);
-                let cb_coeffs =
-                    self.encode_block(&cb_block, &quant_tables.chroma.values, 1.0, strategy);
-                encoder.encode_block(&cb_coeffs, 1); // Cb component
-
-                // Cr block
-                let cr_block = extract_block(cr_plane, width, height, bx, by);
-                let cr_coeffs =
-                    self.encode_block(&cr_block, &quant_tables.chroma.values, 1.0, strategy);
-                encoder.encode_block(&cr_coeffs, 2); // Cr component
-            }
-        }
-
-        encoder.finish()
-    }
-
-    /// Encode Y blocks only (for grayscale)
-    fn encode_y_blocks(
-        &self,
-        y_plane: &[u8],
-        width: usize,
-        height: usize,
-        quant_table: &crate::quant::QuantTable,
-        strategy: &SelectedStrategy,
-    ) -> Vec<u8> {
-        let dc_table = std_dc_luma();
-        let ac_table = std_ac_luma();
-
-        let mut encoder = EntropyEncoder::new(dc_table, ac_table);
-
-        let width_blocks = (width + 7) / 8;
-        let height_blocks = (height + 7) / 8;
-
-        for by in 0..height_blocks {
-            for bx in 0..width_blocks {
-                let block = extract_block(y_plane, width, height, bx, by);
-                let coeffs = self.encode_block(&block, &quant_table.values, 1.0, strategy);
-                encoder.encode_block(&coeffs, 0); // Y component
-            }
-        }
-
-        encoder.finish()
-    }
-
-    /// Encode a single 8x8 block
-    fn encode_block(
+    /// Quantize a single 8x8 block (DCT + quantization)
+    fn quantize_block_impl(
         &self,
         block: &[u8; 64],
         quant: &[u16; 64],

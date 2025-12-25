@@ -106,6 +106,9 @@ pub fn compute_category(value: i16) -> u8 {
     }
 }
 
+/// Maximum code length during Huffman tree construction
+const MAX_CLEN: usize = 32;
+
 /// Frequency counter for Huffman optimization
 #[derive(Clone)]
 pub struct FrequencyCounter {
@@ -136,111 +139,163 @@ impl FrequencyCounter {
         self.counts.fill(0);
     }
 
-    /// Generate optimal Huffman table from frequencies
-    pub fn generate_table(&self) -> HuffmanTable {
-        // Find non-zero symbols
-        let mut symbols: Vec<(usize, i64)> = self.counts[..256]
-            .iter()
-            .enumerate()
-            .filter(|(_, &c)| c > 0)
-            .map(|(i, &c)| (i, c))
-            .collect();
+    /// Generate optimal Huffman table from frequencies.
+    ///
+    /// This implements Section K.2 of the JPEG specification. The algorithm
+    /// builds a Huffman tree from the frequencies, then limits code lengths
+    /// to 16 bits as required by JPEG.
+    pub fn generate_table(&mut self) -> HuffmanTable {
+        let freq = &mut self.counts;
 
-        if symbols.is_empty() {
-            // No symbols - return empty table
-            return HuffmanTable::new(&[0; 16], &[]);
-        }
+        let mut bits = [0u8; MAX_CLEN + 1];
+        let mut bit_pos = [0usize; MAX_CLEN + 1];
+        let mut codesize = [0usize; 257];
+        let mut nz_index = [0usize; 257];
+        let mut others = [-1i32; 257];
 
-        // Sort by frequency (descending)
-        symbols.sort_by(|a, b| b.1.cmp(&a.1));
+        // Ensure pseudo-symbol 256 has a nonzero count
+        // This guarantees no real symbol gets all-ones code
+        freq[256] = 1;
 
-        // Build code lengths using package-merge algorithm (simplified)
-        // For simplicity, use a heuristic: assign shorter codes to more frequent symbols
-        let n = symbols.len();
-        let mut code_lengths: Vec<u8> = vec![0; n];
-
-        // Simple heuristic: distribute codes across lengths 1-16
-        // More frequent symbols get shorter codes
-        let max_codes: [usize; 17] = [0, 2, 4, 8, 16, 32, 64, 128, 256, 256, 256, 256, 256, 256, 256, 256, 256];
-        let mut idx = 0;
-        for len in 1..=16u8 {
-            let max_at_len = max_codes[len as usize];
-            let available = max_at_len.saturating_sub(max_codes[len as usize - 1]);
-            for _ in 0..available {
-                if idx < n {
-                    code_lengths[idx] = len;
-                    idx += 1;
-                }
+        // Group nonzero frequencies together for efficient searching
+        let mut num_nz_symbols = 0;
+        for i in 0..257 {
+            if freq[i] > 0 {
+                nz_index[num_nz_symbols] = i;
+                freq[num_nz_symbols] = freq[i];
+                num_nz_symbols += 1;
             }
         }
 
-        // Ensure all symbols have a code
-        while idx < n {
-            code_lengths[idx] = 16;
-            idx += 1;
+        // Sentinel values for frequency comparison
+        const FREQ_INITIAL_MAX: i64 = 1_000_000_000;
+        const FREQ_MERGED: i64 = 1_000_000_001;
+
+        // Huffman's algorithm: repeatedly merge two smallest frequencies
+        loop {
+            // Find two smallest nonzero frequencies
+            let mut c1: i32 = -1;
+            let mut c2: i32 = -1;
+            let mut v1 = FREQ_INITIAL_MAX;
+            let mut v2 = FREQ_INITIAL_MAX;
+
+            for i in 0..num_nz_symbols {
+                if freq[i] <= v2 {
+                    if freq[i] <= v1 {
+                        c2 = c1;
+                        v2 = v1;
+                        v1 = freq[i];
+                        c1 = i as i32;
+                    } else {
+                        v2 = freq[i];
+                        c2 = i as i32;
+                    }
+                }
+            }
+
+            // Done if we've merged everything into one frequency
+            if c2 < 0 {
+                break;
+            }
+
+            let c1 = c1 as usize;
+            let c2 = c2 as usize;
+
+            // Merge the two counts/trees
+            freq[c1] += freq[c2];
+            // Mark c2 as merged (high value so it won't be selected)
+            freq[c2] = FREQ_MERGED;
+
+            // Increment codesize of everything in c1's tree branch
+            codesize[c1] += 1;
+            let mut node = c1;
+            while others[node] >= 0 {
+                node = others[node] as usize;
+                codesize[node] += 1;
+            }
+
+            // Chain c2 onto c1's tree branch
+            others[node] = c2 as i32;
+
+            // Increment codesize of everything in c2's tree branch
+            codesize[c2] += 1;
+            let mut node = c2;
+            while others[node] >= 0 {
+                node = others[node] as usize;
+                codesize[node] += 1;
+            }
+        }
+
+        // Count the number of symbols of each code length
+        for i in 0..num_nz_symbols {
+            let cs = codesize[i].min(MAX_CLEN);
+            bits[cs] += 1;
         }
 
         // Limit code lengths to 16 bits (JPEG requirement)
-        adjust_code_lengths(&mut code_lengths);
-
-        // Count codes per length
-        let mut bits = [0u8; 16];
-        for &len in &code_lengths {
-            if len > 0 && len <= 16 {
-                bits[len as usize - 1] += 1;
-            }
-        }
-
-        // Build values array (sorted by code length, then by symbol)
-        let mut sym_len: Vec<(usize, u8)> = symbols.iter()
-            .zip(code_lengths.iter())
-            .map(|((sym, _), &len)| (*sym, len))
-            .collect();
-        sym_len.sort_by_key(|&(sym, len)| (len, sym));
-
-        let values: Vec<u8> = sym_len.iter().map(|&(sym, _)| sym as u8).collect();
-
-        HuffmanTable::new(&bits, &values)
-    }
-}
-
-/// Adjust code lengths to satisfy JPEG's 16-bit limit
-fn adjust_code_lengths(lengths: &mut [u8]) {
-    // Count codes at each length
-    let mut count = [0usize; 33];
-    for &len in lengths.iter() {
-        count[len as usize] += 1;
-    }
-
-    // Adjust any codes longer than 16
-    for i in (17..=32).rev() {
-        while count[i] > 0 {
-            let mut j = i - 2;
-            while count[j] == 0 {
+        // This uses the algorithm from Section K.2 of the JPEG spec
+        for i in (17..=MAX_CLEN).rev() {
+            while bits[i] > 0 {
+                // Find length of new prefix to be used
+                let mut j = i - 2;
+                while j > 0 && bits[j] == 0 {
+                    j -= 1;
+                }
                 if j == 0 {
+                    // Can't adjust further, break
                     break;
                 }
-                j -= 1;
-            }
-            if j == 0 {
-                break;
-            }
-            count[i] -= 2;
-            count[i - 1] += 1;
-            count[j + 1] += 2;
-            count[j] -= 1;
-        }
-    }
 
-    // Distribute lengths back to symbols
-    let mut idx = 0;
-    for len in 1..=16u8 {
-        for _ in 0..count[len as usize] {
-            if idx < lengths.len() {
-                lengths[idx] = len;
-                idx += 1;
+                bits[i] -= 2; // Remove two symbols
+                bits[i - 1] += 1; // One goes to length i-1
+                bits[j + 1] += 2; // Two new symbols at length j+1
+                bits[j] -= 1; // Symbol at length j becomes a prefix
             }
         }
+
+        // Remove the count for pseudo-symbol 256 from the largest codelength
+        let mut i = 16;
+        while i > 0 && bits[i] == 0 {
+            i -= 1;
+        }
+        if i > 0 {
+            bits[i] -= 1;
+        }
+
+        // Copy final symbol counts to output BITS array (indices 0-15 for lengths 1-16)
+        let mut output_bits = [0u8; 16];
+        for l in 1..=16 {
+            output_bits[l - 1] = bits[l];
+        }
+
+        // Compute bit_pos - cumulative count of symbols at shorter lengths
+        let mut p = 0usize;
+        for l in 1..=16 {
+            bit_pos[l] = p;
+            p += bits[l] as usize;
+        }
+
+        // Build list of (original_symbol, codesize) pairs, excluding pseudo-symbol 256
+        let mut symbols: Vec<(usize, usize)> = (0..num_nz_symbols)
+            .filter(|&i| nz_index[i] < 256 && codesize[i] > 0)
+            .map(|i| (nz_index[i], codesize[i]))
+            .collect();
+
+        // Sort by codesize (shortest first), then by symbol index for stability
+        symbols.sort_by_key(|&(idx, cs)| (cs, idx));
+
+        // Assign symbols to values array according to the new bits[] distribution
+        let mut values = Vec::with_capacity(symbols.len());
+        let mut sym_iter = symbols.iter();
+        for len in 1..=16usize {
+            for _ in 0..bits[len] {
+                if let Some(&(orig_idx, _)) = sym_iter.next() {
+                    values.push(orig_idx as u8);
+                }
+            }
+        }
+
+        HuffmanTable::new(&output_bits, &values)
     }
 }
 
