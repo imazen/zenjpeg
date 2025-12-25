@@ -43,34 +43,44 @@ const K_INV_LOG2E: f32 = 1.0 / std::f32::consts::LOG2_E;
 
 /// Fast approximation of log2 for Gamma function.
 ///
-/// Based on IEEE 754 float representation with polynomial approximation.
-/// The polynomial is chosen to be continuous at power-of-2 boundaries
-/// (i.e., f(m=1) = 1.0 exactly).
+/// This is a direct port of libjxl's FastLog2f from fast_math-inl.h.
+/// Uses a (2,2) rational polynomial approximation of log1p(x) / log(2)
+/// with range reduction to [-1/3, 1/3].
+/// L1 error ~3.9E-6.
 #[inline]
 fn fast_log2f(x: f32) -> f32 {
-    // Extract exponent and mantissa from IEEE 754 representation
-    let bits = x.to_bits();
-    let exponent = ((bits >> 23) & 0xFF) as i32 - 127;
-    let mantissa_bits = (bits & 0x007F_FFFF) | 0x3F80_0000;
-    let mantissa = f32::from_bits(mantissa_bits);
+    // (2,2) rational polynomial coefficients from C++
+    const P0: f32 = -1.8503833400518310E-06;
+    const P1: f32 = 1.4287160470083755;
+    const P2: f32 = 7.4245873327820566E-01;
 
-    // Approximate log2(mantissa) using polynomial
-    // mantissa is in [1, 2), so log2(mantissa) is in [0, 1)
-    // We need: f(1) = 0, f(2) = 1 (where mantissa goes from 1 to 2)
-    //
-    // Use a minimax polynomial that satisfies boundary conditions:
-    // log2(1+m) ≈ m * (a + b*m + c*m^2) where m = mantissa - 1
-    // Constraints: f(0)=0 (automatic), f(1)=1 means a + b + c = 1
-    //
-    // Coefficients from libjxl's FastLog2f (highway/hwy/contrib/math/math-inl.h):
-    // These are designed to be accurate and continuous.
+    const Q0: f32 = 9.9032814277590719E-01;
+    const Q1: f32 = 1.0096718572241148;
+    const Q2: f32 = 1.7409343003366853E-01;
+
+    let x_bits = x.to_bits() as i32;
+
+    // Range reduction to [-1/3, 1/3] - subtract 2/3 (0x3f2aaaab in float)
+    let exp_bits = x_bits.wrapping_sub(0x3f2aaaab_u32 as i32);
+    // Shifted exponent = log2; also used to clear mantissa
+    let exp_shifted = exp_bits >> 23;
+    // Reconstruct mantissa in [2/3, 4/3] range
+    let mantissa_bits = (x_bits - (exp_shifted << 23)) as u32;
+    let mantissa = f32::from_bits(mantissa_bits);
+    let exp_val = exp_shifted as f32;
+
+    // Evaluate rational polynomial on (mantissa - 1.0), which is in [-1/3, 1/3]
     let m = mantissa - 1.0;
 
-    // Polynomial: m * (1.4426950408889634 - m * (0.7213475204444817 - m * 0.2787524795555183))
-    // This evaluates to exactly 1.0 when m = 1.0
-    let log2_mantissa = m * (1.4426950408889634 - m * (0.7213475204444817 - m * 0.2787524795555183));
+    // Horner's scheme for numerator: p[2]*x^2 + p[1]*x + p[0]
+    let yp = P2 * m + P1;
+    let yp = yp * m + P0;
 
-    exponent as f32 + log2_mantissa
+    // Horner's scheme for denominator: q[2]*x^2 + q[1]*x + q[0]
+    let yq = Q2 * m + Q1;
+    let yq = yq * m + Q0;
+
+    yp / yq + exp_val
 }
 
 /// Butteraugli Gamma function.

@@ -46,13 +46,13 @@
 
 // Module structure
 mod blur;
-mod consts;
+pub mod consts;
 mod diff;
 mod image;
 mod malta;
-mod mask;
+pub mod mask;
 pub mod opsin;
-mod psycho;
+pub mod psycho;
 pub mod xyb;
 
 // Re-export main types and functions
