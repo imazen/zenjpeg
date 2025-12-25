@@ -11,18 +11,21 @@
 use jpegli::quant::{Quality, ZeroBiasParams};
 
 /// Test that aq_strength values are in the expected range.
-/// C++ produces values in 0.0-0.2 range with mean ~0.08.
-/// We allow up to 0.3 for safety margin.
+/// STRICT CHECK: C++ produces values in 0.0-0.2 range with mean ~0.08.
+/// No safety margin - must match C++ exactly.
 #[test]
 fn test_aq_strength_range() {
     // The current implementation uses a constant 0.08
     // When per-block AQ is implemented, this test ensures values stay in range
     let aq_strength = 0.08f32; // Current constant value
 
+    // C++ documented range is 0.0-0.2
+    const MAX_AQ_STRENGTH: f32 = 0.2;
     assert!(
-        aq_strength >= 0.0 && aq_strength <= 0.3,
-        "aq_strength {} is outside valid range [0.0, 0.3]",
-        aq_strength
+        aq_strength >= 0.0 && aq_strength <= MAX_AQ_STRENGTH,
+        "aq_strength {} is outside C++ range [0.0, {:.1}]",
+        aq_strength,
+        MAX_AQ_STRENGTH
     );
 }
 
@@ -67,20 +70,24 @@ fn test_zero_bias_params_valid() {
                     distance,
                     component
                 );
-                // C++ HQ tables have values up to ~2.1 (e.g., 2.0719 for Cb)
+                // STRICT CHECK: C++ HQ tables have values up to ~2.1 (e.g., 2.0719 for Cb)
+                // Use 2.15 max to catch any unexpected values above C++ max.
+                const MAX_ZERO_BIAS: f32 = 2.15;
                 assert!(
-                    params.mul[k] >= 0.0 && params.mul[k] <= 2.5,
-                    "mul[{}]={} outside range [0, 2.5] at distance={}, component={}",
+                    params.mul[k] >= 0.0 && params.mul[k] <= MAX_ZERO_BIAS,
+                    "mul[{}]={} outside C++ range [0, {:.2}] at distance={}, component={}",
                     k,
                     params.mul[k],
+                    MAX_ZERO_BIAS,
                     distance,
                     component
                 );
                 assert!(
-                    params.offset[k] >= 0.0 && params.offset[k] <= 2.5,
-                    "offset[{}]={} outside range [0, 2.5] at distance={}, component={}",
+                    params.offset[k] >= 0.0 && params.offset[k] <= MAX_ZERO_BIAS,
+                    "offset[{}]={} outside C++ range [0, {:.2}] at distance={}, component={}",
                     k,
                     params.offset[k],
+                    MAX_ZERO_BIAS,
                     distance,
                     component
                 );

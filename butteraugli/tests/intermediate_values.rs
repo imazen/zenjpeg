@@ -214,10 +214,16 @@ fn test_diffmap_uniform_gray() {
     println!("  C++ diffmap:  min={:.4} max={:.4} mean={:.4}", c_min, c_max, c_mean);
     println!("  Max pixel diff: {:.6}", max_pixel_diff);
 
-    // Assert reasonable parity
+    // STRICT CHECK: C++ parity required within 5% relative difference
+    // Uniform gray is the simplest case - if this fails, fundamental algorithm differs.
+    const MAX_SCORE_REL: f64 = 0.05;
     assert!(
-        score_rel < 0.25 || score_diff < 0.3,
-        "Score diff too large"
+        score_rel < MAX_SCORE_REL,
+        "Uniform gray score diff too large: {:.2}% (max: {:.0}%), Rust={:.6} C++={:.6}",
+        score_rel * 100.0,
+        MAX_SCORE_REL * 100.0,
+        rust_result.score,
+        cpp_score
     );
 }
 
@@ -269,7 +275,16 @@ fn test_diffmap_gradient() {
     println!("  Diff: {:.6} ({:.2}%)", score_diff, score_rel * 100.0);
     println!("  Max pixel diff: {:.6}", max_pixel_diff);
 
-    assert!(score_rel < 0.30 || score_diff < 0.5, "Score diff too large");
+    // STRICT CHECK: C++ parity required within 10% for gradient
+    const MAX_SCORE_REL: f64 = 0.10;
+    assert!(
+        score_rel < MAX_SCORE_REL,
+        "Gradient score diff too large: {:.2}% (max: {:.0}%), Rust={:.6} C++={:.6}",
+        score_rel * 100.0,
+        MAX_SCORE_REL * 100.0,
+        rust_result.score,
+        cpp_score
+    );
 }
 
 #[test]
@@ -314,7 +329,16 @@ fn test_diffmap_checkerboard() {
     println!("  C++ score:  {:.6}", cpp_score);
     println!("  Diff: {:.6} ({:.2}%)", score_diff, score_rel * 100.0);
 
-    assert!(score_rel < 0.35 || score_diff < 1.0, "Score diff too large");
+    // STRICT CHECK: C++ parity required within 15% for checkerboard (high frequency)
+    const MAX_SCORE_REL: f64 = 0.15;
+    assert!(
+        score_rel < MAX_SCORE_REL,
+        "Checkerboard score diff too large: {:.2}% (max: {:.0}%), Rust={:.6} C++={:.6}",
+        score_rel * 100.0,
+        MAX_SCORE_REL * 100.0,
+        rust_result.score,
+        cpp_score
+    );
 }
 
 #[test]
@@ -346,7 +370,16 @@ fn test_diffmap_color_gradient() {
     println!("  C++ score:  {:.6}", cpp_score);
     println!("  Diff: {:.6} ({:.2}%)", score_diff, score_rel * 100.0);
 
-    assert!(score_rel < 0.30 || score_diff < 0.5, "Score diff too large");
+    // STRICT CHECK: C++ parity required within 10% for color gradient
+    const MAX_SCORE_REL: f64 = 0.10;
+    assert!(
+        score_rel < MAX_SCORE_REL,
+        "Color gradient score diff too large: {:.2}% (max: {:.0}%), Rust={:.6} C++={:.6}",
+        score_rel * 100.0,
+        MAX_SCORE_REL * 100.0,
+        rust_result.score,
+        cpp_score
+    );
 }
 
 #[test]
@@ -406,7 +439,16 @@ fn test_diffmap_random_32x32() {
         println!("    ({:2},{:2}): Rust={:.4} C++={:.4} diff={:.4}", x, y, r, c, d);
     }
 
-    assert!(score_rel < 0.35 || score_diff < 1.5, "Score diff too large");
+    // STRICT CHECK: C++ parity required within 15% for random (complex case)
+    const MAX_SCORE_REL: f64 = 0.15;
+    assert!(
+        score_rel < MAX_SCORE_REL,
+        "Random 32x32 score diff too large: {:.2}% (max: {:.0}%), Rust={:.6} C++={:.6}",
+        score_rel * 100.0,
+        MAX_SCORE_REL * 100.0,
+        rust_result.score,
+        cpp_score
+    );
 }
 
 // ============================================================================

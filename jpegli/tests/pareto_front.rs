@@ -380,10 +380,11 @@ fn test_quality_at_similar_size() {
     println!("Size ratio (jpegli/mozjpeg): {:.3}", size_ratio);
     println!("DSSIM ratio (jpegli/mozjpeg): {:.3}", dssim_ratio);
 
-    // At similar file sizes, quality should be within 30%
+    // STRICT CHECK: At similar file sizes, quality should be within 15%
+    // 30% was too loose - if jpegli is 30% worse, that's a real problem.
     assert!(
-        dssim_ratio < 1.3,
-        "At similar sizes, jpegli DSSIM ratio should be < 1.3, got {}",
+        dssim_ratio < 1.15,
+        "At similar sizes, jpegli DSSIM ratio should be < 1.15 (within 15%), got {:.3}",
         dssim_ratio
     );
 }

@@ -116,19 +116,22 @@ fn test_metrics_correlation() {
 
         println!("{:>8} {:>12.6} {:>14.4}", quality, dssim, ssim2);
 
-        // DSSIM should decrease (better) as quality increases
+        // STRICT CHECK: DSSIM should decrease (better) as quality increases
+        // Allow only 0.0001 tolerance for measurement noise
         assert!(
-            dssim < prev_dssim + 0.001,
-            "DSSIM should decrease with higher quality: {} > {}",
+            dssim < prev_dssim + 0.0001,
+            "DSSIM should decrease with higher quality: Q{} DSSIM={:.6} vs prev {:.6}",
+            quality,
             dssim,
             prev_dssim
         );
 
-        // SSIMULACRA2 should increase (better) as quality increases
-        // Note: SSIMULACRA2 can be negative for very distorted images
+        // STRICT CHECK: SSIMULACRA2 should increase (better) as quality increases
+        // Allow only 0.1 point tolerance (not 1.0!)
         assert!(
-            ssim2 > prev_ssim2 - 1.0,
-            "SSIMULACRA2 should increase with higher quality: {} < {}",
+            ssim2 > prev_ssim2 - 0.1,
+            "SSIMULACRA2 should increase with higher quality: Q{} SSIM2={:.2} vs prev {:.2}",
+            quality,
             ssim2,
             prev_ssim2
         );

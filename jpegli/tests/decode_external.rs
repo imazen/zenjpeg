@@ -55,8 +55,14 @@ fn test_decode_im_q85_444() {
     let dssim = compute_dssim(&jpegli_pixels, &ref_pixels, jw, jh);
     println!("4:4:4 decode DSSIM vs reference: {:.6}", dssim);
 
-    // Should be nearly identical (only rounding differences)
-    assert!(dssim < 0.0001, "DSSIM {} too high", dssim);
+    // STRICT CHECK: 4:4:4 decoding should be nearly identical (only rounding differences)
+    const DSSIM_THRESHOLD_444: f64 = 0.0001;
+    assert!(
+        dssim < DSSIM_THRESHOLD_444,
+        "4:4:4 DSSIM {} too high (max: {})",
+        dssim,
+        DSSIM_THRESHOLD_444
+    );
 }
 
 /// Test decoding non-interleaved 4:4:4 JPEG
@@ -80,7 +86,14 @@ fn test_decode_444_non_interleaved() {
     let dssim = compute_dssim(&jpegli_pixels, &ref_pixels, jw, jh);
     println!("4:4:4 non-interleaved DSSIM vs reference: {:.6}", dssim);
 
-    assert!(dssim < 0.0001, "DSSIM {} too high", dssim);
+    // STRICT CHECK: Non-interleaved 4:4:4 should match reference decoder exactly
+    const DSSIM_THRESHOLD_444: f64 = 0.0001;
+    assert!(
+        dssim < DSSIM_THRESHOLD_444,
+        "4:4:4 non-interleaved DSSIM {} too high (max: {})",
+        dssim,
+        DSSIM_THRESHOLD_444
+    );
 }
 
 /// Test that 4:2:0 decoding works with MCU interleaving
@@ -103,8 +116,18 @@ fn test_decode_420_mcu_interleaved() {
     let dssim = compute_dssim(&jpegli_pixels, &ref_pixels, jw, jh);
     println!("4:2:0 MCU interleaved DSSIM vs reference: {:.6}", dssim);
 
-    // Allow slightly higher tolerance for 4:2:0 due to chroma upsampling differences
-    assert!(dssim < 0.01, "DSSIM {} too high", dssim);
+    // 4:2:0 has looser tolerance than 4:4:4 due to chroma upsampling differences
+    // between implementations. This is a known issue documented in JPEG specs.
+    // Justification: Different upsampling algorithms (bilinear vs fancy) produce
+    // different results. The 0.001 threshold allows for upsampling variations.
+    const DSSIM_THRESHOLD_420: f64 = 0.001;
+    assert!(
+        dssim < DSSIM_THRESHOLD_420,
+        "4:2:0 DSSIM {} too high (max: {}). Note: 4:2:0 allows 10x looser threshold \
+         than 4:4:4 due to chroma upsampling algorithm differences.",
+        dssim,
+        DSSIM_THRESHOLD_420
+    );
 }
 
 /// Test decoding grayscale JPEG

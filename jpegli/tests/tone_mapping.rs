@@ -41,17 +41,23 @@ impl Rng {
     }
 }
 
-/// Test Rec2408 tone mapper against reference.
+/// Test Rec2408 tone mapper self-consistency.
 ///
-/// C++ test parameters:
+/// NOTE: This test compares Rust implementation against itself, NOT against C++.
+/// The C++ thresholds are copied for reference, but this only validates that
+/// repeated calls produce identical results. True C++ parity requires FFI testing.
+///
+/// C++ test parameters (for reference only):
 /// - 8M trials (we use 1M for speed)
 /// - Source: 11000 +/- 150 nits
 /// - Target: 250 +/- 5 nits
 /// - Luminances: random [0.2, 0.4]
 /// - RGB: random [0, 1]
 /// - Error threshold: 2.75e-5
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_rec2408_tone_map() {
+fn test_rec2408_tone_map_self_consistency() {
     const NUM_TRIALS: usize = 1 << 20;
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;
@@ -92,17 +98,22 @@ fn test_rec2408_tone_map() {
     // The threshold is for SIMD vs scalar comparison in C++
 }
 
-/// Test HLG OOTF against reference.
+/// Test HLG OOTF self-consistency.
 ///
-/// C++ test parameters:
+/// NOTE: This test compares Rust implementation against itself, NOT against C++.
+/// True C++ parity requires FFI testing.
+///
+/// C++ test parameters (for reference only):
 /// - 8M trials (we use 1M for speed)
 /// - Source: 300 +/- 50 nits
 /// - Target: 80 +/- 5 nits
 /// - Luminances: random [0.2, 0.4]
 /// - RGB: random [0, 1]
 /// - Error threshold: 7.2e-7
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_hlg_ootf_apply() {
+fn test_hlg_ootf_apply_self_consistency() {
     const NUM_TRIALS: usize = 1 << 20;
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;
@@ -141,16 +152,21 @@ fn test_hlg_ootf_apply() {
     println!("HLG OOTF max abs err: {:.2e}", max_abs_err);
 }
 
-/// Test gamut mapping against reference.
+/// Test gamut mapping self-consistency.
 ///
-/// C++ test parameters:
+/// NOTE: This test compares Rust implementation against itself, NOT against C++.
+/// True C++ parity requires FFI testing.
+///
+/// C++ test parameters (for reference only):
 /// - 8M trials (we use 1M for speed)
 /// - Preserve saturation: random [0.2, 0.4]
 /// - Luminances: random [0.2, 0.4]
 /// - RGB: random [0, 1]
 /// - Error threshold: 1e-10
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_gamut_map() {
+fn test_gamut_map_self_consistency() {
     const NUM_TRIALS: usize = 1 << 20;
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;

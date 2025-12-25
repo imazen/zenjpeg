@@ -396,8 +396,14 @@ fn test_rust_vs_cpp_on_testdata() {
             mean_abs_diff, max_abs_diff
         );
 
-        // This will fail - we're documenting the gap, not passing yet
-        // assert!(max_abs_diff < 0.01, "Implementation differs from C++ by {:.4}", max_abs_diff);
+        // STRICT CHECK: Must match C++ within 0.01 absolute difference
+        // This assertion is currently failing - see test_compute_aq_field_vs_cpp for tracking.
+        assert!(
+            max_abs_diff < 0.01,
+            "AQ implementation differs from C++ by {:.4} (max allowed: 0.01). \
+             See docs/ADAPTIVE_QUANTIZATION.md for known gaps.",
+            max_abs_diff
+        );
     }
 }
 
@@ -467,12 +473,12 @@ fn test_compute_aq_field_vs_cpp() {
             min, max, mean
         );
 
-        // Verify expected values are in the documented 0-0.2 range
-        if min >= 0.0 && max <= 0.3 {
+        // STRICT CHECK: Values must be in C++ documented 0-0.2 range
+        if min >= 0.0 && max <= 0.2 {
             pass_count += 1;
-            println!("  ✓ Values in expected range [0, 0.3]");
+            println!("  ✓ Values in C++ expected range [0, 0.2]");
         } else {
-            println!("  ✗ Values outside expected range!");
+            println!("  ✗ Values outside C++ expected range [0, 0.2]!");
         }
 
         if max > max_diff {
@@ -486,9 +492,10 @@ fn test_compute_aq_field_vs_cpp() {
     );
     println!("Max aq_strength seen: {:.4}", max_diff);
 
-    // Our locked test uses 0.3 as upper bound, C++ should be within that
+    // STRICT CHECK: C++ produces values in 0-0.2 range per documentation
     assert!(
-        max_diff <= 0.3,
-        "C++ produces values outside our locked test range"
+        max_diff <= 0.2,
+        "C++ produces values up to {:.4}, expected max 0.2",
+        max_diff
     );
 }

@@ -334,11 +334,15 @@ fn test_corpus_comparison() {
             }
         );
 
-        // Assert reasonable parity
+        // STRICT CHECK: Size difference should be within 5%
+        // 15% was too loose - Rust should produce similar sizes to C++.
         assert!(
-            size_diff_pct.abs() < 15.0,
-            "Size difference too large: {:.1}%",
-            size_diff_pct
+            size_diff_pct.abs() < 5.0,
+            "Size difference too large: {:.1}% (max: 5%). \
+             Rust avg={:.0}, C++ avg={:.0}",
+            size_diff_pct,
+            avg_rust_bytes,
+            avg_cpp_bytes
         );
     } else {
         panic!("No images were successfully evaluated");

@@ -44,14 +44,20 @@ impl Rng {
     }
 }
 
-/// Test PQ EncodedFromDisplay matches C++ within threshold.
+/// Test PQ EncodedFromDisplay self-consistency.
 ///
-/// From transfer_functions_test.cc:
+/// NOTE: This test compares Rust implementation against a reference
+/// implementation in the same file, NOT against the actual C++ code.
+/// True C++ parity requires FFI testing.
+///
+/// From transfer_functions_test.cc (for reference only):
 /// - Error threshold: 6e-7
 /// - Intensity range: 11000 +/- 150 nits
 /// - Input range: [0, 1]
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_pq_encoded_from_display() {
+fn test_pq_encoded_from_display_vs_reference() {
     const NUM_TRIALS: usize = 1 << 20; // 1M trials (reduced from C++ 8M for speed)
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;
@@ -83,14 +89,18 @@ fn test_pq_encoded_from_display() {
     println!("PQ encode max abs err: {:.2e}", max_abs_err);
 }
 
-/// Test PQ DisplayFromEncoded matches C++ within threshold.
+/// Test PQ DisplayFromEncoded self-consistency.
 ///
-/// From transfer_functions_test.cc:
+/// NOTE: Compares Rust vs reference implementation in this file, NOT C++.
+///
+/// From transfer_functions_test.cc (for reference only):
 /// - Error threshold: 3e-6
 /// - Intensity range: 11000 +/- 150 nits
 /// - Input range: [0, 1]
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_pq_display_from_encoded() {
+fn test_pq_display_from_encoded_vs_reference() {
     const NUM_TRIALS: usize = 1 << 20;
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;
@@ -122,13 +132,17 @@ fn test_pq_display_from_encoded() {
     println!("PQ decode max abs err: {:.2e}", max_abs_err);
 }
 
-/// Test HLG EncodedFromDisplay matches C++ within threshold.
+/// Test HLG EncodedFromDisplay self-consistency.
 ///
-/// From transfer_functions_test.cc:
+/// NOTE: Compares Rust vs reference implementation in this file, NOT C++.
+///
+/// From transfer_functions_test.cc (for reference only):
 /// - Error threshold: 4e-7
 /// - Input range: [0, 1]
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_hlg_encoded_from_display() {
+fn test_hlg_encoded_from_display_vs_reference() {
     const NUM_TRIALS: usize = 1 << 20;
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;
@@ -154,13 +168,17 @@ fn test_hlg_encoded_from_display() {
     println!("HLG encode max abs err: {:.2e}", max_abs_err);
 }
 
-/// Test HLG DisplayFromEncoded matches C++ within threshold.
+/// Test HLG DisplayFromEncoded self-consistency.
 ///
-/// From transfer_functions_test.cc:
+/// NOTE: Compares Rust vs reference implementation in this file, NOT C++.
+///
+/// From transfer_functions_test.cc (for reference only):
 /// - Error threshold: 6e-7
 /// - Input range: [0, 1]
+///
+/// TODO: Add actual C++ comparison via FFI bindings.
 #[test]
-fn test_hlg_display_from_encoded() {
+fn test_hlg_display_from_encoded_vs_reference() {
     const NUM_TRIALS: usize = 1 << 20;
     let mut rng = Rng::new(1);
     let mut max_abs_err: f64 = 0.0;
