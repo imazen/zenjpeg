@@ -188,6 +188,27 @@ This exceeds expectations! Trellis is providing major compression gains at mid-q
 Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps remain
 (progressive encoding, DC trellis, optimized Huffman implementation differences, etc.)
 
+### 2025-12-25: Analysis of mozjpeg-rs (which matches C mozjpeg)
+
+**Key differences identified between zenjpeg and mozjpeg-rs:**
+
+| Factor | Zenjpeg | Mozjpeg-rs | Impact |
+|--------|---------|-----------|--------|
+| DCT Implementation | Float reference | Integer Loeffler + SIMD | +5-8% |
+| Quantization | Float-based | Integer-based | +3-5% |
+| Trellis | AC only | Full with cross-block DC | +5-10% |
+| Progressive Mode | Not implemented | Full support | +10-15% |
+| Huffman Optimization | Basic | Advanced with scan opt | +5-10% |
+| Deringing | None | Enabled by default | +2-3% |
+
+**Total potential gap: 30-50%** (we're seeing 80%, suggesting bugs or format overhead)
+
+**Priority fixes:**
+1. Port integer Loeffler DCT from mozjpeg-rs
+2. Implement cross-block DC trellis
+3. Add progressive mode support
+4. Implement scan optimization
+
 ---
 
 ### Experiment 2: AQ Impact by Image Type

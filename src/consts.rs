@@ -3,6 +3,9 @@
 //! This module contains standard JPEG tables as well as optimized tables
 //! from mozjpeg and jpegli.
 
+/// DCT block dimension
+pub const DCTSIZE: usize = 8;
+
 /// DCT block size (8x8 = 64)
 pub const DCTSIZE2: usize = 64;
 

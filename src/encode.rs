@@ -5,7 +5,7 @@
 
 use crate::adaptive_quant::compute_aq_field;
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
-use crate::dct::{forward_dct_8x8, level_shift, quantize_block};
+use crate::dct::{forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_trellis, quantize_block_int};
 use crate::entropy::{EntropyEncoder, SymbolCounter};
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
@@ -501,6 +501,8 @@ impl Encoder {
     }
 
     /// Quantize a single 8x8 block (DCT + quantization)
+    ///
+    /// Uses integer Loeffler DCT for better precision and compression.
     fn quantize_block_impl(
         &self,
         block: &[u8; 64],
@@ -516,25 +518,21 @@ impl Encoder {
             *quant
         };
 
-        // Level shift and DCT
+        // Level shift and integer DCT (output is scaled by 8)
         let shifted = level_shift(block);
-        let dct = forward_dct_8x8(&shifted);
+        let mut dct_coeffs = [0i16; 64];
+        forward_dct_8x8_int(&shifted, &mut dct_coeffs);
 
         // Quantize (with optional trellis)
         if strategy.trellis.ac_enabled {
-            // Use trellis quantization with standard table for rate estimation
-            // This is what mozjpeg does - standard tables work well enough
+            // Trellis path: pass 8x-scaled DCT directly
+            // Trellis internally multiplies qtable by 8 to match
+            let mut dct_i32 = [0i32; 64];
+            scale_for_trellis(&dct_coeffs, &mut dct_i32);
+
             let mut quantized = [0i16; 64];
-
-            // Convert DCT to i32 for trellis, scaled by 8
-            // Trellis expects DCT values scaled by 8 (multiplies qtable by 8 internally)
-            let mut dct_scaled = [0i32; 64];
-            for i in 0..64 {
-                dct_scaled[i] = (dct[i] * 8.0).round() as i32;
-            }
-
             trellis_quantize_block(
-                &dct_scaled,
+                &dct_i32,
                 &mut quantized,
                 &effective_quant,
                 ac_derived,
@@ -542,7 +540,13 @@ impl Encoder {
             );
             quantized
         } else {
-            quantize_block(&dct, &effective_quant)
+            // Non-trellis path: descale DCT first, then quantize
+            let mut dct_descaled = [0i32; 64];
+            descale_for_quant(&dct_coeffs, &mut dct_descaled);
+
+            let mut quantized = [0i16; 64];
+            quantize_block_int(&dct_descaled, &effective_quant, &mut quantized);
+            quantized
         }
     }
 }
