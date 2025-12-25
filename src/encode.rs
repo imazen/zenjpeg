@@ -10,7 +10,7 @@ use crate::entropy::EntropyEncoder;
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma};
 use crate::quant::QuantTableSet;
-use crate::strategy::{select_strategy, EncodingApproach, SelectedStrategy};
+use crate::strategy::{select_strategy, SelectedStrategy};
 use crate::trellis::{trellis_quantize_ac, TrellisConfig};
 use crate::types::{ColorSpace, EncodingStrategy, PixelFormat, Quality, Subsampling};
 use crate::Result;
@@ -496,12 +496,11 @@ impl Encoder {
         let shifted = level_shift(block);
         let dct = forward_dct_8x8(&shifted);
 
-        // Quantize (with optional trellis)
-        match strategy.approach {
-            EncodingApproach::Mozjpeg if strategy.trellis.ac_enabled => {
-                trellis_quantize_ac(&dct, &effective_quant, &strategy.trellis)
-            }
-            _ => quantize_block(&dct, &effective_quant),
+        // Quantize (with optional trellis - enabled for all approaches when configured)
+        if strategy.trellis.ac_enabled {
+            trellis_quantize_ac(&dct, &effective_quant, &strategy.trellis)
+        } else {
+            quantize_block(&dct, &effective_quant)
         }
     }
 }

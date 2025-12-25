@@ -106,6 +106,144 @@ pub fn compute_category(value: i16) -> u8 {
     }
 }
 
+/// Frequency counter for Huffman optimization
+#[derive(Clone)]
+pub struct FrequencyCounter {
+    /// Counts for each symbol (257 elements for pseudo-symbol at end)
+    pub counts: [i64; 257],
+}
+
+impl Default for FrequencyCounter {
+    fn default() -> Self {
+        Self { counts: [0; 257] }
+    }
+}
+
+impl FrequencyCounter {
+    /// Create a new frequency counter
+    pub fn new() -> Self {
+        Self { counts: [0; 257] }
+    }
+
+    /// Count a symbol occurrence
+    #[inline]
+    pub fn count(&mut self, symbol: u8) {
+        self.counts[symbol as usize] += 1;
+    }
+
+    /// Reset all counts
+    pub fn reset(&mut self) {
+        self.counts.fill(0);
+    }
+
+    /// Generate optimal Huffman table from frequencies
+    pub fn generate_table(&self) -> HuffmanTable {
+        // Find non-zero symbols
+        let mut symbols: Vec<(usize, i64)> = self.counts[..256]
+            .iter()
+            .enumerate()
+            .filter(|(_, &c)| c > 0)
+            .map(|(i, &c)| (i, c))
+            .collect();
+
+        if symbols.is_empty() {
+            // No symbols - return empty table
+            return HuffmanTable::new(&[0; 16], &[]);
+        }
+
+        // Sort by frequency (descending)
+        symbols.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Build code lengths using package-merge algorithm (simplified)
+        // For simplicity, use a heuristic: assign shorter codes to more frequent symbols
+        let n = symbols.len();
+        let mut code_lengths: Vec<u8> = vec![0; n];
+
+        // Simple heuristic: distribute codes across lengths 1-16
+        // More frequent symbols get shorter codes
+        let max_codes: [usize; 17] = [0, 2, 4, 8, 16, 32, 64, 128, 256, 256, 256, 256, 256, 256, 256, 256, 256];
+        let mut idx = 0;
+        for len in 1..=16u8 {
+            let max_at_len = max_codes[len as usize];
+            let available = max_at_len.saturating_sub(max_codes[len as usize - 1]);
+            for _ in 0..available {
+                if idx < n {
+                    code_lengths[idx] = len;
+                    idx += 1;
+                }
+            }
+        }
+
+        // Ensure all symbols have a code
+        while idx < n {
+            code_lengths[idx] = 16;
+            idx += 1;
+        }
+
+        // Limit code lengths to 16 bits (JPEG requirement)
+        adjust_code_lengths(&mut code_lengths);
+
+        // Count codes per length
+        let mut bits = [0u8; 16];
+        for &len in &code_lengths {
+            if len > 0 && len <= 16 {
+                bits[len as usize - 1] += 1;
+            }
+        }
+
+        // Build values array (sorted by code length, then by symbol)
+        let mut sym_len: Vec<(usize, u8)> = symbols.iter()
+            .zip(code_lengths.iter())
+            .map(|((sym, _), &len)| (*sym, len))
+            .collect();
+        sym_len.sort_by_key(|&(sym, len)| (len, sym));
+
+        let values: Vec<u8> = sym_len.iter().map(|&(sym, _)| sym as u8).collect();
+
+        HuffmanTable::new(&bits, &values)
+    }
+}
+
+/// Adjust code lengths to satisfy JPEG's 16-bit limit
+fn adjust_code_lengths(lengths: &mut [u8]) {
+    // Count codes at each length
+    let mut count = [0usize; 33];
+    for &len in lengths.iter() {
+        count[len as usize] += 1;
+    }
+
+    // Adjust any codes longer than 16
+    for i in (17..=32).rev() {
+        while count[i] > 0 {
+            let mut j = i - 2;
+            while count[j] == 0 {
+                if j == 0 {
+                    break;
+                }
+                j -= 1;
+            }
+            if j == 0 {
+                break;
+            }
+            count[i] -= 2;
+            count[i - 1] += 1;
+            count[j + 1] += 2;
+            count[j] -= 1;
+        }
+    }
+
+    // Distribute lengths back to symbols
+    let mut idx = 0;
+    for len in 1..=16u8 {
+        for _ in 0..count[len as usize] {
+            if idx < lengths.len() {
+                lengths[idx] = len;
+                idx += 1;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

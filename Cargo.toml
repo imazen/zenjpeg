@@ -40,6 +40,7 @@ criterion = "0.5"
 tempfile = "3"
 rgb = "0.8"
 imgref = "1.10"
+serde_json = "1.0"
 
 # Benchmarks (uncomment when benches/ directory is created)
 # [[bench]]

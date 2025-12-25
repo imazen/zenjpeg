@@ -61,12 +61,15 @@ fn mozjpeg_strategy(quality: &Quality) -> SelectedStrategy {
 
 /// jpegli-style encoding (best for high quality)
 fn jpegli_strategy(quality: &Quality) -> SelectedStrategy {
+    let q = quality.value();
     SelectedStrategy {
         approach: EncodingApproach::Jpegli,
         trellis: TrellisConfig {
-            ac_enabled: false,
+            // Only enable trellis at lower quality where it helps most
+            // Our simplified trellis is too aggressive at high quality
+            ac_enabled: q < 85.0,
             dc_enabled: false,
-            lambda_base: 1.0,
+            lambda_base: compute_lambda_for_quality(quality),
         },
         // TODO: Re-enable AQ once properly tuned
         adaptive_quant: AdaptiveQuantConfig {
@@ -163,6 +166,8 @@ mod tests {
         assert_eq!(strategy.approach, EncodingApproach::Jpegli);
         // AQ currently disabled until properly tuned
         assert!(!strategy.adaptive_quant.enabled);
+        // Trellis disabled at very high quality (simplified implementation is too aggressive)
+        assert!(!strategy.trellis.ac_enabled);
     }
 
     #[test]
