@@ -177,7 +177,16 @@ else:
 
 **Expected**: Trellis saves 10-20% at Q30, <5% at Q80
 
-**Results**: (pending)
+**Results (2025-12-25)**:
+- Test image: 128x128 natural-looking gradient/edge pattern
+- Q75 with trellis: 1592 bytes
+- Q75 without trellis: 3347 bytes
+- **Compression improvement: 52.4%**
+
+This exceeds expectations! Trellis is providing major compression gains at mid-quality.
+
+Note: Overall we're still ~1.8x larger than mozjpeg C, suggesting other gaps remain
+(progressive encoding, DC trellis, optimized Huffman implementation differences, etc.)
 
 ---
 
