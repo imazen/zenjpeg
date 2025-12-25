@@ -466,6 +466,16 @@ extern "C" {
 
     /// Compute butteraugli FastLog2f (for testing).
     pub fn butteraugli_fast_log2f(v: f32) -> f32;
+
+    /// Compute OpsinDynamicsImage output (XYB values).
+    /// NOTE: Uses simplified blur - for exact parity use butteraugli_compare_full.
+    pub fn butteraugli_opsin_dynamics(
+        linear_rgb: *const f32,
+        width: size_t,
+        height: size_t,
+        intensity_target: f32,
+        out_xyb: *mut f32,
+    ) -> c_int;
 }
 
 /// Safe wrapper to compute butteraugli score between two sRGB images.
