@@ -686,6 +686,28 @@ extern "C" {
 
     /// Gamut mapping
     pub fn jpegli_gamut_map(preserve_saturation: f32, luminances: *const f32, rgb: *mut f32);
+
+    // ========================================================================
+    // Fast Math Functions (for AQ parity testing)
+    // ========================================================================
+
+    /// Fast log2 approximation (L1 error ~3.9E-6)
+    pub fn jpegli_fast_log2f(x: f32) -> f32;
+
+    /// Fast pow2 approximation (max relative error ~3e-7)
+    pub fn jpegli_fast_pow2f(x: f32) -> f32;
+
+    /// Fast power: base^exponent
+    pub fn jpegli_fast_powf(base: f32, exponent: f32) -> f32;
+
+    /// ComputeMask - perceptual masking curve
+    pub fn jpegli_compute_mask(out_val: f32) -> f32;
+
+    /// MaskingSqrt
+    pub fn jpegli_masking_sqrt(v: f32) -> f32;
+
+    /// RatioOfDerivativesOfCubicRootToSimpleGamma
+    pub fn jpegli_ratio_of_derivatives(v: f32, invert: std::os::raw::c_int) -> f32;
 }
 
 // ============================================================================

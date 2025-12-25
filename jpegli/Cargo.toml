@@ -36,7 +36,7 @@ mozjpeg = { workspace = true }
 jpeg-decoder = { workspace = true }
 
 # For FFI comparison testing
-jpegli-sys = { path = "../jpegli-sys" }
+jpegli-sys = { path = "../jpegli-sys", features = ["butteraugli"] }
 
 # For corpus comparison
 codec-eval = { workspace = true }

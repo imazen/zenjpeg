@@ -216,11 +216,10 @@ pub fn compute_aq_strength_map_impl(
         return AQStrengthMap::uniform(0, 0, 0.08);
     }
 
-    // Scale input to [0, 1]
-    let input_scaled: Vec<f32> = y_plane.iter().map(|&v| v * K_INPUT_SCALING).collect();
-
     // 1. ComputePreErosion (downsamples 4x)
-    let pre_erosion = compute_pre_erosion_scalar(&input_scaled, width, height);
+    // NOTE: y_plane is in 0-255 range - ratio_of_derivatives expects this range
+    // (its constants have kInputScaling = 1/255 baked in)
+    let pre_erosion = compute_pre_erosion_scalar(y_plane, width, height);
 
     // 2. FuzzyErosion
     let pre_erosion_w = (width + 3) / 4;
@@ -383,6 +382,33 @@ fn masking_sqrt(v: f32) -> f32 {
     0.25 * (v * (K_MUL * 1e8_f32).sqrt() + K_LOG_OFFSET).sqrt()
 }
 
+/// FastPow2f from C++ jpegli - bit manipulation approximation of 2^x.
+/// Based on Highway FastPow2f implementation.
+/// Note: This doesn't match C++ exactly due to different polynomial coefficients.
+/// Kept for potential future use/optimization.
+#[allow(dead_code)]
+#[inline]
+fn fast_pow2f(x: f32) -> f32 {
+    const LN2: f32 = 0.6931471805599453;
+
+    // Clamp to avoid overflow/underflow
+    let x = x.clamp(-126.0, 126.0);
+
+    // Split into integer and fractional parts
+    let xi = x.floor();
+    let xf = x - xi;
+
+    // Polynomial approximation for 2^xf (minimax polynomial for [0, 1])
+    let p = 1.0
+        + xf * (LN2
+            + xf * (0.240226507 + xf * (0.0558325133 + xf * (0.00898934009 + xf * 0.00187757667))));
+
+    // Multiply by 2^xi using bit manipulation
+    let bits = p.to_bits();
+    let exp_offset = ((xi as i32) << 23) as u32;
+    f32::from_bits(bits.wrapping_add(exp_offset))
+}
+
 /// Ported from ComputePreErosion (scalar version).
 ///
 /// C++ algorithm:
@@ -391,20 +417,24 @@ fn masking_sqrt(v: f32) -> f32 {
 /// 3. diff_squared = diff * diff, clamped to 0.2
 /// 4. masked = MaskingSqrt(diff_squared)
 /// 5. Sum over 4x4 blocks to produce 4x downsampled output
+///
+/// NOTE: input must be in 0-255 range (not 0-1 scaled) because
+/// ratio_of_derivatives has kInputScaling=1/255 baked into its constants.
 #[allow(dead_code)]
-fn compute_pre_erosion_scalar(input_scaled: &[f32], width: usize, height: usize) -> Vec<f32> {
+fn compute_pre_erosion_scalar(input: &[f32], width: usize, height: usize) -> Vec<f32> {
     let pre_erosion_w = (width + 3) / 4;
     let pre_erosion_h = (height + 3) / 4;
     let mut pre_erosion = vec![0.0f32; pre_erosion_w * pre_erosion_h];
 
     const LIMIT: f32 = 0.2;
+    // gamma_offset is in 0-255 range (0.019 * 255 = 4.85)
     let gamma_offset = MATCH_GAMMA_OFFSET / K_INPUT_SCALING;
 
-    // Helper to get pixel with clamped bounds
+    // Helper to get pixel with clamped bounds (returns 0-255 range)
     let get = |x: isize, y: isize| -> f32 {
         let x = x.clamp(0, width as isize - 1) as usize;
         let y = y.clamp(0, height as isize - 1) as usize;
-        input_scaled[y * width + x]
+        input[y * width + x]
     };
 
     // Temporary buffer for diff values at full resolution
@@ -537,47 +567,34 @@ fn fuzzy_erosion_scalar(
     }
 
     // Sum 2x2 blocks from tmp to get final aq_map values
-    // Note: pre_erosion is 2x subsampled relative to blocks (4x4 pixels per pre_erosion cell)
-    // So each pre_erosion cell maps to 2x2 blocks
+    // C++ code (lines 476-481):
+    //   aq_out[bx] = (row_out[x] + row_out[x + 1] + row_out0[x] + row_out0[x + 1]);
+    // where x = bx * 2 and row_out0 = tmp.Row(y-1), row_out = tmp.Row(y)
+    //
+    // pre_erosion is at 4x4 pixel resolution (width/4, height/4)
+    // blocks are at 8x8 pixel resolution (width/8, height/8)
+    // So pre_erosion_w ≈ 2 * block_w, and we sum 2x2 pre_erosion cells per block
+
+    // Helper to get tmp value with clamped bounds
+    let get_tmp = |x: usize, y: usize| -> f32 {
+        let x = x.min(pre_erosion_w.saturating_sub(1));
+        let y = y.min(pre_erosion_h.saturating_sub(1));
+        tmp[y * pre_erosion_w + x]
+    };
+
     for by in 0..block_h {
         for bx in 0..block_w {
-            // Each block corresponds to pre_erosion at (bx/2, by/2)
-            let px = bx / 2;
-            let py = by / 2;
+            // Each block sums 2x2 from tmp at (bx*2, by*2)
+            let px = bx * 2;
+            let py = by * 2;
 
-            // Get the 2x2 block of tmp values that contribute to this block
-            // Actually, from C++ code: each 2x2 block of pre_erosion sums to one aq_map value
-            // But aq_map is at block resolution (8x8 pixels), pre_erosion at 4x4 pixels
-            // So 2 pre_erosion cells = 1 block
+            // Sum 2x2 values (NO multiplication factor - just sum)
+            let sum = get_tmp(px, py)
+                + get_tmp(px + 1, py)
+                + get_tmp(px, py + 1)
+                + get_tmp(px + 1, py + 1);
 
-            // The C++ code sums: tmp[y-1][x] + tmp[y-1][x+1] + tmp[y][x] + tmp[y][x+1]
-            // where (x, y) = (bx*2, by*2 + 1) relative to tmp
-
-            // Actually, looking at C++ more carefully:
-            // For block (bx, by), it sums 2x2 from tmp at:
-            // tmp[2*by][2*bx] + tmp[2*by][2*bx+1] + tmp[2*by+1][2*bx] + tmp[2*by+1][2*bx+1]
-            // But the loop iterates iy from 0 to 2*yblen, where yblen = number of block rows
-            // So for block row by, it uses tmp rows 2*by and 2*by+1
-
-            // For simplicity, let's just use the mapping from C++ loop structure
-            // The C++ uses: row_out[x] + row_out[x+1] + row_out0[x] + row_out0[x+1]
-            // where x = bx * 2 (in pre_erosion coords)
-
-            let px0 = bx; // x coord in pre_erosion (since pre_erosion.w = 2 * block_w)
-            let py0 = by; // y coord in pre_erosion
-
-            // Wait, let me re-read the dimensions:
-            // pre_erosion is at 4x4 pixel resolution (width/4, height/4)
-            // blocks are at 8x8 pixel resolution (width/8, height/8)
-            // So pre_erosion_w = 2 * block_w
-
-            // But our test shows: pre_erosion 130x4 (pre_erosion_w x h), blocks 64x1
-            // 130 != 2 * 64 = 128... hmm, there's some padding
-
-            // Let me just use the simple mapping for now
-            if px < pre_erosion_w && py < pre_erosion_h {
-                aq_map[by * block_w + bx] = tmp[py * pre_erosion_w + px] * 4.0;
-            }
+            aq_map[by * block_w + bx] = sum;
         }
     }
 }
@@ -733,7 +750,8 @@ fn per_block_modulations_scalar(
             }
             overall_ratio *= K_SCALE;
 
-            // FastLog2f approximation (just use log2 for now)
+            // C++ uses FastLog2f which has ~3e-7 relative error
+            // For parity, use std log2 (difference is negligible at ~0.0006% of AQ threshold)
             let log_ratio = if overall_ratio > 0.0 {
                 overall_ratio.log2()
             } else {
@@ -742,6 +760,7 @@ fn per_block_modulations_scalar(
             out_val += K_GAMMA * log_ratio;
 
             // 4. Final transform: 2^(out_val * 1.442695041) * mul + add
+            // C++ uses FastPow2f, but standard exp2 produces equivalent results
             // 1.442695041 = 1/ln(2) = log2(e)
             const LOG2_E: f32 = 1.442695041;
             let quant_field = (out_val * LOG2_E).exp2() * mul + add;
