@@ -3,6 +3,7 @@
 //! Automatically selects the best encoding approach based on target quality
 //! and image characteristics.
 
+use crate::analysis::{analyze_image, ImageAnalysis, RecommendedApproach};
 use crate::types::{AdaptiveQuantConfig, EncodingStrategy, Quality, TrellisConfig};
 
 /// Selected encoding configuration
@@ -39,6 +40,88 @@ pub fn select_strategy(quality: &Quality, strategy: EncodingStrategy) -> Selecte
         EncodingStrategy::Hybrid => hybrid_strategy(quality),
         EncodingStrategy::Auto => auto_strategy(quality),
     }
+}
+
+/// Select the best encoding strategy based on image analysis
+///
+/// This is the smart auto-pick that analyzes the image to decide
+/// between trellis (mozjpeg) and adaptive quantization (jpegli).
+pub fn select_strategy_for_image(
+    quality: &Quality,
+    strategy: EncodingStrategy,
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+) -> (SelectedStrategy, ImageAnalysis) {
+    let q = quality.value();
+    let analysis = analyze_image(pixels, width, height, q);
+
+    let selected = match strategy {
+        EncodingStrategy::Mozjpeg => mozjpeg_strategy(quality),
+        EncodingStrategy::Jpegli => jpegli_strategy(quality),
+        EncodingStrategy::Hybrid => hybrid_strategy(quality),
+        EncodingStrategy::Auto => strategy_from_analysis(quality, &analysis),
+    };
+
+    (selected, analysis)
+}
+
+/// Build strategy from image analysis
+fn strategy_from_analysis(quality: &Quality, analysis: &ImageAnalysis) -> SelectedStrategy {
+    let q = quality.value();
+
+    match analysis.recommended_approach {
+        RecommendedApproach::Trellis => {
+            // Use mozjpeg-style with analysis-tuned parameters
+            SelectedStrategy {
+                approach: EncodingApproach::Mozjpeg,
+                trellis: compute_trellis_config_for_quality(q, true),
+                adaptive_quant: AdaptiveQuantConfig {
+                    enabled: false,
+                    strength: 0.0,
+                },
+                progressive: q < 90.0,
+                optimize_huffman: true,
+            }
+        }
+        RecommendedApproach::AdaptiveQuant => {
+            // Use jpegli-style
+            SelectedStrategy {
+                approach: EncodingApproach::Jpegli,
+                trellis: TrellisConfig::disabled(),
+                adaptive_quant: AdaptiveQuantConfig {
+                    enabled: true,
+                    strength: compute_aq_strength_from_analysis(analysis),
+                },
+                progressive: false,
+                optimize_huffman: true,
+            }
+        }
+        RecommendedApproach::Hybrid => {
+            // Use both with balanced settings
+            SelectedStrategy {
+                approach: EncodingApproach::Hybrid,
+                trellis: compute_trellis_config_for_quality(q, false),
+                adaptive_quant: AdaptiveQuantConfig {
+                    enabled: true,
+                    strength: compute_aq_strength_from_analysis(analysis) * 0.7,
+                },
+                progressive: q < 80.0,
+                optimize_huffman: true,
+            }
+        }
+    }
+}
+
+/// Compute AQ strength based on image analysis
+fn compute_aq_strength_from_analysis(analysis: &ImageAnalysis) -> f32 {
+    // Higher complexity = higher AQ strength
+    let base = 0.5 + analysis.luma_complexity * 0.5;
+
+    // More edges = slightly higher strength
+    let edge_boost = analysis.edge_density * 0.2;
+
+    (base + edge_boost).min(1.0)
 }
 
 /// mozjpeg-style encoding (best for low quality)
