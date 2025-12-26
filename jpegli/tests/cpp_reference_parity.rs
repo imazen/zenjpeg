@@ -105,11 +105,23 @@ fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) ->
 
     let orig_rgb: Vec<[f32; 3]> = orig
         .chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
     let comp_rgb: Vec<[f32; 3]> = comp
         .chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
 
     let orig_frame = Rgb::new(
@@ -192,7 +204,10 @@ fn test_file_size_parity() {
             let rust_jpeg = match encoder.encode(&pixels) {
                 Ok(data) => data,
                 Err(e) => {
-                    failures.push(format!("{} Q{}: encode failed: {:?}", img_ref.name, point.quality, e));
+                    failures.push(format!(
+                        "{} Q{}: encode failed: {:?}",
+                        img_ref.name, point.quality, e
+                    ));
                     continue;
                 }
             };
@@ -214,9 +229,12 @@ fn test_file_size_parity() {
         }
     }
 
-    let overall_diff = ((total_rust_size as f64 - total_cpp_size as f64) / total_cpp_size as f64) * 100.0;
-    eprintln!("\nOverall: Rust {} bytes vs C++ {} bytes ({:+.2}%)",
-        total_rust_size, total_cpp_size, overall_diff);
+    let overall_diff =
+        ((total_rust_size as f64 - total_cpp_size as f64) / total_cpp_size as f64) * 100.0;
+    eprintln!(
+        "\nOverall: Rust {} bytes vs C++ {} bytes ({:+.2}%)",
+        total_rust_size, total_cpp_size, overall_diff
+    );
 
     if !failures.is_empty() {
         eprintln!("\nFailures ({}):", failures.len());
@@ -314,7 +332,10 @@ fn test_dssim_parity() {
 #[test]
 fn test_reference_data_loads() {
     if let Some(reference) = load_reference_data() {
-        assert!(!reference.images.is_empty(), "Reference data should have images");
+        assert!(
+            !reference.images.is_empty(),
+            "Reference data should have images"
+        );
         assert_eq!(reference.version, "1.0");
 
         // Check structure
@@ -331,9 +352,15 @@ fn test_reference_data_loads() {
             }
         }
 
-        eprintln!("Reference data: {} images, {} total data points",
+        eprintln!(
+            "Reference data: {} images, {} total data points",
             reference.images.len(),
-            reference.images.iter().map(|i| i.points.len()).sum::<usize>());
+            reference
+                .images
+                .iter()
+                .map(|i| i.points.len())
+                .sum::<usize>()
+        );
     } else {
         eprintln!("Reference data not found - generate with:");
         eprintln!("  cargo run --example generate_cpp_reference");

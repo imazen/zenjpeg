@@ -249,11 +249,20 @@ fn main() {
     let rust_ycbcr_butter = compute_butteraugli_dist(&rgb, &rust_ycbcr_dec, width, height);
     let rust_xyb_butter = compute_butteraugli_dist(&rgb, &rust_xyb_dec, width, height);
 
-    println!("Rust YCbCr: {} bytes, Butteraugli {:.4}", rust_ycbcr.len(), rust_ycbcr_butter);
-    println!("Rust XYB:   {} bytes, Butteraugli {:.4}", rust_xyb.len(), rust_xyb_butter);
+    println!(
+        "Rust YCbCr: {} bytes, Butteraugli {:.4}",
+        rust_ycbcr.len(),
+        rust_ycbcr_butter
+    );
+    println!(
+        "Rust XYB:   {} bytes, Butteraugli {:.4}",
+        rust_xyb.len(),
+        rust_xyb_butter
+    );
     println!();
 
-    let size_diff = 100.0 * (rust_xyb.len() as f64 - rust_ycbcr.len() as f64) / rust_ycbcr.len() as f64;
+    let size_diff =
+        100.0 * (rust_xyb.len() as f64 - rust_ycbcr.len() as f64) / rust_ycbcr.len() as f64;
     let butter_diff = rust_xyb_butter - rust_ycbcr_butter;
 
     println!("XYB vs YCbCr:");
@@ -267,22 +276,37 @@ fn main() {
         let cpp_ycbcr_butter = compute_butteraugli_dist(&rgb, &cpp_ycbcr_dec, width, height);
         let cpp_xyb_butter = compute_butteraugli_dist(&rgb, &cpp_xyb_dec, width, height);
 
-        println!("\nC++ YCbCr: {} bytes, Butteraugli {:.4}", cpp_y.len(), cpp_ycbcr_butter);
-        println!("C++ XYB:   {} bytes, Butteraugli {:.4}", cpp_x.len(), cpp_xyb_butter);
+        println!(
+            "\nC++ YCbCr: {} bytes, Butteraugli {:.4}",
+            cpp_y.len(),
+            cpp_ycbcr_butter
+        );
+        println!(
+            "C++ XYB:   {} bytes, Butteraugli {:.4}",
+            cpp_x.len(),
+            cpp_xyb_butter
+        );
 
         let cpp_size_diff = 100.0 * (cpp_x.len() as f64 - cpp_y.len() as f64) / cpp_y.len() as f64;
         let cpp_butter_diff = cpp_xyb_butter - cpp_ycbcr_butter;
 
         println!("\nC++ XYB vs YCbCr:");
         println!("  Size: {:+.1}%", cpp_size_diff);
-        println!("  Butteraugli: {:+.4} (negative = XYB better)", cpp_butter_diff);
+        println!(
+            "  Butteraugli: {:+.4} (negative = XYB better)",
+            cpp_butter_diff
+        );
 
         // Rust vs C++ XYB gap
-        let rust_cpp_size = 100.0 * (rust_xyb.len() as f64 - cpp_x.len() as f64) / cpp_x.len() as f64;
+        let rust_cpp_size =
+            100.0 * (rust_xyb.len() as f64 - cpp_x.len() as f64) / cpp_x.len() as f64;
         let rust_cpp_butter = rust_xyb_butter - cpp_xyb_butter;
 
         println!("\nRust XYB vs C++ XYB:");
         println!("  Size: {:+.1}%", rust_cpp_size);
-        println!("  Butteraugli: {:+.4} (negative = Rust better)", rust_cpp_butter);
+        println!(
+            "  Butteraugli: {:+.4} (negative = Rust better)",
+            rust_cpp_butter
+        );
     }
 }

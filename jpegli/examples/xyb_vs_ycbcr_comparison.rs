@@ -322,9 +322,8 @@ fn main() {
 
             // 4. C++ XYB
             if let Some(cpp_xyb) = encode_cpp_cjpegli(ppm_path, quality as u32, true) {
-                let cpp_xyb_dec = decode_xyb_with_icc(&cpp_xyb).unwrap_or_else(|| {
-                    decode_jpeg(&cpp_xyb)
-                });
+                let cpp_xyb_dec =
+                    decode_xyb_with_icc(&cpp_xyb).unwrap_or_else(|| decode_jpeg(&cpp_xyb));
                 results.push(EncoderResult {
                     name: "C++ XYB".to_string(),
                     quality,
@@ -414,8 +413,8 @@ fn main() {
                 let ssim2_y = compute_ssim2(&rgb, &rust_ycbcr_dec, width, height);
                 let ssim2_x = compute_ssim2(&rgb, &rust_xyb_dec, width, height);
 
-                let size_diff_pct =
-                    100.0 * (rust_xyb.len() as f64 - rust_ycbcr.len() as f64) / rust_ycbcr.len() as f64;
+                let size_diff_pct = 100.0 * (rust_xyb.len() as f64 - rust_ycbcr.len() as f64)
+                    / rust_ycbcr.len() as f64;
                 println!(
                     "  Rust XYB vs YCbCr: {:+.1}% size, {:+.2} SSIM2 ({:.2} vs {:.2})",
                     size_diff_pct,

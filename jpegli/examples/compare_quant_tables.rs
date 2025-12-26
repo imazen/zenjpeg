@@ -105,7 +105,10 @@ fn extract_quant_tables(jpeg: &[u8]) -> Vec<(u8, Vec<u16>)> {
                     } else {
                         let mut t = Vec::with_capacity(64);
                         for i in 0..64 {
-                            t.push(u16::from_be_bytes([jpeg[tpos + i * 2], jpeg[tpos + i * 2 + 1]]));
+                            t.push(u16::from_be_bytes([
+                                jpeg[tpos + i * 2],
+                                jpeg[tpos + i * 2 + 1],
+                            ]));
                         }
                         tpos += 128;
                         t
@@ -131,7 +134,13 @@ fn extract_quant_tables(jpeg: &[u8]) -> Vec<(u8, Vec<u16>)> {
 }
 
 fn print_table(name: &str, table: &[u16]) {
-    println!("  {}: min={}, max={}, sum={}", name, table.iter().min().unwrap(), table.iter().max().unwrap(), table.iter().map(|&x| x as u32).sum::<u32>());
+    println!(
+        "  {}: min={}, max={}, sum={}",
+        name,
+        table.iter().min().unwrap(),
+        table.iter().max().unwrap(),
+        table.iter().map(|&x| x as u32).sum::<u32>()
+    );
     println!("  First 8: {:?}", &table[..8]);
 }
 
@@ -176,10 +185,17 @@ fn main() {
             println!("\nTable differences (Rust - C++):");
             for ((rid, rt), (cid, ct)) in rust_tables.iter().zip(cpp_tables.iter()) {
                 if rid == cid {
-                    let diff: Vec<i32> = rt.iter().zip(ct.iter()).map(|(&r, &c)| r as i32 - c as i32).collect();
+                    let diff: Vec<i32> = rt
+                        .iter()
+                        .zip(ct.iter())
+                        .map(|(&r, &c)| r as i32 - c as i32)
+                        .collect();
                     let max_diff = diff.iter().map(|&d| d.abs()).max().unwrap_or(0);
                     let sum_diff: i32 = diff.iter().sum();
-                    println!("  Table {}: max_diff={}, sum_diff={}", rid, max_diff, sum_diff);
+                    println!(
+                        "  Table {}: max_diff={}, sum_diff={}",
+                        rid, max_diff, sum_diff
+                    );
                     if max_diff > 0 {
                         println!("    First 8 Rust: {:?}", &rt[..8]);
                         println!("    First 8 C++:  {:?}", &ct[..8]);
@@ -209,10 +225,17 @@ fn main() {
             println!("\nTable differences (Rust - C++):");
             for ((rid, rt), (cid, ct)) in rust_tables.iter().zip(cpp_tables.iter()) {
                 if rid == cid {
-                    let diff: Vec<i32> = rt.iter().zip(ct.iter()).map(|(&r, &c)| r as i32 - c as i32).collect();
+                    let diff: Vec<i32> = rt
+                        .iter()
+                        .zip(ct.iter())
+                        .map(|(&r, &c)| r as i32 - c as i32)
+                        .collect();
                     let max_diff = diff.iter().map(|&d| d.abs()).max().unwrap_or(0);
                     let sum_diff: i32 = diff.iter().sum();
-                    println!("  Table {}: max_diff={}, sum_diff={}", rid, max_diff, sum_diff);
+                    println!(
+                        "  Table {}: max_diff={}, sum_diff={}",
+                        rid, max_diff, sum_diff
+                    );
                 }
             }
         }

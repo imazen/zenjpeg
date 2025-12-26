@@ -520,7 +520,8 @@ fn compute_diffmap_single_resolution(
     let ps2 = separate_frequencies(&xyb2);
 
     // Compute AC differences using Malta filter
-    let mut block_diff_ac = compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry(), params.xmul());
+    let mut block_diff_ac =
+        compute_psycho_diff_malta(&ps1, &ps2, params.hf_asymmetry(), params.xmul());
 
     // Compute mask from both PsychoImages (also accumulates some AC differences)
     // This matches C++ MaskPsychoImage which calls CombineChannelsForMasking + Mask

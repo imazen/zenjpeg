@@ -220,7 +220,13 @@ fn main() {
     };
 
     let pixels = width * height;
-    println!("Image: {} ({}x{}, {} pixels)", path.file_name().unwrap().to_string_lossy(), width, height, pixels);
+    println!(
+        "Image: {} ({}x{}, {} pixels)",
+        path.file_name().unwrap().to_string_lossy(),
+        width,
+        height,
+        pixels
+    );
 
     let ppm_path = "/tmp/test_image.ppm";
     write_ppm(ppm_path, &rgb, width, height).unwrap();
@@ -228,10 +234,22 @@ fn main() {
     // Collect data for all encoders
     let quality_levels: Vec<u8> = (50..=99).step_by(5).collect();
 
-    let mut rust_ycbcr = Encoder { name: "Rust YCbCr", points: Vec::new() };
-    let mut cpp_ycbcr = Encoder { name: "C++ YCbCr", points: Vec::new() };
-    let mut rust_xyb = Encoder { name: "Rust XYB", points: Vec::new() };
-    let mut cpp_xyb = Encoder { name: "C++ XYB", points: Vec::new() };
+    let mut rust_ycbcr = Encoder {
+        name: "Rust YCbCr",
+        points: Vec::new(),
+    };
+    let mut cpp_ycbcr = Encoder {
+        name: "C++ YCbCr",
+        points: Vec::new(),
+    };
+    let mut rust_xyb = Encoder {
+        name: "Rust XYB",
+        points: Vec::new(),
+    };
+    let mut cpp_xyb = Encoder {
+        name: "C++ XYB",
+        points: Vec::new(),
+    };
 
     print!("Encoding: ");
     for &q in &quality_levels {
@@ -284,17 +302,25 @@ fn main() {
 
     // Print tables
     println!("=== Size vs Quality (SSIM2) ===");
-    println!("{:>5} {:>12} {:>8} {:>8} | {:>12} {:>8} {:>8}",
-             "Q", "Rust YCbCr", "bpp", "SSIM2", "Rust XYB", "bpp", "SSIM2");
+    println!(
+        "{:>5} {:>12} {:>8} {:>8} | {:>12} {:>8} {:>8}",
+        "Q", "Rust YCbCr", "bpp", "SSIM2", "Rust XYB", "bpp", "SSIM2"
+    );
     println!("{}", "-".repeat(75));
 
     for (ry, rx) in rust_ycbcr.points.iter().zip(rust_xyb.points.iter()) {
         let size_diff = 100.0 * (rx.bpp - ry.bpp) / ry.bpp;
-        println!("{:>5} {:>12.0} {:>8.3} {:>8.2} | {:>12.0} {:>8.3} {:>8.2}   XYB {:+.1}% size",
-                 ry.quality,
-                 ry.bpp * pixels as f64 / 8.0, ry.bpp, ry.ssim2,
-                 rx.bpp * pixels as f64 / 8.0, rx.bpp, rx.ssim2,
-                 size_diff);
+        println!(
+            "{:>5} {:>12.0} {:>8.3} {:>8.2} | {:>12.0} {:>8.3} {:>8.2}   XYB {:+.1}% size",
+            ry.quality,
+            ry.bpp * pixels as f64 / 8.0,
+            ry.bpp,
+            ry.ssim2,
+            rx.bpp * pixels as f64 / 8.0,
+            rx.bpp,
+            rx.ssim2,
+            size_diff
+        );
     }
 
     println!("\n=== Implementation Gap (Rust vs C++) ===");
@@ -314,9 +340,11 @@ fn main() {
         let rx = &rust_xyb.points[i];
         let xyb_gap = if i < cpp_xyb.points.len() {
             let cx = &cpp_xyb.points[i];
-            format!("{:+.1}% size, {:+.2} SSIM2",
-                    100.0 * (rx.bpp - cx.bpp) / cx.bpp,
-                    rx.ssim2 - cx.ssim2)
+            format!(
+                "{:+.1}% size, {:+.2} SSIM2",
+                100.0 * (rx.bpp - cx.bpp) / cx.bpp,
+                rx.ssim2 - cx.ssim2
+            )
         } else {
             "N/A".to_string()
         };
@@ -336,11 +364,13 @@ fn main() {
         let find_bpp_at_ssim2 = |points: &[DataPoint]| -> Option<f64> {
             // Find two points that bracket the target
             for i in 0..points.len().saturating_sub(1) {
-                if (points[i].ssim2 <= target_ssim2 && points[i+1].ssim2 >= target_ssim2) ||
-                   (points[i].ssim2 >= target_ssim2 && points[i+1].ssim2 <= target_ssim2) {
+                if (points[i].ssim2 <= target_ssim2 && points[i + 1].ssim2 >= target_ssim2)
+                    || (points[i].ssim2 >= target_ssim2 && points[i + 1].ssim2 <= target_ssim2)
+                {
                     // Linear interpolation
-                    let t = (target_ssim2 - points[i].ssim2) / (points[i+1].ssim2 - points[i].ssim2);
-                    return Some(points[i].bpp + t * (points[i+1].bpp - points[i].bpp));
+                    let t =
+                        (target_ssim2 - points[i].ssim2) / (points[i + 1].ssim2 - points[i].ssim2);
+                    return Some(points[i].bpp + t * (points[i + 1].bpp - points[i].bpp));
                 }
             }
             None
@@ -372,19 +402,37 @@ fn main() {
     println!("  • YCbCr: <0.2% size difference (essentially identical)");
 
     // Calculate average XYB gap
-    let avg_xyb_size_gap: f64 = rust_xyb.points.iter().zip(cpp_xyb.points.iter())
+    let avg_xyb_size_gap: f64 = rust_xyb
+        .points
+        .iter()
+        .zip(cpp_xyb.points.iter())
         .map(|(rx, cx)| 100.0 * (rx.bpp - cx.bpp) / cx.bpp)
-        .sum::<f64>() / rust_xyb.points.len().min(cpp_xyb.points.len()) as f64;
-    let avg_xyb_ssim2_gap: f64 = rust_xyb.points.iter().zip(cpp_xyb.points.iter())
+        .sum::<f64>()
+        / rust_xyb.points.len().min(cpp_xyb.points.len()) as f64;
+    let avg_xyb_ssim2_gap: f64 = rust_xyb
+        .points
+        .iter()
+        .zip(cpp_xyb.points.iter())
         .map(|(rx, cx)| rx.ssim2 - cx.ssim2)
-        .sum::<f64>() / rust_xyb.points.len().min(cpp_xyb.points.len()) as f64;
+        .sum::<f64>()
+        / rust_xyb.points.len().min(cpp_xyb.points.len()) as f64;
 
-    println!("  • XYB: {:+.1}% size, {:+.2} SSIM2 (Rust vs C++)", avg_xyb_size_gap, avg_xyb_ssim2_gap);
+    println!(
+        "  • XYB: {:+.1}% size, {:+.2} SSIM2 (Rust vs C++)",
+        avg_xyb_size_gap, avg_xyb_ssim2_gap
+    );
 
     println!("\nColor space gap (XYB vs YCbCr at same Q):");
-    let avg_color_size: f64 = rust_xyb.points.iter().zip(rust_ycbcr.points.iter())
+    let avg_color_size: f64 = rust_xyb
+        .points
+        .iter()
+        .zip(rust_ycbcr.points.iter())
         .map(|(rx, ry)| 100.0 * (rx.bpp - ry.bpp) / ry.bpp)
-        .sum::<f64>() / rust_xyb.points.len() as f64;
-    println!("  • XYB ~{:.0}% smaller files at same Q setting", -avg_color_size);
+        .sum::<f64>()
+        / rust_xyb.points.len() as f64;
+    println!(
+        "  • XYB ~{:.0}% smaller files at same Q setting",
+        -avg_color_size
+    );
     println!("  • BUT XYB needs higher Q to match YCbCr quality");
 }

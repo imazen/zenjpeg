@@ -136,7 +136,12 @@ fn main() {
 
     let avg_diff = sum_diff / count as f64;
 
-    println!("Full image conversion ({}x{} = {} pixels):", width, height, width * height);
+    println!(
+        "Full image conversion ({}x{} = {} pixels):",
+        width,
+        height,
+        width * height
+    );
     println!("  Max difference: {:.9}", max_diff);
     println!("  Avg difference: {:.9}", avg_diff);
 
@@ -156,7 +161,10 @@ fn main() {
         let channel = worst_idx % 3;
         let channel_name = ["X", "Y", "B"][channel];
 
-        println!("\n  Worst pixel at index {} (channel {}):", pixel_idx, channel_name);
+        println!(
+            "\n  Worst pixel at index {} (channel {}):",
+            pixel_idx, channel_name
+        );
         println!(
             "    RGB: ({}, {}, {})",
             rgb[pixel_idx * 3],

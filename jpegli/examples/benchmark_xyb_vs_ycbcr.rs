@@ -55,7 +55,12 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb, info.width, info.height))
 }
 
-fn encode_with_cjpegli(cjpegli_path: &str, input_path: &Path, quality: u8, xyb: bool) -> Option<Vec<u8>> {
+fn encode_with_cjpegli(
+    cjpegli_path: &str,
+    input_path: &Path,
+    quality: u8,
+    xyb: bool,
+) -> Option<Vec<u8>> {
     let mode = if xyb { "xyb" } else { "ycbcr" };
     let temp_output = std::env::temp_dir().join(format!(
         "cjpegli_bench_{}_{}_{}.jpg",
@@ -142,8 +147,14 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
 
     let attr = Dssim::new();
 
-    let orig_rgba: Vec<RGBA<u8>> = orig.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
-    let comp_rgba: Vec<RGBA<u8>> = comp.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
+    let orig_rgba: Vec<RGBA<u8>> = orig
+        .chunks(3)
+        .map(|c| RGBA::new(c[0], c[1], c[2], 255))
+        .collect();
+    let comp_rgba: Vec<RGBA<u8>> = comp
+        .chunks(3)
+        .map(|c| RGBA::new(c[0], c[1], c[2], 255))
+        .collect();
 
     let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
     let comp_img = attr.create_image_rgba(&comp_rgba, width, height).unwrap();
@@ -155,15 +166,43 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
 fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
     use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 
-    let orig_rgb: Vec<[f32; 3]> = orig.chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+    let orig_rgb: Vec<[f32; 3]> = orig
+        .chunks(3)
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
-    let comp_rgb: Vec<[f32; 3]> = comp.chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+    let comp_rgb: Vec<[f32; 3]> = comp
+        .chunks(3)
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
 
-    let orig_frame = Rgb::new(orig_rgb, width, height, TransferCharacteristic::SRGB, ColorPrimaries::BT709).unwrap();
-    let comp_frame = Rgb::new(comp_rgb, width, height, TransferCharacteristic::SRGB, ColorPrimaries::BT709).unwrap();
+    let orig_frame = Rgb::new(
+        orig_rgb,
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
+    let comp_frame = Rgb::new(
+        comp_rgb,
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
 
     compute_frame_ssimulacra2(orig_frame, comp_frame).unwrap_or(0.0)
 }
@@ -187,7 +226,8 @@ fn main() {
         "/home/lilith/work/jpegli/testdata/jxl/flower",
     ];
 
-    let corpus_dir = corpus_paths.iter()
+    let corpus_dir = corpus_paths
+        .iter()
         .find(|p| Path::new(p).exists())
         .map(PathBuf::from)
         .expect("No corpus found");
@@ -201,8 +241,10 @@ fn main() {
     eprintln!("  qualities: {:?}\n", qualities);
 
     // Print header
-    println!("{:<8} {:>3} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7} {:>6} {:>6}",
-        "Image", "Q", "YCbCr", "XYB", "Δ Size", "DSSIM_Y", "DSSIM_X", "Δ DSSIM", "Butt_Y", "Butt_X");
+    println!(
+        "{:<8} {:>3} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7} {:>6} {:>6}",
+        "Image", "Q", "YCbCr", "XYB", "Δ Size", "DSSIM_Y", "DSSIM_X", "Δ DSSIM", "Butt_Y", "Butt_X"
+    );
     println!("{}", "-".repeat(95));
 
     let mut png_files: Vec<_> = fs::read_dir(&corpus_dir)
@@ -234,7 +276,8 @@ fn main() {
 
         for &quality in &qualities {
             // Encode with YCbCr
-            let Some(ycbcr_jpeg) = encode_with_cjpegli(&cjpegli_path, png_path, quality, false) else {
+            let Some(ycbcr_jpeg) = encode_with_cjpegli(&cjpegli_path, png_path, quality, false)
+            else {
                 continue;
             };
             let ycbcr_size = ycbcr_jpeg.len();
@@ -246,29 +289,53 @@ fn main() {
             let xyb_size = xyb_jpeg.len();
 
             // Decode YCbCr with jpeg-decoder (no ICC needed)
-            let Some((ycbcr_decoded, _, _)) = decode_jpeg(&ycbcr_jpeg) else { continue };
+            let Some((ycbcr_decoded, _, _)) = decode_jpeg(&ycbcr_jpeg) else {
+                continue;
+            };
 
             // Decode XYB with ICC profile application
-            let Some((xyb_decoded, _, _)) = decode_jpeg_with_icc(&xyb_jpeg) else { continue };
+            let Some((xyb_decoded, _, _)) = decode_jpeg_with_icc(&xyb_jpeg) else {
+                continue;
+            };
 
-            let ycbcr_dssim = compute_dssim(&orig_rgb, &ycbcr_decoded, width as usize, height as usize);
+            let ycbcr_dssim =
+                compute_dssim(&orig_rgb, &ycbcr_decoded, width as usize, height as usize);
             let xyb_dssim = compute_dssim(&orig_rgb, &xyb_decoded, width as usize, height as usize);
 
-            let ycbcr_ssim2 = compute_ssimulacra2(&orig_rgb, &ycbcr_decoded, width as usize, height as usize);
-            let xyb_ssim2 = compute_ssimulacra2(&orig_rgb, &xyb_decoded, width as usize, height as usize);
+            let ycbcr_ssim2 =
+                compute_ssimulacra2(&orig_rgb, &ycbcr_decoded, width as usize, height as usize);
+            let xyb_ssim2 =
+                compute_ssimulacra2(&orig_rgb, &xyb_decoded, width as usize, height as usize);
 
-            let ycbcr_butt = compute_butteraugli_score(&orig_rgb, &ycbcr_decoded, width as usize, height as usize);
-            let xyb_butt = compute_butteraugli_score(&orig_rgb, &xyb_decoded, width as usize, height as usize);
+            let ycbcr_butt = compute_butteraugli_score(
+                &orig_rgb,
+                &ycbcr_decoded,
+                width as usize,
+                height as usize,
+            );
+            let xyb_butt =
+                compute_butteraugli_score(&orig_rgb, &xyb_decoded, width as usize, height as usize);
 
             let size_diff_pct = ((xyb_size as f64 - ycbcr_size as f64) / ycbcr_size as f64) * 100.0;
             let dssim_diff_pct = if ycbcr_dssim > 0.0 {
                 ((xyb_dssim - ycbcr_dssim) / ycbcr_dssim) * 100.0
-            } else { 0.0 };
+            } else {
+                0.0
+            };
 
-            println!("{:<8} {:>3} {:>8} {:>8} {:>+6.1}% {:>.6} {:>.6} {:>+6.1}% {:>6.2} {:>6.2}",
-                name, quality, ycbcr_size, xyb_size, size_diff_pct,
-                ycbcr_dssim, xyb_dssim, dssim_diff_pct,
-                ycbcr_butt, xyb_butt);
+            println!(
+                "{:<8} {:>3} {:>8} {:>8} {:>+6.1}% {:>.6} {:>.6} {:>+6.1}% {:>6.2} {:>6.2}",
+                name,
+                quality,
+                ycbcr_size,
+                xyb_size,
+                size_diff_pct,
+                ycbcr_dssim,
+                xyb_dssim,
+                dssim_diff_pct,
+                ycbcr_butt,
+                xyb_butt
+            );
 
             total_ycbcr_size += ycbcr_size;
             total_xyb_size += xyb_size;
@@ -295,18 +362,30 @@ fn main() {
 
     println!("{}", "-".repeat(95));
 
-    let overall_size_diff = ((total_xyb_size as f64 - total_ycbcr_size as f64) / total_ycbcr_size as f64) * 100.0;
+    let overall_size_diff =
+        ((total_xyb_size as f64 - total_ycbcr_size as f64) / total_ycbcr_size as f64) * 100.0;
     let avg_ycbcr_dssim = total_ycbcr_dssim / count as f64;
     let avg_xyb_dssim = total_xyb_dssim / count as f64;
     let avg_dssim_diff = ((avg_xyb_dssim - avg_ycbcr_dssim) / avg_ycbcr_dssim) * 100.0;
 
-    println!("{:<8} {:>3} {:>8} {:>8} {:>+6.1}% {:>.6} {:>.6} {:>+6.1}%",
-        "TOTAL", "", total_ycbcr_size, total_xyb_size, overall_size_diff,
-        avg_ycbcr_dssim, avg_xyb_dssim, avg_dssim_diff);
+    println!(
+        "{:<8} {:>3} {:>8} {:>8} {:>+6.1}% {:>.6} {:>.6} {:>+6.1}%",
+        "TOTAL",
+        "",
+        total_ycbcr_size,
+        total_xyb_size,
+        overall_size_diff,
+        avg_ycbcr_dssim,
+        avg_xyb_dssim,
+        avg_dssim_diff
+    );
 
     eprintln!("\n=== Summary ===");
     eprintln!("XYB vs YCbCr file size: {:+.2}%", overall_size_diff);
-    eprintln!("XYB vs YCbCr avg DSSIM: {:+.2}% (lower is better)", avg_dssim_diff);
+    eprintln!(
+        "XYB vs YCbCr avg DSSIM: {:+.2}% (lower is better)",
+        avg_dssim_diff
+    );
     eprintln!("\nPositive size diff = XYB is larger");
     eprintln!("Negative DSSIM diff = XYB has better quality");
 

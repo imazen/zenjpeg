@@ -64,7 +64,8 @@ fn encode_cpp_quality(input_path: &Path, quality: u32, use_xyb: bool) -> Option<
         cmd.arg("--xyb");
     }
 
-    let output = cmd.stdout(Stdio::null())
+    let output = cmd
+        .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;
@@ -112,8 +113,14 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
 
     let attr = Dssim::new();
 
-    let orig_rgba: Vec<RGBA<u8>> = orig.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
-    let comp_rgba: Vec<RGBA<u8>> = comp.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
+    let orig_rgba: Vec<RGBA<u8>> = orig
+        .chunks(3)
+        .map(|c| RGBA::new(c[0], c[1], c[2], 255))
+        .collect();
+    let comp_rgba: Vec<RGBA<u8>> = comp
+        .chunks(3)
+        .map(|c| RGBA::new(c[0], c[1], c[2], 255))
+        .collect();
 
     let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
     let comp_img = attr.create_image_rgba(&comp_rgba, width, height).unwrap();
@@ -177,10 +184,7 @@ fn compute_ssimulacra2(orig: &[u8], decoded: &[u8], width: usize, height: usize)
 }
 
 /// Binary search to find XYB quality that matches target file size
-fn find_matching_xyb_quality(
-    input_path: &Path,
-    target_size: usize,
-) -> Option<(u32, Vec<u8>)> {
+fn find_matching_xyb_quality(input_path: &Path, target_size: usize) -> Option<(u32, Vec<u8>)> {
     let mut best_quality = 50u32;
     let mut best_data: Option<Vec<u8>> = None;
     let mut best_diff = i64::MAX;
@@ -206,7 +210,8 @@ fn main() {
         "/home/lilith/work/jpegli/testdata/jxl/flower",
     ];
 
-    let corpus_dir = corpus_paths.iter()
+    let corpus_dir = corpus_paths
+        .iter()
         .find(|p| Path::new(p).exists())
         .map(PathBuf::from)
         .expect("No corpus found");
@@ -218,8 +223,20 @@ fn main() {
     eprintln!("cjpegli: {}", get_cjpegli_path());
     eprintln!("corpus: {}\n", corpus_dir.display());
 
-    println!("{:<8} {:>4} {:>4} {:>8} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}",
-        "Image", "Q_Y", "Q_X", "Size_Y", "Size_X", "DSSIM_Y", "DSSIM_X", "Butt_Y", "Butt_X", "SSIM_Y", "SSIM_X");
+    println!(
+        "{:<8} {:>4} {:>4} {:>8} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}",
+        "Image",
+        "Q_Y",
+        "Q_X",
+        "Size_Y",
+        "Size_X",
+        "DSSIM_Y",
+        "DSSIM_X",
+        "Butt_Y",
+        "Butt_X",
+        "SSIM_Y",
+        "SSIM_X"
+    );
     println!("{}", "-".repeat(110));
 
     let mut png_files: Vec<_> = fs::read_dir(&corpus_dir)
@@ -258,7 +275,8 @@ fn main() {
             let ycbcr_size = ycbcr_jpeg.len();
 
             // Find XYB quality that matches this file size
-            let Some((xyb_quality, xyb_jpeg)) = find_matching_xyb_quality(png_path, ycbcr_size) else {
+            let Some((xyb_quality, xyb_jpeg)) = find_matching_xyb_quality(png_path, ycbcr_size)
+            else {
                 continue;
             };
             let xyb_size = xyb_jpeg.len();
@@ -267,7 +285,9 @@ fn main() {
             let ycbcr_decoded = decode_jpeg_simple(&ycbcr_jpeg);
 
             // Decode XYB with ICC
-            let Some((xyb_decoded, _, _)) = decode_xyb_with_icc(&xyb_jpeg) else { continue };
+            let Some((xyb_decoded, _, _)) = decode_xyb_with_icc(&xyb_jpeg) else {
+                continue;
+            };
 
             // Compute all three metrics
             let ycbcr_dssim = compute_dssim(&orig_rgb, &ycbcr_decoded, width, height);
@@ -279,11 +299,20 @@ fn main() {
             let ycbcr_ssim = compute_ssimulacra2(&orig_rgb, &ycbcr_decoded, width, height);
             let xyb_ssim = compute_ssimulacra2(&orig_rgb, &xyb_decoded, width, height);
 
-            println!("{:<8} {:>4} {:>4} {:>8} {:>8} {:>.6} {:>.6} {:>6.2} {:>6.2} {:>6.1} {:>6.1}",
-                name, ycbcr_quality, xyb_quality, ycbcr_size, xyb_size,
-                ycbcr_dssim, xyb_dssim,
-                ycbcr_butt, xyb_butt,
-                ycbcr_ssim, xyb_ssim);
+            println!(
+                "{:<8} {:>4} {:>4} {:>8} {:>8} {:>.6} {:>.6} {:>6.2} {:>6.2} {:>6.1} {:>6.1}",
+                name,
+                ycbcr_quality,
+                xyb_quality,
+                ycbcr_size,
+                xyb_size,
+                ycbcr_dssim,
+                xyb_dssim,
+                ycbcr_butt,
+                xyb_butt,
+                ycbcr_ssim,
+                xyb_ssim
+            );
 
             total_ycbcr_dssim += ycbcr_dssim;
             total_xyb_dssim += xyb_dssim;
