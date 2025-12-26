@@ -256,9 +256,16 @@ impl Encoder {
         strategy: &SelectedStrategy,
     ) -> Result<Vec<u8>> {
         let q = self.quality.value() as u8;
-        // Use mozjpeg-style quant tables (ImageMagick variant)
-        // These are optimized for better perceptual quality at same file size
-        let quant_tables = QuantTableSet::mozjpeg(q);
+
+        // Select quantization tables based on strategy
+        // - Jpegli: perceptually-optimized tables with non-linear frequency scaling
+        // - Mozjpeg/other: mozjpeg's ImageMagick variant tables
+        let use_jpegli_style = strategy.approach == EncodingApproach::Jpegli;
+        let quant_tables = if use_jpegli_style {
+            QuantTableSet::jpegli(q)
+        } else {
+            QuantTableSet::mozjpeg(q)
+        };
 
         // Create standard derived tables for trellis rate estimation
         let ac_derived = get_std_ac_derived();
@@ -272,9 +279,6 @@ impl Encoder {
         let mut y_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cb_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cr_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
-
-        // Choose encoding path based on strategy approach
-        let use_jpegli_style = strategy.approach == EncodingApproach::Jpegli;
 
         if use_jpegli_style {
             // Jpegli-style encoding: use zero-bias quantization with AQ strength
@@ -580,8 +584,14 @@ impl Encoder {
         strategy: &SelectedStrategy,
     ) -> Result<Vec<u8>> {
         let q = self.quality.value() as u8;
-        // Use mozjpeg-style quant table (ImageMagick variant)
-        let quant_table = crate::quant::QuantTable::luma_mozjpeg(q);
+
+        // Select quantization table based on strategy
+        let use_jpegli_style = strategy.approach == EncodingApproach::Jpegli;
+        let quant_table = if use_jpegli_style {
+            crate::quant::QuantTable::luma_jpegli(q)
+        } else {
+            crate::quant::QuantTable::luma_mozjpeg(q)
+        };
 
         // Create standard derived tables for trellis rate estimation
         let ac_derived = get_std_ac_derived();

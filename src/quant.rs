@@ -214,20 +214,19 @@ pub fn quantize_block_simple(coeffs: &[f32; 64], quant: &[u16; 64]) -> [i16; 64]
 
 /// Convert traditional JPEG quality (1-100) to butteraugli distance.
 ///
-/// This approximates jpegli's quality-to-distance mapping.
+/// This matches jpegli's `jpegli_quality_to_distance` function exactly.
+/// Lower distance = higher quality. Distance 1.0 is approximately "visually lossless".
 pub fn quality_to_distance(quality: u8) -> f32 {
-    let q = quality.clamp(1, 100) as f32;
-    if q >= 100.0 {
+    let q = quality.clamp(1, 100) as i32;
+    if q >= 100 {
         0.01
-    } else if q >= 95.0 {
-        // Very high quality: steep curve
-        (100.0 - q) * 0.1
-    } else if q >= 70.0 {
-        // High to medium: moderate curve
-        0.5 + (95.0 - q) * 0.06
+    } else if q >= 30 {
+        // Linear scaling from Q30-Q100
+        0.1 + (100 - q) as f32 * 0.09
     } else {
-        // Low quality: steep increase
-        2.0 + (70.0 - q) * 0.15
+        // Quadratic for very low quality (Q1-Q29)
+        let qf = q as f32;
+        53.0 / 3000.0 * qf * qf - 23.0 / 20.0 * qf + 25.0
     }
 }
 
@@ -244,6 +243,102 @@ const MOZJPEG_CHROMA_QUANT: [u16; 64] = [
     56, 53, 91, 106, 131, 169, 226, 311,  // 311 is valid, will clamp after scaling
     85, 75, 135, 156, 189, 238, 311, 418, // 311, 418 are valid, will clamp after scaling
 ];
+
+// ============================================================================
+// jpegli perceptual quantization tables
+// From C++ jpegli quant.cc - these provide better perceptual quality/size tradeoff
+// ============================================================================
+
+/// jpegli's global scale factor for YCbCr color space
+const JPEGLI_GLOBAL_SCALE: f32 = 1.739_660_1;
+
+/// Distance threshold where non-linear frequency scaling kicks in
+const JPEGLI_DIST_THRESHOLD: f32 = 1.5;
+
+/// Per-frequency scaling exponents for non-linear quality scaling.
+/// Low frequencies (top-left) use lower exponents for more aggressive scaling,
+/// while high frequencies (bottom-right) use 1.0 for linear scaling.
+/// From C++ jpegli quant.cc
+#[rustfmt::skip]
+const JPEGLI_FREQ_EXPONENT: [f32; 64] = [
+    1.00, 0.51, 0.67, 0.74, 1.00, 1.00, 1.00, 1.00,
+    0.51, 0.66, 0.69, 0.87, 1.00, 1.00, 1.00, 1.00,
+    0.67, 0.69, 0.84, 0.83, 0.96, 1.00, 1.00, 1.00,
+    0.74, 0.87, 0.83, 1.00, 1.00, 0.91, 0.91, 1.00,
+    1.00, 1.00, 0.96, 1.00, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 0.91, 1.00, 1.00, 1.00, 1.00,
+    1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00,
+];
+
+/// jpegli's perceptually-optimized base quantization matrix for YCbCr.
+/// 3 components × 64 coefficients = 192 values.
+/// From C++ jpegli quant.cc
+#[rustfmt::skip]
+const JPEGLI_BASE_QUANT_YCBCR: [f32; 192] = [
+    // Channel 0 (Y - Luminance)
+    1.239_740_9, 1.722_711_5, 2.921_216_7, 2.812_737_4, 3.339_819_7, 3.463_603_8, 3.840_915_2, 3.869_56,
+    1.722_711_5, 2.092_889_4, 2.845_676, 2.704_506_8, 3.440_767_4, 3.166_232_4, 4.025_208_7, 4.035_324_5,
+    2.921_216_7, 2.845_676, 2.958_740_4, 3.386_295, 3.619_523_8, 3.904_628, 3.757_835_8, 4.237_447_5,
+    2.812_737_4, 2.704_506_8, 3.386_295, 3.380_058_8, 4.167_986_7, 4.805_510_6, 4.784_259, 4.605_934,
+    3.339_819_7, 3.440_767_4, 3.619_523_8, 4.167_986_7, 4.579_851_3, 4.923_237, 5.574_107, 5.485_333_4,
+    3.463_603_8, 3.166_232_4, 3.904_628, 4.805_510_6, 4.923_237, 5.439_36, 5.093_895_7, 6.087_225_4,
+    3.840_915_2, 4.025_208_7, 3.757_835_8, 4.784_259, 5.574_107, 5.093_895_7, 5.438_461, 5.403_736,
+    3.869_56, 4.035_324_5, 4.237_447_5, 4.605_934, 5.485_333_4, 6.087_225_4, 5.403_736, 4.377_871,
+    // Channel 1 (Cb - Blue difference)
+    2.823_619_8, 6.495_639_4, 9.310_489, 10.647_479, 11.074_191, 17.146_39, 18.463_982, 29.087_002,
+    6.495_639_4, 8.890_104, 8.976_895_8, 13.666_27, 16.547_072, 16.638_714, 26.778_397, 21.330_343,
+    9.310_489, 8.976_895_8, 11.087_377, 18.205_482, 19.752_482, 23.985_66, 102.645_74, 24.450_989,
+    10.647_479, 13.666_27, 18.205_482, 18.628_012, 16.042_51, 25.049_183, 25.017_14, 35.797_89,
+    11.074_191, 16.547_072, 19.752_482, 16.042_51, 19.373_483, 14.677_53, 19.946_96, 51.094_112,
+    17.146_39, 16.638_714, 23.985_66, 25.049_183, 14.677_53, 31.320_412, 46.357_234, 67.481_11,
+    18.463_982, 26.778_397, 102.645_74, 25.017_14, 19.946_96, 46.357_234, 61.315_765, 88.346_65,
+    29.087_002, 21.330_343, 24.450_989, 35.797_89, 51.094_112, 67.481_11, 88.346_65, 112.160_99,
+    // Channel 2 (Cr - Red difference)
+    2.921_725_5, 4.497_681, 7.356_344_5, 6.583_891_5, 8.535_608_7, 8.799_434_4, 9.188_341_5, 9.482_7,
+    4.497_681, 6.309_548_9, 7.024_609, 7.156_445_3, 8.049_059_2, 7.012_429, 6.711_923_2, 8.380_308,
+    7.356_344_5, 7.024_609, 6.892_101_2, 6.882_82, 8.782_226, 6.877_475, 7.885_817_6, 8.679_09,
+    6.583_891_5, 7.156_445_3, 6.882_82, 7.003_073, 7.722_346_5, 7.955_425_7, 7.473_411, 8.362_933,
+    8.535_608_7, 8.049_059_2, 8.782_226, 7.722_346_5, 6.778_005_9, 9.484_922_7, 9.043_702_7, 8.053_178_2,
+    8.799_434_4, 7.012_429, 6.877_475, 7.955_425_7, 9.484_922_7, 8.607_606_5, 9.922_697_4, 64.251_35,
+    9.188_341_5, 6.711_923_2, 7.885_817_6, 7.473_411, 9.043_702_7, 9.922_697_4, 63.184_937, 83.352_94,
+    9.482_7, 8.380_308, 8.679_09, 8.362_933, 8.053_178_2, 64.251_35, 83.352_94, 114.892_02,
+];
+
+/// Apply jpegli's non-linear per-frequency scaling.
+/// Low frequencies use lower exponents for more aggressive scaling.
+#[inline]
+fn jpegli_distance_to_scale(distance: f32, freq_idx: usize) -> f32 {
+    if distance < JPEGLI_DIST_THRESHOLD {
+        return distance;
+    }
+    let exp = JPEGLI_FREQ_EXPONENT[freq_idx];
+    let mul = JPEGLI_DIST_THRESHOLD.powf(1.0 - exp);
+    (0.5 * distance).max(mul * distance.powf(exp))
+}
+
+/// Generate a jpegli-style quantization table for YCbCr.
+///
+/// Uses jpegli's perceptually-optimized base matrix with non-linear
+/// per-frequency scaling for better quality at the same file size.
+///
+/// # Arguments
+/// * `distance` - Butteraugli distance (use quality_to_distance() to convert from 1-100)
+/// * `component` - Component index (0=Y, 1=Cb, 2=Cr)
+fn jpegli_quant_table(distance: f32, component: usize, slot: u8) -> QuantTable {
+    let c = component.min(2);
+    let base_idx = c * 64;
+    let base = &JPEGLI_BASE_QUANT_YCBCR[base_idx..base_idx + 64];
+
+    let mut values = [0u16; 64];
+    for i in 0..64 {
+        let scale = jpegli_distance_to_scale(distance, i) * JPEGLI_GLOBAL_SCALE;
+        let q = (base[i] * scale).round();
+        values[i] = (q as u16).clamp(1, 255);
+    }
+
+    QuantTable { values, slot }
+}
 
 /// Quantization table for a single component
 #[derive(Clone, Debug)]
@@ -278,6 +373,27 @@ impl QuantTable {
     /// Create mozjpeg-style chrominance table at given quality
     pub fn chroma_mozjpeg(quality: u8) -> Self {
         Self::from_base_table(&MOZJPEG_CHROMA_QUANT, quality, 1)
+    }
+
+    /// Create jpegli-style luminance table at given quality.
+    ///
+    /// Uses jpegli's perceptually-optimized base matrix with non-linear
+    /// per-frequency scaling for better quality at the same file size.
+    pub fn luma_jpegli(quality: u8) -> Self {
+        let distance = quality_to_distance(quality);
+        jpegli_quant_table(distance, 0, 0)
+    }
+
+    /// Create jpegli-style Cb chrominance table at given quality.
+    pub fn chroma_cb_jpegli(quality: u8) -> Self {
+        let distance = quality_to_distance(quality);
+        jpegli_quant_table(distance, 1, 1)
+    }
+
+    /// Create jpegli-style Cr chrominance table at given quality.
+    pub fn chroma_cr_jpegli(quality: u8) -> Self {
+        let distance = quality_to_distance(quality);
+        jpegli_quant_table(distance, 2, 1)
     }
 
     /// Scale a base quantization table by quality factor
@@ -330,6 +446,18 @@ impl QuantTableSet {
         Self {
             luma: QuantTable::luma_mozjpeg(quality),
             chroma: QuantTable::chroma_mozjpeg(quality),
+        }
+    }
+
+    /// Create jpegli-style tables at given quality.
+    ///
+    /// Uses jpegli's perceptually-optimized base matrices with non-linear
+    /// per-frequency scaling. Uses the Cb table for chroma (jpegli actually
+    /// uses different tables for Cb and Cr, but standard JPEG uses one chroma table).
+    pub fn jpegli(quality: u8) -> Self {
+        Self {
+            luma: QuantTable::luma_jpegli(quality),
+            chroma: QuantTable::chroma_cb_jpegli(quality),
         }
     }
 }

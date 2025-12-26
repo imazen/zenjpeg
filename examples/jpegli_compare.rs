@@ -24,9 +24,17 @@ fn main() {
     println!("=== zenjpeg vs jpegli Comparison ({}x{}) ===\n", width, height);
 
     for q in [60, 75, 85, 95] {
-        // zenjpeg
-        let zen = zenjpeg::Encoder::new()
+        // zenjpeg with mozjpeg strategy (trellis)
+        let zen_moz = zenjpeg::Encoder::new()
             .quality(zenjpeg::Quality::Standard(q))
+            .strategy(zenjpeg::EncodingStrategy::Mozjpeg)
+            .encode_rgb(&rgb_data, width, height)
+            .unwrap();
+
+        // zenjpeg with jpegli strategy (perceptual quant tables + zero-bias)
+        let zen_jpegli = zenjpeg::Encoder::new()
+            .quality(zenjpeg::Quality::Standard(q))
+            .strategy(zenjpeg::EncodingStrategy::Jpegli)
             .encode_rgb(&rgb_data, width, height)
             .unwrap();
 
@@ -54,31 +62,30 @@ fn main() {
             .unwrap();
 
         // Decode all
-        let zen_dec = jpeg_decoder::Decoder::new(&zen[..]).decode().unwrap();
+        let zen_moz_dec = jpeg_decoder::Decoder::new(&zen_moz[..]).decode().unwrap();
+        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..]).decode().unwrap();
         let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..]).decode().unwrap();
         let moz_dec = jpeg_decoder::Decoder::new(&moz[..]).decode().unwrap();
 
         // Calculate DSSIM
-        let dssim_zen = calculate_dssim(&rgb_data, &zen_dec, width, height);
+        let dssim_zen_moz = calculate_dssim(&rgb_data, &zen_moz_dec, width, height);
+        let dssim_zen_jpegli = calculate_dssim(&rgb_data, &zen_jpegli_dec, width, height);
         let dssim_jpegli = calculate_dssim(&rgb_data, &jpegli_dec, width, height);
         let dssim_moz = calculate_dssim(&rgb_data, &moz_dec, width, height);
 
-        // Calculate MAE
-        let mae_zen = calculate_mae(&rgb_data, &zen_dec);
-        let mae_jpegli = calculate_mae(&rgb_data, &jpegli_dec);
-        let mae_moz = calculate_mae(&rgb_data, &moz_dec);
-
         println!("Q{}:", q);
-        println!("  Size:  zen={:6} jpegli={:6} moz={:6}", zen.len(), jpegli_bytes.len(), moz.len());
-        println!("  DSSIM: zen={:.6} jpegli={:.6} moz={:.6}", dssim_zen, dssim_jpegli, dssim_moz);
-        println!("  MAE:   zen={:.3} jpegli={:.3} moz={:.3}", mae_zen, mae_jpegli, mae_moz);
-        
-        // Pareto analysis: bits per pixel per quality unit
-        let bpp_zen = (zen.len() * 8) as f64 / (width * height) as f64;
-        let bpp_jpegli = (jpegli_bytes.len() * 8) as f64 / (width * height) as f64;
-        let bpp_moz = (moz.len() * 8) as f64 / (width * height) as f64;
-        
-        println!("  BPP:   zen={:.3} jpegli={:.3} moz={:.3}", bpp_zen, bpp_jpegli, bpp_moz);
+        println!("  Size:");
+        println!("    zen/moz:    {:6}  ({:+.1}% vs mozjpeg)", zen_moz.len(),
+            (zen_moz.len() as f64 / moz.len() as f64 - 1.0) * 100.0);
+        println!("    zen/jpegli: {:6}  ({:+.1}% vs ref jpegli)", zen_jpegli.len(),
+            (zen_jpegli.len() as f64 / jpegli_bytes.len() as f64 - 1.0) * 100.0);
+        println!("    ref jpegli: {:6}", jpegli_bytes.len());
+        println!("    mozjpeg:    {:6}", moz.len());
+        println!("  DSSIM:");
+        println!("    zen/moz:    {:.6}", dssim_zen_moz);
+        println!("    zen/jpegli: {:.6}", dssim_zen_jpegli);
+        println!("    ref jpegli: {:.6}", dssim_jpegli);
+        println!("    mozjpeg:    {:.6}", dssim_moz);
         println!();
     }
 }
