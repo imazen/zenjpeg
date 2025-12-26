@@ -56,6 +56,9 @@ mod trellis;
 // Strategy selection
 mod strategy;
 
+// Forked jpegli encoder for experimental improvements
+pub mod jpegli;
+
 // Public API
 pub use encode::Encoder;
 pub use error::Error;

@@ -201,20 +201,22 @@ impl Encoder {
         self.encode_ycbcr_planes(&y_plane, &cb_plane, &cr_plane, width, height, &selected)
     }
 
-    /// Encode RGB image using the actual jpegli encoder.
+    /// Encode RGB image using our forked jpegli encoder.
     ///
-    /// This delegates to jpegli-rs for full perceptual quality:
+    /// Uses the forked jpegli module for full perceptual quality:
     /// - XYB color space processing
     /// - Butteraugli-based adaptive quantization
     /// - Perceptual coefficient optimization
+    ///
+    /// This is a fork that we can modify to improve upon jpegli.
     fn encode_rgb_with_jpegli(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         let q = self.quality.value();
 
-        let result = jpegli::Encoder::new()
+        let result = crate::jpegli::Encoder::new()
             .width(width as u32)
             .height(height as u32)
-            .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(jpegli::Quality::Traditional(q as f32))
+            .pixel_format(crate::jpegli::PixelFormat::Rgb)
+            .quality(crate::jpegli::Quality::Traditional(q as f32))
             .encode(pixels);
 
         match result {
@@ -242,15 +244,15 @@ impl Encoder {
         self.encode_gray_plane(pixels, width, height, &selected)
     }
 
-    /// Encode grayscale image using the actual jpegli encoder.
+    /// Encode grayscale image using our forked jpegli encoder.
     fn encode_gray_with_jpegli(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         let q = self.quality.value();
 
-        let result = jpegli::Encoder::new()
+        let result = crate::jpegli::Encoder::new()
             .width(width as u32)
             .height(height as u32)
-            .pixel_format(jpegli::PixelFormat::Gray)
-            .quality(jpegli::Quality::Traditional(q as f32))
+            .pixel_format(crate::jpegli::PixelFormat::Gray)
+            .quality(crate::jpegli::Quality::Traditional(q as f32))
             .encode(pixels);
 
         match result {
