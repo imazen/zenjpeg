@@ -121,10 +121,9 @@ impl ZeroBiasParams {
     /// - distance >= 3.0: Use LQ table
     /// - 1.0 < distance < 3.0: Linear blend
     ///
-    /// At high quality (low distance), the offset is scaled down to preserve
-    /// more coefficients. This matches jpegli's effective behavior when using
-    /// quant_vals_to_distance to compute the effective distance from actual
-    /// quantization values.
+    /// This matches jpegli's ComputeZeroBiasTables exactly:
+    /// - Offset is constant (not scaled by distance)
+    /// - Only the multiplier is blended between HQ and LQ tables
     ///
     /// # Arguments
     /// * `distance` - Butteraugli distance (quality parameter)
@@ -133,7 +132,7 @@ impl ZeroBiasParams {
     pub fn for_ycbcr(distance: f32, component: usize) -> Self {
         let c = component.min(2);
 
-        // Compute blend factor
+        // Compute blend factor (matches jpegli exactly)
         let mix_lq = ((distance - DIST_HQ) / (DIST_LQ - DIST_HQ)).clamp(0.0, 1.0);
         let mix_hq = 1.0 - mix_lq;
 
@@ -146,21 +145,12 @@ impl ZeroBiasParams {
             let hq = ZERO_BIAS_MUL_YCBCR_HQ[c * 64 + k];
             mul[k] = mix_lq * lq + mix_hq * hq;
 
-            // For offset: at high quality, scale down to preserve more coefficients.
-            // jpegli's effective behavior is to have lower thresholds at high quality.
-            // We scale the offset by distance/DIST_LQ to smoothly reduce aggressiveness.
-            let base_offset = if k == 0 {
+            // Offset is constant (matches jpegli - not scaled by distance)
+            offset[k] = if k == 0 {
                 ZERO_BIAS_OFFSET_YCBCR_DC[c]  // 0.0 for DC
             } else {
                 ZERO_BIAS_OFFSET_YCBCR_AC[c]  // ~0.59 for AC
             };
-
-            // Scale offset by sqrt(distance/DIST_LQ) for smoother curve
-            // At distance 0.5, offset becomes sqrt(0.5/3.0) * 0.59 = 0.24
-            // At distance 1.5, offset becomes sqrt(1.5/3.0) * 0.59 = 0.42
-            // At distance 3.0, offset becomes sqrt(3.0/3.0) * 0.59 = 0.59
-            let scale = (distance / DIST_LQ).min(1.0).sqrt();
-            offset[k] = base_offset * scale;
         }
 
         Self { mul, offset }
@@ -316,6 +306,74 @@ fn jpegli_distance_to_scale(distance: f32, freq_idx: usize) -> f32 {
     let exp = JPEGLI_FREQ_EXPONENT[freq_idx];
     let mul = JPEGLI_DIST_THRESHOLD.powf(1.0 - exp);
     (0.5 * distance).max(mul * distance.powf(exp))
+}
+
+/// Inverse of jpegli_distance_to_scale - converts scale back to distance.
+#[inline]
+fn jpegli_scale_to_distance(scale: f32, freq_idx: usize) -> f32 {
+    if scale < JPEGLI_DIST_THRESHOLD {
+        return scale;
+    }
+    let exp = 1.0 / JPEGLI_FREQ_EXPONENT[freq_idx];
+    let mul = JPEGLI_DIST_THRESHOLD.powf(1.0 - exp);
+    (2.0 * scale).min(mul * scale.powf(exp))
+}
+
+/// Infers the butteraugli distance from quantization table values.
+///
+/// This matches C++ jpegli's `QuantValsToDistance` function.
+/// It finds the distance that would produce the given quant tables
+/// when using jpegli's quantization formula.
+///
+/// This is used to compute zero-bias parameters appropriate for the
+/// actual quant values, rather than the input distance (which may differ
+/// at extreme quality levels where values are clamped to 1 or 255).
+pub fn quant_vals_to_distance(luma: &QuantTable, chroma: &QuantTable) -> f32 {
+    const DIST_MAX: f32 = 10000.0;
+    const QUANT_MAX: u16 = 255;
+
+    let mut dist_min = 0.0f32;
+    let mut dist_max = DIST_MAX;
+
+    // Process luma and chroma (use chroma for both Cb and Cr)
+    let quant_tables = [luma, chroma, chroma];
+
+    for (c, quant) in quant_tables.iter().enumerate() {
+        let base_idx = c * 64;
+        let base_qm = &JPEGLI_BASE_QUANT_YCBCR[base_idx..base_idx + 64];
+
+        for k in 0..64 {
+            let mut dmin = 0.0f32;
+            let mut dmax = DIST_MAX;
+            let invq = 1.0 / base_qm[k] / JPEGLI_GLOBAL_SCALE;
+            let qval = quant.values[k];
+
+            if qval > 1 {
+                let scale_min = (qval as f32 - 0.5) * invq;
+                dmin = jpegli_scale_to_distance(scale_min, k);
+            }
+            if qval < QUANT_MAX {
+                let scale_max = (qval as f32 + 0.5) * invq;
+                dmax = jpegli_scale_to_distance(scale_max, k);
+            }
+
+            if dmin <= dist_max {
+                dist_min = dist_min.max(dmin);
+            }
+            if dmax >= dist_min {
+                dist_max = dist_max.min(dmax);
+            }
+        }
+    }
+
+    // Return the appropriate distance
+    if dist_min == 0.0 {
+        dist_max
+    } else if dist_max >= DIST_MAX {
+        dist_min
+    } else {
+        0.5 * (dist_min + dist_max)
+    }
 }
 
 /// Generate a jpegli-style quantization table for YCbCr.

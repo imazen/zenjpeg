@@ -15,7 +15,7 @@ use crate::progressive::{
     generate_standard_progressive_scans, ScanInfo,
 };
 use crate::types::ScanScript;
-use crate::quant::{QuantTableSet, ZeroBiasParams, quantize_block_with_zero_bias, quality_to_distance};
+use crate::quant::{QuantTableSet, ZeroBiasParams, quantize_block_with_zero_bias, quant_vals_to_distance};
 use crate::strategy::{select_strategy, EncodingApproach, SelectedStrategy};
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
 use crate::types::{EncodingStrategy, PixelFormat, Quality, Subsampling};
@@ -282,12 +282,13 @@ impl Encoder {
 
         if use_jpegli_style {
             // Jpegli-style encoding: use zero-bias quantization with AQ strength
-            let distance = quality_to_distance(q);
+            // Use effective distance from actual quant table values (accounts for clamping)
+            let effective_distance = quant_vals_to_distance(&quant_tables.luma, &quant_tables.chroma);
 
-            // Create zero-bias params for each component
-            let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
-            let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
-            let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
+            // Create zero-bias params for each component using effective distance
+            let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
+            let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
+            let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
             // Compute AQ strength map from Y plane
             let aq_config = AdaptiveQuantConfig {

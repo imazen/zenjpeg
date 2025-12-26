@@ -23,7 +23,7 @@ fn main() {
 
     println!("=== zenjpeg vs jpegli Comparison ({}x{}) ===\n", width, height);
 
-    for q in [60, 75, 85, 95] {
+    for q in [30, 40, 50, 60, 70, 75, 80, 85, 90, 95] {
         // zenjpeg with mozjpeg strategy (trellis)
         let zen_moz = zenjpeg::Encoder::new()
             .quality(zenjpeg::Quality::Standard(q))
