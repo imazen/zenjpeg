@@ -204,4 +204,42 @@ From codec-eval documentation:
 - Strategy selection based on quality
 - Placeholder trellis and AQ implementations
 
-Next: Integration tests with codec-eval, benchmark against reference encoders
+### 2024-12-26: Outlier Analysis with Butteraugli
+
+**Created `find-outliers` tool** in `codec-eval/crates/codec-compare/` to scan corpora and identify encoder-sensitive images.
+
+**Kodak corpus results (24 images, Q50/70/85/95):**
+
+| Metric | C jpegli | C mozjpeg |
+|--------|----------|-----------|
+| Wins (>5% advantage) | 100% | 0% |
+| Avg Butteraugli @ Q85 | 1.8 | 2.8 |
+| Avg Butteraugli @ Q95 | 1.0 | 2.0 |
+
+**Key findings:**
+1. jpegli dominates on Butteraugli quality at ALL quality levels tested
+2. At Q95, jpegli achieves ~50% lower Butteraugli at similar file size
+3. The advantage increases with quality level
+4. No images in Kodak favor mozjpeg on perceptual quality
+
+**Example: kodak/5.png**
+```
+Q  | moz bpp  butter | jpegli bpp  butter
+50 |   1.07    4.47  |   1.46      3.31
+70 |   1.49    3.75  |   1.94      2.73
+85 |   2.25    2.93  |   2.75      1.76
+95 |   3.75    2.65  |   4.64      0.96
+```
+At Q95: jpegli is 24% larger but has 64% better perceptual quality!
+
+**Implications for zenjpeg:**
+1. For quality-optimized encoding, jpegli wins decisively
+2. For size-constrained encoding at low quality, mozjpeg may win (needs more testing)
+3. The "hybrid" strategy may not be needed - jpegli dominates across the board
+4. Focus improvements on jpegli's approach, not mozjpeg's trellis
+
+**Next steps:**
+- [ ] Test at Q30-Q50 to find mozjpeg crossover point (if any)
+- [ ] Test on more diverse corpus (CLIC, CID22)
+- [ ] Analyze what makes certain images compress differently
+- [ ] Consider dropping mozjpeg hybrid strategy if jpegli always wins
