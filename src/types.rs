@@ -256,6 +256,32 @@ pub enum EncodingStrategy {
     Auto,
 }
 
+/// Progressive scan script selection.
+///
+/// Different scan scripts optimize for different trade-offs:
+/// - Minimal: Fastest encoding, reasonable progressive display
+/// - Simple: Good progressive display with frequency band splitting
+/// - Standard: Best compression via successive approximation
+/// - Custom: User-defined scan script
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ScanScript {
+    /// Minimal progressive: DC + full AC scans.
+    /// Fast encoding, good for web preview.
+    #[default]
+    Minimal,
+
+    /// Simple progressive: DC + AC bands (1-5, 6-63).
+    /// Better progressive display with low/high frequency split.
+    Simple,
+
+    /// Standard progressive with successive approximation.
+    /// Best compression, uses refinement scans.
+    Standard,
+
+    /// Custom scan script (advanced usage).
+    Custom(Vec<crate::progressive::ScanInfo>),
+}
+
 impl Default for EncodingStrategy {
     fn default() -> Self {
         EncodingStrategy::Auto

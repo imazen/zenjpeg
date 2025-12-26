@@ -10,7 +10,11 @@ use crate::dct::{forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, SymbolCounter};
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
-use crate::progressive::{generate_minimal_progressive_scans, ScanInfo};
+use crate::progressive::{
+    generate_minimal_progressive_scans, generate_simple_progressive_scans,
+    generate_standard_progressive_scans, ScanInfo,
+};
+use crate::types::ScanScript;
 use crate::quant::QuantTableSet;
 use crate::strategy::{select_strategy, SelectedStrategy};
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
@@ -71,6 +75,7 @@ pub struct Encoder {
     strategy: EncodingStrategy,
     subsampling: Subsampling,
     progressive: Option<bool>,
+    scan_script: ScanScript,
     optimize_huffman: bool,
 }
 
@@ -88,6 +93,7 @@ impl Encoder {
             strategy: EncodingStrategy::Auto,
             subsampling: Subsampling::S444,
             progressive: None, // Auto-select based on strategy
+            scan_script: ScanScript::default(),
             optimize_huffman: true,
         }
     }
@@ -99,6 +105,7 @@ impl Encoder {
             strategy: EncodingStrategy::Mozjpeg,
             subsampling: Subsampling::S420,
             progressive: Some(true),
+            scan_script: ScanScript::Minimal, // Simple progressive, lowest overhead
             optimize_huffman: true,
         }
     }
@@ -110,6 +117,7 @@ impl Encoder {
             strategy: EncodingStrategy::Jpegli,
             subsampling: Subsampling::S444,
             progressive: Some(false),
+            scan_script: ScanScript::default(),
             optimize_huffman: true,
         }
     }
@@ -121,6 +129,7 @@ impl Encoder {
             strategy: EncodingStrategy::Mozjpeg,
             subsampling: Subsampling::S420,
             progressive: Some(false),
+            scan_script: ScanScript::Minimal,
             optimize_huffman: false,
         }
     }
@@ -146,6 +155,21 @@ impl Encoder {
     /// Enable or disable progressive encoding
     pub fn progressive(mut self, progressive: bool) -> Self {
         self.progressive = Some(progressive);
+        self
+    }
+
+    /// Set the progressive scan script.
+    ///
+    /// This only applies when progressive mode is enabled.
+    ///
+    /// # Arguments
+    /// * `script` - The scan script to use:
+    ///   - `Minimal`: DC + full AC scans (fast, good for web)
+    ///   - `Simple`: DC + AC bands 1-5 and 6-63 (better progressive display)
+    ///   - `Standard`: With successive approximation (best compression)
+    ///   - `Custom(scans)`: User-defined scan script
+    pub fn scan_script(mut self, script: ScanScript) -> Self {
+        self.scan_script = script;
         self
     }
 
@@ -370,8 +394,21 @@ impl Encoder {
             all_coeffs.push(cr_coeffs[i]);
         }
 
+        // Check if progressive mode is enabled
+        let use_progressive = self.progressive.unwrap_or(false);
+
+        // Check if using band-split scan script (requires different symbol frequencies)
+        let uses_band_split = matches!(
+            self.scan_script,
+            ScanScript::Simple | ScanScript::Standard | ScanScript::Custom(_)
+        );
+
         // Get Huffman tables (optimized or standard)
-        let (dc_htbl, ac_htbl) = if self.optimize_huffman {
+        // Note: Progressive mode with band-split scans (Simple, Standard) requires
+        // symbol frequencies that differ from baseline encoding. Use standard tables
+        // for band-split progressive. Minimal scan (full AC 1-63) is safe to optimize.
+        let can_optimize = self.optimize_huffman && !(use_progressive && uses_band_split);
+        let (dc_htbl, ac_htbl) = if can_optimize {
             // Two-pass encoding: count symbol frequencies, then generate optimal tables
             let mut dc_counter = FrequencyCounter::new();
             let mut ac_counter = FrequencyCounter::new();
@@ -388,7 +425,7 @@ impl Encoder {
             let ac_table = ac_counter.generate_table().unwrap_or_else(|_| std_ac_luma());
             (dc_table, ac_table)
         } else {
-            // Use standard tables
+            // Use standard tables (for band-split progressive or when optimization is disabled)
             (std_dc_luma(), std_ac_luma())
         };
 
@@ -397,9 +434,6 @@ impl Encoder {
             .expect("Failed to build DC derived table");
         let ac_dtbl = DerivedTable::from_huff_table(&ac_htbl, false)
             .expect("Failed to build AC derived table");
-
-        // Check if progressive mode is enabled
-        let use_progressive = self.progressive.unwrap_or(false);
 
         // Build output buffer with JPEG markers
         let mut output = Vec::with_capacity(width * height);
@@ -532,8 +566,19 @@ impl Encoder {
             }
         }
 
+        // Check if progressive mode is enabled
+        let use_progressive = self.progressive.unwrap_or(false);
+
+        // Check if using band-split scan script
+        let uses_band_split = matches!(
+            self.scan_script,
+            ScanScript::Simple | ScanScript::Standard | ScanScript::Custom(_)
+        );
+
         // Get Huffman tables (optimized or standard)
-        let (dc_htbl, ac_htbl) = if self.optimize_huffman {
+        // Use standard tables for band-split progressive (see RGB encoder comment)
+        let can_optimize = self.optimize_huffman && !(use_progressive && uses_band_split);
+        let (dc_htbl, ac_htbl) = if can_optimize {
             let mut dc_counter = FrequencyCounter::new();
             let mut ac_counter = FrequencyCounter::new();
             let mut symbol_counter = SymbolCounter::new();
@@ -554,9 +599,6 @@ impl Encoder {
             .expect("Failed to build DC derived table");
         let ac_dtbl = DerivedTable::from_huff_table(&ac_htbl, false)
             .expect("Failed to build AC derived table");
-
-        // Check if progressive mode is enabled
-        let use_progressive = self.progressive.unwrap_or(false);
 
         // Build output
         let mut output = Vec::with_capacity(width * height);
@@ -823,8 +865,8 @@ impl Encoder {
     /// Encode YCbCr coefficients using progressive mode.
     ///
     /// This writes multiple scans with progressive encoding:
-    /// - DC scan for all components
-    /// - AC scans for each component
+    /// - DC scan for all components (first pass or refinement)
+    /// - AC scans for each component (first pass or refinement)
     fn encode_progressive_ycbcr(
         &self,
         output: &mut Vec<u8>,
@@ -834,7 +876,12 @@ impl Encoder {
         dc_htbl: &HuffTable,
         ac_htbl: &HuffTable,
     ) {
-        let scans = generate_minimal_progressive_scans(3);
+        let scans = match &self.scan_script {
+            ScanScript::Minimal => generate_minimal_progressive_scans(3),
+            ScanScript::Simple => generate_simple_progressive_scans(3),
+            ScanScript::Standard => generate_standard_progressive_scans(3),
+            ScanScript::Custom(custom_scans) => custom_scans.clone(),
+        };
 
         // Convert to derived tables
         let dc_dtbl = DerivedTable::from_huff_table(dc_htbl, true)
@@ -853,20 +900,36 @@ impl Encoder {
             let num_blocks = y_coeffs.len();
 
             if scan.is_dc_scan() {
-                // DC scan: encode DC for all components
-                for block_idx in 0..num_blocks {
-                    for comp_idx in 0..scan.comps_in_scan as usize {
-                        let coeffs = match scan.component_index[comp_idx] {
-                            0 => &y_coeffs[block_idx],
-                            1 => &cb_coeffs[block_idx],
-                            2 => &cr_coeffs[block_idx],
-                            _ => continue,
-                        };
-                        encoder.encode_dc_first(coeffs, comp_idx, scan.al);
+                // DC scan
+                if scan.is_refinement() {
+                    // DC refinement: output single bit per block
+                    for block_idx in 0..num_blocks {
+                        for comp_idx in 0..scan.comps_in_scan as usize {
+                            let coeffs = match scan.component_index[comp_idx] {
+                                0 => &y_coeffs[block_idx],
+                                1 => &cb_coeffs[block_idx],
+                                2 => &cr_coeffs[block_idx],
+                                _ => continue,
+                            };
+                            encoder.encode_dc_refine(coeffs, scan.al);
+                        }
+                    }
+                } else {
+                    // DC first pass
+                    for block_idx in 0..num_blocks {
+                        for comp_idx in 0..scan.comps_in_scan as usize {
+                            let coeffs = match scan.component_index[comp_idx] {
+                                0 => &y_coeffs[block_idx],
+                                1 => &cb_coeffs[block_idx],
+                                2 => &cr_coeffs[block_idx],
+                                _ => continue,
+                            };
+                            encoder.encode_dc_first(coeffs, comp_idx, scan.al);
+                        }
                     }
                 }
             } else {
-                // AC scan: encode AC for single component
+                // AC scan
                 let comp_idx = scan.component_index[0] as usize;
                 let coeffs_slice = match comp_idx {
                     0 => y_coeffs,
@@ -875,8 +938,16 @@ impl Encoder {
                     _ => y_coeffs,
                 };
 
-                for coeffs in coeffs_slice {
-                    encoder.encode_ac_first(coeffs, scan.ss, scan.se, scan.al);
+                if scan.is_refinement() {
+                    // AC refinement
+                    for coeffs in coeffs_slice {
+                        encoder.encode_ac_refine(coeffs, scan.ss, scan.se, scan.al);
+                    }
+                } else {
+                    // AC first pass
+                    for coeffs in coeffs_slice {
+                        encoder.encode_ac_first(coeffs, scan.ss, scan.se, scan.al);
+                    }
                 }
             }
 
@@ -894,7 +965,12 @@ impl Encoder {
         dc_htbl: &HuffTable,
         ac_htbl: &HuffTable,
     ) {
-        let scans = generate_minimal_progressive_scans(1);
+        let scans = match &self.scan_script {
+            ScanScript::Minimal => generate_minimal_progressive_scans(1),
+            ScanScript::Simple => generate_simple_progressive_scans(1),
+            ScanScript::Standard => generate_standard_progressive_scans(1),
+            ScanScript::Custom(custom_scans) => custom_scans.clone(),
+        };
 
         let dc_dtbl = DerivedTable::from_huff_table(dc_htbl, true)
             .expect("Failed to build DC derived table");
@@ -907,12 +983,28 @@ impl Encoder {
             let mut encoder = ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
 
             if scan.is_dc_scan() {
-                for block_coeffs in coeffs {
-                    encoder.encode_dc_first(block_coeffs, 0, scan.al);
+                if scan.is_refinement() {
+                    // DC refinement
+                    for block_coeffs in coeffs {
+                        encoder.encode_dc_refine(block_coeffs, scan.al);
+                    }
+                } else {
+                    // DC first pass
+                    for block_coeffs in coeffs {
+                        encoder.encode_dc_first(block_coeffs, 0, scan.al);
+                    }
                 }
             } else {
-                for block_coeffs in coeffs {
-                    encoder.encode_ac_first(block_coeffs, scan.ss, scan.se, scan.al);
+                if scan.is_refinement() {
+                    // AC refinement
+                    for block_coeffs in coeffs {
+                        encoder.encode_ac_refine(block_coeffs, scan.ss, scan.se, scan.al);
+                    }
+                } else {
+                    // AC first pass
+                    for block_coeffs in coeffs {
+                        encoder.encode_ac_first(block_coeffs, scan.ss, scan.se, scan.al);
+                    }
                 }
             }
 

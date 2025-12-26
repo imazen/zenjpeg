@@ -6,7 +6,7 @@
 use dssim::Dssim;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use zenjpeg::{Encoder, Quality};
+use zenjpeg::{Encoder, Quality, ScanScript};
 
 /// Get a test image path - try corpus first, fall back to creating synthetic
 fn get_test_image() -> Option<(Vec<u8>, u32, u32)> {
@@ -122,43 +122,17 @@ fn test_trellis_progressive_comparison() {
     let psnr_zen_base = calculate_psnr(&rgb_data, &zen_base_decoded);
     let psnr_c = calculate_psnr(&rgb_data, &c_decoded);
 
-    println!("\nPSNR (higher is better):");
-    println!("  zenjpeg progressive: {:.2} dB", psnr_zen_prog);
-    println!("  zenjpeg baseline:    {:.2} dB", psnr_zen_base);
-    println!("  C mozjpeg:           {:.2} dB", psnr_c);
-
-    // Quality should be reasonable (> 28 dB at Q75 for real photos)
-    assert!(
-        psnr_zen_prog > 28.0,
-        "Progressive PSNR too low: {:.2}",
-        psnr_zen_prog
-    );
-    assert!(
-        psnr_zen_base > 28.0,
-        "Baseline PSNR too low: {:.2}",
-        psnr_zen_base
-    );
-
-    // zenjpeg should be within 3 dB of C mozjpeg
-    let prog_diff = (psnr_zen_prog - psnr_c).abs();
-    let base_diff = (psnr_zen_base - psnr_c).abs();
-    assert!(
-        prog_diff < 3.0,
-        "Progressive differs too much from C: {:.2} dB",
-        prog_diff
-    );
-    assert!(
-        base_diff < 3.0,
-        "Baseline differs too much from C: {:.2} dB",
-        base_diff
-    );
-
-    // DSSIM perceptual quality check
+    // DSSIM perceptual quality check (primary metric - lower is better)
     let dssim_zen_prog = calculate_dssim(&rgb_data, &zen_prog_decoded, width, height);
     let dssim_zen_base = calculate_dssim(&rgb_data, &zen_base_decoded, width, height);
+    let dssim_c = calculate_dssim(&rgb_data, &c_decoded, width, height);
+
     println!("\nDSSIM (lower is better):");
     println!("  zenjpeg progressive: {:.6}", dssim_zen_prog);
     println!("  zenjpeg baseline:    {:.6}", dssim_zen_base);
+    println!("  C mozjpeg:           {:.6}", dssim_c);
+
+    // Quality should be reasonable (DSSIM < 0.005 at Q75)
     assert!(
         dssim_zen_prog < 0.005,
         "Progressive DSSIM too high: {:.6}",
@@ -169,6 +143,21 @@ fn test_trellis_progressive_comparison() {
         "Baseline DSSIM too high: {:.6}",
         dssim_zen_base
     );
+
+    // zenjpeg should be comparable to C mozjpeg perceptually
+    // Allow up to 2x DSSIM difference (reasonable for different implementations)
+    let dssim_ratio = dssim_zen_prog / dssim_c.max(0.0001);
+    assert!(
+        dssim_ratio < 2.0,
+        "Progressive DSSIM ratio {:.2}x too large vs C",
+        dssim_ratio
+    );
+
+    // PSNR for reference only (NOT used for assertions per CLAUDE.md)
+    println!("\nPSNR (informational only, higher is better):");
+    println!("  zenjpeg progressive: {:.2} dB", psnr_zen_prog);
+    println!("  zenjpeg baseline:    {:.2} dB", psnr_zen_base);
+    println!("  C mozjpeg:           {:.2} dB", psnr_c);
 }
 
 /// Test small image encoding.
@@ -188,51 +177,61 @@ fn test_small_image_encoding() {
         }
     }
 
-    let progressive = Encoder::max_compression()
-        .quality(Quality::Standard(85))
-        .encode_rgb(&rgb, width as usize, height as usize)
-        .expect("Progressive failed");
-
+    // Test baseline
     let baseline = Encoder::new()
         .quality(Quality::Standard(85))
         .encode_rgb(&rgb, width as usize, height as usize)
         .expect("Baseline failed");
 
+    // Test progressive with Minimal scan script (should work)
+    let minimal = Encoder::new()
+        .quality(Quality::Standard(85))
+        .progressive(true)
+        .scan_script(ScanScript::Minimal)
+        .encode_rgb(&rgb, width as usize, height as usize)
+        .expect("Minimal failed");
+
+    // Test progressive with Simple scan script (max_compression uses this)
+    let simple = Encoder::new()
+        .quality(Quality::Standard(85))
+        .progressive(true)
+        .scan_script(ScanScript::Simple)
+        .encode_rgb(&rgb, width as usize, height as usize)
+        .expect("Simple failed");
+
     println!("\n=== Small Image (16x16) ===");
-    println!("Progressive: {} bytes", progressive.len());
-    println!("Baseline:    {} bytes", baseline.len());
+    println!("Baseline:           {} bytes", baseline.len());
+    println!("Progressive/Minimal: {} bytes", minimal.len());
+    println!("Progressive/Simple:  {} bytes", simple.len());
 
-    let prog_dec = decode_jpeg(&progressive);
     let base_dec = decode_jpeg(&baseline);
+    let minimal_dec = decode_jpeg(&minimal);
+    let simple_dec = decode_jpeg(&simple);
 
-    let prog_psnr = calculate_psnr(&rgb, &prog_dec);
-    let base_psnr = calculate_psnr(&rgb, &base_dec);
-
-    println!("Progressive PSNR: {:.2} dB", prog_psnr);
-    println!("Baseline PSNR:    {:.2} dB", base_psnr);
-
-    // Both should decode successfully with reasonable quality
-    assert!(
-        prog_psnr > 30.0,
-        "Progressive PSNR too low: {:.2}",
-        prog_psnr
-    );
-    assert!(base_psnr > 30.0, "Baseline PSNR too low: {:.2}", base_psnr);
-
-    // DSSIM perceptual quality check
-    let prog_dssim = calculate_dssim(&rgb, &prog_dec, width, height);
+    // Use DSSIM for perceptual quality (lower is better)
     let base_dssim = calculate_dssim(&rgb, &base_dec, width, height);
-    println!("Progressive DSSIM: {:.6}", prog_dssim);
-    println!("Baseline DSSIM:    {:.6}", base_dssim);
+    let minimal_dssim = calculate_dssim(&rgb, &minimal_dec, width, height);
+    let simple_dssim = calculate_dssim(&rgb, &simple_dec, width, height);
+
+    println!("Baseline DSSIM:           {:.6}", base_dssim);
+    println!("Progressive/Minimal DSSIM: {:.6}", minimal_dssim);
+    println!("Progressive/Simple DSSIM:  {:.6}", simple_dssim);
+
+    // All should decode successfully with reasonable quality (DSSIM < 0.002 at Q85)
     assert!(
-        prog_dssim < 0.005,
-        "Progressive DSSIM too high: {:.6}",
-        prog_dssim
-    );
-    assert!(
-        base_dssim < 0.005,
+        base_dssim < 0.002,
         "Baseline DSSIM too high: {:.6}",
         base_dssim
+    );
+    assert!(
+        minimal_dssim < 0.002,
+        "Minimal DSSIM too high: {:.6}",
+        minimal_dssim
+    );
+    assert!(
+        simple_dssim < 0.002,
+        "Simple DSSIM too high: {:.6}",
+        simple_dssim
     );
 }
 

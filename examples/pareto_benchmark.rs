@@ -4,6 +4,12 @@
 //!
 //! Usage:
 //!   cargo run --release --example pareto_benchmark
+//!   cargo run --release --example pareto_benchmark -- --xyb-fair
+//!
+//! Options:
+//!   --xyb-fair  Use XYB roundtrip for fair jpegli comparison.
+//!               This isolates compression error from color space conversion error
+//!               for codecs that operate in XYB color space internally.
 //!
 //! Outputs:
 //!   - comparison_outputs/pareto_results.csv
@@ -16,19 +22,26 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    let use_xyb_fair = args.iter().any(|a| a == "--xyb-fair");
+
     let output_dir = PathBuf::from("comparison_outputs");
     fs::create_dir_all(&output_dir)?;
 
     // Configure evaluation
+    // Use XYB roundtrip when --xyb-fair is specified for fair jpegli comparison.
+    // This isolates compression error from color space conversion error for XYB codecs.
+    let metrics = if use_xyb_fair {
+        println!("Using XYB roundtrip for fair comparison (--xyb-fair)");
+        MetricConfig::perceptual_xyb()
+    } else {
+        MetricConfig::perceptual()
+    };
+
     let config = EvalConfig::builder()
         .report_dir(&output_dir)
         .viewing(ViewingCondition::desktop())
-        .metrics(MetricConfig {
-            dssim: true,
-            ssimulacra2: true,
-            butteraugli: true,  // All perceptual metrics
-            psnr: false,        // Not reliable for quality
-        })
+        .metrics(metrics)
         .quality_levels(vec![
             30.0, 40.0, 50.0, 60.0, 70.0, 75.0, 80.0, 85.0, 90.0, 95.0,
         ])

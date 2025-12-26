@@ -59,7 +59,8 @@ mod strategy;
 // Public API
 pub use encode::Encoder;
 pub use error::Error;
-pub use types::{ColorSpace, PixelFormat, Quality, Subsampling};
+pub use progressive::ScanInfo;
+pub use types::{ColorSpace, PixelFormat, Quality, ScanScript, Subsampling};
 
 /// Result type for zenjpeg operations
 pub type Result<T> = std::result::Result<T, Error>;
