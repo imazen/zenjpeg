@@ -42,7 +42,7 @@ jpegli-sys = { path = "../jpegli-sys", features = ["butteraugli"] }
 codec-eval = { workspace = true }
 
 [features]
-default = ["simd"]
+default = ["simd", "cms"]
 simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
 cms-lcms2 = ["dep:lcms2", "dep:jpeg-decoder"]

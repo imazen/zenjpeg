@@ -131,7 +131,7 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "butteraugli-oxide"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "approx",
  "chrono",
@@ -140,6 +140,15 @@ dependencies = [
  "mozjpeg",
  "png",
  "proptest",
+ "wide",
+]
+
+[[package]]
+name = "butteraugli-oxide"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a7c15bce302ee11cd5b2674ee6e061dedd905afd3ea870f1da90082849a6eaf"
+dependencies = [
  "wide",
 ]
 
@@ -276,9 +285,9 @@ dependencies = [
 
 [[package]]
 name = "codec-eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "butteraugli-oxide",
+ "butteraugli-oxide 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono",
  "csv",
  "dssim-core",
@@ -668,7 +677,7 @@ dependencies = [
  "approx",
  "arrayref",
  "bincode",
- "butteraugli-oxide",
+ "butteraugli-oxide 0.2.1",
  "bytemuck",
  "chrono",
  "codec-eval",
