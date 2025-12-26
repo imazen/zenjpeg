@@ -2,6 +2,26 @@
 
 This document tracks research findings, experiments, and decisions about combining mozjpeg and jpegli techniques.
 
+## Current State (2024-12-26)
+
+**zenjpeg now has a forked jpegli encoder** in `src/jpegli/` that produces byte-identical output to the reference jpegli-rs. This enables experimentation with improvements.
+
+### Immediate Improvement Targets
+
+1. **Adaptive Quantization Tuning** - `src/jpegli/adaptive_quant.rs`
+   - Current: Full C++ algorithm ported (pre-erosion, fuzzy erosion, modulations)
+   - Opportunity: Tune constants for better Pareto, or try simpler algorithms
+
+2. **Zero-Bias Parameters** - `src/jpegli/quant.rs`
+   - Current: Fixed tables from C++ jpegli
+   - Opportunity: Content-adaptive zero-bias, quality-adaptive offset
+
+3. **Quantization Tables** - `src/jpegli/quant.rs`
+   - Current: jpegli's perceptual matrices with frequency exponents
+   - Opportunity: Tune exponents, learn from corpus
+
+4. **Hybrid Trellis + XYB** - Combine mozjpeg's trellis with jpegli's perceptual model
+
 ## Key Finding: Quality-Dependent Pareto Front
 
 Based on analysis of mozjpeg-rs and jpegli-rs performance:
