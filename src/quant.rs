@@ -5,6 +5,20 @@
 
 use crate::consts::{MOZJPEG_LUMA_QUANT, STD_CHROMA_QUANT, STD_LUMA_QUANT};
 
+/// mozjpeg ImageMagick-style chrominance table (index 3)
+/// Uses same values as luma table for better quality.
+/// Values >255 are clamped AFTER quality scaling, not in the base table.
+const MOZJPEG_CHROMA_QUANT: [u16; 64] = [
+    16, 16, 16, 18, 25, 37, 56, 85,
+    16, 17, 20, 27, 34, 40, 53, 75,
+    16, 20, 24, 31, 43, 62, 91, 135,
+    18, 27, 31, 40, 53, 74, 106, 156,
+    25, 34, 43, 53, 69, 94, 131, 189,
+    37, 40, 62, 74, 94, 124, 169, 238,
+    56, 53, 91, 106, 131, 169, 226, 311,  // 311 is valid, will clamp after scaling
+    85, 75, 135, 156, 189, 238, 311, 418, // 311, 418 are valid, will clamp after scaling
+];
+
 /// Quantization table for a single component
 #[derive(Clone, Debug)]
 pub struct QuantTable {
@@ -33,6 +47,11 @@ impl QuantTable {
     /// Create mozjpeg-style luminance table at given quality
     pub fn luma_mozjpeg(quality: u8) -> Self {
         Self::from_base_table(&MOZJPEG_LUMA_QUANT, quality, 0)
+    }
+
+    /// Create mozjpeg-style chrominance table at given quality
+    pub fn chroma_mozjpeg(quality: u8) -> Self {
+        Self::from_base_table(&MOZJPEG_CHROMA_QUANT, quality, 1)
     }
 
     /// Scale a base quantization table by quality factor
@@ -84,7 +103,7 @@ impl QuantTableSet {
     pub fn mozjpeg(quality: u8) -> Self {
         Self {
             luma: QuantTable::luma_mozjpeg(quality),
-            chroma: QuantTable::chroma_standard(quality),
+            chroma: QuantTable::chroma_mozjpeg(quality),
         }
     }
 }

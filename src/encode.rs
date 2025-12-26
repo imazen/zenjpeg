@@ -126,7 +126,7 @@ impl Encoder {
     pub fn fastest() -> Self {
         Self {
             quality: Quality::Standard(85),
-            strategy: EncodingStrategy::Mozjpeg,
+            strategy: EncodingStrategy::Simple,
             subsampling: Subsampling::S420,
             progressive: Some(false),
             scan_script: ScanScript::Minimal,
@@ -256,7 +256,9 @@ impl Encoder {
         strategy: &SelectedStrategy,
     ) -> Result<Vec<u8>> {
         let q = self.quality.value() as u8;
-        let quant_tables = QuantTableSet::standard(q);
+        // Use mozjpeg-style quant tables (ImageMagick variant)
+        // These are optimized for better perceptual quality at same file size
+        let quant_tables = QuantTableSet::mozjpeg(q);
 
         // Create standard derived tables for trellis rate estimation
         let ac_derived = get_std_ac_derived();
@@ -515,7 +517,8 @@ impl Encoder {
         strategy: &SelectedStrategy,
     ) -> Result<Vec<u8>> {
         let q = self.quality.value() as u8;
-        let quant_table = crate::quant::QuantTable::luma_standard(q);
+        // Use mozjpeg-style quant table (ImageMagick variant)
+        let quant_table = crate::quant::QuantTable::luma_mozjpeg(q);
 
         // Create standard derived tables for trellis rate estimation
         let ac_derived = get_std_ac_derived();

@@ -254,6 +254,8 @@ pub enum EncodingStrategy {
     Hybrid,
     /// Auto-select based on quality setting
     Auto,
+    /// Simple baseline encoding (no trellis, no optimization)
+    Simple,
 }
 
 /// Progressive scan script selection.

@@ -39,6 +39,7 @@ pub fn select_strategy(quality: &Quality, strategy: EncodingStrategy) -> Selecte
         EncodingStrategy::Jpegli => jpegli_strategy(quality),
         EncodingStrategy::Hybrid => hybrid_strategy(quality),
         EncodingStrategy::Auto => auto_strategy(quality),
+        EncodingStrategy::Simple => simple_strategy(quality),
     }
 }
 
@@ -61,6 +62,7 @@ pub fn select_strategy_for_image(
         EncodingStrategy::Jpegli => jpegli_strategy(quality),
         EncodingStrategy::Hybrid => hybrid_strategy(quality),
         EncodingStrategy::Auto => strategy_from_analysis(quality, &analysis),
+        EncodingStrategy::Simple => simple_strategy(quality),
     };
 
     (selected, analysis)
@@ -188,52 +190,40 @@ fn auto_strategy(quality: &Quality) -> SelectedStrategy {
     }
 }
 
+/// Simple baseline encoding (no trellis, no optimization)
+fn simple_strategy(_quality: &Quality) -> SelectedStrategy {
+    SelectedStrategy {
+        approach: EncodingApproach::Mozjpeg,
+        trellis: TrellisConfig::disabled(),
+        adaptive_quant: AdaptiveQuantConfig {
+            enabled: false,
+            strength: 0.0,
+        },
+        progressive: false,
+        optimize_huffman: false,
+    }
+}
+
 /// Compute trellis config based on quality
 ///
 /// The lambda parameters control the rate-distortion tradeoff:
-/// - lambda_log_scale1: Base lambda (higher = favor smaller files)
+/// - lambda_log_scale1: Base lambda (higher = PRESERVE quality, lower = favor smaller files)
 /// - lambda_log_scale2: Normalization factor (higher = less adaptive to block content)
 ///
-/// Note: mozjpeg defaults are (14.75, 16.5) but zenjpeg needs more conservative
-/// values because our quantization pipeline differs from mozjpeg's.
+/// Cost = Rate + Lambda * Distortion
+/// Higher lambda means distortion (quality loss) is penalized more -> preserve quality
+/// Lower lambda means rate (file size) matters more -> aggressive compression
+///
+/// mozjpeg defaults are (14.75, 16.5), which we use for all quality levels.
 fn compute_trellis_config_for_quality(q: f32, aggressive: bool) -> TrellisConfig {
-    if q < 50.0 {
-        // Low quality: more aggressive trellis
-        TrellisConfig {
-            ac_enabled: true,
-            dc_enabled: aggressive,
-            eob_opt: true,
-            lambda_log_scale1: 14.5, // Conservative: mozjpeg uses ~14.75
-            lambda_log_scale2: 16.5,
-        }
-    } else if q < 70.0 {
-        // Medium quality: balanced trellis
-        TrellisConfig {
-            ac_enabled: true,
-            dc_enabled: false,
-            eob_opt: true,
-            lambda_log_scale1: 13.5,
-            lambda_log_scale2: 16.5,
-        }
-    } else if q < 80.0 {
-        // High quality: conservative trellis
-        TrellisConfig {
-            ac_enabled: true,
-            dc_enabled: false,
-            eob_opt: false,
-            lambda_log_scale1: 12.5, // Lower lambda = preserve more detail
-            lambda_log_scale2: 16.5,
-        }
-    } else {
-        // Very high quality: disable trellis - it hurts more than it helps
-        // At Q>=80, rely on Huffman optimization only
-        TrellisConfig {
-            ac_enabled: false,
-            dc_enabled: false,
-            eob_opt: false,
-            lambda_log_scale1: 11.5,
-            lambda_log_scale2: 16.5,
-        }
+    // Use mozjpeg defaults for all quality levels
+    // The quantization table itself controls quality; trellis just optimizes at that level
+    TrellisConfig {
+        ac_enabled: true,
+        dc_enabled: aggressive && q < 50.0, // DC trellis only at low quality
+        eob_opt: true,
+        lambda_log_scale1: 14.75, // mozjpeg default
+        lambda_log_scale2: 16.5,  // mozjpeg default
     }
 }
 
@@ -271,9 +261,9 @@ mod tests {
         assert_eq!(strategy.approach, EncodingApproach::Jpegli);
         // AQ disabled - simplified variance-based version hurts quality
         assert!(!strategy.adaptive_quant.enabled);
-        // Trellis disabled at very high quality (Q>=80) where it hurts
-        assert!(!strategy.trellis.ac_enabled);
-        assert!(!strategy.trellis.dc_enabled);
+        // Trellis still enabled at high quality but with conservative params
+        assert!(strategy.trellis.ac_enabled);
+        assert!(!strategy.trellis.dc_enabled); // DC trellis disabled at high quality
     }
 
     #[test]
@@ -286,10 +276,14 @@ mod tests {
     }
 
     #[test]
-    fn test_lambda_decreases_with_quality() {
+    fn test_lambda_matches_mozjpeg_defaults() {
+        // All quality levels should use mozjpeg's default lambda values
         let low = compute_trellis_config_for_quality(30.0, true);
         let high = compute_trellis_config_for_quality(90.0, false);
-        // Lower quality should have higher lambda
-        assert!(low.lambda_log_scale1 > high.lambda_log_scale1);
+        // Both should use the same mozjpeg defaults
+        assert!((low.lambda_log_scale1 - 14.75).abs() < 0.01);
+        assert!((low.lambda_log_scale2 - 16.5).abs() < 0.01);
+        assert!((high.lambda_log_scale1 - 14.75).abs() < 0.01);
+        assert!((high.lambda_log_scale2 - 16.5).abs() < 0.01);
     }
 }
