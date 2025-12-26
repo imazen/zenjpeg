@@ -187,12 +187,43 @@ impl Encoder {
         // Select encoding strategy
         let selected = select_strategy(&self.quality, self.strategy);
 
+        // For Jpegli strategy, delegate to the actual jpegli encoder
+        // This gives us full perceptual quality (XYB, proper AQ, etc.)
+        if selected.approach == EncodingApproach::Jpegli {
+            return self.encode_rgb_with_jpegli(pixels, width, height);
+        }
+
         // Convert to YCbCr
         let ycbcr = convert_rgb_to_ycbcr(pixels, width, height);
         let (y_plane, cb_plane, cr_plane) = deinterleave_ycbcr(&ycbcr, width, height);
 
         // Encode with selected strategy
         self.encode_ycbcr_planes(&y_plane, &cb_plane, &cr_plane, width, height, &selected)
+    }
+
+    /// Encode RGB image using the actual jpegli encoder.
+    ///
+    /// This delegates to jpegli-rs for full perceptual quality:
+    /// - XYB color space processing
+    /// - Butteraugli-based adaptive quantization
+    /// - Perceptual coefficient optimization
+    fn encode_rgb_with_jpegli(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+        let q = self.quality.value();
+
+        let result = jpegli::Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .pixel_format(jpegli::PixelFormat::Rgb)
+            .quality(jpegli::Quality::Traditional(q as f32))
+            .encode(pixels);
+
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => Err(Error::EncodingFailed {
+                stage: "jpegli",
+                reason: format!("{:?}", e),
+            }),
+        }
     }
 
     /// Encode grayscale image data to JPEG
@@ -202,8 +233,33 @@ impl Encoder {
 
         let selected = select_strategy(&self.quality, self.strategy);
 
+        // For Jpegli strategy, delegate to the actual jpegli encoder
+        if selected.approach == EncodingApproach::Jpegli {
+            return self.encode_gray_with_jpegli(pixels, width, height);
+        }
+
         // Grayscale uses only Y component
         self.encode_gray_plane(pixels, width, height, &selected)
+    }
+
+    /// Encode grayscale image using the actual jpegli encoder.
+    fn encode_gray_with_jpegli(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+        let q = self.quality.value();
+
+        let result = jpegli::Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .pixel_format(jpegli::PixelFormat::Gray)
+            .quality(jpegli::Quality::Traditional(q as f32))
+            .encode(pixels);
+
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => Err(Error::EncodingFailed {
+                stage: "jpegli",
+                reason: format!("{:?}", e),
+            }),
+        }
     }
 
     /// Validate image dimensions
