@@ -121,8 +121,10 @@ impl ZeroBiasParams {
     /// - distance >= 3.0: Use LQ table
     /// - 1.0 < distance < 3.0: Linear blend
     ///
-    /// Also scales the offset by distance so that high quality (low distance)
-    /// has less aggressive zeroing.
+    /// At high quality (low distance), the offset is scaled down to preserve
+    /// more coefficients. This matches jpegli's effective behavior when using
+    /// quant_vals_to_distance to compute the effective distance from actual
+    /// quantization values.
     ///
     /// # Arguments
     /// * `distance` - Butteraugli distance (quality parameter)
@@ -135,31 +137,30 @@ impl ZeroBiasParams {
         let mix_lq = ((distance - DIST_HQ) / (DIST_LQ - DIST_HQ)).clamp(0.0, 1.0);
         let mix_hq = 1.0 - mix_lq;
 
-        // Blend offset based on distance.
-        // At high quality (low distance), use threshold close to 0.5 (normal rounding).
-        // At low quality (high distance), use jpegli's more aggressive thresholds.
-        //
-        // The jpegli AC offset (~0.59) is designed to zero more coefficients than normal.
-        // We blend between 0.5 (normal) and full offset based on distance.
-        let offset_blend = ((distance - DIST_HQ) / (DIST_LQ - DIST_HQ)).clamp(0.0, 1.0);
-
         let mut mul = [0.0f32; 64];
         let mut offset = [0.0f32; 64];
 
         for k in 0..64 {
+            // Blend multiplier between HQ and LQ tables
             let lq = ZERO_BIAS_MUL_YCBCR_LQ[c * 64 + k];
             let hq = ZERO_BIAS_MUL_YCBCR_HQ[c * 64 + k];
             mul[k] = mix_lq * lq + mix_hq * hq;
 
-            if k == 0 {
-                // DC: keep original offset (0.0)
-                offset[k] = ZERO_BIAS_OFFSET_YCBCR_DC[c];
+            // For offset: at high quality, scale down to preserve more coefficients.
+            // jpegli's effective behavior is to have lower thresholds at high quality.
+            // We scale the offset by distance/DIST_LQ to smoothly reduce aggressiveness.
+            let base_offset = if k == 0 {
+                ZERO_BIAS_OFFSET_YCBCR_DC[c]  // 0.0 for DC
             } else {
-                // AC: blend between 0.5 (normal rounding) and jpegli offset (~0.59)
-                // This ensures we never preserve MORE coefficients than normal rounding
-                let jpegli_offset = ZERO_BIAS_OFFSET_YCBCR_AC[c];
-                offset[k] = 0.5 + (jpegli_offset - 0.5) * offset_blend;
-            }
+                ZERO_BIAS_OFFSET_YCBCR_AC[c]  // ~0.59 for AC
+            };
+
+            // Scale offset by sqrt(distance/DIST_LQ) for smoother curve
+            // At distance 0.5, offset becomes sqrt(0.5/3.0) * 0.59 = 0.24
+            // At distance 1.5, offset becomes sqrt(1.5/3.0) * 0.59 = 0.42
+            // At distance 3.0, offset becomes sqrt(3.0/3.0) * 0.59 = 0.59
+            let scale = (distance / DIST_LQ).min(1.0).sqrt();
+            offset[k] = base_offset * scale;
         }
 
         Self { mul, offset }

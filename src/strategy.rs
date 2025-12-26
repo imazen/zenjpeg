@@ -143,19 +143,17 @@ fn mozjpeg_strategy(quality: &Quality) -> SelectedStrategy {
 
 /// jpegli-style encoding (best for high quality)
 fn jpegli_strategy(quality: &Quality) -> SelectedStrategy {
-    let q = quality.value();
     SelectedStrategy {
         approach: EncodingApproach::Jpegli,
-        trellis: compute_trellis_config_for_quality(q, false),
+        trellis: TrellisConfig::disabled(), // jpegli doesn't use trellis
         // AQ disabled - the simplified variance-based implementation hurts quality
         // TODO: Port jpegli's perceptual AQ algorithm for proper high-quality optimization
         adaptive_quant: AdaptiveQuantConfig {
             enabled: false,
             strength: compute_aq_strength_for_quality(quality),
         },
-        // Enable progressive for Q < 90 to improve compression
-        // This matches C mozjpeg behavior and can give 10-20% size reduction
-        progressive: q < 90.0,
+        // Use baseline mode to match jpegli defaults
+        progressive: false,
         optimize_huffman: true,
     }
 }
