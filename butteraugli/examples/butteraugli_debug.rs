@@ -107,7 +107,7 @@ fn cmd_compare(args: &[String]) {
 
     // Compute butteraugli
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, w1, h1, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, w1, h1, &params).expect("butteraugli");
 
     println!("Butteraugli score: {:.6}", result.score);
     println!();
@@ -238,7 +238,7 @@ fn cmd_jpeg(args: &[String]) {
 
     // Butteraugli
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&original, &decoded, width, height, &params);
+    let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
 
     println!("\nButteraugli score: {:.6}", result.score);
 
@@ -284,7 +284,7 @@ fn cmd_sweep(args: &[String]) {
 
         let bpp = jpeg_data.len() as f64 * 8.0 / (width * height) as f64;
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&original, &decoded, width, height, &params);
+        let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
 
         println!(
             "{:>4} {:>10} {:>8.3} {:>10.4}",
@@ -326,11 +326,11 @@ fn cmd_uniform(args: &[String]) {
 
     // Compare identical
     let params = ButteraugliParams::default();
-    let result1 = compute_butteraugli(&img1, &img1, size, size, &params);
+    let result1 = compute_butteraugli(&img1, &img1, size, size, &params).expect("butteraugli");
     println!("Identical images: {:.6}", result1.score);
 
     // Compare ±1
-    let result2 = compute_butteraugli(&img1, &img2, size, size, &params);
+    let result2 = compute_butteraugli(&img1, &img2, size, size, &params).expect("butteraugli");
     println!("±1 difference: {:.6}", result2.score);
 
     // JPEG roundtrip
@@ -339,7 +339,7 @@ fn cmd_uniform(args: &[String]) {
         let decoded = decode_jpeg(&jpeg);
 
         if decoded.len() == img1.len() {
-            let result = compute_butteraugli(&img1, &decoded, size, size, &params);
+            let result = compute_butteraugli(&img1, &decoded, size, size, &params).expect("butteraugli");
             let max_diff = img1
                 .iter()
                 .zip(decoded.iter())

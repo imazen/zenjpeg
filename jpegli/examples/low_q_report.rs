@@ -27,7 +27,7 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 
 fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(original, distorted, width, height, &params);
+    let result = compute_butteraugli(original, distorted, width, height, &params).expect("butteraugli");
     result.score
 }
 

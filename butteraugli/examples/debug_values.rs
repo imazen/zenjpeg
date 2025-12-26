@@ -37,7 +37,8 @@ fn main() {
 
                     // Compute butteraugli
                     let params = ButteraugliParams::default();
-                    let result = compute_butteraugli(&rgb, &decoded, width, height, &params);
+                    let result = compute_butteraugli(&rgb, &decoded, width, height, &params)
+                        .expect("butteraugli");
 
                     println!("Butteraugli score: {:.4}", result.score);
                 }

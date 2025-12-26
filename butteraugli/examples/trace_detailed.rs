@@ -131,7 +131,8 @@ fn main() {
 
         // Actual butteraugli score
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+        let result =
+            compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("butteraugli");
         println!("Actual butteraugli score: {:.6}", result.score);
 
         if let Some(dm) = result.diffmap.as_ref() {
@@ -179,7 +180,8 @@ fn main() {
     }
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb_grad, &rgb_grad2, width, height, &params);
+    let result =
+        compute_butteraugli(&rgb_grad, &rgb_grad2, width, height, &params).expect("butteraugli");
     println!("Gradient +5: score = {:.6}", result.score);
 
     if let Some(dm) = result.diffmap.as_ref() {

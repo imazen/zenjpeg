@@ -73,7 +73,8 @@ fn main() {
 
             // Compute butteraugli
             let params = ButteraugliParams::default();
-            let result = compute_butteraugli(&original, &decoded, width, height, &params);
+            let result =
+                compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
 
             // Analyze diffmap
             let diffmap = result.diffmap.as_ref().unwrap();

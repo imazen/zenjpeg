@@ -11,7 +11,7 @@ fn main() {
     let rgb2: Vec<u8> = vec![138; width * height * 3]; // +10 difference
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("butteraugli");
 
     println!("Uniform images (128 vs 138), 64x64:");
     println!("  butteraugli score: {:.4}", result.score);
@@ -29,14 +29,14 @@ fn main() {
 
     // Try smaller difference
     let rgb3: Vec<u8> = vec![129; width * height * 3]; // +1 difference
-    let result2 = compute_butteraugli(&rgb1, &rgb3, width, height, &params);
+    let result2 = compute_butteraugli(&rgb1, &rgb3, width, height, &params).expect("butteraugli");
     println!("\nUniform images (128 vs 129), 64x64:");
     println!("  butteraugli score: {:.4}", result2.score);
 
     // Very different (black vs white)
     let rgb_black: Vec<u8> = vec![0; width * height * 3];
     let rgb_white: Vec<u8> = vec![255; width * height * 3];
-    let result3 = compute_butteraugli(&rgb_black, &rgb_white, width, height, &params);
+    let result3 = compute_butteraugli(&rgb_black, &rgb_white, width, height, &params).expect("butteraugli");
     println!("\nBlack vs White, 64x64:");
     println!("  butteraugli score: {:.4}", result3.score);
 }

@@ -130,7 +130,7 @@ fn main() {
 
     // Compute butteraugli
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("butteraugli");
     println!("\nButteraugli score: {:.4}", result.score);
 
     if let Some(dm) = result.diffmap.as_ref() {

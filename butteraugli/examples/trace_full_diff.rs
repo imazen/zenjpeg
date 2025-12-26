@@ -84,7 +84,7 @@ fn main() {
 
     // Actual butteraugli
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("butteraugli");
     println!("\n=== Actual ===");
     println!("  Butteraugli score = {:.4}", result.score);
 

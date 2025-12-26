@@ -99,7 +99,7 @@ fn main() {
     }
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params);
+    let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("butteraugli");
     println!("Inverse block checkerboard:");
     println!("  Score: {:.6}", result.score);
     if let Some(ref diffmap) = result.diffmap {
@@ -111,7 +111,7 @@ fn main() {
     let rgb_black: Vec<u8> = vec![0; width * height * 3];
     let rgb_white: Vec<u8> = vec![255; width * height * 3];
 
-    let result = compute_butteraugli(&rgb_black, &rgb_white, width, height, &params);
+    let result = compute_butteraugli(&rgb_black, &rgb_white, width, height, &params).expect("butteraugli");
     println!("Black vs White:");
     println!("  Score: {:.6}", result.score);
     if let Some(ref diffmap) = result.diffmap {
@@ -123,7 +123,7 @@ fn main() {
     let rgb_gray: Vec<u8> = vec![128; width * height * 3];
     let rgb_gray2: Vec<u8> = vec![138; width * height * 3];
 
-    let result = compute_butteraugli(&rgb_gray, &rgb_gray2, width, height, &params);
+    let result = compute_butteraugli(&rgb_gray, &rgb_gray2, width, height, &params).expect("butteraugli");
     println!("Gray 128 vs Gray 138:");
     println!("  Score: {:.6}", result.score);
     if let Some(ref diffmap) = result.diffmap {
@@ -173,7 +173,7 @@ fn main() {
             }
         }
 
-        let result = compute_butteraugli(&original, &degraded, w, h, &params);
+        let result = compute_butteraugli(&original, &degraded, w, h, &params).expect("butteraugli");
         println!("Original vs 8x8 block-averaged (simulating extreme blur):");
         println!("  Score: {:.6}", result.score);
         if let Some(ref diffmap) = result.diffmap {
@@ -186,7 +186,7 @@ fn main() {
         let decoded = decode_jpeg(&jpeg_data);
 
         if decoded.len() == original.len() {
-            let result = compute_butteraugli(&original, &decoded, w, h, &params);
+            let result = compute_butteraugli(&original, &decoded, w, h, &params).expect("butteraugli");
             println!("Original vs JPEG Q10:");
             println!("  JPEG size: {} bytes", jpeg_data.len());
             println!("  Score: {:.6}", result.score);
