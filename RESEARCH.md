@@ -238,8 +238,25 @@ At Q95: jpegli is 24% larger but has 64% better perceptual quality!
 3. The "hybrid" strategy may not be needed - jpegli dominates across the board
 4. Focus improvements on jpegli's approach, not mozjpeg's trellis
 
+**Low quality test (Q30-Q60):**
+```
+Q  | moz bpp  butter | jpegli bpp  butter | Efficiency ratio
+30 |   0.29    5.73  |   0.57      3.91   | jpegli 1.48x better
+40 |   0.36    4.82  |   0.61      3.56   | jpegli 1.32x better
+50 |   0.43    4.10  |   0.67      3.39   | jpegli 1.18x better
+60 |   0.51    3.97  |   0.76      2.98   | jpegli 1.27x better
+```
+
+**Conclusion:** NO crossover point exists - jpegli wins at ALL quality levels tested (Q30-Q95).
+
+mozjpeg produces smaller files at same Q, but jpegli has better efficiency (quality per bit).
+
+**Revised strategy for zenjpeg:**
+1. ~~Hybrid mozjpeg+jpegli~~ → Pure jpegli approach
+2. Focus improvements on jpegli's adaptive quantization and XYB
+3. Consider mozjpeg trellis only for "min size at acceptable quality" mode
+
 **Next steps:**
-- [ ] Test at Q30-Q50 to find mozjpeg crossover point (if any)
-- [ ] Test on more diverse corpus (CLIC, CID22)
-- [ ] Analyze what makes certain images compress differently
-- [ ] Consider dropping mozjpeg hybrid strategy if jpegli always wins
+- [ ] Test on more diverse corpus (CLIC, CID22) to confirm
+- [ ] Identify improvements to jpegli's approach
+- [ ] Consider size-constrained mode using mozjpeg for extreme compression
