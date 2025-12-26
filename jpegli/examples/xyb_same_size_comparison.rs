@@ -1,16 +1,21 @@
 //! Compare XYB vs YCbCr at SAME FILE SIZE to find quality difference.
 //!
 //! This is the correct way to measure XYB efficiency - same file size, compare quality.
+//! Uses all three metrics: DSSIM, SSIMULACRA2, and Butteraugli.
 //!
-//! Usage: cargo run --release --example xyb_same_size_comparison --features cms-lcms2
+//! Usage: cargo run --release --example xyb_same_size_comparison
 
+use jpegli::icc::{apply_icc_transform, extract_icc_profile};
 use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::fs;
 use std::io::Write as IoWrite;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli/build/tools/cjpegli";
+fn get_cjpegli_path() -> String {
+    std::env::var("CJPEGLI_PATH")
+        .unwrap_or_else(|_| "/home/lilith/work/jpegli/build/tools/cjpegli".to_string())
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
     let file = fs::File::open(path).ok()?;
@@ -39,30 +44,27 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
     Ok(())
 }
 
-fn encode_cpp_quality(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec<u8>> {
-    if !Path::new(CJPEGLI_PATH).exists() {
+fn encode_cpp_quality(input_path: &Path, quality: u32, use_xyb: bool) -> Option<Vec<u8>> {
+    let cjpegli_path = get_cjpegli_path();
+    if !Path::new(&cjpegli_path).exists() {
         return None;
     }
-    let output_path = format!(
-        "/tmp/samesize_{}_{}.jpg",
+    let output_path = std::env::temp_dir().join(format!(
+        "samesize_{}_{}.jpg",
         if use_xyb { "xyb" } else { "ycbcr" },
         quality
-    );
+    ));
 
-    let mut args = vec![
-        "--chroma_subsampling=444".to_string(),
-        "-q".to_string(),
-        format!("{}", quality),
-    ];
+    let mut cmd = Command::new(&cjpegli_path);
+    cmd.arg(input_path)
+        .arg(&output_path)
+        .arg(format!("--quality={}", quality));
+
     if use_xyb {
-        args.push("--xyb".to_string());
+        cmd.arg("--xyb");
     }
-    args.push(ppm_path.to_string());
-    args.push(output_path.clone());
 
-    let output = Command::new(CJPEGLI_PATH)
-        .args(&args)
-        .stdout(Stdio::null())
+    let output = cmd.stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;
@@ -70,55 +72,64 @@ fn encode_cpp_quality(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec
     if !output.status.success() {
         return None;
     }
-    fs::read(&output_path).ok()
+    let data = fs::read(&output_path).ok()?;
+    let _ = fs::remove_file(&output_path);
+    Some(data)
 }
 
 fn decode_jpeg_simple(data: &[u8]) -> Vec<u8> {
     jpeg_decoder::Decoder::new(data).decode().expect("decode")
 }
 
-fn decode_xyb_with_icc(jpeg_data: &[u8]) -> Option<Vec<u8>> {
-    // Try Rust CMS first
-    #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-    {
-        if let Ok((pixels, _, _)) = jpegli::icc::decode_jpeg_with_icc(jpeg_data) {
-            return Some(pixels);
-        }
+fn decode_xyb_with_icc(jpeg_data: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
+    let icc_profile = extract_icc_profile(jpeg_data);
+
+    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg_data));
+    let pixels = decoder.decode().ok()?;
+    let info = decoder.info()?;
+
+    let rgb = match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => pixels,
+        jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
+        _ => return None,
+    };
+
+    let width = info.width as usize;
+    let height = info.height as usize;
+
+    let output = if let Some(ref profile) = icc_profile {
+        apply_icc_transform(&rgb, width, height, profile).unwrap_or(rgb)
+    } else {
+        rgb
+    };
+
+    Some((output, width, height))
+}
+
+fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
+    use dssim::Dssim;
+    use rgb::RGBA;
+
+    let attr = Dssim::new();
+
+    let orig_rgba: Vec<RGBA<u8>> = orig.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
+    let comp_rgba: Vec<RGBA<u8>> = comp.chunks(3).map(|c| RGBA::new(c[0], c[1], c[2], 255)).collect();
+
+    let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
+    let comp_img = attr.create_image_rgba(&comp_rgba, width, height).unwrap();
+
+    let (dssim, _) = attr.compare(&orig_img, comp_img);
+    dssim.into()
+}
+
+fn compute_butteraugli(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
+    use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
+
+    let params = ButteraugliParams::default();
+    match compute_butteraugli(orig, comp, width, height, &params) {
+        Ok(result) => result.score,
+        Err(_) => f64::NAN,
     }
-
-    // Fallback to Python with Pillow
-    let jpeg_path = "/tmp/xyb_samesize_decode.jpg";
-    let output_path = "/tmp/xyb_samesize_decode.bin";
-    fs::write(jpeg_path, jpeg_data).ok()?;
-
-    let script = r#"
-import io, sys
-from PIL import Image, ImageCms
-img = Image.open(sys.argv[1])
-if 'icc_profile' in img.info and len(img.info['icc_profile']) > 0:
-    input_profile = ImageCms.ImageCmsProfile(io.BytesIO(img.info['icc_profile']))
-    srgb = ImageCms.createProfile('sRGB')
-    transform = ImageCms.buildTransformFromOpenProfiles(input_profile, srgb, 'RGB', 'RGB')
-    img = ImageCms.applyTransform(img, transform)
-with open(sys.argv[2], 'wb') as f:
-    f.write(bytes(img.convert('RGB').tobytes()))
-"#;
-
-    let status = Command::new("python3")
-        .args(["-c", script, jpeg_path, output_path])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok()?;
-
-    let _ = fs::remove_file(jpeg_path);
-    if !status.success() {
-        return None;
-    }
-
-    let data = fs::read(output_path).ok()?;
-    let _ = fs::remove_file(output_path);
-    Some(data)
 }
 
 fn compute_ssimulacra2(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
@@ -165,91 +176,166 @@ fn compute_ssimulacra2(orig: &[u8], decoded: &[u8], width: usize, height: usize)
     compute_frame_ssimulacra2(orig_rgb, dec_rgb).unwrap_or(-1.0)
 }
 
-fn main() {
-    println!("=== XYB vs YCbCr: Same File Size Comparison ===\n");
-    println!("For each quality level, find comparable file sizes and compare SSIMULACRA2.\n");
+/// Binary search to find XYB quality that matches target file size
+fn find_matching_xyb_quality(
+    input_path: &Path,
+    target_size: usize,
+) -> Option<(u32, Vec<u8>)> {
+    let mut best_quality = 50u32;
+    let mut best_data: Option<Vec<u8>> = None;
+    let mut best_diff = i64::MAX;
 
-    let image_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
-    let path = Path::new(image_path);
-
-    let (rgb, width, height) = match load_png(path) {
-        Some(d) => d,
-        None => {
-            eprintln!("Failed to load image");
-            return;
-        }
-    };
-
-    println!(
-        "Image: {} ({}x{})\n",
-        path.file_name().unwrap().to_string_lossy(),
-        width,
-        height
-    );
-
-    let ppm_path = "/tmp/samesize_test.ppm";
-    write_ppm(ppm_path, &rgb, width, height).unwrap();
-
-    // Strategy: For each YCbCr quality level, find XYB quality that produces similar file size
-    let ycbcr_qualities = [50, 60, 70, 80, 90];
-
-    println!(
-        "{:>6} {:>8} {:>12} {:>6} {:>8} {:>12} {:>10}",
-        "YCbCr", "Size", "SSIMULACRA2", "XYB", "Size", "SSIMULACRA2", "Diff"
-    );
-    println!("{}", "-".repeat(72));
-
-    for &yq in &ycbcr_qualities {
-        // Encode YCbCr at this quality
-        let ycbcr_data = match encode_cpp_quality(ppm_path, yq, false) {
-            Some(d) => d,
-            None => continue,
-        };
-        let ycbcr_size = ycbcr_data.len();
-        let ycbcr_dec = decode_jpeg_simple(&ycbcr_data);
-        let ycbcr_ssim = compute_ssimulacra2(&rgb, &ycbcr_dec, width, height);
-
-        // Binary search to find XYB quality that produces similar file size
-        let mut best_xyb_q = yq;
-        let mut best_size_diff = i64::MAX;
-        let mut best_xyb_data = None;
-
-        for xq in 30..=100 {
-            if let Some(xyb_data) = encode_cpp_quality(ppm_path, xq, true) {
-                let size_diff = (xyb_data.len() as i64 - ycbcr_size as i64).abs();
-                if size_diff < best_size_diff {
-                    best_size_diff = size_diff;
-                    best_xyb_q = xq;
-                    best_xyb_data = Some(xyb_data);
-                }
+    // Linear search (could optimize with binary search)
+    for quality in (30..=100).step_by(2) {
+        if let Some(data) = encode_cpp_quality(input_path, quality, true) {
+            let diff = (data.len() as i64 - target_size as i64).abs();
+            if diff < best_diff {
+                best_diff = diff;
+                best_quality = quality;
+                best_data = Some(data);
             }
-        }
-
-        if let Some(xyb_data) = best_xyb_data {
-            let xyb_size = xyb_data.len();
-            let xyb_dec = decode_xyb_with_icc(&xyb_data).unwrap_or_else(|| decode_jpeg_simple(&xyb_data));
-            let xyb_ssim = compute_ssimulacra2(&rgb, &xyb_dec, width, height);
-
-            let ssim_diff = xyb_ssim - ycbcr_ssim;
-            let size_diff_pct =
-                100.0 * (xyb_size as f64 - ycbcr_size as f64) / ycbcr_size as f64;
-
-            let status = if ssim_diff > 0.5 {
-                "XYB better"
-            } else if ssim_diff < -0.5 {
-                "YCbCr better"
-            } else {
-                "~equal"
-            };
-
-            println!(
-                "Q{:>4} {:>8} {:>12.2} Q{:>4} {:>8} {:>12.2} {:>+7.2} {}",
-                yq, ycbcr_size, ycbcr_ssim, best_xyb_q, xyb_size, xyb_ssim, ssim_diff, status
-            );
         }
     }
 
-    println!("\n=== Summary ===\n");
-    println!("At same file size (within 1-2%), compare SSIMULACRA2 scores.");
-    println!("Positive diff = XYB is better, Negative = YCbCr is better.");
+    best_data.map(|d| (best_quality, d))
+}
+
+fn main() {
+    let corpus_paths = [
+        "/home/lilith/work/codec-eval/codec-corpus/kodak",
+        "/home/lilith/work/jpegli/testdata/jxl/flower",
+    ];
+
+    let corpus_dir = corpus_paths.iter()
+        .find(|p| Path::new(p).exists())
+        .map(PathBuf::from)
+        .expect("No corpus found");
+
+    let ycbcr_qualities: Vec<u32> = vec![50, 70, 80, 90, 95];
+
+    eprintln!("=== XYB vs YCbCr: Same File Size Comparison ===");
+    eprintln!("Adjusting XYB quality to match YCbCr file size, then comparing quality metrics.\n");
+    eprintln!("cjpegli: {}", get_cjpegli_path());
+    eprintln!("corpus: {}\n", corpus_dir.display());
+
+    println!("{:<8} {:>4} {:>4} {:>8} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}",
+        "Image", "Q_Y", "Q_X", "Size_Y", "Size_X", "DSSIM_Y", "DSSIM_X", "Butt_Y", "Butt_X", "SSIM_Y", "SSIM_X");
+    println!("{}", "-".repeat(110));
+
+    let mut png_files: Vec<_> = fs::read_dir(&corpus_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+        .map(|e| e.path())
+        .collect();
+    png_files.sort();
+
+    let max_images = std::env::var("MAX_IMAGES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(12);
+    png_files.truncate(max_images);
+
+    let mut total_ycbcr_dssim = 0.0;
+    let mut total_xyb_dssim = 0.0;
+    let mut total_ycbcr_butt = 0.0;
+    let mut total_xyb_butt = 0.0;
+    let mut total_ycbcr_ssim = 0.0;
+    let mut total_xyb_ssim = 0.0;
+    let mut count = 0;
+
+    for png_path in &png_files {
+        let name = png_path.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+        let Some((orig_rgb, width, height)) = load_png(png_path) else {
+            continue;
+        };
+
+        for &ycbcr_quality in &ycbcr_qualities {
+            // Encode with YCbCr
+            let Some(ycbcr_jpeg) = encode_cpp_quality(png_path, ycbcr_quality, false) else {
+                continue;
+            };
+            let ycbcr_size = ycbcr_jpeg.len();
+
+            // Find XYB quality that matches this file size
+            let Some((xyb_quality, xyb_jpeg)) = find_matching_xyb_quality(png_path, ycbcr_size) else {
+                continue;
+            };
+            let xyb_size = xyb_jpeg.len();
+
+            // Decode YCbCr
+            let ycbcr_decoded = decode_jpeg_simple(&ycbcr_jpeg);
+
+            // Decode XYB with ICC
+            let Some((xyb_decoded, _, _)) = decode_xyb_with_icc(&xyb_jpeg) else { continue };
+
+            // Compute all three metrics
+            let ycbcr_dssim = compute_dssim(&orig_rgb, &ycbcr_decoded, width, height);
+            let xyb_dssim = compute_dssim(&orig_rgb, &xyb_decoded, width, height);
+
+            let ycbcr_butt = compute_butteraugli(&orig_rgb, &ycbcr_decoded, width, height);
+            let xyb_butt = compute_butteraugli(&orig_rgb, &xyb_decoded, width, height);
+
+            let ycbcr_ssim = compute_ssimulacra2(&orig_rgb, &ycbcr_decoded, width, height);
+            let xyb_ssim = compute_ssimulacra2(&orig_rgb, &xyb_decoded, width, height);
+
+            println!("{:<8} {:>4} {:>4} {:>8} {:>8} {:>.6} {:>.6} {:>6.2} {:>6.2} {:>6.1} {:>6.1}",
+                name, ycbcr_quality, xyb_quality, ycbcr_size, xyb_size,
+                ycbcr_dssim, xyb_dssim,
+                ycbcr_butt, xyb_butt,
+                ycbcr_ssim, xyb_ssim);
+
+            total_ycbcr_dssim += ycbcr_dssim;
+            total_xyb_dssim += xyb_dssim;
+            total_ycbcr_butt += ycbcr_butt;
+            total_xyb_butt += xyb_butt;
+            total_ycbcr_ssim += ycbcr_ssim;
+            total_xyb_ssim += xyb_ssim;
+            count += 1;
+        }
+    }
+
+    println!("{}", "-".repeat(110));
+
+    if count > 0 {
+        let avg_ycbcr_dssim = total_ycbcr_dssim / count as f64;
+        let avg_xyb_dssim = total_xyb_dssim / count as f64;
+        let avg_ycbcr_butt = total_ycbcr_butt / count as f64;
+        let avg_xyb_butt = total_xyb_butt / count as f64;
+        let avg_ycbcr_ssim = total_ycbcr_ssim / count as f64;
+        let avg_xyb_ssim = total_xyb_ssim / count as f64;
+
+        eprintln!("\n=== SUMMARY (at matched file sizes) ===");
+        eprintln!("Total comparisons: {}\n", count);
+
+        eprintln!("DSSIM (lower = better):");
+        eprintln!("  YCbCr avg: {:.6}", avg_ycbcr_dssim);
+        eprintln!("  XYB avg:   {:.6}", avg_xyb_dssim);
+        let dssim_diff = ((avg_xyb_dssim - avg_ycbcr_dssim) / avg_ycbcr_dssim) * 100.0;
+        if avg_xyb_dssim < avg_ycbcr_dssim {
+            eprintln!("  Winner: XYB ({:.1}% better)\n", -dssim_diff);
+        } else {
+            eprintln!("  Winner: YCbCr ({:.1}% better)\n", dssim_diff);
+        }
+
+        eprintln!("Butteraugli (lower = better):");
+        eprintln!("  YCbCr avg: {:.2}", avg_ycbcr_butt);
+        eprintln!("  XYB avg:   {:.2}", avg_xyb_butt);
+        let butt_diff = ((avg_xyb_butt - avg_ycbcr_butt) / avg_ycbcr_butt) * 100.0;
+        if avg_xyb_butt < avg_ycbcr_butt {
+            eprintln!("  Winner: XYB ({:.1}% better)\n", -butt_diff);
+        } else {
+            eprintln!("  Winner: YCbCr ({:.1}% better)\n", butt_diff);
+        }
+
+        eprintln!("SSIMULACRA2 (higher = better):");
+        eprintln!("  YCbCr avg: {:.2}", avg_ycbcr_ssim);
+        eprintln!("  XYB avg:   {:.2}", avg_xyb_ssim);
+        let ssim_diff = avg_xyb_ssim - avg_ycbcr_ssim;
+        if avg_xyb_ssim > avg_ycbcr_ssim {
+            eprintln!("  Winner: XYB ({:+.2} points)\n", ssim_diff);
+        } else {
+            eprintln!("  Winner: YCbCr ({:+.2} points)\n", -ssim_diff);
+        }
+    }
 }
