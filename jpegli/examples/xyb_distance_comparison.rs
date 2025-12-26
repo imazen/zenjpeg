@@ -144,7 +144,12 @@ fn main() {
     };
 
     let pixels = width * height;
-    println!("Image: {} ({}x{})\n", path.file_name().unwrap().to_string_lossy(), width, height);
+    println!(
+        "Image: {} ({}x{})\n",
+        path.file_name().unwrap().to_string_lossy(),
+        width,
+        height
+    );
 
     let ppm_path = "/tmp/dist_test.ppm";
     write_ppm(ppm_path, &rgb, width, height).unwrap();
@@ -152,8 +157,10 @@ fn main() {
     // Test at various butteraugli distance targets
     let distances = [0.5, 1.0, 1.5, 2.0, 3.0];
 
-    println!("{:>8} {:>12} {:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
-             "Target", "Mode", "Size", "bpp", "Actual Dist", "Savings", "Dist Diff", "Status");
+    println!(
+        "{:>8} {:>12} {:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
+        "Target", "Mode", "Size", "bpp", "Actual Dist", "Savings", "Dist Diff", "Status"
+    );
     println!("{}", "-".repeat(95));
 
     for &target_dist in &distances {
@@ -181,7 +188,8 @@ fn main() {
 
         let ycbcr_bpp = ycbcr_data.len() as f64 * 8.0 / pixels as f64;
         let xyb_bpp = xyb_data.len() as f64 * 8.0 / pixels as f64;
-        let savings = 100.0 * (ycbcr_data.len() as f64 - xyb_data.len() as f64) / ycbcr_data.len() as f64;
+        let savings =
+            100.0 * (ycbcr_data.len() as f64 - xyb_data.len() as f64) / ycbcr_data.len() as f64;
         let dist_diff = xyb_actual - ycbcr_actual;
 
         let status = if savings > 0.0 && dist_diff.abs() < 0.3 {
@@ -192,10 +200,28 @@ fn main() {
             "~equal"
         };
 
-        println!("{:>8.1} {:>12} {:>10} {:>10.3} {:>12.4} {:>10} {:>10.4} {:>10}",
-                 target_dist, "YCbCr", ycbcr_data.len(), ycbcr_bpp, ycbcr_actual, "", "", "");
-        println!("{:>8} {:>12} {:>10} {:>10.3} {:>12.4} {:>9.1}% {:>10.4} {:>10}",
-                 "", "XYB", xyb_data.len(), xyb_bpp, xyb_actual, savings, dist_diff, status);
+        println!(
+            "{:>8.1} {:>12} {:>10} {:>10.3} {:>12.4} {:>10} {:>10.4} {:>10}",
+            target_dist,
+            "YCbCr",
+            ycbcr_data.len(),
+            ycbcr_bpp,
+            ycbcr_actual,
+            "",
+            "",
+            ""
+        );
+        println!(
+            "{:>8} {:>12} {:>10} {:>10.3} {:>12.4} {:>9.1}% {:>10.4} {:>10}",
+            "",
+            "XYB",
+            xyb_data.len(),
+            xyb_bpp,
+            xyb_actual,
+            savings,
+            dist_diff,
+            status
+        );
         println!();
     }
 

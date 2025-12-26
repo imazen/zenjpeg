@@ -180,7 +180,8 @@ fn main() {
     for diff in [1u8, 2, 5, 10, 20, 50] {
         let rgb1: Vec<u8> = vec![128; width * height * 3];
         let rgb2: Vec<u8> = vec![128 + diff; width * height * 3];
-        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
+        let result =
+            compute_butteraugli(&rgb1, &rgb2, width, height, &params).expect("valid input");
         println!("Gray 128 vs {}: score = {:.4}", 128 + diff, result.score);
     }
 

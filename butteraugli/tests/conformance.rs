@@ -50,8 +50,7 @@ fn test_identical_images_score_zero() {
     let rgb: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&rgb, &rgb, width, height, &params)
-        .expect("valid input");
+    let result = compute_butteraugli(&rgb, &rgb, width, height, &params).expect("valid input");
 
     assert!(
         result.score < 0.001,
@@ -161,7 +160,8 @@ fn test_score_monotonicity_with_quality() {
         }
 
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
+        let result =
+            compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
 
         println!(
             "Quality {}: butteraugli score = {:.4}",
@@ -246,7 +246,8 @@ fn test_jpegli_roundtrip_butteraugli() {
         }
 
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
+        let result =
+            compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
 
         println!(
             "Q{}: size={} bytes, butteraugli={:.4}",
@@ -290,7 +291,8 @@ fn test_cpp_butteraugli_comparison() {
     let decoded = decode_jpeg(&jpeg_data);
 
     let params = ButteraugliParams::default();
-    let rust_result = compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
+    let rust_result =
+        compute_butteraugli(&original, &decoded, width, height, &params).expect("valid input");
     println!("Rust butteraugli: {:.4}", rust_result.score);
 
     // TODO: Call C++ butteraugli for comparison

@@ -315,7 +315,9 @@ pub fn compute_butteraugli(
         });
     }
 
-    Ok(diff::compute_butteraugli_impl(rgb1, rgb2, width, height, params))
+    Ok(diff::compute_butteraugli_impl(
+        rgb1, rgb2, width, height, params,
+    ))
 }
 
 /// Computes butteraugli score between two linear RGB images.
@@ -371,7 +373,9 @@ pub fn compute_butteraugli_linear(
         });
     }
 
-    Ok(diff::compute_butteraugli_linear_impl(rgb1, rgb2, width, height, params))
+    Ok(diff::compute_butteraugli_linear_impl(
+        rgb1, rgb2, width, height, params,
+    ))
 }
 
 /// Converts sRGB u8 value to linear RGB f32.
@@ -453,15 +457,22 @@ mod tests {
         let rgb1: Vec<u8> = vec![0; width * height * 3];
         let rgb2: Vec<u8> = vec![0; 10]; // Wrong size
 
-        let result = compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
-        assert!(matches!(result, Err(ButteraugliError::InvalidBufferSize { .. })));
+        let result =
+            compute_butteraugli(&rgb1, &rgb2, width, height, &ButteraugliParams::default());
+        assert!(matches!(
+            result,
+            Err(ButteraugliError::InvalidBufferSize { .. })
+        ));
     }
 
     #[test]
     fn test_too_small_dimensions() {
         let rgb: Vec<u8> = vec![0; 4 * 4 * 3];
         let result = compute_butteraugli(&rgb, &rgb, 4, 4, &ButteraugliParams::default());
-        assert!(matches!(result, Err(ButteraugliError::InvalidDimensions { .. })));
+        assert!(matches!(
+            result,
+            Err(ButteraugliError::InvalidDimensions { .. })
+        ));
     }
 
     #[test]

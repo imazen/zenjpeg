@@ -148,11 +148,23 @@ fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) ->
 
     let orig_rgb: Vec<[f32; 3]> = orig
         .chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
     let comp_rgb: Vec<[f32; 3]> = comp
         .chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
 
     let orig_frame = Rgb::new(
@@ -264,7 +276,9 @@ fn main() {
             continue;
         };
 
-        let original_size = fs::metadata(png_path).map(|m| m.len() as usize).unwrap_or(0);
+        let original_size = fs::metadata(png_path)
+            .map(|m| m.len() as usize)
+            .unwrap_or(0);
 
         let mut points = Vec::new();
 
@@ -317,7 +331,11 @@ fn main() {
     let json = serde_json::to_string_pretty(&reference).expect("Failed to serialize");
     fs::write(&output_path, &json).expect("Failed to write output");
 
-    eprintln!("\nGenerated {} bytes to {}", json.len(), output_path.display());
+    eprintln!(
+        "\nGenerated {} bytes to {}",
+        json.len(),
+        output_path.display()
+    );
 
     // Print summary
     eprintln!("\nSummary:");

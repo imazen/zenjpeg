@@ -223,7 +223,8 @@ fn main() {
             }
         };
         // Decode XYB with proper ICC conversion
-        let xyb_dec = decode_xyb_with_icc(&xyb_data).unwrap_or_else(|| decode_jpeg_simple(&xyb_data));
+        let xyb_dec =
+            decode_xyb_with_icc(&xyb_data).unwrap_or_else(|| decode_jpeg_simple(&xyb_data));
         let xyb_ssim = compute_ssimulacra2(&rgb, &xyb_dec, width, height);
 
         let ycbcr_bpp = ycbcr_data.len() as f64 * 8.0 / pixels as f64;
@@ -235,7 +236,12 @@ fn main() {
 
         println!(
             "{:>8.1} {:>10} {:>10} {:>10.3} {:>12.2} {:>10}",
-            target_dist, "YCbCr", ycbcr_data.len(), ycbcr_bpp, ycbcr_ssim, ""
+            target_dist,
+            "YCbCr",
+            ycbcr_data.len(),
+            ycbcr_bpp,
+            ycbcr_ssim,
+            ""
         );
 
         let winner = if xyb_efficiency > ycbcr_efficiency {
@@ -243,13 +249,20 @@ fn main() {
         } else {
             "YCbCr"
         };
-        let size_diff = 100.0 * (ycbcr_data.len() as f64 - xyb_data.len() as f64)
-            / ycbcr_data.len() as f64;
+        let size_diff =
+            100.0 * (ycbcr_data.len() as f64 - xyb_data.len() as f64) / ycbcr_data.len() as f64;
         let ssim_diff = xyb_ssim - ycbcr_ssim;
 
         println!(
             "{:>8} {:>10} {:>10} {:>10.3} {:>12.2} {:>10} (size: {:+.1}%, ssim: {:+.2})",
-            "", "XYB", xyb_data.len(), xyb_bpp, xyb_ssim, winner, size_diff, ssim_diff
+            "",
+            "XYB",
+            xyb_data.len(),
+            xyb_bpp,
+            xyb_ssim,
+            winner,
+            size_diff,
+            ssim_diff
         );
         println!();
     }
