@@ -152,7 +152,7 @@ proptest! {
                 linear2.as_ptr(),
                 width,
                 height,
-                params.intensity_target,
+                80.0, // default intensity_target
                 &mut cpp_score,
             )
         };
@@ -217,7 +217,7 @@ proptest! {
                 linear2.as_ptr(),
                 width,
                 height,
-                params.intensity_target,
+                80.0, // default intensity_target
                 &mut cpp_score,
             )
         };
@@ -287,7 +287,7 @@ proptest! {
                 linear2.as_ptr(),
                 width,
                 height,
-                params.intensity_target,
+                80.0, // default intensity_target
                 &mut cpp_score,
             )
         };

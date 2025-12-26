@@ -3,7 +3,7 @@
 //! Run with: cargo run --example trace_uniform
 
 use butteraugli_oxide::opsin::{gamma, opsin_absorbance, srgb_to_xyb_butteraugli};
-use butteraugli_oxide::{compute_butteraugli, ButteraugliParams, ImageF, PsychoImage};
+use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 
 /// sRGB transfer function (gamma decoding)
 fn srgb_to_linear(v: u8) -> f32 {

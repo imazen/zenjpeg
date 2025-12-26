@@ -189,7 +189,8 @@ fn test_uniform_gray_score_parity() {
 
         // Rust butteraugli
         let params = ButteraugliParams::default();
-        let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params);
+        let rust_result =
+            compute_butteraugli(&srgb1, &srgb2, width, height, &params).expect("butteraugli");
 
         // C++ butteraugli
         let mut linear1 = vec![0.0f32; srgb1.len()];
@@ -206,7 +207,7 @@ fn test_uniform_gray_score_parity() {
                 linear2.as_ptr(),
                 width,
                 height,
-                params.intensity_target,
+                80.0, // default intensity_target
                 &mut cpp_score,
             )
         };
@@ -260,7 +261,8 @@ fn test_gradient_score_parity() {
 
     // Rust butteraugli
     let params = ButteraugliParams::default();
-    let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params);
+    let rust_result =
+        compute_butteraugli(&srgb1, &srgb2, width, height, &params).expect("butteraugli");
 
     // C++ butteraugli
     let mut linear1 = vec![0.0f32; srgb1.len()];
@@ -277,7 +279,7 @@ fn test_gradient_score_parity() {
             linear2.as_ptr(),
             width,
             height,
-            params.intensity_target,
+            80.0, // default intensity_target
             &mut cpp_score,
         )
     };
@@ -334,7 +336,8 @@ fn test_checkerboard_score_parity() {
 
     // Rust butteraugli
     let params = ButteraugliParams::default();
-    let rust_result = compute_butteraugli(&srgb1, &srgb2, width, height, &params);
+    let rust_result =
+        compute_butteraugli(&srgb1, &srgb2, width, height, &params).expect("butteraugli");
 
     // C++ butteraugli
     let mut linear1 = vec![0.0f32; srgb1.len()];
@@ -351,7 +354,7 @@ fn test_checkerboard_score_parity() {
             linear2.as_ptr(),
             width,
             height,
-            params.intensity_target,
+            80.0, // default intensity_target
             &mut cpp_score,
         )
     };
@@ -404,7 +407,8 @@ fn test_real_image_score_parity() {
 
         // Rust butteraugli
         let params = ButteraugliParams::default();
-        let rust_result = compute_butteraugli(&original, &decoded, width, height, &params);
+        let rust_result =
+            compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
 
         // C++ butteraugli
         let mut linear_orig = vec![0.0f32; original.len()];
@@ -421,7 +425,7 @@ fn test_real_image_score_parity() {
                 linear_dec.as_ptr(),
                 width,
                 height,
-                params.intensity_target,
+                80.0, // default intensity_target
                 &mut cpp_score,
             )
         };

@@ -110,6 +110,7 @@ fn compare_image(
         height as usize,
         &bfly_params,
     )
+    .expect("butteraugli")
     .score;
 
     // C++ encoding with timing
@@ -146,6 +147,7 @@ fn compare_image(
         height as usize,
         &bfly_params,
     )
+    .expect("butteraugli")
     .score;
 
     // Cleanup
