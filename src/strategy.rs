@@ -153,7 +153,9 @@ fn jpegli_strategy(quality: &Quality) -> SelectedStrategy {
             enabled: false,
             strength: compute_aq_strength_for_quality(quality),
         },
-        progressive: false, // jpegli uses sequential by default
+        // Enable progressive for Q < 90 to improve compression
+        // This matches C mozjpeg behavior and can give 10-20% size reduction
+        progressive: q < 90.0,
         optimize_huffman: true,
     }
 }
@@ -175,19 +177,14 @@ fn hybrid_strategy(quality: &Quality) -> SelectedStrategy {
 }
 
 /// Auto-select based on quality
+///
+/// Currently uses mozjpeg strategy (trellis quantization) for all quality levels
+/// because it achieves better compression in benchmarks against C mozjpeg.
+/// The jpegli zero-bias approach may be better for perceptual quality at high
+/// quality levels, but mozjpeg trellis wins on compression ratio.
 fn auto_strategy(quality: &Quality) -> SelectedStrategy {
-    let q = quality.value();
-
-    if q < 50.0 {
-        // Low quality: mozjpeg wins
-        mozjpeg_strategy(quality)
-    } else if q < 70.0 {
-        // Medium quality: hybrid is often best
-        hybrid_strategy(quality)
-    } else {
-        // High quality: jpegli wins
-        jpegli_strategy(quality)
-    }
+    // Use mozjpeg for all quality levels - trellis achieves better compression
+    mozjpeg_strategy(quality)
 }
 
 /// Simple baseline encoding (no trellis, no optimization)
@@ -249,6 +246,7 @@ mod tests {
 
     #[test]
     fn test_auto_strategy_low_quality() {
+        // Auto uses mozjpeg for all quality levels (best compression)
         let strategy = select_strategy(&Quality::Standard(30), EncodingStrategy::Auto);
         assert_eq!(strategy.approach, EncodingApproach::Mozjpeg);
         assert!(strategy.trellis.ac_enabled);
@@ -257,11 +255,10 @@ mod tests {
 
     #[test]
     fn test_auto_strategy_high_quality() {
+        // Auto uses mozjpeg for all quality levels (best compression)
         let strategy = select_strategy(&Quality::Standard(90), EncodingStrategy::Auto);
-        assert_eq!(strategy.approach, EncodingApproach::Jpegli);
-        // AQ disabled - simplified variance-based version hurts quality
-        assert!(!strategy.adaptive_quant.enabled);
-        // Trellis still enabled at high quality but with conservative params
+        assert_eq!(strategy.approach, EncodingApproach::Mozjpeg);
+        // Trellis enabled for high quality mozjpeg
         assert!(strategy.trellis.ac_enabled);
         assert!(!strategy.trellis.dc_enabled); // DC trellis disabled at high quality
     }

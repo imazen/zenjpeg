@@ -3,10 +3,10 @@
 //! Provides the public Encoder API that combines mozjpeg and jpegli approaches
 //! for Pareto-optimal JPEG compression.
 
-use crate::adaptive_quant::compute_aq_field;
+use crate::adaptive_quant::{compute_aq_field, compute_aq_strength_map, AdaptiveQuantConfig, AQStrengthMap};
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
 use crate::consts::DCTSIZE2;
-use crate::dct::{forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_trellis, quantize_block_int};
+use crate::dct::{forward_dct_8x8, forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_trellis, quantize_block_int};
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, SymbolCounter};
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
@@ -15,8 +15,8 @@ use crate::progressive::{
     generate_standard_progressive_scans, ScanInfo,
 };
 use crate::types::ScanScript;
-use crate::quant::QuantTableSet;
-use crate::strategy::{select_strategy, SelectedStrategy};
+use crate::quant::{QuantTableSet, ZeroBiasParams, quantize_block_with_zero_bias, quality_to_distance};
+use crate::strategy::{select_strategy, EncodingApproach, SelectedStrategy};
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
 use crate::types::{EncodingStrategy, PixelFormat, Quality, Subsampling};
 use crate::Result;
@@ -264,127 +264,189 @@ impl Encoder {
         let ac_derived = get_std_ac_derived();
         let dc_derived = get_std_dc_derived();
 
-        // Compute adaptive quantization field if enabled
-        let aq_field = if strategy.adaptive_quant.enabled {
-            compute_aq_field(y_plane, width, height, &strategy.adaptive_quant)
-        } else {
-            crate::adaptive_quant::AqField::uniform((width + 7) / 8, (height + 7) / 8)
-        };
-
         let width_blocks = (width + 7) / 8;
         let height_blocks = (height + 7) / 8;
         let total_blocks = width_blocks * height_blocks;
 
-        // Check if DC trellis is enabled
-        let dc_trellis_enabled = strategy.trellis.ac_enabled && strategy.trellis.dc_enabled;
-
-        // Storage for raw DCT coefficients (needed for DC trellis)
-        let mut y_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
-            Some(vec![[0i32; DCTSIZE2]; total_blocks])
-        } else {
-            None
-        };
-        let mut cb_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
-            Some(vec![[0i32; DCTSIZE2]; total_blocks])
-        } else {
-            None
-        };
-        let mut cr_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
-            Some(vec![[0i32; DCTSIZE2]; total_blocks])
-        } else {
-            None
-        };
-
-        // Separate storage for each component (needed for DC trellis row optimization)
+        // Separate storage for each component
         let mut y_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cb_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cr_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
 
-        for by in 0..height_blocks {
-            for bx in 0..width_blocks {
-                let block_idx = by * width_blocks + bx;
+        // Choose encoding path based on strategy approach
+        let use_jpegli_style = strategy.approach == EncodingApproach::Jpegli;
 
-                // Y block
-                let y_block = extract_block(y_plane, width, height, bx, by);
-                let (y_quant, y_raw) = self.quantize_block_with_raw(
-                    &y_block,
-                    &quant_tables.luma.values,
-                    aq_field.get(bx, by),
-                    strategy,
-                    &ac_derived,
-                );
-                y_coeffs.push(y_quant);
-                if let Some(ref mut raw) = y_raw_dct {
-                    raw[block_idx] = y_raw;
-                }
+        if use_jpegli_style {
+            // Jpegli-style encoding: use zero-bias quantization with AQ strength
+            let distance = quality_to_distance(q);
 
-                // Cb block
-                let cb_block = extract_block(cb_plane, width, height, bx, by);
-                let (cb_quant, cb_raw) = self.quantize_block_with_raw(
-                    &cb_block,
-                    &quant_tables.chroma.values,
-                    1.0,
-                    strategy,
-                    &ac_derived,
-                );
-                cb_coeffs.push(cb_quant);
-                if let Some(ref mut raw) = cb_raw_dct {
-                    raw[block_idx] = cb_raw;
-                }
+            // Create zero-bias params for each component
+            let y_zero_bias = ZeroBiasParams::for_ycbcr(distance, 0);
+            let cb_zero_bias = ZeroBiasParams::for_ycbcr(distance, 1);
+            let cr_zero_bias = ZeroBiasParams::for_ycbcr(distance, 2);
 
-                // Cr block
-                let cr_block = extract_block(cr_plane, width, height, bx, by);
-                let (cr_quant, cr_raw) = self.quantize_block_with_raw(
-                    &cr_block,
-                    &quant_tables.chroma.values,
-                    1.0,
-                    strategy,
-                    &ac_derived,
-                );
-                cr_coeffs.push(cr_quant);
-                if let Some(ref mut raw) = cr_raw_dct {
-                    raw[block_idx] = cr_raw;
+            // Compute AQ strength map from Y plane
+            let aq_config = AdaptiveQuantConfig {
+                enabled: true,
+                strength: 1.0,
+            };
+            let aq_map = compute_aq_strength_map(y_plane, width, height, quant_tables.luma.values[1], &aq_config);
+
+            for by in 0..height_blocks {
+                for bx in 0..width_blocks {
+                    let aq_strength = aq_map.get(bx, by);
+
+                    // Y block: DCT + zero-bias quantization
+                    let y_block = extract_block(y_plane, width, height, bx, by);
+                    let y_shifted = level_shift(&y_block);
+                    let y_dct = forward_dct_8x8(&y_shifted);
+                    let y_quant = quantize_block_with_zero_bias(
+                        &y_dct,
+                        &quant_tables.luma.values,
+                        &y_zero_bias,
+                        aq_strength,
+                    );
+                    y_coeffs.push(y_quant);
+
+                    // Cb block
+                    let cb_block = extract_block(cb_plane, width, height, bx, by);
+                    let cb_shifted = level_shift(&cb_block);
+                    let cb_dct = forward_dct_8x8(&cb_shifted);
+                    let cb_quant = quantize_block_with_zero_bias(
+                        &cb_dct,
+                        &quant_tables.chroma.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
+                    cb_coeffs.push(cb_quant);
+
+                    // Cr block
+                    let cr_block = extract_block(cr_plane, width, height, bx, by);
+                    let cr_shifted = level_shift(&cr_block);
+                    let cr_dct = forward_dct_8x8(&cr_shifted);
+                    let cr_quant = quantize_block_with_zero_bias(
+                        &cr_dct,
+                        &quant_tables.chroma.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
+                    cr_coeffs.push(cr_quant);
                 }
             }
-        }
+        } else {
+            // Mozjpeg-style encoding: trellis quantization with AQ multiplier
+            let aq_field = if strategy.adaptive_quant.enabled {
+                compute_aq_field(y_plane, width, height, &strategy.adaptive_quant)
+            } else {
+                crate::adaptive_quant::AqField::uniform(width_blocks, height_blocks)
+            };
 
-        // Run DC trellis optimization if enabled
-        if dc_trellis_enabled {
-            if let Some(ref y_raw) = y_raw_dct {
-                run_dc_trellis_by_row(
-                    y_raw,
-                    &mut y_coeffs,
-                    quant_tables.luma.values[0],
-                    &dc_derived,
-                    strategy.trellis.lambda_log_scale1,
-                    strategy.trellis.lambda_log_scale2,
-                    height_blocks,
-                    width_blocks,
-                );
+            // Check if DC trellis is enabled
+            let dc_trellis_enabled = strategy.trellis.ac_enabled && strategy.trellis.dc_enabled;
+
+            // Storage for raw DCT coefficients (needed for DC trellis)
+            let mut y_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+                Some(vec![[0i32; DCTSIZE2]; total_blocks])
+            } else {
+                None
+            };
+            let mut cb_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+                Some(vec![[0i32; DCTSIZE2]; total_blocks])
+            } else {
+                None
+            };
+            let mut cr_raw_dct: Option<Vec<[i32; DCTSIZE2]>> = if dc_trellis_enabled {
+                Some(vec![[0i32; DCTSIZE2]; total_blocks])
+            } else {
+                None
+            };
+
+            for by in 0..height_blocks {
+                for bx in 0..width_blocks {
+                    let block_idx = by * width_blocks + bx;
+
+                    // Y block
+                    let y_block = extract_block(y_plane, width, height, bx, by);
+                    let (y_quant, y_raw) = self.quantize_block_with_raw(
+                        &y_block,
+                        &quant_tables.luma.values,
+                        aq_field.get(bx, by),
+                        strategy,
+                        &ac_derived,
+                    );
+                    y_coeffs.push(y_quant);
+                    if let Some(ref mut raw) = y_raw_dct {
+                        raw[block_idx] = y_raw;
+                    }
+
+                    // Cb block
+                    let cb_block = extract_block(cb_plane, width, height, bx, by);
+                    let (cb_quant, cb_raw) = self.quantize_block_with_raw(
+                        &cb_block,
+                        &quant_tables.chroma.values,
+                        1.0,
+                        strategy,
+                        &ac_derived,
+                    );
+                    cb_coeffs.push(cb_quant);
+                    if let Some(ref mut raw) = cb_raw_dct {
+                        raw[block_idx] = cb_raw;
+                    }
+
+                    // Cr block
+                    let cr_block = extract_block(cr_plane, width, height, bx, by);
+                    let (cr_quant, cr_raw) = self.quantize_block_with_raw(
+                        &cr_block,
+                        &quant_tables.chroma.values,
+                        1.0,
+                        strategy,
+                        &ac_derived,
+                    );
+                    cr_coeffs.push(cr_quant);
+                    if let Some(ref mut raw) = cr_raw_dct {
+                        raw[block_idx] = cr_raw;
+                    }
+                }
             }
-            if let Some(ref cb_raw) = cb_raw_dct {
-                run_dc_trellis_by_row(
-                    cb_raw,
-                    &mut cb_coeffs,
-                    quant_tables.chroma.values[0],
-                    &dc_derived,
-                    strategy.trellis.lambda_log_scale1,
-                    strategy.trellis.lambda_log_scale2,
-                    height_blocks,
-                    width_blocks,
-                );
-            }
-            if let Some(ref cr_raw) = cr_raw_dct {
-                run_dc_trellis_by_row(
-                    cr_raw,
-                    &mut cr_coeffs,
-                    quant_tables.chroma.values[0],
-                    &dc_derived,
-                    strategy.trellis.lambda_log_scale1,
-                    strategy.trellis.lambda_log_scale2,
-                    height_blocks,
-                    width_blocks,
-                );
+
+            // Run DC trellis optimization if enabled
+            if dc_trellis_enabled {
+                if let Some(ref y_raw) = y_raw_dct {
+                    run_dc_trellis_by_row(
+                        y_raw,
+                        &mut y_coeffs,
+                        quant_tables.luma.values[0],
+                        &dc_derived,
+                        strategy.trellis.lambda_log_scale1,
+                        strategy.trellis.lambda_log_scale2,
+                        height_blocks,
+                        width_blocks,
+                    );
+                }
+                if let Some(ref cb_raw) = cb_raw_dct {
+                    run_dc_trellis_by_row(
+                        cb_raw,
+                        &mut cb_coeffs,
+                        quant_tables.chroma.values[0],
+                        &dc_derived,
+                        strategy.trellis.lambda_log_scale1,
+                        strategy.trellis.lambda_log_scale2,
+                        height_blocks,
+                        width_blocks,
+                    );
+                }
+                if let Some(ref cr_raw) = cr_raw_dct {
+                    run_dc_trellis_by_row(
+                        cr_raw,
+                        &mut cr_coeffs,
+                        quant_tables.chroma.values[0],
+                        &dc_derived,
+                        strategy.trellis.lambda_log_scale1,
+                        strategy.trellis.lambda_log_scale2,
+                        height_blocks,
+                        width_blocks,
+                    );
+                }
             }
         }
 
@@ -397,7 +459,8 @@ impl Encoder {
         }
 
         // Check if progressive mode is enabled
-        let use_progressive = self.progressive.unwrap_or(false);
+        // Use explicit setting if provided, otherwise use strategy's recommendation
+        let use_progressive = self.progressive.unwrap_or(strategy.progressive);
 
         // Check if using band-split scan script (requires different symbol frequencies)
         let uses_band_split = matches!(
@@ -570,7 +633,8 @@ impl Encoder {
         }
 
         // Check if progressive mode is enabled
-        let use_progressive = self.progressive.unwrap_or(false);
+        // Use explicit setting if provided, otherwise use strategy's recommendation
+        let use_progressive = self.progressive.unwrap_or(strategy.progressive);
 
         // Check if using band-split scan script
         let uses_band_split = matches!(
