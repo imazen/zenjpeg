@@ -466,3 +466,60 @@ Extended `build-predictor` to evaluate winners using all three metrics:
    - jpegli supports XYB color space encoding
    - XYB mode may further improve butteraugli scores
    - Would require ICC profile handling for proper decoding
+
+### 2024-12-27: Three-Encoder Comparison (mozjpeg vs jpegli vs jpegli-xyb)
+
+**Added jpegli-xyb encoder** to the comparison framework. This required:
+1. Updating `full-comparison.rs` to add `encode_jpegli_xyb` using `.use_xyb(true)`
+2. Using `jpegli::icc::decode_jpeg_with_icc()` for proper XYB decoding (the `Decoder::apply_icc(true)` method has bugs)
+3. Updating codec-compare to use local jpegli-rs crate with `cms-lcms2` feature
+
+**Kodak corpus results (24 images, Q30-Q95, BPP-matched comparison):**
+
+**Butteraugli (lower is better):**
+| BPP | mozjpeg | jpegli | jpegli-xyb |
+|-----|---------|--------|------------|
+| 0.50 | 12.5% | **58.3%** | 29.2% |
+| 0.75 | 16.7% | **66.7%** | 16.7% |
+| 1.00 | 8.3% | **79.2%** | 12.5% |
+| 1.50 | 0.0% | **91.7%** | 8.3% |
+| 2.00 | 4.2% | **91.7%** | 4.2% |
+
+**DSSIM (lower is better):**
+| BPP | mozjpeg | jpegli | jpegli-xyb |
+|-----|---------|--------|------------|
+| 0.50 | **41.7%** | 20.8% | 37.5% |
+| 0.75 | **75.0%** | 8.3% | 16.7% |
+| 1.00 | **95.8%** | 0.0% | 4.2% |
+| 1.50 | **95.8%** | 4.2% | 0.0% |
+| 2.00 | **91.7%** | 8.3% | 0.0% |
+
+**SSIMULACRA2 (higher is better):**
+| BPP | mozjpeg | jpegli | jpegli-xyb |
+|-----|---------|--------|------------|
+| 0.50 | 29.2% | 12.5% | **58.3%** |
+| 0.75 | **54.2%** | 16.7% | 29.2% |
+| 1.00 | **62.5%** | 25.0% | 12.5% |
+| 1.50 | **54.2%** | 41.7% | 4.2% |
+| 2.00 | 37.5% | **58.3%** | 4.2% |
+
+**Key Findings:**
+
+1. **Butteraugli:** jpegli (YCbCr mode) dominates. XYB mode doesn't improve butteraugli scores and actually performs worse at higher BPP.
+
+2. **DSSIM:** mozjpeg dominates at medium-high BPP (75-96%). At very low BPP (0.5), jpegli-xyb is competitive with mozjpeg (38% vs 42%).
+
+3. **SSIMULACRA2:** jpegli-xyb wins at low BPP (58% at 0.5 bpp). mozjpeg wins at medium BPPs. jpegli wins at high BPPs.
+
+4. **XYB mode is NOT universally better:** Despite using a perceptually uniform color space, jpegli-xyb underperforms regular jpegli on butteraugli. This suggests jpegli's YCbCr-specific optimizations are well-tuned.
+
+5. **File size penalty:** At same quality level, jpegli-xyb produces ~10-15% larger files than jpegli YCbCr mode (and ~40-60% larger than mozjpeg).
+
+**Implications for zenjpeg:**
+
+1. **For butteraugli targets:** Use jpegli YCbCr (not XYB)
+2. **For DSSIM targets:** Use mozjpeg at 0.5-2.0 BPP
+3. **For SSIMULACRA2 targets at low BPP:** Consider jpegli-xyb
+4. **XYB mode may be useful for:** Very low bitrate encoding where perceptual color fidelity matters more than structural fidelity
+
+**Technical note:** The XYB decoding in the comparison uses `jpegli::icc::decode_jpeg_with_icc()` which uses jpeg-decoder + lcms2 for proper ICC profile application. The native jpegli-rs Decoder with `apply_icc(true)` has bugs that cause decode failures on XYB streams.
