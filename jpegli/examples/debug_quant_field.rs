@@ -3,7 +3,7 @@
 use std::path::Path;
 
 fn main() {
-    let test_img = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
+    let test_img = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     if !Path::new(test_img).exists() {
         println!("Test image not found");
         return;

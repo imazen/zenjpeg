@@ -20,8 +20,10 @@ cargo test --release  # Run with optimizations
 
 - **Main branch**: `main`
 - **Current working branch**: `stepbystep2`
-- **Rust project location**: `jpegli-rs/` subdirectory within the main jpegli repo
-- **C++ source**: Root of repository (this is Google's libjxl/jpegli)
+- **Repository structure**: Standalone Rust workspace at `~/work/jpegli-rs`
+- **C++ source**: `jpegli-cpp/` submodule (imazen fork of Google's libjxl/jpegli)
+- **C++ build path**: `jpegli-cpp/build/tools/cjpegli`
+- **C++ testdata path**: `jpegli-cpp/testdata/`
 
 ## Project Overview
 
@@ -866,7 +868,12 @@ sudo apt install -y cmake build-essential ninja-build \
     libbrotli-dev libgif-dev libjpeg-dev libpng-dev \
     libwebp-dev pkg-config
 
-cd /path/to/jpegli
+# Initialize submodule if needed
+cd ~/work/jpegli-rs
+git submodule update --init --recursive jpegli-cpp
+
+# Build C++ tools
+cd jpegli-cpp
 mkdir -p build && cd build
 cmake -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \

@@ -10,9 +10,9 @@ use std::time::Instant;
 
 fn find_cjpegli() -> Option<PathBuf> {
     let paths = [
-        "/home/lilith/work/jpegli/build/tools/cjpegli",
-        "../../../build/tools/cjpegli",
-        "../../build/tools/cjpegli",
+        "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli",
+        "jpegli-cpp/build/tools/cjpegli",
+        "jpegli-cpp/build/tools/cjpegli",
     ];
     paths.iter().map(PathBuf::from).find(|p| p.exists())
 }
@@ -60,7 +60,7 @@ fn test_q100_rust_vs_cpp() {
     };
 
     // Use a small test image for speed
-    let test_img = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
+    let test_img = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     if !std::path::Path::new(test_img).exists() {
         println!("Skipping: test image not found at {}", test_img);
         return;

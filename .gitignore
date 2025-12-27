@@ -1,3 +1,4 @@
+target/
 comparison_outputs/
 reports/
 *.testdata

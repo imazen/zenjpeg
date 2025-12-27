@@ -46,7 +46,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
-    let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
 
     if let Some((original, width, height)) = load_png(path) {
         println!("Image: {}x{}", width, height);

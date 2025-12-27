@@ -132,7 +132,7 @@ fn main() {
 
     // Test 4: Real image with JPEG compression
     println!("\n=== Test 4: Real image JPEG roundtrip ===");
-    let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     if path.exists() {
         let (original, w, h) = load_png(path).expect("load png");
 

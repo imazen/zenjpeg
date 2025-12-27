@@ -377,8 +377,19 @@ pub fn get_testdata_dir() -> PathBuf {
         }
     }
 
-    // Check the C++ testdata location
-    let cpp_testdata = PathBuf::from("/home/lilith/work/jpegli/testdata");
+    // Check the C++ testdata location (in jpegli-cpp submodule)
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        // From jpegli crate, go up one level to workspace root, then into jpegli-cpp
+        let cpp_testdata = PathBuf::from(&manifest)
+            .parent()
+            .map(|p| p.join("jpegli-cpp/testdata"))
+            .filter(|p| p.exists());
+        if let Some(testdata) = cpp_testdata {
+            return testdata;
+        }
+    }
+    // Legacy fallback
+    let cpp_testdata = PathBuf::from("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata");
     if cpp_testdata.exists() {
         return cpp_testdata;
     }

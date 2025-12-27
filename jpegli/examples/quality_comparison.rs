@@ -74,7 +74,7 @@ fn parse_ppm(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn main() {
-    let png_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     // Load PNG
     let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
@@ -114,7 +114,7 @@ fn main() {
         let ppm_path = "/tmp/test.ppm";
         let jpg_path = format!("/tmp/cpp_q{}.jpg", q);
 
-        let output = Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
+        let output = Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--chroma_subsampling=444",
                 "-p",
@@ -161,7 +161,7 @@ fn main() {
         let ppm_path = "/tmp/test.ppm";
         let jpg_path = format!("/tmp/cpp_q{}.jpg", q);
 
-        let output = Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
+        let output = Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--chroma_subsampling=444",
                 "-p",
@@ -210,7 +210,7 @@ fn main() {
         let rust_decoded_ppm = format!("/tmp/rust_xyb_q{}_decoded.ppm", q);
 
         // C++ XYB encode
-        let output = Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
+        let output = Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--xyb",
                 "-p",

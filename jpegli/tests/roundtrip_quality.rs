@@ -85,7 +85,7 @@ fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
 /// Test roundtrip quality on the flower_small test image.
 #[test]
 fn test_roundtrip_flower_small() {
-    let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     if !path.exists() {
         eprintln!("Skipping test: test image not found at {:?}", path);
         return;

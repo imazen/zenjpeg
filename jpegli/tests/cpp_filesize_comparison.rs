@@ -33,7 +33,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 
 /// Encode with C++ cjpegli (matching settings: 4:4:4, no AQ, sequential, fixed codes)
 fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
-    let cjpegli_path = "/home/lilith/work/jpegli/build/tools/cjpegli";
+    let cjpegli_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli";
     if !std::path::Path::new(cjpegli_path).exists() {
         return None;
     }
@@ -121,7 +121,7 @@ fn test_filesize_comparison_synthetic() {
 #[test]
 #[ignore = "requires C++ cjpegli build and test image"]
 fn test_filesize_comparison_photo() {
-    let png_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     if !std::path::Path::new(png_path).exists() {
         println!("Skipping: test image not found");
         return;
