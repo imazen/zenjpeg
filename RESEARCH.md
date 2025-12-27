@@ -324,5 +324,72 @@ else:
 **Next steps:**
 - [x] Test on more diverse corpus (CID22) - Done, confirms pattern
 - [x] Analyze image characteristics for detection heuristics - Done
+- [x] Build encoder prediction model with 86.6% accuracy
 - [ ] Implement content-adaptive strategy selection
 - [ ] Add flat% and edge detection to zenjpeg encoder
+
+### 2024-12-27: Encoder Selection Model
+
+**Methodology:**
+Created comprehensive encoder comparison tools in `codec-eval/crates/codec-compare/`:
+1. `full-comparison` - Encodes images at Q25-90, computes butteraugli/dssim/ssimulacra2
+2. `image-heuristics` - Extracts 25+ image characteristics
+3. `build-predictor` - Evaluates prediction rules against actual performance
+
+**Dataset:**
+- CLIC 2025 validation: 32 images × 14 quality levels × 2 encoders = 896 encodes
+- Kodak: 24 images × 14 quality levels × 2 encoders = 672 encodes
+- Combined: 56 images, 382 significant BPP-matched comparisons
+
+**Key Findings (BPP-based, 5% margin threshold):**
+
+| BPP | mozjpeg wins | jpegli wins | % jpegli |
+|-----|--------------|-------------|----------|
+| 0.2 | 5 | 49 | **91%** |
+| 0.4 | 16 | 28 | 64% |
+| 0.6 | 17 | 26 | 60% |
+| 0.8 | 13 | 29 | 69% |
+| 1.0+ | 10 | 189 | **95%** |
+
+**Best Prediction Rule (combined_v13, 86.6% accuracy):**
+```rust
+fn predict_encoder(flat_block_pct: f64, edge_strength: f64,
+                   local_contrast: f64, target_bpp: f64) -> &'static str {
+    let complexity = edge_strength + local_contrast;
+    let uniformity = flat_block_pct;
+
+    // Very flat, low complexity, 0.35-0.6 bpp is mozjpeg territory
+    if uniformity > 75.0 && complexity < 20.0 && target_bpp >= 0.35 && target_bpp < 0.6 {
+        "mozjpeg"
+    } else {
+        "jpegli"
+    }
+}
+```
+
+**Accuracy by Corpus:**
+- CLIC 2025: 87.1%
+- Kodak: 85.9%
+- Combined: 86.6%
+
+**Image Category Analysis:**
+| Category | mozjpeg wins | jpegli wins | % jpegli |
+|----------|--------------|-------------|----------|
+| very_flat_low_bpp | **15** | 7 | 32% |
+| flat_low_bpp | 6 | 33 | 85% |
+| flat_high_bpp | 26 | 90 | 78% |
+| mixed_* | 6 | 53 | 90% |
+| complex_* | 6 | 61 | 91% |
+
+**Key Insight:** The only category where mozjpeg dominates is very_flat_low_bpp (>80% flat blocks, BPP < 0.6).
+
+**Rule Simplification:**
+Given that "always use jpegli" achieves 84% accuracy, the prediction rule adds only ~2.6 percentage points. For simplicity, zenjpeg could default to jpegli for all cases except:
+- Targeting < 0.6 bpp AND
+- Image is very flat (>75% flat blocks) AND
+- Low complexity (edge + contrast < 20)
+
+**Next Steps for zenjpeg:**
+1. Implement fast flat-block and edge detection during encoding
+2. Use prediction model to select encoder strategy
+3. For hybrid mode: use mozjpeg's quantization with jpegli's encoding
