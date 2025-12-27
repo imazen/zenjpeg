@@ -502,8 +502,8 @@ fn encode_cpp(input_path: &str, quality: u8) -> Result<Vec<u8>, String> {
 
     // Try multiple possible locations for cjpegli
     let cjpegli_paths = [
-        "jpegli-cpp/build/tools/cjpegli",
-        "jpegli-cpp/build/tools/cjpegli",
+        "internal/jpegli-cpp/build/tools/cjpegli",
+        "internal/jpegli-cpp/build/tools/cjpegli",
         "/usr/local/bin/cjpegli",
         "cjpegli",
     ];

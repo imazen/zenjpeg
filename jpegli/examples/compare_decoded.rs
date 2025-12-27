@@ -7,7 +7,7 @@ use std::process::Command;
 fn main() {
     let test_images = [
         (
-            "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+            "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
             "flower",
         ),
         ("/mnt/v/work/corpus/CID22-512/1459534.png", "cid22_large"),
@@ -51,7 +51,7 @@ fn main() {
 
     // Just do flower for detailed histogram
     if let Some((hist, max_diff)) = detailed_histogram(
-        "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
         "flower",
     ) {
         println!("Flower image difference histogram:");
@@ -82,7 +82,7 @@ fn compare_image(png_path: &str, name: &str) -> Option<CompareResult> {
     write_ppm(&ppm_path, &rgb, width as usize, height as usize).ok()?;
 
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    let output = Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
+    let output = Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",
@@ -161,7 +161,7 @@ fn detailed_histogram(png_path: &str, name: &str) -> Option<(Vec<usize>, u8)> {
     write_ppm(&ppm_path, &rgb, width as usize, height as usize).ok()?;
 
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
+    Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",

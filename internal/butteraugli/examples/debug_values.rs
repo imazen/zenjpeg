@@ -4,7 +4,7 @@ use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
 
 fn main() {
     // Load the actual test image and encode/decode
-    let test_image = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let test_image = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     if let Ok(file) = std::fs::File::open(test_image) {
         let decoder = png::Decoder::new(file);

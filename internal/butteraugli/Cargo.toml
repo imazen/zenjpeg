@@ -1,0 +1,40 @@
+[package]
+name = "butteraugli-oxide"
+version = "0.2.1"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Pure Rust implementation of Google's butteraugli perceptual image quality metric from libjxl"
+authors = ["Lilith River <lilith@imazen.io>"]
+rust-version = "1.70"
+publish = false  # Published from standalone repo; this copy is for parity testing
+
+[features]
+default = ["simd"]
+simd = []
+
+[dependencies]
+# SIMD support
+wide = "0.7"
+
+[dev-dependencies]
+# Image I/O for testing
+png = "0.17"
+
+# JPEG encoding/decoding for roundtrip tests
+mozjpeg = "0.10"
+jpeg-decoder = "0.3"
+
+# Testing utilities
+approx = "0.5"
+
+# Property-based testing
+proptest = "1.4"
+
+# Date/time for reference data generation
+chrono = "0.4"
+
+# FFI bindings for C++ comparison (parity testing)
+jpegli-internals-sys = { path = "../jpegli-internals-sys", features = ["butteraugli"] }
+
+[lints]
+workspace = true

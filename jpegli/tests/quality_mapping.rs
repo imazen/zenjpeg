@@ -127,7 +127,7 @@ fn find_matching_jpegli_quality(
 /// Test quality mapping on a real image.
 #[test]
 fn test_quality_mapping() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;
@@ -217,7 +217,7 @@ fn test_quality_mapping_corpus() {
 #[test]
 #[ignore] // Requires test image
 fn generate_quality_mapping_table() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;

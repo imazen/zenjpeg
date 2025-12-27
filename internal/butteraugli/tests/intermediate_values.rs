@@ -5,7 +5,7 @@
 
 use butteraugli_oxide::opsin::srgb_to_xyb_butteraugli;
 use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
-use jpegli_sys::{
+use jpegli_internals_sys::{
     butteraugli_compare_full, butteraugli_opsin_dynamics, butteraugli_srgb_to_linear,
     BUTTERAUGLI_OK,
 };

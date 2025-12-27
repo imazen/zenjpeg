@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Path to C++ cjpegli binary
-const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli";
+const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
 
 /// Path to CID22-512 corpus
 const CORPUS_PATH: &str = "/mnt/v/work/corpus/CID22-512";

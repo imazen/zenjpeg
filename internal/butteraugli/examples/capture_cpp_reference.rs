@@ -15,7 +15,7 @@
 //! cargo run --example capture_cpp_reference
 //! ```
 
-use jpegli_sys::{butteraugli_compare_full, butteraugli_srgb_to_linear, BUTTERAUGLI_OK};
+use jpegli_internals_sys::{butteraugli_compare_full, butteraugli_srgb_to_linear, BUTTERAUGLI_OK};
 
 // ============================================================================
 // Image Generation Functions

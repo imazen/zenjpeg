@@ -4,7 +4,7 @@
 //! implementation via FFI bindings to verify mathematical parity.
 
 use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
-use jpegli_sys::{
+use jpegli_internals_sys::{
     butteraugli_compare, butteraugli_fast_log2f, butteraugli_gamma, butteraugli_srgb_to_linear,
     BUTTERAUGLI_OK,
 };
@@ -388,7 +388,7 @@ fn test_checkerboard_score_parity() {
 #[test]
 #[ignore] // Requires test image
 fn test_real_image_score_parity() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     if !path.exists() {
         eprintln!("Skipping: test image not found at {:?}", path);
         return;
