@@ -1111,8 +1111,9 @@ impl<'a> EntropyDecoder<'a> {
 
             if size == 0 {
                 if run == 15 {
-                    // ZRL in refinement - skip zeros that were zero in original
-                    // But first, apply refinement bits to any nonzero coeffs we encounter
+                    // ZRL in refinement - skip 16 zeros (not 15!)
+                    // The run nibble is 15, but ZRL means 16 zeros.
+                    num_zeros_to_skip = 16;
                 } else {
                     // EOB run
                     if run == 0 {
@@ -1154,8 +1155,15 @@ impl<'a> EntropyDecoder<'a> {
 
             // Skip zeros and apply refinement bits to nonzero coefficients
             while k <= se as usize {
+                // For ZRL (size=0), stop immediately after skipping all 16 zeros.
+                // Don't continue reading refinement bits for subsequent nonzeros -
+                // those belong to the next symbol.
+                if size == 0 && num_zeros_to_skip == 0 {
+                    break;
+                }
+
                 if coeffs[k] != 0 {
-                    // Apply refinement bit
+                    // Apply refinement bit for previously-nonzero coefficient
                     let bit = self.reader.read_bits(1)? as i16;
                     if bit != 0 && (coeffs[k] & bit_val) == 0 {
                         if coeffs[k] > 0 {
@@ -1167,7 +1175,7 @@ impl<'a> EntropyDecoder<'a> {
                 } else if num_zeros_to_skip > 0 {
                     num_zeros_to_skip -= 1;
                 } else {
-                    // Found our target position
+                    // Found our target position (for NEW_NZ symbols)
                     break;
                 }
                 k += 1;
@@ -1181,9 +1189,9 @@ impl<'a> EntropyDecoder<'a> {
                 } else {
                     coeffs[k] = -bit_val;
                 }
+                k += 1; // Move past the placed coefficient
             }
-
-            k += 1;
+            // For ZRL (size==0), k already points past the 16 zeros we skipped
         }
 
         Ok(())
