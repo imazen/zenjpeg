@@ -262,25 +262,74 @@ fn decide_approach(
     edge_strength_mean: f32,
     local_contrast_mean: f32,
 ) -> RecommendedApproach {
-    // Estimate target BPP from quality and image characteristics
-    let estimated_bpp = estimate_bpp(quality, flat_block_pct);
+    // Default to Butteraugli-optimized strategy
+    decide_approach_for_metric(
+        quality,
+        flat_block_pct,
+        edge_strength_mean,
+        local_contrast_mean,
+        crate::types::OptimizeFor::Butteraugli,
+    )
+}
 
-    // Complexity metric (matches codec-compare's combined_v13 rule)
+/// Decide encoding approach based on target quality metric
+///
+/// Research findings by metric:
+/// - Butteraugli: jpegli wins 84%, mozjpeg only for very flat + low BPP
+/// - DSSIM: mozjpeg wins 67%, especially at 0.6-1.5 BPP
+/// - SSIMULACRA2: balanced, mozjpeg slightly ahead at medium BPP
+/// - FileSize: always use trellis
+pub fn decide_approach_for_metric(
+    quality: f32,
+    flat_block_pct: f32,
+    edge_strength_mean: f32,
+    local_contrast_mean: f32,
+    metric: crate::types::OptimizeFor,
+) -> RecommendedApproach {
+    use crate::types::OptimizeFor;
+
+    let estimated_bpp = estimate_bpp(quality, flat_block_pct);
     let complexity = edge_strength_mean + local_contrast_mean;
     let uniformity = flat_block_pct;
 
-    // Research-validated prediction rule (86.6% accuracy):
-    //
-    // mozjpeg wins when:
-    // - Image is very flat (>75% flat blocks)
-    // - Low complexity (edge + contrast < 20)
-    // - Target BPP in the 0.35-0.6 range
-    //
-    // jpegli wins in all other cases (~84% of images)
-    if uniformity > 75.0 && complexity < 20.0 && estimated_bpp >= 0.35 && estimated_bpp < 0.6 {
-        RecommendedApproach::Trellis
-    } else {
-        RecommendedApproach::AdaptiveQuant
+    match metric {
+        OptimizeFor::Butteraugli => {
+            // jpegli wins 84% - only use mozjpeg for very flat + medium BPP
+            if uniformity > 75.0 && complexity < 20.0 && estimated_bpp >= 0.35 && estimated_bpp < 0.6
+            {
+                RecommendedApproach::Trellis
+            } else {
+                RecommendedApproach::AdaptiveQuant
+            }
+        }
+        OptimizeFor::Dssim => {
+            // mozjpeg wins 67% - favored at 0.5-2.0 BPP range
+            // jpegli only wins at very low (<0.4) or very high (>2.5) BPP
+            if estimated_bpp < 0.4 {
+                RecommendedApproach::AdaptiveQuant // jpegli wins at very low BPP
+            } else if estimated_bpp > 2.5 {
+                RecommendedApproach::AdaptiveQuant // jpegli wins at very high BPP
+            } else {
+                RecommendedApproach::Trellis // mozjpeg wins at medium BPP
+            }
+        }
+        OptimizeFor::Ssimulacra2 => {
+            // Balanced - mozjpeg slightly ahead at 0.5-1.5 BPP
+            if estimated_bpp >= 0.5 && estimated_bpp <= 1.5 {
+                // mozjpeg has slight edge
+                if complexity > 30.0 {
+                    RecommendedApproach::AdaptiveQuant // complex images favor jpegli
+                } else {
+                    RecommendedApproach::Trellis
+                }
+            } else {
+                RecommendedApproach::AdaptiveQuant // jpegli at extremes
+            }
+        }
+        OptimizeFor::FileSize => {
+            // Always use trellis for file size optimization
+            RecommendedApproach::Trellis
+        }
     }
 }
 

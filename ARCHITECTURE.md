@@ -44,8 +44,8 @@ Forward DCT with 1/8 scaling for JPEG compatibility:
 - Apply 8x8 DCT
 - Output scaled for quantization
 
-Current: Reference implementation (direct formula)
-TODO: Fast DCT (Loeffler algorithm), SIMD
+Current: Reference implementation + integer DCT
+TODO: SIMD DCT (check mozjpeg-rs for existing work)
 
 ### Stage 4: Quantization
 
@@ -84,17 +84,48 @@ Huffman coding of quantized coefficients:
 - AC coefficients: run-length + category encoding
 - Byte stuffing: 0xFF → 0xFF 0x00
 
-Current: Fixed standard tables
-TODO: Optimized tables based on actual statistics
+Features:
+- Two-pass Huffman optimization (frequency counting + optimal table generation)
+- Progressive encoding with successive approximation
+- AC refinement with correction bits
+
+### Stage 6: Progressive Encoding (progressive.rs, entropy.rs)
+
+Full progressive JPEG support with three scan script presets:
+- **Minimal**: DC + full AC scans (fast, good for web)
+- **Simple**: DC + AC bands 1-5 and 6-63 (better progressive display)
+- **Standard**: With successive approximation (best compression)
+
+Progressive encoding features:
+- DC first/refinement scans
+- AC first/refinement scans with spectral band selection
+- EOBRUN accumulation for runs of all-zero blocks
+- Proper correction bit ordering for AC refinement
 
 ## Strategy Selection (strategy.rs)
 
-```
-Quality       Strategy        Features
----------     ----------      -----------------------------------
-Q < 50        Mozjpeg         Trellis AC+DC, Progressive, Huffman opt
-Q 50-70       Hybrid          Trellis AC, AQ at reduced strength
-Q >= 70       Jpegli          Adaptive quant, Sequential, Huffman opt
+### Automatic Encoder Selection
+
+Based on research across 382 BPP-matched comparisons (CLIC 2025 + Kodak):
+
+| Metric | mozjpeg wins | jpegli wins | Best default |
+|--------|-------------|-------------|--------------|
+| Butteraugli | 16% | **84%** | jpegli |
+| DSSIM | **67%** | 33% | mozjpeg |
+| SSIMULACRA2 | 51% | 49% | balanced |
+
+The prediction model (86.6% accuracy) uses:
+- Flat block percentage (>75% = flat)
+- Edge strength + local contrast (complexity)
+- Estimated BPP from quality
+
+### OptimizeFor API
+
+```rust
+encoder.optimize_for(OptimizeFor::Butteraugli)  // Default - web images
+encoder.optimize_for(OptimizeFor::Dssim)        // Archival/medical
+encoder.optimize_for(OptimizeFor::Ssimulacra2)  // General purpose
+encoder.optimize_for(OptimizeFor::FileSize)     // Smallest files
 ```
 
 ### SelectedStrategy Structure
@@ -108,6 +139,46 @@ pub struct SelectedStrategy {
 }
 ```
 
+## Quality Modes
+
+```rust
+pub enum Quality {
+    Standard(u8),      // 1-100, auto-selects strategy
+    Low(u8),           // Forces mozjpeg strategy
+    High(u8),          // Forces jpegli strategy
+    Perceptual(f32),   // Target Butteraugli distance (binary search)
+    TargetSize(usize), // Binary search for file size
+    Linear(f32),       // Perceptually uniform quality steps
+}
+```
+
+### Perceptual Quality Targeting
+
+`Quality::Perceptual(distance)` uses binary search:
+1. Estimate starting quality from distance formula
+2. 4 iterations of binary search around estimate
+3. Return JPEG closest to target Butteraugli distance
+
+### Target Size Encoding
+
+`Quality::TargetSize(bytes)` uses binary search:
+1. Start with Q10-Q100 range
+2. 7 iterations of binary search
+3. Return highest quality that fits target size
+
+## Image Analysis (analysis.rs)
+
+Fast image analysis for encoder selection:
+- Samples every 4th block for variance
+- Samples every 4th pixel for edge detection
+- ~1/16th of full image scan cost
+
+Metrics computed:
+- `flat_block_pct`: Percentage of low-variance blocks
+- `edge_strength_mean`: Mean gradient magnitude
+- `local_contrast_mean`: Mean local variance
+- `luma_complexity`: Overall detail level
+
 ## File Format
 
 Standard JFIF JPEG structure:
@@ -115,77 +186,81 @@ Standard JFIF JPEG structure:
 SOI (FFD8)
 APP0 (JFIF header)
 DQT (quantization tables)
-SOF0 (frame header)
+SOF0/SOF2 (frame header - baseline or progressive)
 DHT (Huffman tables)
-SOS (scan header)
+SOS (scan header) × N for progressive
 Entropy data (with byte stuffing)
 EOI (FFD9)
 ```
-
-## Quality Targets
-
-zenjpeg aims to achieve better Pareto front than either encoder alone:
-
-```
-Quality     mozjpeg strength    jpegli strength
----------   -----------------   ---------------
-Q30         ★★★                 ★☆☆
-Q50         ★★★                 ★★☆
-Q70         ★★☆                 ★★★
-Q90         ★☆☆                 ★★★
-```
-
-By selecting the right strategy per quality level, zenjpeg achieves the envelope of both curves.
 
 ## Module Dependencies
 
 ```
 lib.rs
-├── error.rs      (standalone)
-├── types.rs      (imports trellis.rs, adaptive_quant.rs)
-├── consts.rs     (standalone)
-├── color.rs      (standalone)
-├── dct.rs        (imports consts.rs)
-├── quant.rs      (imports consts.rs)
-├── huffman.rs    (imports consts.rs)
-├── entropy.rs    (imports huffman.rs)
-├── trellis.rs    (imports huffman.rs)
-├── adaptive_quant.rs (standalone)
-├── strategy.rs   (imports types.rs)
-└── encode.rs     (imports all above)
+├── error.rs          (standalone)
+├── types.rs          (OptimizeFor, Quality, ScanScript, etc.)
+├── analysis.rs       (image analysis, metric-aware selection)
+├── consts.rs         (JPEG constants, standard tables)
+├── color.rs          (RGB→YCbCr conversion)
+├── dct.rs            (forward DCT)
+├── quant.rs          (quantization tables, zero-bias)
+├── huffman.rs        (Huffman table handling)
+├── entropy.rs        (entropy encoding, progressive encoder)
+├── progressive.rs    (scan script generation)
+├── trellis.rs        (rate-distortion optimization)
+├── adaptive_quant.rs (jpegli-style AQ)
+├── strategy.rs       (encoder selection)
+├── jpegli/           (forked jpegli encoder)
+│   ├── encode.rs
+│   ├── huffman_opt.rs
+│   └── adaptive_quant.rs
+└── encode.rs         (main Encoder API)
 ```
 
 ## Performance Considerations
 
-### Current Bottlenecks
-1. DCT: Using slow reference implementation
-2. Color conversion: Scalar, not vectorized
-3. Entropy coding: No table optimization
+### Current Status
+- DCT: Reference + integer implementations
+- Huffman: Two-pass optimization implemented
+- Progressive: Full support with all scan scripts
+- Trellis: Enabled for Q < 80
 
-### Optimization Plan
-1. Fast DCT (Loeffler) - 3-4x speedup
-2. SIMD color conversion - 4-8x speedup
-3. SIMD DCT - 4-8x speedup
-4. Two-pass Huffman - better compression
+### Optimization TODO
+1. SIMD DCT - check mozjpeg-rs for existing work
+2. SIMD color conversion
+3. Parallel block processing
 
 ## Testing Strategy
 
 ### Unit Tests
-Each module has inline tests for core functionality.
+206 tests covering:
+- DCT accuracy
+- Quantization
+- Huffman encoding
+- Trellis optimization
+- Progressive encoding
+- Encoder presets
 
 ### Integration Tests
-TODO: Roundtrip tests with jpeg-decoder
-
-### Parity Tests
-TODO: Compare output with mozjpeg-rs and jpegli-rs
+- Roundtrip tests with jpeg_decoder
+- Multi-decoder verification (jpeg_decoder, djpeg, ImageMagick)
+- Progressive scan validation
 
 ### Quality Tests
-TODO: Use codec-eval to verify Pareto improvements
+- codec-eval integration for Pareto analysis
+- Butteraugli/DSSIM/SSIMULACRA2 metrics
+
+## Current Limitations
+
+1. **Simplified AQ**: Full jpegli perceptual AQ not yet ported
+2. **Trellis at high Q**: Disabled for Q >= 80 (hurts quality without proper AQ)
+3. **No XYB mode**: YCbCr only (XYB available via jpegli delegation)
 
 ## Future Work
 
-1. **XYB Color Space** - Optional jpegli mode for even better high-quality
-2. **Progressive Encoding** - Scan optimization
-3. **Restart Markers** - Error resilience
-4. **ICC Profiles** - Color management
-5. **EXIF Preservation** - Metadata handling
+1. **Full jpegli AQ port** - Pre-erosion, fuzzy erosion, modulations
+2. **SIMD acceleration** - DCT, color conversion
+3. **XYB Color Space** - Optional mode for better high-quality
+4. **Restart Markers** - Error resilience
+5. **ICC Profiles** - Color management
+6. **EXIF Preservation** - Metadata handling

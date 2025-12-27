@@ -73,10 +73,32 @@ zenjpeg appears on Pareto front at multiple quality levels:
 
 ### Pending
 - [ ] Port jpegli's perceptual adaptive quantization (complex algorithm)
-- [ ] Progressive encoding
-- [ ] SIMD acceleration
-- [ ] Documentation (ARCHITECTURE.md, RESEARCH.md)
-- [ ] Check mozjpeg-rs for SIMD DCT work to port
+- [ ] Port SIMD DCT from mozjpeg-rs (see below)
+
+### SIMD DCT Available in mozjpeg-rs
+
+**Location**: `/home/lilith/work/mozjpeg-rs/src/dct.rs` (1,546 lines)
+
+Three implementations ready to port:
+1. **Scalar Loeffler** with `#[multiversion]` autovectorization
+2. **Row-parallel SIMD** using `wide::i32x4` (4 rows at once)
+3. **Transpose-based SIMD** using `wide::i32x8` (8 rows at once, best for cache)
+
+**Hand-written AVX2**: `/home/lilith/work/mozjpeg-rs/src/simd/x86_64/avx2.rs` (502 lines)
+- Uses `core::arch::x86_64` intrinsics
+- ~15% faster than autovectorized version
+- Gated behind `simd-intrinsics` feature flag
+
+**Dependencies**:
+- `multiversion` crate for compile-time platform dispatch
+- `wide` crate for portable SIMD vectors
+- All have scalar fallbacks for unsupported platforms
+
+### Completed
+- [x] Progressive encoding (full support with all scan scripts)
+- [x] Documentation updates (ARCHITECTURE.md)
+- [x] Metric-specific strategy selection (OptimizeFor API)
+- [x] Perceptual quality targeting (binary search)
 
 ### Known Limitations
 - Simplified variance-based AQ hurts quality - needs full jpegli perceptual AQ port

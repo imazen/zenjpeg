@@ -258,6 +258,37 @@ pub enum EncodingStrategy {
     Simple,
 }
 
+/// Target quality metric for optimization.
+///
+/// Different metrics favor different encoders:
+/// - Butteraugli: jpegli wins 84% of comparisons
+/// - DSSIM: mozjpeg wins 67% of comparisons
+/// - SSIMULACRA2: balanced (~50/50)
+///
+/// The encoder selection heuristic adjusts based on this setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptimizeFor {
+    /// Optimize for Butteraugli distance (Google's perceptual metric).
+    /// Best for web images where perceptual quality matters most.
+    /// Favors jpegli-style encoding.
+    #[default]
+    Butteraugli,
+
+    /// Optimize for DSSIM (structural similarity).
+    /// Best for archival or medical imaging where structure matters.
+    /// Favors mozjpeg-style encoding at medium bitrates.
+    Dssim,
+
+    /// Optimize for SSIMULACRA2 (balanced perceptual metric).
+    /// Good general-purpose choice.
+    /// Balanced between mozjpeg and jpegli.
+    Ssimulacra2,
+
+    /// Optimize for smallest file size at given quality.
+    /// Uses aggressive trellis quantization.
+    FileSize,
+}
+
 /// Progressive scan script selection.
 ///
 /// Different scan scripts optimize for different trade-offs:

@@ -63,7 +63,7 @@ pub mod jpegli;
 pub use encode::Encoder;
 pub use error::Error;
 pub use progressive::ScanInfo;
-pub use types::{ColorSpace, EncodingStrategy, PixelFormat, Quality, ScanScript, Subsampling};
+pub use types::{ColorSpace, EncodingStrategy, OptimizeFor, PixelFormat, Quality, ScanScript, Subsampling};
 
 /// Result type for zenjpeg operations
 pub type Result<T> = std::result::Result<T, Error>;

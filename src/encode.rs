@@ -18,7 +18,7 @@ use crate::types::ScanScript;
 use crate::quant::{QuantTableSet, ZeroBiasParams, quantize_block_with_zero_bias, quant_vals_to_distance};
 use crate::strategy::{select_strategy, EncodingApproach, SelectedStrategy};
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
-use crate::types::{EncodingStrategy, PixelFormat, Quality, Subsampling};
+use crate::types::{EncodingStrategy, OptimizeFor, PixelFormat, Quality, Subsampling};
 use crate::Result;
 
 /// Standard AC luma derived table for trellis rate estimation.
@@ -77,6 +77,7 @@ pub struct Encoder {
     progressive: Option<bool>,
     scan_script: ScanScript,
     optimize_huffman: bool,
+    optimize_for: OptimizeFor,
 }
 
 impl Default for Encoder {
@@ -95,6 +96,7 @@ impl Encoder {
             progressive: None, // Auto-select based on strategy
             scan_script: ScanScript::default(),
             optimize_huffman: true,
+            optimize_for: OptimizeFor::default(),
         }
     }
 
@@ -107,6 +109,7 @@ impl Encoder {
             progressive: Some(true),
             scan_script: ScanScript::Minimal, // Simple progressive, lowest overhead
             optimize_huffman: true,
+            optimize_for: OptimizeFor::FileSize,
         }
     }
 
@@ -119,6 +122,7 @@ impl Encoder {
             progressive: Some(false),
             scan_script: ScanScript::default(),
             optimize_huffman: true,
+            optimize_for: OptimizeFor::Butteraugli,
         }
     }
 
@@ -131,6 +135,7 @@ impl Encoder {
             progressive: Some(false),
             scan_script: ScanScript::Minimal,
             optimize_huffman: false,
+            optimize_for: OptimizeFor::default(),
         }
     }
 
@@ -179,10 +184,41 @@ impl Encoder {
         self
     }
 
+    /// Set the target quality metric to optimize for.
+    ///
+    /// Different metrics favor different encoding strategies:
+    /// - `Butteraugli`: Favors jpegli (84% win rate) - best for web images
+    /// - `Dssim`: Favors mozjpeg at medium bitrates (67% win rate) - best for archival
+    /// - `Ssimulacra2`: Balanced between encoders - good general choice
+    /// - `FileSize`: Aggressive trellis for smallest files
+    ///
+    /// # Example
+    /// ```
+    /// use zenjpeg::{Encoder, OptimizeFor};
+    ///
+    /// let encoder = Encoder::new()
+    ///     .optimize_for(OptimizeFor::Dssim);  // Optimize for structural similarity
+    /// ```
+    pub fn optimize_for(mut self, metric: OptimizeFor) -> Self {
+        self.optimize_for = metric;
+        self
+    }
+
     /// Encode RGB image data to JPEG
     pub fn encode_rgb(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         self.validate_dimensions(width, height)?;
         self.validate_pixel_data(pixels, width, height, PixelFormat::Rgb8)?;
+
+        // Handle special quality modes
+        match &self.quality {
+            Quality::Perceptual(target) => {
+                return self.encode_rgb_targeting_quality(pixels, width, height, *target);
+            }
+            Quality::TargetSize(target_bytes) => {
+                return self.encode_rgb_targeting_size(pixels, width, height, *target_bytes);
+            }
+            _ => {}
+        }
 
         // Select encoding strategy
         let selected = select_strategy(&self.quality, self.strategy);
@@ -198,6 +234,108 @@ impl Encoder {
         let (y_plane, cb_plane, cr_plane) = deinterleave_ycbcr(&ycbcr, width, height);
 
         // Encode with selected strategy
+        self.encode_ycbcr_planes(&y_plane, &cb_plane, &cr_plane, width, height, &selected)
+    }
+
+    /// Encode targeting a specific perceptual quality (Butteraugli distance).
+    ///
+    /// Uses binary search to find the quality value that produces
+    /// approximately the target Butteraugli distance.
+    ///
+    /// # Arguments
+    /// * `target_distance` - Target Butteraugli distance (0.5 = excellent, 1.0 = good, 2.0 = acceptable)
+    fn encode_rgb_targeting_quality(
+        &self,
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+        target_distance: f32,
+    ) -> Result<Vec<u8>> {
+        // Use the inverse quality-to-distance formula to estimate starting quality
+        let estimated_q = crate::analysis::distance_to_quality(target_distance);
+
+        // Binary search around the estimate
+        let mut low_q = (estimated_q - 15.0).max(10.0);
+        let mut high_q = (estimated_q + 15.0).min(100.0);
+        let mut best_jpeg = Vec::new();
+        let mut best_q = estimated_q;
+
+        // 4 iterations of binary search gives ~1 quality unit precision
+        for _ in 0..4 {
+            let mid_q = (low_q + high_q) / 2.0;
+            let encoder = self.clone().quality(Quality::Standard(mid_q as u8));
+            let jpeg = encoder.encode_rgb_internal(pixels, width, height)?;
+
+            // Estimate distance from quality (not actual measurement)
+            let est_distance = crate::analysis::quality_to_distance(mid_q);
+
+            if est_distance > target_distance {
+                // Distance too high (quality too low) - increase quality
+                low_q = mid_q;
+            } else {
+                // Distance low enough - this is good, try lower quality for smaller file
+                high_q = mid_q;
+            }
+
+            best_jpeg = jpeg;
+            best_q = mid_q;
+        }
+
+        // Final encode at best quality
+        let encoder = self.clone().quality(Quality::Standard(best_q as u8));
+        encoder.encode_rgb_internal(pixels, width, height)
+    }
+
+    /// Encode targeting a specific file size in bytes.
+    ///
+    /// Uses binary search on quality to find the highest quality
+    /// that fits within the target size.
+    fn encode_rgb_targeting_size(
+        &self,
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+        target_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        let mut low_q = 10.0f32;
+        let mut high_q = 100.0f32;
+        let mut best_jpeg = Vec::new();
+
+        // 7 iterations gives ~1 quality unit precision
+        for _ in 0..7 {
+            let mid_q = (low_q + high_q) / 2.0;
+            let encoder = self.clone().quality(Quality::Standard(mid_q as u8));
+            let jpeg = encoder.encode_rgb_internal(pixels, width, height)?;
+
+            if jpeg.len() <= target_bytes {
+                // Fits! Try higher quality
+                low_q = mid_q;
+                best_jpeg = jpeg;
+            } else {
+                // Too big - try lower quality
+                high_q = mid_q;
+            }
+        }
+
+        if best_jpeg.is_empty() {
+            // Even lowest quality doesn't fit, return it anyway
+            let encoder = self.clone().quality(Quality::Standard(10));
+            best_jpeg = encoder.encode_rgb_internal(pixels, width, height)?;
+        }
+
+        Ok(best_jpeg)
+    }
+
+    /// Internal encode without special quality mode handling
+    fn encode_rgb_internal(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+        let selected = select_strategy(&self.quality, self.strategy);
+
+        if selected.approach == EncodingApproach::Jpegli {
+            return self.encode_rgb_with_jpegli(pixels, width, height);
+        }
+
+        let ycbcr = convert_rgb_to_ycbcr(pixels, width, height);
+        let (y_plane, cb_plane, cr_plane) = deinterleave_ycbcr(&ycbcr, width, height);
         self.encode_ycbcr_planes(&y_plane, &cb_plane, &cr_plane, width, height, &selected)
     }
 
