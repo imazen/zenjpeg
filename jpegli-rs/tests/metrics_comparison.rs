@@ -214,7 +214,6 @@ fn test_metrics_distortion_levels() {
 
 /// Benchmark encoding quality across encoders using multiple metrics.
 #[test]
-#[ignore] // Requires test file
 fn test_metrics_encoder_comparison() {
     let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {

@@ -7,7 +7,6 @@ use std::process::Command;
 
 /// Compare Rust vs C++ at various quality levels.
 #[test]
-#[ignore] // Requires C++ cjpegli build
 fn test_cpp_quality_comparison() {
     let width = 128u32;
     let height = 128u32;
