@@ -16,6 +16,7 @@ simd = []  # Enable SIMD intrinsics
 # Core utilities
 bytemuck = { version = "1.14", features = ["derive"] }
 wide = "0.7"
+multiversion = "0.7"  # For SIMD autovectorization across platforms
 
 # Image analysis for auto-picking encoding strategy
 evalchroma = "1.0"
