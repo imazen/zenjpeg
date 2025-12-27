@@ -273,7 +273,20 @@ This aligns with the research notes about quality-dependent Pareto fronts!
 2. Use jpegli approach for bpp > 1.0 (or Q > ~70)
 3. Hybrid zone at 0.75-1.0 bpp
 
+**CID22 corpus (20 images) confirms pattern:**
+
+| BPP | mozjpeg wins | jpegli wins |
+|-----|--------------|-------------|
+| 0.50 | 50% | 50% |
+| 0.75 | **55%** | 45% |
+| 1.00 | 35% | **65%** |
+| 1.50 | 20% | **80%** |
+| 2.00 | 30% | **70%** |
+
+**Confirmed: crossover at ~0.75-1.0 bpp across both Kodak and CID22**
+
 **Next steps:**
-- [ ] Test on more diverse corpus (CLIC, CID22)
+- [x] Test on more diverse corpus (CID22) - Done, confirms pattern
 - [ ] Implement BPP-based strategy selection
-- [ ] Consider per-image content analysis for better selection
+- [ ] Map Q values to expected BPP for strategy selection
+- [ ] Consider per-image content analysis for edge cases
