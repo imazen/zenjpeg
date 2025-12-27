@@ -71,8 +71,8 @@ fn compare_rust_cpp_420() {
             let cpp_jpeg = fs::read("/tmp/cpp_420_flower.jpg").unwrap();
             println!("C++ 4:2:0:  {} bytes", cpp_jpeg.len());
 
-            let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
-                / cpp_jpeg.len() as f64;
+            let diff_pct =
+                100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
             println!("Size difference: {:+.1}%", diff_pct);
         } else {
             println!(

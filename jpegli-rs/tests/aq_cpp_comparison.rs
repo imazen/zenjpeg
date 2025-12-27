@@ -236,7 +236,8 @@ fn test_rust_aq_impl_produces_valid_output() {
 #[test]
 fn test_rust_vs_cpp_on_testdata() {
     // Parse actual C++ testdata and compare Rust implementation
-    let path = match jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") {
+    let path = match jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata")
+    {
         Some(p) => p,
         None => {
             eprintln!("Testdata not found - skipping. Set CPP_TESTDATA_DIR env var.");
@@ -453,7 +454,8 @@ fn test_rust_vs_cpp_on_testdata() {
 #[test]
 #[ignore] // Run with --ignored when ready
 fn test_compute_aq_field_vs_cpp() {
-    let path = match jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") {
+    let path = match jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata")
+    {
         Some(p) => p,
         None => {
             eprintln!("Testdata not found - skipping. Set CPP_TESTDATA_DIR env var.");

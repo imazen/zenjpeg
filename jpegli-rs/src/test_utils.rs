@@ -462,8 +462,12 @@ pub fn get_cpp_testdata_path(filename: &str) -> Option<PathBuf> {
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         let candidates = [
             PathBuf::from(&manifest).join("cpp_testdata").join(filename),
-            PathBuf::from(&manifest).join("../cpp_testdata").join(filename),
-            PathBuf::from(&manifest).join("../internal/jpegli-cpp").join(filename),
+            PathBuf::from(&manifest)
+                .join("../cpp_testdata")
+                .join(filename),
+            PathBuf::from(&manifest)
+                .join("../internal/jpegli-cpp")
+                .join(filename),
             PathBuf::from(&manifest).join("testdata").join(filename),
         ];
         for path in candidates {

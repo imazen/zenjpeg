@@ -166,18 +166,18 @@ fn main() {
 
         let cjpegli_path = jpegli::test_utils::require_cjpegli();
         let output = Command::new(&cjpegli_path)
-                .args([
-                    "--chroma_subsampling=444",
-                    "-p",
-                    "0",
-                    "--fixed_code",
-                    ppm_path,
-                    &jpg_path,
-                    "-q",
-                    &q.to_string(),
-                ])
-                .output()
-                .expect("cjpegli");
+            .args([
+                "--chroma_subsampling=444",
+                "-p",
+                "0",
+                "--fixed_code",
+                ppm_path,
+                &jpg_path,
+                "-q",
+                &q.to_string(),
+            ])
+            .output()
+            .expect("cjpegli");
 
         if output.status.success() {
             let cpp_data = fs::read(&jpg_path).unwrap();

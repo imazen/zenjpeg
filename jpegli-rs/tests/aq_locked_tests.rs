@@ -262,7 +262,8 @@ fn test_per_block_aq_placeholder() {
     // 4. Assert max difference < 1e-4
 
     // For now, just verify the testdata file exists
-    let testdata_path = jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata");
+    let testdata_path =
+        jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata");
     assert!(
         testdata_path.is_some(),
         "C++ testdata not found. Set CPP_TESTDATA_DIR env var or run:\n\

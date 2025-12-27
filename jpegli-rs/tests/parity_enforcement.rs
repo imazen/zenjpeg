@@ -447,7 +447,8 @@ fn test_parity_comprehensive() {
     let mut targets_reached = Vec::new();
 
     // Test flower
-    let flower_path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
+    let flower_path =
+        jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if let Some(result) = test_image(&flower_path, "flower", 90, BASELINE.flower_q90_diff_pct) {
         results.push(result);
     }

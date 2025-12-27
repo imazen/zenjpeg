@@ -210,7 +210,10 @@ fn main() {
         None
     }
     .or_else(|| {
-        std::env::var("CORPUS_DIR").ok().map(PathBuf::from).filter(|d| d.exists())
+        std::env::var("CORPUS_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|d| d.exists())
     })
     .or_else(|| {
         let candidates = [
@@ -218,7 +221,10 @@ fn main() {
             "../codec-corpus/kodak",
             "codec-corpus/kodak",
         ];
-        candidates.iter().find(|p| Path::new(p).exists()).map(PathBuf::from)
+        candidates
+            .iter()
+            .find(|p| Path::new(p).exists())
+            .map(PathBuf::from)
     })
     .expect("No corpus found. Set CORPUS_DIR or JPEGLI_TESTDATA env var.");
 
