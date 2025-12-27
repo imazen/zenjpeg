@@ -76,6 +76,7 @@ zenjpeg appears on Pareto front at multiple quality levels:
 - [ ] Progressive encoding
 - [ ] SIMD acceleration
 - [ ] Documentation (ARCHITECTURE.md, RESEARCH.md)
+- [ ] Check mozjpeg-rs for SIMD DCT work to port
 
 ### Known Limitations
 - Simplified variance-based AQ hurts quality - needs full jpegli perceptual AQ port
