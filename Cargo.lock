@@ -292,6 +292,8 @@ dependencies = [
  "csv",
  "dssim-core",
  "imgref",
+ "jpeg-decoder",
+ "moxcms 0.7.11",
  "rayon",
  "rgb",
  "serde",
@@ -687,7 +689,7 @@ dependencies = [
  "jpeg-decoder",
  "jpegli-sys",
  "lcms2",
- "moxcms",
+ "moxcms 0.6.4",
  "mozjpeg",
  "multiversion",
  "png",
@@ -821,6 +823,16 @@ checksum = "154cecde340309c40d67acd50e4f4a0ba99960ff13e786cf211ebcc6aa490085"
 dependencies = [
  "chrono",
  "num-traits",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
+dependencies = [
+ "num-traits",
+ "pxfm",
 ]
 
 [[package]]
@@ -1030,6 +1042,15 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "pxfm"
+version = "0.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7186d3822593aa4393561d186d1393b3923e9d6163d3fbfd6e825e3e6cf3e6a8"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
