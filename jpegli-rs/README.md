@@ -54,14 +54,16 @@ std::fs::write("output.jpg", &jpeg_data)?;
 jpegli-rs achieves **10-17% better quality** (measured by DSSIM) at the same file size
 compared to mozjpeg, or produces **5-8% smaller files** at equivalent quality.
 
-## License
-
-BSD-3-Clause, same as the original jpegli.
-
 ## Acknowledgments
 
 This is a Rust port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
 from the JPEG XL project by Google.
+
+## License
+
+AGPL-3.0-or-later. A commercial license is available from https://imageresizing.net/pricing
+
+The original jpegli from libjxl is BSD-3-Clause licensed. See LICENSE for full details.
 
 ## AI-Generated Code Notice
 

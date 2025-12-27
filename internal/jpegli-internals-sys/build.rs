@@ -52,6 +52,9 @@ fn main() {
         build_butteraugli_wrapper(&manifest_dir, &jpegli_root, &build_dir, &target);
     }
 
+    // Build the jpegli test FFI wrapper (for fast math, AQ functions)
+    build_jpegli_test_ffi(&jpegli_root, &build_dir, &target);
+
     // Link the libraries
     link_libraries(&build_dir, &target, butteraugli_enabled);
 }
@@ -96,10 +99,62 @@ fn build_butteraugli_wrapper(
     build.compile("butteraugli_c");
 }
 
+/// Build the jpegli test FFI wrapper (fast math, AQ functions)
+fn build_jpegli_test_ffi(
+    jpegli_root: &PathBuf,
+    build_dir: &PathBuf,
+    target: &str,
+) {
+    let ffi_source = jpegli_root.join("lib/extras/jpegli_test_ffi.cc");
+
+    // Check if the source file exists (only in stepbystep2 branch)
+    if !ffi_source.exists() {
+        println!("cargo:warning=jpegli_test_ffi.cc not found - FFI functions will not be available");
+        return;
+    }
+
+    println!("cargo:rerun-if-changed={}", ffi_source.display());
+
+    let mut build = cc::Build::new();
+
+    build
+        .cpp(true)
+        .file(&ffi_source)
+        // Include paths for jpegli-cpp headers
+        .include(jpegli_root)
+        .include(jpegli_root.join("lib"))
+        // Include path for generated config headers
+        .include(build_dir.join("lib/include"))
+        // Include third_party for highway
+        .include(jpegli_root.join("third_party"))
+        // Optimization
+        .opt_level(2);
+
+    // Platform-specific C++ standard
+    if target.contains("msvc") {
+        build.flag("/std:c++17");
+    } else {
+        build.flag("-std=c++17");
+    }
+
+    // Suppress some warnings in C++ code
+    if !target.contains("msvc") {
+        build.flag("-Wno-unused-parameter");
+        build.flag("-Wno-sign-compare");
+    }
+
+    build.compile("jpegli_test_ffi");
+}
+
 /// Find a pre-built library in common locations
 fn find_prebuilt_library(jpegli_root: &PathBuf, butteraugli_enabled: bool) -> Option<PathBuf> {
     // Check standard build directories
-    let candidates = ["build", "build_release", "build_test", "cmake-build-release"];
+    let candidates = [
+        "build",
+        "build_release",
+        "build_test",
+        "cmake-build-release",
+    ];
 
     for candidate in &candidates {
         let build_dir = jpegli_root.join(candidate);
