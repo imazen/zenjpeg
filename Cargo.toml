@@ -29,15 +29,13 @@ jpegli = { path = "../jpegli/jpegli-rs/jpegli" }
 [dev-dependencies]
 # Image I/O
 png = "0.17"
-jpeg-decoder = "0.3"
 
-# Quality metrics
+# Quality metrics (individual metrics for standalone tests)
 dssim = "3.2"
-ssimulacra2 = "0.5"
 butteraugli-oxide = { path = "../jpegli/jpegli-rs/butteraugli" }
 
-# Codec evaluation
-codec-eval = { path = "../codec-eval" }
+# Codec evaluation (handles metrics, ICC profiles, and JPEG decoding)
+codec-eval = { git = "https://github.com/imazen/codec-eval" }
 
 # Testing
 proptest = "1.4"

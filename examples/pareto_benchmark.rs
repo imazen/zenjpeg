@@ -16,7 +16,8 @@
 //!   - comparison_outputs/pareto_results.json
 
 use codec_eval::{
-    EvalConfig, EvalSession, ImageData, MetricConfig, ParetoFront, RDPoint, ViewingCondition,
+    decode::jpeg_decode_callback, EvalConfig, EvalSession, ImageData, MetricConfig, ParetoFront,
+    RDPoint, ViewingCondition,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -50,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = EvalSession::new(config);
 
     // Register zenjpeg encoder
+    // Uses ICC-aware decode callback to handle XYB JPEG color profiles correctly
     session.add_codec_with_decode(
         "zenjpeg",
         env!("CARGO_PKG_VERSION"),
@@ -59,8 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let height = image.height();
             let quality = request.quality as u8;
 
-            let encoder =
-                zenjpeg::Encoder::new().quality(zenjpeg::Quality::Standard(quality));
+            let encoder = zenjpeg::Encoder::new().quality(zenjpeg::Quality::Standard(quality));
             encoder.encode_rgb(&rgb, width, height).map_err(|e| {
                 codec_eval::Error::Codec {
                     codec: "zenjpeg".to_string(),
@@ -68,19 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             })
         }),
-        Box::new(|data| {
-            let mut decoder = jpeg_decoder::Decoder::new(data);
-            let pixels = decoder.decode().map_err(|e| codec_eval::Error::Codec {
-                codec: "jpeg-decoder".to_string(),
-                message: e.to_string(),
-            })?;
-            let info = decoder.info().unwrap();
-            Ok(ImageData::RgbSlice {
-                data: pixels,
-                width: info.width as usize,
-                height: info.height as usize,
-            })
-        }),
+        jpeg_decode_callback(),
     );
 
     // Register mozjpeg-oxide encoder
@@ -103,22 +92,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             })
         }),
-        Box::new(|data| {
-            let mut decoder = jpeg_decoder::Decoder::new(data);
-            let pixels = decoder.decode().map_err(|e| codec_eval::Error::Codec {
-                codec: "jpeg-decoder".to_string(),
-                message: e.to_string(),
-            })?;
-            let info = decoder.info().unwrap();
-            Ok(ImageData::RgbSlice {
-                data: pixels,
-                width: info.width as usize,
-                height: info.height as usize,
-            })
-        }),
+        jpeg_decode_callback(),
     );
 
     // Register jpegli encoder
+    // jpegli produces XYB JPEGs with custom ICC profiles - the ICC-aware decode
+    // callback ensures colors are transformed to sRGB for accurate metrics
     session.add_codec_with_decode(
         "jpegli",
         "0.1.0",
@@ -138,19 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 message: e.to_string(),
             })
         }),
-        Box::new(|data| {
-            let mut decoder = jpeg_decoder::Decoder::new(data);
-            let pixels = decoder.decode().map_err(|e| codec_eval::Error::Codec {
-                codec: "jpeg-decoder".to_string(),
-                message: e.to_string(),
-            })?;
-            let info = decoder.info().unwrap();
-            Ok(ImageData::RgbSlice {
-                data: pixels,
-                width: info.width as usize,
-                height: info.height as usize,
-            })
-        }),
+        jpeg_decode_callback(),
     );
 
     println!("Registered {} codecs", session.codec_count());
