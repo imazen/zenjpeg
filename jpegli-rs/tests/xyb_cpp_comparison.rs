@@ -1,4 +1,5 @@
 //! Test XYB mode output against C++ jpegli reference.
+#![cfg(feature = "ffi-tests")]
 
 use std::fs;
 use std::process::Command;

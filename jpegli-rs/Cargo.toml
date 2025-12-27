@@ -26,6 +26,10 @@ lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
 jpeg-decoder = { workspace = true, optional = true }
 butteraugli-oxide = { workspace = true }
+# For FFI comparison testing (internal parity tests only - requires C++ build)
+jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
+# For corpus comparison testing
+codec-eval = { version = "0.2", optional = true }
 
 [dev-dependencies]
 chrono = "0.4"
@@ -43,14 +47,14 @@ zune-jpeg = { workspace = true }
 mozjpeg = { workspace = true }
 jpeg-decoder = { workspace = true }
 
-# For FFI comparison testing (internal parity tests only - requires C++ build)
-# Uncomment locally when running parity tests:
-# jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
-
 [features]
 default = ["simd", "cms"]
 simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
+# Enable FFI tests against C++ implementation (requires C++ build)
+ffi-tests = ["dep:jpegli-internals-sys"]
+# Enable corpus comparison tests (requires codec-eval)
+corpus-tests = ["dep:codec-eval"]
 cms-lcms2 = ["dep:lcms2", "dep:jpeg-decoder"]
 cms-moxcms = ["dep:moxcms", "dep:jpeg-decoder"]
 # Enable debug token serialization for C++ comparison
@@ -96,7 +100,7 @@ required-features = ["test-utils"]
 
 [[example]]
 name = "compare_xyb_constants"
-required-features = ["test-utils"]
+required-features = ["test-utils", "ffi-tests"]
 
 [[example]]
 name = "debug_aq_values"
