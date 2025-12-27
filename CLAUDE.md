@@ -101,6 +101,41 @@ A feature is **NOT ported** until ALL of these are true:
 | Port constants only = "done" | Port constants AND wire into pipeline |
 | Make tests pass with loose thresholds | Use exact C++ values as reference |
 
+## ⚠️ MANDATORY: Test Integrity Rules
+
+**NEVER modify tests to make them pass. Tests are the specification.**
+
+### Absolute Rules
+
+1. **NEVER loosen assertions** - If a test expects `cpp_better == 0`, don't change it to `cpp_better <= 5`
+2. **NEVER relax thresholds** - If a test expects `< 0.001`, don't change it to `< 0.01`
+3. **NEVER remove failing tests** - Mark with `#[ignore]` and document the bug instead
+4. **NEVER skip tests in CI** - If a test fails, fix the code or mark it `#[ignore]` with explanation
+
+### When Tests Fail
+
+| ❌ DON'T | ✅ DO INSTEAD |
+|----------|---------------|
+| Change `assert_eq!(x, 0)` to `assert!(x <= 5)` | Fix the algorithm to produce 0 |
+| Increase tolerance from 0.001 to 0.01 | Find why precision is wrong |
+| Delete the failing test | Add `#[ignore] // BUG: description` |
+| Remove `-D warnings` from CI | Fix the warnings |
+
+### Marking Tests as Ignored
+
+When a test reveals a real bug that can't be fixed immediately:
+
+```rust
+#[test]
+#[ignore] // FAILING: 4/185 cases where C++ is better - algorithm needs fixing
+fn test_against_cpp_testdata() {
+```
+
+The `#[ignore]` comment MUST describe:
+- What is failing
+- Why it's failing (if known)
+- That it needs fixing (not "acceptable limitation")
+
 ## ⚠️ MANDATORY: Git Commit Discipline
 
 **Uncommitted work is invisible work. It cannot be reviewed, reverted, or understood.**
