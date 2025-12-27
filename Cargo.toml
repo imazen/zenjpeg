@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "jpegli-rs",
-    "internal/butteraugli",
     "internal/jpegli-internals-sys",
 ]
 
@@ -52,7 +51,7 @@ libc = "0.2"
 libloading = "0.8"
 
 # Local crates
-butteraugli-oxide = { path = "internal/butteraugli" }
+butteraugli-oxide = { path = "../butteraugli" }
 
 # SIMD dispatch
 multiversion = "0.7"
