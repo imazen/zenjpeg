@@ -44,7 +44,7 @@ struct ComputeAdaptiveQuantFieldTest {
 
 /// Parse first line of FuzzyErosion testdata file.
 fn parse_first_fuzzy_erosion_test() -> Option<FuzzyErosionTest> {
-    let path = common::get_cpp_testdata_path("FuzzyErosion.testdata")?;
+    let path = common::try_get_cpp_testdata_path("FuzzyErosion.testdata")?;
     let file = File::open(&path).ok()?;
     let reader = BufReader::new(file);
 
@@ -353,7 +353,7 @@ fn test_all_aq_testdata_entries() {
     let file = match File::open(&path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Could not open {}: {}", path, e);
+            eprintln!("Could not open {}: {}", path.display(), e);
             return;
         }
     };
