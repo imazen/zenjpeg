@@ -851,11 +851,13 @@ impl ProgressiveTokenBuffer {
     #[inline]
     pub fn push_ref(&mut self, token: RefToken) {
         if let Some(info) = self.scan_info.last_mut() {
-            // Count the symbol (masked for EOB run encoding)
+            // Count the actual symbol for Huffman table building
+            // - EOB symbols: 0x00, 0x10, 0x20, ... (high nibble = bits needed for run)
+            // - Newly-nonzero: 0x01, 0x11, 0x21, ... (high nibble = run, low nibble = 1)
+            // - ZRL: 0xF0
             let context = info.context as usize;
             if context < self.counters.len() {
-                // Mask off the low 4 bits for EOB run symbols
-                self.counters[context].count(token.symbol & 0xF0);
+                self.counters[context].count(token.symbol);
             }
             info.ref_tokens.push(token);
         }
@@ -1200,6 +1202,13 @@ impl ProgressiveTokenBuffer {
     /// * `ss` - Spectral selection start (1-63)
     /// * `se` - Spectral selection end (1-63)
     /// * `al` - Successive approximation low bit
+    /// Tokenizes AC coefficients for a progressive first scan.
+    ///
+    /// IMPORTANT: We must use absolute values for zero-detection to match
+    /// the refinement scan's classification. Otherwise, small negative
+    /// coefficients like -2 with al=2 would be incorrectly tokenized here
+    /// (because (-2) >> 2 = -1 in signed arithmetic) but classified as
+    /// "newly-nonzero" in refinement (because abs(-2) >> 2 = 0).
     pub fn tokenize_ac_first_scan(
         &mut self,
         blocks: &[[i16; 64]],
@@ -1214,16 +1223,17 @@ impl ProgressiveTokenBuffer {
 
         for block in blocks {
             // Find last nonzero coefficient in spectral range
+            // Use absolute value for consistency with refinement scan classification
             let mut last_nonzero = ss as usize;
             for k in (ss as usize..=se as usize).rev() {
-                if (block[k] >> al) != 0 {
+                if (block[k].unsigned_abs() >> al) != 0 {
                     last_nonzero = k;
                     break;
                 }
             }
 
-            // Check if block is all zeros in this range
-            let is_eob = (ss as usize..=se as usize).all(|k| (block[k] >> al) == 0);
+            // Check if block is all zeros in this range (using absolute values)
+            let is_eob = (ss as usize..=se as usize).all(|k| (block[k].unsigned_abs() >> al) == 0);
 
             if is_eob {
                 eob_run += 1;
@@ -1244,8 +1254,9 @@ impl ProgressiveTokenBuffer {
             // Encode coefficients
             let mut run = 0u8;
             for k in ss as usize..=se as usize {
-                let coef = block[k] >> al;
-                if coef == 0 {
+                let coef = block[k];
+                let abs_shifted = coef.unsigned_abs() >> al;
+                if abs_shifted == 0 {
                     run += 1;
                 } else {
                     // Emit ZRL for runs >= 16
@@ -1255,8 +1266,14 @@ impl ProgressiveTokenBuffer {
                         run -= 16;
                     }
 
-                    // Emit coefficient token
-                    let token = Token::ac(context, run, coef);
+                    // Emit coefficient token with the shifted value
+                    // Preserve sign from original coefficient
+                    let shifted_value = if coef < 0 {
+                        -(abs_shifted as i16)
+                    } else {
+                        abs_shifted as i16
+                    };
+                    let token = Token::ac(context, run, shifted_value);
                     self.push(token);
                     run = 0;
                 }
@@ -1336,9 +1353,10 @@ impl ProgressiveTokenBuffer {
 
         for block in blocks {
             // Find if there are any newly-nonzero or previously-nonzero coefficients
+            // Use unsigned_abs() for consistency with first-pass encoding
             let mut has_content = false;
             for k in ss as usize..=se as usize {
-                let abs_coef = block[k].abs();
+                let abs_coef = block[k].unsigned_abs();
                 // Was previously nonzero (bits at ah position or higher)
                 let was_nonzero = (abs_coef >> ah) != 0;
                 // Is newly nonzero (bit at al position, but not at ah)
@@ -1382,8 +1400,20 @@ impl ProgressiveTokenBuffer {
 
             for k in ss as usize..=se as usize {
                 let coef = block[k];
-                let abs_coef = coef.abs();
+                let abs_coef = coef.unsigned_abs();
                 let was_nonzero = (abs_coef >> ah) != 0;
+
+                // FIX: Emit ZRL proactively when run reaches 16, BEFORE collecting more refbits.
+                // This ensures each ZRL gets only the refbits from PREV_NZ within its 16-zero span.
+                if run >= 16 {
+                    let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
+                    self.push_ref(ref_token);
+                    for &bit in &block_refbits {
+                        self.push_refbit(bit);
+                    }
+                    block_refbits.clear();
+                    run -= 16;
+                }
 
                 if was_nonzero {
                     // Previously nonzero: emit refinement bit
@@ -1393,17 +1423,8 @@ impl ProgressiveTokenBuffer {
                     // Check if newly nonzero
                     let newly_nonzero = ((abs_coef >> al) & 1) != 0;
                     if newly_nonzero {
-                        // Emit ZRL for runs >= 16
-                        while run >= 16 {
-                            // ZRL with pending refbits
-                            let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
-                            self.push_ref(ref_token);
-                            for &bit in &block_refbits {
-                                self.push_refbit(bit);
-                            }
-                            block_refbits.clear();
-                            run -= 16;
-                        }
+                        // Note: ZRL emission already handled above when run >= 16,
+                        // so run is guaranteed to be < 16 here.
 
                         // Emit newly nonzero coefficient
                         let sign = if coef < 0 { 0 } else { 1 };
@@ -2115,8 +2136,8 @@ mod cpp_comparison_tests {
     use std::io::{BufRead, BufReader};
 
     fn load_testdata() -> Option<Vec<(Vec<i64>, Vec<u8>)>> {
-        let path = "/home/lilith/work/jpegli/CreateHuffmanTree.testdata";
-        let file = File::open(path).ok()?;
+        let path = crate::test_utils::get_cpp_testdata_path("CreateHuffmanTree.testdata")?;
+        let file = File::open(&path).ok()?;
         let reader = BufReader::new(file);
 
         let mut tests = Vec::new();
