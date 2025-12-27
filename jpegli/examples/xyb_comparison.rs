@@ -74,7 +74,7 @@ sys.stdout.buffer.write(img.tobytes())
 }
 
 fn main() {
-    let png_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     // Load PNG
     let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
@@ -101,7 +101,7 @@ fn main() {
     for q in [50u8, 60, 70, 80, 90, 95] {
         // Encode C++ XYB
         let xyb_path = format!("/tmp/cpp_xyb_{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
+        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--xyb",
                 "-p",
@@ -117,7 +117,7 @@ fn main() {
 
         // Encode C++ YCbCr
         let ycbcr_path = format!("/tmp/cpp_ycbcr_{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
+        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--chroma_subsampling=444",
                 "-p",

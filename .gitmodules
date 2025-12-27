@@ -1,3 +1,3 @@
 [submodule "jpegli-cpp"]
-	path = jpegli-cpp
+	path = internal/jpegli-cpp
 	url = https://github.com/imazen/jpegli

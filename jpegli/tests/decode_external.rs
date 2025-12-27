@@ -39,7 +39,7 @@ fn decode_with_jpeg_decoder(data: &[u8]) -> (Vec<u8>, usize, usize) {
 /// Test decoding 4:4:4 JPEG from ImageMagick
 #[test]
 fn test_decode_im_q85_444() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444.jpg");
+    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_444.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;
@@ -69,7 +69,7 @@ fn test_decode_im_q85_444() {
 #[test]
 fn test_decode_444_non_interleaved() {
     let path = Path::new(
-        "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.q85_444_non_interleaved.jpg",
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.q85_444_non_interleaved.jpg",
     );
     if !path.exists() {
         eprintln!("Skipping: test file not found");
@@ -99,7 +99,7 @@ fn test_decode_444_non_interleaved() {
 /// Test that 4:2:0 decoding works with MCU interleaving
 #[test]
 fn test_decode_420_mcu_interleaved() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_420.jpg");
+    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_420.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;
@@ -133,7 +133,7 @@ fn test_decode_420_mcu_interleaved() {
 /// Test decoding grayscale JPEG
 #[test]
 fn test_decode_grayscale() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_gray.jpg");
+    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_gray.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;

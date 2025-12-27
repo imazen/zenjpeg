@@ -8,7 +8,7 @@
 #[test]
 fn test_fast_log2f_callable() {
     let x = 2.0f32;
-    let cpp_result = unsafe { jpegli_sys::jpegli_fast_log2f(x) };
+    let cpp_result = unsafe { jpegli_internals_sys::jpegli_fast_log2f(x) };
     println!("C++ jpegli_fast_log2f(2.0) = {}", cpp_result);
     // log2(2) = 1.0, should be close
     assert!((cpp_result - 1.0).abs() < 0.01);
@@ -17,7 +17,7 @@ fn test_fast_log2f_callable() {
 #[test]
 fn test_fast_pow2f_callable() {
     let x = 1.0f32;
-    let cpp_result = unsafe { jpegli_sys::jpegli_fast_pow2f(x) };
+    let cpp_result = unsafe { jpegli_internals_sys::jpegli_fast_pow2f(x) };
     println!("C++ jpegli_fast_pow2f(1.0) = {}", cpp_result);
     // pow2(1) = 2.0, should be close
     assert!((cpp_result - 2.0).abs() < 0.01);
@@ -45,7 +45,7 @@ fn test_fast_log2f_vs_std_log2() {
 
     for &x in &test_values {
         let rust_std = x.log2();
-        let cpp_fast = unsafe { jpegli_sys::jpegli_fast_log2f(x) };
+        let cpp_fast = unsafe { jpegli_internals_sys::jpegli_fast_log2f(x) };
 
         let abs_diff = (rust_std - cpp_fast).abs();
         let rel_diff = if rust_std.abs() > 1e-6 {
@@ -101,7 +101,7 @@ fn test_fast_pow2f_vs_std_exp2() {
 
     for &x in &test_values {
         let rust_std = x.exp2();
-        let cpp_fast = unsafe { jpegli_sys::jpegli_fast_pow2f(x) };
+        let cpp_fast = unsafe { jpegli_internals_sys::jpegli_fast_pow2f(x) };
 
         let abs_diff = (rust_std - cpp_fast).abs();
         let rel_diff = if rust_std > 1e-6 {
@@ -164,7 +164,7 @@ fn test_fast_powf_vs_std_powf() {
 
     for &(base, exp) in &test_cases {
         let rust_std = base.powf(exp);
-        let cpp_fast = unsafe { jpegli_sys::jpegli_fast_powf(base, exp) };
+        let cpp_fast = unsafe { jpegli_internals_sys::jpegli_fast_powf(base, exp) };
 
         let abs_diff = (rust_std - cpp_fast).abs();
         let rel_diff = if rust_std > 1e-6 {
@@ -223,7 +223,7 @@ fn test_compute_mask_comparison() {
     println!("{}", "-".repeat(60));
 
     for &v in &test_values {
-        let cpp_result = unsafe { jpegli_sys::jpegli_compute_mask(v) };
+        let cpp_result = unsafe { jpegli_internals_sys::jpegli_compute_mask(v) };
         let rust_result = rust_compute_mask(v);
         let diff = (cpp_result - rust_result).abs();
         max_diff = max_diff.max(diff);
@@ -261,7 +261,7 @@ fn test_masking_sqrt_comparison() {
     println!("{}", "-".repeat(60));
 
     for &v in &test_values {
-        let cpp_result = unsafe { jpegli_sys::jpegli_masking_sqrt(v) };
+        let cpp_result = unsafe { jpegli_internals_sys::jpegli_masking_sqrt(v) };
         let rust_result = rust_masking_sqrt(v);
         let diff = (cpp_result - rust_result).abs();
         max_diff = max_diff.max(diff);
@@ -292,8 +292,8 @@ fn test_ratio_of_derivatives_comparison() {
     println!("{}", "-".repeat(45));
 
     for &v in &test_values {
-        let cpp_0 = unsafe { jpegli_sys::jpegli_ratio_of_derivatives(v, 0) };
-        let cpp_1 = unsafe { jpegli_sys::jpegli_ratio_of_derivatives(v, 1) };
+        let cpp_0 = unsafe { jpegli_internals_sys::jpegli_ratio_of_derivatives(v, 0) };
+        let cpp_1 = unsafe { jpegli_internals_sys::jpegli_ratio_of_derivatives(v, 1) };
         println!("{:>10.4} {:>14.8} {:>14.8}", v, cpp_0, cpp_1);
     }
 }
@@ -316,17 +316,17 @@ fn test_cumulative_aq_error() {
 
     for &pv in &pixel_values {
         // Step 1: ratio_of_derivatives (C++ uses fast_powf internally)
-        let cpp_ratio = unsafe { jpegli_sys::jpegli_ratio_of_derivatives(pv, 0) };
+        let cpp_ratio = unsafe { jpegli_internals_sys::jpegli_ratio_of_derivatives(pv, 0) };
 
         // Rust would use std::powf - simulate the computation
         // The actual formula is complex, but the key is that FastPowf differs
 
         // Step 2: compute_mask which uses FastLog2f internally
-        let cpp_mask = unsafe { jpegli_sys::jpegli_compute_mask(cpp_ratio) };
+        let cpp_mask = unsafe { jpegli_internals_sys::jpegli_compute_mask(cpp_ratio) };
 
         // Step 3: The final 2^x transform
         let exponent = cpp_mask * 0.5; // Example factor
-        let cpp_final = unsafe { jpegli_sys::jpegli_fast_pow2f(exponent) };
+        let cpp_final = unsafe { jpegli_internals_sys::jpegli_fast_pow2f(exponent) };
         let rust_final = exponent.exp2();
 
         let diff = (cpp_final - rust_final).abs();
@@ -398,8 +398,8 @@ fn test_ratio_of_derivatives_rust_vs_cpp() {
     for &v in &test_values {
         let rust_0 = rust_ratio_of_derivatives(v, false);
         let rust_1 = rust_ratio_of_derivatives(v, true);
-        let cpp_0 = unsafe { jpegli_sys::jpegli_ratio_of_derivatives(v, 0) };
-        let cpp_1 = unsafe { jpegli_sys::jpegli_ratio_of_derivatives(v, 1) };
+        let cpp_0 = unsafe { jpegli_internals_sys::jpegli_ratio_of_derivatives(v, 0) };
+        let cpp_1 = unsafe { jpegli_internals_sys::jpegli_ratio_of_derivatives(v, 1) };
 
         println!(
             "{:>8.4} {:>14.6} {:>14.6} {:>14.6} {:>14.6}",
@@ -448,7 +448,7 @@ fn test_brute_force_fast_pow2f_comparison() {
     for i in -5000..=5000 {
         let x = i as f32 / 1000.0; // -5.0 to 5.0 in 0.001 steps
 
-        let cpp = unsafe { jpegli_sys::jpegli_fast_pow2f(x) };
+        let cpp = unsafe { jpegli_internals_sys::jpegli_fast_pow2f(x) };
         let rust = rust_fast_pow2f(x);
         let diff = (cpp - rust).abs();
 
@@ -487,7 +487,7 @@ fn test_brute_force_fast_pow2f_comparison() {
     let aq_values: Vec<f32> = vec![-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
     println!("{:>10} {:>15} {:>15} {:>15}", "x", "C++", "Rust", "diff");
     for x in aq_values {
-        let cpp = unsafe { jpegli_sys::jpegli_fast_pow2f(x) };
+        let cpp = unsafe { jpegli_internals_sys::jpegli_fast_pow2f(x) };
         let rust = rust_fast_pow2f(x);
         let diff = (cpp - rust).abs();
         println!("{:>10.4} {:>15.10} {:>15.10} {:>15.10}", x, cpp, rust, diff);
@@ -512,8 +512,8 @@ fn test_log2_pow2_roundtrip() {
 
     for &x in &test_values {
         // C++ path: fast_pow2f(fast_log2f(x))
-        let cpp_log = unsafe { jpegli_sys::jpegli_fast_log2f(x) };
-        let cpp_round = unsafe { jpegli_sys::jpegli_fast_pow2f(cpp_log) };
+        let cpp_log = unsafe { jpegli_internals_sys::jpegli_fast_log2f(x) };
+        let cpp_round = unsafe { jpegli_internals_sys::jpegli_fast_pow2f(cpp_log) };
 
         // Rust path: exp2(log2(x))
         let rust_log = x.log2();

@@ -109,7 +109,7 @@ fn decode_jpeg_to_rgb(data: &[u8]) -> (Vec<u8>, u32, u32) {
 
 fn main() {
     let png_path = std::env::args().nth(1).unwrap_or_else(|| {
-        "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png".to_string()
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png".to_string()
     });
 
     let (original, width, height) = load_png(Path::new(&png_path));

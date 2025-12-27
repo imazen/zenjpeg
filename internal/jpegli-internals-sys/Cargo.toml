@@ -1,11 +1,12 @@
 [package]
-name = "jpegli-sys"
+name = "jpegli-internals-sys"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "FFI bindings to jpegli C++ for comparison testing"
-links = "jpegli_ffi"
+description = "FFI bindings to instrumented jpegli C++ internals for parity testing"
+links = "jpegli_internals_ffi"
 build = "build.rs"
+publish = false  # Internal testing only
 
 [features]
 default = []

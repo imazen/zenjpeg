@@ -10,7 +10,7 @@ fn main() {
 
     // Get C++ constants
     let (cpp_opsin_matrix, cpp_opsin_bias, cpp_scaled_offset, cpp_scaled_scale) =
-        jpegli_sys::cpp_get_xyb_constants();
+        jpegli_internals_sys::cpp_get_xyb_constants();
 
     // Rust constants
     let rust_opsin_matrix = &XYB_OPSIN_ABSORBANCE_MATRIX;
@@ -72,7 +72,7 @@ fn main() {
 
         // C++ conversion
         let srgb = vec![*r, *g, *b];
-        let cpp_xyb = jpegli_sys::cpp_srgb_to_scaled_xyb(&srgb, 1, 1, 255.0);
+        let cpp_xyb = jpegli_internals_sys::cpp_srgb_to_scaled_xyb(&srgb, 1, 1, 255.0);
 
         let diff_x = (rust_x - cpp_xyb[0]).abs();
         let diff_y = (rust_y - cpp_xyb[1]).abs();
@@ -94,7 +94,7 @@ fn main() {
     // Test with real image pixels
     println!("=== Image Conversion Test ===\n");
 
-    let image_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let image_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     let file = std::fs::File::open(image_path).unwrap();
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info().unwrap();
@@ -120,7 +120,7 @@ fn main() {
         rust_xyb[i * 3 + 2] = b;
     }
 
-    let cpp_xyb = jpegli_sys::cpp_srgb_to_scaled_xyb(&rgb, width, height, 255.0);
+    let cpp_xyb = jpegli_internals_sys::cpp_srgb_to_scaled_xyb(&rgb, width, height, 255.0);
 
     // Calculate statistics
     let mut max_diff = 0.0f32;

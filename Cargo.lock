@@ -136,7 +136,7 @@ dependencies = [
  "approx",
  "chrono",
  "jpeg-decoder",
- "jpegli-sys",
+ "jpegli-internals-sys",
  "mozjpeg",
  "png",
  "proptest",
@@ -687,7 +687,7 @@ dependencies = [
  "dssim",
  "imgref",
  "jpeg-decoder",
- "jpegli-sys",
+ "jpegli-internals-sys",
  "lcms2",
  "moxcms 0.6.4",
  "mozjpeg",
@@ -704,7 +704,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jpegli-sys"
+name = "jpegli-internals-sys"
 version = "0.1.0"
 dependencies = [
  "cc",

@@ -7,7 +7,7 @@ use std::process::Command;
 fn main() {
     let test_images = [
         (
-            "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+            "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
             "flower",
         ),
         ("/mnt/v/work/corpus/CID22-512/1459534.png", "cid22_large"),
@@ -35,7 +35,7 @@ fn main() {
 
     println!("\n=== Detailed breakdown for flower ===\n");
     if let Some(result) = compare_to_original(
-        "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
         "flower",
     ) {
         println!(
@@ -93,7 +93,7 @@ fn compare_to_original(png_path: &str, name: &str) -> Option<CompareResult> {
 
     // Encode with C++
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
+    Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",

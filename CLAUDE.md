@@ -21,9 +21,22 @@ cargo test --release  # Run with optimizations
 - **Main branch**: `main`
 - **Current working branch**: `stepbystep2`
 - **Repository structure**: Standalone Rust workspace at `~/work/jpegli-rs`
-- **C++ source**: `jpegli-cpp/` submodule (imazen fork of Google's libjxl/jpegli)
-- **C++ build path**: `jpegli-cpp/build/tools/cjpegli`
-- **C++ testdata path**: `jpegli-cpp/testdata/`
+
+### Directory Layout
+```
+jpegli-rs/
+├── jpegli/                         # Pure Rust encoder/decoder (THE PRODUCT)
+├── internal/
+│   ├── jpegli-cpp/                 # Submodule: instrumented C++ fork for parity testing
+│   ├── jpegli-internals-sys/       # FFI bindings to C++ internals (not published)
+│   └── butteraugli/                # Butteraugli copy for parity testing (published separately)
+└── Cargo.toml                      # Workspace config
+```
+
+- **C++ source**: `internal/jpegli-cpp/` submodule (instrumented imazen fork)
+- **C++ build path**: `internal/jpegli-cpp/build/tools/cjpegli`
+- **C++ testdata path**: `internal/jpegli-cpp/testdata/`
+- **FFI bindings**: `internal/jpegli-internals-sys/` (uses `jpegli_*` symbols, not `jpeg_*`)
 
 ## Project Overview
 
@@ -870,10 +883,10 @@ sudo apt install -y cmake build-essential ninja-build \
 
 # Initialize submodule if needed
 cd ~/work/jpegli-rs
-git submodule update --init --recursive jpegli-cpp
+git submodule update --init --recursive internal/jpegli-cpp
 
 # Build C++ tools
-cd jpegli-cpp
+cd internal/jpegli-cpp
 mkdir -p build && cd build
 cmake -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \

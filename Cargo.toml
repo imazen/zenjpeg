@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "butteraugli",
     "jpegli",
-    "jpegli-sys",
+    "internal/butteraugli",
+    "internal/jpegli-internals-sys",
 ]
 
 [workspace.package]
@@ -52,7 +52,7 @@ libc = "0.2"
 libloading = "0.8"
 
 # Local crates
-butteraugli-oxide = { path = "butteraugli" }
+butteraugli-oxide = { path = "internal/butteraugli" }
 
 # SIMD dispatch
 multiversion = "0.7"

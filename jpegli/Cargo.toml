@@ -35,8 +35,8 @@ zune-jpeg = { workspace = true }
 mozjpeg = { workspace = true }
 jpeg-decoder = { workspace = true }
 
-# For FFI comparison testing
-jpegli-sys = { path = "../jpegli-sys", features = ["butteraugli"] }
+# For FFI comparison testing (internal parity tests only)
+jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
 
 # For corpus comparison
 codec-eval = { workspace = true }
