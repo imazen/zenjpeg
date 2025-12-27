@@ -14,9 +14,15 @@ fn main() {
     // Add optional corpus images if they exist
     for (path, name) in [
         ("/mnt/v/work/corpus/CID22-512/1459534.png", "cid22_large"),
-        ("/mnt/v/work/corpus/CID22-512/2504911.png", "cid22_medium_large"),
+        (
+            "/mnt/v/work/corpus/CID22-512/2504911.png",
+            "cid22_medium_large",
+        ),
         ("/mnt/v/work/corpus/CID22-512/3616956.png", "cid22_medium"),
-        ("/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png", "cid22_small"),
+        (
+            "/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png",
+            "cid22_small",
+        ),
     ] {
         if std::path::Path::new(path).exists() {
             test_images.push((path.to_string(), name));
@@ -82,19 +88,19 @@ fn compare_image(png_path: &str, name: &str) -> Option<CompareResult> {
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
     let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
     let output = Command::new(&cjpegli_path)
-            .args([
-                "--noadaptive_quantization",
-                "--chroma_subsampling=444",
-                "-p",
-                "0",
-                "--fixed_code",
-                &ppm_path,
-                &cpp_jpg_path,
-                "-q",
-                "90",
-            ])
-            .output()
-            .ok()?;
+        .args([
+            "--noadaptive_quantization",
+            "--chroma_subsampling=444",
+            "-p",
+            "0",
+            "--fixed_code",
+            &ppm_path,
+            &cpp_jpg_path,
+            "-q",
+            "90",
+        ])
+        .output()
+        .ok()?;
 
     if !output.status.success() {
         return None;

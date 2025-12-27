@@ -14,7 +14,10 @@ fn main() {
     // Add optional corpus images if they exist
     for (path, name) in [
         ("/mnt/v/work/corpus/CID22-512/1459534.png", "cid22_large"),
-        ("/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png", "cid22_small"),
+        (
+            "/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png",
+            "cid22_small",
+        ),
     ] {
         if std::path::Path::new(path).exists() {
             test_images.push((path.to_string(), name));

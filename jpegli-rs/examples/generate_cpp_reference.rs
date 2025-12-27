@@ -230,12 +230,10 @@ fn main() {
     let corpus_dir = args
         .get(1)
         .map(PathBuf::from)
-        .or_else(|| {
-            corpus_paths
-                .into_iter()
-                .find(|p| p.exists())
-        })
-        .expect("No corpus directory found. Set JPEGLI_TESTDATA env var or pass CORPUS_DIR argument");
+        .or_else(|| corpus_paths.into_iter().find(|p| p.exists()))
+        .expect(
+            "No corpus directory found. Set JPEGLI_TESTDATA env var or pass CORPUS_DIR argument",
+        );
 
     let output_path = args
         .get(2)

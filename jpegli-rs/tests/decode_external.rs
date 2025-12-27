@@ -68,7 +68,8 @@ fn test_decode_im_q85_444() {
 /// Test decoding non-interleaved 4:4:4 JPEG
 #[test]
 fn test_decode_444_non_interleaved() {
-    let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.q85_444_non_interleaved.jpg");
+    let path = jpegli::test_utils::get_testdata_dir()
+        .join("jxl/flower/flower_small.q85_444_non_interleaved.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
         return;

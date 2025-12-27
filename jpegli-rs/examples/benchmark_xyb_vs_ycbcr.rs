@@ -231,7 +231,11 @@ fn main() {
     if flower_dir.exists() {
         corpus_paths.push(flower_dir);
     }
-    for c in ["../codec-eval/codec-corpus/kodak", "../codec-corpus/kodak", "codec-corpus/kodak"] {
+    for c in [
+        "../codec-eval/codec-corpus/kodak",
+        "../codec-corpus/kodak",
+        "codec-corpus/kodak",
+    ] {
         let p = PathBuf::from(c);
         if p.exists() {
             corpus_paths.push(p);
