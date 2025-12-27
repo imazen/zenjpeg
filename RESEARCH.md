@@ -247,16 +247,33 @@ Q  | moz bpp  butter | jpegli bpp  butter | Efficiency ratio
 60 |   0.51    3.97  |   0.76      2.98   | jpegli 1.27x better
 ```
 
-**Conclusion:** NO crossover point exists - jpegli wins at ALL quality levels tested (Q30-Q95).
+**CORRECTION: Same-Q comparison was misleading!**
 
-mozjpeg produces smaller files at same Q, but jpegli has better efficiency (quality per bit).
+Q values don't mean the same thing across encoders. Created `rd-compare` tool to compare at matched file sizes (fair comparison).
 
-**Revised strategy for zenjpeg:**
-1. ~~Hybrid mozjpeg+jpegli~~ → Pure jpegli approach
-2. Focus improvements on jpegli's adaptive quantization and XYB
-3. Consider mozjpeg trellis only for "min size at acceptable quality" mode
+**Rate-Distortion comparison at matched BPP (Kodak, 24 images):**
+
+| BPP | mozjpeg wins | jpegli wins |
+|-----|--------------|-------------|
+| 0.30 | 0% | **100%** |
+| 0.50 | **58%** | 42% |
+| 0.75 | **67%** | 33% |
+| 1.00 | 29% | **71%** |
+| 1.50 | 12% | **88%** |
+| 2.0+ | 4% | **96%** |
+
+**Crossover point: ~0.75-1.0 bpp**
+- Below 0.75 bpp: mozjpeg's trellis wins (high compression)
+- Above 1.0 bpp: jpegli's AQ wins (moderate compression)
+
+This aligns with the research notes about quality-dependent Pareto fronts!
+
+**Corrected strategy for zenjpeg:**
+1. Use mozjpeg approach for bpp < 0.75 (or Q < ~60)
+2. Use jpegli approach for bpp > 1.0 (or Q > ~70)
+3. Hybrid zone at 0.75-1.0 bpp
 
 **Next steps:**
-- [ ] Test on more diverse corpus (CLIC, CID22) to confirm
-- [ ] Identify improvements to jpegli's approach
-- [ ] Consider size-constrained mode using mozjpeg for extreme compression
+- [ ] Test on more diverse corpus (CLIC, CID22)
+- [ ] Implement BPP-based strategy selection
+- [ ] Consider per-image content analysis for better selection
