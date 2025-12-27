@@ -393,3 +393,70 @@ Given that "always use jpegli" achieves 84% accuracy, the prediction rule adds o
 1. Implement fast flat-block and edge detection during encoding
 2. Use prediction model to select encoder strategy
 3. For hybrid mode: use mozjpeg's quantization with jpegli's encoding
+
+### 2024-12-27: Multi-Metric Analysis
+
+**Critical Finding: The optimal encoder depends heavily on which quality metric you care about.**
+
+Extended `build-predictor` to evaluate winners using all three metrics:
+
+| Metric | mozjpeg wins | jpegli wins | Best Rule | Accuracy |
+|--------|-------------|-------------|-----------|----------|
+| **Butteraugli** | 61 (16%) | 321 (84%) | combined_v13 | 86.6% |
+| **DSSIM** | 264 (67%) | 131 (33%) | combined_v11 | 52.4% |
+| **SSIMULACRA2** | 109 (51%) | 104 (49%) | combined_v12 | 60.1% |
+
+**Analysis by Metric:**
+
+**Butteraugli (jpegli-favoring):**
+- jpegli wins 84% of comparisons
+- Dominates at very low BPP (0.2: 91%) and high BPP (1.0+: 95%)
+- mozjpeg only wins in very_flat_low_bpp category (68%)
+- *Why:* Butteraugli was developed by Google (same team as jpegli) and shares perceptual assumptions with jpegli's XYB color space
+
+**DSSIM (mozjpeg-favoring):**
+- mozjpeg wins 67% of comparisons
+- Dominates in the 0.6-1.5 BPP range (82-98% win rate)
+- jpegli only wins at very low BPP (0.2: 87%) and very high BPP (3.0: 58%)
+- *Why:* SSIM is based on structural similarity - mozjpeg's trellis optimization preserves structure better
+
+| BPP (DSSIM) | mozjpeg wins | jpegli wins | % mozjpeg |
+|-------------|--------------|-------------|-----------|
+| 0.2 | 7 | 48 | 13% |
+| 0.4 | 24 | 29 | 45% |
+| 0.6 | 44 | 10 | **81%** |
+| 0.8 | 51 | 4 | **93%** |
+| 1.0 | 50 | 1 | **98%** |
+| 1.5 | 41 | 4 | **91%** |
+| 2.0 | 30 | 12 | **71%** |
+| 3.0 | 17 | 23 | 43% |
+
+**SSIMULACRA2 (balanced):**
+- Nearly tied: mozjpeg 51%, jpegli 49%
+- mozjpeg wins at medium BPP (0.6-1.0 range)
+- jpegli wins at low BPP (0.2-0.4) and high BPP (2.0+)
+- *Why:* SSIMULACRA2 is a blend of approaches and shows more balanced results
+
+**Implications for zenjpeg:**
+
+1. **The current prediction model (combined_v13) is only optimized for Butteraugli.**
+   - If targeting DSSIM, should use mozjpeg more often (especially 0.6-1.5 BPP)
+   - If targeting SSIMULACRA2, need a different strategy (metric-adaptive)
+
+2. **Metric-specific strategies:**
+   ```
+   Butteraugli: Use jpegli except for very flat images at 0.35-0.6 BPP
+   DSSIM:       Use mozjpeg for 0.5-2.0 BPP, jpegli for extremes
+   SSIMULACRA2: Use mozjpeg for 0.5-1.5 BPP, jpegli otherwise
+   ```
+
+3. **Practical recommendation:**
+   - For web images (perceptual quality): Use butteraugli-based strategy (jpegli-favoring)
+   - For archival/medical (structural fidelity): Use DSSIM-based strategy (mozjpeg-favoring)
+   - For general use: Use SSIMULACRA2-based strategy (balanced)
+
+4. **Why butteraugli favors jpegli:**
+   - Butteraugli uses XYB color space internally
+   - jpegli encodes in XYB color space
+   - Both designed by same Google team
+   - This may create "home field advantage" for jpegli
