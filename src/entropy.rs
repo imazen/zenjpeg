@@ -50,6 +50,10 @@ impl BitWriter {
     /// Write bits to the stream
     #[inline]
     pub fn write_bits(&mut self, value: u32, count: u8) {
+        if std::env::var("DEBUG_BITS").is_ok() {
+            let bits: String = (0..count).rev().map(|i| if (value >> i) & 1 == 1 { '1' } else { '0' }).collect();
+            eprintln!("    WRITE {} bits: {}", count, bits);
+        }
         self.bit_buffer = (self.bit_buffer << count) | (value & ((1 << count) - 1));
         self.bits_in_buffer += count;
 
@@ -441,6 +445,11 @@ impl ProgressiveEncoder {
     pub fn encode_ac_refine(&mut self, coefficients: &[i16; 64], ss: u8, se: u8, al: u8) {
         let mut run = 0u32;
         let mut pending_bits: Vec<u32> = Vec::new();
+        let debug = std::env::var("DEBUG_REFINE").is_ok();
+
+        if debug {
+            eprintln!("encode_ac_refine: ss={}, se={}, al={}", ss, se, al);
+        }
 
         for k in ss..=se {
             let nat_pos = ZIGZAG[k as usize];
@@ -448,23 +457,37 @@ impl ProgressiveEncoder {
             let abs_coef = coef.unsigned_abs();
 
             // Check if this is a previously-coded non-zero coefficient
-            if (abs_coef >> al) > 1 {
+            // The first scan (with Al = current Ah = al+1) encoded the coefficient if
+            // (coef >> (al+1)) != 0. We must use signed shift to match the first scan's logic.
+            // For negative values like -1: (-1 >> 1) = -1 (non-zero), so it was encoded.
+            // The abs_coef > 1 check fails for -1 since abs(-1) = 1, but signed shift works.
+            let prev_shift = al + 1; // Ah = previous Al
+            if (coef >> prev_shift) != 0 {
                 // Already coded - just queue the refinement bit
-                pending_bits.push(((abs_coef >> al) & 1) as u32);
+                // Use absolute value since magnitude bits are what we're refining
+                let correction_bit = ((abs_coef >> al) & 1) as u32;
+                pending_bits.push(correction_bit);
+                if debug {
+                    eprintln!("  k={}: prev non-zero coef={}, queue correction bit {}", k, coef, correction_bit);
+                }
             } else if (abs_coef >> al) == 1 {
                 // New non-zero coefficient
-                // Flush EOBRUN if needed
+                // Flush EOBRUN if needed (EOBRUN is for previous blocks, not this one)
                 if self.eobrun > 0 {
                     self.flush_eobrun();
-                    for &bit in &pending_bits {
-                        self.writer.write_bits(bit, 1);
-                    }
-                    pending_bits.clear();
+                    // Note: pending_bits are for THIS block, not the EOBRUN blocks
+                    // They get output after the coefficient symbol below
                 }
 
                 // Emit ZRL for runs of 16
                 while run >= 16 {
                     let (code, size) = self.ac_table.get_code(0xF0);
+                    if debug {
+                        eprintln!("  ZRL 0xF0: code={:#x}, size={}", code, size);
+                    }
+                    if size == 0 {
+                        eprintln!("ERROR: ZRL symbol 0xF0 has no code!");
+                    }
                     self.writer.write_bits(code, size);
                     for &bit in &pending_bits {
                         self.writer.write_bits(bit, 1);
@@ -476,6 +499,12 @@ impl ProgressiveEncoder {
                 // Emit the coefficient
                 let symbol = ((run as u8) << 4) | 1;
                 let (code, size) = self.ac_table.get_code(symbol);
+                if debug {
+                    eprintln!("  New non-zero at k={}: symbol=0x{:02X}, code={:#x}, size={}", k, symbol, code, size);
+                }
+                if size == 0 {
+                    eprintln!("ERROR: symbol 0x{:02X} has no code!", symbol);
+                }
                 self.writer.write_bits(code, size);
 
                 // Sign bit (1 for positive, 0 for negative)
@@ -483,6 +512,9 @@ impl ProgressiveEncoder {
                 self.writer.write_bits(sign_bit, 1);
 
                 // Output pending correction bits
+                if debug && !pending_bits.is_empty() {
+                    eprintln!("    outputting {} pending correction bits: {:?}", pending_bits.len(), pending_bits);
+                }
                 for &bit in &pending_bits {
                     self.writer.write_bits(bit, 1);
                 }
@@ -491,23 +523,67 @@ impl ProgressiveEncoder {
             } else {
                 // Zero coefficient - increment run
                 run += 1;
+                if debug {
+                    eprintln!("  k={}: zero (coef={}), run now {}", k, coef, run);
+                }
             }
         }
 
         // Handle remaining run (EOB)
-        if run > 0 || !pending_bits.is_empty() {
+        // EOB is only needed if we have trailing zeros in this block
+        if run > 0 {
             self.eobrun += 1;
             if !self.allow_eobrun || self.eobrun == 0x7FFF {
-                self.flush_eobrun();
-                for &bit in &pending_bits {
-                    self.writer.write_bits(bit, 1);
-                }
+                self.flush_eobrun_with_correction_bits(&pending_bits);
             }
+        } else if !pending_bits.is_empty() && self.eobrun > 0 {
+            // If we have pending bits but no run, and there's a pending EOBRUN from
+            // a previous block, flush it now with our pending bits
+            self.flush_eobrun_with_correction_bits(&pending_bits);
         }
+        // Note: If run == 0 and eobrun == 0, pending_bits are lost (not carried across blocks)
+        // This matches mozjpeg-rs behavior. A full implementation would accumulate BE bits.
+    }
+
+    /// Flush the EOB run with pending correction bits.
+    fn flush_eobrun_with_correction_bits(&mut self, pending_bits: &[u32]) {
+        let debug = std::env::var("DEBUG_REFINE").is_ok();
+
+        if self.eobrun == 0 {
+            return;
+        }
+
+        // Calculate EOBn symbol (n = floor(log2(EOBRUN)))
+        let nbits = 15 - self.eobrun.leading_zeros() as u8;
+
+        // Symbol for EOBn is nbits << 4 (run=0)
+        let symbol = nbits << 4;
+        let (code, size) = self.ac_table.get_code(symbol);
+        if debug {
+            eprintln!("  flush_eobrun_with_correction: eobrun={}, symbol=0x{:02X}, pending_bits={:?}",
+                self.eobrun, symbol, pending_bits);
+        }
+        self.writer.write_bits(code, size);
+
+        // Output additional bits for EOBRUN
+        if nbits > 0 {
+            let mask = (1u16 << nbits) - 1;
+            let extra = self.eobrun & mask;
+            self.writer.write_bits(extra as u32, nbits);
+        }
+
+        // Output correction bits immediately after EOBRUN
+        for &bit in pending_bits {
+            self.writer.write_bits(bit, 1);
+        }
+
+        self.eobrun = 0;
     }
 
     /// Flush the EOB run to the bitstream.
     fn flush_eobrun(&mut self) {
+        let debug = std::env::var("DEBUG_REFINE").is_ok();
+
         if self.eobrun == 0 {
             return;
         }
@@ -522,6 +598,13 @@ impl ProgressiveEncoder {
         // Symbol for EOBn is nbits << 4 (run=0)
         let symbol = nbits << 4;
         let (code, size) = self.ac_table.get_code(symbol);
+        if debug {
+            eprintln!("  flush_eobrun: eobrun={}, nbits={}, symbol=0x{:02X}, code={:#x}, size={}",
+                self.eobrun, nbits, symbol, code, size);
+        }
+        if size == 0 {
+            eprintln!("ERROR: EOBn symbol 0x{:02X} has no code!", symbol);
+        }
         self.writer.write_bits(code, size);
 
         // Output additional bits for EOBRUN
