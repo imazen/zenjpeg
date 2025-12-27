@@ -715,10 +715,26 @@ mod tests {
 
     #[test]
     fn test_integer_dct_white_block() {
+        // Input: uniform block of 127 (level-shifted from 255)
+        // Expected DC: 127 * 8 (DCT sum) * 8 (mozjpeg scaling) / 8 = 1016 * 8 = 8128
+        // The 8x scaling is intentional (matches libjpeg/mozjpeg behavior)
         let samples = [127i16; 64];
         let mut coeffs = [0i16; 64];
         forward_dct_8x8_int(&samples, &mut coeffs);
-        assert!(coeffs[0] > 900, "DC = {} (expected ~1016)", coeffs[0]);
+        assert_eq!(coeffs[0], 8128, "DC = {} (expected 8128 with 8x scaling)", coeffs[0]);
+        for i in 1..64 {
+            assert_eq!(coeffs[i], 0, "AC[{}] = {} (expected 0)", i, coeffs[i]);
+        }
+    }
+
+    #[test]
+    fn test_integer_dct_black_block() {
+        // Input: uniform block of -128 (level-shifted from 0)
+        // Expected DC: -128 * 8 (DCT sum) * 8 (mozjpeg scaling) / 8 = -1024 * 8 = -8192
+        let samples = [-128i16; 64];
+        let mut coeffs = [0i16; 64];
+        forward_dct_8x8_int(&samples, &mut coeffs);
+        assert_eq!(coeffs[0], -8192, "DC = {} (expected -8192 with 8x scaling)", coeffs[0]);
         for i in 1..64 {
             assert_eq!(coeffs[i], 0, "AC[{}] = {} (expected 0)", i, coeffs[i]);
         }
