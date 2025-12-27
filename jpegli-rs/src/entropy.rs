@@ -301,8 +301,7 @@ impl EntropyEncoder {
         }
 
         // Check if block is all zeros in this range (using absolute values)
-        let all_zero =
-            (ss as usize..=se as usize).all(|k| (coeffs[k].unsigned_abs() >> al) == 0);
+        let all_zero = (ss as usize..=se as usize).all(|k| (coeffs[k].unsigned_abs() >> al) == 0);
 
         if all_zero {
             *eob_run += 1;
@@ -494,8 +493,10 @@ impl EntropyEncoder {
                 // Flush EOBRUN if needed (we're about to emit ZRL)
                 if *eob_run > 0 {
                     if debug_refine {
-                        eprintln!("  block {} k={}: FLUSH eob_run={} before ZRL",
-                                 block_num, k, *eob_run);
+                        eprintln!(
+                            "  block {} k={}: FLUSH eob_run={} before ZRL",
+                            block_num, k, *eob_run
+                        );
                     }
                     self.emit_eob_run_by_idx(table_idx, *eob_run)?;
                     *eob_run = 0;
@@ -507,8 +508,13 @@ impl EntropyEncoder {
                     eprintln!("ERROR: ZRL (0xF0) not in table!");
                 }
                 if debug_refine {
-                    eprintln!("  block {} k={}: EMIT ZRL (0xF0) len={} + {} pending_bits",
-                             block_num, k, len, pending_bits.len());
+                    eprintln!(
+                        "  block {} k={}: EMIT ZRL (0xF0) len={} + {} pending_bits",
+                        block_num,
+                        k,
+                        len,
+                        pending_bits.len()
+                    );
                 }
                 self.writer.write_bits(code, len);
 
@@ -525,16 +531,20 @@ impl EntropyEncoder {
                 let refbit = (shifted & 1) as u32;
                 pending_bits.push(refbit);
                 if debug_refine {
-                    eprintln!("  block {} k={}: coef={} shifted={} -> PREV_NZ refbit={}",
-                             block_num, k, coef, shifted, refbit);
+                    eprintln!(
+                        "  block {} k={}: coef={} shifted={} -> PREV_NZ refbit={}",
+                        block_num, k, coef, shifted, refbit
+                    );
                 }
             } else if shifted == 1 {
                 // New non-zero coefficient at this refinement level
                 // Flush EOBRUN if needed
                 if *eob_run > 0 {
                     if debug_refine {
-                        eprintln!("  block {} k={}: FLUSH eob_run={} before new_nz",
-                                 block_num, k, *eob_run);
+                        eprintln!(
+                            "  block {} k={}: FLUSH eob_run={} before new_nz",
+                            block_num, k, *eob_run
+                        );
                     }
                     self.emit_eob_run_by_idx(table_idx, *eob_run)?;
                     *eob_run = 0;
@@ -584,8 +594,10 @@ impl EntropyEncoder {
                 // First flush any pending EOB run from pure-zero blocks
                 if *eob_run > 0 {
                     if debug_refine {
-                        eprintln!("  block {} END: FLUSH eob_run={} before EOB with pending_bits",
-                                 block_num, *eob_run);
+                        eprintln!(
+                            "  block {} END: FLUSH eob_run={} before EOB with pending_bits",
+                            block_num, *eob_run
+                        );
                     }
                     self.emit_eob_run_by_idx(table_idx, *eob_run)?;
                     *eob_run = 0;
@@ -599,8 +611,13 @@ impl EntropyEncoder {
                     })?;
                 let (eob_code, eob_len) = ac_table.encode(0x00);
                 if debug_refine {
-                    eprintln!("  block {} END: EMIT EOB (0x00) len={} + {} pending_bits: {:?}",
-                             block_num, eob_len, pending_bits.len(), pending_bits);
+                    eprintln!(
+                        "  block {} END: EMIT EOB (0x00) len={} + {} pending_bits: {:?}",
+                        block_num,
+                        eob_len,
+                        pending_bits.len(),
+                        pending_bits
+                    );
                 }
                 self.writer.write_bits(eob_code, eob_len);
 
@@ -612,19 +629,18 @@ impl EntropyEncoder {
                 // Pure zero block (no correction bits) - can accumulate into EOB run
                 *eob_run += 1;
                 if debug_refine {
-                    eprintln!("  block {} END: pure-zero block, eob_run now {}",
-                             block_num, *eob_run);
+                    eprintln!(
+                        "  block {} END: pure-zero block, eob_run now {}",
+                        block_num, *eob_run
+                    );
                 }
                 if *eob_run >= 0x7FFF {
                     self.emit_eob_run_by_idx(table_idx, *eob_run)?;
                     *eob_run = 0;
                 }
             }
-        } else {
-            if debug_refine {
-                eprintln!("  block {} END: no trailing run/pending_bits",
-                         block_num);
-            }
+        } else if debug_refine {
+            eprintln!("  block {} END: no trailing run/pending_bits", block_num);
         }
 
         Ok(())

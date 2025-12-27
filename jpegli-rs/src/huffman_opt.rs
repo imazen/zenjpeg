@@ -1196,19 +1196,18 @@ impl ProgressiveTokenBuffer {
 
     /// Tokenizes an AC first scan (ah == 0).
     ///
+    /// IMPORTANT: We must use absolute values for zero-detection to match
+    /// the refinement scan's classification. Otherwise, small negative
+    /// coefficients like -2 with al=2 would be incorrectly tokenized here
+    /// (because (-2) >> 2 = -1 in signed arithmetic) but classified as
+    /// "newly-nonzero" in refinement (because abs(-2) >> 2 = 0).
+    ///
     /// # Arguments
     /// * `blocks` - Quantized DCT blocks for this component
     /// * `context` - Context ID for this scan (for histogram)
     /// * `ss` - Spectral selection start (1-63)
     /// * `se` - Spectral selection end (1-63)
     /// * `al` - Successive approximation low bit
-    /// Tokenizes AC coefficients for a progressive first scan.
-    ///
-    /// IMPORTANT: We must use absolute values for zero-detection to match
-    /// the refinement scan's classification. Otherwise, small negative
-    /// coefficients like -2 with al=2 would be incorrectly tokenized here
-    /// (because (-2) >> 2 = -1 in signed arithmetic) but classified as
-    /// "newly-nonzero" in refinement (because abs(-2) >> 2 = 0).
     pub fn tokenize_ac_first_scan(
         &mut self,
         blocks: &[[i16; 64]],
