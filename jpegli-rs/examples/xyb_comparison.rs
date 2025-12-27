@@ -74,8 +74,8 @@ sys.stdout.buffer.write(img.tobytes())
 }
 
 fn main() {
-    let png_path =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path = jpegli::test_utils::require_flower_small_path();
+    let png_path = png_path.to_str().expect("path should be valid UTF-8");
 
     // Load PNG
     let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
@@ -99,10 +99,12 @@ fn main() {
     println!("| Quality | XYB Size | YCbCr Size | XYB DSSIM | YCbCr DSSIM | Notes |");
     println!("|---------|----------|------------|-----------|-------------|-------|");
 
+    let cjpegli = jpegli::test_utils::require_cjpegli();
+
     for q in [50u8, 60, 70, 80, 90, 95] {
         // Encode C++ XYB
         let xyb_path = format!("/tmp/cpp_xyb_{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+        Command::new(&cjpegli)
             .args([
                 "--xyb",
                 "-p",
@@ -118,7 +120,7 @@ fn main() {
 
         // Encode C++ YCbCr
         let ycbcr_path = format!("/tmp/cpp_ycbcr_{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+        Command::new(&cjpegli)
             .args([
                 "--chroma_subsampling=444",
                 "-p",

@@ -8,11 +8,33 @@ use jpegli::quant::Quality;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Path to C++ cjpegli binary
-const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
+fn find_cjpegli_path() -> Option<PathBuf> {
+    jpegli::test_utils::find_cjpegli()
+}
 
-/// Path to CID22-512 corpus
-const CORPUS_PATH: &str = "/mnt/v/work/corpus/CID22-512";
+fn find_corpus_path() -> Option<PathBuf> {
+    // Check environment variable first
+    if let Ok(dir) = std::env::var("CORPUS_DIR") {
+        let path = PathBuf::from(dir);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    // Check relative paths
+    let candidates = [
+        "../corpus/CID22-512",
+        "../codec-corpus/CID22/CID22-512",
+        "corpus/CID22-512",
+    ];
+    for p in candidates {
+        let path = PathBuf::from(p);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
 
 /// Generic JPEG decoder using jpeg-decoder crate
 fn decode_jpeg(data: &[u8]) -> codec_eval::Result<ImageData> {
@@ -92,11 +114,12 @@ fn register_rust_jpegli(session: &mut EvalSession) {
 
 /// Register C++ jpegli encoder with decoder
 fn register_cpp_jpegli(session: &mut EvalSession) {
+    let cjpegli_path = find_cjpegli_path().expect("cjpegli not found");
     session.add_codec_with_decode(
         "jpegli-cpp",
         "latest",
         // Encoder
-        Box::new(|image, request| {
+        Box::new(move |image, request| {
             let width = image.width();
             let height = image.height();
             let rgb_data = image.to_rgb8_vec();
@@ -112,7 +135,7 @@ fn register_cpp_jpegli(session: &mut EvalSession) {
 
             // Run cjpegli with matching settings
             let quality = request.quality as u32;
-            let output = Command::new(CJPEGLI_PATH)
+            let output = Command::new(&cjpegli_path)
                 .args([
                     "--chroma_subsampling=444",
                     "-p",
@@ -204,16 +227,22 @@ fn load_png(path: &Path) -> Result<ImageData, codec_eval::Error> {
 #[ignore = "requires C++ cjpegli build and CID22-512 corpus"]
 fn test_corpus_comparison() {
     // Check prerequisites
-    if !Path::new(CJPEGLI_PATH).exists() {
-        eprintln!("Skipping: C++ cjpegli not available at {}", CJPEGLI_PATH);
-        return;
-    }
+    let cjpegli_path = match find_cjpegli_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: C++ cjpegli not available. Set CJPEGLI_PATH env var.");
+            return;
+        }
+    };
+    let _ = cjpegli_path; // Used by register_cpp_jpegli
 
-    let corpus_path = Path::new(CORPUS_PATH);
-    if !corpus_path.exists() {
-        eprintln!("Skipping: Corpus not available at {}", CORPUS_PATH);
-        return;
-    }
+    let corpus_path = match find_corpus_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: Corpus not available. Set CORPUS_DIR env var.");
+            return;
+        }
+    };
 
     // Count available images
     let images: Vec<_> = std::fs::read_dir(corpus_path)

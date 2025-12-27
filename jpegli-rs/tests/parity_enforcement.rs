@@ -81,9 +81,9 @@ fn fetch_corpus_image(filename: &str) -> Option<std::path::PathBuf> {
 
     // Check local corpus paths first
     let local_paths = [
-        "/mnt/v/work/corpus/CID22-512",
-        "/home/lilith/work/codec-comparison/codec-corpus/CID22/CID22-512/training",
         "../codec-comparison/codec-corpus/CID22/CID22-512/training",
+        "../codec-corpus/CID22/CID22-512/training",
+        "codec-corpus/CID22/CID22-512/training",
     ];
 
     for local_path in local_paths {
@@ -126,10 +126,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 
 /// Encode with C++ cjpegli (matching settings)
 fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
-    let cjpegli_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
-    if !std::path::Path::new(cjpegli_path).exists() {
-        return None;
-    }
+    let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
 
     let output_path = format!("/tmp/cpp_parity_q{}.jpg", quality);
     let output = Command::new(cjpegli_path)
@@ -274,9 +271,7 @@ fn test_image(
 #[test]
 #[ignore = "requires C++ cjpegli build and test images"]
 fn test_parity_flower_q90() {
-    let png_path = std::path::PathBuf::from(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let png_path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
 
     let result = match test_image(&png_path, "flower", 90, BASELINE.flower_q90_diff_pct) {
         Some(r) => r,
@@ -452,9 +447,7 @@ fn test_parity_comprehensive() {
     let mut targets_reached = Vec::new();
 
     // Test flower
-    let flower_path = std::path::PathBuf::from(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let flower_path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if let Some(result) = test_image(&flower_path, "flower", 90, BASELINE.flower_q90_diff_pct) {
         results.push(result);
     }

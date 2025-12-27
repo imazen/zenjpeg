@@ -78,8 +78,8 @@ struct TestResult {
 }
 
 fn main() {
-    let png_path =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path_buf = jpegli::test_utils::require_flower_small_path();
+    let png_path = png_path_buf.to_str().expect("Invalid path");
     let output_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "reports/low_q_report.html".to_string());
@@ -123,7 +123,8 @@ fn main() {
     for &q in &qualities {
         // C++ YCbCr
         let cpp_path = format!("/tmp/cpp_ycbcr_q{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+        let cjpegli_path = jpegli::test_utils::require_cjpegli();
+        Command::new(&cjpegli_path)
             .args([
                 "--chroma_subsampling=444",
                 "-p",
@@ -186,7 +187,8 @@ fn main() {
     for &q in &qualities {
         // C++ XYB
         let cpp_path = format!("/tmp/cpp_xyb_q{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+        let cjpegli_path = jpegli::test_utils::require_cjpegli();
+        Command::new(&cjpegli_path)
             .args([
                 "--xyb",
                 "-p",

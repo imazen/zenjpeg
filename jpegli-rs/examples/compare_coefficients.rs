@@ -5,8 +5,8 @@ use std::io::Write;
 use std::process::Command;
 
 fn main() {
-    let png_path =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path_buf = jpegli::test_utils::require_flower_small_path();
+    let png_path = png_path_buf.to_str().expect("Invalid path");
 
     println!("=== DCT Coefficient Comparison ===\n");
 
@@ -16,7 +16,8 @@ fn main() {
     write_ppm(ppm_path, &original, width as usize, height as usize).expect("Failed to write PPM");
 
     let cpp_jpg = "/tmp/coeff_cpp.jpg";
-    Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+    let cjpegli_path = jpegli::test_utils::require_cjpegli();
+    Command::new(&cjpegli_path)
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",

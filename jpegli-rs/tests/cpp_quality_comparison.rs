@@ -35,22 +35,11 @@ fn test_cpp_quality_comparison() {
         writer.write_image_data(&data).unwrap();
     }
 
-    // Check cjpegli exists - try multiple paths
-    let possible_paths = [
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-    ];
-    let cjpegli_path = possible_paths
-        .iter()
-        .map(std::path::PathBuf::from)
-        .find(|p| p.exists());
-
-    let cjpegli_path = match cjpegli_path {
+    // Check cjpegli exists
+    let cjpegli_path = match jpegli::test_utils::find_cjpegli() {
         Some(p) => p,
         None => {
-            println!("Skipping: cjpegli not found in any expected location");
+            println!("Skipping: cjpegli not found. Set CJPEGLI_PATH env var.");
             return;
         }
     };

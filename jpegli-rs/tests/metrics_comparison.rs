@@ -216,11 +216,9 @@ fn test_metrics_distortion_levels() {
 #[test]
 #[ignore] // Requires test file
 fn test_metrics_encoder_comparison() {
-    let path = Path::new(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
-        eprintln!("Skipping: test file not found");
+        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
         return;
     }
 

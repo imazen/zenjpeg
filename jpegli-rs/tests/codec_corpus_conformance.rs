@@ -17,8 +17,16 @@ use jpegli::decode::Decoder;
 
 /// Find the codec-corpus directory, checking common locations.
 fn find_codec_corpus() -> Option<PathBuf> {
+    // Check environment variable first
+    if let Ok(dir) = std::env::var("CODEC_CORPUS_DIR") {
+        let path = PathBuf::from(dir);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    // Check relative paths
     let candidates = [
-        PathBuf::from("/home/lilith/work/codec-eval/codec-corpus"),
         PathBuf::from("../codec-eval/codec-corpus"),
         PathBuf::from("../../codec-eval/codec-corpus"),
         PathBuf::from("../codec-corpus"),

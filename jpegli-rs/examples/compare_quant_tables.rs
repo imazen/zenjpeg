@@ -7,7 +7,9 @@ use std::io::Write as IoWrite;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
+fn get_cjpegli_path() -> std::path::PathBuf {
+    jpegli::test_utils::require_cjpegli()
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
     let file = fs::File::open(path).ok()?;
@@ -48,9 +50,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32, use_xyb: bool)
 }
 
 fn encode_cpp(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec<u8>> {
-    if !Path::new(CJPEGLI_PATH).exists() {
-        return None;
-    }
+    let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
     let output_path = format!(
         "/tmp/cpp_quant_{}_{}.jpg",
         if use_xyb { "xyb" } else { "ycbcr" },
@@ -66,7 +66,7 @@ fn encode_cpp(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec<u8>> {
     let q_str = quality.to_string();
     args.push(&q_str);
 
-    let output = Command::new(CJPEGLI_PATH)
+    let output = Command::new(&cjpegli_path)
         .args(&args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -147,9 +147,8 @@ fn print_table(name: &str, table: &[u16]) {
 fn main() {
     println!("=== Quantization Table Comparison ===\n");
 
-    let image_path =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
-    let path = Path::new(image_path);
+    let image_path = jpegli::test_utils::require_flower_small_path();
+    let path = image_path.as_path();
 
     let (rgb, width, height) = match load_png(path) {
         Some(d) => d,

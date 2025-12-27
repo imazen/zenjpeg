@@ -23,16 +23,14 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 #[test]
 #[ignore = "requires testdata and C++ cjpegli"]
 fn compare_rust_cpp_420() {
-    let png_path = Path::new(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let png_path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
 
     if !png_path.exists() {
-        println!("Skipping: test image not found");
+        println!("Skipping: test image not found. Set JPEGLI_TESTDATA env var.");
         return;
     }
 
-    let (pixels, width, height) = load_png(png_path).expect("load PNG");
+    let (pixels, width, height) = load_png(&png_path).expect("load PNG");
     println!("Image: {}x{}", width, height);
 
     // Encode with Rust 4:2:0
@@ -50,35 +48,40 @@ fn compare_rust_cpp_420() {
     println!("Rust 4:2:0: {} bytes", rust_jpeg.len());
 
     // Encode with C++ cjpegli
-    let cjpegli = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli");
-    if cjpegli.exists() {
-        let status = std::process::Command::new(cjpegli)
-            .args([
-                png_path.to_str().unwrap(),
-                "/tmp/cpp_420_flower.jpg",
-                "-q",
-                "85",
-                "--chroma_subsampling=420",
-            ])
-            .output();
+    let cjpegli = match jpegli::test_utils::find_cjpegli() {
+        Some(p) => p,
+        None => {
+            println!("Skipping C++ comparison: cjpegli not found. Set CJPEGLI_PATH env var.");
+            return;
+        }
+    };
 
-        if let Ok(output) = status {
-            if output.status.success() {
-                let cpp_jpeg = fs::read("/tmp/cpp_420_flower.jpg").unwrap();
-                println!("C++ 4:2:0:  {} bytes", cpp_jpeg.len());
+    let status = std::process::Command::new(&cjpegli)
+        .args([
+            png_path.to_str().unwrap(),
+            "/tmp/cpp_420_flower.jpg",
+            "-q",
+            "85",
+            "--chroma_subsampling=420",
+        ])
+        .output();
 
-                let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
-                    / cpp_jpeg.len() as f64;
-                println!("Size difference: {:+.1}%", diff_pct);
-            } else {
-                println!(
-                    "C++ encoding failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+    if let Ok(output) = status {
+        if output.status.success() {
+            let cpp_jpeg = fs::read("/tmp/cpp_420_flower.jpg").unwrap();
+            println!("C++ 4:2:0:  {} bytes", cpp_jpeg.len());
+
+            let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
+                / cpp_jpeg.len() as f64;
+            println!("Size difference: {:+.1}%", diff_pct);
+        } else {
+            println!(
+                "C++ encoding failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     } else {
-        println!("cjpegli not found at {:?}", cjpegli);
+        println!("Command execution failed for cjpegli at {:?}", cjpegli);
     }
 
     // Also compare 4:4:4

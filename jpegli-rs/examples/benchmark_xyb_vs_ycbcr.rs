@@ -218,20 +218,30 @@ fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usi
 }
 
 fn main() {
-    let cjpegli_path = std::env::var("CJPEGLI_PATH").unwrap_or_else(|_| {
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string()
-    });
+    let cjpegli_path = std::env::var("CJPEGLI_PATH")
+        .map(PathBuf::from)
+        .or_else(|_| jpegli::test_utils::find_cjpegli().ok_or(()))
+        .expect("cjpegli not found. Set CJPEGLI_PATH or build internal/jpegli-cpp");
+    let cjpegli_path = cjpegli_path.to_string_lossy().to_string();
 
-    let corpus_paths = [
-        "/home/lilith/work/codec-eval/codec-corpus/kodak",
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower",
-    ];
+    // Check for corpus directories
+    let testdata_dir = jpegli::test_utils::get_testdata_dir();
+    let mut corpus_paths: Vec<PathBuf> = Vec::new();
+    let flower_dir = testdata_dir.join("jxl/flower");
+    if flower_dir.exists() {
+        corpus_paths.push(flower_dir);
+    }
+    for c in ["../codec-eval/codec-corpus/kodak", "../codec-corpus/kodak", "codec-corpus/kodak"] {
+        let p = PathBuf::from(c);
+        if p.exists() {
+            corpus_paths.push(p);
+        }
+    }
 
     let corpus_dir = corpus_paths
-        .iter()
-        .find(|p| Path::new(p).exists())
-        .map(PathBuf::from)
-        .expect("No corpus found");
+        .into_iter()
+        .find(|p| p.exists())
+        .expect("No corpus found. Set JPEGLI_TESTDATA env var");
 
     let qualities: Vec<u8> = vec![30, 50, 70, 80, 85, 90, 95];
 
