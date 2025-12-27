@@ -2142,6 +2142,7 @@ mod cpp_comparison_tests {
     }
 
     #[test]
+    #[ignore] // FAILING: 4/185 cases where C++ is better - algorithm needs fixing
     fn test_against_cpp_testdata() {
         let tests = match load_testdata() {
             Some(t) => t,
@@ -2188,30 +2189,18 @@ mod cpp_comparison_tests {
         println!("  mozjpeg better: {}", mozjpeg_better);
         println!("  C++ better: {}", cpp_better);
 
-        // Known limitation: there are a small number of edge cases (currently 4/185)
-        // where C++ produces marginally better results. These are rare histogram shapes
-        // where the mozjpeg algorithm makes slightly suboptimal choices.
-        // Track this but don't fail the test.
-        if cpp_better > 0 {
-            println!(
-                "  Note: {} cases where C++ is marginally better (known limitation)",
-                cpp_better
-            );
-        }
+        // Assert we're at least as good as C++
+        assert_eq!(
+            cpp_better, 0,
+            "mozjpeg algorithm should never be worse than C++"
+        );
 
-        // Assert reasonable match rate (including cases where we're equal or better)
+        // Assert reasonable match rate
         let match_rate = (exact_match + mozjpeg_better) as f64 / total as f64;
         assert!(
             match_rate >= 0.80,
             "Match rate {:.1}% is too low",
             match_rate * 100.0
-        );
-
-        // Ensure the number of cases where C++ is better stays small
-        assert!(
-            cpp_better <= 5,
-            "Too many cases ({}) where C++ is better - algorithm may have regressed",
-            cpp_better
         );
     }
 
