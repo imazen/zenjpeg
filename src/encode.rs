@@ -1077,7 +1077,7 @@ impl Encoder {
                 if scan.is_refinement() {
                     // AC refinement
                     for coeffs in coeffs_slice {
-                        encoder.encode_ac_refine(coeffs, scan.ss, scan.se, scan.al);
+                        encoder.encode_ac_refine(coeffs, scan.ss, scan.se, scan.ah, scan.al);
                     }
                 } else {
                     // AC first pass
@@ -1134,7 +1134,7 @@ impl Encoder {
                 if scan.is_refinement() {
                     // AC refinement
                     for block_coeffs in coeffs {
-                        encoder.encode_ac_refine(block_coeffs, scan.ss, scan.se, scan.al);
+                        encoder.encode_ac_refine(block_coeffs, scan.ss, scan.se, scan.ah, scan.al);
                     }
                 } else {
                     // AC first pass

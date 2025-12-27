@@ -90,6 +90,49 @@ After the fix:
 - jpegli-rs decoder: `src/entropy.rs` `decode_ac_refine()` for understanding decoder expectations
 - mozjpeg-rs encoder: `src/entropy.rs` for reference implementation (has same bug!)
 
+## Additional Fix: Incremental ZRL Emission
+
+### The Second Bug
+
+The first fix addressed checking "previously coded" coefficients correctly, but there was a second issue: when emitting ZRL (Zero Run Length) symbols, correction bits were being output incorrectly.
+
+### Symptoms
+- Complex patterns (like checkerboard) with `al=2` in the first scan still failed
+- Simpler patterns with `al=1` worked
+
+### Root Cause
+
+When accumulating a long run of zeros (e.g., 39 zeros), we would wait until finding a new non-zero coefficient, then emit multiple ZRL symbols. However, correction bits for prev-coded coefficients were accumulated throughout the entire scan, and ALL bits were emitted with the first ZRL.
+
+The decoder expects correction bits to be interleaved correctly: each ZRL covers 16 zero positions, and correction bits should be emitted only for prev-coded coefficients within those 16 positions.
+
+### The Fix
+
+Emit ZRL incrementally when `run` reaches 16 during the zero-counting loop, not just when reaching a new non-zero:
+
+```rust
+} else {
+    // Zero coefficient - increment run
+    run += 1;
+
+    // If run reaches 16, emit ZRL immediately with pending correction bits
+    if run == 16 {
+        if self.eobrun > 0 {
+            self.flush_eobrun();
+        }
+        let (code, size) = self.ac_table.get_code(0xF0);
+        self.writer.write_bits(code, size);
+        for &bit in &pending_bits {
+            self.writer.write_bits(bit, 1);
+        }
+        pending_bits.clear();
+        run = 0;
+    }
+}
+```
+
+This ensures correction bits are output in the correct order as the decoder scans through positions.
+
 ## Date
 
 2025-12-27

@@ -442,13 +442,20 @@ impl ProgressiveEncoder {
     /// This is more complex because we need to:
     /// 1. Output correction bits for previously non-zero coefficients
     /// 2. Output new non-zero coefficients with their correction bits
-    pub fn encode_ac_refine(&mut self, coefficients: &[i16; 64], ss: u8, se: u8, al: u8) {
+    ///
+    /// # Arguments
+    /// * `coefficients` - DCT coefficients in natural order
+    /// * `ss` - Spectral selection start (1..63)
+    /// * `se` - Spectral selection end (1..63)
+    /// * `ah` - Successive approximation high bit (previous Al)
+    /// * `al` - Successive approximation low bit (current precision)
+    pub fn encode_ac_refine(&mut self, coefficients: &[i16; 64], ss: u8, se: u8, ah: u8, al: u8) {
         let mut run = 0u32;
         let mut pending_bits: Vec<u32> = Vec::new();
         let debug = std::env::var("DEBUG_REFINE").is_ok();
 
         if debug {
-            eprintln!("encode_ac_refine: ss={}, se={}, al={}", ss, se, al);
+            eprintln!("encode_ac_refine: ss={}, se={}, ah={}, al={}", ss, se, ah, al);
         }
 
         for k in ss..=se {
@@ -457,12 +464,11 @@ impl ProgressiveEncoder {
             let abs_coef = coef.unsigned_abs();
 
             // Check if this is a previously-coded non-zero coefficient
-            // The first scan (with Al = current Ah = al+1) encoded the coefficient if
-            // (coef >> (al+1)) != 0. We must use signed shift to match the first scan's logic.
+            // The previous scan (with Al = current Ah) encoded the coefficient if
+            // (coef >> ah) != 0. We must use signed shift to match the encoder's logic.
             // For negative values like -1: (-1 >> 1) = -1 (non-zero), so it was encoded.
             // The abs_coef > 1 check fails for -1 since abs(-1) = 1, but signed shift works.
-            let prev_shift = al + 1; // Ah = previous Al
-            if (coef >> prev_shift) != 0 {
+            if (coef >> ah) != 0 {
                 // Already coded - just queue the refinement bit
                 // Use absolute value since magnitude bits are what we're refining
                 let correction_bit = ((abs_coef >> al) & 1) as u32;
@@ -472,6 +478,10 @@ impl ProgressiveEncoder {
                 }
             } else if (abs_coef >> al) == 1 {
                 // New non-zero coefficient
+                if debug {
+                    eprintln!("  New non-zero at k={}: coef={}, abs={}, ah={}, (coef>>ah)={}, (abs>>al)={}",
+                        k, coef, abs_coef, ah, coef >> ah, abs_coef >> al);
+                }
                 // Flush EOBRUN if needed (EOBRUN is for previous blocks, not this one)
                 if self.eobrun > 0 {
                     self.flush_eobrun();
@@ -480,10 +490,13 @@ impl ProgressiveEncoder {
                 }
 
                 // Emit ZRL for runs of 16
+                if debug && run >= 16 {
+                    eprintln!("  Before ZRL loop: run={}, pending_bits.len()={}", run, pending_bits.len());
+                }
                 while run >= 16 {
                     let (code, size) = self.ac_table.get_code(0xF0);
                     if debug {
-                        eprintln!("  ZRL 0xF0: code={:#x}, size={}", code, size);
+                        eprintln!("  ZRL 0xF0: code={:#x}, size={}, emitting {} correction bits", code, size, pending_bits.len());
                     }
                     if size == 0 {
                         eprintln!("ERROR: ZRL symbol 0xF0 has no code!");
@@ -500,7 +513,8 @@ impl ProgressiveEncoder {
                 let symbol = ((run as u8) << 4) | 1;
                 let (code, size) = self.ac_table.get_code(symbol);
                 if debug {
-                    eprintln!("  New non-zero at k={}: symbol=0x{:02X}, code={:#x}, size={}", k, symbol, code, size);
+                    eprintln!("  New non-zero at k={}: symbol=0x{:02X}, code={:#x}, size={}, run={}, pending={}",
+                        k, symbol, code, size, run, pending_bits.len());
                 }
                 if size == 0 {
                     eprintln!("ERROR: symbol 0x{:02X} has no code!", symbol);
@@ -522,9 +536,33 @@ impl ProgressiveEncoder {
                 run = 0;
             } else {
                 // Zero coefficient - increment run
+                // In refinement, "zero" means (coef >> ah) == 0 AND (abs >> al) != 1
+                // This is a TRUE zero (never coded before)
                 run += 1;
-                if debug {
-                    eprintln!("  k={}: zero (coef={}), run now {}", k, coef, run);
+                if debug && run <= 5 {
+                    eprintln!("  k={}: TRUE zero (coef={}), run now {}", k, coef, run);
+                }
+
+                // If run reaches 16, we need to emit ZRL immediately with pending correction bits
+                // This matches libjpeg-turbo's approach of emitting ZRL as we go
+                if run == 16 {
+                    // Flush EOBRUN first if needed
+                    if self.eobrun > 0 {
+                        self.flush_eobrun();
+                    }
+
+                    let (code, size) = self.ac_table.get_code(0xF0);
+                    if debug {
+                        eprintln!("  Incremental ZRL at k={}: emitting {} correction bits", k, pending_bits.len());
+                    }
+                    self.writer.write_bits(code, size);
+
+                    // Output pending correction bits
+                    for &bit in &pending_bits {
+                        self.writer.write_bits(bit, 1);
+                    }
+                    pending_bits.clear();
+                    run = 0;
                 }
             }
         }
