@@ -47,7 +47,8 @@ jobs:
       - name: Build
         run: cargo build -p jpegli-rs --all-features
       - name: Run tests
-        run: cargo test -p jpegli-rs --all-features
+        # Run lib and doc tests only; integration tests require C++ build
+        run: cargo test -p jpegli-rs --lib --all-features
 
   test-features:
     name: Test feature combinations

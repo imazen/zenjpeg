@@ -12,6 +12,9 @@ categories = ["multimedia::images", "encoding"]
 authors = ["Lilith River <lilith@imazen.io>"]
 rust-version = "1.70"
 
+[lib]
+name = "jpegli"  # Keep import name as `use jpegli` for compatibility
+
 [dependencies]
 wide = { workspace = true }
 bytemuck = { workspace = true }
