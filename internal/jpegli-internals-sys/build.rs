@@ -47,8 +47,53 @@ fn main() {
         build_with_cmake(&jpegli_root, &out_dir, &target, &host, butteraugli_enabled)
     };
 
+    // Build and link the C wrapper for butteraugli if enabled
+    if butteraugli_enabled {
+        build_butteraugli_wrapper(&manifest_dir, &jpegli_root, &build_dir, &target);
+    }
+
     // Link the libraries
     link_libraries(&build_dir, &target, butteraugli_enabled);
+}
+
+/// Build the butteraugli C wrapper using cc crate
+fn build_butteraugli_wrapper(
+    manifest_dir: &PathBuf,
+    jpegli_root: &PathBuf,
+    build_dir: &PathBuf,
+    target: &str,
+) {
+    println!("cargo:rerun-if-changed=cpp/butteraugli_c.cc");
+    println!("cargo:rerun-if-changed=cpp/butteraugli_c.h");
+
+    let mut build = cc::Build::new();
+
+    build
+        .cpp(true)
+        .file(manifest_dir.join("cpp/butteraugli_c.cc"))
+        // Include paths for jpegli-cpp headers
+        .include(jpegli_root)
+        .include(jpegli_root.join("lib"))
+        // Include path for generated config headers
+        .include(build_dir.join("lib/include"))
+        // Local header
+        .include(manifest_dir.join("cpp"))
+        // Optimization
+        .opt_level(2);
+
+    // Platform-specific C++ standard
+    if target.contains("msvc") {
+        build.flag("/std:c++17");
+    } else {
+        build.flag("-std=c++17");
+    }
+
+    // Suppress some warnings in C++ code
+    if !target.contains("msvc") {
+        build.flag("-Wno-unused-parameter");
+    }
+
+    build.compile("butteraugli_c");
 }
 
 /// Find a pre-built library in common locations
