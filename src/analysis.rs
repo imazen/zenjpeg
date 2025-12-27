@@ -16,6 +16,13 @@ pub struct ImageAnalysis {
     pub luma_complexity: f32,
     /// Edge density (0.0 = no edges, 1.0 = many edges)
     pub edge_density: f32,
+    /// Percentage of "flat" blocks (0-100)
+    /// A block is flat if its variance < 100
+    pub flat_block_pct: f32,
+    /// Mean edge strength across sampled pixels (0-255 range)
+    pub edge_strength_mean: f32,
+    /// Mean local contrast (variance in 3x3 neighborhood, 0-255 range)
+    pub local_contrast_mean: f32,
     /// Recommended encoding approach based on analysis
     pub recommended_approach: RecommendedApproach,
 }
@@ -49,57 +56,82 @@ pub fn analyze_image(pixels: &[u8], width: usize, height: usize, quality: f32) -
     };
     let chroma = adjust_sampling(img, subsampling, quality);
 
-    // Compute luma complexity
-    let luma_complexity = compute_luma_complexity(pixels, width, height);
+    // Compute luma complexity and flat block percentage
+    let (luma_complexity, flat_block_pct) = compute_luma_metrics(pixels, width, height);
 
-    // Compute edge density
-    let edge_density = compute_edge_density(pixels, width, height);
+    // Compute edge metrics
+    let (edge_density, edge_strength_mean, local_contrast_mean) =
+        compute_edge_metrics(pixels, width, height);
 
-    // Decide recommended approach
-    let recommended_approach = decide_approach(quality, &chroma, luma_complexity, edge_density);
+    // Decide recommended approach using research-validated prediction model
+    let recommended_approach = decide_approach(
+        quality,
+        &chroma,
+        flat_block_pct,
+        edge_strength_mean,
+        local_contrast_mean,
+    );
 
     ImageAnalysis {
         chroma,
         luma_complexity,
         edge_density,
+        flat_block_pct,
+        edge_strength_mean,
+        local_contrast_mean,
         recommended_approach,
     }
 }
 
-/// Compute luma complexity (variance-based)
-fn compute_luma_complexity(pixels: &[u8], width: usize, height: usize) -> f32 {
+/// Compute luma metrics: complexity and flat block percentage
+///
+/// Returns (luma_complexity, flat_block_pct) where:
+/// - luma_complexity: 0.0 = flat, 1.0 = highly detailed
+/// - flat_block_pct: 0-100, percentage of blocks with variance < FLAT_THRESHOLD
+fn compute_luma_metrics(pixels: &[u8], width: usize, height: usize) -> (f32, f32) {
+    // Threshold for considering a block "flat" (matches codec-compare heuristics)
+    const FLAT_THRESHOLD: f32 = 100.0;
+
     if width < 8 || height < 8 {
-        return 0.5; // Default for tiny images
+        return (0.5, 50.0); // Default for tiny images
     }
 
-    // Sample blocks across the image
     let block_size = 8;
     let blocks_x = width / block_size;
     let blocks_y = height / block_size;
 
     if blocks_x == 0 || blocks_y == 0 {
-        return 0.5;
+        return (0.5, 50.0);
     }
 
     let mut total_variance = 0.0f64;
-    let mut block_count = 0;
+    let mut flat_blocks = 0u32;
+    let mut block_count = 0u32;
 
     // Sample every 4th block for speed
     for by in (0..blocks_y).step_by(4) {
         for bx in (0..blocks_x).step_by(4) {
             let variance = compute_block_variance(pixels, width, bx * block_size, by * block_size);
             total_variance += variance as f64;
+            if variance < FLAT_THRESHOLD {
+                flat_blocks += 1;
+            }
             block_count += 1;
         }
     }
 
     if block_count == 0 {
-        return 0.5;
+        return (0.5, 50.0);
     }
 
     // Normalize: variance 0 = flat, variance ~2000 = highly detailed
     let avg_variance = total_variance / block_count as f64;
-    (avg_variance / 2000.0).min(1.0) as f32
+    let luma_complexity = (avg_variance / 2000.0).min(1.0) as f32;
+
+    // Calculate flat block percentage (0-100 scale)
+    let flat_block_pct = (flat_blocks as f32 / block_count as f32) * 100.0;
+
+    (luma_complexity, flat_block_pct)
 }
 
 /// Compute variance of an 8x8 block (luma only)
@@ -128,13 +160,20 @@ fn compute_block_variance(pixels: &[u8], stride: usize, x: usize, y: usize) -> f
     variance as f32
 }
 
-/// Compute edge density using simple Sobel-like detection
-fn compute_edge_density(pixels: &[u8], width: usize, height: usize) -> f32 {
+/// Compute edge metrics: density, mean strength, and local contrast
+///
+/// Returns (edge_density, edge_strength_mean, local_contrast_mean) where:
+/// - edge_density: 0.0-1.0, fraction of pixels that are edges
+/// - edge_strength_mean: 0-255, mean gradient magnitude
+/// - local_contrast_mean: 0-255, mean variance in 3x3 neighborhood
+fn compute_edge_metrics(pixels: &[u8], width: usize, height: usize) -> (f32, f32, f32) {
     if width < 3 || height < 3 {
-        return 0.5;
+        return (0.5, 15.0, 15.0);
     }
 
     let mut edge_count = 0u32;
+    let mut total_gradient = 0u64;
+    let mut total_local_contrast = 0u64;
     let mut total_pixels = 0u32;
 
     // Sample every 4th pixel for speed
@@ -148,30 +187,43 @@ fn compute_edge_density(pixels: &[u8], width: usize, height: usize) -> f32 {
 
             if bottom_idx + 2 < pixels.len() {
                 // Simple gradient magnitude (luma approximation)
-                let center = luma_approx(&pixels[center_idx..center_idx + 3]);
-                let left = luma_approx(&pixels[left_idx..left_idx + 3]);
-                let right = luma_approx(&pixels[right_idx..right_idx + 3]);
-                let top = luma_approx(&pixels[top_idx..top_idx + 3]);
-                let bottom = luma_approx(&pixels[bottom_idx..bottom_idx + 3]);
+                let center = luma_approx(&pixels[center_idx..center_idx + 3]) as i32;
+                let left = luma_approx(&pixels[left_idx..left_idx + 3]) as i32;
+                let right = luma_approx(&pixels[right_idx..right_idx + 3]) as i32;
+                let top = luma_approx(&pixels[top_idx..top_idx + 3]) as i32;
+                let bottom = luma_approx(&pixels[bottom_idx..bottom_idx + 3]) as i32;
 
-                let gx = (right as i32 - left as i32).abs();
-                let gy = (bottom as i32 - top as i32).abs();
+                let gx = (right - left).abs();
+                let gy = (bottom - top).abs();
                 let gradient = gx + gy;
+
+                total_gradient += gradient as u64;
 
                 // Threshold for "edge"
                 if gradient > 30 {
                     edge_count += 1;
                 }
+
+                // Local contrast: variance of 3x3 neighborhood (simplified: range of neighbors)
+                let max_neighbor = center.max(left).max(right).max(top).max(bottom);
+                let min_neighbor = center.min(left).min(right).min(top).min(bottom);
+                let local_range = (max_neighbor - min_neighbor) as u64;
+                total_local_contrast += local_range;
+
                 total_pixels += 1;
             }
         }
     }
 
     if total_pixels == 0 {
-        return 0.5;
+        return (0.5, 15.0, 15.0);
     }
 
-    (edge_count as f32 / total_pixels as f32).min(1.0)
+    let edge_density = (edge_count as f32 / total_pixels as f32).min(1.0);
+    let edge_strength_mean = (total_gradient as f64 / total_pixels as f64) as f32;
+    let local_contrast_mean = (total_local_contrast as f64 / total_pixels as f64) as f32;
+
+    (edge_density, edge_strength_mean, local_contrast_mean)
 }
 
 #[inline]
@@ -179,60 +231,57 @@ fn luma_approx(rgb: &[u8]) -> u8 {
     ((rgb[0] as u16 + 2 * rgb[1] as u16 + rgb[2] as u16) / 4) as u8
 }
 
-/// Decide encoding approach based on analysis
+/// Estimate BPP (bits per pixel) from quality and image flatness
+///
+/// Based on empirical analysis from codec-compare experiments.
+/// BPP varies ~13x across images at same quality, but this gives
+/// a reasonable estimate for strategy selection.
+pub fn estimate_bpp(quality: f32, flat_block_pct: f32) -> f32 {
+    // Base BPP from quality (empirical fit from corpus analysis)
+    let base = 0.1 + 0.016 * quality;
+
+    // Content factor: flat images compress better
+    let content_factor = 0.3 + 0.7 * (100.0 - flat_block_pct) / 100.0;
+
+    base * content_factor
+}
+
+/// Decide encoding approach using research-validated prediction model
+///
+/// Based on 382 significant BPP-matched comparisons across CLIC 2025
+/// and Kodak corpora. Achieves 86.6% accuracy in predicting which
+/// encoder produces better perceptual quality at matched file size.
+///
+/// Key finding: jpegli wins ~84% of cases. The only category where
+/// mozjpeg dominates is very flat images (>75% flat blocks) at
+/// low-to-medium BPP (0.35-0.6), with low complexity.
 fn decide_approach(
     quality: f32,
-    chroma: &ChromaEvaluation,
-    luma_complexity: f32,
-    edge_density: f32,
+    _chroma: &ChromaEvaluation,
+    flat_block_pct: f32,
+    edge_strength_mean: f32,
+    local_contrast_mean: f32,
 ) -> RecommendedApproach {
-    // Get sharpness info
-    let sharpness = chroma.sharpness.unwrap_or(Sharpness {
-        horiz: 0,
-        vert: 0,
-        peak: 0,
-    });
-    let max_sharpness = sharpness.horiz.max(sharpness.vert);
+    // Estimate target BPP from quality and image characteristics
+    let estimated_bpp = estimate_bpp(quality, flat_block_pct);
 
-    // Decision matrix:
+    // Complexity metric (matches codec-compare's combined_v13 rule)
+    let complexity = edge_strength_mean + local_contrast_mean;
+    let uniformity = flat_block_pct;
+
+    // Research-validated prediction rule (86.6% accuracy):
     //
-    // Quality < 50: Always trellis (best for low bitrate)
-    // Quality >= 80: Usually AQ (best for high quality)
-    // Quality 50-80: Depends on image characteristics
-
-    if quality < 50.0 {
-        // Low quality: trellis always wins
-        return RecommendedApproach::Trellis;
+    // mozjpeg wins when:
+    // - Image is very flat (>75% flat blocks)
+    // - Low complexity (edge + contrast < 20)
+    // - Target BPP in the 0.35-0.6 range
+    //
+    // jpegli wins in all other cases (~84% of images)
+    if uniformity > 75.0 && complexity < 20.0 && estimated_bpp >= 0.35 && estimated_bpp < 0.6 {
+        RecommendedApproach::Trellis
+    } else {
+        RecommendedApproach::AdaptiveQuant
     }
-
-    if quality >= 80.0 {
-        // High quality: AQ usually wins, unless image is very simple
-        if luma_complexity < 0.2 && edge_density < 0.1 {
-            // Very simple image (logos, text) - trellis still helps
-            return RecommendedApproach::Trellis;
-        }
-        return RecommendedApproach::AdaptiveQuant;
-    }
-
-    // Medium quality (50-80): decide based on image characteristics
-
-    // Complex images with many edges benefit from AQ
-    if luma_complexity > 0.5 && edge_density > 0.3 {
-        return RecommendedApproach::AdaptiveQuant;
-    }
-
-    // Simple images with few edges benefit from trellis
-    if luma_complexity < 0.3 && edge_density < 0.2 {
-        return RecommendedApproach::Trellis;
-    }
-
-    // Sharp chroma (red text, saturated colors) needs AQ to preserve detail
-    if max_sharpness > 1000 {
-        return RecommendedApproach::AdaptiveQuant;
-    }
-
-    // Default for medium zone: hybrid
-    RecommendedApproach::Hybrid
 }
 
 /// Convert quality to Butteraugli distance (jpegli formula)
@@ -338,10 +387,25 @@ mod tests {
     }
 
     #[test]
-    fn test_low_quality_always_trellis() {
+    fn test_prediction_model_very_flat_medium_quality() {
+        // Research finding: mozjpeg wins for very flat images at 0.35-0.6 bpp
+        // At Q75, uniform image has flat_pct=100, bpp≈0.39, so mozjpeg wins
+        let pixels = vec![128u8; 64 * 64 * 3];
+        let analysis = analyze_image(&pixels, 64, 64, 75.0);
+        assert_eq!(analysis.recommended_approach, RecommendedApproach::Trellis);
+    }
+
+    #[test]
+    fn test_prediction_model_flat_low_quality() {
+        // Research finding: jpegli wins at very low bpp (<0.35) even for flat images
+        // At Q30, uniform image has flat_pct=100, bpp≈0.17, so jpegli wins
         let pixels = vec![128u8; 64 * 64 * 3];
         let analysis = analyze_image(&pixels, 64, 64, 30.0);
-        assert_eq!(analysis.recommended_approach, RecommendedApproach::Trellis);
+        // At very low quality, jpegli still wins because bpp < 0.35
+        assert_eq!(
+            analysis.recommended_approach,
+            RecommendedApproach::AdaptiveQuant
+        );
     }
 
     #[test]

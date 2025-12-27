@@ -29,6 +29,7 @@ jpegli = { path = "../jpegli/jpegli-rs/jpegli" }
 [dev-dependencies]
 # Image I/O
 png = "0.17"
+jpeg-decoder = "0.3"
 
 # Quality metrics (individual metrics for standalone tests)
 dssim = "3.2"
