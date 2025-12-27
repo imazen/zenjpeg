@@ -230,6 +230,39 @@ impl Encoder {
         // Convert to YCbCr using f32 precision throughout (matches C++ jpegli)
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        // Handle chroma subsampling
+        let (cb_plane_final, cr_plane_final, c_width, c_height) = match self.config.subsampling {
+            Subsampling::S420 => {
+                // 4:2:0: Downsample both Cb and Cr by 2x2
+                let cb_down = self.downsample_2x2_f32(&cb_plane, width, height)?;
+                let cr_down = self.downsample_2x2_f32(&cr_plane, width, height)?;
+                let c_w = (width + 1) / 2;
+                let c_h = (height + 1) / 2;
+                (cb_down, cr_down, c_w, c_h)
+            }
+            Subsampling::S422 => {
+                // 4:2:2: Downsample horizontally only
+                let cb_down = self.downsample_2x1_f32(&cb_plane, width, height)?;
+                let cr_down = self.downsample_2x1_f32(&cr_plane, width, height)?;
+                let c_w = (width + 1) / 2;
+                (cb_down, cr_down, c_w, height)
+            }
+            Subsampling::S440 => {
+                // 4:4:0: Downsample vertically only
+                let cb_down = self.downsample_1x2_f32(&cb_plane, width, height)?;
+                let cr_down = self.downsample_1x2_f32(&cr_plane, width, height)?;
+                let c_h = (height + 1) / 2;
+                (cb_down, cr_down, width, c_h)
+            }
+            Subsampling::S444 => {
+                // 4:4:4: No subsampling
+                (cb_plane, cr_plane, width, height)
+            }
+        };
+
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
         let cb_quant =
@@ -238,8 +271,17 @@ impl Encoder {
             quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
 
         // Quantize all blocks first (needed for both standard and optimized encoding)
-        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
-            &y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant,
+        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
+            &y_plane,
+            width,
+            height,
+            &cb_plane_final,
+            &cr_plane_final,
+            c_width,
+            c_height,
+            &y_quant,
+            &cb_quant,
+            &cr_quant,
         )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
@@ -473,6 +515,48 @@ impl Encoder {
                 let p11 = plane[y1 * width + x1];
 
                 result[y * new_width + x] = (p00 + p10 + p01 + p11) * 0.25;
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Downsamples a float plane by 2x1 (horizontal only, box filter averaging).
+    fn downsample_2x1_f32(&self, plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
+        let new_width = (width + 1) / 2;
+        let result_size = checked_size_2d(new_width, height)?;
+        let mut result = try_alloc_zeroed_f32(result_size, "allocating downsampled plane")?;
+
+        for y in 0..height {
+            for x in 0..new_width {
+                let x0 = x * 2;
+                let x1 = (x0 + 1).min(width - 1);
+
+                let p0 = plane[y * width + x0];
+                let p1 = plane[y * width + x1];
+
+                result[y * new_width + x] = (p0 + p1) * 0.5;
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Downsamples a float plane by 1x2 (vertical only, box filter averaging).
+    fn downsample_1x2_f32(&self, plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
+        let new_height = (height + 1) / 2;
+        let result_size = checked_size_2d(width, new_height)?;
+        let mut result = try_alloc_zeroed_f32(result_size, "allocating downsampled plane")?;
+
+        for y in 0..new_height {
+            for x in 0..width {
+                let y0 = y * 2;
+                let y1 = (y0 + 1).min(height - 1);
+
+                let p0 = plane[y0 * width + x];
+                let p1 = plane[y1 * width + x];
+
+                result[y * width + x] = (p0 + p1) * 0.5;
             }
         }
 
@@ -1856,10 +1940,107 @@ impl Encoder {
         Ok((y_blocks, cb_blocks, cr_blocks))
     }
 
+    /// Quantizes all blocks with subsampling support.
+    ///
+    /// Unlike `quantize_all_blocks`, this version handles different dimensions
+    /// for Y and chroma planes (needed for 4:2:0, 4:2:2, 4:4:0 subsampling).
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_all_blocks_subsampled(
+        &self,
+        y_plane: &[f32],
+        y_width: usize,
+        y_height: usize,
+        cb_plane: &[f32],
+        cr_plane: &[f32],
+        c_width: usize,
+        c_height: usize,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+    ) -> Result<(
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+    )> {
+        let y_blocks_h = (y_width + 7) / 8;
+        let y_blocks_v = (y_height + 7) / 8;
+        let c_blocks_h = (c_width + 7) / 8;
+        let c_blocks_v = (c_height + 7) / 8;
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+
+        // Zero-bias parameters for each component
+        let effective_distance = quant::quant_vals_to_distance(y_quant, cb_quant, cr_quant);
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
+        let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
+        let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
+
+        // Compute per-block adaptive quantization strength from Y plane
+        let y_quant_01 = y_quant.values[1];
+        let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
+
+        let mut y_blocks = Vec::with_capacity(y_blocks_h * y_blocks_v);
+        let mut cb_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
+        let mut cr_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
+
+        // Quantize Y blocks
+        for by in 0..y_blocks_v {
+            for bx in 0..y_blocks_h {
+                let aq_strength = aq_map.get(bx, by);
+                let y_block = self.extract_block_ycbcr_f32(y_plane, y_width, y_height, bx, by);
+                let y_dct = forward_dct_8x8(&y_block);
+                let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
+                y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+            }
+        }
+
+        // Quantize chroma blocks (from possibly downsampled planes)
+        if is_color {
+            for by in 0..c_blocks_v {
+                for bx in 0..c_blocks_h {
+                    // For chroma, use average AQ strength from corresponding Y region
+                    // For 4:2:0, each chroma block corresponds to 2x2 Y blocks
+                    let y_bx = (bx * y_blocks_h) / c_blocks_h;
+                    let y_by = (by * y_blocks_v) / c_blocks_v;
+                    let aq_strength = aq_map.get(y_bx.min(y_blocks_h - 1), y_by.min(y_blocks_v - 1));
+
+                    let cb_block = self.extract_block_ycbcr_f32(cb_plane, c_width, c_height, bx, by);
+                    let cb_dct = forward_dct_8x8(&cb_block);
+                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
+                        &cb_dct,
+                        &cb_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
+                    cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
+
+                    let cr_block = self.extract_block_ycbcr_f32(cr_plane, c_width, c_height, bx, by);
+                    let cr_dct = forward_dct_8x8(&cr_block);
+                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
+                        &cr_dct,
+                        &cr_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
+                    cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
+                }
+            }
+        }
+
+        Ok((y_blocks, cb_blocks, cr_blocks))
+    }
+
     /// Builds optimized Huffman tables from quantized blocks.
     ///
     /// Collects symbol frequencies from all blocks and generates optimal
     /// Huffman tables with their DHT marker representations.
+    ///
+    /// For subsampled modes, this iterates blocks in MCU order to correctly
+    /// account for padding blocks.
     fn build_optimized_tables(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -1872,36 +2053,114 @@ impl Encoder {
         let mut ac_luma_freq = FrequencyCounter::new();
         let mut ac_chroma_freq = FrequencyCounter::new();
 
-        // Collect frequencies from all blocks
-        let mut prev_y_dc: i16 = 0;
-        let mut prev_cb_dc: i16 = 0;
-        let mut prev_cr_dc: i16 = 0;
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let (h_samp, v_samp) = match self.config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
 
-        for (i, y_block) in y_blocks.iter().enumerate() {
-            Self::collect_block_frequencies(
-                y_block,
-                prev_y_dc,
-                &mut dc_luma_freq,
-                &mut ac_luma_freq,
-            );
-            prev_y_dc = y_block[0];
+        // Zero block for padding
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
-            if is_color {
+        if h_samp == 1 && v_samp == 1 {
+            // 4:4:4 mode - simple iteration, no padding needed
+            let mut prev_y_dc: i16 = 0;
+            let mut prev_cb_dc: i16 = 0;
+            let mut prev_cr_dc: i16 = 0;
+
+            for (i, y_block) in y_blocks.iter().enumerate() {
                 Self::collect_block_frequencies(
-                    &cb_blocks[i],
-                    prev_cb_dc,
-                    &mut dc_chroma_freq,
-                    &mut ac_chroma_freq,
+                    y_block,
+                    prev_y_dc,
+                    &mut dc_luma_freq,
+                    &mut ac_luma_freq,
                 );
-                prev_cb_dc = cb_blocks[i][0];
+                prev_y_dc = y_block[0];
 
-                Self::collect_block_frequencies(
-                    &cr_blocks[i],
-                    prev_cr_dc,
-                    &mut dc_chroma_freq,
-                    &mut ac_chroma_freq,
-                );
-                prev_cr_dc = cr_blocks[i][0];
+                if is_color {
+                    Self::collect_block_frequencies(
+                        &cb_blocks[i],
+                        prev_cb_dc,
+                        &mut dc_chroma_freq,
+                        &mut ac_chroma_freq,
+                    );
+                    prev_cb_dc = cb_blocks[i][0];
+
+                    Self::collect_block_frequencies(
+                        &cr_blocks[i],
+                        prev_cr_dc,
+                        &mut dc_chroma_freq,
+                        &mut ac_chroma_freq,
+                    );
+                    prev_cr_dc = cr_blocks[i][0];
+                }
+            }
+        } else {
+            // Subsampled mode - iterate in MCU order with padding
+            let y_blocks_h = (width + 7) / 8;
+            let y_blocks_v = (height + 7) / 8;
+            let c_blocks_h = ((width + 1) / h_samp + 7) / 8;
+            let c_blocks_v = ((height + 1) / v_samp + 7) / 8;
+            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+
+            let mut prev_y_dc: i16 = 0;
+            let mut prev_cb_dc: i16 = 0;
+            let mut prev_cr_dc: i16 = 0;
+
+            for mcu_y in 0..mcu_v {
+                for mcu_x in 0..mcu_h {
+                    // Y blocks in this MCU
+                    for dy in 0..v_samp {
+                        for dx in 0..h_samp {
+                            let y_bx = mcu_x * h_samp + dx;
+                            let y_by = mcu_y * v_samp + dy;
+                            let block = if y_bx < y_blocks_h && y_by < y_blocks_v {
+                                let y_idx = y_by * y_blocks_h + y_bx;
+                                &y_blocks[y_idx]
+                            } else {
+                                &ZERO_BLOCK
+                            };
+                            Self::collect_block_frequencies(
+                                block,
+                                prev_y_dc,
+                                &mut dc_luma_freq,
+                                &mut ac_luma_freq,
+                            );
+                            prev_y_dc = block[0];
+                        }
+                    }
+
+                    // Chroma blocks
+                    if is_color {
+                        let (cb_block, cr_block) =
+                            if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
+                                let c_idx = mcu_y * c_blocks_h + mcu_x;
+                                (&cb_blocks[c_idx], &cr_blocks[c_idx])
+                            } else {
+                                (&ZERO_BLOCK, &ZERO_BLOCK)
+                            };
+
+                        Self::collect_block_frequencies(
+                            cb_block,
+                            prev_cb_dc,
+                            &mut dc_chroma_freq,
+                            &mut ac_chroma_freq,
+                        );
+                        prev_cb_dc = cb_block[0];
+
+                        Self::collect_block_frequencies(
+                            cr_block,
+                            prev_cr_dc,
+                            &mut dc_chroma_freq,
+                            &mut ac_chroma_freq,
+                        );
+                        prev_cr_dc = cr_block[0];
+                    }
+                }
             }
         }
 
@@ -1944,7 +2203,9 @@ impl Encoder {
         })
     }
 
-    /// Encodes blocks using the provided Huffman tables.
+    /// Encodes blocks using optimized Huffman tables.
+    ///
+    /// Handles MCU interleaving for subsampled modes (4:2:0, 4:2:2, 4:4:0).
     fn encode_with_tables(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -1964,21 +2225,81 @@ impl Encoder {
             encoder.set_restart_interval(self.config.restart_interval);
         }
 
-        for (i, y_block) in y_blocks.iter().enumerate() {
-            encoder.encode_block(y_block, 0, 0, 0)?;
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let (h_samp, v_samp) = match self.config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
 
-            if is_color {
-                encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
-                encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
+        if h_samp == 1 && v_samp == 1 {
+            // 4:4:4 mode - simple 1:1 interleaving
+            for (i, y_block) in y_blocks.iter().enumerate() {
+                encoder.encode_block(y_block, 0, 0, 0)?;
+
+                if is_color {
+                    encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
+                    encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
+                }
+
+                encoder.check_restart();
             }
+        } else {
+            // Subsampled mode - MCU interleaving
+            let y_blocks_h = (width + 7) / 8;
+            let y_blocks_v = (height + 7) / 8;
+            let c_blocks_h = ((width + 1) / h_samp + 7) / 8;
+            let c_blocks_v = ((height + 1) / v_samp + 7) / 8;
 
-            encoder.check_restart();
+            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+
+            // Zero block for padding out-of-bounds MCU positions
+            const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+            for mcu_y in 0..mcu_v {
+                for mcu_x in 0..mcu_h {
+                    // Encode Y blocks in this MCU (must encode all 4 even if out of bounds)
+                    for dy in 0..v_samp {
+                        for dx in 0..h_samp {
+                            let y_bx = mcu_x * h_samp + dx;
+                            let y_by = mcu_y * v_samp + dy;
+                            if y_bx < y_blocks_h && y_by < y_blocks_v {
+                                let y_idx = y_by * y_blocks_h + y_bx;
+                                encoder.encode_block(&y_blocks[y_idx], 0, 0, 0)?;
+                            } else {
+                                // Out of bounds - encode zero block (padding)
+                                encoder.encode_block(&ZERO_BLOCK, 0, 0, 0)?;
+                            }
+                        }
+                    }
+
+                    // Encode Cb and Cr blocks (always, even if out of bounds)
+                    if is_color {
+                        if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
+                            let c_idx = mcu_y * c_blocks_h + mcu_x;
+                            encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1)?;
+                            encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1)?;
+                        } else {
+                            // Out of bounds - encode zero blocks (padding)
+                            encoder.encode_block(&ZERO_BLOCK, 1, 1, 1)?;
+                            encoder.encode_block(&ZERO_BLOCK, 2, 1, 1)?;
+                        }
+                    }
+
+                    encoder.check_restart();
+                }
+            }
         }
 
         Ok(encoder.finish())
     }
 
     /// Encodes blocks using standard (fixed) Huffman tables - single pass.
+    ///
+    /// Handles MCU interleaving for subsampled modes (4:2:0, 4:2:2, 4:4:0).
     fn encode_blocks_standard(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -1997,15 +2318,74 @@ impl Encoder {
             encoder.set_restart_interval(self.config.restart_interval);
         }
 
-        for (i, y_block) in y_blocks.iter().enumerate() {
-            encoder.encode_block(y_block, 0, 0, 0)?;
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let (h_samp, v_samp) = match self.config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
 
-            if is_color {
-                encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
-                encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
+        if h_samp == 1 && v_samp == 1 {
+            // 4:4:4 mode - simple 1:1 interleaving
+            for (i, y_block) in y_blocks.iter().enumerate() {
+                encoder.encode_block(y_block, 0, 0, 0)?;
+
+                if is_color {
+                    encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
+                    encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
+                }
+
+                encoder.check_restart();
             }
+        } else {
+            // Subsampled mode - MCU interleaving
+            let y_blocks_h = (width + 7) / 8;
+            let y_blocks_v = (height + 7) / 8;
+            let c_blocks_h = ((width + 1) / h_samp + 7) / 8;
+            let c_blocks_v = ((height + 1) / v_samp + 7) / 8;
 
-            encoder.check_restart();
+            // MCU dimensions in terms of Y blocks
+            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+
+            // Zero block for padding out-of-bounds MCU positions
+            const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+            for mcu_y in 0..mcu_v {
+                for mcu_x in 0..mcu_h {
+                    // Encode Y blocks in this MCU (must encode all even if out of bounds)
+                    for dy in 0..v_samp {
+                        for dx in 0..h_samp {
+                            let y_bx = mcu_x * h_samp + dx;
+                            let y_by = mcu_y * v_samp + dy;
+                            if y_bx < y_blocks_h && y_by < y_blocks_v {
+                                let y_idx = y_by * y_blocks_h + y_bx;
+                                encoder.encode_block(&y_blocks[y_idx], 0, 0, 0)?;
+                            } else {
+                                // Out of bounds - encode zero block (padding)
+                                encoder.encode_block(&ZERO_BLOCK, 0, 0, 0)?;
+                            }
+                        }
+                    }
+
+                    // Encode Cb and Cr blocks (always, even if out of bounds)
+                    if is_color {
+                        if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
+                            let c_idx = mcu_y * c_blocks_h + mcu_x;
+                            encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1)?;
+                            encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1)?;
+                        } else {
+                            // Out of bounds - encode zero blocks (padding)
+                            encoder.encode_block(&ZERO_BLOCK, 1, 1, 1)?;
+                            encoder.encode_block(&ZERO_BLOCK, 2, 1, 1)?;
+                        }
+                    }
+
+                    encoder.check_restart();
+                }
+            }
         }
 
         Ok(encoder.finish())
