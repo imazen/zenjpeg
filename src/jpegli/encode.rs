@@ -2140,40 +2140,39 @@ impl Encoder {
         // Note: XYB MCU order is 4 X blocks, 4 Y blocks, 1 B block per MCU
         // But since all share the same table, we just iterate through them
 
-        let mut prev_dc: i16 = 0;
-
-        // In XYB mode, we have interleaved blocks per MCU:
-        // [X0, X1, X2, X3, Y0, Y1, Y2, Y3, B0] per MCU
-        // DC prediction resets at each component boundary within MCU
-
+        // DC prediction carries across MCUs for each component (standard JPEG behavior)
         let mcu_count = b_blocks.len();
+
+        // Each component maintains its own DC prediction across all MCUs
+        let mut prev_dc_x: i16 = 0;
+        let mut prev_dc_y: i16 = 0;
+        let mut prev_dc_b: i16 = 0;
+
         for mcu_idx in 0..mcu_count {
             // X blocks (4 per MCU)
             let x_start = mcu_idx * 4;
-            prev_dc = 0;
             for i in 0..4 {
                 let block = &x_blocks[x_start + i];
-                Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);
-                prev_dc = block[0];
+                Self::collect_block_frequencies(block, prev_dc_x, &mut dc_freq, &mut ac_freq);
+                prev_dc_x = block[0];
             }
 
             // Y blocks (4 per MCU)
             let y_start = mcu_idx * 4;
-            prev_dc = 0;
             for i in 0..4 {
                 let block = &y_blocks[y_start + i];
-                Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);
-                prev_dc = block[0];
+                Self::collect_block_frequencies(block, prev_dc_y, &mut dc_freq, &mut ac_freq);
+                prev_dc_y = block[0];
             }
 
             // B block (1 per MCU)
-            prev_dc = 0;
             Self::collect_block_frequencies(
                 &b_blocks[mcu_idx],
-                prev_dc,
+                prev_dc_b,
                 &mut dc_freq,
                 &mut ac_freq,
             );
+            prev_dc_b = b_blocks[mcu_idx][0];
         }
 
         // Generate optimized tables

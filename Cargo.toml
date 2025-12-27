@@ -24,7 +24,7 @@ rgb = "0.8"
 
 # Reference implementations (for comparison and fallback)
 mozjpeg-oxide = { path = "../mozjpeg-rs" }
-jpegli = { path = "../jpegli/jpegli-rs/jpegli" }
+jpegli = { path = "../jpegli-rs/jpegli-rs", package = "jpegli-rs" }
 
 [dev-dependencies]
 # Image I/O
@@ -33,7 +33,7 @@ jpeg-decoder = "0.3"
 
 # Quality metrics (individual metrics for standalone tests)
 dssim = "3.2"
-butteraugli-oxide = { path = "../jpegli/jpegli-rs/butteraugli" }
+butteraugli-oxide = { path = "../butteraugli" }
 
 # Codec evaluation (handles metrics, ICC profiles, and JPEG decoding)
 codec-eval = { git = "https://github.com/imazen/codec-eval" }
