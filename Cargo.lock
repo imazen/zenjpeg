@@ -626,7 +626,6 @@ dependencies = [
 name = "jpegli-internals-sys"
 version = "0.1.0"
 dependencies = [
- "cc",
  "cmake",
  "libc",
 ]
