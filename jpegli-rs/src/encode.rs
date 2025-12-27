@@ -907,9 +907,8 @@ impl Encoder {
         }
 
         // AC scans are always non-interleaved
-        // TODO: For now, use level 0 (no SA refinement) until refinement is fixed
         // Progressive Level 2 with successive approximation (matches C++ jpegli)
-        let use_refinement = true; // TESTING: Enabling refinement to debug
+        let use_refinement = true;
 
         for c in 0..num_components {
             if use_refinement {
@@ -942,13 +941,14 @@ impl Encoder {
                 });
 
                 // AC 3-63 refinement: bit 0 (Ah=1, Al=0)
-                scans.push(ProgressiveScan {
-                    components: vec![c],
-                    ss: 3,
-                    se: 63,
-                    ah: 1,
-                    al: 0,
-                });
+                // TEMP: Skipping second refinement to test first refinement
+                // scans.push(ProgressiveScan {
+                //     components: vec![c],
+                //     ss: 3,
+                //     se: 63,
+                //     ah: 1,
+                //     al: 0,
+                // });
             } else {
                 // Level 0: no successive approximation (simpler, works)
                 scans.push(ProgressiveScan {
@@ -1227,6 +1227,7 @@ impl Encoder {
                     table_idx,
                     scan.ss,
                     scan.se,
+                    scan.ah,
                     scan.al,
                     &mut eob_run,
                 )?;
