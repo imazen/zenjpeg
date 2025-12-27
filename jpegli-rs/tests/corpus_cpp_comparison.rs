@@ -1,7 +1,8 @@
 //! Corpus comparison test using codec-eval.
 //!
 //! Compares Rust jpegli against C++ jpegli on a large corpus.
-//! Run with: cargo test --test corpus_cpp_comparison -- --ignored --nocapture
+//! Run with: cargo test --test corpus_cpp_comparison --features corpus-tests -- --ignored --nocapture
+#![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
 use jpegli::quant::Quality;
