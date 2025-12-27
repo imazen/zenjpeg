@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "jpegli",
+    "jpegli-rs",
     "internal/butteraugli",
     "internal/jpegli-internals-sys",
 ]
@@ -10,8 +10,8 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "BSD-3-Clause"
-repository = "https://github.com/libjxl/libjxl"
-description = "Rust port of jpegli - improved JPEG encoder/decoder"
+repository = "https://github.com/imazen/jpegli-rs"
+description = "Pure Rust JPEG encoder/decoder - port of Google's jpegli"
 
 [workspace.dependencies]
 # Core
@@ -45,7 +45,7 @@ approx = "0.5"
 proptest = "1.4"
 criterion = "0.5"
 test-case = "3.3"
-codec-eval = { path = "/home/lilith/work/codec-eval" }
+# codec-eval = { path = "/home/lilith/work/codec-eval" }  # Local dev only
 
 # FFI
 libc = "0.2"
