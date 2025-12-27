@@ -2,7 +2,7 @@
 name = "jpegli-rs"
 version = "0.1.0"
 edition = "2021"
-license = "BSD-3-Clause"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/imazen/jpegli-rs"
 documentation = "https://docs.rs/jpegli-rs"
 readme = "README.md"
@@ -27,7 +27,9 @@ moxcms = { workspace = true, optional = true }
 jpeg-decoder = { workspace = true, optional = true }
 butteraugli-oxide = { workspace = true }
 # For FFI comparison testing (internal parity tests only - requires C++ build)
-jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
+# NOTE: jpegli-internals-sys is not published to crates.io.
+# The ffi-tests feature only works with a local checkout that includes the C++ submodule.
+# jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
 # For corpus comparison testing
 codec-eval = { version = "0.2", optional = true }
 
@@ -51,8 +53,10 @@ jpeg-decoder = { workspace = true }
 default = ["simd", "cms"]
 simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
-# Enable FFI tests against C++ implementation (requires C++ build)
-ffi-tests = ["dep:jpegli-internals-sys"]
+# Enable FFI tests against C++ implementation (requires C++ build + local checkout)
+# NOTE: This feature is only available in a local checkout with the C++ submodule.
+# When jpegli-internals-sys is available, change to: ffi-tests = ["dep:jpegli-internals-sys"]
+ffi-tests = []
 # Enable corpus comparison tests (requires codec-eval)
 corpus-tests = ["dep:codec-eval"]
 cms-lcms2 = ["dep:lcms2", "dep:jpeg-decoder"]
