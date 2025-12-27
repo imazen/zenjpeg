@@ -455,8 +455,14 @@ Extended `build-predictor` to evaluate winners using all three metrics:
    - For archival/medical (structural fidelity): Use DSSIM-based strategy (mozjpeg-favoring)
    - For general use: Use SSIMULACRA2-based strategy (balanced)
 
-4. **Why butteraugli favors jpegli:**
-   - Butteraugli uses XYB color space internally
-   - jpegli encodes in XYB color space
-   - Both designed by same Google team
-   - This may create "home field advantage" for jpegli
+4. **Why butteraugli favors jpegli (even without XYB mode):**
+   - **Note:** jpegli was tested in standard YCbCr mode, NOT XYB mode
+   - jpegli's adaptive quantization is tuned for perceptual quality
+   - jpegli's zero-bias tables and quantization matrices may be optimized for butteraugli-like metrics
+   - mozjpeg's trellis optimizes for rate-distortion (bit savings), not perceptual quality
+   - This suggests jpegli's perceptual tuning works even in YCbCr mode
+
+5. **Future work: Test with XYB mode enabled**
+   - jpegli supports XYB color space encoding
+   - XYB mode may further improve butteraugli scores
+   - Would require ICC profile handling for proper decoding
