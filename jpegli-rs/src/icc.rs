@@ -84,8 +84,8 @@ pub fn is_xyb_profile(icc_data: &[u8]) -> bool {
 #[cfg(feature = "cms-lcms2")]
 pub fn apply_icc_transform(
     rgb_data: &[u8],
-    width: usize,
-    height: usize,
+    _width: usize,
+    _height: usize,
     icc_profile: &[u8],
 ) -> Result<Vec<u8>> {
     use lcms2::{Intent, PixelFormat, Profile, Transform};
@@ -114,7 +114,7 @@ pub fn apply_icc_transform(
     let mut output = vec![[0u8; 3]; pixels.len()];
     transform.transform_pixels(&pixels, &mut output);
 
-    Ok(output.into_iter().flat_map(|p| p).collect())
+    Ok(output.into_iter().flatten().collect())
 }
 
 /// Apply ICC profile transformation using moxcms (pure Rust).

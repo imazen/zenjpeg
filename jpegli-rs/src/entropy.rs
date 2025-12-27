@@ -855,7 +855,7 @@ impl<'a> EntropyDecoder<'a> {
         match self.reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
             Ok(bits) => {
                 // fast_decode expects bits in MSB position (shifted left by 32 - FAST_BITS)
-                let shifted = (bits as u32) << (32 - HuffmanDecodeTable::FAST_BITS);
+                let shifted = bits << (32 - HuffmanDecodeTable::FAST_BITS);
                 if let Some((symbol, len)) = table.fast_decode(shifted) {
                     self.reader.skip_bits(len);
                     return Ok(symbol);

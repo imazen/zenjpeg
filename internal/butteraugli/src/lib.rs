@@ -69,8 +69,7 @@
 //! - <https://github.com/google/butteraugli>
 //! - <https://github.com/libjxl/libjxl>
 
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
+// Lint configuration is in workspace Cargo.toml [workspace.lints.clippy]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::similar_names)]
 #![allow(clippy::cast_precision_loss)]
@@ -160,12 +159,11 @@ impl std::fmt::Display for ButteraugliError {
             Self::InvalidBufferSize { expected, actual } => {
                 write!(
                     f,
-                    "buffer size {} doesn't match expected size {}",
-                    actual, expected
+                    "buffer size {actual} doesn't match expected size {expected}"
                 )
             }
             Self::InvalidDimensions { width, height } => {
-                write!(f, "invalid dimensions: {}x{} (minimum 8x8)", width, height)
+                write!(f, "invalid dimensions: {width}x{height} (minimum 8x8)")
             }
         }
     }

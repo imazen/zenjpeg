@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn get_cjpegli_path() -> String {
-    std::env::var("CJPEGLI_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string())
+    std::env::var("CJPEGLI_PATH").unwrap_or_else(|_| {
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string()
+    })
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {

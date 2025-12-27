@@ -121,7 +121,8 @@ fn test_filesize_comparison_synthetic() {
 #[test]
 #[ignore = "requires C++ cjpegli build and test image"]
 fn test_filesize_comparison_photo() {
-    let png_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     if !std::path::Path::new(png_path).exists() {
         println!("Skipping: test image not found");
         return;

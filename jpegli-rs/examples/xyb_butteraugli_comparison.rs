@@ -162,7 +162,8 @@ fn main() {
     println!("Butteraugli is the metric XYB is optimized for.");
     println!("Lower Butteraugli = better perceptual quality.\n");
 
-    let image_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let image_path =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     let path = Path::new(image_path);
 
     let (rgb, width, height) = match load_png(path) {

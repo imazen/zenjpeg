@@ -238,7 +238,8 @@ fn cmd_jpeg(args: &[String]) {
 
     // Butteraugli
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
+    let result =
+        compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
 
     println!("\nButteraugli score: {:.6}", result.score);
 
@@ -284,7 +285,8 @@ fn cmd_sweep(args: &[String]) {
 
         let bpp = jpeg_data.len() as f64 * 8.0 / (width * height) as f64;
         let params = ButteraugliParams::default();
-        let result = compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
+        let result =
+            compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
 
         println!(
             "{:>4} {:>10} {:>8.3} {:>10.4}",
@@ -339,7 +341,8 @@ fn cmd_uniform(args: &[String]) {
         let decoded = decode_jpeg(&jpeg);
 
         if decoded.len() == img1.len() {
-            let result = compute_butteraugli(&img1, &decoded, size, size, &params).expect("butteraugli");
+            let result =
+                compute_butteraugli(&img1, &decoded, size, size, &params).expect("butteraugli");
             let max_diff = img1
                 .iter()
                 .zip(decoded.iter())

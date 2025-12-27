@@ -5,7 +5,8 @@ use std::io::Write;
 use std::process::Command;
 
 fn main() {
-    let png_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     println!("=== DCT Coefficient Comparison ===\n");
 

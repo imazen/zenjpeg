@@ -218,8 +218,9 @@ fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usi
 }
 
 fn main() {
-    let cjpegli_path = std::env::var("CJPEGLI_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string());
+    let cjpegli_path = std::env::var("CJPEGLI_PATH").unwrap_or_else(|_| {
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string()
+    });
 
     let corpus_paths = [
         "/home/lilith/work/codec-eval/codec-corpus/kodak",

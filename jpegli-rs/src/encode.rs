@@ -666,7 +666,7 @@ impl Encoder {
         // Tokenize all scans to collect symbol statistics
         let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
 
-        for (_scan_idx, scan) in scans.iter().enumerate() {
+        for scan in scans.iter() {
             // Calculate context for this scan
             // Context determines which Huffman table histogram to use
             let context = if scan.ss == 0 && scan.se == 0 {
@@ -1791,7 +1791,7 @@ impl Encoder {
         // Zero-bias parameters for each component
         // Use effective distance inferred from quant tables (like C++ QuantValsToDistance)
         // For YCbCr mode, Cb and Cr share the same quant table (c_quant)
-        let input_distance = self.config.quality.to_distance();
+        let _input_distance = self.config.quality.to_distance();
         let effective_distance = quant::quant_vals_to_distance(y_quant, c_quant, c_quant);
         let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
@@ -1883,7 +1883,7 @@ impl Encoder {
         // Zero-bias parameters for each component
         // Use effective distance inferred from quant tables (like C++ QuantValsToDistance)
         // This is important at Q100 where quant values are all 1s but input distance is 0.01
-        let input_distance = self.config.quality.to_distance();
+        let _input_distance = self.config.quality.to_distance();
         let effective_distance = quant::quant_vals_to_distance(y_quant, cb_quant, cr_quant);
         let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
@@ -2006,9 +2006,11 @@ impl Encoder {
                     // For 4:2:0, each chroma block corresponds to 2x2 Y blocks
                     let y_bx = (bx * y_blocks_h) / c_blocks_h;
                     let y_by = (by * y_blocks_v) / c_blocks_v;
-                    let aq_strength = aq_map.get(y_bx.min(y_blocks_h - 1), y_by.min(y_blocks_v - 1));
+                    let aq_strength =
+                        aq_map.get(y_bx.min(y_blocks_h - 1), y_by.min(y_blocks_v - 1));
 
-                    let cb_block = self.extract_block_ycbcr_f32(cb_plane, c_width, c_height, bx, by);
+                    let cb_block =
+                        self.extract_block_ycbcr_f32(cb_plane, c_width, c_height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
@@ -2018,7 +2020,8 @@ impl Encoder {
                     );
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
-                    let cr_block = self.extract_block_ycbcr_f32(cr_plane, c_width, c_height, bx, by);
+                    let cr_block =
+                        self.extract_block_ycbcr_f32(cr_plane, c_width, c_height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
@@ -2136,13 +2139,12 @@ impl Encoder {
 
                     // Chroma blocks
                     if is_color {
-                        let (cb_block, cr_block) =
-                            if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
-                                let c_idx = mcu_y * c_blocks_h + mcu_x;
-                                (&cb_blocks[c_idx], &cr_blocks[c_idx])
-                            } else {
-                                (&ZERO_BLOCK, &ZERO_BLOCK)
-                            };
+                        let (cb_block, cr_block) = if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
+                            let c_idx = mcu_y * c_blocks_h + mcu_x;
+                            (&cb_blocks[c_idx], &cr_blocks[c_idx])
+                        } else {
+                            (&ZERO_BLOCK, &ZERO_BLOCK)
+                        };
 
                         Self::collect_block_frequencies(
                             cb_block,
@@ -2520,8 +2522,6 @@ impl Encoder {
         // Note: XYB MCU order is 4 X blocks, 4 Y blocks, 1 B block per MCU
         // But since all share the same table, we just iterate through them
 
-        let mut prev_dc: i16 = 0;
-
         // In XYB mode, we have interleaved blocks per MCU:
         // [X0, X1, X2, X3, Y0, Y1, Y2, Y3, B0] per MCU
         // DC prediction resets at each component boundary within MCU
@@ -2530,7 +2530,7 @@ impl Encoder {
         for mcu_idx in 0..mcu_count {
             // X blocks (4 per MCU)
             let x_start = mcu_idx * 4;
-            prev_dc = 0;
+            let mut prev_dc: i16 = 0;
             for i in 0..4 {
                 let block = &x_blocks[x_start + i];
                 Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);

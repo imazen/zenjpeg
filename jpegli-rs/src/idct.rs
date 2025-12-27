@@ -101,7 +101,7 @@ fn forward_even_odd<const N: usize>(input: &[f32], output: &mut [f32]) {
 fn b_transpose<const N: usize>(coeff: &mut [f32]) {
     // Cumulative sum from end to start
     for i in (1..N).rev() {
-        coeff[i] = coeff[i] + coeff[i - 1];
+        coeff[i] += coeff[i - 1];
     }
     coeff[0] *= SQRT2;
 }
@@ -155,7 +155,7 @@ fn idct1d_4(input: &[f32], output: &mut [f32]) {
     first[1] = first_out[1];
 
     // BTranspose<2>: just coeff[0] *= sqrt2 (after sum which doesn't exist for N=2)
-    second[1] = second[1] + second[0];
+    second[1] += second[0];
     second[0] *= SQRT2;
 
     // IDCT1D<2> on second half
@@ -280,7 +280,7 @@ pub fn inverse_dct_8x8_u8(input: &[f32; DCT_BLOCK_SIZE]) -> [u8; DCT_BLOCK_SIZE]
 
 /// Performs inverse DCT on multiple blocks.
 pub fn inverse_dct_blocks(blocks: &[[f32; DCT_BLOCK_SIZE]]) -> Vec<[f32; DCT_BLOCK_SIZE]> {
-    blocks.iter().map(|b| inverse_dct_8x8(b)).collect()
+    blocks.iter().map(inverse_dct_8x8).collect()
 }
 
 #[cfg(test)]

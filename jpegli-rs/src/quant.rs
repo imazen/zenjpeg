@@ -556,8 +556,10 @@ pub fn quantize_block(
 /// For non-adaptive quantization, use aq_strength = 0.0
 /// Counter for debugging zero-bias effectiveness
 #[cfg(debug_assertions)]
+#[allow(dead_code)] // Used for manual debugging - print stats at end of encoding
 static ZERO_BIAS_DEBUG: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 #[cfg(debug_assertions)]
+#[allow(dead_code)] // Used for manual debugging - print stats at end of encoding
 static ZERO_BIAS_ZEROS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn quantize_block_with_zero_bias(

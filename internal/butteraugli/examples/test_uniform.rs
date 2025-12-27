@@ -36,7 +36,8 @@ fn main() {
     // Very different (black vs white)
     let rgb_black: Vec<u8> = vec![0; width * height * 3];
     let rgb_white: Vec<u8> = vec![255; width * height * 3];
-    let result3 = compute_butteraugli(&rgb_black, &rgb_white, width, height, &params).expect("butteraugli");
+    let result3 =
+        compute_butteraugli(&rgb_black, &rgb_white, width, height, &params).expect("butteraugli");
     println!("\nBlack vs White, 64x64:");
     println!("  butteraugli score: {:.4}", result3.score);
 }

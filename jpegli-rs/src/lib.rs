@@ -30,11 +30,9 @@
 //! let jpeg_data = encoder.encode(pixels)?;
 //! ```
 
+// Lint configuration is in workspace Cargo.toml [workspace.lints.clippy]
 #![allow(missing_docs)]
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
-#![allow(clippy::similar_names)]
 
 // ============================================================================
 // Module structure

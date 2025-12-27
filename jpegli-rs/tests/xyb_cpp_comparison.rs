@@ -160,7 +160,13 @@ fn test_xyb_color_conversion_values() {
         let srgb = [r, g, b];
         let mut cpp_xyb = [0.0f32; 3];
         unsafe {
-            jpegli_internals_sys::jpegli_srgb_to_scaled_xyb(srgb.as_ptr(), 1, 1, 255.0, cpp_xyb.as_mut_ptr());
+            jpegli_internals_sys::jpegli_srgb_to_scaled_xyb(
+                srgb.as_ptr(),
+                1,
+                1,
+                255.0,
+                cpp_xyb.as_mut_ptr(),
+            );
         }
         let (cpp_x, cpp_y, cpp_b) = (cpp_xyb[0], cpp_xyb[1], cpp_xyb[2]);
 
@@ -235,7 +241,8 @@ fn test_xyb_constants_match_cpp() {
     use jpegli::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
 
     // Get C++ constants via FFI
-    let (cpp_matrix, cpp_bias, cpp_offset, cpp_scale) = jpegli_internals_sys::cpp_get_xyb_constants();
+    let (cpp_matrix, cpp_bias, cpp_offset, cpp_scale) =
+        jpegli_internals_sys::cpp_get_xyb_constants();
 
     println!("C++ Opsin Matrix:");
     for i in 0..3 {

@@ -235,7 +235,9 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 /// the quality scales may differ between encoders.
 #[test]
 fn test_pareto_front_flower_small() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;
@@ -327,7 +329,9 @@ fn test_pareto_front_flower_small() {
 /// Test that at similar file sizes, quality is comparable.
 #[test]
 fn test_quality_at_similar_size() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;
@@ -392,7 +396,9 @@ fn test_quality_at_similar_size() {
 /// Test XYB mode vs YCbCr mode vs mozjpeg with DSSIM + off-by-N stats
 #[test]
 fn test_xyb_vs_ycbcr_vs_mozjpeg() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;

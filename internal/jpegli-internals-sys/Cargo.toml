@@ -1,8 +1,8 @@
 [package]
 name = "jpegli-internals-sys"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
 description = "FFI bindings to instrumented jpegli C++ internals for parity testing"
 links = "jpegli_internals_ffi"
 build = "build.rs"
@@ -13,11 +13,8 @@ default = []
 butteraugli = []
 
 [dependencies]
-libc = { workspace = true }
+libc = "0.2"
 
 [build-dependencies]
 cc = "1.0"
 cmake = "0.1"
-
-[lints]
-workspace = true

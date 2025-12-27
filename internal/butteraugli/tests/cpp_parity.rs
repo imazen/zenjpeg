@@ -388,7 +388,9 @@ fn test_checkerboard_score_parity() {
 #[test]
 #[ignore] // Requires test image
 fn test_real_image_score_parity() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping: test image not found at {:?}", path);
         return;

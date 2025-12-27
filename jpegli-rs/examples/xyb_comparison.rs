@@ -74,7 +74,8 @@ sys.stdout.buffer.write(img.tobytes())
 }
 
 fn main() {
-    let png_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
 
     // Load PNG
     let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
