@@ -3,8 +3,7 @@
 //! # Status: PARTIAL IMPLEMENTATION
 //!
 //! This module contains a partial port of the C++ adaptive quantization.
-//! The constants and helper functions are ported from a previous attempt
-//! at `/home/lilith/work/jpeg-encoder/src/jpegli/adaptive_quantization.rs`.
+//! The constants and helper functions are ported from a previous implementation.
 //!
 //! ## What C++ Does (from lib/jpegli/adaptive_quantization.cc)
 //!

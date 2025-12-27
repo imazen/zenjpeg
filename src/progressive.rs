@@ -136,7 +136,7 @@ pub fn generate_simple_progressive_scans(num_components: u8) -> Vec<ScanInfo> {
 ///
 /// Uses successive approximation for better compression:
 /// 1. DC scan with point transform (Al=1)
-/// 2. AC scans with reduced precision
+/// 2. AC scans with reduced precision (split into 1-5 and 6-63 like libjpeg)
 /// 3. Refinement scans
 pub fn generate_standard_progressive_scans(num_components: u8) -> Vec<ScanInfo> {
     let mut scans = Vec::new();
@@ -146,7 +146,7 @@ pub fn generate_standard_progressive_scans(num_components: u8) -> Vec<ScanInfo> 
     dc_scan.al = 1;
     scans.push(dc_scan);
 
-    // AC scans for each component with successive approximation
+    // AC first scans for each component - split like libjpeg
     for comp in 0..num_components {
         // Low frequency (1-5) at reduced precision
         scans.push(ScanInfo::ac_scan(comp, 1, 5, 0, 2));
@@ -154,9 +154,9 @@ pub fn generate_standard_progressive_scans(num_components: u8) -> Vec<ScanInfo> 
         scans.push(ScanInfo::ac_scan(comp, 6, 63, 0, 2));
     }
 
-    // AC refinement scans
+    // AC refinement scans - must cover same spectral range as first scans combined
     for comp in 0..num_components {
-        // Refine bits 2->1
+        // Refine bits 2->1 for full band
         scans.push(ScanInfo::ac_scan(comp, 1, 63, 2, 1));
     }
 

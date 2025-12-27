@@ -2113,10 +2113,34 @@ mod cpp_comparison_tests {
     use super::*;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
+    use std::path::PathBuf;
+
+    fn find_testdata_path(filename: &str) -> Option<PathBuf> {
+        // Check environment variable first
+        if let Ok(dir) = std::env::var("CPP_TESTDATA_DIR") {
+            let path = PathBuf::from(dir).join(filename);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        // Try relative paths
+        let candidates = [
+            PathBuf::from("testdata").join(filename),
+            PathBuf::from("../jpegli").join(filename),
+        ];
+        for path in candidates {
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        None
+    }
 
     fn load_testdata() -> Option<Vec<(Vec<i64>, Vec<u8>)>> {
-        let path = "/home/lilith/work/jpegli/CreateHuffmanTree.testdata";
-        let file = File::open(path).ok()?;
+        let path = find_testdata_path("CreateHuffmanTree.testdata")?;
+        let file = File::open(&path).ok()?;
         let reader = BufReader::new(file);
 
         let mut tests = Vec::new();

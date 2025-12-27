@@ -3,6 +3,8 @@
 //! Compares zenjpeg vs C mozjpeg with various encoder configurations.
 //! Adapted from mozjpeg-rs/tests/trellis_validation.rs
 
+mod common;
+
 use dssim::Dssim;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -10,9 +12,15 @@ use zenjpeg::{Encoder, Quality, ScanScript};
 
 /// Get a test image path - try corpus first, fall back to creating synthetic
 fn get_test_image() -> Option<(Vec<u8>, u32, u32)> {
-    // Try to find a test image in common locations
+    // Try environment-based path first
+    if let Some(path) = common::get_kodim01_path() {
+        if let Some(img) = load_png(&path) {
+            return Some(img);
+        }
+    }
+
+    // Try relative paths
     let candidates = [
-        PathBuf::from("/home/lilith/work/codec-corpus/kodak/kodim01.png"),
         PathBuf::from("../codec-corpus/kodak/kodim01.png"),
         PathBuf::from("testdata/test.png"),
     ];

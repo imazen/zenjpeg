@@ -569,6 +569,45 @@ mod tests {
     }
 
     #[test]
+    fn test_progressive_symbols_in_ac_table() {
+        let htbl = create_std_ac_luma_table();
+        let dtbl = DerivedTable::from_huff_table(&htbl, false).unwrap();
+
+        // Check essential symbols for progressive refinement encoding
+        // Note: Standard AC table from JPEG spec doesn't include all EOBn symbols.
+        // Higher EOBn (0x70-0xE0) are for long EOBRUN and may be missing.
+        // This is why progressive JPEG should use optimized Huffman tables.
+
+        // EOB0 (0x00) - essential for any JPEG
+        assert!(dtbl.ehufsi[0x00] > 0, "EOB0 (0x00) must be present");
+
+        // ZRL (0xF0) - essential for long zero runs
+        assert!(dtbl.ehufsi[0xF0] > 0, "ZRL (0xF0) must be present");
+
+        // Run/Size=1 symbols commonly used in progressive refinement
+        // At minimum, (0 << 4) | 1 = 0x01 should be present (most common)
+        assert!(dtbl.ehufsi[0x01] > 0, "Symbol 0x01 (run=0, size=1) must be present");
+
+        // Document which progressive symbols are missing (informational)
+        let mut missing_eobn = Vec::new();
+        for n in 1..15u8 {
+            let symbol = n << 4;
+            if dtbl.ehufsi[symbol as usize] == 0 {
+                missing_eobn.push(n);
+            }
+        }
+
+        if !missing_eobn.is_empty() {
+            // This is expected for standard tables - just document it
+            println!(
+                "Note: Standard AC table missing EOBn for n={:?}. \
+                 Use optimized Huffman tables for better progressive compression.",
+                missing_eobn
+            );
+        }
+    }
+
+    #[test]
     fn test_chrominance_tables() {
         // Build derived tables for chrominance
         let mut dc_htbl = HuffTable::default();

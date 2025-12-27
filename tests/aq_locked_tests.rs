@@ -10,6 +10,8 @@
 //!
 //! Adapted from jpegli-rs/tests/aq_locked_tests.rs
 
+mod common;
+
 use zenjpeg::adaptive_quant::{AdaptiveQuantConfig, AqField};
 use zenjpeg::{Encoder, Quality};
 
@@ -327,9 +329,12 @@ fn test_aq_strength_range_cpp() {
 #[ignore] // Enable when full jpegli AQ is implemented
 fn test_aq_vs_cpp_testdata() {
     // Check if testdata exists
-    let testdata_path = "/home/lilith/work/jpegli/ComputeAdaptiveQuantField.testdata";
-    if !std::path::Path::new(testdata_path).exists() {
-        eprintln!("C++ testdata not found at {}. Skipping test.", testdata_path);
+    let Some(testdata_path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+        eprintln!("C++ testdata not found. Set CPP_TESTDATA_DIR env var.");
+        return;
+    };
+    if !testdata_path.exists() {
+        eprintln!("C++ testdata not found at {:?}. Skipping test.", testdata_path);
         return;
     }
 

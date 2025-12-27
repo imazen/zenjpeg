@@ -11,6 +11,8 @@
 //! 5. Detail-rich (high frequency content)
 //! 6. Large uniform areas (typical product packaging)
 
+mod common;
+
 use std::fs::File;
 use std::path::Path;
 use zenjpeg::{Encoder, Quality};
@@ -146,13 +148,9 @@ fn create_uniform_image() -> Vec<u8> {
 
 /// Try to load flower_small.rgb.png, fall back to synthetic natural image
 fn load_or_create_natural_image() -> (Vec<u8>, usize, usize) {
-    let paths = [
-        "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png",
-        "/home/lilith/work/jpegli-old/testdata/jxl/flower/flower_small.rgb.png",
-    ];
-
-    for path in &paths {
-        if let Some(img) = load_png(Path::new(path)) {
+    // Try environment-based path discovery first
+    if let Some(path) = common::get_flower_small_path() {
+        if let Some(img) = load_png(&path) {
             return img;
         }
     }

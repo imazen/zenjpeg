@@ -5,6 +5,8 @@
 //!
 //! Adapted from jpegli-rs/tests/aq_cpp_comparison.rs
 
+mod common;
+
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -42,8 +44,8 @@ struct ComputeAdaptiveQuantFieldTest {
 
 /// Parse first line of FuzzyErosion testdata file.
 fn parse_first_fuzzy_erosion_test() -> Option<FuzzyErosionTest> {
-    let path = "/home/lilith/work/jpegli/FuzzyErosion.testdata";
-    let file = File::open(path).ok()?;
+    let path = common::get_cpp_testdata_path("FuzzyErosion.testdata")?;
+    let file = File::open(&path).ok()?;
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
@@ -156,11 +158,14 @@ fn test_fuzzy_erosion_expected_range() {
 #[test]
 fn test_compute_aq_field_testdata_range() {
     // Parse actual C++ testdata
-    let path = "/home/lilith/work/jpegli/ComputeAdaptiveQuantField.testdata";
-    let file = match File::open(path) {
+    let Some(path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+        eprintln!("ComputeAdaptiveQuantField.testdata not found. Set CPP_TESTDATA_DIR env var.");
+        return;
+    };
+    let file = match File::open(&path) {
         Ok(f) => f,
         Err(_) => {
-            eprintln!("Testdata not found at {} - skipping", path);
+            eprintln!("Testdata not found at {:?} - skipping", path);
             return;
         }
     };
@@ -224,7 +229,11 @@ fn test_compute_aq_field_testdata_range() {
 #[ignore] // Run with --ignored when full AQ implementation is ready
 fn test_rust_vs_cpp_aq() {
     // Parse actual C++ testdata and compare Rust implementation
-    let path = "/home/lilith/work/jpegli/ComputeAdaptiveQuantField.testdata";
+    let Some(path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+        eprintln!("Testdata not found. Set CPP_TESTDATA_DIR env var.");
+        return;
+    };
+    let path = path; // rebind for consistency
     let file = match File::open(path) {
         Ok(f) => f,
         Err(_) => {
@@ -338,7 +347,11 @@ fn test_rust_vs_cpp_aq() {
 #[test]
 #[ignore] // Run with --ignored for comprehensive testing
 fn test_all_aq_testdata_entries() {
-    let path = "/home/lilith/work/jpegli/ComputeAdaptiveQuantField.testdata";
+    let Some(path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+        eprintln!("Testdata not found. Set CPP_TESTDATA_DIR env var.");
+        return;
+    };
+    let path = path; // rebind for consistency
     let file = match File::open(path) {
         Ok(f) => f,
         Err(e) => {
