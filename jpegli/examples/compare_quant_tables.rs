@@ -7,7 +7,7 @@ use std::io::Write as IoWrite;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli/build/tools/cjpegli";
+const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli";
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
     let file = fs::File::open(path).ok()?;
@@ -147,7 +147,7 @@ fn print_table(name: &str, table: &[u16]) {
 fn main() {
     println!("=== Quantization Table Comparison ===\n");
 
-    let image_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
+    let image_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     let path = Path::new(image_path);
 
     let (rgb, width, height) = match load_png(path) {

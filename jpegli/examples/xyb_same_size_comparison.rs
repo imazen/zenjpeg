@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 
 fn get_cjpegli_path() -> String {
     std::env::var("CJPEGLI_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/jpegli/build/tools/cjpegli".to_string())
+        .unwrap_or_else(|_| "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli".to_string())
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
@@ -207,7 +207,7 @@ fn find_matching_xyb_quality(input_path: &Path, target_size: usize) -> Option<(u
 fn main() {
     let corpus_paths = [
         "/home/lilith/work/codec-eval/codec-corpus/kodak",
-        "/home/lilith/work/jpegli/testdata/jxl/flower",
+        "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower",
     ];
 
     let corpus_dir = corpus_paths

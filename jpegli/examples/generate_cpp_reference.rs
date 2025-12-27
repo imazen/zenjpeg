@@ -202,12 +202,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     let cjpegli_path = std::env::var("CJPEGLI_PATH")
-        .unwrap_or_else(|_| "/home/lilith/work/jpegli/build/tools/cjpegli".to_string());
+        .unwrap_or_else(|_| "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli".to_string());
 
     // Default corpus locations to check
     let corpus_paths = [
         "/home/lilith/work/codec-eval/codec-corpus/kodak",
-        "/home/lilith/work/jpegli/testdata/jxl/flower",
+        "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower",
     ];
 
     let corpus_dir = args

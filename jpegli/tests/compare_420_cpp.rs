@@ -23,7 +23,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 #[test]
 #[ignore = "requires testdata and C++ cjpegli"]
 fn compare_rust_cpp_420() {
-    let png_path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png");
+    let png_path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     
     if !png_path.exists() {
         println!("Skipping: test image not found");
@@ -48,7 +48,7 @@ fn compare_rust_cpp_420() {
     println!("Rust 4:2:0: {} bytes", rust_jpeg.len());
     
     // Encode with C++ cjpegli
-    let cjpegli = Path::new("/home/lilith/work/jpegli/build/tools/cjpegli");
+    let cjpegli = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli");
     if cjpegli.exists() {
         let status = std::process::Command::new(cjpegli)
             .args([

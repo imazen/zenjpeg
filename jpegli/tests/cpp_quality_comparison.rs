@@ -37,10 +37,10 @@ fn test_cpp_quality_comparison() {
 
     // Check cjpegli exists - try multiple paths
     let possible_paths = [
-        "/home/lilith/work/jpegli/build/tools/cjpegli",
-        "../build/tools/cjpegli",
-        "../../build/tools/cjpegli",
-        "../../../build/tools/cjpegli",
+        "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli",
+        "jpegli-cpp/build/tools/cjpegli",
+        "jpegli-cpp/build/tools/cjpegli",
+        "jpegli-cpp/build/tools/cjpegli",
     ];
     let cjpegli_path = possible_paths
         .iter()

@@ -77,7 +77,7 @@ struct TestResult {
 }
 
 fn main() {
-    let png_path = "/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     let output_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "reports/low_q_report.html".to_string());
@@ -121,7 +121,7 @@ fn main() {
     for &q in &qualities {
         // C++ YCbCr
         let cpp_path = format!("/tmp/cpp_ycbcr_q{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
+        Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--chroma_subsampling=444",
                 "-p",
@@ -184,7 +184,7 @@ fn main() {
     for &q in &qualities {
         // C++ XYB
         let cpp_path = format!("/tmp/cpp_xyb_q{}.jpg", q);
-        Command::new("/home/lilith/work/jpegli/build/tools/cjpegli")
+        Command::new("/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli")
             .args([
                 "--xyb",
                 "-p",

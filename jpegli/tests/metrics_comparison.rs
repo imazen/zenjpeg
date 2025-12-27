@@ -216,7 +216,7 @@ fn test_metrics_distortion_levels() {
 #[test]
 #[ignore] // Requires test file
 fn test_metrics_encoder_comparison() {
-    let path = Path::new("/home/lilith/work/jpegli/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new("/home/lilith/work/jpegli-rs/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
     if !path.exists() {
         eprintln!("Skipping: test file not found");
         return;

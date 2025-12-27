@@ -8,7 +8,7 @@ use std::process::Command;
 #[ignore = "requires C++ cjpegli build"]
 fn test_xyb_cpp_comparison() {
     // Check if cjpegli is available
-    let cjpegli_path = "/home/lilith/work/jpegli/build/tools/cjpegli";
+    let cjpegli_path = "/home/lilith/work/jpegli-rs/jpegli-cpp/build/tools/cjpegli";
     if !std::path::Path::new(cjpegli_path).exists() {
         panic!("cjpegli not found at {}. Build it first.", cjpegli_path);
     }

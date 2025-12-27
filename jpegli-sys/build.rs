@@ -13,9 +13,9 @@ fn main() {
 
     let butteraugli_enabled = env::var("CARGO_FEATURE_BUTTERAUGLI").is_ok();
 
-    // Check if the jpegli C++ source is available
+    // Check if the jpegli C++ source is available (in jpegli-cpp submodule)
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let jpegli_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let jpegli_root = manifest_dir.parent().unwrap().join("jpegli-cpp");
 
     // Check if build directory exists with pre-built library
     // When butteraugli is enabled, prefer build/ since build_test/ doesn't have extras
