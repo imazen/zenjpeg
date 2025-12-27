@@ -285,8 +285,44 @@ This aligns with the research notes about quality-dependent Pareto fronts!
 
 **Confirmed: crossover at ~0.75-1.0 bpp across both Kodak and CID22**
 
+### Image Characteristic Analysis (2024-12-26)
+
+Analyzed Kodak images to find what characteristics favor each encoder:
+
+**mozjpeg-favoring images (at low bpp):**
+| Image | Flat% | Edges | Detail% |
+|-------|-------|-------|---------|
+| 23.png | **81%** | 9 | 4% |
+| 12.png | **75%** | 11 | 7% |
+| 2.png | **74%** | 11 | 2% |
+| 3.png | **73%** | 10 | 4% |
+
+**jpegli-favoring images (even at low bpp):**
+| Image | Flat% | Edges | Detail% |
+|-------|-------|-------|---------|
+| 8.png | 21% | **38** | **40%** |
+| 13.png | 10% | **38** | **27%** |
+| 5.png | 22% | **31** | **28%** |
+| 1.png | 22% | **30** | **20%** |
+
+**Detection heuristic:**
+```
+if flat_pct > 70% && edge_strength < 15:
+    use mozjpeg for bpp < 1.0
+elif flat_pct < 30% && edge_strength > 25:
+    use jpegli even at low bpp
+else:
+    use jpegli for bpp > 0.75
+    use mozjpeg for bpp < 0.75
+```
+
+**Why this works:**
+- **Flat images**: mozjpeg's trellis efficiently zeros coefficients
+- **Complex images**: jpegli's AQ allocates bits to detail areas
+- **Mixed images**: crossover at ~0.75-1.0 bpp
+
 **Next steps:**
 - [x] Test on more diverse corpus (CID22) - Done, confirms pattern
-- [ ] Implement BPP-based strategy selection
-- [ ] Map Q values to expected BPP for strategy selection
-- [ ] Consider per-image content analysis for edge cases
+- [x] Analyze image characteristics for detection heuristics - Done
+- [ ] Implement content-adaptive strategy selection
+- [ ] Add flat% and edge detection to zenjpeg encoder
