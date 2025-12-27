@@ -158,7 +158,7 @@ fn test_fuzzy_erosion_expected_range() {
 #[test]
 fn test_compute_aq_field_testdata_range() {
     // Parse actual C++ testdata
-    let Some(path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+    let Some(path) = common::try_get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
         eprintln!("ComputeAdaptiveQuantField.testdata not found. Set CPP_TESTDATA_DIR env var.");
         return;
     };
@@ -229,12 +229,11 @@ fn test_compute_aq_field_testdata_range() {
 #[ignore] // Run with --ignored when full AQ implementation is ready
 fn test_rust_vs_cpp_aq() {
     // Parse actual C++ testdata and compare Rust implementation
-    let Some(path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+    let Some(path) = common::try_get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
         eprintln!("Testdata not found. Set CPP_TESTDATA_DIR env var.");
         return;
     };
-    let path = path; // rebind for consistency
-    let file = match File::open(path) {
+    let file = match File::open(&path) {
         Ok(f) => f,
         Err(_) => {
             eprintln!("Testdata not found - skipping");
@@ -347,12 +346,11 @@ fn test_rust_vs_cpp_aq() {
 #[test]
 #[ignore] // Run with --ignored for comprehensive testing
 fn test_all_aq_testdata_entries() {
-    let Some(path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+    let Some(path) = common::try_get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
         eprintln!("Testdata not found. Set CPP_TESTDATA_DIR env var.");
         return;
     };
-    let path = path; // rebind for consistency
-    let file = match File::open(path) {
+    let file = match File::open(&path) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("Could not open {}: {}", path, e);

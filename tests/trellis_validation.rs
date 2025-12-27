@@ -13,7 +13,7 @@ use zenjpeg::{Encoder, Quality, ScanScript};
 /// Get a test image path - try corpus first, fall back to creating synthetic
 fn get_test_image() -> Option<(Vec<u8>, u32, u32)> {
     // Try environment-based path first
-    if let Some(path) = common::get_kodim01_path() {
+    if let Some(path) = common::try_get_kodim01_path() {
         if let Some(img) = load_png(&path) {
             return Some(img);
         }

@@ -149,7 +149,7 @@ fn create_uniform_image() -> Vec<u8> {
 /// Try to load flower_small.rgb.png, fall back to synthetic natural image
 fn load_or_create_natural_image() -> (Vec<u8>, usize, usize) {
     // Try environment-based path discovery first
-    if let Some(path) = common::get_flower_small_path() {
+    if let Some(path) = common::try_get_flower_small_path() {
         if let Some(img) = load_png(&path) {
             return img;
         }
