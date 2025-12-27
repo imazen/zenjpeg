@@ -907,17 +907,58 @@ impl Encoder {
         }
 
         // AC scans are always non-interleaved
-        // For now, use simple progressive without successive approximation
-        // TODO: Add progressive level 2 with SA once basic progressive works
+        // TODO: For now, use level 0 (no SA refinement) until refinement is fixed
+        // Progressive Level 2 with successive approximation (matches C++ jpegli)
+        let use_refinement = true; // TESTING: Enabling refinement to debug
+
         for c in 0..num_components {
-            // AC 1-63, full precision (no successive approximation)
-            scans.push(ProgressiveScan {
-                components: vec![c],
-                ss: 1,
-                se: 63,
-                ah: 0,
-                al: 0,
-            });
+            if use_refinement {
+                // Level 2: with successive approximation
+                // AC 1-2: full precision (low frequency, most visible)
+                scans.push(ProgressiveScan {
+                    components: vec![c],
+                    ss: 1,
+                    se: 2,
+                    ah: 0,
+                    al: 0,
+                });
+
+                // AC 3-63 first pass: top bits only (Al=2 means bits 2+)
+                scans.push(ProgressiveScan {
+                    components: vec![c],
+                    ss: 3,
+                    se: 63,
+                    ah: 0,
+                    al: 2,
+                });
+
+                // AC 3-63 refinement: bit 1 (Ah=2, Al=1)
+                scans.push(ProgressiveScan {
+                    components: vec![c],
+                    ss: 3,
+                    se: 63,
+                    ah: 2,
+                    al: 1,
+                });
+
+                // AC 3-63 refinement: bit 0 (Ah=1, Al=0)
+                scans.push(ProgressiveScan {
+                    components: vec![c],
+                    ss: 3,
+                    se: 63,
+                    ah: 1,
+                    al: 0,
+                });
+            } else {
+                // Level 0: no successive approximation (simpler, works)
+                scans.push(ProgressiveScan {
+                    components: vec![c],
+                    ss: 1,
+                    se: 63,
+                    ah: 0,
+                    al: 0,
+                });
+            }
         }
 
         scans
@@ -1172,7 +1213,6 @@ impl Encoder {
         let table_idx = if is_color && comp_idx > 0 { 1 } else { 0 };
 
         let mut eob_run = 0u16;
-        let mut pending_bits: Vec<u8> = Vec::new();
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
@@ -1188,9 +1228,7 @@ impl Encoder {
                     scan.ss,
                     scan.se,
                     scan.al,
-                    scan.ah,
                     &mut eob_run,
-                    &mut pending_bits,
                 )?;
             }
         }
@@ -2524,36 +2562,40 @@ impl Encoder {
 
         // In XYB mode, we have interleaved blocks per MCU:
         // [X0, X1, X2, X3, Y0, Y1, Y2, Y3, B0] per MCU
-        // DC prediction resets at each component boundary within MCU
+        // DC prediction carries across MCUs for each component (standard JPEG behavior)
 
         let mcu_count = b_blocks.len();
+
+        // Each component maintains its own DC prediction across all MCUs
+        let mut prev_dc_x: i16 = 0;
+        let mut prev_dc_y: i16 = 0;
+        let mut prev_dc_b: i16 = 0;
+
         for mcu_idx in 0..mcu_count {
             // X blocks (4 per MCU)
             let x_start = mcu_idx * 4;
-            let mut prev_dc: i16 = 0;
             for i in 0..4 {
                 let block = &x_blocks[x_start + i];
-                Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);
-                prev_dc = block[0];
+                Self::collect_block_frequencies(block, prev_dc_x, &mut dc_freq, &mut ac_freq);
+                prev_dc_x = block[0];
             }
 
             // Y blocks (4 per MCU)
             let y_start = mcu_idx * 4;
-            prev_dc = 0;
             for i in 0..4 {
                 let block = &y_blocks[y_start + i];
-                Self::collect_block_frequencies(block, prev_dc, &mut dc_freq, &mut ac_freq);
-                prev_dc = block[0];
+                Self::collect_block_frequencies(block, prev_dc_y, &mut dc_freq, &mut ac_freq);
+                prev_dc_y = block[0];
             }
 
             // B block (1 per MCU)
-            prev_dc = 0;
             Self::collect_block_frequencies(
                 &b_blocks[mcu_idx],
-                prev_dc,
+                prev_dc_b,
                 &mut dc_freq,
                 &mut ac_freq,
             );
+            prev_dc_b = b_blocks[mcu_idx][0];
         }
 
         // Generate optimized tables
