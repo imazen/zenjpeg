@@ -11,6 +11,7 @@ categories = ["encoding", "multimedia::images"]
 [features]
 default = []
 simd = []  # Enable SIMD intrinsics
+ffi-tests = ["jpegli-internals-sys"]  # Enable C++ FFI comparison tests
 
 [dependencies]
 # Core utilities
@@ -26,6 +27,9 @@ rgb = "0.8"
 # Reference implementations (for comparison and fallback)
 mozjpeg-oxide = { path = "../mozjpeg-rs" }
 jpegli = { path = "../jpegli-rs/jpegli-rs", package = "jpegli-rs" }
+
+# FFI bindings to C++ jpegli (optional, for verification tests)
+jpegli-internals-sys = { path = "../jpegli-rs/internal/jpegli-internals-sys", optional = true }
 
 [dev-dependencies]
 # Image I/O
