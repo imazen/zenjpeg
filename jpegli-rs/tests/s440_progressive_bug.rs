@@ -49,7 +49,6 @@ fn test_s440_progressive_roundtrip() {
 
 /// Test all subsampling modes with progressive encoding
 #[test]
-#[ignore] // KNOWN ISSUE: Sequential modulo pattern at Q90 produces invalid Huffman codes
 fn test_all_subsampling_progressive() {
     let test_cases = [
         (Subsampling::S444, "S444"),
