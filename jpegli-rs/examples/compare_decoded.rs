@@ -5,22 +5,23 @@ use std::io::Write;
 use std::process::Command;
 
 fn main() {
-    let test_images = [
-        (
-            "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-            "flower",
-        ),
+    // Build test image list dynamically
+    let flower_path = jpegli::test_utils::require_flower_small_path();
+    let flower_str = flower_path.to_string_lossy().to_string();
+
+    let mut test_images: Vec<(String, &str)> = vec![(flower_str.clone(), "flower")];
+
+    // Add optional corpus images if they exist
+    for (path, name) in [
         ("/mnt/v/work/corpus/CID22-512/1459534.png", "cid22_large"),
-        (
-            "/mnt/v/work/corpus/CID22-512/2504911.png",
-            "cid22_medium_large",
-        ),
+        ("/mnt/v/work/corpus/CID22-512/2504911.png", "cid22_medium_large"),
         ("/mnt/v/work/corpus/CID22-512/3616956.png", "cid22_medium"),
-        (
-            "/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png",
-            "cid22_small",
-        ),
-    ];
+        ("/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png", "cid22_small"),
+    ] {
+        if std::path::Path::new(path).exists() {
+            test_images.push((path.to_string(), name));
+        }
+    }
 
     println!("=== Decoded Pixel Comparison (C++ vs Rust, Q90) ===\n");
     println!(
@@ -29,7 +30,7 @@ fn main() {
     );
     println!("{}", "-".repeat(80));
 
-    for (png_path, name) in test_images {
+    for (png_path, name) in &test_images {
         if let Some(result) = compare_image(png_path, name) {
             let total = result.total_pixels as f64;
             println!(
@@ -50,10 +51,7 @@ fn main() {
     println!("\n=== Histogram of differences ===\n");
 
     // Just do flower for detailed histogram
-    if let Some((hist, max_diff)) = detailed_histogram(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-        "flower",
-    ) {
+    if let Some((hist, max_diff)) = detailed_histogram(&flower_str, "flower") {
         println!("Flower image difference histogram:");
         for (diff, count) in hist.iter().enumerate().take(max_diff as usize + 1) {
             if *count > 0 {
@@ -82,8 +80,8 @@ fn compare_image(png_path: &str, name: &str) -> Option<CompareResult> {
     write_ppm(&ppm_path, &rgb, width as usize, height as usize).ok()?;
 
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    let output =
-        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+    let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
+    let output = Command::new(&cjpegli_path)
             .args([
                 "--noadaptive_quantization",
                 "--chroma_subsampling=444",
@@ -162,7 +160,8 @@ fn detailed_histogram(png_path: &str, name: &str) -> Option<(Vec<usize>, u8)> {
     write_ppm(&ppm_path, &rgb, width as usize, height as usize).ok()?;
 
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+    let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
+    Command::new(&cjpegli_path)
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",

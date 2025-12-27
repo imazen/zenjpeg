@@ -4,12 +4,8 @@ use jpegli::adaptive_quant::compute_aq_strength_map;
 use std::path::Path;
 
 fn main() {
-    let test_img =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
-    if !Path::new(test_img).exists() {
-        println!("Test image not found");
-        return;
-    }
+    let test_img_buf = jpegli::test_utils::require_flower_small_path();
+    let test_img = test_img_buf.to_str().expect("Invalid path");
 
     // Load PNG
     let png_data = std::fs::read(test_img).unwrap();

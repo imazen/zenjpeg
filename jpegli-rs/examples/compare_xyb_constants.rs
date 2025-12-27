@@ -94,9 +94,8 @@ fn main() {
     // Test with real image pixels
     println!("=== Image Conversion Test ===\n");
 
-    let image_path =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
-    let file = std::fs::File::open(image_path).unwrap();
+    let image_path = jpegli::test_utils::require_flower_small_path();
+    let file = std::fs::File::open(&image_path).unwrap();
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size()];

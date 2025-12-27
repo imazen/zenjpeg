@@ -201,26 +201,41 @@ fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usi
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let cjpegli_path = std::env::var("CJPEGLI_PATH").unwrap_or_else(|_| {
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string()
-    });
+    let cjpegli_path = std::env::var("CJPEGLI_PATH")
+        .map(PathBuf::from)
+        .or_else(|_| jpegli::test_utils::find_cjpegli().ok_or(()))
+        .expect("cjpegli not found. Set CJPEGLI_PATH or build internal/jpegli-cpp");
+    let cjpegli_path = cjpegli_path.to_string_lossy().to_string();
 
     // Default corpus locations to check
-    let corpus_paths = [
-        "/home/lilith/work/codec-eval/codec-corpus/kodak",
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower",
+    let testdata_dir = jpegli::test_utils::get_testdata_dir();
+    let mut corpus_paths: Vec<PathBuf> = Vec::new();
+    let flower_dir = testdata_dir.join("jxl/flower");
+    if flower_dir.exists() {
+        corpus_paths.push(flower_dir);
+    }
+    // Check common relative locations
+    let candidates = [
+        "../codec-eval/codec-corpus/kodak",
+        "../codec-corpus/kodak",
+        "codec-corpus/kodak",
     ];
+    for c in &candidates {
+        let p = PathBuf::from(c);
+        if p.exists() {
+            corpus_paths.push(p);
+        }
+    }
 
     let corpus_dir = args
         .get(1)
         .map(PathBuf::from)
         .or_else(|| {
             corpus_paths
-                .iter()
-                .find(|p| Path::new(p).exists())
-                .map(PathBuf::from)
+                .into_iter()
+                .find(|p| p.exists())
         })
-        .expect("No corpus directory found. Usage: generate_cpp_reference [CORPUS_DIR]");
+        .expect("No corpus directory found. Set JPEGLI_TESTDATA env var or pass CORPUS_DIR argument");
 
     let output_path = args
         .get(2)

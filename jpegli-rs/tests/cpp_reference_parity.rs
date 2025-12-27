@@ -169,8 +169,9 @@ fn test_file_size_parity() {
     };
 
     let corpus_paths = [
-        "/home/lilith/work/codec-eval/codec-corpus/kodak",
+        "../codec-eval/codec-corpus/kodak",
         "../codec-corpus/kodak",
+        "codec-corpus/kodak",
     ];
 
     let corpus_dir = corpus_paths
@@ -259,8 +260,9 @@ fn test_dssim_parity() {
     };
 
     let corpus_paths = [
-        "/home/lilith/work/codec-eval/codec-corpus/kodak",
+        "../codec-eval/codec-corpus/kodak",
         "../codec-corpus/kodak",
+        "codec-corpus/kodak",
     ];
 
     let corpus_dir = corpus_paths

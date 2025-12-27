@@ -12,10 +12,8 @@ use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn get_cjpegli_path() -> String {
-    std::env::var("CJPEGLI_PATH").unwrap_or_else(|_| {
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli".to_string()
-    })
+fn get_cjpegli_path() -> std::path::PathBuf {
+    jpegli::test_utils::require_cjpegli()
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
@@ -46,10 +44,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 }
 
 fn encode_cpp_quality(input_path: &Path, quality: u32, use_xyb: bool) -> Option<Vec<u8>> {
-    let cjpegli_path = get_cjpegli_path();
-    if !Path::new(&cjpegli_path).exists() {
-        return None;
-    }
+    let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
     let output_path = std::env::temp_dir().join(format!(
         "samesize_{}_{}.jpg",
         if use_xyb { "xyb" } else { "ycbcr" },
@@ -206,22 +201,32 @@ fn find_matching_xyb_quality(input_path: &Path, target_size: usize) -> Option<(u
 }
 
 fn main() {
-    let corpus_paths = [
-        "/home/lilith/work/codec-eval/codec-corpus/kodak",
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower",
-    ];
+    let testdata_dir = jpegli::test_utils::get_testdata_dir();
+    let flower_dir = testdata_dir.join("jxl/flower");
 
-    let corpus_dir = corpus_paths
-        .iter()
-        .find(|p| Path::new(p).exists())
-        .map(PathBuf::from)
-        .expect("No corpus found");
+    let corpus_dir = if flower_dir.exists() {
+        Some(flower_dir)
+    } else {
+        None
+    }
+    .or_else(|| {
+        std::env::var("CORPUS_DIR").ok().map(PathBuf::from).filter(|d| d.exists())
+    })
+    .or_else(|| {
+        let candidates = [
+            "../codec-eval/codec-corpus/kodak",
+            "../codec-corpus/kodak",
+            "codec-corpus/kodak",
+        ];
+        candidates.iter().find(|p| Path::new(p).exists()).map(PathBuf::from)
+    })
+    .expect("No corpus found. Set CORPUS_DIR or JPEGLI_TESTDATA env var.");
 
     let ycbcr_qualities: Vec<u32> = vec![50, 70, 80, 90, 95];
 
     eprintln!("=== XYB vs YCbCr: Same File Size Comparison ===");
     eprintln!("Adjusting XYB quality to match YCbCr file size, then comparing quality metrics.\n");
-    eprintln!("cjpegli: {}", get_cjpegli_path());
+    eprintln!("cjpegli: {}", get_cjpegli_path().display());
     eprintln!("corpus: {}\n", corpus_dir.display());
 
     println!(

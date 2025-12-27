@@ -167,15 +167,7 @@ fn compare_image(
 }
 
 fn find_cjpegli() -> Option<std::path::PathBuf> {
-    let paths = [
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-    ];
-    paths
-        .iter()
-        .map(std::path::PathBuf::from)
-        .find(|p| p.exists())
+    jpegli::test_utils::find_cjpegli()
 }
 
 fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
@@ -196,9 +188,8 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
 
     // Try testdata
     if images.len() < max_images {
-        if let Ok(entries) =
-            fs::read_dir("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower")
-        {
+        let testdata_flower = jpegli::test_utils::get_testdata_dir().join("jxl/flower");
+        if let Ok(entries) = fs::read_dir(&testdata_flower) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().map_or(false, |e| e == "png") {

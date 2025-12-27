@@ -68,3 +68,76 @@ harness = false
 
 [lints]
 workspace = true
+
+# Examples that require test-utils feature
+[[example]]
+name = "benchmark_xyb_vs_ycbcr"
+required-features = ["test-utils"]
+
+[[example]]
+name = "compare_coefficients"
+required-features = ["test-utils"]
+
+[[example]]
+name = "compare_decoded"
+required-features = ["test-utils"]
+
+[[example]]
+name = "compare_quality"
+required-features = ["test-utils"]
+
+[[example]]
+name = "compare_quant_tables"
+required-features = ["test-utils"]
+
+[[example]]
+name = "compare_to_original"
+required-features = ["test-utils"]
+
+[[example]]
+name = "compare_xyb_constants"
+required-features = ["test-utils"]
+
+[[example]]
+name = "debug_aq_values"
+required-features = ["test-utils"]
+
+[[example]]
+name = "debug_quant_field"
+required-features = ["test-utils"]
+
+[[example]]
+name = "generate_cpp_reference"
+required-features = ["test-utils"]
+
+[[example]]
+name = "low_q_report"
+required-features = ["test-utils"]
+
+[[example]]
+name = "quality_comparison"
+required-features = ["test-utils"]
+
+[[example]]
+name = "xyb_butteraugli_comparison"
+required-features = ["test-utils"]
+
+[[example]]
+name = "xyb_distance_comparison"
+required-features = ["test-utils"]
+
+[[example]]
+name = "xyb_same_size_comparison"
+required-features = ["test-utils"]
+
+[[example]]
+name = "xyb_ssimulacra2_comparison"
+required-features = ["test-utils"]
+
+[[example]]
+name = "xyb_vs_ycbcr_comparison"
+required-features = ["test-utils"]
+
+[[example]]
+name = "xyb_ycbcr_pareto"
+required-features = ["test-utils"]

@@ -85,15 +85,13 @@ fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
 /// Test roundtrip quality on the flower_small test image.
 #[test]
 fn test_roundtrip_flower_small() {
-    let path = Path::new(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
-        eprintln!("Skipping test: test image not found at {:?}", path);
+        eprintln!("Skipping test: test image not found. Set JPEGLI_TESTDATA env var.");
         return;
     }
 
-    let (original_rgb, width, height) = load_png(path).expect("Failed to load test image");
+    let (original_rgb, width, height) = load_png(&path).expect("Failed to load test image");
 
     // Encode with jpegli at quality 90
     let jpeg_data = encode_with_jpegli(&original_rgb, width as u32, height as u32, 90);

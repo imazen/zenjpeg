@@ -84,13 +84,20 @@ fn extract_array(json: &str, key: &str) -> Option<Vec<u64>> {
 /// Test that Rust build_code_lengths matches C++ CreateHuffmanTree.
 #[test]
 fn test_huffman_cpp_reference() {
-    let testdata_path = "/home/lilith/work/jpegli/CreateHuffmanTree.testdata";
+    let testdata_path = match jpegli::test_utils::get_cpp_testdata_path("CreateHuffmanTree.testdata") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping test: CreateHuffmanTree.testdata not found");
+            eprintln!("Set CPP_TESTDATA_DIR env var or generate with:");
+            eprintln!("  GENERATE_RUST_TEST_DATA=1 ./build/tools/cjpegli input.png output.jpg");
+            return;
+        }
+    };
 
-    let data = match fs::read_to_string(testdata_path) {
+    let data = match fs::read_to_string(&testdata_path) {
         Ok(d) => d,
         Err(_) => {
-            eprintln!("Skipping test: {} not found", testdata_path);
-            eprintln!("Generate with: GENERATE_RUST_TEST_DATA=1 ./build/tools/cjpegli input.png output.jpg");
+            eprintln!("Skipping test: {:?} could not be read", testdata_path);
             return;
         }
     };

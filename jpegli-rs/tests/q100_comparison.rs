@@ -9,12 +9,7 @@ use std::process::Command;
 use std::time::Instant;
 
 fn find_cjpegli() -> Option<PathBuf> {
-    let paths = [
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-        "internal/jpegli-cpp/build/tools/cjpegli",
-    ];
-    paths.iter().map(PathBuf::from).find(|p| p.exists())
+    jpegli::test_utils::find_cjpegli()
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
@@ -60,12 +55,12 @@ fn test_q100_rust_vs_cpp() {
     };
 
     // Use a small test image for speed
-    let test_img =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
-    if !std::path::Path::new(test_img).exists() {
-        println!("Skipping: test image not found at {}", test_img);
+    let test_img = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
+    if !test_img.exists() {
+        println!("Skipping: test image not found. Set JPEGLI_TESTDATA env var.");
         return;
     }
+    let test_img = test_img.to_str().unwrap();
 
     // Load PNG
     let png_data = std::fs::read(test_img).unwrap();

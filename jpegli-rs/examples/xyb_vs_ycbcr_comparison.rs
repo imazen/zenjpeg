@@ -15,7 +15,9 @@ use std::io::Write as IoWrite;
 use std::path::Path;
 use std::process::Command;
 
-const CJPEGLI_PATH: &str = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
+fn get_cjpegli_path() -> Option<std::path::PathBuf> {
+    jpegli::test_utils::find_cjpegli()
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
     let file = fs::File::open(path).ok()?;
@@ -123,9 +125,7 @@ fn encode_rust_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8, use_xyb:
 }
 
 fn encode_cpp_cjpegli(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec<u8>> {
-    if !Path::new(CJPEGLI_PATH).exists() {
-        return None;
-    }
+    let cjpegli_path = get_cjpegli_path()?;
 
     let output_path = format!(
         "/tmp/cpp_{}_{}.jpg",
@@ -148,7 +148,7 @@ fn encode_cpp_cjpegli(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec
     args.push("-q".to_string());
     args.push(quality.to_string());
 
-    let output = Command::new(CJPEGLI_PATH).args(&args).output().ok()?;
+    let output = Command::new(&cjpegli_path).args(&args).output().ok()?;
 
     if !output.status.success() {
         eprintln!(
@@ -226,27 +226,30 @@ fn main() {
     println!("=== XYB vs YCbCr Comparison: Rust vs C++ ===\n");
 
     // Check if cjpegli exists
-    if !Path::new(CJPEGLI_PATH).exists() {
-        eprintln!("ERROR: cjpegli not found at {}", CJPEGLI_PATH);
-        eprintln!("Build it with: cd /home/lilith/work/jpegli && mkdir -p build && cd build && cmake -G Ninja -DJPEGXL_ENABLE_TOOLS=ON .. && ninja cjpegli");
-        return;
+    let cjpegli_path = get_cjpegli_path();
+    if cjpegli_path.is_none() {
+        eprintln!("Warning: cjpegli not found, C++ comparisons will be skipped");
+        eprintln!("Set CJPEGLI_PATH or build internal/jpegli-cpp to enable C++ comparison");
     }
 
-    // Test images
-    let test_images = [
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower.png",
-    ];
+    // Test images - build dynamically from available paths
+    let flower_small = jpegli::test_utils::require_flower_small_path();
+    let flower_small_str = flower_small.to_string_lossy().to_string();
+
+    let mut test_images = vec![flower_small_str];
+
+    // Try to add flower.png if testdata dir exists
+    let testdata_dir = jpegli::test_utils::get_testdata_dir();
+    let flower_full = testdata_dir.join("jxl/flower/flower.png");
+    if flower_full.exists() {
+        test_images.push(flower_full.to_string_lossy().to_string());
+    }
 
     // Quality levels to test
     let quality_levels = [70, 80, 85, 90, 95];
 
     for image_path in &test_images {
         let path = Path::new(image_path);
-        if !path.exists() {
-            println!("Skipping {}: file not found", image_path);
-            continue;
-        }
 
         println!(
             "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

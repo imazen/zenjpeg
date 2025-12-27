@@ -8,10 +8,7 @@ use std::process::Command;
 #[ignore = "requires C++ cjpegli build"]
 fn test_xyb_cpp_comparison() {
     // Check if cjpegli is available
-    let cjpegli_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
-    if !std::path::Path::new(cjpegli_path).exists() {
-        panic!("cjpegli not found at {}. Build it first.", cjpegli_path);
-    }
+    let cjpegli_path = jpegli::test_utils::require_cjpegli();
 
     // Create test image (16x16 gradient)
     let width = 16;

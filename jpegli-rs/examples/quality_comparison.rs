@@ -28,7 +28,8 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 
 /// Decode XYB JPEG using djpegli (handles ICC profile correctly)
 fn decode_xyb_jpeg(jpeg_path: &str, ppm_path: &str) -> Option<Vec<u8>> {
-    let output = Command::new("/home/lilith/work/jpegli/build/tools/djpegli")
+    let djpegli_path = jpegli::test_utils::find_djpegli()?;
+    let output = Command::new(&djpegli_path)
         .args([jpeg_path, ppm_path])
         .output()
         .ok()?;
@@ -74,8 +75,8 @@ fn parse_ppm(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn main() {
-    let png_path =
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path_buf = jpegli::test_utils::require_flower_small_path();
+    let png_path = png_path_buf.to_str().expect("Invalid path");
 
     // Load PNG
     let decoder = png::Decoder::new(fs::File::open(png_path).unwrap());
@@ -115,20 +116,20 @@ fn main() {
         let ppm_path = "/tmp/test.ppm";
         let jpg_path = format!("/tmp/cpp_q{}.jpg", q);
 
-        let output =
-            Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
-                .args([
-                    "--chroma_subsampling=444",
-                    "-p",
-                    "0",
-                    "--fixed_code",
-                    ppm_path,
-                    &jpg_path,
-                    "-q",
-                    &q.to_string(),
-                ])
-                .output()
-                .expect("cjpegli");
+        let cjpegli_path = jpegli::test_utils::require_cjpegli();
+        let output = Command::new(&cjpegli_path)
+            .args([
+                "--chroma_subsampling=444",
+                "-p",
+                "0",
+                "--fixed_code",
+                ppm_path,
+                &jpg_path,
+                "-q",
+                &q.to_string(),
+            ])
+            .output()
+            .expect("cjpegli");
 
         if output.status.success() {
             let cpp_data = fs::read(&jpg_path).unwrap();
@@ -163,8 +164,8 @@ fn main() {
         let ppm_path = "/tmp/test.ppm";
         let jpg_path = format!("/tmp/cpp_q{}.jpg", q);
 
-        let output =
-            Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+        let cjpegli_path = jpegli::test_utils::require_cjpegli();
+        let output = Command::new(&cjpegli_path)
                 .args([
                     "--chroma_subsampling=444",
                     "-p",
@@ -213,20 +214,20 @@ fn main() {
         let rust_decoded_ppm = format!("/tmp/rust_xyb_q{}_decoded.ppm", q);
 
         // C++ XYB encode
-        let output =
-            Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
-                .args([
-                    "--xyb",
-                    "-p",
-                    "0",
-                    "--fixed_code",
-                    ppm_path,
-                    &cpp_jpg_path,
-                    "-q",
-                    &q.to_string(),
-                ])
-                .output()
-                .expect("cjpegli");
+        let cjpegli_path = jpegli::test_utils::require_cjpegli();
+        let output = Command::new(&cjpegli_path)
+            .args([
+                "--xyb",
+                "-p",
+                "0",
+                "--fixed_code",
+                ppm_path,
+                &cpp_jpg_path,
+                "-q",
+                &q.to_string(),
+            ])
+            .output()
+            .expect("cjpegli");
 
         let cpp_result = if output.status.success() {
             fs::read(&cpp_jpg_path).ok()

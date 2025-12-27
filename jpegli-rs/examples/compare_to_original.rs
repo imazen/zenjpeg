@@ -5,17 +5,21 @@ use std::io::Write;
 use std::process::Command;
 
 fn main() {
-    let test_images = [
-        (
-            "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-            "flower",
-        ),
+    // Build test image list dynamically
+    let flower_path = jpegli::test_utils::require_flower_small_path();
+    let flower_str = flower_path.to_string_lossy().to_string();
+
+    let mut test_images: Vec<(String, &str)> = vec![(flower_str.clone(), "flower")];
+
+    // Add optional corpus images if they exist
+    for (path, name) in [
         ("/mnt/v/work/corpus/CID22-512/1459534.png", "cid22_large"),
-        (
-            "/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png",
-            "cid22_small",
-        ),
-    ];
+        ("/mnt/v/work/corpus/CID22-512/nicubunu_Game_baddie_Policeman.png", "cid22_small"),
+    ] {
+        if std::path::Path::new(path).exists() {
+            test_images.push((path.to_string(), name));
+        }
+    }
 
     println!("=== Quality vs Original (Q90) ===\n");
     println!(
@@ -24,7 +28,7 @@ fn main() {
     );
     println!("{}", "-".repeat(70));
 
-    for (png_path, name) in test_images {
+    for (png_path, name) in &test_images {
         if let Some(result) = compare_to_original(png_path, name) {
             println!(
                 "{:<20} {:>12.2} {:>12.2} {:>12} {:>12}",
@@ -34,10 +38,7 @@ fn main() {
     }
 
     println!("\n=== Detailed breakdown for flower ===\n");
-    if let Some(result) = compare_to_original(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-        "flower",
-    ) {
+    if let Some(result) = compare_to_original(&flower_str, "flower") {
         println!(
             "C++  vs Original: PSNR={:.2} dB, MSE={:.2}, MaxErr={}",
             result.cpp_psnr, result.cpp_mse, result.cpp_max_err
@@ -93,7 +94,8 @@ fn compare_to_original(png_path: &str, name: &str) -> Option<CompareResult> {
 
     // Encode with C++
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+    let cjpegli_path = jpegli::test_utils::find_cjpegli()?;
+    Command::new(&cjpegli_path)
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",

@@ -127,15 +127,13 @@ fn find_matching_jpegli_quality(
 /// Test quality mapping on a real image.
 #[test]
 fn test_quality_mapping() {
-    let path = Path::new(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
-        eprintln!("Skipping: test file not found");
+        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
         return;
     }
 
-    let (rgb, width, height) = load_png(path).expect("load png");
+    let (rgb, width, height) = load_png(&path).expect("load png");
 
     println!("\n=== Quality Mapping: mozjpeg -> jpegli (4:4:4) ===");
     println!(
@@ -219,15 +217,13 @@ fn test_quality_mapping_corpus() {
 #[test]
 #[ignore] // Requires test image
 fn generate_quality_mapping_table() {
-    let path = Path::new(
-        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
-    );
+    let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
-        eprintln!("Skipping: test file not found");
+        eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
         return;
     }
 
-    let (rgb, width, height) = load_png(path).expect("load png");
+    let (rgb, width, height) = load_png(&path).expect("load png");
 
     println!("\n// Quality mapping table: mozjpeg Q -> jpegli Q (for same DSSIM)");
     println!("// Generated from flower_small.rgb.png test image");

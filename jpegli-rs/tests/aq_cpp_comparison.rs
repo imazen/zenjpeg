@@ -40,8 +40,8 @@ struct ComputeAdaptiveQuantFieldTest {
 
 /// Parse first line of testdata file.
 fn parse_first_fuzzy_erosion_test() -> Option<FuzzyErosionTest> {
-    let path = "/home/lilith/work/jpegli/FuzzyErosion.testdata";
-    let file = File::open(path).ok()?;
+    let path = jpegli::test_utils::get_cpp_testdata_path("FuzzyErosion.testdata")?;
+    let file = File::open(&path).ok()?;
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
@@ -236,8 +236,14 @@ fn test_rust_aq_impl_produces_valid_output() {
 #[test]
 fn test_rust_vs_cpp_on_testdata() {
     // Parse actual C++ testdata and compare Rust implementation
-    let path = "/home/lilith/work/jpegli/ComputeAdaptiveQuantField.testdata";
-    let file = match File::open(path) {
+    let path = match jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") {
+        Some(p) => p,
+        None => {
+            eprintln!("Testdata not found - skipping. Set CPP_TESTDATA_DIR env var.");
+            return;
+        }
+    };
+    let file = match File::open(&path) {
         Ok(f) => f,
         Err(_) => {
             eprintln!("Testdata not found - skipping");
@@ -447,11 +453,17 @@ fn test_rust_vs_cpp_on_testdata() {
 #[test]
 #[ignore] // Run with --ignored when ready
 fn test_compute_aq_field_vs_cpp() {
-    let path = "/home/lilith/work/jpegli/ComputeAdaptiveQuantField.testdata";
-    let file = match File::open(path) {
+    let path = match jpegli::test_utils::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") {
+        Some(p) => p,
+        None => {
+            eprintln!("Testdata not found - skipping. Set CPP_TESTDATA_DIR env var.");
+            return;
+        }
+    };
+    let file = match File::open(&path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Could not open {}: {}", path, e);
+            eprintln!("Could not open {:?}: {}", path, e);
             return;
         }
     };
