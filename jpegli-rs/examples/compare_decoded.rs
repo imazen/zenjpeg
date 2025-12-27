@@ -82,20 +82,21 @@ fn compare_image(png_path: &str, name: &str) -> Option<CompareResult> {
     write_ppm(&ppm_path, &rgb, width as usize, height as usize).ok()?;
 
     let cpp_jpg_path = format!("/tmp/{}_cpp.jpg", name);
-    let output = Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
-        .args([
-            "--noadaptive_quantization",
-            "--chroma_subsampling=444",
-            "-p",
-            "0",
-            "--fixed_code",
-            &ppm_path,
-            &cpp_jpg_path,
-            "-q",
-            "90",
-        ])
-        .output()
-        .ok()?;
+    let output =
+        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+            .args([
+                "--noadaptive_quantization",
+                "--chroma_subsampling=444",
+                "-p",
+                "0",
+                "--fixed_code",
+                &ppm_path,
+                &cpp_jpg_path,
+                "-q",
+                "90",
+            ])
+            .output()
+            .ok()?;
 
     if !output.status.success() {
         return None;

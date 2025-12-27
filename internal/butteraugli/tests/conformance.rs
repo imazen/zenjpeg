@@ -135,7 +135,9 @@ fn test_large_difference_nonzero_score() {
 /// Higher quality should give lower (better) butteraugli scores.
 #[test]
 fn test_score_monotonicity_with_quality() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping test: test image not found at {:?}", path);
         return;
@@ -227,7 +229,9 @@ fn test_diffmap_dimensions() {
 #[test]
 #[ignore] // Requires test image and jpegli encoder
 fn test_jpegli_roundtrip_butteraugli() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping test: test image not found at {:?}", path);
         return;
@@ -278,7 +282,9 @@ fn test_cpp_butteraugli_comparison() {
         return;
     }
 
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if !path.exists() {
         eprintln!("Skipping: test image not found");
         return;

@@ -111,7 +111,8 @@ fn main() {
     let rgb_black: Vec<u8> = vec![0; width * height * 3];
     let rgb_white: Vec<u8> = vec![255; width * height * 3];
 
-    let result = compute_butteraugli(&rgb_black, &rgb_white, width, height, &params).expect("butteraugli");
+    let result =
+        compute_butteraugli(&rgb_black, &rgb_white, width, height, &params).expect("butteraugli");
     println!("Black vs White:");
     println!("  Score: {:.6}", result.score);
     if let Some(ref diffmap) = result.diffmap {
@@ -123,7 +124,8 @@ fn main() {
     let rgb_gray: Vec<u8> = vec![128; width * height * 3];
     let rgb_gray2: Vec<u8> = vec![138; width * height * 3];
 
-    let result = compute_butteraugli(&rgb_gray, &rgb_gray2, width, height, &params).expect("butteraugli");
+    let result =
+        compute_butteraugli(&rgb_gray, &rgb_gray2, width, height, &params).expect("butteraugli");
     println!("Gray 128 vs Gray 138:");
     println!("  Score: {:.6}", result.score);
     if let Some(ref diffmap) = result.diffmap {
@@ -132,7 +134,9 @@ fn main() {
 
     // Test 4: Real image with JPEG compression
     println!("\n=== Test 4: Real image JPEG roundtrip ===");
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
     if path.exists() {
         let (original, w, h) = load_png(path).expect("load png");
 
@@ -186,7 +190,8 @@ fn main() {
         let decoded = decode_jpeg(&jpeg_data);
 
         if decoded.len() == original.len() {
-            let result = compute_butteraugli(&original, &decoded, w, h, &params).expect("butteraugli");
+            let result =
+                compute_butteraugli(&original, &decoded, w, h, &params).expect("butteraugli");
             println!("Original vs JPEG Q10:");
             println!("  JPEG size: {} bytes", jpeg_data.len());
             println!("  Score: {:.6}", result.score);

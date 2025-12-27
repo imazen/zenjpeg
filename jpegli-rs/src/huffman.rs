@@ -457,9 +457,7 @@ pub fn build_code_lengths(freqs: &[u64], max_length: u8) -> Vec<u8> {
         let root_idx = 2 * n - 1;
 
         // Reset depths and compute from tree
-        for d in &mut depth {
-            *d = 0;
-        }
+        depth.fill(0);
         set_depth(&tree, root_idx, &mut depth, 0);
 
         // Check if we need to retry

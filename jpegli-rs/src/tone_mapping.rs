@@ -174,7 +174,7 @@ impl HlgOotf {
 
         Self {
             exponent,
-            apply_ootf: exponent < -0.01 || exponent > 0.01,
+            apply_ootf: !(-0.01..=0.01).contains(&exponent),
             red_y: luminances[0],
             green_y: luminances[1],
             blue_y: luminances[2],
@@ -186,7 +186,7 @@ impl HlgOotf {
         let exponent = gamma - 1.0;
         Self {
             exponent,
-            apply_ootf: exponent < -0.01 || exponent > 0.01,
+            apply_ootf: !(-0.01..=0.01).contains(&exponent),
             red_y: luminances[0],
             green_y: luminances[1],
             blue_y: luminances[2],

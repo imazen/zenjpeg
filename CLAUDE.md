@@ -25,7 +25,7 @@ cargo test --release  # Run with optimizations
 ### Directory Layout
 ```
 jpegli-rs/
-├── jpegli/                         # Pure Rust encoder/decoder (THE PRODUCT)
+├── jpegli-rs/                         # Pure Rust encoder/decoder (THE PRODUCT)
 ├── internal/
 │   ├── jpegli-cpp/                 # Submodule: instrumented C++ fork for parity testing
 │   ├── jpegli-internals-sys/       # FFI bindings to C++ internals (not published)
@@ -225,7 +225,7 @@ cargo test --test cpp_filesize_comparison -- --ignored --nocapture
 # If >1% difference, feature is NOT done
 
 # 4. Check the feature is actually USED
-grep -r "feature_name" jpegli-rs/jpegli/src/encode.rs
+grep -r "feature_name" jpegli-rs/jpegli-rs/src/encode.rs
 # Must find actual usage, not just imports
 ```
 
@@ -256,7 +256,7 @@ These were marked "done" prematurely but have since been properly implemented:
 ```
 jpegli-rs/
 ├── Cargo.toml          # Workspace root
-├── jpegli/             # Main library crate
+├── jpegli-rs/             # Main library crate
 │   ├── src/
 │   │   ├── lib.rs           # Module exports
 │   │   ├── consts.rs        # Constants, tables, matrices
@@ -547,7 +547,7 @@ Cloudinary Image Dataset 2022 with pre-encoded files:
 
 ### Flower Test Images
 Small test images for quick validation:
-- Path: `/home/lilith/work/jpegli/testdata/jxl/flower/`
+- Path: `/home/lilith/work/jpegli-rs/testdata/jxl/flower/`
 - `flower_small.rgb.png` - Small test image
 - Various pre-encoded JPEGs for decode testing
 

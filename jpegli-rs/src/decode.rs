@@ -15,8 +15,8 @@
 //! ```
 
 use crate::alloc::{
-    checked_size_2d, try_alloc_dct_blocks, try_alloc_vec, try_alloc_zeroed, validate_dimensions,
-    MemoryTracker, DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION,
+    checked_size_2d, try_alloc_dct_blocks, try_alloc_zeroed, validate_dimensions,
+    DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS,
 };
 use crate::color;
 use crate::consts::{

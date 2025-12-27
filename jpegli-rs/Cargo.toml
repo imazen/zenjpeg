@@ -40,8 +40,9 @@ zune-jpeg = { workspace = true }
 mozjpeg = { workspace = true }
 jpeg-decoder = { workspace = true }
 
-# For FFI comparison testing (internal parity tests only)
-jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
+# For FFI comparison testing (internal parity tests only - requires C++ build)
+# Uncomment locally when running parity tests:
+# jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
 
 [features]
 default = ["simd", "cms"]

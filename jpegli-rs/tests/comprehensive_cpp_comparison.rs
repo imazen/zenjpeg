@@ -196,7 +196,9 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
 
     // Try testdata
     if images.len() < max_images {
-        if let Ok(entries) = fs::read_dir("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower") {
+        if let Ok(entries) =
+            fs::read_dir("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower")
+        {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().map_or(false, |e| e == "png") {

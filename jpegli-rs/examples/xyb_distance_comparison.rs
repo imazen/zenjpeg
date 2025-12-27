@@ -132,7 +132,8 @@ fn main() {
     println!("This compares at SAME QUALITY (butteraugli distance), not same Q value.");
     println!("XYB should produce smaller files at the same quality.\n");
 
-    let image_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let image_path =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     let path = Path::new(image_path);
 
     let (rgb, width, height) = match load_png(path) {

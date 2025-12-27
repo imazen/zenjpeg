@@ -55,7 +55,7 @@ fn sub_reverse<const N: usize>(in1: &[f32], in2: &[f32], out: &mut [f32]) {
 fn b_transform<const N: usize>(coeff: &mut [f32]) {
     coeff[0] = coeff[0] * SQRT2 + coeff[1];
     for i in 1..(N - 1) {
-        coeff[i] = coeff[i] + coeff[i + 1];
+        coeff[i] += coeff[i + 1];
     }
 }
 
@@ -305,7 +305,7 @@ pub fn forward_dct_8x8_u8(input: &[u8; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE]
 
 /// Performs forward DCT on multiple blocks.
 pub fn forward_dct_blocks(blocks: &[[f32; DCT_BLOCK_SIZE]]) -> Vec<[f32; DCT_BLOCK_SIZE]> {
-    blocks.iter().map(|b| forward_dct_8x8(b)).collect()
+    blocks.iter().map(forward_dct_8x8).collect()
 }
 
 #[cfg(test)]

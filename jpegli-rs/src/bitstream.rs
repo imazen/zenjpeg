@@ -186,7 +186,7 @@ impl<'a> BitReader<'a> {
             if next == 0x00 {
                 // Byte stuffing - skip the 0x00
                 self.position += 1;
-            } else if next >= 0xD0 && next <= 0xD7 {
+            } else if (0xD0..=0xD7).contains(&next) {
                 // Restart marker - skip it and continue
                 self.position += 1;
             } else {

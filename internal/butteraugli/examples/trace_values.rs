@@ -46,7 +46,9 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
-    let path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
 
     if let Some((original, width, height)) = load_png(path) {
         println!("Image: {}x{}", width, height);
@@ -73,8 +75,8 @@ fn main() {
 
             // Compute butteraugli
             let params = ButteraugliParams::default();
-            let result =
-                compute_butteraugli(&original, &decoded, width, height, &params).expect("butteraugli");
+            let result = compute_butteraugli(&original, &decoded, width, height, &params)
+                .expect("butteraugli");
 
             // Analyze diffmap
             let diffmap = result.diffmap.as_ref().unwrap();

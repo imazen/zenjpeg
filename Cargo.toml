@@ -61,6 +61,35 @@ multiversion = "0.7"
 unsafe_code = "warn"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
-nursery = "warn"
+all = { level = "warn", priority = -1 }
+# pedantic and nursery are too noisy for ported code with:
+# - mathematical single-char variable names (x, y, r, g, b)
+# - long numeric constants from C++ (without _ separators)
+# Enable selectively when code stabilizes
+# pedantic = "warn"
+# nursery = "warn"
+
+# Allow common patterns in ported image processing code
+cast_possible_truncation = "allow"  # Necessary for u8/f32 conversions
+cast_precision_loss = "allow"  # f32/f64 conversions
+cast_sign_loss = "allow"  # Dimension calculations
+cast_lossless = "allow"  # From trait suggestions (noisy)
+missing_panics_doc = "allow"  # Many internal functions
+missing_errors_doc = "allow"  # Doc cleanup is future work
+must_use_candidate = "allow"  # Nice but noisy for initial port
+excessive_precision = "allow"  # C++ constants with many decimals
+doc_markdown = "allow"  # Backtick suggestions in docs
+uninlined_format_args = "allow"  # Style preference
+unreadable_literal = "allow"  # Long C++ constants
+items_after_statements = "allow"  # Common in ported code
+unnecessary_wraps = "allow"  # Result consistency
+unused_self = "allow"  # Builder patterns, future expansion
+approx_constant = "allow"  # Use C++ exact values for parity
+needless_range_loop = "allow"  # Common in ported array code
+too_many_arguments = "allow"  # Architecture from C++
+type_complexity = "allow"  # Complex types from C++
+redundant_closure = "allow"  # Style preference
+similar_names = "allow"  # Common in math code
+many_single_char_names = "allow"  # Math variables (x, y, r, g, b)
+enum_variant_names = "allow"  # Emit* prefix is clear
+doc_overindented_list_items = "allow"  # Doc formatting preferences

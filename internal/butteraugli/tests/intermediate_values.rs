@@ -173,8 +173,7 @@ fn test_diffmap_uniform_gray() {
     let params = ButteraugliParams::default();
     let rust_result =
         compute_butteraugli(&img1, &img2, width, height, &params).expect("butteraugli");
-    let (cpp_score, cpp_diffmap) =
-        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
+    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
 
     let rust_diffmap = rust_result.diffmap.expect("Rust should produce diffmap");
 
@@ -244,8 +243,7 @@ fn test_diffmap_gradient() {
     let params = ButteraugliParams::default();
     let rust_result =
         compute_butteraugli(&img1, &img2, width, height, &params).expect("butteraugli");
-    let (cpp_score, cpp_diffmap) =
-        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
+    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
 
     let rust_diffmap = rust_result.diffmap.expect("Rust should produce diffmap");
 
@@ -310,8 +308,7 @@ fn test_diffmap_checkerboard() {
     let params = ButteraugliParams::default();
     let rust_result =
         compute_butteraugli(&img1, &img2, width, height, &params).expect("butteraugli");
-    let (cpp_score, cpp_diffmap) =
-        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
+    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
 
     let score_diff = (rust_result.score - cpp_score).abs();
     let score_rel = if cpp_score > 0.001 {
@@ -347,8 +344,7 @@ fn test_diffmap_color_gradient() {
     let params = ButteraugliParams::default();
     let rust_result =
         compute_butteraugli(&img1, &img2, width, height, &params).expect("butteraugli");
-    let (cpp_score, cpp_diffmap) =
-        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
+    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
 
     let score_diff = (rust_result.score - cpp_score).abs();
     let score_rel = if cpp_score > 0.001 {
@@ -387,8 +383,7 @@ fn test_diffmap_random_32x32() {
     let params = ButteraugliParams::default();
     let rust_result =
         compute_butteraugli(&img1, &img2, width, height, &params).expect("butteraugli");
-    let (cpp_score, cpp_diffmap) =
-        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
+    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
 
     let rust_diffmap = rust_result.diffmap.expect("Rust should produce diffmap");
 
@@ -548,8 +543,7 @@ fn test_divergence_investigation() {
     let params = ButteraugliParams::default();
     let rust_result =
         compute_butteraugli(&img1, &img2, width, height, &params).expect("butteraugli");
-    let (cpp_score, cpp_diffmap) =
-        cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
+    let (cpp_score, cpp_diffmap) = cpp_butteraugli_with_diffmap(&img1, &img2, width, height, 80.0); // default intensity_target
 
     let rust_diffmap = rust_result.diffmap.expect("diffmap");
 

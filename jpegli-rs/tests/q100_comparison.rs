@@ -60,7 +60,8 @@ fn test_q100_rust_vs_cpp() {
     };
 
     // Use a small test image for speed
-    let test_img = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let test_img =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     if !std::path::Path::new(test_img).exists() {
         println!("Skipping: test image not found at {}", test_img);
         return;

@@ -23,16 +23,18 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 #[test]
 #[ignore = "requires testdata and C++ cjpegli"]
 fn compare_rust_cpp_420() {
-    let png_path = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
-    
+    let png_path = Path::new(
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png",
+    );
+
     if !png_path.exists() {
         println!("Skipping: test image not found");
         return;
     }
-    
+
     let (pixels, width, height) = load_png(png_path).expect("load PNG");
     println!("Image: {}x{}", width, height);
-    
+
     // Encode with Rust 4:2:0
     let config = jpegli::encode::EncoderConfig {
         width,
@@ -41,12 +43,12 @@ fn compare_rust_cpp_420() {
         subsampling: jpegli::types::Subsampling::S420,
         ..Default::default()
     };
-    
+
     let encoder = jpegli::encode::Encoder::from_config(config);
     let rust_jpeg = encoder.encode(&pixels).expect("encode");
     fs::write("/tmp/rust_420_flower.jpg", &rust_jpeg).unwrap();
     println!("Rust 4:2:0: {} bytes", rust_jpeg.len());
-    
+
     // Encode with C++ cjpegli
     let cjpegli = Path::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli");
     if cjpegli.exists() {
@@ -54,26 +56,31 @@ fn compare_rust_cpp_420() {
             .args([
                 png_path.to_str().unwrap(),
                 "/tmp/cpp_420_flower.jpg",
-                "-q", "85",
+                "-q",
+                "85",
                 "--chroma_subsampling=420",
             ])
             .output();
-        
+
         if let Ok(output) = status {
             if output.status.success() {
                 let cpp_jpeg = fs::read("/tmp/cpp_420_flower.jpg").unwrap();
                 println!("C++ 4:2:0:  {} bytes", cpp_jpeg.len());
-                
-                let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
+
+                let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
+                    / cpp_jpeg.len() as f64;
                 println!("Size difference: {:+.1}%", diff_pct);
             } else {
-                println!("C++ encoding failed: {}", String::from_utf8_lossy(&output.stderr));
+                println!(
+                    "C++ encoding failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
         }
     } else {
         println!("cjpegli not found at {:?}", cjpegli);
     }
-    
+
     // Also compare 4:4:4
     let config444 = jpegli::encode::EncoderConfig {
         width,
@@ -85,7 +92,7 @@ fn compare_rust_cpp_420() {
     let encoder444 = jpegli::encode::Encoder::from_config(config444);
     let rust_444 = encoder444.encode(&pixels).expect("encode");
     println!("Rust 4:4:4: {} bytes", rust_444.len());
-    
+
     let reduction = 100.0 * (1.0 - rust_jpeg.len() as f64 / rust_444.len() as f64);
     println!("4:2:0 vs 4:4:4 size reduction: {:.1}%", reduction);
 }

@@ -27,7 +27,8 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 
 fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize) -> f64 {
     let params = ButteraugliParams::default();
-    let result = compute_butteraugli(original, distorted, width, height, &params).expect("butteraugli");
+    let result =
+        compute_butteraugli(original, distorted, width, height, &params).expect("butteraugli");
     result.score
 }
 
@@ -77,7 +78,8 @@ struct TestResult {
 }
 
 fn main() {
-    let png_path = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
+    let png_path =
+        "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";
     let output_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "reports/low_q_report.html".to_string());

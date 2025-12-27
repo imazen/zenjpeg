@@ -58,9 +58,11 @@ use std::f32::consts::PI;
 const MATCH_GAMMA_OFFSET: f32 = 0.019;
 
 /// Limit threshold for pre-erosion.
+#[allow(dead_code)] // Kept for reference - used in C++ but handled differently in Rust
 const LIMIT: f32 = 0.2;
 
 /// AC quantization scaling constant.
+#[allow(dead_code)] // Kept for reference - used in C++ but handled differently in Rust
 const K_AC_QUANT: f32 = 0.841;
 
 /// Input scaling factor (1/255 for 8-bit input).
@@ -84,12 +86,15 @@ const K_HF_MOD_COEFF: f32 = -2.0052193233688884 / 112.0;
 // Constants for ComputeMask (from C++)
 // CRITICAL: kBase is NEGATIVE in C++ (-0.74174993)!
 const K_MASK_BASE: f32 = -0.74174993;
+#[allow(dead_code)] // Old constants kept for reference - replaced by K_MASK_* versions
 const K_MUL4: f32 = 0.03879999369382858;
+#[allow(dead_code)] // Old constants kept for reference - replaced by K_MASK_* versions
 const K_MUL2: f32 = 0.17580001056194305;
 const K_MASK_MUL4: f32 = 3.2353257320940401;
 const K_MASK_MUL2: f32 = 12.906028311180409;
 const K_MASK_OFFSET2: f32 = 305.04035728311436;
 const K_MASK_MUL3: f32 = 5.0220313103171232;
+#[allow(dead_code)] // Old constant kept for reference - replaced by K_MASK_* version
 const K_MUL3: f32 = 0.30230000615119934;
 const K_MASK_OFFSET3: f32 = 2.1925739705298404;
 const K_MASK_OFFSET4: f32 = 0.25 * K_MASK_OFFSET3;
