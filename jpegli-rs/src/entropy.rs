@@ -771,7 +771,7 @@ impl EntropyEncoder {
         let mut refbit_idx = 0;
         let mut eobrun_idx = 0;
 
-        for ref_token in scan_info.ref_tokens.iter() {
+        for ref_token in &scan_info.ref_tokens {
             // Write the Huffman code for the symbol
             let (code, len) = ac_table.encode(ref_token.symbol);
 
@@ -927,11 +927,18 @@ impl<'a> EntropyDecoder<'a> {
         // Slow path for longer codes
         let mut code = 0u32;
         for len in 1..=16 {
-            code = (code << 1) | self.reader.read_bits(1)?;
-            if (code as i32) <= table.maxcode[len] {
-                let idx = (code as i32 + table.valoffset[len]) as usize;
-                if idx < table.values.len() {
-                    return Ok(table.values[idx]);
+            match self.reader.read_bits(1) {
+                Ok(bit) => {
+                    code = (code << 1) | bit;
+                    if (code as i32) <= table.maxcode[len] {
+                        let idx = (code as i32 + table.valoffset[len]) as usize;
+                        if idx < table.values.len() {
+                            return Ok(table.values[idx]);
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(e);
                 }
             }
         }
@@ -1138,7 +1145,6 @@ impl<'a> EntropyDecoder<'a> {
         eob_run: &mut u16,
     ) -> Result<()> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
-
         let bit_val = 1i16 << al;
 
         // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return
@@ -1214,8 +1220,15 @@ impl<'a> EntropyDecoder<'a> {
 
             // Skip zeros and apply refinement bits to nonzero coefficients
             while k <= se as usize {
+                // For ZRL (size=0), stop immediately after skipping all 16 zeros.
+                // Don't continue reading refinement bits for subsequent nonzeros -
+                // those belong to the next symbol.
+                if size == 0 && num_zeros_to_skip == 0 {
+                    break;
+                }
+
                 if coeffs[k] != 0 {
-                    // Apply refinement bit
+                    // Apply refinement bit for previously-nonzero coefficient
                     let bit = self.reader.read_bits(1)? as i16;
                     if bit != 0 && (coeffs[k] & bit_val) == 0 {
                         if coeffs[k] > 0 {
@@ -1227,7 +1240,7 @@ impl<'a> EntropyDecoder<'a> {
                 } else if num_zeros_to_skip > 0 {
                     num_zeros_to_skip -= 1;
                 } else {
-                    // Found our target position
+                    // Found our target position (for NEW_NZ symbols)
                     break;
                 }
                 k += 1;
@@ -1243,7 +1256,7 @@ impl<'a> EntropyDecoder<'a> {
                 }
                 k += 1; // Move past the placed coefficient
             }
-            // For ZRL (size==0), don't increment k - the next symbol continues from here
+            // For ZRL (size==0), k already points past the 16 zeros we skipped
         }
 
         Ok(())
