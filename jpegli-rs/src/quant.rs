@@ -404,19 +404,21 @@ fn distance_to_quality(distance: f32) -> f32 {
 /// * `component` - Component index (0 = Y/luma, 1+ = chroma)
 /// * `color_space` - Color space being used
 /// * `use_xyb` - Whether to use XYB-optimized tables
+/// * `is_420` - Whether 4:2:0 chroma subsampling is used (applies quality compensation)
 #[must_use]
 pub fn generate_quant_table(
     quality: Quality,
     component: usize,
     color_space: ColorSpace,
     use_xyb: bool,
+    is_420: bool,
 ) -> QuantTable {
     let distance = quality.to_distance();
 
     if use_xyb {
         generate_xyb_quant_table(distance, component)
     } else {
-        generate_standard_quant_table(distance, component, color_space)
+        generate_standard_quant_table(distance, component, color_space, is_420)
     }
 }
 
@@ -453,11 +455,14 @@ fn generate_standard_quant_table(
     distance: f32,
     component: usize,
     color_space: ColorSpace,
+    is_420: bool,
 ) -> QuantTable {
+    use crate::consts::{GLOBAL_SCALE_420, K420_RESCALE};
+
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
     // Choose base matrix based on color space
-    let (base, global_scale) = if color_space == ColorSpace::YCbCr {
+    let (base, mut global_scale) = if color_space == ColorSpace::YCbCr {
         let base_idx = component.min(2) * DCT_BLOCK_SIZE;
         (
             &BASE_QUANT_MATRIX_YCBCR[base_idx..base_idx + DCT_BLOCK_SIZE],
@@ -472,9 +477,25 @@ fn generate_standard_quant_table(
         )
     };
 
+    // Apply 4:2:0 global quality compensation (like C++ jpegli)
+    // This makes quant tables 22% larger for ALL components
+    if is_420 && color_space == ColorSpace::YCbCr {
+        global_scale *= GLOBAL_SCALE_420;
+    }
+
+    // Check if we need per-frequency chroma rescale for 4:2:0
+    let is_chroma_420 = is_420 && color_space == ColorSpace::YCbCr && component > 0;
+
     for (i, &base_val) in base.iter().enumerate() {
         // Apply per-frequency non-linear scaling
-        let scale = distance_to_scale(distance, i) * global_scale;
+        let mut scale = distance_to_scale(distance, i) * global_scale;
+
+        // Apply additional per-frequency rescale for chroma in 4:2:0 mode
+        // This reduces chroma quantization to preserve color fidelity
+        if is_chroma_420 {
+            scale *= K420_RESCALE[i];
+        }
+
         let q = (base_val * scale).round();
         values[i] = (q as u16).clamp(1, 255);
     }
@@ -681,7 +702,8 @@ mod tests {
 
     #[test]
     fn test_xyb_table_generation() {
-        let table = generate_quant_table(Quality::from_distance(1.0), 0, ColorSpace::Xyb, true);
+        let table =
+            generate_quant_table(Quality::from_distance(1.0), 0, ColorSpace::Xyb, true, false);
 
         // All values should be valid
         for &v in &table.values {
@@ -701,8 +723,8 @@ mod tests {
             let quality = Quality::from_quality(q as f32);
             let distance = quality.to_distance();
 
-            let ycbcr = generate_quant_table(quality, 0, ColorSpace::YCbCr, false);
-            let xyb = generate_quant_table(quality, 0, ColorSpace::Xyb, true);
+            let ycbcr = generate_quant_table(quality, 0, ColorSpace::YCbCr, false, false);
+            let xyb = generate_quant_table(quality, 0, ColorSpace::Xyb, true, false);
 
             let ycbcr_sum: u32 = ycbcr.values.iter().map(|&x| x as u32).sum();
             let xyb_sum: u32 = xyb.values.iter().map(|&x| x as u32).sum();

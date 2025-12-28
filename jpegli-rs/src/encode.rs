@@ -10,8 +10,8 @@ use crate::alloc::{
 use crate::color;
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, JPEG_ZIGZAG_ORDER,
-    MARKER_APP0, MARKER_APP14, MARKER_APP2, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI,
-    MARKER_SOF0, MARKER_SOF2, MARKER_SOI, MARKER_SOS, MAX_ICC_BYTES_PER_MARKER, XYB_ICC_PROFILE,
+    MARKER_APP14, MARKER_APP2, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0,
+    MARKER_SOF2, MARKER_SOI, MARKER_SOS, MAX_ICC_BYTES_PER_MARKER, XYB_ICC_PROFILE,
 };
 use crate::dct::forward_dct_8x8;
 use crate::entropy::{self, EntropyEncoder};
@@ -264,11 +264,14 @@ impl Encoder {
         };
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
-        let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
+        // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
+        let is_420 = self.config.subsampling == Subsampling::S420;
+        let y_quant =
+            quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false, is_420);
         let cb_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false, is_420);
         let cr_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false, is_420);
 
         // Quantize all blocks first (needed for both standard and optimized encoding)
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
@@ -343,23 +346,27 @@ impl Encoder {
         let b_height = (height + 1) / 2;
 
         // Generate XYB quantization tables (one per component)
+        // XYB mode doesn't use 4:2:0 quality compensation
         let x_quant = quant::generate_quant_table(
             self.config.quality,
             0, // X component
             ColorSpace::Rgb,
             true,
+            false, // is_420
         );
         let y_quant = quant::generate_quant_table(
             self.config.quality,
             1, // Y component (luma-like)
             ColorSpace::Rgb,
             true,
+            false, // is_420
         );
         let b_quant = quant::generate_quant_table(
             self.config.quality,
             2, // B component
             ColorSpace::Rgb,
             true,
+            false, // is_420
         );
 
         // Write JPEG structure for XYB mode (no JFIF, just ICC profile)
@@ -586,11 +593,13 @@ impl Encoder {
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
-        let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
+        // Progressive mode uses 4:4:4, so is_420 = false
+        let y_quant =
+            quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false, false);
         let cb_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false, false);
         let cr_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false, false);
 
         // Quantize all blocks to get full-precision coefficients
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
@@ -649,11 +658,13 @@ impl Encoder {
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
-        let y_quant = quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false);
+        // Progressive mode uses 4:4:4, so is_420 = false
+        let y_quant =
+            quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false, false);
         let cb_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false);
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false, false);
         let cr_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false);
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false, false);
 
         // Quantize all blocks to get full-precision coefficients
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
@@ -1364,27 +1375,14 @@ impl Encoder {
         Ok((y_plane, cb_plane, cr_plane))
     }
 
-    /// Writes the JPEG header (SOI + APP0).
+    /// Writes the JPEG header (SOI only, no JFIF APP0).
+    ///
+    /// Note: C++ jpegli does not write JFIF APP0, so we skip it for parity.
+    /// The JFIF marker is optional and many modern decoders don't require it.
     fn write_header(&self, output: &mut Vec<u8>) -> Result<()> {
-        // SOI
+        // SOI only - no JFIF marker for C++ parity
         output.push(0xFF);
         output.push(MARKER_SOI);
-
-        // APP0 (JFIF header)
-        output.push(0xFF);
-        output.push(MARKER_APP0);
-
-        let app0_data = [
-            0x00, 0x10, // Length
-            b'J', b'F', b'I', b'F', 0x00, // Identifier
-            0x01, 0x01, // Version 1.01
-            0x00, // Units: no units
-            0x00, 0x01, // X density
-            0x00, 0x01, // Y density
-            0x00, 0x00, // No thumbnail
-        ];
-        output.extend_from_slice(&app0_data);
-
         Ok(())
     }
 
@@ -1631,7 +1629,7 @@ impl Encoder {
         Ok(())
     }
 
-    /// Writes Huffman tables.
+    /// Writes standard Huffman tables in a single DHT segment.
     fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
         use crate::huffman::{
             STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_AC_LUMINANCE_BITS,
@@ -1639,55 +1637,39 @@ impl Encoder {
             STD_DC_LUMINANCE_BITS, STD_DC_LUMINANCE_VALUES,
         };
 
-        // Helper to write one table
-        let write_table = |out: &mut Vec<u8>, class: u8, id: u8, bits: &[u8; 16], values: &[u8]| {
-            out.push(0xFF);
-            out.push(MARKER_DHT);
+        // Write all 4 Huffman tables in a single DHT segment (like C++ jpegli)
+        output.push(0xFF);
+        output.push(MARKER_DHT);
 
-            let length = 2 + 1 + 16 + values.len();
-            out.push((length >> 8) as u8);
-            out.push(length as u8);
+        // Calculate total length
+        let total_len = 2
+            + (1 + 16 + STD_DC_LUMINANCE_VALUES.len())
+            + (1 + 16 + STD_AC_LUMINANCE_VALUES.len())
+            + (1 + 16 + STD_DC_CHROMINANCE_VALUES.len())
+            + (1 + 16 + STD_AC_CHROMINANCE_VALUES.len());
 
-            out.push((class << 4) | id);
-            out.extend_from_slice(bits);
-            out.extend_from_slice(values);
-        };
+        output.push((total_len >> 8) as u8);
+        output.push(total_len as u8);
 
         // DC luminance (class 0, id 0)
-        write_table(
-            output,
-            0,
-            0,
-            &STD_DC_LUMINANCE_BITS,
-            &STD_DC_LUMINANCE_VALUES,
-        );
+        output.push(0x00);
+        output.extend_from_slice(&STD_DC_LUMINANCE_BITS);
+        output.extend_from_slice(&STD_DC_LUMINANCE_VALUES);
 
         // AC luminance (class 1, id 0)
-        write_table(
-            output,
-            1,
-            0,
-            &STD_AC_LUMINANCE_BITS,
-            &STD_AC_LUMINANCE_VALUES,
-        );
+        output.push(0x10);
+        output.extend_from_slice(&STD_AC_LUMINANCE_BITS);
+        output.extend_from_slice(&STD_AC_LUMINANCE_VALUES);
 
         // DC chrominance (class 0, id 1)
-        write_table(
-            output,
-            0,
-            1,
-            &STD_DC_CHROMINANCE_BITS,
-            &STD_DC_CHROMINANCE_VALUES,
-        );
+        output.push(0x01);
+        output.extend_from_slice(&STD_DC_CHROMINANCE_BITS);
+        output.extend_from_slice(&STD_DC_CHROMINANCE_VALUES);
 
         // AC chrominance (class 1, id 1)
-        write_table(
-            output,
-            1,
-            1,
-            &STD_AC_CHROMINANCE_BITS,
-            &STD_AC_CHROMINANCE_VALUES,
-        );
+        output.push(0x11);
+        output.extend_from_slice(&STD_AC_CHROMINANCE_BITS);
+        output.extend_from_slice(&STD_AC_CHROMINANCE_VALUES);
 
         Ok(())
     }
@@ -1701,43 +1683,40 @@ impl Encoder {
         output: &mut Vec<u8>,
         tables: &OptimizedHuffmanTables,
     ) -> Result<()> {
-        // Helper to write one table
-        let write_table = |out: &mut Vec<u8>, class: u8, id: u8, bits: &[u8; 16], values: &[u8]| {
-            out.push(0xFF);
-            out.push(MARKER_DHT);
+        // Write all 4 Huffman tables in a single DHT segment (like C++ jpegli)
+        // This saves 12 bytes compared to 4 separate segments
+        output.push(0xFF);
+        output.push(MARKER_DHT);
 
-            let length = 2 + 1 + 16 + values.len();
-            out.push((length >> 8) as u8);
-            out.push(length as u8);
+        // Calculate total length: 2 (length field) + 4 tables × (1 + 16 + values.len())
+        let total_len = 2
+            + (1 + 16 + tables.dc_luma.values.len())
+            + (1 + 16 + tables.ac_luma.values.len())
+            + (1 + 16 + tables.dc_chroma.values.len())
+            + (1 + 16 + tables.ac_chroma.values.len());
 
-            out.push((class << 4) | id);
-            out.extend_from_slice(bits);
-            out.extend_from_slice(values);
-        };
+        output.push((total_len >> 8) as u8);
+        output.push(total_len as u8);
 
         // DC luminance (class 0, id 0)
-        write_table(output, 0, 0, &tables.dc_luma.bits, &tables.dc_luma.values);
+        output.push(0x00);
+        output.extend_from_slice(&tables.dc_luma.bits);
+        output.extend_from_slice(&tables.dc_luma.values);
 
         // AC luminance (class 1, id 0)
-        write_table(output, 1, 0, &tables.ac_luma.bits, &tables.ac_luma.values);
+        output.push(0x10);
+        output.extend_from_slice(&tables.ac_luma.bits);
+        output.extend_from_slice(&tables.ac_luma.values);
 
         // DC chrominance (class 0, id 1)
-        write_table(
-            output,
-            0,
-            1,
-            &tables.dc_chroma.bits,
-            &tables.dc_chroma.values,
-        );
+        output.push(0x01);
+        output.extend_from_slice(&tables.dc_chroma.bits);
+        output.extend_from_slice(&tables.dc_chroma.values);
 
         // AC chrominance (class 1, id 1)
-        write_table(
-            output,
-            1,
-            1,
-            &tables.ac_chroma.bits,
-            &tables.ac_chroma.values,
-        );
+        output.push(0x11);
+        output.extend_from_slice(&tables.ac_chroma.bits);
+        output.extend_from_slice(&tables.ac_chroma.values);
 
         Ok(())
     }

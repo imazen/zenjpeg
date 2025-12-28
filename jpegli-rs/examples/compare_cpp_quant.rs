@@ -19,9 +19,10 @@ fn main() {
     ];
 
     // Generate Rust tables - component 0=Y, 1=Cb, 2=Cr
+    // This example compares 4:4:4 mode, so is_420 = false
     let quality = Quality::Traditional(90.0);
-    let rust_y = quant::generate_quant_table(quality, 0, ColorSpace::YCbCr, false);
-    let rust_cb = quant::generate_quant_table(quality, 1, ColorSpace::YCbCr, false);
+    let rust_y = quant::generate_quant_table(quality, 0, ColorSpace::YCbCr, false, false);
+    let rust_cb = quant::generate_quant_table(quality, 1, ColorSpace::YCbCr, false, false);
 
     println!("=== Y Table Comparison (Q90, 4:4:4) ===");
     print_comparison("Y", &cpp_y_table, &rust_y.values);

@@ -441,22 +441,19 @@ fn test_encode_large_image() {
 // ============================================================================
 
 #[test]
-fn test_encode_has_jfif_header() {
+fn test_encode_no_jfif_header() {
+    // jpegli-rs intentionally omits the JFIF APP0 marker to match C++ jpegli behavior.
+    // This saves 18 bytes per file.
     let img = generate_gradient_d(64, 64, 3);
     let encoder = Encoder::new().width(64).height(64);
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
-    // Look for APP0 JFIF marker
+    // Should NOT have APP0 JFIF marker (matches C++ jpegli)
     let app0_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xE0]);
-    assert!(app0_pos.is_some(), "JFIF APP0 marker should be present");
-
-    // Verify JFIF signature
-    if let Some(pos) = app0_pos {
-        let sig_start = pos + 4; // Skip marker and length
-        if jpeg.len() > sig_start + 5 {
-            assert_eq!(&jpeg[sig_start..sig_start + 5], b"JFIF\0");
-        }
-    }
+    assert!(
+        app0_pos.is_none(),
+        "JFIF APP0 marker should NOT be present (matches C++ jpegli)"
+    );
 }
 
 // ============================================================================

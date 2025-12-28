@@ -151,3 +151,17 @@ required-features = ["test-utils"]
 [[example]]
 name = "xyb_ycbcr_pareto"
 required-features = ["test-utils"]
+
+# This example requires the `image` crate which is not in workspace dependencies
+[[example]]
+name = "test_multiple_decoders"
+required-features = ["test-utils"]
+
+# These examples use APIs that are not fully implemented yet
+[[example]]
+name = "debug_roundtrip"
+required-features = ["test-utils"]
+
+[[example]]
+name = "debug_scans_separate"
+required-features = ["test-utils"]

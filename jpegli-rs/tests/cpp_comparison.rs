@@ -259,7 +259,12 @@ fn test_marker_structure() {
     println!("  DHT: {}", dht_count);
     println!("  SOS: {}", sos_count);
 
-    assert!(app0_count >= 1, "Should have JFIF marker");
+    // Note: We intentionally don't write JFIF APP0 marker to match C++ jpegli behavior
+    // C++ cjpegli doesn't write JFIF marker, and removing it saves 18 bytes
+    assert_eq!(
+        app0_count, 0,
+        "Should NOT have JFIF marker (matches C++ jpegli)"
+    );
     assert!(dqt_count >= 1, "Should have DQT marker");
     assert!(sof0_count >= 1, "Should have SOF0 marker");
     assert!(dht_count >= 1, "Should have DHT marker");

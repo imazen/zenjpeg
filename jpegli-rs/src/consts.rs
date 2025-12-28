@@ -126,6 +126,22 @@ pub const GLOBAL_SCALE_YCBCR: f32 = 1.739_660_1;
 /// Global scale for 4:2:0 chroma subsampling.
 pub const GLOBAL_SCALE_420: f32 = 1.22;
 
+/// Per-frequency rescale factors for 4:2:0 chroma components.
+/// These are applied ONLY to chroma tables (Cb/Cr, components 1 and 2)
+/// when using 4:2:0 subsampling, in addition to GLOBAL_SCALE_420.
+/// From C++ jpegli quant.cc k420Rescale.
+#[rustfmt::skip]
+pub const K420_RESCALE: [f32; 64] = [
+    0.4093, 0.3209, 0.3477, 0.3333, 0.3144, 0.2823, 0.3214, 0.3354,
+    0.3209, 0.3111, 0.3489, 0.2801, 0.3059, 0.3119, 0.4135, 0.3445,
+    0.3477, 0.3489, 0.3586, 0.3257, 0.2727, 0.3754, 0.3369, 0.3484,
+    0.3333, 0.2801, 0.3257, 0.3020, 0.3515, 0.3410, 0.3971, 0.3839,
+    0.3144, 0.3059, 0.2727, 0.3515, 0.3105, 0.3397, 0.2716, 0.3836,
+    0.2823, 0.3119, 0.3754, 0.3410, 0.3397, 0.3212, 0.3583, 0.3584,
+    0.3214, 0.4135, 0.3369, 0.3971, 0.2716, 0.3583, 0.3606, 0.3614,
+    0.3354, 0.3445, 0.3484, 0.3839, 0.3836, 0.3584, 0.3614, 0.3323,
+];
+
 /// Distance threshold where non-linear scaling kicks in.
 pub const DIST_NONLINEAR_THRESHOLD: f32 = 1.5;
 
