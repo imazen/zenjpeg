@@ -78,6 +78,10 @@ pub struct Encoder {
     scan_script: ScanScript,
     optimize_huffman: bool,
     optimize_for: OptimizeFor,
+    /// Enable overshoot deringing to reduce ringing artifacts near hard edges.
+    /// This is especially effective for images with white backgrounds or sharp text.
+    /// Enabled by default for mozjpeg strategy, disabled for jpegli.
+    overshoot_deringing: Option<bool>,
 }
 
 impl Default for Encoder {
@@ -97,6 +101,7 @@ impl Encoder {
             scan_script: ScanScript::default(),
             optimize_huffman: true,
             optimize_for: OptimizeFor::default(),
+            overshoot_deringing: None, // Auto-select based on strategy
         }
     }
 
@@ -110,6 +115,7 @@ impl Encoder {
             scan_script: ScanScript::Minimal, // Simple progressive, lowest overhead
             optimize_huffman: true,
             optimize_for: OptimizeFor::FileSize,
+            overshoot_deringing: Some(true), // Helps with edge artifacts
         }
     }
 
@@ -123,6 +129,7 @@ impl Encoder {
             scan_script: ScanScript::default(),
             optimize_huffman: true,
             optimize_for: OptimizeFor::Butteraugli,
+            overshoot_deringing: Some(false), // jpegli handles this differently
         }
     }
 
@@ -136,6 +143,7 @@ impl Encoder {
             scan_script: ScanScript::Minimal,
             optimize_huffman: false,
             optimize_for: OptimizeFor::default(),
+            overshoot_deringing: Some(false), // Skip for speed
         }
     }
 
@@ -201,6 +209,23 @@ impl Encoder {
     /// ```
     pub fn optimize_for(mut self, metric: OptimizeFor) -> Self {
         self.optimize_for = metric;
+        self
+    }
+
+    /// Enable or disable overshoot deringing.
+    ///
+    /// Overshoot deringing reduces visible ringing artifacts near sharp edges,
+    /// particularly on white backgrounds. It works by replacing flat max-value
+    /// regions with smooth curves that overshoot the maximum, which compress
+    /// better while looking identical after decoding (due to value clamping).
+    ///
+    /// # When to use
+    /// - **Enable**: Images with white backgrounds, text, graphics, sharp edges
+    /// - **Disable**: Natural photos without saturated regions, when speed matters
+    ///
+    /// Default: `None` (auto-select based on strategy - enabled for mozjpeg, disabled for jpegli)
+    pub fn overshoot_deringing(mut self, enable: bool) -> Self {
+        self.overshoot_deringing = Some(enable);
         self
     }
 
