@@ -206,17 +206,38 @@ impl Default for Decoder {
     }
 }
 
-/// A decoded image.
+/// A decoded image with dimensions and pixel data.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DecodedImage {
-    /// Image width
+    /// Image width in pixels
     pub width: u32,
-    /// Image height
+    /// Image height in pixels
     pub height: u32,
-    /// Pixel format
+    /// Pixel format of the data
     pub format: PixelFormat,
-    /// Pixel data
+    /// Raw pixel data in the specified format
     pub data: Vec<u8>,
+}
+
+impl DecodedImage {
+    /// Returns the image dimensions as a tuple (width, height).
+    #[must_use]
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// Returns the number of bytes per pixel for this image's format.
+    #[must_use]
+    pub fn bytes_per_pixel(&self) -> usize {
+        self.format.bytes_per_pixel()
+    }
+
+    /// Returns the stride (bytes per row) of the image.
+    #[must_use]
+    pub fn stride(&self) -> usize {
+        self.width as usize * self.bytes_per_pixel()
+    }
 }
 
 /// Internal JPEG parser state.

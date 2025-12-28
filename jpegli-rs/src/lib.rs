@@ -38,54 +38,55 @@
 // Module structure
 // ============================================================================
 
-// Layer 0: Constants and types
-pub mod consts;
-pub mod types;
-
-// Layer 1: Pure math functions
-pub mod huffman;
-pub mod huffman_opt;
-pub mod quant;
-
-// Layer 2: Transforms
-pub mod color;
-pub mod dct;
-pub mod idct;
-pub mod tone_mapping;
-pub mod transfer_functions;
-pub mod xyb;
-
-// Layer 3: Bitstream I/O
-pub mod bitstream;
-pub mod scan_script;
-
-// Layer 4: Stateful components
-pub mod entropy;
-
-// Layer 5-6: Pipelines
+// Public modules (stable API)
 pub mod decode;
 pub mod encode;
+pub mod error;
+pub mod quant;
+pub mod types;
 
-// Simplified adaptive quantization (NOT C++ matching - uses arbitrary thresholds)
-pub mod simplified_quant;
-
-// Adaptive quantization (placeholder for C++ matching implementation)
+// Internal modules - NOT part of the stable public API.
+// These are hidden from documentation and may change without notice.
+// Use at your own risk.
+#[doc(hidden)]
 pub mod adaptive_quant;
+#[doc(hidden)]
+pub mod alloc;
+#[doc(hidden)]
+pub mod bitstream;
+#[doc(hidden)]
+pub mod color;
+#[doc(hidden)]
+pub mod consts;
+#[doc(hidden)]
+pub mod dct;
+#[doc(hidden)]
+pub mod entropy;
+#[doc(hidden)]
+pub mod huffman;
+#[doc(hidden)]
+pub mod huffman_opt;
+#[doc(hidden)]
+pub mod icc;
+#[doc(hidden)]
+pub mod idct;
+#[doc(hidden)]
+pub mod scan_script;
+#[doc(hidden)]
+pub mod simplified_quant;
+#[doc(hidden)]
+pub mod tone_mapping;
+#[doc(hidden)]
+pub mod transfer_functions;
+#[doc(hidden)]
+pub mod xyb;
 
-// Quality metrics - re-export from the butteraugli-oxide crate
+// Quality metrics - re-export from the butteraugli crate
 pub use butteraugli;
 
-// Error types
-pub mod error;
-
-// Safe allocation helpers
-pub mod alloc;
-
-// ICC color management
-pub mod icc;
-
 // Test utilities (available for tests and examples)
-#[cfg(any(test, feature = "test-utils"))]
+// Hidden from docs but always available for integration tests
+#[doc(hidden)]
 pub mod test_utils;
 
 // ============================================================================
@@ -93,13 +94,13 @@ pub mod test_utils;
 // ============================================================================
 
 pub use error::{Error, Result};
-pub use types::{ColorSpace, PixelFormat, SampleDepth};
+pub use types::{ColorSpace, JpegMode, PixelFormat, SampleDepth, Subsampling};
 
 // Encoder API
 pub use encode::{Encoder, EncoderConfig};
 
 // Decoder API
-pub use decode::{Decoder, DecoderConfig};
+pub use decode::{DecodedImage, Decoder, DecoderConfig};
 
 // Quality settings
 pub use quant::{Quality, QuantTable};

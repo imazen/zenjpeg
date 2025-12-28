@@ -46,7 +46,6 @@ fn test_xyb_cpp_comparison() {
     println!("C++ JPEG size: {} bytes", cpp_jpeg.len());
 
     // Encode with Rust in XYB mode
-    #[allow(deprecated)]
     let rust_jpeg = jpegli::encode::Encoder::new()
         .width(width as u32)
         .height(height as u32)
@@ -325,7 +324,6 @@ fn test_icc_profile_embedding() {
     let height = 8;
     let rgb_data = vec![128u8; width * height * 3];
 
-    #[allow(deprecated)]
     let jpeg = jpegli::encode::Encoder::new()
         .width(width as u32)
         .height(height as u32)

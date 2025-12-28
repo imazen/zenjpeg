@@ -4,6 +4,7 @@ use crate::consts::DCT_BLOCK_SIZE;
 
 /// Color space representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 #[repr(u8)]
 pub enum ColorSpace {
     /// Unknown or unspecified color space
@@ -44,6 +45,7 @@ impl ColorSpace {
 
 /// Pixel format for input/output data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum PixelFormat {
     /// Grayscale, 1 byte per pixel
     Gray,
@@ -94,6 +96,7 @@ impl PixelFormat {
 
 /// Sample bit depth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum SampleDepth {
     /// 8-bit samples (0-255)
     #[default]
@@ -118,6 +121,7 @@ impl SampleDepth {
 
 /// Chroma subsampling mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Subsampling {
     /// 4:4:4 - No subsampling
     #[default]
@@ -152,6 +156,7 @@ impl Subsampling {
 
 /// JPEG encoding mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum JpegMode {
     /// Baseline sequential DCT (most compatible)
     #[default]

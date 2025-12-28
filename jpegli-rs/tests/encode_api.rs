@@ -494,7 +494,6 @@ fn test_encode_dht_present() {
 // ============================================================================
 
 #[test]
-#[allow(deprecated)]
 fn test_xyb_has_app14_adobe_marker() {
     let img = generate_gradient_d(64, 64, 3);
     let encoder = Encoder::new().width(64).height(64).use_xyb(true);
