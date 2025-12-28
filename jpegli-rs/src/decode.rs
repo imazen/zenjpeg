@@ -31,7 +31,7 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::icc::apply_icc_transform;
 use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
-use crate::quant::dequantize_block;
+use crate::quant::{dequantize_block_with_bias, DequantBiasStats};
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
 /// Decoder configuration.
@@ -976,6 +976,41 @@ impl<'a> JpegParser<'a> {
         let mcu_cols = (width + mcu_width - 1) / mcu_width;
         let mcu_rows = (height + mcu_height - 1) / mcu_height;
 
+        // Gather coefficient statistics for dequantization bias computation
+        // (only for full-resolution components, matching C++ jpegli behavior)
+        let mut bias_stats = DequantBiasStats::new(self.num_components as usize);
+        for comp_idx in 0..self.num_components as usize {
+            let h_samp = self.components[comp_idx].h_samp_factor;
+            let v_samp = self.components[comp_idx].v_samp_factor;
+
+            // Only gather stats for full-resolution components (matches C++ ShouldApplyDequantBiases)
+            if h_samp == max_h_samp && v_samp == max_v_samp {
+                for block in &self.coeffs[comp_idx] {
+                    // Convert to natural order for statistics
+                    let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                    for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                        natural_coeffs[zi as usize] = block[i];
+                    }
+                    bias_stats.gather_block(comp_idx, &natural_coeffs);
+                }
+            }
+        }
+
+        // Compute biases for each component
+        let mut component_biases: Vec<[f32; DCT_BLOCK_SIZE]> = Vec::new();
+        for comp_idx in 0..self.num_components as usize {
+            let h_samp = self.components[comp_idx].h_samp_factor;
+            let v_samp = self.components[comp_idx].v_samp_factor;
+
+            // Only apply bias to full-resolution components
+            if h_samp == max_h_samp && v_samp == max_v_samp {
+                component_biases.push(bias_stats.compute_biases(comp_idx));
+            } else {
+                // No bias for subsampled components
+                component_biases.push([0.0f32; DCT_BLOCK_SIZE]);
+            }
+        }
+
         // Dequantize and IDCT all blocks, then upsample if needed
         let mut planes: Vec<Vec<u8>> = Vec::new();
 
@@ -999,6 +1034,8 @@ impl<'a> JpegParser<'a> {
             let comp_plane_size = checked_size_2d(comp_width, comp_height)?;
             let mut comp_plane = try_alloc_zeroed(comp_plane_size, "allocating component plane")?;
 
+            let biases = &component_biases[comp_idx];
+
             for by in 0..comp_blocks_v {
                 for bx in 0..comp_blocks_h {
                     let block_idx = by * comp_blocks_h + bx;
@@ -1007,13 +1044,13 @@ impl<'a> JpegParser<'a> {
                     }
                     let coeffs = &self.coeffs[comp_idx][block_idx];
 
-                    // Convert to natural order and dequantize
+                    // Convert to natural order and dequantize with bias
                     let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
                     for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
                         natural_coeffs[zi as usize] = coeffs[i];
                     }
 
-                    let dequant = dequantize_block(&natural_coeffs, quant);
+                    let dequant = dequantize_block_with_bias(&natural_coeffs, quant, biases);
                     let pixels = inverse_dct_8x8(&dequant);
 
                     // Copy to component plane with level shift
