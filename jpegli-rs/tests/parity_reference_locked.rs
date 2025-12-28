@@ -37,10 +37,11 @@ const QUALITY_LEVELS: &[u8] = &[
 ];
 
 /// Maximum allowed parity difference percentage per mode
-const MAX_DIFF_S444: f64 = 0.5; // 4:4:4 should be very close
-const MAX_DIFF_S420: f64 = 1.0; // 4:2:0 has slightly more variance
-const MAX_DIFF_S422: f64 = 1.0; // 4:2:2 similar to 4:2:0
-const MAX_DIFF_S440: f64 = 2.0; // 4:4:0 is rare, allow more variance
+/// These are set just above actual observed variance to catch regressions
+const MAX_DIFF_S444: f64 = 0.10; // Actual max: ±0.05%
+const MAX_DIFF_S420: f64 = 0.25; // Actual max: -0.17% at Q95
+const MAX_DIFF_S422: f64 = 0.15; // Actual max: ±0.07%
+const MAX_DIFF_S440: f64 = 0.25; // Target after fix
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - DO NOT MODIFY WITHOUT VALID REASON
@@ -149,29 +150,29 @@ pub const S422_OPT: &[(u8, usize, usize, f64, f64)] = &[
 ];
 
 /// 4:4:0 Optimized Huffman - (quality, rust_size, cpp_size, dssim, butteraugli)
-/// Note: 4:4:0 is rare; C++ values are estimates based on pattern
+/// Generated 2024-12-28 after fixing chroma dimension calculation bug
 #[rustfmt::skip]
 pub const S440_OPT: &[(u8, usize, usize, f64, f64)] = &[
-    (5, 14849, 14849, 0.018234, 10.50000000),
-    (10, 17758, 17758, 0.013876, 8.90000000),
-    (15, 21360, 21360, 0.010542, 7.80000000),
-    (20, 25077, 25077, 0.008123, 6.50000000),
-    (25, 28687, 28687, 0.006612, 5.90000000),
-    (30, 31303, 31303, 0.005724, 5.70000000),
-    (35, 32721, 32721, 0.005342, 5.30000000),
-    (40, 34076, 34076, 0.004988, 5.00000000),
-    (45, 35930, 35930, 0.004568, 4.60000000),
-    (50, 37689, 37689, 0.004198, 4.30000000),
-    (55, 39913, 39913, 0.003812, 4.10000000),
-    (60, 43058, 43058, 0.003398, 3.90000000),
-    (65, 46022, 46022, 0.002989, 3.80000000),
-    (70, 50406, 50406, 0.002572, 3.50000000),
-    (75, 55183, 55183, 0.002163, 3.30000000),
-    (80, 61836, 61836, 0.001748, 3.10000000),
-    (85, 71806, 71806, 0.001318, 2.80000000),
-    (90, 89152, 89152, 0.000823, 2.50000000),
-    (95, 123408, 123408, 0.000412, 2.20000000),
-    (100, 278624, 278624, 0.000142, 2.00000000),
+    (5, 14535, 14530, 0.006496, 4.80000000),
+    (10, 17277, 17277, 0.005884, 4.60000000),
+    (15, 20690, 20679, 0.005282, 4.40000000),
+    (20, 24244, 24242, 0.004799, 4.20000000),
+    (25, 27729, 27731, 0.004420, 4.00000000),
+    (30, 30221, 30206, 0.004181, 3.80000000),
+    (35, 31571, 31568, 0.004076, 3.60000000),
+    (40, 32914, 32915, 0.003971, 3.40000000),
+    (45, 34780, 34781, 0.003842, 3.20000000),
+    (50, 36434, 36448, 0.003720, 3.00000000),
+    (55, 38473, 38472, 0.003576, 2.80000000),
+    (60, 41448, 41440, 0.003429, 2.60000000),
+    (65, 44198, 44205, 0.003280, 2.40000000),
+    (70, 48355, 48350, 0.003116, 2.20000000),
+    (75, 52873, 52884, 0.002952, 2.00000000),
+    (80, 59270, 59269, 0.002760, 1.80000000),
+    (85, 68848, 68848, 0.002524, 1.60000000),
+    (90, 85355, 85361, 0.002180, 1.40000000),
+    (95, 118647, 118644, 0.001758, 1.20000000),
+    (100, 254654, 254628, 0.001231, 1.00000000),
 ];
 
 // =============================================================================
@@ -367,24 +368,32 @@ fn test_s422_opt_parity() {
 }
 
 /// Verify 4:4:0 optimized Huffman matches reference
-/// NOTE: Disabled due to encoding bug (index out of bounds in chroma indexing)
 #[test]
-#[ignore]
 fn test_s440_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
-    for &(q, expected_rust, _, _, _) in S440_OPT {
+    for &(q, expected_rust, expected_cpp, _, _) in S440_OPT {
         let jpeg = encode_rust(&rgb, width, height, q, Subsampling::S440, true);
         let rust_size = jpeg.len();
 
         let diff_pct = 100.0 * (rust_size as f64 - expected_rust as f64) / expected_rust as f64;
         assert!(
-            diff_pct.abs() < 0.5, // Allow slightly more variance for 4:4:0
+            diff_pct.abs() < 0.1,
             "Q{} 4:4:0 OPT: size {} vs expected {} (diff: {:.2}%)",
             q,
             rust_size,
             expected_rust,
             diff_pct
+        );
+
+        let cpp_diff = 100.0 * (rust_size as f64 - expected_cpp as f64) / expected_cpp as f64;
+        assert!(
+            cpp_diff.abs() < MAX_DIFF_S440,
+            "Q{} 4:4:0 OPT: Rust {} vs C++ {} (diff: {:.2}%)",
+            q,
+            rust_size,
+            expected_cpp,
+            cpp_diff
         );
     }
 }
@@ -403,6 +412,7 @@ fn print_summary() {
         ("4:4:4 OPT", Subsampling::S444, true, "444", S444_OPT),
         ("4:2:0 OPT", Subsampling::S420, true, "420", S420_OPT),
         ("4:2:2 OPT", Subsampling::S422, true, "422", S422_OPT),
+        ("4:4:0 OPT", Subsampling::S440, true, "440", S440_OPT),
     ];
 
     for (name, subsampling, opt, cpp_mode, reference) in configs {
@@ -497,8 +507,7 @@ fn exhaustive_parity() {
         (Subsampling::S444, "444"),
         (Subsampling::S420, "420"),
         (Subsampling::S422, "422"),
-        // S440 is disabled due to encoding bug (index out of bounds)
-        // (Subsampling::S440, "440"),
+        (Subsampling::S440, "440"),
     ];
 
     let huffman_modes = [(true, "opt"), (false, "fixed")];
@@ -556,8 +565,8 @@ fn exhaustive_parity() {
     // Print summary table
     println!("\n=== Summary Table ===\n");
     println!(
-        "{:>8} {:>12} {:>12} {:>12}",
-        "Q", "444_opt", "420_opt", "422_opt"
+        "{:>8} {:>12} {:>12} {:>12} {:>12}",
+        "Q", "444_opt", "420_opt", "422_opt", "440_opt"
     );
 
     for &q in QUALITY_LEVELS {
@@ -576,10 +585,15 @@ fn exhaustive_parity() {
             .and_then(|v| v.iter().find(|e| e.0 == q))
             .map(|e| e.3)
             .unwrap_or(0.0);
+        let s440 = results
+            .get("440_opt")
+            .and_then(|v| v.iter().find(|e| e.0 == q))
+            .map(|e| e.3)
+            .unwrap_or(0.0);
 
         println!(
-            "{:>8} {:>+11.2}% {:>+11.2}% {:>+11.2}%",
-            q, s444, s420, s422
+            "{:>8} {:>+11.2}% {:>+11.2}% {:>+11.2}% {:>+11.2}%",
+            q, s444, s420, s422, s440
         );
     }
 
