@@ -10,8 +10,8 @@ use crate::alloc::{
 use crate::color;
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, JPEG_ZIGZAG_ORDER,
-    MARKER_APP0, MARKER_APP2, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI, MARKER_SOF0,
-    MARKER_SOF2, MARKER_SOI, MARKER_SOS, MAX_ICC_BYTES_PER_MARKER, XYB_ICC_PROFILE,
+    MARKER_APP0, MARKER_APP14, MARKER_APP2, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI,
+    MARKER_SOF0, MARKER_SOF2, MARKER_SOI, MARKER_SOS, MAX_ICC_BYTES_PER_MARKER, XYB_ICC_PROFILE,
 };
 use crate::dct::forward_dct_8x8;
 use crate::entropy::{self, EntropyEncoder};
@@ -364,7 +364,10 @@ impl Encoder {
 
         // Write JPEG structure for XYB mode (no JFIF, just ICC profile)
         self.write_header_xyb(output)?;
-        // Write XYB ICC profile so decoders can interpret the colors correctly
+        // Write APP14 Adobe marker for RGB colorspace (required by some decoders)
+        // See: https://github.com/google/jpegli/pull/135
+        self.write_app14_adobe(output, 0)?; // 0 = RGB (no transform)
+                                            // Write XYB ICC profile so decoders can interpret the colors correctly
         self.write_icc_profile(output, &XYB_ICC_PROFILE)?;
         self.write_quant_tables_xyb(output, &x_quant, &y_quant, &b_quant)?;
         self.write_frame_header_xyb(output)?;
@@ -1393,6 +1396,32 @@ impl Encoder {
         // SOI only - no JFIF marker for XYB mode
         output.push(0xFF);
         output.push(MARKER_SOI);
+        Ok(())
+    }
+
+    /// Writes an APP14 Adobe marker for RGB/CMYK/YCCK colorspaces.
+    ///
+    /// The APP14 marker is required by some decoders to properly interpret
+    /// RGB (including XYB), CMYK, and YCCK colorspaces.
+    ///
+    /// See: https://github.com/google/jpegli/pull/135
+    ///
+    /// # Arguments
+    /// * `transform` - Color transform type:
+    ///   - 0 = RGB or CMYK (no transform)
+    ///   - 1 = YCbCr
+    ///   - 2 = YCCK
+    fn write_app14_adobe(&self, output: &mut Vec<u8>, transform: u8) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_APP14);
+        output.extend_from_slice(&[
+            0x00, 0x0E, // Length: 14 bytes (includes length field)
+            b'A', b'd', b'o', b'b', b'e', // Signature
+            0x00, 0x64, // DCTEncodeVersion (100)
+            0x00, 0x00, // APP14Flags0
+            0x00, 0x00,      // APP14Flags1
+            transform, // Color transform
+        ]);
         Ok(())
     }
 

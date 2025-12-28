@@ -66,6 +66,8 @@ pub const MARKER_APP0: u8 = 0xE0;
 pub const MARKER_APP1: u8 = 0xE1;
 /// Application marker 2 (ICC Profile)
 pub const MARKER_APP2: u8 = 0xE2;
+/// Application marker 14 (Adobe)
+pub const MARKER_APP14: u8 = 0xEE;
 /// Comment marker
 pub const MARKER_COM: u8 = 0xFE;
 

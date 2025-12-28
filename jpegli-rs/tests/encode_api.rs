@@ -488,3 +488,57 @@ fn test_encode_dht_present() {
     let dht_count = jpeg.windows(2).filter(|w| w == &[0xFF, 0xC4]).count();
     assert!(dht_count >= 1, "At least one DHT marker should be present");
 }
+
+// ============================================================================
+// APP14 Adobe Marker Tests (XYB mode)
+// ============================================================================
+
+#[test]
+#[allow(deprecated)]
+fn test_xyb_has_app14_adobe_marker() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = Encoder::new().width(64).height(64).use_xyb(true);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    // Look for APP14 marker (0xFF 0xEE)
+    let app14_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xEE]);
+    assert!(
+        app14_pos.is_some(),
+        "XYB mode should include APP14 Adobe marker"
+    );
+
+    // Verify Adobe signature
+    if let Some(pos) = app14_pos {
+        let sig_start = pos + 4; // Skip marker and length
+        if jpeg.len() > sig_start + 5 {
+            assert_eq!(
+                &jpeg[sig_start..sig_start + 5],
+                b"Adobe",
+                "APP14 should have Adobe signature"
+            );
+        }
+
+        // Verify transform byte is 0 (RGB)
+        let transform_offset = pos + 4 + 11; // marker(2) + length(2) + Adobe(5) + version(2) + flags(4)
+        if jpeg.len() > transform_offset {
+            assert_eq!(
+                jpeg[transform_offset], 0,
+                "Transform byte should be 0 for RGB"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_ycbcr_no_app14_marker() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = Encoder::new().width(64).height(64);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    // YCbCr mode should NOT have APP14 marker (JFIF is sufficient)
+    let app14_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xEE]);
+    assert!(
+        app14_pos.is_none(),
+        "YCbCr mode should not include APP14 marker"
+    );
+}
