@@ -3,10 +3,14 @@
 //! Provides the public Encoder API that combines mozjpeg and jpegli approaches
 //! for Pareto-optimal JPEG compression.
 
-use crate::adaptive_quant::{compute_aq_field, compute_aq_strength_map, AdaptiveQuantConfig, AQStrengthMap};
+use crate::adaptive_quant::{compute_aq_field, compute_aq_strength_map, AdaptiveQuantConfig};
 use crate::color::{convert_rgb_to_ycbcr, deinterleave_ycbcr};
 use crate::consts::DCTSIZE2;
-use crate::dct::{forward_dct_8x8, forward_dct_8x8_int, level_shift, descale_for_quant, scale_for_trellis, quantize_block_int};
+use crate::dct::{
+    descale_for_quant, forward_dct_8x8, forward_dct_8x8_int, level_shift, quantize_block_int,
+    scale_for_trellis,
+};
+use crate::deringing::preprocess_deringing;
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, SymbolCounter};
 use crate::error::Error;
 use crate::huffman::{std_ac_luma, std_dc_luma, DerivedTable, FrequencyCounter, HuffTable};
@@ -14,10 +18,12 @@ use crate::progressive::{
     generate_minimal_progressive_scans, generate_simple_progressive_scans,
     generate_standard_progressive_scans, ScanInfo,
 };
-use crate::types::ScanScript;
-use crate::quant::{QuantTableSet, ZeroBiasParams, quantize_block_with_zero_bias, quant_vals_to_distance};
+use crate::quant::{
+    quant_vals_to_distance, quantize_block_with_zero_bias, QuantTableSet, ZeroBiasParams,
+};
 use crate::strategy::{select_strategy, EncodingApproach, SelectedStrategy};
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block, TrellisConfig};
+use crate::types::ScanScript;
 use crate::types::{EncodingStrategy, OptimizeFor, PixelFormat, Quality, Subsampling};
 use crate::Result;
 
@@ -229,6 +235,28 @@ impl Encoder {
         self
     }
 
+    /// Resolve whether deringing should be enabled based on explicit setting or strategy.
+    ///
+    /// Auto-selection:
+    /// - Mozjpeg strategy: enable (reduces ringing artifacts)
+    /// - Jpegli strategy: disable (jpegli has its own approach)
+    /// - Hybrid strategy: enable (benefits from deringing like mozjpeg)
+    fn should_use_deringing(&self, strategy: &SelectedStrategy) -> bool {
+        match self.overshoot_deringing {
+            Some(explicit) => explicit,
+            None => {
+                // Auto-select based on strategy
+                // Deringing is most beneficial for mozjpeg-style encoding
+                // For jpegli, the perceptual optimization handles ringing differently
+                match strategy.approach {
+                    EncodingApproach::Mozjpeg => true,
+                    EncodingApproach::Jpegli => false,
+                    EncodingApproach::Hybrid => true,
+                }
+            }
+        }
+    }
+
     /// Encode RGB image data to JPEG
     pub fn encode_rgb(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         self.validate_dimensions(width, height)?;
@@ -372,7 +400,12 @@ impl Encoder {
     /// - Perceptual coefficient optimization
     ///
     /// This is a fork that we can modify to improve upon jpegli.
-    fn encode_rgb_with_jpegli(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+    fn encode_rgb_with_jpegli(
+        &self,
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
         let q = self.quality.value();
 
         let result = crate::jpegli::Encoder::new()
@@ -408,7 +441,12 @@ impl Encoder {
     }
 
     /// Encode grayscale image using our forked jpegli encoder.
-    fn encode_gray_with_jpegli(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+    fn encode_gray_with_jpegli(
+        &self,
+        pixels: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
         let q = self.quality.value();
 
         let result = crate::jpegli::Encoder::new()
@@ -501,10 +539,14 @@ impl Encoder {
         let mut cb_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cr_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
 
+        // Resolve deringing setting (auto-selects based on strategy if not explicitly set)
+        let use_deringing = self.should_use_deringing(strategy);
+
         if use_jpegli_style {
             // Jpegli-style encoding: use zero-bias quantization with AQ strength
             // Use effective distance from actual quant table values (accounts for clamping)
-            let effective_distance = quant_vals_to_distance(&quant_tables.luma, &quant_tables.chroma);
+            let effective_distance =
+                quant_vals_to_distance(&quant_tables.luma, &quant_tables.chroma);
 
             // Create zero-bias params for each component using effective distance
             let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
@@ -516,15 +558,28 @@ impl Encoder {
                 enabled: true,
                 strength: 1.0,
             };
-            let aq_map = compute_aq_strength_map(y_plane, width, height, quant_tables.luma.values[1], &aq_config);
+            let aq_map = compute_aq_strength_map(
+                y_plane,
+                width,
+                height,
+                quant_tables.luma.values[1],
+                &aq_config,
+            );
+
+            // Get DC quant values for deringing (index 0 in quant table)
+            let luma_dc_quant = quant_tables.luma.values[0];
+            let chroma_dc_quant = quant_tables.chroma.values[0];
 
             for by in 0..height_blocks {
                 for bx in 0..width_blocks {
                     let aq_strength = aq_map.get(bx, by);
 
-                    // Y block: DCT + zero-bias quantization
+                    // Y block: level shift, optional deringing, DCT, quantization
                     let y_block = extract_block(y_plane, width, height, bx, by);
-                    let y_shifted = level_shift(&y_block);
+                    let mut y_shifted = level_shift(&y_block);
+                    if use_deringing {
+                        preprocess_deringing(&mut y_shifted, luma_dc_quant);
+                    }
                     let y_dct = forward_dct_8x8(&y_shifted);
                     let y_quant = quantize_block_with_zero_bias(
                         &y_dct,
@@ -536,7 +591,10 @@ impl Encoder {
 
                     // Cb block
                     let cb_block = extract_block(cb_plane, width, height, bx, by);
-                    let cb_shifted = level_shift(&cb_block);
+                    let mut cb_shifted = level_shift(&cb_block);
+                    if use_deringing {
+                        preprocess_deringing(&mut cb_shifted, chroma_dc_quant);
+                    }
                     let cb_dct = forward_dct_8x8(&cb_shifted);
                     let cb_quant = quantize_block_with_zero_bias(
                         &cb_dct,
@@ -548,7 +606,10 @@ impl Encoder {
 
                     // Cr block
                     let cr_block = extract_block(cr_plane, width, height, bx, by);
-                    let cr_shifted = level_shift(&cr_block);
+                    let mut cr_shifted = level_shift(&cr_block);
+                    if use_deringing {
+                        preprocess_deringing(&mut cr_shifted, chroma_dc_quant);
+                    }
                     let cr_dct = forward_dct_8x8(&cr_shifted);
                     let cr_quant = quantize_block_with_zero_bias(
                         &cr_dct,
@@ -587,6 +648,18 @@ impl Encoder {
                 None
             };
 
+            // Prepare deringing DC quant values (None if deringing disabled)
+            let luma_deringing = if use_deringing {
+                Some(quant_tables.luma.values[0])
+            } else {
+                None
+            };
+            let chroma_deringing = if use_deringing {
+                Some(quant_tables.chroma.values[0])
+            } else {
+                None
+            };
+
             for by in 0..height_blocks {
                 for bx in 0..width_blocks {
                     let block_idx = by * width_blocks + bx;
@@ -599,6 +672,7 @@ impl Encoder {
                         aq_field.get(bx, by),
                         strategy,
                         &ac_derived,
+                        luma_deringing,
                     );
                     y_coeffs.push(y_quant);
                     if let Some(ref mut raw) = y_raw_dct {
@@ -613,6 +687,7 @@ impl Encoder {
                         1.0,
                         strategy,
                         &ac_derived,
+                        chroma_deringing,
                     );
                     cb_coeffs.push(cb_quant);
                     if let Some(ref mut raw) = cb_raw_dct {
@@ -627,6 +702,7 @@ impl Encoder {
                         1.0,
                         strategy,
                         &ac_derived,
+                        chroma_deringing,
                     );
                     cr_coeffs.push(cr_quant);
                     if let Some(ref mut raw) = cr_raw_dct {
@@ -712,8 +788,12 @@ impl Encoder {
             }
 
             // Generate optimal tables from frequency counts
-            let dc_table = dc_counter.generate_table().unwrap_or_else(|_| std_dc_luma());
-            let ac_table = ac_counter.generate_table().unwrap_or_else(|_| std_ac_luma());
+            let dc_table = dc_counter
+                .generate_table()
+                .unwrap_or_else(|_| std_dc_luma());
+            let ac_table = ac_counter
+                .generate_table()
+                .unwrap_or_else(|_| std_ac_luma());
             (dc_table, ac_table)
         } else {
             // Use standard tables (for band-split progressive or when optimization is disabled)
@@ -833,14 +913,28 @@ impl Encoder {
             None
         };
 
+        // Resolve deringing setting and prepare DC quant value
+        let use_deringing = self.should_use_deringing(strategy);
+        let deringing_dc_quant = if use_deringing {
+            Some(quant_table.values[0])
+        } else {
+            None
+        };
+
         // Quantize all blocks first
         let mut all_coeffs: Vec<[i16; 64]> = Vec::with_capacity(total_blocks);
         for by in 0..height_blocks {
             for bx in 0..width_blocks {
                 let block_idx = by * width_blocks + bx;
                 let block = extract_block(y_plane, width, height, bx, by);
-                let (coeffs, raw) =
-                    self.quantize_block_with_raw(&block, &quant_table.values, 1.0, strategy, &ac_derived);
+                let (coeffs, raw) = self.quantize_block_with_raw(
+                    &block,
+                    &quant_table.values,
+                    1.0,
+                    strategy,
+                    &ac_derived,
+                    deringing_dc_quant,
+                );
                 all_coeffs.push(coeffs);
                 if let Some(ref mut raw_storage) = raw_dct {
                     raw_storage[block_idx] = raw;
@@ -886,8 +980,12 @@ impl Encoder {
                 symbol_counter.count_block(coeffs, 0, &mut dc_counter, &mut ac_counter);
             }
 
-            let dc_table = dc_counter.generate_table().unwrap_or_else(|_| std_dc_luma());
-            let ac_table = ac_counter.generate_table().unwrap_or_else(|_| std_ac_luma());
+            let dc_table = dc_counter
+                .generate_table()
+                .unwrap_or_else(|_| std_dc_luma());
+            let ac_table = ac_counter
+                .generate_table()
+                .unwrap_or_else(|_| std_ac_luma());
             (dc_table, ac_table)
         } else {
             (std_dc_luma(), std_ac_luma())
@@ -1092,6 +1190,7 @@ impl Encoder {
     /// Quantize a single 8x8 block (DCT + quantization)
     ///
     /// Uses integer Loeffler DCT for better precision and compression.
+    #[allow(dead_code)]
     fn quantize_block_impl(
         &self,
         block: &[u8; 64],
@@ -1100,7 +1199,9 @@ impl Encoder {
         strategy: &SelectedStrategy,
         ac_derived: &DerivedTable,
     ) -> [i16; 64] {
-        let (quantized, _) = self.quantize_block_with_raw(block, quant, aq_mult, strategy, ac_derived);
+        // No deringing in this simplified path
+        let (quantized, _) =
+            self.quantize_block_with_raw(block, quant, aq_mult, strategy, ac_derived, None);
         quantized
     }
 
@@ -1108,6 +1209,9 @@ impl Encoder {
     ///
     /// The raw DCT coefficients are needed for DC trellis optimization.
     /// They are stored scaled by 8 (matching mozjpeg's convention).
+    ///
+    /// # Arguments
+    /// * `deringing_dc_quant` - If Some(dc_quant), apply overshoot deringing using the given DC quant value
     fn quantize_block_with_raw(
         &self,
         block: &[u8; 64],
@@ -1115,6 +1219,7 @@ impl Encoder {
         aq_mult: f32,
         strategy: &SelectedStrategy,
         ac_derived: &DerivedTable,
+        deringing_dc_quant: Option<u16>,
     ) -> ([i16; 64], [i32; DCTSIZE2]) {
         // Apply AQ to quantization table
         let effective_quant = if aq_mult != 1.0 {
@@ -1123,8 +1228,13 @@ impl Encoder {
             *quant
         };
 
-        // Level shift and integer DCT (output is scaled by 8)
-        let shifted = level_shift(block);
+        // Level shift and optional deringing
+        let mut shifted = level_shift(block);
+        if let Some(dc_quant) = deringing_dc_quant {
+            preprocess_deringing(&mut shifted, dc_quant);
+        }
+
+        // Integer DCT (output is scaled by 8)
         let mut dct_coeffs = [0i16; 64];
         forward_dct_8x8_int(&shifted, &mut dct_coeffs);
 
@@ -1183,8 +1293,8 @@ impl Encoder {
         };
 
         // Convert to derived tables
-        let dc_dtbl = DerivedTable::from_huff_table(dc_htbl, true)
-            .expect("Failed to build DC derived table");
+        let dc_dtbl =
+            DerivedTable::from_huff_table(dc_htbl, true).expect("Failed to build DC derived table");
         let ac_dtbl = DerivedTable::from_huff_table(ac_htbl, false)
             .expect("Failed to build AC derived table");
 
@@ -1193,7 +1303,8 @@ impl Encoder {
             self.write_sos_progressive(output, scan);
 
             // Create encoder for this scan
-            let mut encoder = ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
+            let mut encoder =
+                ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
 
             // Get coefficients for the components in this scan
             let num_blocks = y_coeffs.len();
@@ -1271,15 +1382,16 @@ impl Encoder {
             ScanScript::Custom(custom_scans) => custom_scans.clone(),
         };
 
-        let dc_dtbl = DerivedTable::from_huff_table(dc_htbl, true)
-            .expect("Failed to build DC derived table");
+        let dc_dtbl =
+            DerivedTable::from_huff_table(dc_htbl, true).expect("Failed to build DC derived table");
         let ac_dtbl = DerivedTable::from_huff_table(ac_htbl, false)
             .expect("Failed to build AC derived table");
 
         for scan in &scans {
             self.write_sos_progressive(output, scan);
 
-            let mut encoder = ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
+            let mut encoder =
+                ProgressiveEncoder::new_standard_tables(dc_dtbl.clone(), ac_dtbl.clone());
 
             if scan.is_dc_scan() {
                 if scan.is_refinement() {
