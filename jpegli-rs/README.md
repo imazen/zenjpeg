@@ -54,6 +54,23 @@ std::fs::write("output.jpg", &jpeg_data)?;
 jpegli-rs achieves **10-17% better quality** (measured by DSSIM) at the same file size
 compared to mozjpeg, or produces **5-8% smaller files** at equivalent quality.
 
+## Development
+
+### Running FFI Comparison Tests
+
+To verify the Rust implementation matches the C++ original:
+
+```bash
+# Linux/macOS
+./internal/setup-ffi-tests.sh
+
+# Windows
+.\internal\setup-ffi-tests.ps1
+```
+
+This requires CMake, a C++ compiler, and ~10 minutes for the initial C++ build.
+See [internal/README.md](../internal/README.md) for details.
+
 ## Acknowledgments
 
 This is a Rust port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
