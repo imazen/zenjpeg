@@ -57,8 +57,7 @@ mod trellis;
 // Strategy selection
 mod strategy;
 
-// Forked jpegli encoder for experimental improvements
-pub mod jpegli;
+// Note: jpegli encoding is now delegated to the jpegli-rs crate dependency
 
 // Public API
 pub use encode::Encoder;
