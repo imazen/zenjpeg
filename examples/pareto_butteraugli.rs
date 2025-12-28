@@ -6,7 +6,7 @@
 //! - reference jpegli
 //! - reference mozjpeg
 
-use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{compute_butteraugli, ButteraugliParams};
 
 fn main() {
     // Create synthetic test image

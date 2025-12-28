@@ -150,7 +150,7 @@ cargo test -- --nocapture     # Show output
 
 ### Dev/Testing
 - `codec-eval` (path: ../codec-eval) - Quality metrics and comparison
-- `butteraugli-oxide` - Perceptual quality metric
+- `butteraugli` - Perceptual quality metric
 - `dssim` - DSSIM quality metric
 - `ssimulacra2` - SSIMULACRA2 quality metric
 - `png` - Image I/O
@@ -189,7 +189,7 @@ cargo run --release --example pareto_benchmark
 |--------|---------|-------|-------|
 | DSSIM | dssim | 0 = identical | Primary metric |
 | SSIMULACRA2 | ssimulacra2 | 100 = identical | Secondary |
-| Butteraugli | butteraugli-oxide | <1.0 good | Perceptual |
+| Butteraugli | butteraugli | <1.0 good | Perceptual |
 
 ## Common Issues
 
