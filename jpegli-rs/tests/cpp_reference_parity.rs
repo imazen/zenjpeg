@@ -146,7 +146,7 @@ fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) ->
 }
 
 fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
+    use butteraugli::{compute_butteraugli, ButteraugliParams};
 
     let params = ButteraugliParams::default();
     match compute_butteraugli(orig, comp, width, height, &params) {

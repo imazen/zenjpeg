@@ -2,7 +2,7 @@
 //!
 //! Usage: cargo run --release --example xyb_butteraugli_comparison
 
-use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
 use rgb::RGBA8;
 use std::fs;

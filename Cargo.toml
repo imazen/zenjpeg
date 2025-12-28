@@ -51,7 +51,7 @@ libc = "0.2"
 libloading = "0.8"
 
 # Published crates
-butteraugli-oxide = "0.2"
+butteraugli = "0.2"
 
 # SIMD dispatch
 multiversion = "0.7"

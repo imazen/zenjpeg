@@ -5,7 +5,7 @@
 //!
 //! Usage: cargo run --release --example xyb_distance_comparison
 
-use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
+use butteraugli::{compute_butteraugli, ButteraugliParams};
 use std::fs;
 use std::io::Write as IoWrite;
 use std::path::Path;
