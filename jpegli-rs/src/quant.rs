@@ -649,6 +649,136 @@ pub fn dequantize_block(
     result
 }
 
+/// Dequantizes a block of coefficients with optimal Laplacian biases.
+///
+/// This implements the dequantization bias from jpegli which reduces
+/// reconstruction error. The bias shifts reconstructed values toward
+/// zero based on coefficient statistics.
+///
+/// See: J. R. Price and M. Rabbani, "Dequantization bias for JPEG decompression"
+/// Proceedings International Conference on Information Technology: Coding and
+/// Computing (Cat. No.PR00540), 2000, pp. 30-35.
+pub fn dequantize_block_with_bias(
+    quantized: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    biases: &[f32; DCT_BLOCK_SIZE],
+) -> [f32; DCT_BLOCK_SIZE] {
+    let mut result = [0.0f32; DCT_BLOCK_SIZE];
+    for k in 0..DCT_BLOCK_SIZE {
+        let q = quantized[k];
+        if q == 0 {
+            // Zero coefficients stay zero
+            result[k] = 0.0;
+        } else {
+            // Apply bias: shift toward zero
+            // For positive: (q - bias) * quant
+            // For negative: (q + bias) * quant = (q - (-bias)) * quant
+            let bias = biases[k];
+            let biased_q = if q > 0 {
+                q as f32 - bias
+            } else {
+                q as f32 + bias
+            };
+            result[k] = biased_q * quant[k] as f32;
+        }
+    }
+    result
+}
+
+/// Statistics for computing optimal dequantization biases.
+#[derive(Debug, Clone)]
+pub struct DequantBiasStats {
+    /// Number of nonzero coefficients at each position (64 values per component)
+    pub nonzeros: Vec<i32>,
+    /// Sum of absolute values at each position (64 values per component)
+    pub sumabs: Vec<i32>,
+    /// Number of blocks processed per component
+    pub num_blocks: Vec<usize>,
+}
+
+impl DequantBiasStats {
+    /// Create new statistics tracker for the given number of components.
+    #[must_use]
+    pub fn new(num_components: usize) -> Self {
+        let size = num_components * DCT_BLOCK_SIZE;
+        Self {
+            nonzeros: vec![0; size],
+            sumabs: vec![0; size],
+            num_blocks: vec![0; num_components],
+        }
+    }
+
+    /// Gather statistics from a block of coefficients.
+    pub fn gather_block(&mut self, component: usize, coeffs: &[i16; DCT_BLOCK_SIZE]) {
+        let offset = component * DCT_BLOCK_SIZE;
+        for (k, &coeff) in coeffs.iter().enumerate() {
+            let abs_coeff = coeff.abs() as i32;
+            if abs_coeff > 0 {
+                self.nonzeros[offset + k] += 1;
+                self.sumabs[offset + k] += abs_coeff;
+            }
+        }
+        self.num_blocks[component] += 1;
+    }
+
+    /// Compute optimal Laplacian biases for a component.
+    ///
+    /// Returns biases for each coefficient position (64 values).
+    #[must_use]
+    pub fn compute_biases(&self, component: usize) -> [f32; DCT_BLOCK_SIZE] {
+        let mut biases = [0.0f32; DCT_BLOCK_SIZE];
+        let offset = component * DCT_BLOCK_SIZE;
+        let num_blocks = self.num_blocks[component];
+
+        if num_blocks == 0 {
+            return biases;
+        }
+
+        // DC coefficient (k=0) doesn't get bias
+        biases[0] = 0.0;
+
+        // AC coefficients
+        for k in 1..DCT_BLOCK_SIZE {
+            let n1 = self.nonzeros[offset + k];
+            if n1 == 0 {
+                // No nonzero coefficients at this position - use default 0.5
+                biases[k] = 0.5;
+                continue;
+            }
+
+            // Notation from Price & Rabbani paper
+            let n = num_blocks as f64;
+            let n1_f = n1 as f64;
+            let n0 = n - n1_f;
+            let s1 = self.sumabs[offset + k] as f64;
+
+            // lambda = average absolute value of nonzero coefficients
+            let lambda = s1 / n1_f;
+
+            // Compute gamma from equation in paper
+            // A = 2 * N * lambda, B = N1
+            let a = 2.0 * n * lambda;
+            let b = n1_f;
+
+            // gamma = (-N0 + sqrt(N0^2 + A*B)) / A
+            let gamma = (-n0 + (n0 * n0 + a * b).sqrt()) / a;
+
+            // Clamp gamma to valid range (must be in (0, 1) for log to work)
+            let gamma = gamma.clamp(0.0001, 0.9999);
+            let gamma2 = gamma * gamma;
+
+            // Compute bias from equation (5) in paper:
+            // bias = 0.5 * ((1 + gamma^2)/(1 - gamma^2) + 1/ln(gamma))
+            let bias = 0.5 * (((1.0 + gamma2) / (1.0 - gamma2)) + 1.0 / gamma.ln());
+
+            // Clamp to reasonable range
+            biases[k] = bias.clamp(0.0, 1.0) as f32;
+        }
+
+        biases
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
