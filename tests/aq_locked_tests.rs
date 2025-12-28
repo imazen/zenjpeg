@@ -329,7 +329,7 @@ fn test_aq_strength_range_cpp() {
 #[ignore] // Enable when full jpegli AQ is implemented
 fn test_aq_vs_cpp_testdata() {
     // Check if testdata exists
-    let Some(testdata_path) = common::get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
+    let Some(testdata_path) = common::try_get_cpp_testdata_path("ComputeAdaptiveQuantField.testdata") else {
         eprintln!("C++ testdata not found. Set CPP_TESTDATA_DIR env var.");
         return;
     };
