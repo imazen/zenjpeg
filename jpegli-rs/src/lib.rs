@@ -73,7 +73,7 @@ pub mod simplified_quant;
 pub mod adaptive_quant;
 
 // Quality metrics - re-export from the butteraugli-oxide crate
-pub use butteraugli_oxide;
+pub use butteraugli;
 
 // Error types
 pub mod error;

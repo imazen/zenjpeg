@@ -102,8 +102,8 @@ fn compare_image(
     let rust_dssim = compute_dssim(rgb, &rust_decoded, width as usize, height as usize);
 
     // Rust butteraugli
-    let bfly_params = butteraugli_oxide::ButteraugliParams::default();
-    let rust_butteraugli = butteraugli_oxide::compute_butteraugli(
+    let bfly_params = butteraugli::ButteraugliParams::default();
+    let rust_butteraugli = butteraugli::compute_butteraugli(
         rgb,
         &rust_decoded,
         width as usize,
@@ -140,7 +140,7 @@ fn compare_image(
     let cpp_dssim = compute_dssim(rgb, &cpp_decoded, width as usize, height as usize);
 
     // C++ butteraugli
-    let cpp_butteraugli = butteraugli_oxide::compute_butteraugli(
+    let cpp_butteraugli = butteraugli::compute_butteraugli(
         rgb,
         &cpp_decoded,
         width as usize,

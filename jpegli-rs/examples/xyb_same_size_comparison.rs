@@ -126,7 +126,7 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
 }
 
 fn compute_butteraugli(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use butteraugli_oxide::{compute_butteraugli, ButteraugliParams};
+    use butteraugli::{compute_butteraugli, ButteraugliParams};
 
     let params = ButteraugliParams::default();
     match compute_butteraugli(orig, comp, width, height, &params) {
