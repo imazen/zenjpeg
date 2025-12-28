@@ -221,9 +221,9 @@ fn trace_block(rgb: &[u8], width: usize, quality: f32, bx: usize, by: usize) {
     println!();
     println!("   DC = {:.1}, AC[1] = {:.1}", y_dct[0], y_dct[1]);
 
-    // Step 5: Quantization
+    // Step 5: Quantization (4:4:4 mode, so is_420 = false)
     let q = Quality::from_quality(quality);
-    let y_quant = generate_quant_table(q, 0, ColorSpace::YCbCr, false);
+    let y_quant = generate_quant_table(q, 0, ColorSpace::YCbCr, false, false);
 
     println!("\n5. Quantization table (Y, first 16):");
     print!("     ");
@@ -769,8 +769,9 @@ fn cmd_quant(args: &[String]) {
     println!();
 
     let q = Quality::from_quality(quality);
-    let y_table = generate_quant_table(q, 0, ColorSpace::YCbCr, false);
-    let c_table = generate_quant_table(q, 1, ColorSpace::YCbCr, false);
+    // Default to 4:4:4 mode (is_420 = false)
+    let y_table = generate_quant_table(q, 0, ColorSpace::YCbCr, false, false);
+    let c_table = generate_quant_table(q, 1, ColorSpace::YCbCr, false, false);
 
     println!("Y (Luminance) Table:");
     print_quant_table(&y_table.values);
