@@ -724,6 +724,7 @@ impl DequantBiasStats {
     /// Compute optimal Laplacian biases for a component.
     ///
     /// Returns biases for each coefficient position (64 values).
+    /// See: J. R. Price and M. Rabbani, "Dequantization bias for JPEG decompression"
     #[must_use]
     pub fn compute_biases(&self, component: usize) -> [f32; DCT_BLOCK_SIZE] {
         let mut biases = [0.0f32; DCT_BLOCK_SIZE];
@@ -746,33 +747,32 @@ impl DequantBiasStats {
                 continue;
             }
 
-            // Notation from Price & Rabbani paper
-            let n = num_blocks as f64;
-            let n1_f = n1 as f64;
-            let n0 = n - n1_f;
-            let s1 = self.sumabs[offset + k] as f64;
+            // Notation from C++ jpegli (render.cc ComputeOptimalLaplacianBiases):
+            // N = num_blocks, N1 = nonzeros[k], N0 = N - N1, S = sumabs[k]
+            // Note: C++ uses float variables with double literals, but we use f32 for result
+            let n = num_blocks as f32;
+            let n1_f = n1 as f32;
+            let n0 = num_blocks as f32 - n1_f; // Match C++ which uses (int - float)
+            let s = self.sumabs[offset + k] as f32;
 
-            // lambda = average absolute value of nonzero coefficients
-            let lambda = s1 / n1_f;
-
-            // Compute gamma from equation in paper
-            // A = 2 * N * lambda, B = N1
-            let a = 2.0 * n * lambda;
-            let b = n1_f;
-
+            // Compute gamma from eq. 11, with A and B being grouping of terms
+            // A = 4*S + 2*N
+            // B = 4*S - 2*N1
             // gamma = (-N0 + sqrt(N0^2 + A*B)) / A
-            let gamma = (-n0 + (n0 * n0 + a * b).sqrt()) / a;
+            // Using f64 for computation to match C++ mixed precision
+            let a: f64 = 4.0 * s as f64 + 2.0 * n as f64;
+            let b: f64 = 4.0 * s as f64 - 2.0 * n1_f as f64;
+            let n0_f64 = n0 as f64;
 
-            // Clamp gamma to valid range (must be in (0, 1) for log to work)
-            let gamma = gamma.clamp(0.0001, 0.9999);
-            let gamma2 = gamma * gamma;
+            let gamma: f32 = ((-n0_f64 + (n0_f64 * n0_f64 + a * b).sqrt()) / a) as f32;
+            let gamma2: f32 = gamma * gamma;
 
             // Compute bias from equation (5) in paper:
             // bias = 0.5 * ((1 + gamma^2)/(1 - gamma^2) + 1/ln(gamma))
-            let bias = 0.5 * (((1.0 + gamma2) / (1.0 - gamma2)) + 1.0 / gamma.ln());
-
-            // Clamp to reasonable range
-            biases[k] = bias.clamp(0.0, 1.0) as f32;
+            let gamma2_f64 = gamma2 as f64;
+            let gamma_f64 = gamma as f64;
+            biases[k] =
+                (0.5 * (((1.0 + gamma2_f64) / (1.0 - gamma2_f64)) + 1.0 / gamma_f64.ln())) as f32;
         }
 
         biases
