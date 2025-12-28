@@ -325,6 +325,7 @@ pub const STD_CHROMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
 
 /// Quality representation that can be either traditional (1-100) or butteraugli distance.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Quality {
     /// Traditional JPEG quality (1-100, where 100 is best)
     Traditional(f32),
