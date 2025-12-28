@@ -2152,8 +2152,11 @@ impl Encoder {
             // Subsampled mode - iterate in MCU order with padding
             let y_blocks_h = (width + 7) / 8;
             let y_blocks_v = (height + 7) / 8;
-            let c_blocks_h = ((width + 1) / h_samp + 7) / 8;
-            let c_blocks_v = ((height + 1) / v_samp + 7) / 8;
+            // Use ceiling division for chroma dimensions: (n + d - 1) / d
+            let c_width = (width + h_samp - 1) / h_samp;
+            let c_height = (height + v_samp - 1) / v_samp;
+            let c_blocks_h = (c_width + 7) / 8;
+            let c_blocks_v = (c_height + 7) / 8;
             let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
             let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
 
@@ -2299,8 +2302,11 @@ impl Encoder {
             // Subsampled mode - MCU interleaving
             let y_blocks_h = (width + 7) / 8;
             let y_blocks_v = (height + 7) / 8;
-            let c_blocks_h = ((width + 1) / h_samp + 7) / 8;
-            let c_blocks_v = ((height + 1) / v_samp + 7) / 8;
+            // Use ceiling division for chroma dimensions: (n + d - 1) / d
+            let c_width = (width + h_samp - 1) / h_samp;
+            let c_height = (height + v_samp - 1) / v_samp;
+            let c_blocks_h = (c_width + 7) / 8;
+            let c_blocks_v = (c_height + 7) / 8;
 
             let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
             let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
@@ -2392,8 +2398,11 @@ impl Encoder {
             // Subsampled mode - MCU interleaving
             let y_blocks_h = (width + 7) / 8;
             let y_blocks_v = (height + 7) / 8;
-            let c_blocks_h = ((width + 1) / h_samp + 7) / 8;
-            let c_blocks_v = ((height + 1) / v_samp + 7) / 8;
+            // Use ceiling division for chroma dimensions: (n + d - 1) / d
+            let c_width = (width + h_samp - 1) / h_samp;
+            let c_height = (height + v_samp - 1) / v_samp;
+            let c_blocks_h = (c_width + 7) / 8;
+            let c_blocks_v = (c_height + 7) / 8;
 
             // MCU dimensions in terms of Y blocks
             let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
