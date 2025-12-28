@@ -100,16 +100,14 @@ fn build_butteraugli_wrapper(
 }
 
 /// Build the jpegli test FFI wrapper (fast math, AQ functions)
-fn build_jpegli_test_ffi(
-    jpegli_root: &PathBuf,
-    build_dir: &PathBuf,
-    target: &str,
-) {
+fn build_jpegli_test_ffi(jpegli_root: &PathBuf, build_dir: &PathBuf, target: &str) {
     let ffi_source = jpegli_root.join("lib/extras/jpegli_test_ffi.cc");
 
     // Check if the source file exists (only in stepbystep2 branch)
     if !ffi_source.exists() {
-        println!("cargo:warning=jpegli_test_ffi.cc not found - FFI functions will not be available");
+        println!(
+            "cargo:warning=jpegli_test_ffi.cc not found - FFI functions will not be available"
+        );
         return;
     }
 
