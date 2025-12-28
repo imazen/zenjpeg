@@ -118,9 +118,11 @@ fn main() {
     // Check if zenjpeg is smaller but lower quality
     if zen.len() < moz.len() && zen_total_err > moz_total_err {
         println!();
-        println!("*** ISSUE: zenjpeg is {} bytes SMALLER but has {:.1}% MORE error ***",
-                 moz.len() - zen.len(),
-                 (zen_total_err as f64 / moz_total_err as f64 - 1.0) * 100.0);
+        println!(
+            "*** ISSUE: zenjpeg is {} bytes SMALLER but has {:.1}% MORE error ***",
+            moz.len() - zen.len(),
+            (zen_total_err as f64 / moz_total_err as f64 - 1.0) * 100.0
+        );
         println!("This suggests over-aggressive quantization or trellis.");
     }
 }

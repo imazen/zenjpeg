@@ -404,7 +404,10 @@ fn test_fast_benchmark() {
     let max_ratio = all_ratios.iter().cloned().fold(0.0f64, f64::max);
     let min_ratio = all_ratios.iter().cloned().fold(f64::MAX, f64::min);
 
-    println!("\nOverall: avg={:.3}, min={:.3}, max={:.3}", overall_avg, min_ratio, max_ratio);
+    println!(
+        "\nOverall: avg={:.3}, min={:.3}, max={:.3}",
+        overall_avg, min_ratio, max_ratio
+    );
 
     // Assert reasonable compression ratio
     // Current state (2024-12): ~1.4-2x larger than mozjpeg
@@ -437,12 +440,7 @@ fn test_fast_benchmark() {
         ("Uniform", &uniform_results),
     ] {
         for r in results {
-            assert!(
-                r.zenjpeg_size > 0,
-                "{} Q{}: Empty JPEG",
-                name,
-                r.quality
-            );
+            assert!(r.zenjpeg_size > 0, "{} Q{}: Empty JPEG", name, r.quality);
         }
     }
 }
@@ -464,12 +462,23 @@ fn test_compression_baseline() {
     // Hardcoded baseline values (update when compression improves)
     // Current: zenjpeg ~6000 bytes, mozjpeg ~4000 bytes at Q85 for product image
     let zen_max_baseline = 10000; // Fail if regression exceeds this
-    let moz_expected = 4000;      // Reference point
+    let moz_expected = 4000; // Reference point
 
     println!("\n=== Compression Baseline Test (Q85 Product) ===");
-    println!("zenjpeg: {} bytes (max baseline: {})", zen_jpeg.len(), zen_max_baseline);
-    println!("mozjpeg: {} bytes (expected: ~{})", moz_jpeg.len(), moz_expected);
-    println!("ratio: {:.3}", zen_jpeg.len() as f64 / moz_jpeg.len() as f64);
+    println!(
+        "zenjpeg: {} bytes (max baseline: {})",
+        zen_jpeg.len(),
+        zen_max_baseline
+    );
+    println!(
+        "mozjpeg: {} bytes (expected: ~{})",
+        moz_jpeg.len(),
+        moz_expected
+    );
+    println!(
+        "ratio: {:.3}",
+        zen_jpeg.len() as f64 / moz_jpeg.len() as f64
+    );
 
     assert!(
         zen_jpeg.len() < zen_max_baseline,

@@ -1,6 +1,6 @@
 //! Debug quality size behavior
 
-use zenjpeg::{Encoder, Quality, EncodingStrategy};
+use zenjpeg::{Encoder, EncodingStrategy, Quality};
 
 fn main() {
     let width = 128;

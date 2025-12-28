@@ -212,11 +212,7 @@ fn test_compute_aq_field_testdata_range() {
         );
 
         // STRICT CHECK: C++ produces values in 0.0-0.2 range per documentation
-        assert!(
-            min >= 0.0,
-            "aq_strength min {} should be >= 0.0",
-            min
-        );
+        assert!(min >= 0.0, "aq_strength min {} should be >= 0.0", min);
         assert!(
             max <= 0.21, // Small tolerance for floating point
             "aq_strength max {} should be <= 0.2",
@@ -281,7 +277,10 @@ fn test_rust_vs_cpp_aq() {
             "Input slice: {}x{} (padding: row={}, col={})",
             input_width, input_height, start_row, start_col
         );
-        println!("Processing: {}x{} pixels ({} x {} blocks)", img_width, img_height, actual_block_w, actual_block_h);
+        println!(
+            "Processing: {}x{} pixels ({} x {} blocks)",
+            img_width, img_height, actual_block_w, actual_block_h
+        );
 
         if img_width == 0 || img_height == 0 {
             eprintln!("Not enough data to process");

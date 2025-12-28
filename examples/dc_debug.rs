@@ -39,8 +39,10 @@ fn main() {
         let reconstructed = dequant + 128;
         let error = (p - reconstructed).abs();
 
-        println!("{:5} | {:6} | {:6} | {:7} | {:9} | {:7} | {:13} | {:5}",
-                 p, level_shifted, dct_dc, descaled, quantized, dequant, reconstructed, error);
+        println!(
+            "{:5} | {:6} | {:6} | {:7} | {:9} | {:7} | {:13} | {:5}",
+            p, level_shifted, dct_dc, descaled, quantized, dequant, reconstructed, error
+        );
     }
 
     // Now test what mozjpeg would do
@@ -70,8 +72,10 @@ fn main() {
         let reconstructed = dequant + 128;
         let error = (p - reconstructed).abs();
 
-        println!("{:5} | {:6} | {:6} | {:3} | {:9} | {:7} | {:13} | {:5}",
-                 p, level_shifted, dct_dc, q8, quantized, dequant, reconstructed, error);
+        println!(
+            "{:5} | {:6} | {:6} | {:3} | {:9} | {:7} | {:13} | {:5}",
+            p, level_shifted, dct_dc, q8, quantized, dequant, reconstructed, error
+        );
     }
 
     // Compare with actual encoded/decoded output
@@ -92,8 +96,12 @@ fn main() {
         // Get first pixel
         let decoded = zen_dec[0];
 
-        println!("Gray {}: decoded as {} (error: {})",
-                 test_value, decoded, (test_value as i32 - decoded as i32).abs());
+        println!(
+            "Gray {}: decoded as {} (error: {})",
+            test_value,
+            decoded,
+            (test_value as i32 - decoded as i32).abs()
+        );
     }
 
     // Test with RED color (R varies, G=B=0)
@@ -105,8 +113,8 @@ fn main() {
         let mut rgb = Vec::with_capacity(64 * 3);
         for _ in 0..64 {
             rgb.push(test_red); // R
-            rgb.push(0);        // G
-            rgb.push(0);        // B
+            rgb.push(0); // G
+            rgb.push(0); // B
         }
 
         let zen = zenjpeg::Encoder::new()
@@ -123,12 +131,18 @@ fn main() {
         let zen_dec = jpeg_decoder::Decoder::new(&zen[..]).decode().unwrap();
         let moz_dec = jpeg_decoder::Decoder::new(&moz[..]).decode().unwrap();
 
-        println!("Red {:3}: zen=({:3},{:3},{:3}) moz=({:3},{:3},{:3}) | zen_err={} moz_err={}",
-                 test_red,
-                 zen_dec[0], zen_dec[1], zen_dec[2],
-                 moz_dec[0], moz_dec[1], moz_dec[2],
-                 (test_red as i32 - zen_dec[0] as i32).abs(),
-                 (test_red as i32 - moz_dec[0] as i32).abs());
+        println!(
+            "Red {:3}: zen=({:3},{:3},{:3}) moz=({:3},{:3},{:3}) | zen_err={} moz_err={}",
+            test_red,
+            zen_dec[0],
+            zen_dec[1],
+            zen_dec[2],
+            moz_dec[0],
+            moz_dec[1],
+            moz_dec[2],
+            (test_red as i32 - zen_dec[0] as i32).abs(),
+            (test_red as i32 - moz_dec[0] as i32).abs()
+        );
     }
 
     // Calculate YCbCr for red values
@@ -182,14 +196,20 @@ fn main() {
         let moz_v = moz_dec[i * 3];
         let zen_e = (orig as i32 - zen_v as i32).abs();
         let moz_e = (orig as i32 - moz_v as i32).abs();
-        println!("{:4} | {:3} | {:3} | {:7} | {:7}", orig, zen_v, moz_v, zen_e, moz_e);
+        println!(
+            "{:4} | {:3} | {:3} | {:7} | {:7}",
+            orig, zen_v, moz_v, zen_e, moz_e
+        );
     }
 
     for i in 0..rgb_grad.len() {
         zen_total += (rgb_grad[i] as i64 - zen_dec[i] as i64).abs();
         moz_total += (rgb_grad[i] as i64 - moz_dec[i] as i64).abs();
     }
-    println!("\nTotal gradient block error: zen={} moz={}", zen_total, moz_total);
+    println!(
+        "\nTotal gradient block error: zen={} moz={}",
+        zen_total, moz_total
+    );
     println!("File size: zen={} moz={}", zen.len(), moz.len());
 
     // Test multi-block image to see where errors accumulate
@@ -232,9 +252,13 @@ fn main() {
         .unwrap();
 
     let zen16_dec = jpeg_decoder::Decoder::new(&zen16[..]).decode().unwrap();
-    let zen16_fast_dec = jpeg_decoder::Decoder::new(&zen16_fast[..]).decode().unwrap();
+    let zen16_fast_dec = jpeg_decoder::Decoder::new(&zen16_fast[..])
+        .decode()
+        .unwrap();
     let moz16_dec = jpeg_decoder::Decoder::new(&moz16[..]).decode().unwrap();
-    let moz16_fast_dec = jpeg_decoder::Decoder::new(&moz16_fast[..]).decode().unwrap();
+    let moz16_fast_dec = jpeg_decoder::Decoder::new(&moz16_fast[..])
+        .decode()
+        .unwrap();
 
     let mut zen16_err = 0i64;
     let mut zen16_fast_err = 0i64;
@@ -246,10 +270,17 @@ fn main() {
         moz16_err += (rgb16[i] as i64 - moz16_dec[i] as i64).abs();
         moz16_fast_err += (rgb16[i] as i64 - moz16_fast_dec[i] as i64).abs();
     }
-    println!("16x16 error: zen={} zen_fast={} moz={} moz_fast={}",
-             zen16_err, zen16_fast_err, moz16_err, moz16_fast_err);
-    println!("16x16 size:  zen={} zen_fast={} moz={} moz_fast={}",
-             zen16.len(), zen16_fast.len(), moz16.len(), moz16_fast.len());
+    println!(
+        "16x16 error: zen={} zen_fast={} moz={} moz_fast={}",
+        zen16_err, zen16_fast_err, moz16_err, moz16_fast_err
+    );
+    println!(
+        "16x16 size:  zen={} zen_fast={} moz={} moz_fast={}",
+        zen16.len(),
+        zen16_fast.len(),
+        moz16.len(),
+        moz16_fast.len()
+    );
 
     // 64x64 test
     println!();
@@ -294,7 +325,11 @@ fn main() {
         moz64_max = moz64_max.max(me);
     }
     let n = (width * height * 3) as f64;
-    println!("64x64 MAE: zen={:.3} moz={:.3}", zen64_err as f64 / n, moz64_err as f64 / n);
+    println!(
+        "64x64 MAE: zen={:.3} moz={:.3}",
+        zen64_err as f64 / n,
+        moz64_err as f64 / n
+    );
     println!("64x64 max: zen={} moz={}", zen64_max, moz64_max);
     println!("64x64 size: zen={} moz={}", zen64.len(), moz64.len());
 }

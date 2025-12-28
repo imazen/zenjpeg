@@ -147,9 +147,9 @@ impl ZeroBiasParams {
 
             // Offset is constant (matches jpegli - not scaled by distance)
             offset[k] = if k == 0 {
-                ZERO_BIAS_OFFSET_YCBCR_DC[c]  // 0.0 for DC
+                ZERO_BIAS_OFFSET_YCBCR_DC[c] // 0.0 for DC
             } else {
-                ZERO_BIAS_OFFSET_YCBCR_AC[c]  // ~0.59 for AC
+                ZERO_BIAS_OFFSET_YCBCR_AC[c] // ~0.59 for AC
             };
         }
 
@@ -225,13 +225,10 @@ pub fn quality_to_distance(quality: u8) -> f32 {
 /// Uses same values as luma table for better quality.
 /// Values >255 are clamped AFTER quality scaling, not in the base table.
 const MOZJPEG_CHROMA_QUANT: [u16; 64] = [
-    16, 16, 16, 18, 25, 37, 56, 85,
-    16, 17, 20, 27, 34, 40, 53, 75,
-    16, 20, 24, 31, 43, 62, 91, 135,
-    18, 27, 31, 40, 53, 74, 106, 156,
-    25, 34, 43, 53, 69, 94, 131, 189,
-    37, 40, 62, 74, 94, 124, 169, 238,
-    56, 53, 91, 106, 131, 169, 226, 311,  // 311 is valid, will clamp after scaling
+    16, 16, 16, 18, 25, 37, 56, 85, 16, 17, 20, 27, 34, 40, 53, 75, 16, 20, 24, 31, 43, 62, 91,
+    135, 18, 27, 31, 40, 53, 74, 106, 156, 25, 34, 43, 53, 69, 94, 131, 189, 37, 40, 62, 74, 94,
+    124, 169, 238, 56, 53, 91, 106, 131, 169, 226,
+    311, // 311 is valid, will clamp after scaling
     85, 75, 135, 156, 189, 238, 311, 418, // 311, 418 are valid, will clamp after scaling
 ];
 

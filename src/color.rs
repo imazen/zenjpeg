@@ -60,7 +60,11 @@ pub fn convert_rgb_to_ycbcr(rgb: &[u8], width: usize, height: usize) -> Vec<u8> 
 }
 
 /// Extract Y, Cb, Cr planes from interleaved YCbCr data
-pub fn deinterleave_ycbcr(ycbcr: &[u8], width: usize, height: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+pub fn deinterleave_ycbcr(
+    ycbcr: &[u8],
+    width: usize,
+    height: usize,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pixel_count = width * height;
     let mut y_plane = Vec::with_capacity(pixel_count);
     let mut cb_plane = Vec::with_capacity(pixel_count);

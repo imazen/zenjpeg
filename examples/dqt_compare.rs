@@ -49,7 +49,10 @@ fn main() {
                 total_diff += (zt[j] as i32 - mt[j] as i32).abs();
             }
         }
-        println!("Table {}: {} differences, total delta = {}", i, diffs, total_diff);
+        println!(
+            "Table {}: {} differences, total delta = {}",
+            i, diffs, total_diff
+        );
 
         // Show first 16 values
         println!("  First 16 values:");
@@ -63,7 +66,13 @@ fn main() {
         println!("  Differences (all positions):");
         for j in 0..64 {
             if zt[j] != mt[j] {
-                println!("  pos {:2}: zen={:3} moz={:3} (delta={})", j, zt[j], mt[j], (zt[j] as i32 - mt[j] as i32).abs());
+                println!(
+                    "  pos {:2}: zen={:3} moz={:3} (delta={})",
+                    j,
+                    zt[j],
+                    mt[j],
+                    (zt[j] as i32 - mt[j] as i32).abs()
+                );
             }
         }
         println!();
@@ -88,7 +97,10 @@ fn main() {
         moz_err += (rgb[i] as i64 - moz_dec[i] as i64).abs();
     }
     println!("Total absolute error: zen={} moz={}", zen_err, moz_err);
-    println!("Ratio: zenjpeg has {:.1}x more error", zen_err as f64 / moz_err as f64);
+    println!(
+        "Ratio: zenjpeg has {:.1}x more error",
+        zen_err as f64 / moz_err as f64
+    );
 }
 
 fn extract_all_dqt(jpeg: &[u8]) -> Vec<[u16; 64]> {

@@ -35,12 +35,12 @@ const CONST_BITS: i32 = 13;
 const PASS1_BITS: i32 = 2;
 
 // Pre-calculated fixed-point constants: FIX(x) = (x * (1 << CONST_BITS) + 0.5)
-const FIX_0_298631336: i32 = 2446;  // FIX(0.298631336)
-const FIX_0_390180644: i32 = 3196;  // FIX(0.390180644)
-const FIX_0_541196100: i32 = 4433;  // FIX(0.541196100)
-const FIX_0_765366865: i32 = 6270;  // FIX(0.765366865)
-const FIX_0_899976223: i32 = 7373;  // FIX(0.899976223)
-const FIX_1_175875602: i32 = 9633;  // FIX(1.175875602)
+const FIX_0_298631336: i32 = 2446; // FIX(0.298631336)
+const FIX_0_390180644: i32 = 3196; // FIX(0.390180644)
+const FIX_0_541196100: i32 = 4433; // FIX(0.541196100)
+const FIX_0_765366865: i32 = 6270; // FIX(0.765366865)
+const FIX_0_899976223: i32 = 7373; // FIX(0.899976223)
+const FIX_1_175875602: i32 = 9633; // FIX(1.175875602)
 const FIX_1_501321110: i32 = 12299; // FIX(1.501321110)
 const FIX_1_847759065: i32 = 15137; // FIX(1.847759065)
 const FIX_1_961570560: i32 = 16069; // FIX(1.961570560)
@@ -124,8 +124,8 @@ pub fn forward_dct_8x8_int(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE
         let tmp5 = tmp5 * FIX_2_053119869; // sqrt(2) * ( c1+c3-c5+c7)
         let tmp6 = tmp6 * FIX_3_072711026; // sqrt(2) * ( c1+c3+c5-c7)
         let tmp7 = tmp7 * FIX_1_501321110; // sqrt(2) * ( c1+c3-c5-c7)
-        let z1 = z1 * (-FIX_0_899976223);  // sqrt(2) * ( c7-c3)
-        let z2 = z2 * (-FIX_2_562915447);  // sqrt(2) * (-c1-c3)
+        let z1 = z1 * (-FIX_0_899976223); // sqrt(2) * ( c7-c3)
+        let z2 = z2 * (-FIX_2_562915447); // sqrt(2) * (-c1-c3)
         let z3 = z3 * (-FIX_1_961570560) + z5; // sqrt(2) * (-c3-c5)
         let z4 = z4 * (-FIX_0_390180644) + z5; // sqrt(2) * ( c5-c3)
 
@@ -623,7 +623,18 @@ pub fn scale_for_trellis(coeffs: &[i16; DCTSIZE2], output: &mut [i32; DCTSIZE2])
 }
 
 /// Quantize DCT coefficients using integer arithmetic.
-pub fn quantize_block_int(coeffs: &[i32; DCTSIZE2], quant: &[u16; DCTSIZE2], output: &mut [i16; DCTSIZE2]) {
+///
+/// For non-trellis path. Input should be descaled DCT (not scaled by 8).
+///
+/// # Arguments
+/// * `coeffs` - Descaled DCT coefficients
+/// * `quant` - Quantization table
+/// * `output` - Quantized coefficients
+pub fn quantize_block_int(
+    coeffs: &[i32; DCTSIZE2],
+    quant: &[u16; DCTSIZE2],
+    output: &mut [i16; DCTSIZE2],
+) {
     for i in 0..DCTSIZE2 {
         let c = coeffs[i];
         let q = quant[i] as i32;
@@ -778,14 +789,11 @@ mod tests {
 
     #[test]
     fn test_quantize_block_int() {
-        let coeffs = [100i32, 50, -30, 0, 200, -150, 10, 5,
-                      0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0];
+        let coeffs = [
+            100i32, 50, -30, 0, 200, -150, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         let quant = [16u16; 64];
         let mut output = [0i16; 64];
 

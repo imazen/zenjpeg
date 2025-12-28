@@ -27,13 +27,26 @@ fn main() {
         }
     }
 
-    println!("=== Butteraugli Pareto Comparison ({}x{}) ===\n", width, height);
+    println!(
+        "=== Butteraugli Pareto Comparison ({}x{}) ===\n",
+        width, height
+    );
     println!("Lower Butteraugli = better quality, Lower bpp = better compression");
     println!("Target: within 5% file size of reference implementations\n");
 
     // Header
-    println!("{:>4} | {:>12} {:>8} | {:>12} {:>8} | {:>12} {:>8} | {:>12} {:>8}",
-        "Q", "zen/moz bpp", "butter", "zen/jpegli", "butter", "ref jpegli", "butter", "mozjpeg", "butter");
+    println!(
+        "{:>4} | {:>12} {:>8} | {:>12} {:>8} | {:>12} {:>8} | {:>12} {:>8}",
+        "Q",
+        "zen/moz bpp",
+        "butter",
+        "zen/jpegli",
+        "butter",
+        "ref jpegli",
+        "butter",
+        "mozjpeg",
+        "butter"
+    );
     println!("{}", "-".repeat(105));
 
     for q in [30, 40, 50, 60, 70, 75, 80, 85, 90, 95] {
@@ -76,20 +89,29 @@ fn main() {
 
         // Decode all
         let zen_moz_dec = jpeg_decoder::Decoder::new(&zen_moz[..]).decode().unwrap();
-        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..]).decode().unwrap();
-        let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..]).decode().unwrap();
+        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..])
+            .decode()
+            .unwrap();
+        let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..])
+            .decode()
+            .unwrap();
         let moz_dec = jpeg_decoder::Decoder::new(&moz[..]).decode().unwrap();
 
         // Calculate Butteraugli scores
         let params = ButteraugliParams::default();
         let butter_zen_moz = compute_butteraugli(&rgb_data, &zen_moz_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
-        let butter_zen_jpegli = compute_butteraugli(&rgb_data, &zen_jpegli_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
+            .map(|r| r.score)
+            .unwrap_or(f64::NAN);
+        let butter_zen_jpegli =
+            compute_butteraugli(&rgb_data, &zen_jpegli_dec, width, height, &params)
+                .map(|r| r.score)
+                .unwrap_or(f64::NAN);
         let butter_jpegli = compute_butteraugli(&rgb_data, &jpegli_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
+            .map(|r| r.score)
+            .unwrap_or(f64::NAN);
         let butter_moz = compute_butteraugli(&rgb_data, &moz_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
+            .map(|r| r.score)
+            .unwrap_or(f64::NAN);
 
         // Calculate bpp
         let bits = 8.0;
@@ -98,9 +120,18 @@ fn main() {
         let bpp_jpegli = (jpegli_bytes.len() as f64 * bits) / pixels as f64;
         let bpp_moz = (moz.len() as f64 * bits) / pixels as f64;
 
-        println!("{:>4} | {:>12.4} {:>8.4} | {:>12.4} {:>8.4} | {:>12.4} {:>8.4} | {:>12.4} {:>8.4}",
-            q, bpp_zen_moz, butter_zen_moz, bpp_zen_jpegli, butter_zen_jpegli,
-            bpp_jpegli, butter_jpegli, bpp_moz, butter_moz);
+        println!(
+            "{:>4} | {:>12.4} {:>8.4} | {:>12.4} {:>8.4} | {:>12.4} {:>8.4} | {:>12.4} {:>8.4}",
+            q,
+            bpp_zen_moz,
+            butter_zen_moz,
+            bpp_zen_jpegli,
+            butter_zen_jpegli,
+            bpp_jpegli,
+            butter_jpegli,
+            bpp_moz,
+            butter_moz
+        );
     }
 
     println!("\n=== Pareto Analysis ===\n");
@@ -130,17 +161,25 @@ fn main() {
             .encode_rgb(&rgb_data, width as u32, height as u32)
             .unwrap();
 
-        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..]).decode().unwrap();
-        let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..]).decode().unwrap();
+        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..])
+            .decode()
+            .unwrap();
+        let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..])
+            .decode()
+            .unwrap();
         let moz_dec = jpeg_decoder::Decoder::new(&moz[..]).decode().unwrap();
 
         let params = ButteraugliParams::default();
-        let butter_zen_jpegli = compute_butteraugli(&rgb_data, &zen_jpegli_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
+        let butter_zen_jpegli =
+            compute_butteraugli(&rgb_data, &zen_jpegli_dec, width, height, &params)
+                .map(|r| r.score)
+                .unwrap_or(f64::NAN);
         let butter_jpegli = compute_butteraugli(&rgb_data, &jpegli_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
+            .map(|r| r.score)
+            .unwrap_or(f64::NAN);
         let butter_moz = compute_butteraugli(&rgb_data, &moz_dec, width, height, &params)
-            .map(|r| r.score).unwrap_or(f64::NAN);
+            .map(|r| r.score)
+            .unwrap_or(f64::NAN);
 
         let bpp_zen_jpegli = (zen_jpegli.len() as f64 * 8.0) / pixels as f64;
         let bpp_jpegli = (jpegli_bytes.len() as f64 * 8.0) / pixels as f64;
@@ -153,20 +192,39 @@ fn main() {
 
     // Find comparable points (similar bpp, compare quality)
     println!("At similar file sizes, which has better quality?\n");
-    println!("{:>15} vs {:>15} | {:>8} | {:>10} vs {:>10} | Winner",
-        "Encoder A", "Encoder B", "~bpp", "Butter A", "Butter B");
+    println!(
+        "{:>15} vs {:>15} | {:>8} | {:>10} vs {:>10} | Winner",
+        "Encoder A", "Encoder B", "~bpp", "Butter A", "Butter B"
+    );
     println!("{}", "-".repeat(85));
 
     // Compare zen/jpegli vs ref jpegli at each Q
     for q in [60, 75, 85, 95] {
-        let zen = all_points.iter().find(|p| p.0 == "zen/jpegli" && p.1 == q).unwrap();
-        let jpegli = all_points.iter().find(|p| p.0 == "ref jpegli" && p.1 == q).unwrap();
+        let zen = all_points
+            .iter()
+            .find(|p| p.0 == "zen/jpegli" && p.1 == q)
+            .unwrap();
+        let jpegli = all_points
+            .iter()
+            .find(|p| p.0 == "ref jpegli" && p.1 == q)
+            .unwrap();
 
         let bpp_diff_pct = ((zen.2 - jpegli.2) / jpegli.2 * 100.0).abs();
-        let winner = if zen.3 < jpegli.3 { "zen/jpegli" } else { "ref jpegli" };
+        let winner = if zen.3 < jpegli.3 {
+            "zen/jpegli"
+        } else {
+            "ref jpegli"
+        };
 
-        println!("{:>15} vs {:>15} | {:>8.3} | {:>10.4} vs {:>10.4} | {} (bpp diff: {:.1}%)",
-            format!("zen/jpegli Q{}", q), format!("ref jpegli Q{}", q),
-            (zen.2 + jpegli.2) / 2.0, zen.3, jpegli.3, winner, bpp_diff_pct);
+        println!(
+            "{:>15} vs {:>15} | {:>8.3} | {:>10.4} vs {:>10.4} | {} (bpp diff: {:.1}%)",
+            format!("zen/jpegli Q{}", q),
+            format!("ref jpegli Q{}", q),
+            (zen.2 + jpegli.2) / 2.0,
+            zen.3,
+            jpegli.3,
+            winner,
+            bpp_diff_pct
+        );
     }
 }

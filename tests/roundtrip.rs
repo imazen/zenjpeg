@@ -39,7 +39,11 @@ fn test_roundtrip_gradient_q75() {
     let jpeg_data = encoder.encode_rgb(&pixels, width, height).unwrap();
 
     // Verify JPEG structure
-    assert!(jpeg_data.len() > 100, "JPEG too small: {} bytes", jpeg_data.len());
+    assert!(
+        jpeg_data.len() > 100,
+        "JPEG too small: {} bytes",
+        jpeg_data.len()
+    );
     assert_eq!(jpeg_data[0], 0xFF, "Missing SOI marker");
     assert_eq!(jpeg_data[1], 0xD8, "Missing SOI marker");
     assert_eq!(jpeg_data[jpeg_data.len() - 2], 0xFF, "Missing EOI marker");
@@ -52,16 +56,23 @@ fn test_roundtrip_gradient_q75() {
     // Check if decoding works now
     match decoded {
         Ok(pixels) => {
-            assert_eq!(
-                pixels.len(),
-                width * height * 3,
-                "Wrong decoded size"
+            assert_eq!(pixels.len(), width * height * 3, "Wrong decoded size");
+            println!(
+                "Successfully decoded {}x{} image ({} bytes JPEG)",
+                width,
+                height,
+                jpeg_data.len()
             );
-            println!("Successfully decoded {}x{} image ({} bytes JPEG)", width, height, jpeg_data.len());
         }
         Err(e) => {
             // Still failing - show the error for debugging
-            eprintln!("Decode failed ({}x{}, {} bytes): {:?}", width, height, jpeg_data.len(), e);
+            eprintln!(
+                "Decode failed ({}x{}, {} bytes): {:?}",
+                width,
+                height,
+                jpeg_data.len(),
+                e
+            );
         }
     }
 }
@@ -125,7 +136,12 @@ fn test_encode_various_sizes() {
         // Verify basic JPEG structure
         assert_eq!(jpeg_data[0], 0xFF, "{}x{}: Missing SOI", width, height);
         assert_eq!(jpeg_data[1], 0xD8, "{}x{}: Missing SOI", width, height);
-        assert!(jpeg_data.len() > 100, "{}x{}: JPEG too small", width, height);
+        assert!(
+            jpeg_data.len() > 100,
+            "{}x{}: JPEG too small",
+            width,
+            height
+        );
 
         // NOTE: Decoding fails currently due to entropy encoding issues
         // TODO: Enable decode test once encoding is fixed
@@ -167,9 +183,7 @@ fn test_encoder_presets() {
     let pixels = create_gradient_image(width, height);
 
     // Test all presets
-    let default = Encoder::new()
-        .encode_rgb(&pixels, width, height)
-        .unwrap();
+    let default = Encoder::new().encode_rgb(&pixels, width, height).unwrap();
 
     let max_compression = Encoder::max_compression()
         .encode_rgb(&pixels, width, height)
@@ -277,13 +291,18 @@ fn test_progressive_encoding_rgb() {
             );
             println!(
                 "Progressive: Successfully decoded {}x{} image ({} bytes JPEG)",
-                width, height, jpeg_data.len()
+                width,
+                height,
+                jpeg_data.len()
             );
         }
         Err(e) => {
             eprintln!(
                 "Progressive decode failed ({}x{}, {} bytes): {:?}",
-                width, height, jpeg_data.len(), e
+                width,
+                height,
+                jpeg_data.len(),
+                e
             );
         }
     }
@@ -321,7 +340,10 @@ fn test_progressive_encoding_grayscale() {
             break;
         }
     }
-    assert!(found_sof2, "Progressive grayscale JPEG should contain SOF2 marker");
+    assert!(
+        found_sof2,
+        "Progressive grayscale JPEG should contain SOF2 marker"
+    );
 
     println!("Progressive grayscale: {} bytes", jpeg_data.len());
 }

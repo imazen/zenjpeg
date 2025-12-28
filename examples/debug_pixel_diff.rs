@@ -19,10 +19,10 @@ fn main() {
     for q in [30, 50, 70, 95] {
         let encoder = Encoder::new().quality(Quality::Standard(q));
         let jpeg_data = encoder.encode_rgb(&pixels, width, height).unwrap();
-        
+
         let mut decoder = jpeg_decoder::Decoder::new(&jpeg_data[..]);
         let decoded = decoder.decode().unwrap();
-        
+
         // Compute max and average difference
         let mut max_diff = 0i32;
         let mut sum_diff = 0i64;
@@ -32,8 +32,13 @@ fn main() {
             sum_diff += diff as i64;
         }
         let avg_diff = sum_diff as f64 / pixels.len() as f64;
-        
-        println!("Q{}: size={} bytes, max_diff={}, avg_diff={:.2}", 
-            q, jpeg_data.len(), max_diff, avg_diff);
+
+        println!(
+            "Q{}: size={} bytes, max_diff={}, avg_diff={:.2}",
+            q,
+            jpeg_data.len(),
+            max_diff,
+            avg_diff
+        );
     }
 }

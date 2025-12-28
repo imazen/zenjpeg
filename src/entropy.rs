@@ -158,11 +158,7 @@ impl EntropyEncoder {
                 let (code, size) = self.ac_table.get_code(rs);
                 self.writer.write_bits(code, size);
 
-                let ac_val = if ac < 0 {
-                    ac + (1 << ac_cat) - 1
-                } else {
-                    ac
-                };
+                let ac_val = if ac < 0 { ac + (1 << ac_cat) - 1 } else { ac };
                 self.writer.write_bits(ac_val as u32, ac_cat);
 
                 run = 0;

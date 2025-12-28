@@ -47,8 +47,7 @@ impl RdCurve {
         let mut total_diff = 0.0;
         let mut total_weight = 0.0;
 
-        for ((q1, bpp1, dssim1), (q2, bpp2, dssim2)) in
-            self.points.iter().zip(other.points.iter())
+        for ((q1, bpp1, dssim1), (q2, bpp2, dssim2)) in self.points.iter().zip(other.points.iter())
         {
             if q1 != q2 {
                 return f64::MAX;
@@ -168,8 +167,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (i, cluster) in clusters.iter().enumerate() {
         let rep = &cluster.representative;
-        let avg_bpp: f64 = rep.points.iter().map(|(_, bpp, _)| bpp).sum::<f64>()
-            / rep.points.len() as f64;
+        let avg_bpp: f64 =
+            rep.points.iter().map(|(_, bpp, _)| bpp).sum::<f64>() / rep.points.len() as f64;
 
         let cluster_original_size: usize = cluster.members.iter().map(|c| c.original_size).sum();
         total_original_size += cluster_original_size;
@@ -295,9 +294,7 @@ fn load_image(path: &Path) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error
 
             let rgb = match info.pixel_format {
                 jpeg_decoder::PixelFormat::RGB24 => pixels,
-                jpeg_decoder::PixelFormat::L8 => {
-                    pixels.iter().flat_map(|&g| [g, g, g]).collect()
-                }
+                jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
                 _ => return Err("Unsupported JPEG pixel format".into()),
             };
 
@@ -421,7 +418,10 @@ fn write_curve_data(output_dir: &Path, clusters: &[Cluster]) -> Result<(), std::
         "Original images: {}\n",
         clusters.iter().map(|c| c.members.len()).sum::<usize>()
     ));
-    summary.push_str(&format!("Reduced to: {} representatives\n\n", clusters.len()));
+    summary.push_str(&format!(
+        "Reduced to: {} representatives\n\n",
+        clusters.len()
+    ));
 
     summary.push_str("## Clusters\n\n");
     for (i, cluster) in clusters.iter().enumerate() {

@@ -26,7 +26,10 @@ fn main() {
     // Reference: C mozjpeg at Q75 produces DSSIM ~0.000886
     let target_dssim = 0.000886;
 
-    println!("Finding quality level to match C mozjpeg DSSIM {:.6}", target_dssim);
+    println!(
+        "Finding quality level to match C mozjpeg DSSIM {:.6}",
+        target_dssim
+    );
     println!();
 
     // Try different quality levels
@@ -43,18 +46,30 @@ fn main() {
 
         let dssim = compute_dssim(&rgb, &decoded, width, height);
 
-        let status = if dssim <= target_dssim { "✓ matches" } else { "" };
-        println!("Q{:2}: {} bytes, DSSIM={:.6} {}", q, jpeg.len(), dssim, status);
+        let status = if dssim <= target_dssim {
+            "✓ matches"
+        } else {
+            ""
+        };
+        println!(
+            "Q{:2}: {} bytes, DSSIM={:.6} {}",
+            q,
+            jpeg.len(),
+            dssim,
+            status
+        );
     }
 }
 
 fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     let attr = Dssim::new();
 
-    let orig_rgba: Vec<RGBA8> = original.chunks(3)
+    let orig_rgba: Vec<RGBA8> = original
+        .chunks(3)
         .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
         .collect();
-    let dec_rgba: Vec<RGBA8> = decoded.chunks(3)
+    let dec_rgba: Vec<RGBA8> = decoded
+        .chunks(3)
         .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
         .collect();
 

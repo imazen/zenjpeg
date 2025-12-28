@@ -82,10 +82,7 @@ fn test_quality_vs_dssim() {
         let dssim = compute_dssim(&original, &decoded, width, height);
         let size = jpeg_data.len();
 
-        println!(
-            "Q{}: size={} bytes, DSSIM={:.6}",
-            q, size, dssim
-        );
+        println!("Q{}: size={} bytes, DSSIM={:.6}", q, size, dssim);
 
         // Higher quality should give lower DSSIM (better)
         if q > 30 {
@@ -180,7 +177,11 @@ fn test_strategy_selection_affects_quality() {
     );
 
     // Both should produce reasonable quality
-    assert!(low_dssim < 0.05, "Low mode DSSIM too high: {:.6}", low_dssim);
+    assert!(
+        low_dssim < 0.05,
+        "Low mode DSSIM too high: {:.6}",
+        low_dssim
+    );
     assert!(
         high_dssim < 0.05,
         "High mode DSSIM too high: {:.6}",
@@ -200,17 +201,11 @@ fn test_compare_with_reference_encoders() {
     // zenjpeg
     let zen_encoder = Encoder::new().quality(Quality::Standard(quality));
     let zen_jpeg = zen_encoder.encode_rgb(&original, width, height).unwrap();
-    let zen_decoded = jpeg_decoder::Decoder::new(&zen_jpeg[..])
-        .decode()
-        .unwrap();
+    let zen_decoded = jpeg_decoder::Decoder::new(&zen_jpeg[..]).decode().unwrap();
     let zen_dssim = compute_dssim(&original, &zen_decoded, width, height);
 
     println!("=== Quality {} Comparison ===", quality);
-    println!(
-        "zenjpeg:  {} bytes, DSSIM={:.6}",
-        zen_jpeg.len(),
-        zen_dssim
-    );
+    println!("zenjpeg:  {} bytes, DSSIM={:.6}", zen_jpeg.len(), zen_dssim);
 
     // mozjpeg-oxide (if available)
     // TODO: Add when API is stable

@@ -14,12 +14,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 /// Calculate DSSIM between two RGB images
-fn calculate_dssim(
-    original: &[u8],
-    decoded: &[u8],
-    width: usize,
-    height: usize,
-) -> f64 {
+fn calculate_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     use dssim::Dssim;
     use imgref::ImgVec;
     use rgb::RGB;
@@ -27,19 +22,35 @@ fn calculate_dssim(
     // dssim requires f32 images with values in 0.0-1.0 range
     let orig_rgb: Vec<RGB<f32>> = original
         .chunks_exact(3)
-        .map(|c| RGB::new(c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0))
+        .map(|c| {
+            RGB::new(
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            )
+        })
         .collect();
     let dec_rgb: Vec<RGB<f32>> = decoded
         .chunks_exact(3)
-        .map(|c| RGB::new(c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0))
+        .map(|c| {
+            RGB::new(
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            )
+        })
         .collect();
 
     let orig_img = ImgVec::new(orig_rgb, width, height);
     let dec_img = ImgVec::new(dec_rgb, width, height);
 
     let attr = Dssim::new();
-    let orig_ref = attr.create_image(&orig_img).expect("Failed to create orig image");
-    let dec_ref = attr.create_image(&dec_img).expect("Failed to create dec image");
+    let orig_ref = attr
+        .create_image(&orig_img)
+        .expect("Failed to create orig image");
+    let dec_ref = attr
+        .create_image(&dec_img)
+        .expect("Failed to create dec image");
 
     let (val, _) = attr.compare(&orig_ref, dec_ref);
     val.into()
@@ -141,8 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let with_dssim = calculate_dssim(&rgb_data, &with_decoded, width, height);
             let without_dssim = calculate_dssim(&rgb_data, &without_decoded, width, height);
 
-            let size_diff_pct =
-                (with_dering.len() as f64 - without_dering.len() as f64) / without_dering.len() as f64 * 100.0;
+            let size_diff_pct = (with_dering.len() as f64 - without_dering.len() as f64)
+                / without_dering.len() as f64
+                * 100.0;
             let dssim_diff = with_dssim - without_dssim;
 
             all_results.push(DeringResult {
@@ -162,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nProcessing: synthetic_white_bg");
     let (width, height) = (256, 256);
     let mut pixels = vec![255u8; width * height * 3]; // White background
-    // Add a dark rectangle
+                                                      // Add a dark rectangle
     for y in 64..192 {
         for x in 64..192 {
             let idx = (y * width + x) * 3;
@@ -197,12 +209,153 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let with_dssim = calculate_dssim(&pixels, &with_decoded, width, height);
         let without_dssim = calculate_dssim(&pixels, &without_decoded, width, height);
 
-        let size_diff_pct =
-            (with_dering.len() as f64 - without_dering.len() as f64) / without_dering.len() as f64 * 100.0;
+        let size_diff_pct = (with_dering.len() as f64 - without_dering.len() as f64)
+            / without_dering.len() as f64
+            * 100.0;
         let dssim_diff = with_dssim - without_dssim;
 
         all_results.push(DeringResult {
             image: "synthetic_white_bg".to_string(),
+            quality,
+            with_dering_size: with_dering.len(),
+            without_dering_size: without_dering.len(),
+            with_dering_dssim: with_dssim,
+            without_dering_dssim: without_dssim,
+            size_diff_pct,
+            dssim_diff,
+        });
+    }
+
+    // Generate synthetic test with many sharp lines (worst case for ringing)
+    println!("\nProcessing: synthetic_lines");
+    let (width, height) = (512, 512);
+    let mut pixels = vec![255u8; width * height * 3]; // White background
+
+    // Add many horizontal black lines (1px wide, spaced 8px apart)
+    for y in (0..height).step_by(8) {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            pixels[idx] = 0;
+            pixels[idx + 1] = 0;
+            pixels[idx + 2] = 0;
+        }
+    }
+    // Add many vertical black lines
+    for y in 0..height {
+        for x in (0..width).step_by(8) {
+            let idx = (y * width + x) * 3;
+            pixels[idx] = 0;
+            pixels[idx + 1] = 0;
+            pixels[idx + 2] = 0;
+        }
+    }
+
+    let saturated_count = pixels.iter().filter(|&&p| p == 0 || p == 255).count();
+    let saturated_pct = saturated_count as f64 / pixels.len() as f64 * 100.0;
+    println!("  Saturated pixels: {:.1}%", saturated_pct);
+
+    // Test at low quality levels for lines (Q10 can cause decoder issues)
+    let low_quality_levels: Vec<u8> = vec![15, 20, 25, 30, 40];
+    println!("  Testing at low quality: {:?}", low_quality_levels);
+
+    for &quality in &low_quality_levels {
+        // Use baseline encoding (no progressive) for synthetic tests to avoid decoder issues
+        let with_dering = mozjpeg_oxide::Encoder::max_compression()
+            .quality(quality)
+            .subsampling(mozjpeg_oxide::Subsampling::S420)
+            .overshoot_deringing(true)
+            .optimize_scans(false)  // Baseline for compatibility
+            .encode_rgb(&pixels, width as u32, height as u32)?;
+
+        let without_dering = mozjpeg_oxide::Encoder::max_compression()
+            .quality(quality)
+            .subsampling(mozjpeg_oxide::Subsampling::S420)
+            .overshoot_deringing(false)
+            .optimize_scans(false)  // Baseline for compatibility
+            .encode_rgb(&pixels, width as u32, height as u32)?;
+
+        let with_decoded = decode_jpeg(&with_dering)?;
+        let without_decoded = decode_jpeg(&without_dering)?;
+
+        let with_dssim = calculate_dssim(&pixels, &with_decoded, width, height);
+        let without_dssim = calculate_dssim(&pixels, &without_decoded, width, height);
+
+        let size_diff_pct = (with_dering.len() as f64 - without_dering.len() as f64)
+            / without_dering.len() as f64
+            * 100.0;
+        let dssim_diff = with_dssim - without_dssim;
+
+        all_results.push(DeringResult {
+            image: "synthetic_lines".to_string(),
+            quality,
+            with_dering_size: with_dering.len(),
+            without_dering_size: without_dering.len(),
+            with_dering_dssim: with_dssim,
+            without_dering_dssim: without_dssim,
+            size_diff_pct,
+            dssim_diff,
+        });
+    }
+
+    // Generate synthetic test with text-like patterns (alternating blocks)
+    println!("\nProcessing: synthetic_text");
+    let (width, height) = (512, 512);
+    let mut pixels = vec![255u8; width * height * 3]; // White background
+
+    // Simulate text: small black rectangles on white
+    for block_y in 0..(height / 16) {
+        for block_x in 0..(width / 8) {
+            // Every other block is "text"
+            if (block_y + block_x) % 2 == 0 {
+                for dy in 2..14 {
+                    for dx in 1..7 {
+                        let y = block_y * 16 + dy;
+                        let x = block_x * 8 + dx;
+                        if y < height && x < width {
+                            let idx = (y * width + x) * 3;
+                            pixels[idx] = 0;
+                            pixels[idx + 1] = 0;
+                            pixels[idx + 2] = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let saturated_count = pixels.iter().filter(|&&p| p == 0 || p == 255).count();
+    let saturated_pct = saturated_count as f64 / pixels.len() as f64 * 100.0;
+    println!("  Saturated pixels: {:.1}%", saturated_pct);
+
+    for &quality in &low_quality_levels {
+        // Use baseline encoding (no progressive) for synthetic tests to avoid decoder issues
+        let with_dering = mozjpeg_oxide::Encoder::max_compression()
+            .quality(quality)
+            .subsampling(mozjpeg_oxide::Subsampling::S420)
+            .overshoot_deringing(true)
+            .optimize_scans(false)  // Baseline for compatibility
+            .encode_rgb(&pixels, width as u32, height as u32)?;
+
+        let without_dering = mozjpeg_oxide::Encoder::max_compression()
+            .quality(quality)
+            .subsampling(mozjpeg_oxide::Subsampling::S420)
+            .overshoot_deringing(false)
+            .optimize_scans(false)  // Baseline for compatibility
+            .encode_rgb(&pixels, width as u32, height as u32)?;
+
+        let with_decoded = decode_jpeg(&with_dering)?;
+        let without_decoded = decode_jpeg(&without_dering)?;
+
+        let with_dssim = calculate_dssim(&pixels, &with_decoded, width, height);
+        let without_dssim = calculate_dssim(&pixels, &without_decoded, width, height);
+
+        let size_diff_pct = (with_dering.len() as f64 - without_dering.len() as f64)
+            / without_dering.len() as f64
+            * 100.0;
+        let dssim_diff = with_dssim - without_dssim;
+
+        all_results.push(DeringResult {
+            image: "synthetic_text".to_string(),
             quality,
             with_dering_size: with_dering.len(),
             without_dering_size: without_dering.len(),
@@ -231,12 +384,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let avg_size_diff: f64 = q_results.iter().map(|r| r.size_diff_pct).sum::<f64>() / q_results.len() as f64;
-        let avg_dssim_diff: f64 = q_results.iter().map(|r| r.dssim_diff).sum::<f64>() / q_results.len() as f64;
-        let avg_with_size: f64 = q_results.iter().map(|r| r.with_dering_size as f64).sum::<f64>() / q_results.len() as f64;
-        let avg_without_size: f64 = q_results.iter().map(|r| r.without_dering_size as f64).sum::<f64>() / q_results.len() as f64;
-        let avg_with_dssim: f64 = q_results.iter().map(|r| r.with_dering_dssim).sum::<f64>() / q_results.len() as f64;
-        let avg_without_dssim: f64 = q_results.iter().map(|r| r.without_dering_dssim).sum::<f64>() / q_results.len() as f64;
+        let avg_size_diff: f64 =
+            q_results.iter().map(|r| r.size_diff_pct).sum::<f64>() / q_results.len() as f64;
+        let avg_dssim_diff: f64 =
+            q_results.iter().map(|r| r.dssim_diff).sum::<f64>() / q_results.len() as f64;
+        let avg_with_size: f64 = q_results
+            .iter()
+            .map(|r| r.with_dering_size as f64)
+            .sum::<f64>()
+            / q_results.len() as f64;
+        let avg_without_size: f64 = q_results
+            .iter()
+            .map(|r| r.without_dering_size as f64)
+            .sum::<f64>()
+            / q_results.len() as f64;
+        let avg_with_dssim: f64 =
+            q_results.iter().map(|r| r.with_dering_dssim).sum::<f64>() / q_results.len() as f64;
+        let avg_without_dssim: f64 = q_results
+            .iter()
+            .map(|r| r.without_dering_dssim)
+            .sum::<f64>()
+            / q_results.len() as f64;
 
         println!(
             "{:>5} {:>12.0} {:>12.0} {:>+9.2}% {:>12.6} {:>12.6} {:>+10.6}",
@@ -250,16 +418,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Per-image summary for synthetic
-    println!("\n=== SYNTHETIC WHITE BACKGROUND (high saturated %) ===");
-    let synthetic_results: Vec<_> = all_results.iter().filter(|r| r.image == "synthetic_white_bg").collect();
+    // Per-image summary for synthetic tests
+    println!("\n=== SYNTHETIC WHITE BACKGROUND ===");
+    let synthetic_results: Vec<_> = all_results
+        .iter()
+        .filter(|r| r.image == "synthetic_white_bg")
+        .collect();
     for r in &synthetic_results {
         println!(
-            "Q{}: Size {:>+5.1}%, DSSIM {:>+.6} ({})",
+            "Q{:>2}: Size {:>+5.1}%, DSSIM {:>+.6} ({})",
             r.quality,
             r.size_diff_pct,
             r.dssim_diff,
-            if r.dssim_diff < 0.0 { "BETTER" } else { "worse" }
+            if r.dssim_diff < 0.0 {
+                "BETTER"
+            } else {
+                "worse"
+            }
+        );
+    }
+
+    println!("\n=== SYNTHETIC LINES (grid pattern, 100% saturated) ===");
+    let lines_results: Vec<_> = all_results
+        .iter()
+        .filter(|r| r.image == "synthetic_lines")
+        .collect();
+    for r in &lines_results {
+        println!(
+            "Q{:>2}: Size {:>+5.1}%, DSSIM {:>+.6} ({})",
+            r.quality,
+            r.size_diff_pct,
+            r.dssim_diff,
+            if r.dssim_diff < 0.0 {
+                "BETTER"
+            } else {
+                "worse"
+            }
+        );
+    }
+
+    println!("\n=== SYNTHETIC TEXT (checkerboard blocks, 100% saturated) ===");
+    let text_results: Vec<_> = all_results
+        .iter()
+        .filter(|r| r.image == "synthetic_text")
+        .collect();
+    for r in &text_results {
+        println!(
+            "Q{:>2}: Size {:>+5.1}%, DSSIM {:>+.6} ({})",
+            r.quality,
+            r.size_diff_pct,
+            r.dssim_diff,
+            if r.dssim_diff < 0.0 {
+                "BETTER"
+            } else {
+                "worse"
+            }
         );
     }
 

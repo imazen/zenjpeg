@@ -157,7 +157,13 @@ pub fn compute_aq_strength_map(
     // Convert to f32 for computation
     let y_plane_f32: Vec<f32> = y_plane.iter().map(|&v| v as f32).collect();
 
-    compute_aq_strength_map_impl(&y_plane_f32, width, height, y_quant_01 as f32, config.strength)
+    compute_aq_strength_map_impl(
+        &y_plane_f32,
+        width,
+        height,
+        y_quant_01 as f32,
+        config.strength,
+    )
 }
 
 /// Converts quant_field to aq_strength.
@@ -457,7 +463,8 @@ fn per_block_modulations(
 
     // Compute dampen based on y_quant_01
     let dampen = if y_quant_01 >= K_DAMPEN_RAMP_START {
-        let d = 1.0 - (y_quant_01 - K_DAMPEN_RAMP_START) / (K_DAMPEN_RAMP_END - K_DAMPEN_RAMP_START);
+        let d =
+            1.0 - (y_quant_01 - K_DAMPEN_RAMP_START) / (K_DAMPEN_RAMP_END - K_DAMPEN_RAMP_START);
         d.max(0.0)
     } else {
         1.0

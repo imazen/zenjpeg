@@ -82,16 +82,18 @@ mod tests {
 #[cfg(test)]
 mod debug_tests {
     use super::*;
-    
+
     #[test]
     fn debug_quality_encoding() {
         use quant::QuantTableSet;
-        
+
         // Check quant table values at different quality levels
         for q in [30, 50, 70, 95] {
             let tables = QuantTableSet::standard(q as u8);
-            println!("Q{}: luma[0]={}, luma[1]={}, luma[63]={}", 
-                q, tables.luma.values[0], tables.luma.values[1], tables.luma.values[63]);
+            println!(
+                "Q{}: luma[0]={}, luma[1]={}, luma[63]={}",
+                q, tables.luma.values[0], tables.luma.values[1], tables.luma.values[63]
+            );
         }
     }
 }

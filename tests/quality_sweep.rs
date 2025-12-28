@@ -63,7 +63,10 @@ fn test_quality_sweep() {
     println!("\n=== Quality Sweep Experiment ===");
     println!("Image: {}x{} synthetic test pattern", width, height);
     println!();
-    println!("{:>4} | {:>8} | {:>10} | {:>8}", "Q", "Size", "DSSIM", "BPP");
+    println!(
+        "{:>4} | {:>8} | {:>10} | {:>8}",
+        "Q", "Size", "DSSIM", "BPP"
+    );
     println!("{}", "-".repeat(45));
 
     let mut prev_dssim = f64::MAX;
@@ -86,7 +89,9 @@ fn test_quality_sweep() {
         if q > 20 {
             assert!(
                 dssim <= prev_dssim * 1.2, // Allow 20% tolerance for noise
-                "Q{} should have better quality than Q{}", q, q - 10
+                "Q{} should have better quality than Q{}",
+                q,
+                q - 10
             );
         }
 
@@ -105,13 +110,16 @@ fn test_trellis_vs_no_trellis_sweep() {
     let qualities = [30, 50, 70, 90];
 
     println!("\n=== Trellis vs No-Trellis Comparison ===");
-    println!("{:>4} | {:>12} | {:>12} | {:>10}", "Q", "With Trellis", "No Trellis", "Improvement");
+    println!(
+        "{:>4} | {:>12} | {:>12} | {:>10}",
+        "Q", "With Trellis", "No Trellis", "Improvement"
+    );
     println!("{}", "-".repeat(55));
 
     for q in qualities {
         // With trellis (default for low-mid quality)
         let with_trellis = Encoder::new()
-            .quality(Quality::Low(q))  // Forces mozjpeg strategy with trellis
+            .quality(Quality::Low(q)) // Forces mozjpeg strategy with trellis
             .encode_rgb(&original, width, height)
             .unwrap();
 
@@ -122,7 +130,8 @@ fn test_trellis_vs_no_trellis_sweep() {
             .encode_rgb(&original, width, height)
             .unwrap();
 
-        let improvement = (1.0 - (with_trellis.len() as f64 / without_trellis.len() as f64)) * 100.0;
+        let improvement =
+            (1.0 - (with_trellis.len() as f64 / without_trellis.len() as f64)) * 100.0;
 
         println!(
             "{:>4} | {:>12} | {:>12} | {:>9.1}%",
@@ -171,7 +180,10 @@ fn test_linear_quality() {
     let linear_levels = [0.0_f32, 25.0, 50.0, 75.0, 100.0];
 
     println!("\n=== Linear Quality Mapping ===");
-    println!("{:>8} | {:>8} | {:>8} | {:>10}", "Linear", "Standard", "Size", "DSSIM");
+    println!(
+        "{:>8} | {:>8} | {:>8} | {:>10}",
+        "Linear", "Standard", "Size", "DSSIM"
+    );
     println!("{}", "-".repeat(50));
 
     let mut dssims = Vec::new();
@@ -188,7 +200,10 @@ fn test_linear_quality() {
 
         println!(
             "{:>8.1} | {:>8.1} | {:>8} | {:>10.6}",
-            linear, standard_q, jpeg_data.len(), dssim
+            linear,
+            standard_q,
+            jpeg_data.len(),
+            dssim
         );
 
         dssims.push(dssim);
@@ -197,9 +212,10 @@ fn test_linear_quality() {
     // Verify DSSIM decreases (quality improves) with higher linear value
     for i in 1..dssims.len() {
         assert!(
-            dssims[i] <= dssims[i-1] * 1.1,
+            dssims[i] <= dssims[i - 1] * 1.1,
             "Linear({}) should have better quality than Linear({})",
-            linear_levels[i], linear_levels[i-1]
+            linear_levels[i],
+            linear_levels[i - 1]
         );
     }
 
@@ -207,12 +223,17 @@ fn test_linear_quality() {
     let log_dssims: Vec<f64> = dssims.iter().map(|d| d.ln()).collect();
     let mut deltas = Vec::new();
     for i in 1..log_dssims.len() {
-        deltas.push((log_dssims[i] - log_dssims[i-1]).abs());
+        deltas.push((log_dssims[i] - log_dssims[i - 1]).abs());
     }
 
     println!("\nLog-DSSIM deltas (should be roughly equal):");
     for (i, delta) in deltas.iter().enumerate() {
-        println!("  L{} -> L{}: {:.3}", linear_levels[i], linear_levels[i+1], delta);
+        println!(
+            "  L{} -> L{}: {:.3}",
+            linear_levels[i],
+            linear_levels[i + 1],
+            delta
+        );
     }
 
     // The deltas should be within 2x of each other for good linearity
@@ -233,13 +254,16 @@ fn test_dc_trellis_impact() {
     let qualities = [30, 50, 70, 90];
 
     println!("\n=== DC Trellis Optimization Impact ===");
-    println!("{:>4} | {:>12} | {:>12} | {:>10}", "Q", "AC+DC Trellis", "AC Only", "DC Savings");
+    println!(
+        "{:>4} | {:>12} | {:>12} | {:>10}",
+        "Q", "AC+DC Trellis", "AC Only", "DC Savings"
+    );
     println!("{}", "-".repeat(55));
 
     for q in qualities {
         // With DC trellis (default when trellis is enabled)
         let with_dc = Encoder::new()
-            .quality(Quality::Low(q))  // Low uses trellis with both AC and DC enabled
+            .quality(Quality::Low(q)) // Low uses trellis with both AC and DC enabled
             .encode_rgb(&original, width, height)
             .unwrap();
 
@@ -296,18 +320,24 @@ fn test_quality_monotonic() {
     // Higher quality should give larger files
     for i in 1..sizes.len() {
         assert!(
-            sizes[i] >= sizes[i-1],
+            sizes[i] >= sizes[i - 1],
             "Q{} size ({}) should be >= Q{} size ({})",
-            qualities[i], sizes[i], qualities[i-1], sizes[i-1]
+            qualities[i],
+            sizes[i],
+            qualities[i - 1],
+            sizes[i - 1]
         );
     }
 
     // Higher quality should give lower DSSIM (better)
     for i in 1..dssims.len() {
         assert!(
-            dssims[i] <= dssims[i-1] * 1.1, // 10% tolerance
+            dssims[i] <= dssims[i - 1] * 1.1, // 10% tolerance
             "Q{} DSSIM ({:.6}) should be <= Q{} DSSIM ({:.6})",
-            qualities[i], dssims[i], qualities[i-1], dssims[i-1]
+            qualities[i],
+            dssims[i],
+            qualities[i - 1],
+            dssims[i - 1]
         );
     }
 }

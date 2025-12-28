@@ -62,12 +62,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let quality = request.quality as u8;
 
             let encoder = zenjpeg::Encoder::new().quality(zenjpeg::Quality::Standard(quality));
-            encoder.encode_rgb(&rgb, width, height).map_err(|e| {
-                codec_eval::Error::Codec {
+            encoder
+                .encode_rgb(&rgb, width, height)
+                .map_err(|e| codec_eval::Error::Codec {
                     codec: "zenjpeg".to_string(),
                     message: e.to_string(),
-                }
-            })
+                })
         }),
         jpeg_decode_callback(),
     );
@@ -85,12 +85,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let encoder = mozjpeg_oxide::Encoder::new()
                 .quality(quality)
                 .subsampling(mozjpeg_oxide::Subsampling::S444);
-            encoder.encode_rgb(&rgb, width, height).map_err(|e| {
-                codec_eval::Error::Codec {
+            encoder
+                .encode_rgb(&rgb, width, height)
+                .map_err(|e| codec_eval::Error::Codec {
                     codec: "mozjpeg-oxide".to_string(),
                     message: e.to_string(),
-                }
-            })
+                })
         }),
         jpeg_decode_callback(),
     );
@@ -132,7 +132,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .take(6) // Use first 6 images for reasonably comprehensive benchmark
             .collect()
     } else {
-        println!("Kodak corpus not found at {:?}, using synthetic image", corpus_dir);
+        println!(
+            "Kodak corpus not found at {:?}, using synthetic image",
+            corpus_dir
+        );
         vec![]
     };
 

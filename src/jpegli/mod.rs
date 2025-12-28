@@ -6,8 +6,8 @@
 
 // Core types and constants
 pub mod consts;
-pub mod types;
 pub mod error;
+pub mod types;
 
 // Memory allocation
 pub mod alloc;
@@ -15,20 +15,20 @@ pub mod alloc;
 // Transforms
 pub mod color;
 pub mod dct;
-pub mod xyb;
 pub mod tone_mapping;
 pub mod transfer_functions;
+pub mod xyb;
 
 // Quantization
-pub mod quant;
 pub mod adaptive_quant;
+pub mod quant;
 pub mod simplified_quant;
 
 // Entropy coding
 pub mod bitstream;
+pub mod entropy;
 pub mod huffman;
 pub mod huffman_opt;
-pub mod entropy;
 pub mod scan_script;
 
 // ICC color management

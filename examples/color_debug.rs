@@ -21,7 +21,10 @@ fn main() {
 
     for (r, g, b) in test_colors {
         let (y, cb, cr) = zenjpeg_rgb_to_ycbcr(r, g, b);
-        println!("RGB({:3},{:3},{:3}) -> YCbCr({:3},{:3},{:3})", r, g, b, y, cb, cr);
+        println!(
+            "RGB({:3},{:3},{:3}) -> YCbCr({:3},{:3},{:3})",
+            r, g, b, y, cb, cr
+        );
     }
 
     // Now test a larger image and compare decoded output
@@ -72,8 +75,10 @@ fn main() {
         let zen_diff = (orig as i32 - zen_r as i32).abs();
         let moz_diff = (orig as i32 - moz_r as i32).abs();
 
-        println!("{:4} |  {:3}   {:3}   {:3}  |  {:3}   {:3}   {:3}   (err: zen={}, moz={})",
-                 orig, zen_r, zen_g, zen_b, moz_r, moz_g, moz_b, zen_diff, moz_diff);
+        println!(
+            "{:4} |  {:3}   {:3}   {:3}  |  {:3}   {:3}   {:3}   (err: zen={}, moz={})",
+            orig, zen_r, zen_g, zen_b, moz_r, moz_g, moz_b, zen_diff, moz_diff
+        );
     }
 
     // Total error
@@ -94,9 +99,9 @@ fn main() {
     let mut red_rgb = Vec::with_capacity(width * height * 3);
     for i in 0..64 {
         let v = (i * 4) as u8;
-        red_rgb.push(v);     // R varies
-        red_rgb.push(0);     // G = 0
-        red_rgb.push(0);     // B = 0
+        red_rgb.push(v); // R varies
+        red_rgb.push(0); // G = 0
+        red_rgb.push(0); // B = 0
     }
 
     let zen = zenjpeg::Encoder::new()
@@ -126,8 +131,10 @@ fn main() {
         let moz_g = moz_dec[i * 3 + 1];
         let moz_b = moz_dec[i * 3 + 2];
 
-        println!("{:4} |  {:3}   {:3}   {:3}  |  {:3}   {:3}   {:3}",
-                 orig_r, zen_r, zen_g, zen_b, moz_r, moz_g, moz_b);
+        println!(
+            "{:4} |  {:3}   {:3}   {:3}  |  {:3}   {:3}   {:3}",
+            orig_r, zen_r, zen_g, zen_b, moz_r, moz_g, moz_b
+        );
     }
 }
 

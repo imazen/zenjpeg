@@ -21,7 +21,10 @@ fn main() {
         }
     }
 
-    println!("=== zenjpeg vs jpegli Comparison ({}x{}) ===\n", width, height);
+    println!(
+        "=== zenjpeg vs jpegli Comparison ({}x{}) ===\n",
+        width, height
+    );
 
     for q in [30, 40, 50, 60, 70, 75, 80, 85, 90, 95] {
         // zenjpeg with mozjpeg strategy (trellis)
@@ -45,7 +48,7 @@ fn main() {
             .pixel_format(jpegli::PixelFormat::Rgb)
             .quality(jpegli::Quality::Traditional(q as f32))
             .encode(&rgb_data);
-        
+
         let jpegli_bytes = match jpegli_result {
             Ok(b) => b,
             Err(e) => {
@@ -63,8 +66,12 @@ fn main() {
 
         // Decode all
         let zen_moz_dec = jpeg_decoder::Decoder::new(&zen_moz[..]).decode().unwrap();
-        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..]).decode().unwrap();
-        let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..]).decode().unwrap();
+        let zen_jpegli_dec = jpeg_decoder::Decoder::new(&zen_jpegli[..])
+            .decode()
+            .unwrap();
+        let jpegli_dec = jpeg_decoder::Decoder::new(&jpegli_bytes[..])
+            .decode()
+            .unwrap();
         let moz_dec = jpeg_decoder::Decoder::new(&moz[..]).decode().unwrap();
 
         // Calculate DSSIM
@@ -75,10 +82,16 @@ fn main() {
 
         println!("Q{}:", q);
         println!("  Size:");
-        println!("    zen/moz:    {:6}  ({:+.1}% vs mozjpeg)", zen_moz.len(),
-            (zen_moz.len() as f64 / moz.len() as f64 - 1.0) * 100.0);
-        println!("    zen/jpegli: {:6}  ({:+.1}% vs ref jpegli)", zen_jpegli.len(),
-            (zen_jpegli.len() as f64 / jpegli_bytes.len() as f64 - 1.0) * 100.0);
+        println!(
+            "    zen/moz:    {:6}  ({:+.1}% vs mozjpeg)",
+            zen_moz.len(),
+            (zen_moz.len() as f64 / moz.len() as f64 - 1.0) * 100.0
+        );
+        println!(
+            "    zen/jpegli: {:6}  ({:+.1}% vs ref jpegli)",
+            zen_jpegli.len(),
+            (zen_jpegli.len() as f64 / jpegli_bytes.len() as f64 - 1.0) * 100.0
+        );
         println!("    ref jpegli: {:6}", jpegli_bytes.len());
         println!("    mozjpeg:    {:6}", moz.len());
         println!("  DSSIM:");
@@ -92,17 +105,19 @@ fn main() {
 
 fn calculate_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     let attr = Dssim::new();
-    
-    let orig_rgb: Vec<RGB8> = orig.chunks(3)
+
+    let orig_rgb: Vec<RGB8> = orig
+        .chunks(3)
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
-    let dec_rgb: Vec<RGB8> = decoded.chunks(3)
+    let dec_rgb: Vec<RGB8> = decoded
+        .chunks(3)
         .map(|c| RGB8::new(c[0], c[1], c[2]))
         .collect();
-    
+
     let orig_img = attr.create_image_rgb(&orig_rgb, width, height).unwrap();
     let dec_img = attr.create_image_rgb(&dec_rgb, width, height).unwrap();
-    
+
     let (dssim_val, _) = attr.compare(&orig_img, dec_img);
     dssim_val.into()
 }

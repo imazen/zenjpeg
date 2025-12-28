@@ -86,7 +86,10 @@ fn test_trellis_progressive_comparison() {
         "zenjpeg (progressive+trellis): {} bytes",
         zen_progressive.len()
     );
-    println!("zenjpeg (baseline+trellis):    {} bytes", zen_baseline.len());
+    println!(
+        "zenjpeg (baseline+trellis):    {} bytes",
+        zen_baseline.len()
+    );
     println!("C mozjpeg:                     {} bytes", c_jpeg.len());
 
     let ratio_prog = zen_progressive.len() as f64 / c_jpeg.len() as f64;

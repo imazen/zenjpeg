@@ -1,5 +1,5 @@
-use zenjpeg::{Encoder, Quality, ScanScript};
 use std::io::Write;
+use zenjpeg::{Encoder, Quality, ScanScript};
 
 fn main() {
     let width = 16usize;
@@ -21,7 +21,7 @@ fn main() {
         .quality(Quality::Standard(85))
         .progressive(true)
         .scan_script(ScanScript::Simple)
-        .optimize_huffman(false)  // Use standard tables
+        .optimize_huffman(false) // Use standard tables
         .encode_rgb(&rgb, width, height)
         .expect("Simple with std tables failed");
 
@@ -63,6 +63,11 @@ fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {
             let diff = a as f64 - b as f64;
             diff * diff
         })
-        .sum::<f64>() / len as f64;
-    if mse == 0.0 { f64::INFINITY } else { 10.0 * (255.0_f64 * 255.0 / mse).log10() }
+        .sum::<f64>()
+        / len as f64;
+    if mse == 0.0 {
+        f64::INFINITY
+    } else {
+        10.0 * (255.0_f64 * 255.0 / mse).log10()
+    }
 }
