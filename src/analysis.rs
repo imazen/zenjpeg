@@ -25,6 +25,9 @@ pub struct ImageAnalysis {
     pub local_contrast_mean: f32,
     /// Recommended encoding approach based on analysis
     pub recommended_approach: RecommendedApproach,
+    /// Deringing benefit score (0.0 = no benefit, 1.0 = high benefit)
+    /// High when image has saturated regions (pixels at 0 or 255) near edges
+    pub deringing_benefit: f32,
 }
 
 /// Recommended encoding approach
@@ -36,6 +39,16 @@ pub enum RecommendedApproach {
     AdaptiveQuant,
     /// Use both with blend (hybrid approach)
     Hybrid,
+}
+
+/// Quick check if deringing would benefit this image.
+///
+/// Returns true if the image has significant saturated regions (pixels near 0 or 255)
+/// adjacent to edges, which is where deringing helps most.
+///
+/// This is faster than full analyze_image() when you only need deringing decision.
+pub fn should_use_deringing(pixels: &[u8], width: usize, height: usize) -> bool {
+    compute_deringing_benefit(pixels, width, height) > 0.1
 }
 
 /// Analyze an image and return recommended encoding settings
@@ -72,6 +85,9 @@ pub fn analyze_image(pixels: &[u8], width: usize, height: usize, quality: f32) -
         local_contrast_mean,
     );
 
+    // Compute deringing benefit (saturated regions near edges)
+    let deringing_benefit = compute_deringing_benefit(pixels, width, height);
+
     ImageAnalysis {
         chroma,
         luma_complexity,
@@ -80,6 +96,7 @@ pub fn analyze_image(pixels: &[u8], width: usize, height: usize, quality: f32) -
         edge_strength_mean,
         local_contrast_mean,
         recommended_approach,
+        deringing_benefit,
     }
 }
 
@@ -229,6 +246,78 @@ fn compute_edge_metrics(pixels: &[u8], width: usize, height: usize) -> (f32, f32
 #[inline]
 fn luma_approx(rgb: &[u8]) -> u8 {
     ((rgb[0] as u16 + 2 * rgb[1] as u16 + rgb[2] as u16) / 4) as u8
+}
+
+/// Compute deringing benefit score based on saturated regions near edges.
+///
+/// Deringing is most beneficial when:
+/// 1. Image has pixels at max value (255) - especially white backgrounds
+/// 2. These saturated pixels are adjacent to non-saturated pixels (edges)
+/// 3. Common in: text on white, logos, graphics, overexposed highlights
+///
+/// Returns 0.0-1.0 where higher means more benefit from deringing.
+fn compute_deringing_benefit(pixels: &[u8], width: usize, height: usize) -> f32 {
+    if width < 3 || height < 3 {
+        return 0.0;
+    }
+
+    let mut saturated_edge_count = 0u32;
+    let mut total_samples = 0u32;
+
+    // Thresholds for "saturated" (near min/max)
+    const MAX_THRESH: u8 = 250; // Near white
+    const MIN_THRESH: u8 = 5; // Near black
+    const EDGE_DIFF: i32 = 30; // Significant edge
+
+    // Sample every 4th pixel for speed
+    for y in (1..height - 1).step_by(4) {
+        for x in (1..width - 1).step_by(4) {
+            let idx = (y * width + x) * 3;
+            if idx + 2 >= pixels.len() {
+                continue;
+            }
+
+            let center_luma = luma_approx(&pixels[idx..idx + 3]);
+
+            // Check if center pixel is saturated (near white or black)
+            let is_saturated = center_luma >= MAX_THRESH || center_luma <= MIN_THRESH;
+
+            if is_saturated {
+                // Check if there's an edge nearby (significant luminance difference)
+                let left_idx = (y * width + x - 1) * 3;
+                let right_idx = (y * width + x + 1) * 3;
+                let top_idx = ((y - 1) * width + x) * 3;
+                let bottom_idx = ((y + 1) * width + x) * 3;
+
+                if bottom_idx + 2 < pixels.len() {
+                    let left = luma_approx(&pixels[left_idx..left_idx + 3]);
+                    let right = luma_approx(&pixels[right_idx..right_idx + 3]);
+                    let top = luma_approx(&pixels[top_idx..top_idx + 3]);
+                    let bottom = luma_approx(&pixels[bottom_idx..bottom_idx + 3]);
+
+                    // Check for significant edge in any direction
+                    let has_edge = (center_luma as i32 - left as i32).abs() > EDGE_DIFF
+                        || (center_luma as i32 - right as i32).abs() > EDGE_DIFF
+                        || (center_luma as i32 - top as i32).abs() > EDGE_DIFF
+                        || (center_luma as i32 - bottom as i32).abs() > EDGE_DIFF;
+
+                    if has_edge {
+                        saturated_edge_count += 1;
+                    }
+                }
+            }
+            total_samples += 1;
+        }
+    }
+
+    if total_samples == 0 {
+        return 0.0;
+    }
+
+    // Normalize: even a small fraction of saturated edges suggests deringing helps
+    // Use sqrt to boost low values (deringing helps even with few such regions)
+    let ratio = saturated_edge_count as f32 / total_samples as f32;
+    (ratio * 10.0).sqrt().min(1.0)
 }
 
 /// Estimate BPP (bits per pixel) from quality and image flatness

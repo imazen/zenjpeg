@@ -235,25 +235,39 @@ impl Encoder {
         self
     }
 
-    /// Resolve whether deringing should be enabled based on explicit setting or strategy.
+    /// Resolve whether deringing should be enabled based on explicit setting,
+    /// image analysis, and strategy.
     ///
-    /// Auto-selection:
-    /// - Mozjpeg strategy: enable (reduces ringing artifacts)
-    /// - Jpegli strategy: disable (jpegli has its own approach)
-    /// - Hybrid strategy: enable (benefits from deringing like mozjpeg)
-    fn should_use_deringing(&self, strategy: &SelectedStrategy) -> bool {
-        match self.overshoot_deringing {
-            Some(explicit) => explicit,
-            None => {
-                // Auto-select based on strategy
-                // Deringing is most beneficial for mozjpeg-style encoding
-                // For jpegli, the perceptual optimization handles ringing differently
-                match strategy.approach {
-                    EncodingApproach::Mozjpeg => true,
-                    EncodingApproach::Jpegli => false,
-                    EncodingApproach::Hybrid => true,
-                }
-            }
+    /// Priority:
+    /// 1. Explicit setting always wins
+    /// 2. Image analysis (if provided) - checks for saturated edges
+    /// 3. Strategy-based default (mozjpeg=on, jpegli=off, hybrid=on)
+    fn should_use_deringing(
+        &self,
+        strategy: &SelectedStrategy,
+        rgb_pixels: Option<(&[u8], usize, usize)>,
+    ) -> bool {
+        // Explicit setting always wins
+        if let Some(explicit) = self.overshoot_deringing {
+            return explicit;
+        }
+
+        // For jpegli strategy, deringing is typically not needed
+        if strategy.approach == EncodingApproach::Jpegli {
+            return false;
+        }
+
+        // Use image analysis if RGB pixels provided
+        if let Some((pixels, width, height)) = rgb_pixels {
+            // Only enable if image has saturated regions near edges
+            return crate::analysis::should_use_deringing(pixels, width, height);
+        }
+
+        // Fallback: strategy-based default
+        match strategy.approach {
+            EncodingApproach::Mozjpeg => true,
+            EncodingApproach::Jpegli => false,
+            EncodingApproach::Hybrid => true,
         }
     }
 
@@ -278,16 +292,28 @@ impl Encoder {
 
         // For Jpegli strategy, delegate to the actual jpegli encoder
         // This gives us full perceptual quality (XYB, proper AQ, etc.)
-        if selected.approach == EncodingApproach::Jpegli {
+        // But respect user's explicit progressive request (jpegli doesn't support it)
+        if selected.approach == EncodingApproach::Jpegli && self.progressive != Some(true) {
             return self.encode_rgb_with_jpegli(pixels, width, height);
         }
+
+        // Determine deringing from image analysis (while we still have RGB)
+        let use_deringing = self.should_use_deringing(&selected, Some((pixels, width, height)));
 
         // Convert to YCbCr
         let ycbcr = convert_rgb_to_ycbcr(pixels, width, height);
         let (y_plane, cb_plane, cr_plane) = deinterleave_ycbcr(&ycbcr, width, height);
 
         // Encode with selected strategy
-        self.encode_ycbcr_planes(&y_plane, &cb_plane, &cr_plane, width, height, &selected)
+        self.encode_ycbcr_planes(
+            &y_plane,
+            &cb_plane,
+            &cr_plane,
+            width,
+            height,
+            &selected,
+            use_deringing,
+        )
     }
 
     /// Encode targeting a specific perceptual quality (Butteraugli distance).
@@ -383,13 +409,24 @@ impl Encoder {
     fn encode_rgb_internal(&self, pixels: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         let selected = select_strategy(&self.quality, self.strategy);
 
-        if selected.approach == EncodingApproach::Jpegli {
+        if selected.approach == EncodingApproach::Jpegli && self.progressive != Some(true) {
             return self.encode_rgb_with_jpegli(pixels, width, height);
         }
 
+        // Determine deringing from image analysis (while we still have RGB)
+        let use_deringing = self.should_use_deringing(&selected, Some((pixels, width, height)));
+
         let ycbcr = convert_rgb_to_ycbcr(pixels, width, height);
         let (y_plane, cb_plane, cr_plane) = deinterleave_ycbcr(&ycbcr, width, height);
-        self.encode_ycbcr_planes(&y_plane, &cb_plane, &cr_plane, width, height, &selected)
+        self.encode_ycbcr_planes(
+            &y_plane,
+            &cb_plane,
+            &cr_plane,
+            width,
+            height,
+            &selected,
+            use_deringing,
+        )
     }
 
     /// Encode RGB image using our forked jpegli encoder.
@@ -436,8 +473,12 @@ impl Encoder {
             return self.encode_gray_with_jpegli(pixels, width, height);
         }
 
+        // Determine deringing - use strategy-based default for grayscale
+        // (no RGB available for image analysis)
+        let use_deringing = self.should_use_deringing(&selected, None);
+
         // Grayscale uses only Y component
-        self.encode_gray_plane(pixels, width, height, &selected)
+        self.encode_gray_plane(pixels, width, height, &selected, use_deringing)
     }
 
     /// Encode grayscale image using our forked jpegli encoder.
@@ -513,6 +554,7 @@ impl Encoder {
         width: usize,
         height: usize,
         strategy: &SelectedStrategy,
+        use_deringing: bool,
     ) -> Result<Vec<u8>> {
         let q = self.quality.value() as u8;
 
@@ -538,9 +580,6 @@ impl Encoder {
         let mut y_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cb_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
         let mut cr_coeffs: Vec<[i16; DCTSIZE2]> = Vec::with_capacity(total_blocks);
-
-        // Resolve deringing setting (auto-selects based on strategy if not explicitly set)
-        let use_deringing = self.should_use_deringing(strategy);
 
         if use_jpegli_style {
             // Jpegli-style encoding: use zero-bias quantization with AQ strength
@@ -884,6 +923,7 @@ impl Encoder {
         width: usize,
         height: usize,
         strategy: &SelectedStrategy,
+        use_deringing: bool,
     ) -> Result<Vec<u8>> {
         let q = self.quality.value() as u8;
 
@@ -913,8 +953,7 @@ impl Encoder {
             None
         };
 
-        // Resolve deringing setting and prepare DC quant value
-        let use_deringing = self.should_use_deringing(strategy);
+        // Prepare DC quant value for deringing
         let deringing_dc_quant = if use_deringing {
             Some(quant_table.values[0])
         } else {

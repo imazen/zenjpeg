@@ -3,6 +3,7 @@
 //! Evaluates the impact of overshoot deringing on compression and quality
 //! using different image types.
 
+use zenjpeg::analysis::should_use_deringing;
 use zenjpeg::{Encoder, Quality};
 
 /// Test that deringing can be explicitly enabled/disabled
@@ -206,4 +207,96 @@ fn test_deringing_fastest_preset() {
     let encoder = Encoder::fastest();
     let result = encoder.encode_rgb(&pixels, width, height);
     assert!(result.is_ok(), "fastest preset should succeed");
+}
+
+/// Test image analysis correctly detects white background with edges
+#[test]
+fn test_analysis_white_background_with_edges() {
+    let (width, height) = (64, 64);
+    let mut pixels = vec![255u8; width * height * 3]; // White background
+
+    // Add dark rectangle (creates saturated edges)
+    // Use 14..50 to align with sampling pattern (step_by(4) from 1: samples at 13, 17...)
+    // Sample at x=13 has neighbor at x=14 which is dark, detecting the edge
+    for y in 14..50 {
+        for x in 14..50 {
+            let idx = (y * width + x) * 3;
+            pixels[idx] = 50;
+            pixels[idx + 1] = 50;
+            pixels[idx + 2] = 50;
+        }
+    }
+
+    // Should detect that deringing would help
+    let result = should_use_deringing(&pixels, width, height);
+    assert!(
+        result,
+        "White background with dark edges should benefit from deringing"
+    );
+}
+
+/// Test image analysis correctly detects mid-tone images don't need deringing
+#[test]
+fn test_analysis_midtone_no_edges() {
+    let (width, height) = (64, 64);
+
+    // Uniform mid-gray (no saturated pixels)
+    let pixels = vec![128u8; width * height * 3];
+
+    // Should NOT recommend deringing for uniform mid-tone
+    let result = should_use_deringing(&pixels, width, height);
+    assert!(
+        !result,
+        "Uniform mid-tone image should NOT benefit from deringing"
+    );
+}
+
+/// Test image analysis with gradient (no saturated edges)
+#[test]
+fn test_analysis_gradient() {
+    let (width, height) = (64, 64);
+    let mut pixels = Vec::with_capacity(width * height * 3);
+
+    // Smooth gradient from mid-gray to light gray (no saturated pixels)
+    for y in 0..height {
+        for x in 0..width {
+            let val = 64 + ((x + y) * 120 / (width + height)) as u8;
+            pixels.push(val);
+            pixels.push(val);
+            pixels.push(val);
+        }
+    }
+
+    // Should NOT recommend deringing (no saturated edges)
+    let result = should_use_deringing(&pixels, width, height);
+    assert!(
+        !result,
+        "Gradient without saturated edges should NOT benefit from deringing"
+    );
+}
+
+/// Test image analysis with text-like pattern (white bg, black text)
+#[test]
+fn test_analysis_text_pattern() {
+    let (width, height) = (64, 64);
+    let mut pixels = vec![255u8; width * height * 3]; // White
+
+    // Add "text-like" dark stripes
+    for y in 0..height {
+        for x in 0..width {
+            if y % 8 < 3 && x % 4 < 2 {
+                let idx = (y * width + x) * 3;
+                pixels[idx] = 0;
+                pixels[idx + 1] = 0;
+                pixels[idx + 2] = 0;
+            }
+        }
+    }
+
+    // Should detect that deringing would help (white background + black text)
+    let result = should_use_deringing(&pixels, width, height);
+    assert!(
+        result,
+        "Text-like pattern (white bg, black text) should benefit from deringing"
+    );
 }
