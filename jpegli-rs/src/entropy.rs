@@ -866,6 +866,39 @@ impl Default for EntropyEncoder {
 }
 
 /// Entropy decoder for a single scan.
+/// Decodes a Huffman symbol from the bit reader using the provided table.
+/// This is a standalone function to avoid borrow conflicts in decode_block.
+#[inline]
+fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> Result<u8> {
+    // Try fast lookup first (most common path)
+    if let Ok(bits) = reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
+        // fast_decode expects bits in MSB position
+        let shifted = bits << (32 - HuffmanDecodeTable::FAST_BITS);
+        if let Some((symbol, len)) = table.fast_decode(shifted) {
+            reader.skip_bits(len);
+            return Ok(symbol);
+        }
+    }
+
+    // Slow path for longer codes
+    let mut code = 0u32;
+    for len in 1..=16 {
+        let bit = reader.read_bits(1)?;
+        code = (code << 1) | bit;
+        if (code as i32) <= table.maxcode[len] {
+            let idx = (code as i32 + table.valoffset[len]) as usize;
+            if idx < table.values.len() {
+                return Ok(table.values[idx]);
+            }
+        }
+    }
+
+    Err(Error::InvalidHuffmanTable {
+        table_idx: 0,
+        reason: "invalid code",
+    })
+}
+
 pub struct EntropyDecoder<'a> {
     /// Bit reader
     reader: BitReader<'a>,
@@ -976,14 +1009,23 @@ impl<'a> EntropyDecoder<'a> {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> Result<[i16; DCT_BLOCK_SIZE]> {
-        // Clone tables to avoid borrow conflicts with self.decode_huffman()
-        let dc_table = self.get_dc_table(dc_table_idx)?;
-        let ac_table = self.get_ac_table(ac_table_idx)?;
+        // Get table references once (tables are cheap to reference)
+        let dc_table = self.dc_tables[dc_table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "DC table not set",
+            })?;
+        let ac_table = self.ac_tables[ac_table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
-        // Decode DC coefficient
-        let dc_cat = self.decode_huffman(&dc_table)?;
+        // Decode DC coefficient using standalone function
+        let dc_cat = decode_huffman_symbol(&mut self.reader, dc_table)?;
+
         let dc_diff = if dc_cat == 0 {
             0
         } else {
@@ -997,7 +1039,7 @@ impl<'a> EntropyDecoder<'a> {
         // Decode AC coefficients
         let mut i = 1;
         while i < DCT_BLOCK_SIZE {
-            let symbol = self.decode_huffman(&ac_table)?;
+            let symbol = decode_huffman_symbol(&mut self.reader, ac_table)?;
 
             if symbol == 0 {
                 // EOB - remaining coefficients are zero

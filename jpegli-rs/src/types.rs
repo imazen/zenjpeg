@@ -119,6 +119,23 @@ impl SampleDepth {
     }
 }
 
+/// Output data type for decoder.
+///
+/// Controls the precision and format of decoded pixel data.
+/// jpegli uses float internally for 12-bit precision, so Float32 output
+/// preserves the full internal precision without conversion loss.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum OutputDataType {
+    /// 8-bit unsigned integer (0-255), standard JPEG output
+    #[default]
+    Uint8,
+    /// 16-bit unsigned integer (0-65535), scaled from internal precision
+    Uint16,
+    /// 32-bit float (0.0-1.0), preserves full internal precision
+    Float32,
+}
+
 /// Chroma subsampling mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
