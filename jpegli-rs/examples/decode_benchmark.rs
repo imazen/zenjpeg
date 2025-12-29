@@ -1,10 +1,11 @@
 //! Decoder performance benchmark
 //!
-//! Compares jpegli-rs decoder vs jpeg-decoder
+//! Compares jpegli-rs decoder vs jpeg-decoder vs zune-jpeg
 //!
 //! Usage: cargo run --release --example decode_benchmark
 
 use std::time::Instant;
+use zune_jpeg::JpegDecoder;
 
 fn main() {
     // Generate test image
@@ -31,6 +32,8 @@ fn main() {
     // Warmup
     let _ = jpegli::Decoder::new().decode(&jpeg);
     let _ = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg)).decode();
+    let mut zune = JpegDecoder::new(&jpeg);
+    let _ = zune.decode();
 
     let iterations = 20;
     let mpixels = (width * height) as f64 / 1_000_000.0;
@@ -63,10 +66,22 @@ fn main() {
     println!("jpeg-decoder:   {:?} ({:.1} MP/s)", jpeg_decoder_time,
         mpixels / jpeg_decoder_time.as_secs_f64());
 
+    // Benchmark zune-jpeg
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let mut decoder = JpegDecoder::new(&jpeg);
+        let _ = decoder.decode().unwrap();
+    }
+    let zune_time = start.elapsed() / iterations;
+    println!("zune-jpeg:      {:?} ({:.1} MP/s)", zune_time,
+        mpixels / zune_time.as_secs_f64());
+
     println!();
-    println!("Speed comparison:");
-    println!("  jpegli-rs / jpeg-decoder: {:.2}x",
-        jpeg_decoder_time.as_secs_f64() / jpegli_time.as_secs_f64());
+    println!("Speed comparison (vs jpegli-rs u8):");
+    println!("  jpeg-decoder: {:.2}x faster",
+        jpegli_time.as_secs_f64() / jpeg_decoder_time.as_secs_f64());
+    println!("  zune-jpeg:    {:.2}x faster",
+        jpegli_time.as_secs_f64() / zune_time.as_secs_f64());
 
     // Also test with larger image
     println!("\n--- 4K Test ---");
@@ -105,4 +120,13 @@ fn main() {
     let jpeg_decoder_4k_time = start.elapsed() / iterations_4k;
     println!("jpeg-decoder:   {:?} ({:.1} MP/s)", jpeg_decoder_4k_time,
         mpixels_4k / jpeg_decoder_4k_time.as_secs_f64());
+
+    let start = Instant::now();
+    for _ in 0..iterations_4k {
+        let mut decoder = JpegDecoder::new(&jpeg_4k);
+        let _ = decoder.decode().unwrap();
+    }
+    let zune_4k_time = start.elapsed() / iterations_4k;
+    println!("zune-jpeg:      {:?} ({:.1} MP/s)", zune_4k_time,
+        mpixels_4k / zune_4k_time.as_secs_f64());
 }
