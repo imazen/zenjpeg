@@ -14,6 +14,7 @@ arbitrary = { version = "1", features = ["derive"] }
 zune-jpeg = "0.4"
 
 [dependencies.jpegli]
+package = "jpegli-rs"
 path = ".."
 
 # Prevent this from interfering with workspaces
@@ -44,6 +45,13 @@ bench = false
 [[bin]]
 name = "fuzz_differential"
 path = "fuzz_targets/fuzz_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_encode"
+path = "fuzz_targets/fuzz_encode.rs"
 test = false
 doc = false
 bench = false
