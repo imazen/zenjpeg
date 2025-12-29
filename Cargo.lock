@@ -135,7 +135,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1633021aa104f22a81d65e8fc0f76a1cc96fa169639026289926547a40f73728"
 dependencies = [
- "wide",
+ "wide 0.7.33",
 ]
 
 [[package]]
@@ -144,7 +144,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a7c15bce302ee11cd5b2674ee6e061dedd905afd3ea870f1da90082849a6eaf"
 dependencies = [
- "wide",
+ "wide 0.7.33",
 ]
 
 [[package]]
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "jpegli-rs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "approx",
  "arrayref",
@@ -694,7 +694,8 @@ dependencies = [
  "lcms2",
  "moxcms",
  "mozjpeg",
- "multiversion",
+ "mozjpeg-oxide",
+ "multiversion 0.7.4",
  "png",
  "proptest",
  "rgb",
@@ -702,7 +703,7 @@ dependencies = [
  "serde_json",
  "ssimulacra2",
  "test-case",
- "wide",
+ "wide 0.7.33",
  "zune-jpeg",
 ]
 
@@ -833,6 +834,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mozjpeg-oxide"
+version = "0.2.2"
+dependencies = [
+ "bytemuck",
+ "multiversion 0.8.0",
+ "wide 1.1.1",
+]
+
+[[package]]
 name = "mozjpeg-sys"
 version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -850,7 +860,17 @@ version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4851161a11d3ad0bf9402d90ffc3967bf231768bfd7aeb61755ad06dbf1a142"
 dependencies = [
- "multiversion-macros",
+ "multiversion-macros 0.7.4",
+ "target-features",
+]
+
+[[package]]
+name = "multiversion"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7edb7f0ff51249dfda9ab96b5823695e15a052dc15074c9dbf3d118afaf2c201"
+dependencies = [
+ "multiversion-macros 0.8.0",
  "target-features",
 ]
 
@@ -863,6 +883,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+ "target-features",
+]
+
+[[package]]
+name = "multiversion-macros"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b093064383341eb3271f42e381cb8f10a01459478446953953c75d24bd339fc0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
  "target-features",
 ]
 
@@ -1204,6 +1236,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "safe_arch"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f7caad094bd561859bcd467734a720c3c1f5d1f338995351fefe2190c45efed"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1503,7 +1544,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
 dependencies = [
  "bytemuck",
- "safe_arch",
+ "safe_arch 0.7.4",
+]
+
+[[package]]
+name = "wide"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac11b009ebeae802ed758530b6496784ebfee7a87b9abfbcaf3bbe25b814eb25"
+dependencies = [
+ "bytemuck",
+ "safe_arch 1.0.0",
 ]
 
 [[package]]
