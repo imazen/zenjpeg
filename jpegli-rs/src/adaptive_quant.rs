@@ -173,9 +173,12 @@ impl AQStrengthMap {
             return 0.0;
         }
         let mean = self.mean();
-        let variance = self.strengths.iter()
+        let variance = self
+            .strengths
+            .iter()
             .map(|&x| (x - mean).powi(2))
-            .sum::<f32>() / self.strengths.len() as f32;
+            .sum::<f32>()
+            / self.strengths.len() as f32;
         variance.sqrt()
     }
 
@@ -186,7 +189,11 @@ impl AQStrengthMap {
             return (0.0, 0.0, 0.0, 0.0);
         }
         let min = self.strengths.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = self.strengths.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let max = self
+            .strengths
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
         let mean = self.mean();
         let std = self.std();
         (min, max, mean, std)

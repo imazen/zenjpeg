@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 fn main() {
     let image_dir = PathBuf::from(
-        env::args().nth(1).unwrap_or_else(||
-            "/home/lilith/work/codec-eval/codec-corpus/kodak".to_string()
-        )
+        env::args()
+            .nth(1)
+            .unwrap_or_else(|| "/home/lilith/work/codec-eval/codec-corpus/kodak".to_string()),
     );
 
     let max_files: usize = env::var("MAX_FILES")
@@ -47,25 +47,45 @@ fn main() {
             for &q in &qualities {
                 // 1. Baseline jpegli (no hybrid)
                 let baseline = encode_baseline(&img, q);
-                println!("{},{},baseline,{},{:.4},{:.6},0.0%",
-                    img.name, q, baseline.bytes, baseline.bpp, baseline.dssim);
+                println!(
+                    "{},{},baseline,{},{:.4},{:.6},0.0%",
+                    img.name, q, baseline.bytes, baseline.bpp, baseline.dssim
+                );
 
                 // 2. Hybrid without scaling (expect ~16% larger)
                 let hybrid_raw = encode_hybrid(&img, q, None);
-                let size_diff_raw = 100.0 * (hybrid_raw.bytes as f64 - baseline.bytes as f64) / baseline.bytes as f64;
-                println!("{},{},hybrid_raw,{},{:.4},{:.6},{:+.1}%",
-                    img.name, q, hybrid_raw.bytes, hybrid_raw.bpp, hybrid_raw.dssim, size_diff_raw);
+                let size_diff_raw = 100.0 * (hybrid_raw.bytes as f64 - baseline.bytes as f64)
+                    / baseline.bytes as f64;
+                println!(
+                    "{},{},hybrid_raw,{},{:.4},{:.6},{:+.1}%",
+                    img.name, q, hybrid_raw.bytes, hybrid_raw.bpp, hybrid_raw.dssim, size_diff_raw
+                );
 
                 // 3. Hybrid with AQ scaling to match baseline size
                 let hybrid_scaled = encode_hybrid(&img, q, Some(size_diff_raw as f32));
-                let size_diff_scaled = 100.0 * (hybrid_scaled.bytes as f64 - baseline.bytes as f64) / baseline.bytes as f64;
-                println!("{},{},hybrid_scaled,{},{:.4},{:.6},{:+.1}%",
-                    img.name, q, hybrid_scaled.bytes, hybrid_scaled.bpp, hybrid_scaled.dssim, size_diff_scaled);
+                let size_diff_scaled = 100.0 * (hybrid_scaled.bytes as f64 - baseline.bytes as f64)
+                    / baseline.bytes as f64;
+                println!(
+                    "{},{},hybrid_scaled,{},{:.4},{:.6},{:+.1}%",
+                    img.name,
+                    q,
+                    hybrid_scaled.bytes,
+                    hybrid_scaled.bpp,
+                    hybrid_scaled.dssim,
+                    size_diff_scaled
+                );
 
                 // 4. Summary line
                 let quality_gain = 100.0 * (baseline.dssim - hybrid_scaled.dssim) / baseline.dssim;
-                eprintln!("  {} Q{}: baseline={} bytes, scaled={} bytes ({:+.1}%), quality gain: {:.1}%",
-                    img.name, q, baseline.bytes, hybrid_scaled.bytes, size_diff_scaled, quality_gain);
+                eprintln!(
+                    "  {} Q{}: baseline={} bytes, scaled={} bytes ({:+.1}%), quality gain: {:.1}%",
+                    img.name,
+                    q,
+                    baseline.bytes,
+                    hybrid_scaled.bytes,
+                    size_diff_scaled,
+                    quality_gain
+                );
             }
             eprintln!();
         }
@@ -124,12 +144,18 @@ fn encode_baseline(img: &ImageData, quality: u8) -> EncodingResult {
 }
 
 #[cfg(feature = "hybrid-trellis")]
-fn encode_hybrid(img: &ImageData, quality: u8, target_size_reduction: Option<f32>) -> EncodingResult {
+fn encode_hybrid(
+    img: &ImageData,
+    quality: u8,
+    target_size_reduction: Option<f32>,
+) -> EncodingResult {
     use jpegli::adaptive_quant::compute_aq_strength_map;
     use jpegli::hybrid_config::HybridConfig;
 
     // Extract Y plane for AQ computation
-    let y_plane: Vec<f32> = img.pixels.chunks(3)
+    let y_plane: Vec<f32> = img
+        .pixels
+        .chunks(3)
         .map(|c| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32)
         .collect();
 
@@ -141,8 +167,13 @@ fn encode_hybrid(img: &ImageData, quality: u8, target_size_reduction: Option<f32
     if let Some(size_reduction) = target_size_reduction {
         let scale = aq_map.scale_for_size_reduction(size_reduction);
         aq_map.scale(scale);
-        eprintln!("    AQ scaling: mean {:.3} -> {:.3} (scale={:.2}x) to reduce size by {:.1}%",
-            original_mean, aq_map.mean(), scale, size_reduction);
+        eprintln!(
+            "    AQ scaling: mean {:.3} -> {:.3} (scale={:.2}x) to reduce size by {:.1}%",
+            original_mean,
+            aq_map.mean(),
+            scale,
+            size_reduction
+        );
     }
 
     // Encode with hybrid config and custom AQ map
@@ -167,7 +198,11 @@ fn encode_hybrid(img: &ImageData, quality: u8, target_size_reduction: Option<f32
 }
 
 #[cfg(not(feature = "hybrid-trellis"))]
-fn encode_hybrid(img: &ImageData, quality: u8, _target_size_reduction: Option<f32>) -> EncodingResult {
+fn encode_hybrid(
+    img: &ImageData,
+    quality: u8,
+    _target_size_reduction: Option<f32>,
+) -> EncodingResult {
     encode_baseline(img, quality)
 }
 
@@ -191,7 +226,9 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+    let decoded_img = attr
+        .create_image_rgba(&decoded_rgba, width, height)
+        .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()

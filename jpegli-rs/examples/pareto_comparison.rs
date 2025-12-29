@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 fn main() {
     let image_dir = PathBuf::from(
-        env::args().nth(1).unwrap_or_else(|| 
-            "/home/lilith/work/codec-eval/codec-corpus/kodak".to_string()
-        )
+        env::args()
+            .nth(1)
+            .unwrap_or_else(|| "/home/lilith/work/codec-eval/codec-corpus/kodak".to_string()),
     );
 
     let max_files: usize = env::var("MAX_FILES")
@@ -35,7 +35,11 @@ fn main() {
         return;
     }
 
-    eprintln!("Loading {} images from {}", files.len(), image_dir.display());
+    eprintln!(
+        "Loading {} images from {}",
+        files.len(),
+        image_dir.display()
+    );
 
     // Quality levels to test (Q40-Q80)
     let qualities = [40, 50, 60, 70, 75, 80];
@@ -88,7 +92,7 @@ impl EncodingResult {
         let norm_dssim = self.dssim * 100.0;
         let norm_ssim2 = (100.0 - self.ssim2) / 100.0;
         let norm_butter = self.butteraugli / 4.0;
-        
+
         // Equal weights (1/3 each)
         (norm_dssim + norm_ssim2 + norm_butter) / 3.0
     }
@@ -99,8 +103,16 @@ fn print_result(encoder: &str, quality: u8, img: &ImageData, result: &EncodingRe
     let bpp = 8.0 * result.bytes as f64 / pixels as f64;
     println!(
         "{},{},{},{},{},{},{:.4},{:.6},{:.2},{:.4},{:.6}",
-        encoder, quality, img.name, img.width, img.height,
-        result.bytes, bpp, result.dssim, result.ssim2, result.butteraugli,
+        encoder,
+        quality,
+        img.name,
+        img.width,
+        img.height,
+        result.bytes,
+        bpp,
+        result.dssim,
+        result.ssim2,
+        result.butteraugli,
         result.combined_score()
     );
 }
@@ -121,7 +133,8 @@ fn load_image(path: &PathBuf) -> Option<ImageData> {
     let pixels = buf[..info.buffer_size()].to_vec();
 
     // Compute AQ mean for adaptive decision
-    let y_plane: Vec<f32> = pixels.chunks(3)
+    let y_plane: Vec<f32> = pixels
+        .chunks(3)
         .map(|c| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32)
         .collect();
     let aq_map = jpegli::adaptive_quant::compute_aq_strength_map(&y_plane, width, height, 8);
@@ -145,11 +158,17 @@ fn encode_jpegli(img: &ImageData, quality: u8) -> EncodingResult {
         .expect("jpegli encode");
 
     let decoded = decode_jpeg(&jpeg_data);
-    compute_metrics(&img.pixels, &decoded, img.width, img.height, jpeg_data.len())
+    compute_metrics(
+        &img.pixels,
+        &decoded,
+        img.width,
+        img.height,
+        jpeg_data.len(),
+    )
 }
 
 fn encode_mozjpeg(img: &ImageData, quality: u8) -> EncodingResult {
-    use mozjpeg::{Compress, ColorSpace};
+    use mozjpeg::{ColorSpace, Compress};
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(img.width, img.height);
@@ -163,7 +182,13 @@ fn encode_mozjpeg(img: &ImageData, quality: u8) -> EncodingResult {
     let jpeg_data = comp.finish().expect("mozjpeg finish");
 
     let decoded = decode_jpeg(&jpeg_data);
-    compute_metrics(&img.pixels, &decoded, img.width, img.height, jpeg_data.len())
+    compute_metrics(
+        &img.pixels,
+        &decoded,
+        img.width,
+        img.height,
+        jpeg_data.len(),
+    )
 }
 
 #[cfg(feature = "hybrid-trellis")]
@@ -182,7 +207,13 @@ fn encode_adaptive_hybrid(img: &ImageData, quality: u8) -> EncodingResult {
 
     let jpeg_data = encoder.encode(&img.pixels).expect("adaptive encode");
     let decoded = decode_jpeg(&jpeg_data);
-    compute_metrics(&img.pixels, &decoded, img.width, img.height, jpeg_data.len())
+    compute_metrics(
+        &img.pixels,
+        &decoded,
+        img.width,
+        img.height,
+        jpeg_data.len(),
+    )
 }
 
 #[cfg(not(feature = "hybrid-trellis"))]
@@ -196,7 +227,13 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     decoder.decode().expect("decode")
 }
 
-fn compute_metrics(original: &[u8], decoded: &[u8], width: usize, height: usize, bytes: usize) -> EncodingResult {
+fn compute_metrics(
+    original: &[u8],
+    decoded: &[u8],
+    width: usize,
+    height: usize,
+    bytes: usize,
+) -> EncodingResult {
     EncodingResult {
         bytes,
         dssim: compute_dssim(original, decoded, width, height),
@@ -220,7 +257,9 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+    let decoded_img = attr
+        .create_image_rgba(&decoded_rgba, width, height)
+        .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()
@@ -232,7 +271,13 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let orig_rgb = Rgb::new(
         original
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -244,7 +289,13 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let decoded_rgb = Rgb::new(
         decoded
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -265,4 +316,3 @@ fn compute_butteraugli(original: &[u8], decoded: &[u8], width: usize, height: us
         Err(_) => 99.0,
     }
 }
-

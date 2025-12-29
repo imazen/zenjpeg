@@ -13,8 +13,10 @@ fn main() {
     println!("XYB Parity Test: Rust vs C jpegli");
     println!("{}", "=".repeat(90));
     println!();
-    println!("{:<20} {:<5} {:<10} {:<10} {:<8} {:<10} {:<10} {:<8}",
-        "Image", "Q", "C bytes", "Rust bytes", "Size %", "C DSSIM", "Rust DSSIM", "Δ DSSIM");
+    println!(
+        "{:<20} {:<5} {:<10} {:<10} {:<8} {:<10} {:<10} {:<8}",
+        "Image", "Q", "C bytes", "Rust bytes", "Size %", "C DSSIM", "Rust DSSIM", "Δ DSSIM"
+    );
     println!("{}", "-".repeat(90));
 
     for img_path in &images {
@@ -37,7 +39,13 @@ fn main() {
             // C jpegli XYB
             let cpp_path = format!("/tmp/cpp_xyb_{}_{}.jpg", img_name, q);
             Command::new("cjpegli")
-                .args(&[img_path.to_string(), cpp_path.clone(), "-q".to_string(), q.to_string(), "--xyb".to_string()])
+                .args(&[
+                    img_path.to_string(),
+                    cpp_path.clone(),
+                    "-q".to_string(),
+                    q.to_string(),
+                    "--xyb".to_string(),
+                ])
                 .output()
                 .expect("cjpegli");
             let cpp_bytes = std::fs::metadata(&cpp_path).map(|m| m.len()).unwrap_or(0);
@@ -70,16 +78,25 @@ fn main() {
             // Decode and compute DSSIM
             let cpp_decoded = decode_jpeg(&std::fs::read(&cpp_path).unwrap());
             let rust_decoded = decode_jpeg(&rust_jpeg);
-            
+
             let cpp_dssim = compute_dssim(pixels, &cpp_decoded, width as usize, height as usize);
             let rust_dssim = compute_dssim(pixels, &rust_decoded, width as usize, height as usize);
 
             let size_diff = 100.0 * (rust_bytes as f64 - cpp_bytes as f64) / cpp_bytes as f64;
             let dssim_diff = rust_dssim - cpp_dssim;
 
-            println!("{:<20} {:<5} {:<10} {:<10} {:+.1}%{:<3} {:<10.6} {:<10.6} {:+.6}",
-                img_name, q, cpp_bytes, rust_bytes, size_diff, "",
-                cpp_dssim, rust_dssim, dssim_diff);
+            println!(
+                "{:<20} {:<5} {:<10} {:<10} {:+.1}%{:<3} {:<10.6} {:<10.6} {:+.6}",
+                img_name,
+                q,
+                cpp_bytes,
+                rust_bytes,
+                size_diff,
+                "",
+                cpp_dssim,
+                rust_dssim,
+                dssim_diff
+            );
         }
     }
 }
@@ -104,7 +121,9 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+    let decoded_img = attr
+        .create_image_rgba(&decoded_rgba, width, height)
+        .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()

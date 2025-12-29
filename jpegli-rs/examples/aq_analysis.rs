@@ -6,9 +6,9 @@
 //! ```
 
 use jpegli::adaptive_quant::compute_aq_strength_map;
-use jpegli::hybrid_config::{should_use_hybrid, estimate_hybrid_improvement, AQ_MEAN_THRESHOLD};
-use std::path::PathBuf;
+use jpegli::hybrid_config::{estimate_hybrid_improvement, should_use_hybrid, AQ_MEAN_THRESHOLD};
 use std::env;
+use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -20,8 +20,10 @@ fn main() {
 
     println!("=== AQ Complexity Analysis ===");
     println!("Threshold for hybrid: aq_mean > {:.2}\n", AQ_MEAN_THRESHOLD);
-    println!("{:<15} {:>8} {:>8} {:>8} {:>8} {:>12} {:>12}", 
-        "Image", "AQ Min", "AQ Max", "AQ Mean", "AQ Std", "Use Hybrid?", "Est. Impr%");
+    println!(
+        "{:<15} {:>8} {:>8} {:>8} {:>8} {:>12} {:>12}",
+        "Image", "AQ Min", "AQ Max", "AQ Mean", "AQ Std", "Use Hybrid?", "Est. Impr%"
+    );
     println!("{}", "-".repeat(85));
 
     let mut files: Vec<_> = std::fs::read_dir(&image_dir)
@@ -31,7 +33,7 @@ fn main() {
         .filter(|p| p.extension().is_some_and(|e| e == "png"))
         .collect();
     files.sort();
-    
+
     let max_files: usize = env::var("MAX_FILES")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -45,14 +47,24 @@ fn main() {
         if let Some(stats) = analyze_image(path) {
             let use_hybrid = should_use_hybrid(stats.mean);
             let est_improvement = estimate_hybrid_improvement(stats.mean);
-            
-            if use_hybrid { total_use += 1; } else { total_skip += 1; }
-            
+
+            if use_hybrid {
+                total_use += 1;
+            } else {
+                total_skip += 1;
+            }
+
             let decision = if use_hybrid { "YES" } else { "no" };
-            println!("{:<15} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>12} {:>11.1}%",
+            println!(
+                "{:<15} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>12} {:>11.1}%",
                 path.file_name().unwrap().to_string_lossy(),
-                stats.min, stats.max, stats.mean, stats.std,
-                decision, est_improvement);
+                stats.min,
+                stats.max,
+                stats.mean,
+                stats.std,
+                decision,
+                est_improvement
+            );
         }
     }
 
@@ -84,7 +96,8 @@ fn analyze_image(path: &PathBuf) -> Option<AQStats> {
     let pixels = &buf[..info.buffer_size()];
 
     // Extract Y plane
-    let y_plane: Vec<f32> = pixels.chunks(3)
+    let y_plane: Vec<f32> = pixels
+        .chunks(3)
         .map(|c| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32)
         .collect();
 
@@ -92,5 +105,10 @@ fn analyze_image(path: &PathBuf) -> Option<AQStats> {
     let aq_map = compute_aq_strength_map(&y_plane, width, height, 8);
     let (min, max, mean, std) = aq_map.stats();
 
-    Some(AQStats { min, max, mean, std })
+    Some(AQStats {
+        min,
+        max,
+        mean,
+        std,
+    })
 }
