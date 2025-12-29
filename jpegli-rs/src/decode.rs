@@ -30,7 +30,7 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::icc::apply_icc_transform;
 use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
-use crate::quant::{dequantize_block_with_bias, DequantBiasStats};
+use crate::quant::{dequantize_block, dequantize_block_with_bias, DequantBiasStats};
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
 /// Decoder configuration.
@@ -175,7 +175,8 @@ impl Decoder {
         let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format
-        let mut pixels = parser.to_pixels(output_format)?;
+        // For XYB images, use simple dequantization so ICC profile works correctly
+        let mut pixels = parser.to_pixels(output_format, info.is_xyb)?;
 
         // Apply ICC profile if enabled and present
         #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
@@ -951,7 +952,7 @@ impl<'a> JpegParser<'a> {
         }
     }
 
-    fn to_pixels(&self, format: PixelFormat) -> Result<Vec<u8>> {
+    fn to_pixels(&self, format: PixelFormat, is_xyb: bool) -> Result<Vec<u8>> {
         if self.coeffs.is_empty() {
             return Err(Error::InternalError {
                 reason: "no decoded data",
@@ -1082,7 +1083,14 @@ impl<'a> JpegParser<'a> {
                             natural_coeffs[zi as usize] = coeffs[i];
                         }
 
-                        let dequant = dequantize_block_with_bias(&natural_coeffs, quant, biases);
+                        // For XYB images, use simple dequantization (no bias)
+                        // The ICC profile expects standard JPEG decoding
+                        // For YCbCr, use biased dequantization (jpegli optimization)
+                        let dequant = if is_xyb {
+                            dequantize_block(&natural_coeffs, quant)
+                        } else {
+                            dequantize_block_with_bias(&natural_coeffs, quant, biases)
+                        };
                         let pixels = inverse_dct_8x8(&dequant);
 
                         // Store as f32, NO level shift yet (matches C++ which adds 128/255 after color transform)
@@ -1159,29 +1167,42 @@ impl<'a> JpegParser<'a> {
                 Ok(rgb)
             }
             (3, PixelFormat::Rgb) => {
-                // YCbCr to RGB conversion in f32, then convert to u8
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
                 let mut rgb = try_alloc_zeroed(rgb_size, "allocating RGB output")?;
 
-                for i in 0..output_size {
-                    // Get YCbCr values (still centered around 0 for Y, 0 for Cb/Cr)
-                    let y = planes_f32[0][i];
-                    let cb = planes_f32[1][i]; // Cb is centered around 0 (not 128)
-                    let cr = planes_f32[2][i]; // Cr is centered around 0 (not 128)
+                if is_xyb {
+                    // XYB mode: Output raw level-shifted values, NO YCbCr→RGB conversion.
+                    // The XYB values are stored in YCbCr positions but are NOT YCbCr.
+                    // The ICC profile transforms these directly to sRGB.
+                    // This matches jpeg-decoder's behavior which skips color conversion
+                    // when an ICC profile is present.
+                    for i in 0..output_size {
+                        rgb[i * 3] = (planes_f32[0][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                    }
+                } else {
+                    // YCbCr to RGB conversion in f32, then convert to u8
+                    for i in 0..output_size {
+                        // Get YCbCr values (still centered around 0 for Y, 0 for Cb/Cr)
+                        let y = planes_f32[0][i];
+                        let cb = planes_f32[1][i]; // Cb is centered around 0 (not 128)
+                        let cr = planes_f32[2][i]; // Cr is centered around 0 (not 128)
 
-                    // YCbCr to RGB conversion (BT.601)
-                    // R = Y + 1.402 * Cr
-                    // G = Y - 0.344136 * Cb - 0.714136 * Cr
-                    // B = Y + 1.772 * Cb
-                    let r = y + 1.402 * cr;
-                    let g = y - 0.344136 * cb - 0.714136 * cr;
-                    let b = y + 1.772 * cb;
+                        // YCbCr to RGB conversion (BT.601)
+                        // R = Y + 1.402 * Cr
+                        // G = Y - 0.344136 * Cb - 0.714136 * Cr
+                        // B = Y + 1.772 * Cb
+                        let r = y + 1.402 * cr;
+                        let g = y - 0.344136 * cb - 0.714136 * cr;
+                        let b = y + 1.772 * cb;
 
-                    // Level shift (+128) and convert to u8
-                    rgb[i * 3] = (r + 128.0).round().clamp(0.0, 255.0) as u8;
-                    rgb[i * 3 + 1] = (g + 128.0).round().clamp(0.0, 255.0) as u8;
-                    rgb[i * 3 + 2] = (b + 128.0).round().clamp(0.0, 255.0) as u8;
+                        // Level shift (+128) and convert to u8
+                        rgb[i * 3] = (r + 128.0).round().clamp(0.0, 255.0) as u8;
+                        rgb[i * 3 + 1] = (g + 128.0).round().clamp(0.0, 255.0) as u8;
+                        rgb[i * 3 + 2] = (b + 128.0).round().clamp(0.0, 255.0) as u8;
+                    }
                 }
                 Ok(rgb)
             }

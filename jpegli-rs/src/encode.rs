@@ -2844,6 +2844,7 @@ impl Encoder {
     /// Returns quantized blocks for X, Y, and B components.
     /// B component is already downsampled (half resolution).
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)] // Reserved for future XYB encoding improvements
     fn quantize_all_blocks_xyb(
         &self,
         x_plane: &[f32],

@@ -69,13 +69,21 @@ pub fn extract_icc_profile(jpeg_data: &[u8]) -> Option<Vec<u8>> {
     Some(profile)
 }
 
-/// Check if an ICC profile is an XYB profile.
+/// Check if an ICC profile is an XYB profile from jpegli/JPEG XL.
 pub fn is_xyb_profile(icc_data: &[u8]) -> bool {
-    // Check for "XYB" in profile description
-    // The XYB profile typically has "XYB_Per" in the description tag
+    // XYB profiles from jpegli/libjxl have "jxl " as the CMM type (bytes 4-7)
+    // The description "XYB_Per" is stored as UTF-16BE which we could also check
+    if icc_data.len() >= 8 && &icc_data[4..8] == b"jxl " {
+        return true;
+    }
+
+    // Fallback: check for "XYB" in profile (ASCII or UTF-16BE)
+    // UTF-16BE would be "\0X\0Y\0B" = [0, 88, 0, 89, 0, 66]
+    const XYB_UTF16BE: [u8; 6] = [0, b'X', 0, b'Y', 0, b'B'];
     icc_data
         .windows(XYB_PROFILE_MARKER.len())
         .any(|w| w == XYB_PROFILE_MARKER)
+        || icc_data.windows(6).any(|w| w == XYB_UTF16BE)
 }
 
 /// Apply ICC profile transformation to RGB image data.
