@@ -93,12 +93,18 @@ pub fn scale_quant_by_aq(base_quant: &[u16; DCT_BLOCK_SIZE], aq_strength: f32) -
 
 /// Convert f32 DCT coefficients to i32 for trellis quantization.
 ///
-/// jpegli uses f32 DCT with 1/8 scaling (values roughly -1024 to +1024).
-/// mozjpeg trellis expects i32 coefficients.
+/// jpegli and mozjpeg use different quantization formulas:
+/// - jpegli: quantized = round(DCT / quantval)
+/// - mozjpeg trellis: quantized = round(DCT / (8 * quantval))
+///
+/// To make trellis produce the same quantized values as jpegli:
+/// - We multiply DCT by 8: trellis sees round((8*DCT) / (8*quantval)) = round(DCT / quantval)
+/// - This preserves precision better than dividing quant by 8
 pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
     let mut result = [0i32; DCT_BLOCK_SIZE];
     for i in 0..DCT_BLOCK_SIZE {
-        result[i] = coeffs[i].round() as i32;
+        // Multiply by 8 to compensate for trellis's internal 8x quant scaling
+        result[i] = (coeffs[i] * 8.0).round() as i32;
     }
     result
 }
@@ -120,19 +126,23 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
 pub fn hybrid_quantize_block(
     dct_coeffs: &[f32; DCT_BLOCK_SIZE],
     base_quant: &[u16; DCT_BLOCK_SIZE],
-    aq_strength: f32,
+    _aq_strength: f32, // NOTE: AQ not yet integrated into trellis (needs lambda adjustment)
     ac_table: &DerivedTable,
     config: &TrellisConfig,
 ) -> [i16; DCT_BLOCK_SIZE] {
-    // 1. Scale quant table by AQ strength
-    let scaled_quant = scale_quant_by_aq(base_quant, aq_strength);
+    // NOTE: jpegli uses AQ for zero-bias thresholds, not quant table scaling.
+    // To properly integrate AQ into trellis, we'd need to modify the lambda
+    // (rate-distortion tradeoff) based on aq_strength. For now, we just run
+    // trellis with the base quant table.
+    //
+    // TODO: Integrate AQ into trellis by adjusting lambda per block.
 
-    // 2. Convert f32 DCT to i32
+    // Convert f32 DCT to i32 (with 8x scaling to match trellis's 8x quant divisor)
     let dct_i32 = dct_f32_to_i32(dct_coeffs);
 
-    // 3. Run trellis quantization with AQ-scaled quant table
+    // Run trellis quantization
     let mut quantized = [0i16; DCT_BLOCK_SIZE];
-    trellis_quantize_block(&dct_i32, &mut quantized, &scaled_quant, ac_table, config);
+    trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, config);
 
     quantized
 }

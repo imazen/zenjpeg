@@ -218,6 +218,7 @@ fn main() {
     // Step 6: Compare actual encoding
     println!("\n6. Full encoding comparison:");
 
+    // Standard jpegli (AQ + zero-bias)
     let start = Instant::now();
     let jpegli_result = jpegli::Encoder::new()
         .width(width as u32)
@@ -226,15 +227,93 @@ fn main() {
         .encode(&pixels)
         .unwrap();
     let jpegli_time = start.elapsed();
+    println!(
+        "   jpegli (AQ):        {} bytes in {:?}",
+        jpegli_result.len(),
+        jpegli_time
+    );
 
-    println!("   jpegli: {} bytes in {:?}", jpegli_result.len(), jpegli_time);
+    // Hybrid jpegli (AQ + trellis)
+    let start = Instant::now();
+    let hybrid_result = jpegli::Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .quality(jpegli::quant::Quality::from_quality(quality as f32))
+        .hybrid_trellis(true)
+        .encode(&pixels)
+        .unwrap();
+    let hybrid_time = start.elapsed();
+    println!(
+        "   jpegli (AQ+trellis): {} bytes in {:?}",
+        hybrid_result.len(),
+        hybrid_time
+    );
+
+    // Size comparison
+    let size_diff = hybrid_result.len() as i64 - jpegli_result.len() as i64;
+    let size_pct = (size_diff as f64 / jpegli_result.len() as f64) * 100.0;
+    println!(
+        "   Difference: {:+} bytes ({:+.2}%)",
+        size_diff, size_pct
+    );
+
+    // Verify both are valid JPEGs and compare quality
+    use jpeg_decoder::Decoder;
+    let mut decoder = Decoder::new(&jpegli_result[..]);
+    let jpegli_decoded = decoder.decode().expect("jpegli output should be valid JPEG");
+
+    let mut decoder = Decoder::new(&hybrid_result[..]);
+    let hybrid_decoded = decoder.decode().expect("hybrid output should be valid JPEG");
+    println!("   Both outputs are valid JPEGs ✓");
+
+    // Calculate DSSIM to compare quality
+    let attr = dssim::Dssim::new();
+
+    // Original image
+    let orig_rgba: Vec<rgb::RGBA<u8>> = pixels
+        .chunks(3)
+        .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+        .collect();
+    let orig_img = attr
+        .create_image_rgba(&orig_rgba, width, height)
+        .expect("create orig image");
+
+    // jpegli decoded
+    let jpegli_rgba: Vec<rgb::RGBA<u8>> = jpegli_decoded
+        .chunks(3)
+        .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+        .collect();
+    let jpegli_img = attr
+        .create_image_rgba(&jpegli_rgba, width, height)
+        .expect("create jpegli image");
+
+    // hybrid decoded
+    let hybrid_rgba: Vec<rgb::RGBA<u8>> = hybrid_decoded
+        .chunks(3)
+        .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+        .collect();
+    let hybrid_img = attr
+        .create_image_rgba(&hybrid_rgba, width, height)
+        .expect("create hybrid image");
+
+    let (jpegli_dssim, _) = attr.compare(&orig_img, jpegli_img);
+    let (hybrid_dssim, _) = attr.compare(&orig_img, hybrid_img);
+
+    println!("\n7. Quality comparison (DSSIM, lower = better):");
+    println!("   jpegli (AQ):         {:.6}", jpegli_dssim);
+    println!("   jpegli (AQ+trellis): {:.6}", hybrid_dssim);
+    println!(
+        "   Quality ratio: {:.2}x",
+        hybrid_dssim / jpegli_dssim
+    );
 
     println!("\n=== Summary ===");
-    println!("The hybrid approach would:");
-    println!("1. Use jpegli's AQ to identify block importance (smooth vs textured)");
-    println!("2. Scale quant tables per-block (low AQ → fine quant, high AQ → coarse)");
-    println!("3. Run mozjpeg trellis on each block with its scaled quant table");
-    println!("4. Benefit: optimal bit allocation BOTH spatially (AQ) and per-coefficient (trellis)");
+    println!("Current implementation: trellis quantization WITHOUT AQ integration.");
+    println!("This shows trellis produces valid, comparable results to jpegli.");
+    println!();
+    println!("TODO: Integrate AQ into trellis by adjusting lambda per block:");
+    println!("- Higher AQ strength (textured) → higher lambda → favor smaller file");
+    println!("- Lower AQ strength (smooth) → lower lambda → preserve quality");
 }
 
 /// Scale standard luminance quant table for quality level
