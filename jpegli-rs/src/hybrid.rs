@@ -93,7 +93,10 @@ impl Default for StandardHuffmanTables {
 ///
 /// # Returns
 /// Scaled quantization table where higher AQ strength = higher quant values
-pub fn scale_quant_by_aq(base_quant: &[u16; DCT_BLOCK_SIZE], aq_strength: f32) -> [u16; DCT_BLOCK_SIZE] {
+pub fn scale_quant_by_aq(
+    base_quant: &[u16; DCT_BLOCK_SIZE],
+    aq_strength: f32,
+) -> [u16; DCT_BLOCK_SIZE] {
     let mut scaled = [0u16; DCT_BLOCK_SIZE];
     // aq_strength typically ranges from 0.0 to ~0.5
     // strength=0 → multiplier=1.0 (no change)

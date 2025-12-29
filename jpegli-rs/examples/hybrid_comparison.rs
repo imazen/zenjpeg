@@ -13,7 +13,9 @@ use std::time::Instant;
 #[cfg(not(feature = "hybrid-trellis"))]
 fn main() {
     eprintln!("This example requires the hybrid-trellis feature.");
-    eprintln!("Run with: cargo run --release --example hybrid_comparison --features hybrid-trellis");
+    eprintln!(
+        "Run with: cargo run --release --example hybrid_comparison --features hybrid-trellis"
+    );
 }
 
 #[cfg(feature = "hybrid-trellis")]
@@ -90,8 +92,10 @@ fn main() {
 
     // Print summary table
     println!("\n{}", "=".repeat(100));
-    println!("{:30} {:>12} {:>12} {:>12} {:>10} {:>10} {:>10}",
-        "Image", "jpegli", "hybrid", "mozjpeg", "j_dssim", "h_dssim", "m_dssim");
+    println!(
+        "{:30} {:>12} {:>12} {:>12} {:>10} {:>10} {:>10}",
+        "Image", "jpegli", "hybrid", "mozjpeg", "j_dssim", "h_dssim", "m_dssim"
+    );
     println!("{}", "-".repeat(100));
 
     let mut total_jpegli = 0usize;
@@ -102,9 +106,16 @@ fn main() {
     let mut sum_mozjpeg_dssim = 0.0f64;
 
     for r in &results {
-        println!("{:30} {:>12} {:>12} {:>12} {:>10.6} {:>10.6} {:>10.6}",
-            r.name, r.jpegli_size, r.hybrid_size, r.mozjpeg_size,
-            r.jpegli_dssim, r.hybrid_dssim, r.mozjpeg_dssim);
+        println!(
+            "{:30} {:>12} {:>12} {:>12} {:>10.6} {:>10.6} {:>10.6}",
+            r.name,
+            r.jpegli_size,
+            r.hybrid_size,
+            r.mozjpeg_size,
+            r.jpegli_dssim,
+            r.hybrid_dssim,
+            r.mozjpeg_dssim
+        );
 
         total_jpegli += r.jpegli_size;
         total_hybrid += r.hybrid_size;
@@ -116,10 +127,16 @@ fn main() {
 
     let n = results.len() as f64;
     println!("{}", "-".repeat(100));
-    println!("{:30} {:>12} {:>12} {:>12} {:>10.6} {:>10.6} {:>10.6}",
+    println!(
+        "{:30} {:>12} {:>12} {:>12} {:>10.6} {:>10.6} {:>10.6}",
         "TOTAL/MEAN",
-        total_jpegli, total_hybrid, total_mozjpeg,
-        sum_jpegli_dssim / n, sum_hybrid_dssim / n, sum_mozjpeg_dssim / n);
+        total_jpegli,
+        total_hybrid,
+        total_mozjpeg,
+        sum_jpegli_dssim / n,
+        sum_hybrid_dssim / n,
+        sum_mozjpeg_dssim / n
+    );
 
     // Summary analysis
     println!("\n=== Summary ===\n");
@@ -132,11 +149,17 @@ fn main() {
 
     println!("Hybrid vs jpegli:");
     println!("  File size: {:+.2}%", hybrid_vs_jpegli_size);
-    println!("  DSSIM ratio: {:.3}x (lower = better quality)", hybrid_vs_jpegli_dssim);
+    println!(
+        "  DSSIM ratio: {:.3}x (lower = better quality)",
+        hybrid_vs_jpegli_dssim
+    );
 
     println!("\nmozjpeg vs jpegli:");
     println!("  File size: {:+.2}%", mozjpeg_vs_jpegli_size);
-    println!("  DSSIM ratio: {:.3}x (lower = better quality)", mozjpeg_vs_jpegli_dssim);
+    println!(
+        "  DSSIM ratio: {:.3}x (lower = better quality)",
+        mozjpeg_vs_jpegli_dssim
+    );
 
     // Count wins
     let mut hybrid_wins_size = 0;
@@ -145,15 +168,29 @@ fn main() {
     let mut mozjpeg_wins_dssim = 0;
 
     for r in &results {
-        if r.hybrid_size < r.jpegli_size { hybrid_wins_size += 1; }
-        if r.hybrid_dssim < r.jpegli_dssim { hybrid_wins_dssim += 1; }
-        if r.mozjpeg_size < r.jpegli_size { mozjpeg_wins_size += 1; }
-        if r.mozjpeg_dssim < r.jpegli_dssim { mozjpeg_wins_dssim += 1; }
+        if r.hybrid_size < r.jpegli_size {
+            hybrid_wins_size += 1;
+        }
+        if r.hybrid_dssim < r.jpegli_dssim {
+            hybrid_wins_dssim += 1;
+        }
+        if r.mozjpeg_size < r.jpegli_size {
+            mozjpeg_wins_size += 1;
+        }
+        if r.mozjpeg_dssim < r.jpegli_dssim {
+            mozjpeg_wins_dssim += 1;
+        }
     }
 
     println!("\nWins vs jpegli (out of {}):", results.len());
-    println!("  Hybrid: {} smaller, {} better quality", hybrid_wins_size, hybrid_wins_dssim);
-    println!("  mozjpeg: {} smaller, {} better quality", mozjpeg_wins_size, mozjpeg_wins_dssim);
+    println!(
+        "  Hybrid: {} smaller, {} better quality",
+        hybrid_wins_size, hybrid_wins_dssim
+    );
+    println!(
+        "  mozjpeg: {} smaller, {} better quality",
+        mozjpeg_wins_size, mozjpeg_wins_dssim
+    );
 }
 
 #[cfg(feature = "hybrid-trellis")]

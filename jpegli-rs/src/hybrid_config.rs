@@ -149,8 +149,8 @@ impl HybridConfig {
     pub fn favor_size() -> Self {
         Self {
             enabled: true,
-            aq_lambda_scale: 0.0,      // Most efficient setting
-            base_lambda_scale1: 14.0,  // Lower base = smaller files
+            aq_lambda_scale: 0.0,     // Most efficient setting
+            base_lambda_scale1: 14.0, // Lower base = smaller files
             dc_enabled: false,
             ..Self::default()
         }
@@ -163,8 +163,8 @@ impl HybridConfig {
     pub fn favor_quality() -> Self {
         Self {
             enabled: true,
-            aq_lambda_scale: 4.0,      // Maximum quality improvement
-            base_lambda_scale1: 15.5,  // Higher base = more quality
+            aq_lambda_scale: 4.0,     // Maximum quality improvement
+            base_lambda_scale1: 15.5, // Higher base = more quality
             dc_enabled: false,
             ..Self::default()
         }
@@ -277,7 +277,12 @@ impl HybridConfig {
 
     /// Convert to mozjpeg TrellisConfig for a specific block.
     #[cfg(feature = "hybrid-trellis")]
-    pub fn to_trellis_config(&self, aq_strength: f32, dampen: f32, is_chroma: bool) -> TrellisConfig {
+    pub fn to_trellis_config(
+        &self,
+        aq_strength: f32,
+        dampen: f32,
+        is_chroma: bool,
+    ) -> TrellisConfig {
         let adjustment = self.compute_lambda_adjustment(aq_strength, dampen, is_chroma);
 
         TrellisConfig {

@@ -142,11 +142,7 @@ fn main() {
     let scaled_high = scale_quant_by_aq(&base_quant, high_aq);
 
     println!("   Base quant[0..4]: {:?}", &base_quant[0..4]);
-    println!(
-        "   Low AQ ({:.3}) scaled: {:?}",
-        low_aq,
-        &scaled_low[0..4]
-    );
+    println!("   Low AQ ({:.3}) scaled: {:?}", low_aq, &scaled_low[0..4]);
     println!(
         "   High AQ ({:.3}) scaled: {:?}",
         high_aq,
@@ -252,18 +248,19 @@ fn main() {
     // Size comparison
     let size_diff = hybrid_result.len() as i64 - jpegli_result.len() as i64;
     let size_pct = (size_diff as f64 / jpegli_result.len() as f64) * 100.0;
-    println!(
-        "   Difference: {:+} bytes ({:+.2}%)",
-        size_diff, size_pct
-    );
+    println!("   Difference: {:+} bytes ({:+.2}%)", size_diff, size_pct);
 
     // Verify both are valid JPEGs and compare quality
     use jpeg_decoder::Decoder;
     let mut decoder = Decoder::new(&jpegli_result[..]);
-    let jpegli_decoded = decoder.decode().expect("jpegli output should be valid JPEG");
+    let jpegli_decoded = decoder
+        .decode()
+        .expect("jpegli output should be valid JPEG");
 
     let mut decoder = Decoder::new(&hybrid_result[..]);
-    let hybrid_decoded = decoder.decode().expect("hybrid output should be valid JPEG");
+    let hybrid_decoded = decoder
+        .decode()
+        .expect("hybrid output should be valid JPEG");
     println!("   Both outputs are valid JPEGs ✓");
 
     // Calculate DSSIM to compare quality
@@ -302,10 +299,7 @@ fn main() {
     println!("\n7. Quality comparison (DSSIM, lower = better):");
     println!("   jpegli (AQ):         {:.6}", jpegli_dssim);
     println!("   jpegli (AQ+trellis): {:.6}", hybrid_dssim);
-    println!(
-        "   Quality ratio: {:.2}x",
-        hybrid_dssim / jpegli_dssim
-    );
+    println!("   Quality ratio: {:.2}x", hybrid_dssim / jpegli_dssim);
 
     println!("\n=== Summary ===");
     println!("Current implementation: trellis quantization WITHOUT AQ integration.");

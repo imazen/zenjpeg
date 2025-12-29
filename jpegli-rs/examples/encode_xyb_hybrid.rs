@@ -35,7 +35,7 @@ fn main() {
             .encode(pixels)
             .expect("Encode failed")
     };
-    
+
     #[cfg(not(feature = "hybrid-trellis"))]
     let jpeg = {
         jpegli::Encoder::new()

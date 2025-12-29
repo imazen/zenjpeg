@@ -97,7 +97,11 @@ fn main() {
     }
 
     // Load images into memory
-    eprintln!("Loading {} images from {}", files.len(), image_dir.display());
+    eprintln!(
+        "Loading {} images from {}",
+        files.len(),
+        image_dir.display()
+    );
     let images: Vec<ImageData> = files.iter().filter_map(|f| load_image(f)).collect();
     eprintln!("Loaded {} images", images.len());
 
@@ -328,7 +332,9 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+    let decoded_img = attr
+        .create_image_rgba(&decoded_rgba, width, height)
+        .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()
@@ -341,7 +347,13 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let orig_rgb = Rgb::new(
         original
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -353,7 +365,13 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let decoded_rgb = Rgb::new(
         decoded
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,

@@ -6,9 +6,9 @@
 //! ```
 
 fn main() {
-    let image_path = std::env::args().nth(1).unwrap_or_else(||
-        "/home/lilith/work/codec-eval/codec-corpus/kodak/1.png".to_string()
-    );
+    let image_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "/home/lilith/work/codec-eval/codec-corpus/kodak/1.png".to_string());
 
     // Load image
     let file = std::fs::File::open(&image_path).expect("Failed to open image");
@@ -61,15 +61,21 @@ fn main() {
             .hybrid_config(HybridConfig::default())
             .encode(pixels)
             .expect("XYB hybrid encode");
-        
-        let diff_pct = 100.0 * (xyb_hybrid.len() as f64 - xyb_baseline.len() as f64) / xyb_baseline.len() as f64;
-        println!("XYB + hybrid:   {} bytes ({:+.1}% vs XYB baseline)", xyb_hybrid.len(), diff_pct);
+
+        let diff_pct = 100.0 * (xyb_hybrid.len() as f64 - xyb_baseline.len() as f64)
+            / xyb_baseline.len() as f64;
+        println!(
+            "XYB + hybrid:   {} bytes ({:+.1}% vs XYB baseline)",
+            xyb_hybrid.len(),
+            diff_pct
+        );
 
         // Decode and check quality
         let decoded_baseline = decode_jpeg(&xyb_baseline);
         let decoded_hybrid = decode_jpeg(&xyb_hybrid);
 
-        let dssim_baseline = compute_dssim(pixels, &decoded_baseline, width as usize, height as usize);
+        let dssim_baseline =
+            compute_dssim(pixels, &decoded_baseline, width as usize, height as usize);
         let dssim_hybrid = compute_dssim(pixels, &decoded_hybrid, width as usize, height as usize);
 
         let quality_gain = 100.0 * (dssim_baseline - dssim_hybrid) / dssim_baseline;
@@ -77,7 +83,10 @@ fn main() {
         println!();
         println!("Quality comparison (DSSIM, lower is better):");
         println!("  XYB baseline: {:.6}", dssim_baseline);
-        println!("  XYB + hybrid: {:.6} ({:+.1}%)", dssim_hybrid, -quality_gain);
+        println!(
+            "  XYB + hybrid: {:.6} ({:+.1}%)",
+            dssim_hybrid, -quality_gain
+        );
     }
 
     #[cfg(not(feature = "hybrid-trellis"))]
@@ -106,7 +115,9 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+    let decoded_img = attr
+        .create_image_rgba(&decoded_rgba, width, height)
+        .unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()
