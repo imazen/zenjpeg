@@ -26,8 +26,6 @@ use crate::xyb::srgb_to_scaled_xyb;
 
 #[cfg(feature = "hybrid-trellis")]
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
-#[cfg(feature = "hybrid-trellis")]
-use mozjpeg_oxide::TrellisConfig;
 
 /// Progressive scan parameters.
 #[derive(Debug, Clone)]
@@ -65,10 +63,10 @@ pub struct EncoderConfig {
     pub restart_interval: u16,
     /// Use optimized Huffman tables
     pub optimize_huffman: bool,
-    /// Use hybrid quantization (jpegli AQ + mozjpeg trellis)
+    /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
     /// Requires the `hybrid-trellis` feature
     #[cfg(feature = "hybrid-trellis")]
-    pub use_hybrid_trellis: bool,
+    pub hybrid_config: crate::hybrid_config::HybridConfig,
 }
 
 impl Default for EncoderConfig {
@@ -86,41 +84,45 @@ impl Default for EncoderConfig {
             // Match C++ jpegli default: optimize_coding = true
             optimize_huffman: true,
             #[cfg(feature = "hybrid-trellis")]
-            use_hybrid_trellis: false,
+            hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
         }
     }
 }
 
 /// Quantization context for hybrid trellis mode.
 ///
-/// This struct holds pre-built Huffman tables and trellis config for use
+/// This struct holds pre-built Huffman tables and hybrid config for use
 /// during hybrid quantization (jpegli AQ + mozjpeg trellis).
 #[cfg(feature = "hybrid-trellis")]
 struct HybridQuantContext {
     huff_tables: StandardHuffmanTables,
-    trellis_config: TrellisConfig,
+    config: crate::hybrid_config::HybridConfig,
 }
 
 #[cfg(feature = "hybrid-trellis")]
 impl HybridQuantContext {
-    /// Creates a new hybrid quantization context with AC-only trellis.
-    fn new() -> Self {
-        // Create AC-only trellis config (no DC trellis since jpegli handles DC differently)
-        let mut config = TrellisConfig::default();
-        config.dc_enabled = false; // AC-only for this experiment
-
+    /// Creates a new hybrid quantization context with the given config.
+    fn new(config: crate::hybrid_config::HybridConfig) -> Self {
         Self {
             huff_tables: StandardHuffmanTables::new(),
-            trellis_config: config,
+            config,
         }
     }
 
     /// Quantize a block using hybrid AQ + trellis.
+    ///
+    /// # Arguments
+    /// * `dct_coeffs` - DCT coefficients
+    /// * `quant` - Quantization table
+    /// * `aq_strength` - Per-block AQ strength
+    /// * `dampen` - Quality-based AQ dampen factor (0-1)
+    /// * `is_luma` - True for Y component, false for Cb/Cr
     fn quantize_block(
         &self,
         dct_coeffs: &[f32; DCT_BLOCK_SIZE],
         quant: &[u16; DCT_BLOCK_SIZE],
         aq_strength: f32,
+        dampen: f32,
         is_luma: bool,
     ) -> [i16; DCT_BLOCK_SIZE] {
         let ac_table = if is_luma {
@@ -129,7 +131,10 @@ impl HybridQuantContext {
             &self.huff_tables.chroma_ac
         };
 
-        hybrid_quantize_block(dct_coeffs, quant, aq_strength, ac_table, &self.trellis_config)
+        // Generate per-block trellis config based on AQ and hybrid settings
+        let trellis_config = self.config.to_trellis_config(aq_strength, dampen, !is_luma);
+
+        hybrid_quantize_block(dct_coeffs, quant, aq_strength, ac_table, &trellis_config)
     }
 }
 
@@ -243,7 +248,24 @@ impl Encoder {
     #[cfg(feature = "hybrid-trellis")]
     #[must_use]
     pub fn hybrid_trellis(mut self, enable: bool) -> Self {
-        self.config.use_hybrid_trellis = enable;
+        if enable {
+            self.config.hybrid_config = crate::hybrid_config::HybridConfig::default();
+        } else {
+            self.config.hybrid_config = crate::hybrid_config::HybridConfig::disabled();
+        }
+        self
+    }
+
+    /// Set custom hybrid quantization configuration.
+    ///
+    /// Allows fine-tuning all hybrid AQ+trellis parameters.
+    /// See [`HybridConfig`](crate::hybrid_config::HybridConfig) for available options.
+    ///
+    /// Requires the `hybrid-trellis` feature.
+    #[cfg(feature = "hybrid-trellis")]
+    #[must_use]
+    pub fn hybrid_config(mut self, config: crate::hybrid_config::HybridConfig) -> Self {
+        self.config.hybrid_config = config;
         self
     }
 
@@ -1921,8 +1943,8 @@ impl Encoder {
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "hybrid-trellis")]
-        let hybrid_ctx = if self.config.use_hybrid_trellis {
-            Some(HybridQuantContext::new())
+        let hybrid_ctx = if self.config.hybrid_config.enabled {
+            Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
             None
         };
@@ -1938,7 +1960,7 @@ impl Encoder {
 
                 #[cfg(feature = "hybrid-trellis")]
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
+                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
                     quant::quantize_block_with_zero_bias(
                         &y_dct,
@@ -1965,7 +1987,7 @@ impl Encoder {
 
                     #[cfg(feature = "hybrid-trellis")]
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cb_dct, &c_quant.values, aq_strength, false)
+                        ctx.quantize_block(&cb_dct, &c_quant.values, aq_strength, 1.0, false)
                     } else {
                         quant::quantize_block_with_zero_bias(
                             &cb_dct,
@@ -1991,7 +2013,7 @@ impl Encoder {
 
                     #[cfg(feature = "hybrid-trellis")]
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cr_dct, &c_quant.values, aq_strength, false)
+                        ctx.quantize_block(&cr_dct, &c_quant.values, aq_strength, 1.0, false)
                     } else {
                         quant::quantize_block_with_zero_bias(
                             &cr_dct,
@@ -2060,8 +2082,8 @@ impl Encoder {
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "hybrid-trellis")]
-        let hybrid_ctx = if self.config.use_hybrid_trellis {
-            Some(HybridQuantContext::new())
+        let hybrid_ctx = if self.config.hybrid_config.enabled {
+            Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
             None
         };
@@ -2080,7 +2102,7 @@ impl Encoder {
 
                 #[cfg(feature = "hybrid-trellis")]
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
+                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
                     quant::quantize_block_with_zero_bias(
                         &y_dct,
@@ -2105,7 +2127,7 @@ impl Encoder {
 
                     #[cfg(feature = "hybrid-trellis")]
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, false)
+                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
                     } else {
                         quant::quantize_block_with_zero_bias(
                             &cb_dct,
@@ -2129,7 +2151,7 @@ impl Encoder {
 
                     #[cfg(feature = "hybrid-trellis")]
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, false)
+                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
                     } else {
                         quant::quantize_block_with_zero_bias(
                             &cr_dct,
@@ -2194,8 +2216,8 @@ impl Encoder {
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "hybrid-trellis")]
-        let hybrid_ctx = if self.config.use_hybrid_trellis {
-            Some(HybridQuantContext::new())
+        let hybrid_ctx = if self.config.hybrid_config.enabled {
+            Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
             None
         };
@@ -2213,7 +2235,7 @@ impl Encoder {
 
                 #[cfg(feature = "hybrid-trellis")]
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
+                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
                     quant::quantize_block_with_zero_bias(
                         &y_dct,
@@ -2251,7 +2273,7 @@ impl Encoder {
 
                     #[cfg(feature = "hybrid-trellis")]
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, false)
+                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
                     } else {
                         quant::quantize_block_with_zero_bias(
                             &cb_dct,
@@ -2276,7 +2298,7 @@ impl Encoder {
 
                     #[cfg(feature = "hybrid-trellis")]
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, false)
+                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
                     } else {
                         quant::quantize_block_with_zero_bias(
                             &cr_dct,
