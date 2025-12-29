@@ -1,27 +1,93 @@
 # Streaming Support Plan for jpegli-rs
 
-**Date**: December 2024
+**Date**: December 2024 (Updated December 28, 2024)
 **Goal**: Add chunked/streaming APIs to jpegli-rs for server-side on-the-fly encoding/decoding
+
+## Executive Summary
+
+| Phase | Effort | What It Does |
+|-------|--------|--------------|
+| **Phase 1: Chunked Encoder** | ~1 week | Accept pixel rows incrementally, emit progressive JPEG at end |
+| **Phase 2: Streaming Decoder** | ~1 week | Accept JPEG bytes incrementally, provide progressive preview |
+| **Phase 3: True Streaming** | ~1 week (optional) | Real-time baseline-only streaming for both encoder and decoder |
+
+**Key Insight**: Progressive JPEG cannot truly stream (all data needed before any output).
+"Chunked" mode saves memory by processing rows as they arrive but still produces output at the end.
+
+**Work Location**: All changes go in jpegli-rs at `/home/lilith/work/jpegli-rs/jpegli-rs/src/`
 
 ## Requirements
 
 - Server-side on-the-fly encoding/decoding
 - Both encoder AND decoder streaming support
 - Progressive JPEG support (not just baseline)
-- Build decoder natively in jpegli-rs (not wrap external crate)
 - Preserve f32 precision throughout pipeline (no quant loss from intermediate conversions)
+
+## Important: jpegli-rs Already Has a Full Decoder!
+
+**Location**: `/home/lilith/work/jpegli-rs/jpegli-rs/src/`
+
+The jpegli-rs library already includes:
+- `decode.rs` (46,920 lines) - Complete JPEG decoder with marker parsing
+- `idct.rs` (11,716 lines) - Inverse DCT
+- `entropy.rs` (45,582 lines) - Entropy encoding/decoding
+- `color.rs` (20,138 lines) - Color space conversion
+- `quant.rs` (39,269 lines) - Quantization/dequantization
+
+**This plan is about adding STREAMING APIs to the existing encoder/decoder, NOT building a decoder from scratch.**
+
+The zenjpeg fork (`/home/lilith/work/zenjpeg/src/jpegli/`) is encoder-focused and has only partial decoder support - but the original jpegli-rs has everything.
 
 ## Current Architecture
 
-### Encoder Status: Complete, Non-Streaming
+### Location: `/home/lilith/work/jpegli-rs/jpegli-rs/src/`
 
-Location: `src/jpegli/`
+Both encoder and decoder are **complete** with f32 precision throughout.
+
+### Encoder (Complete)
 
 **Current API**:
 ```rust
 // Requires entire image upfront
-pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>>
+let encoder = Encoder::new()
+    .quality(Quality::Standard(90))
+    .subsampling(Subsampling::S444);
+let jpeg = encoder.encode(&pixels, width, height)?;
 ```
+
+**Key Files**:
+| File | Lines | Purpose |
+|------|-------|---------|
+| `encode.rs` | 116,126 | Main encoder pipeline |
+| `huffman_opt.rs` | 74,082 | Two-pass Huffman optimization |
+| `entropy.rs` | 45,582 | Huffman encoding/decoding |
+| `adaptive_quant.rs` | 31,244 | Per-block AQ strength |
+| `quant.rs` | 39,269 | Quantization with zero-biasing |
+| `color.rs` | 20,138 | RGB↔YCbCr (f32 precision) |
+| `dct.rs` | 11,941 | Forward DCT |
+| `idct.rs` | 11,716 | Inverse DCT |
+| `bitstream.rs` | 10,763 | Bit-level I/O |
+| `alloc.rs` | 11,349 | Memory management |
+
+### Decoder (Complete)
+
+**Current API**:
+```rust
+let decoder = Decoder::new()
+    .apply_icc(true)
+    .fancy_upsampling(true);
+let decoded = decoder.decode(&jpeg_bytes)?;
+// decoded.pixels: Vec<u8> or configurable format
+```
+
+**Features**:
+- Full JPEG parsing (all markers)
+- Baseline and progressive support
+- ICC profile extraction and application
+- XYB color space support
+- Fancy upsampling
+- Block smoothing
+- DoS protection (max_pixels, max_memory limits)
 
 **Memory Model** (for 4K image 3840×2160):
 - Y plane (f32): 33 MB
@@ -29,37 +95,6 @@ pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>>
 - Cr plane (f32): 33 MB
 - Coefficients: 50 MB
 - **Peak: ~150 MB**
-
-**Key Files**:
-| File | Lines | Purpose |
-|------|-------|---------|
-| `encode.rs` | 2,721 | Main encoder pipeline |
-| `huffman_opt.rs` | 2,255 | Two-pass Huffman optimization |
-| `entropy.rs` | 1,242 | Huffman encoding + partial decoding |
-| `adaptive_quant.rs` | 917 | Per-block AQ strength |
-| `quant.rs` | 949 | Quantization, zero-biasing |
-| `color.rs` | 665 | RGB↔YCbCr (f32 precision) |
-| `dct.rs` | 397 | Forward DCT |
-| `alloc.rs` | 390 | Memory management |
-| `bitstream.rs` | 375 | Bit-level I/O |
-
-### Decoder Status: Partial
-
-**What Exists** (in `entropy.rs:811-1100`):
-- ✅ `BitReader` with byte unstuffing (0xFF 0x00 → 0xFF)
-- ✅ `HuffmanDecodeTable` with 16-bit fast lookup
-- ✅ `decode_block()` for baseline and progressive
-- ✅ DC differential decoding
-- ✅ AC run-length decoding
-- ✅ Progressive refinement decoding
-
-**What's Missing**:
-- ❌ JPEG file parsing (markers, headers)
-- ❌ Inverse DCT
-- ❌ Dequantization
-- ❌ YCbCr → RGB color conversion
-- ❌ Chroma upsampling
-- ❌ Decoder orchestration
 
 ## Why Progressive Can't Truly Stream
 
@@ -147,17 +182,35 @@ let jpeg = encoder.finish()?;
 
 ---
 
-### Phase 2: Full JPEG Decoder (~2-3 weeks)
+### Phase 2: Streaming Decoder API (~1 week)
 
-**Goal**: Complete native JPEG decoder with incremental input support.
+**Goal**: Add incremental input and progressive preview to the EXISTING jpegli-rs decoder.
 
-**API**:
+**Key Point**: jpegli-rs at `/home/lilith/work/jpegli-rs/jpegli-rs/src/decode.rs` already has:
+- ✅ Complete JPEG parser (all markers)
+- ✅ Inverse DCT (f32 precision)
+- ✅ Color conversion (YCbCr→RGB, XYB support)
+- ✅ Chroma upsampling
+- ✅ Progressive scan handling
+- ✅ ICC profile support
+
+**What's Missing**: Incremental input API and progressive preview capability.
+
+**Current API** (requires complete JPEG upfront):
 ```rust
-let mut decoder = Decoder::new()?;
+let decoder = Decoder::new()
+    .apply_icc(true)
+    .fancy_upsampling(true);
+let decoded = decoder.decode(&jpeg_bytes)?;  // Needs ALL bytes
+```
+
+**New Streaming API**:
+```rust
+let mut decoder = StreamingDecoder::new()?;
 
 // Feed JPEG data as it arrives
 for chunk in incoming_jpeg_chunks {
-    decoder.write(&chunk)?;
+    decoder.write(&chunk)?;  // Buffers internally
 }
 
 // Get decoded pixels (f32 or u8)
@@ -169,265 +222,105 @@ if let Some(preview) = decoder.current_preview()? {
 }
 ```
 
-#### Component 1: JPEG Parser (`src/jpegli/parser.rs` ~600 lines)
+#### Changes Required
 
-**Marker Handling**:
+**1. Add Input Buffer to Decoder State** (~100 lines)
 ```rust
-pub struct JpegParser {
-    state: ParserState,
-    buffer: Vec<u8>,
-    // Extracted metadata
-    frame: Option<FrameHeader>,
-    quant_tables: [Option<[u16; 64]>; 4],
-    huff_tables: HuffmanTables,
-    scans: Vec<ScanHeader>,
+pub struct StreamingDecoder {
+    // Buffer for incomplete JPEG data
+    input_buffer: Vec<u8>,
+    // Track parsing progress
+    parse_state: ParseState,
+    // Underlying decoder (existing)
+    inner: Decoder,
+    // For progressive: coefficients received so far
+    partial_coeffs: Option<CoefficientBuffer>,
 }
 
-enum ParserState {
-    ExpectingMarker,
-    ReadingSegmentLength,
-    ReadingSegment { marker: u8, remaining: usize },
-    ReadingEntropyData,
+enum ParseState {
+    AwaitingHeader,
+    HeaderParsed { width: u32, height: u32 },
+    DecodingScans { scans_complete: usize },
     Complete,
 }
 ```
 
-**Markers to Handle**:
-| Marker | Code | Purpose |
-|--------|------|---------|
-| SOI | 0xFFD8 | Start of image |
-| EOI | 0xFFD9 | End of image |
-| SOF0 | 0xFFC0 | Baseline frame header |
-| SOF2 | 0xFFC2 | Progressive frame header |
-| DHT | 0xFFC4 | Huffman table definition |
-| DQT | 0xFFDB | Quantization table definition |
-| DRI | 0xFFDD | Restart interval |
-| SOS | 0xFFDA | Start of scan |
-| RST0-7 | 0xFFD0-D7 | Restart markers |
-| APP0 | 0xFFE0 | JFIF metadata |
-| APP1 | 0xFFE1 | EXIF metadata |
-| APP2 | 0xFFE2 | ICC profile |
-| COM | 0xFFFE | Comment |
-
-**Frame Header Parsing**:
+**2. Implement Incremental Parsing** (~200 lines)
 ```rust
-struct FrameHeader {
-    precision: u8,        // Usually 8
-    height: u16,
-    width: u16,
-    components: Vec<ComponentInfo>,
-}
-
-struct ComponentInfo {
-    id: u8,
-    h_sampling: u8,       // 1-4
-    v_sampling: u8,       // 1-4
-    quant_table_id: u8,   // 0-3
-}
-```
-
-**Scan Header Parsing**:
-```rust
-struct ScanHeader {
-    components: Vec<ScanComponent>,
-    spectral_start: u8,   // Ss (0 for DC, 1-63 for AC)
-    spectral_end: u8,     // Se (0 for DC, 63 for full AC)
-    approx_high: u8,      // Ah (successive approximation)
-    approx_low: u8,       // Al
-}
-
-struct ScanComponent {
-    component_id: u8,
-    dc_table_id: u8,
-    ac_table_id: u8,
-}
-```
-
-#### Component 2: Inverse DCT (`src/jpegli/idct.rs` ~300 lines)
-
-**Reference Implementation** (mirror of forward DCT):
-```rust
-/// Inverse DCT using Loeffler algorithm
-/// Input: quantized coefficients in zigzag order
-/// Output: 8x8 pixel block (f32, range 0-255)
-pub fn inverse_dct_8x8(coeffs: &[i16; 64], quant: &[u16; 64]) -> [f32; 64] {
-    // 1. Dequantize: multiply by quant table
-    let mut block = [0.0f32; 64];
-    for i in 0..64 {
-        let zigzag_pos = ZIGZAG[i];
-        block[zigzag_pos] = coeffs[i] as f32 * quant[i] as f32;
-    }
-
-    // 2. 1D IDCT on rows
-    for row in 0..8 {
-        idct_1d(&mut block[row * 8..row * 8 + 8]);
-    }
-
-    // 3. 1D IDCT on columns (transpose access)
-    // ... similar with column stride
-
-    // 4. Level shift: add 128
-    for val in &mut block {
-        *val += 128.0;
-    }
-
-    block
-}
-```
-
-**SIMD Version** (optional, for performance):
-- Use `wide::f32x4` or `wide::f32x8` for parallel computation
-- Match pattern in existing `dct.rs` forward DCT
-
-#### Component 3: Color Conversion (`src/jpegli/color.rs` additions ~150 lines)
-
-**YCbCr → RGB** (add to existing color.rs):
-```rust
-/// Convert YCbCr to RGB (BT.601 JPEG standard)
-/// All values in 0-255 range
-#[inline]
-pub fn ycbcr_to_rgb_f32(y: f32, cb: f32, cr: f32) -> (f32, f32, f32) {
-    let cb = cb - 128.0;
-    let cr = cr - 128.0;
-
-    let r = y + 1.402 * cr;
-    let g = y - 0.344136 * cb - 0.714136 * cr;
-    let b = y + 1.772 * cb;
-
-    (r.clamp(0.0, 255.0), g.clamp(0.0, 255.0), b.clamp(0.0, 255.0))
-}
-```
-
-**Chroma Upsampling** (for 4:2:0, 4:2:2):
-```rust
-/// Upsample chroma plane by 2x in both dimensions (4:2:0 → 4:4:4)
-pub fn upsample_2x2(input: &[f32], in_w: usize, in_h: usize) -> Vec<f32> {
-    let out_w = in_w * 2;
-    let out_h = in_h * 2;
-    let mut output = vec![0.0; out_w * out_h];
-
-    // Bilinear interpolation
-    for y in 0..out_h {
-        for x in 0..out_w {
-            let src_x = (x as f32) / 2.0;
-            let src_y = (y as f32) / 2.0;
-            // ... bilinear sample from input
-        }
-    }
-    output
-}
-
-/// Upsample chroma plane by 2x horizontally only (4:2:2 → 4:4:4)
-pub fn upsample_2x1(input: &[f32], in_w: usize, in_h: usize) -> Vec<f32> {
-    // Similar, only horizontal interpolation
-}
-```
-
-#### Component 4: Decoder Orchestration (`src/jpegli/decode.rs` ~800 lines)
-
-**Main Decoder Struct**:
-```rust
-pub struct Decoder {
-    parser: JpegParser,
-    // Coefficient storage (for progressive)
-    coefficients: Option<CoefficientBuffer>,
-    // Decode state
-    state: DecodeState,
-    // Output configuration
-    output_format: OutputFormat,
-}
-
-struct CoefficientBuffer {
-    width_in_blocks: usize,
-    height_in_blocks: usize,
-    // One buffer per component
-    components: Vec<Vec<[i16; 64]>>,
-}
-
-enum DecodeState {
-    Parsing,
-    DecodingBaseline { mcu_row: usize },
-    DecodingProgressive { scan_index: usize },
-    Complete,
-}
-
-pub enum OutputFormat {
-    Rgb8,      // Vec<u8>, 3 bytes per pixel
-    Rgba8,     // Vec<u8>, 4 bytes per pixel
-    RgbF32,    // Vec<f32>, 3 values per pixel (preserve precision)
-    Gray8,     // Vec<u8>, 1 byte per pixel
-}
-```
-
-**Decode Pipeline**:
-```rust
-impl Decoder {
+impl StreamingDecoder {
     pub fn write(&mut self, data: &[u8]) -> Result<()> {
-        // 1. Feed data to parser
-        self.parser.write(data)?;
+        self.input_buffer.extend_from_slice(data);
 
-        // 2. Process any complete scans
-        while let Some(scan) = self.parser.next_scan()? {
-            self.decode_scan(&scan)?;
+        // Try to advance parsing
+        loop {
+            match self.try_advance()? {
+                Advance::NeedMoreData => break,
+                Advance::HeaderParsed => continue,
+                Advance::ScanComplete => continue,
+                Advance::ImageComplete => break,
+            }
         }
-
         Ok(())
     }
 
-    pub fn finish(self) -> Result<DecodedImage> {
-        // 1. Ensure we have complete image
-        if self.state != DecodeState::Complete {
-            return Err(Error::IncompleteImage);
-        }
-
-        // 2. IDCT all blocks
-        let planes = self.idct_all_blocks()?;
-
-        // 3. Upsample chroma if needed
-        let (y, cb, cr) = self.upsample_chroma(planes)?;
-
-        // 4. Convert to output format
-        self.convert_to_output(y, cb, cr)
-    }
-
-    pub fn current_preview(&self) -> Option<DecodedImage> {
-        // Decode whatever we have so far
-        // DC-only gives blocky preview
-        // More scans = more detail
+    fn try_advance(&mut self) -> Result<Advance> {
+        // Attempt to parse next marker/segment from buffer
+        // Use existing parsing logic from decode.rs
     }
 }
 ```
 
-**MCU Decoding** (reuse existing entropy.rs):
+**3. Add Progressive Preview** (~150 lines)
 ```rust
-fn decode_mcu(&mut self, scan: &ScanHeader) -> Result<()> {
-    let entropy = &mut self.entropy_decoder;
+impl StreamingDecoder {
+    /// Get preview from partial progressive data
+    /// Returns None if no scans decoded yet
+    pub fn current_preview(&self) -> Option<PreviewImage> {
+        let coeffs = self.partial_coeffs.as_ref()?;
 
-    for comp_idx in 0..scan.components.len() {
-        let comp = &scan.components[comp_idx];
-        let blocks_h = self.frame.components[comp_idx].h_sampling;
-        let blocks_v = self.frame.components[comp_idx].v_sampling;
+        // IDCT whatever coefficients we have
+        // DC-only = very blocky but shows composition
+        // More AC = more detail
+        let pixels = self.inner.idct_partial(coeffs)?;
 
-        for v in 0..blocks_v {
-            for h in 0..blocks_h {
-                // Use existing decode_block from entropy.rs
-                let block = entropy.decode_block(
-                    comp.dc_table_id,
-                    comp.ac_table_id,
-                    scan.spectral_start,
-                    scan.spectral_end,
-                    scan.approx_high,
-                    scan.approx_low,
-                )?;
-
-                // Store in coefficient buffer
-                self.store_block(comp_idx, block_x, block_y, block)?;
-            }
-        }
+        Some(PreviewImage {
+            width: self.width,
+            height: self.height,
+            pixels,
+            scans_decoded: self.scans_complete,
+            is_complete: false,
+        })
     }
-    Ok(())
 }
 ```
+
+**4. Expose Partial IDCT** (~50 lines in existing decode.rs)
+```rust
+impl Decoder {
+    /// IDCT with partial coefficients (for progressive preview)
+    pub fn idct_partial(&self, coeffs: &CoefficientBuffer) -> Vec<u8> {
+        // Same IDCT logic but works with incomplete data
+        // Missing AC coefficients → blocky but valid output
+    }
+}
+```
+
+#### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `decode.rs` | Add `StreamingDecoder` wrapper, expose `idct_partial()` |
+| `types.rs` | Add `PreviewImage`, `ParseState` types |
+| `mod.rs` | Export `StreamingDecoder` |
+
+#### Memory Considerations
+
+Streaming decoder still needs to buffer:
+- Input JPEG data (until parsed): variable, typically < 1 MB
+- Coefficient buffer (for progressive): ~50 MB for 4K
+- Output pixels: ~24 MB for 4K RGB8
+
+Total peak: similar to current (~75 MB), but input can be discarded as parsed.
 
 ---
 
@@ -506,41 +399,43 @@ for chunk in jpeg_chunks {
 
 ## File Checklist
 
-### New Files
-- [ ] `src/jpegli/parser.rs` - JPEG marker parsing (~600 lines)
-- [ ] `src/jpegli/decode.rs` - Decoder orchestration (~800 lines)
-- [ ] `src/jpegli/idct.rs` - Inverse DCT (~300 lines)
+### jpegli-rs Files to Modify (`/home/lilith/work/jpegli-rs/jpegli-rs/src/`)
 
-### Modified Files
-- [ ] `src/jpegli/encode.rs` - Add ChunkedEncoder
-- [ ] `src/jpegli/color.rs` - Add YCbCr→RGB, upsampling
-- [ ] `src/jpegli/quant.rs` - Add dequantization helper
-- [ ] `src/jpegli/entropy.rs` - Expose decode primitives publicly
-- [ ] `src/jpegli/mod.rs` - Export new APIs
-- [ ] `src/jpegli/types.rs` - Add decoder config types
+**Phase 1: Chunked Encoder**
+- [ ] `encode.rs` - Add `ChunkedEncoder` struct and methods
+- [ ] `types.rs` - Add `ChunkedEncoderConfig` if needed
+- [ ] `mod.rs` - Export `ChunkedEncoder`
+
+**Phase 2: Streaming Decoder**
+- [ ] `decode.rs` - Add `StreamingDecoder` wrapper, expose `idct_partial()`
+- [ ] `types.rs` - Add `PreviewImage`, `ParseState` types
+- [ ] `mod.rs` - Export `StreamingDecoder`
+
+**Phase 3: True Baseline Streaming (optional)**
+- [ ] `encode.rs` - Add `StreamingEncoder` with output callback
+- [ ] `decode.rs` - Add `StreamingDecoder` with scanline callback
+
+### zenjpeg Changes (if wrapping jpegli-rs streaming)
+- [ ] `src/lib.rs` - Re-export streaming APIs
+- [ ] `src/encode.rs` - Forward to jpegli-rs ChunkedEncoder
 
 ---
 
 ## Implementation Order
 
 1. **Week 1**: ChunkedEncoder (Phase 1)
-   - Day 1-2: Basic struct, row buffer, block extraction
-   - Day 3: Integration with existing quantization/DCT
-   - Day 4: finish() with Huffman opt + progressive encoding
-   - Day 5: Tests, edge cases (partial rows, small images)
+   - Day 1-2: Basic `ChunkedEncoder` struct, 8-row buffer, block extraction
+   - Day 3: Integration with existing quantization/DCT pipeline
+   - Day 4: `finish()` with Huffman optimization + progressive encoding
+   - Day 5: Tests, edge cases (partial rows, small images, 1x1 images)
 
-2. **Week 2-3**: Decoder Parser + IDCT (Phase 2a)
-   - Day 1-3: JPEG parser with all marker handling
-   - Day 4-5: Inverse DCT (scalar reference)
-   - Day 6-7: Integration tests with baseline JPEGs
+2. **Week 2**: Streaming Decoder (Phase 2)
+   - Day 1-2: `StreamingDecoder` wrapper with input buffer
+   - Day 3: Incremental parsing that advances on `write()`
+   - Day 4: Progressive preview with partial IDCT
+   - Day 5: Tests with truncated JPEGs, byte-at-a-time feeding
 
-3. **Week 3-4**: Decoder Orchestration (Phase 2b)
-   - Day 1-2: Baseline decode pipeline
-   - Day 3-4: Progressive scan accumulation
-   - Day 5: Color conversion + upsampling
-   - Day 6-7: Preview mode, final testing
-
-4. **Week 5** (optional): True Streaming (Phase 3)
-   - Baseline streaming encoder
-   - Baseline streaming decoder
-   - Memory verification
+3. **Week 3** (optional): True Baseline Streaming (Phase 3)
+   - Day 1-2: Baseline streaming encoder with output callback
+   - Day 3-4: Baseline streaming decoder with scanline callback
+   - Day 5: Memory verification, performance benchmarks
