@@ -52,6 +52,7 @@ libloading = "0.8"
 
 # Published crates
 butteraugli = "0.2"
+mozjpeg-oxide = { path = "../mozjpeg-rs" }
 
 # SIMD dispatch
 multiversion = "0.7"

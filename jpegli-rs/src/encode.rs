@@ -60,6 +60,10 @@ pub struct EncoderConfig {
     pub restart_interval: u16,
     /// Use optimized Huffman tables
     pub optimize_huffman: bool,
+    /// Use hybrid quantization (jpegli AQ + mozjpeg trellis)
+    /// Requires the `hybrid-trellis` feature
+    #[cfg(feature = "hybrid-trellis")]
+    pub use_hybrid_trellis: bool,
 }
 
 impl Default for EncoderConfig {
@@ -76,6 +80,8 @@ impl Default for EncoderConfig {
             restart_interval: 0,
             // Match C++ jpegli default: optimize_coding = true
             optimize_huffman: true,
+            #[cfg(feature = "hybrid-trellis")]
+            use_hybrid_trellis: false,
         }
     }
 }
@@ -177,6 +183,20 @@ impl Encoder {
     #[must_use]
     pub fn optimize_huffman(mut self, enable: bool) -> Self {
         self.config.optimize_huffman = enable;
+        self
+    }
+
+    /// Enable hybrid quantization (jpegli AQ + mozjpeg trellis).
+    ///
+    /// This combines jpegli's adaptive quantization (which determines WHERE
+    /// to spend bits based on image content) with mozjpeg's trellis quantization
+    /// (which optimizes HOW to spend bits via rate-distortion optimization).
+    ///
+    /// Requires the `hybrid-trellis` feature.
+    #[cfg(feature = "hybrid-trellis")]
+    #[must_use]
+    pub fn hybrid_trellis(mut self, enable: bool) -> Self {
+        self.config.use_hybrid_trellis = enable;
         self
     }
 
