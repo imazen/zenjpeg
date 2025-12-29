@@ -1,7 +1,12 @@
 //! Parameter sweep for hybrid AQ+trellis optimization.
 //!
 //! Systematically tests different parameter combinations and outputs results
-//! in CSV format for analysis.
+//! in CSV format with multiple quality metrics for Pareto analysis.
+//!
+//! Metrics:
+//! - DSSIM: Structural dissimilarity (lower = better)
+//! - SSIMULACRA2: Perceptual quality 0-100 (higher = better)
+//! - Butteraugli: Psychovisual distance (lower = better, <1.0 good, >2.0 bad)
 //!
 //! Run with:
 //! ```
@@ -11,16 +16,9 @@
 //! # Comprehensive sweep (many params, slower)
 //! SWEEP=comprehensive cargo run --release --example hybrid_sweep --features hybrid-trellis
 //!
-//! # Custom image directory
-//! cargo run --release --example hybrid_sweep --features hybrid-trellis -- /path/to/images
-//!
-//! # Limit images for faster testing
-//! MAX_FILES=5 cargo run --release --example hybrid_sweep --features hybrid-trellis
-//! ```
-//!
-//! Output is CSV to stdout, can be redirected:
-//! ```
-//! cargo run --release --example hybrid_sweep --features hybrid-trellis > results.csv
+//! # Save results with timestamp
+//! cargo run --release --example hybrid_sweep --features hybrid-trellis \
+//!   > sweep_$(date +%Y%m%d_%H%M%S).csv
 //! ```
 
 use std::env;
@@ -44,8 +42,16 @@ fn main() {
             eprintln!("Using comprehensive sweep configuration");
             SweepConfig::comprehensive()
         }
+        Ok("pareto") => {
+            eprintln!("Using Pareto-focused sweep (size vs quality)");
+            pareto_sweep_config()
+        }
+        Ok("multiq") => {
+            eprintln!("Using multi-quality sweep (focused params, many Q levels)");
+            multiq_sweep_config()
+        }
         Ok("quick") | Err(_) => {
-            eprintln!("Using quick sweep configuration (set SWEEP=comprehensive for full sweep)");
+            eprintln!("Using quick sweep configuration (set SWEEP=comprehensive or SWEEP=pareto)");
             SweepConfig::quick()
         }
         Ok(other) => {
@@ -92,10 +98,7 @@ fn main() {
 
     // Load images into memory
     eprintln!("Loading {} images from {}", files.len(), image_dir.display());
-    let images: Vec<ImageData> = files
-        .iter()
-        .filter_map(|f| load_image(f))
-        .collect();
+    let images: Vec<ImageData> = files.iter().filter_map(|f| load_image(f)).collect();
     eprintln!("Loaded {} images", images.len());
 
     // Generate configs
@@ -109,37 +112,49 @@ fn main() {
         total
     );
 
-    // Print CSV header
+    // Print CSV header with all metrics
     println!(
         "config_id,aq_lambda_scale,base_scale1,dc_enabled,aq_exponent,quality,image,\
-         jpegli_size,hybrid_size,jpegli_dssim,hybrid_dssim,\
-         size_ratio,dssim_ratio,encode_time_ms"
+         width,height,pixels,\
+         jpegli_bytes,hybrid_bytes,\
+         jpegli_bpp,hybrid_bpp,\
+         jpegli_dssim,hybrid_dssim,\
+         jpegli_ssim2,hybrid_ssim2,\
+         jpegli_butteraugli,hybrid_butteraugli,\
+         size_ratio,dssim_ratio,ssim2_diff,butteraugli_ratio,\
+         encode_time_ms"
     );
 
     let mut completed = 0;
     let start_total = Instant::now();
 
     for quality in &sweep_config.quality_levels {
-        // Encode baseline jpegli once per quality level
-        let jpegli_results: Vec<(usize, f64)> = images
+        // Encode baseline jpegli once per quality level per image
+        let jpegli_results: Vec<EncodingResult> = images
             .iter()
-            .map(|img| encode_jpegli(img, *quality))
+            .map(|img| encode_and_measure(img, *quality, None))
             .collect();
 
         for config in &configs {
             for (img_idx, img) in images.iter().enumerate() {
-                let (jpegli_size, jpegli_dssim) = jpegli_results[img_idx];
+                let jpegli = &jpegli_results[img_idx];
 
                 // Encode with hybrid config
                 let start = Instant::now();
-                let (hybrid_size, hybrid_dssim) = encode_hybrid(img, *quality, config);
+                let hybrid = encode_and_measure(img, *quality, Some(config));
                 let encode_time = start.elapsed().as_secs_f64() * 1000.0;
 
-                let size_ratio = hybrid_size as f64 / jpegli_size as f64;
-                let dssim_ratio = hybrid_dssim / jpegli_dssim;
+                let pixels = img.width * img.height;
+                let jpegli_bpp = 8.0 * jpegli.bytes as f64 / pixels as f64;
+                let hybrid_bpp = 8.0 * hybrid.bytes as f64 / pixels as f64;
+
+                let size_ratio = hybrid.bytes as f64 / jpegli.bytes as f64;
+                let dssim_ratio = hybrid.dssim / jpegli.dssim;
+                let ssim2_diff = hybrid.ssim2 - jpegli.ssim2; // positive = hybrid better
+                let butteraugli_ratio = hybrid.butteraugli / jpegli.butteraugli;
 
                 println!(
-                    "{},{:.2},{:.2},{},{:.2},{},{},{},{},{:.6},{:.6},{:.4},{:.4},{:.2}",
+                    "{},{:.2},{:.2},{},{:.2},{},{},{},{},{},{},{},{:.4},{:.4},{:.6},{:.6},{:.2},{:.2},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.2}",
                     config.id(),
                     config.aq_lambda_scale,
                     config.base_lambda_scale1,
@@ -147,16 +162,26 @@ fn main() {
                     config.aq_exponent,
                     quality,
                     img.name,
-                    jpegli_size,
-                    hybrid_size,
-                    jpegli_dssim,
-                    hybrid_dssim,
+                    img.width,
+                    img.height,
+                    pixels,
+                    jpegli.bytes,
+                    hybrid.bytes,
+                    jpegli_bpp,
+                    hybrid_bpp,
+                    jpegli.dssim,
+                    hybrid.dssim,
+                    jpegli.ssim2,
+                    hybrid.ssim2,
+                    jpegli.butteraugli,
+                    hybrid.butteraugli,
                     size_ratio,
                     dssim_ratio,
+                    ssim2_diff,
+                    butteraugli_ratio,
                     encode_time
                 );
 
-                // Flush to see progress in real-time
                 io::stdout().flush().ok();
 
                 completed += 1;
@@ -176,11 +201,44 @@ fn main() {
         }
     }
 
+    let total_time = start_total.elapsed().as_secs_f64();
     eprintln!(
-        "Completed {} combinations in {:.1}s",
+        "\nCompleted {} combinations in {:.1}s ({:.1} per second)",
         total,
-        start_total.elapsed().as_secs_f64()
+        total_time,
+        total as f64 / total_time
     );
+
+    // Print summary statistics
+    eprintln!("\nResults saved. Analyze with:");
+    eprintln!("  python3 -c \"import pandas as pd; df = pd.read_csv('results.csv'); print(df.groupby('config_id')[['size_ratio','dssim_ratio','ssim2_diff','butteraugli_ratio']].mean().sort_values('dssim_ratio'))\"");
+}
+
+/// Pareto-focused sweep: vary quality to get size variation, test key params
+#[cfg(feature = "hybrid-trellis")]
+fn pareto_sweep_config() -> jpegli::hybrid_config::SweepConfig {
+    jpegli::hybrid_config::SweepConfig {
+        aq_lambda_scales: vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0],
+        base_scale1_values: vec![14.0, 14.75, 15.5],
+        dc_enabled_values: vec![false, true],
+        aq_exponents: vec![1.0, 2.0],
+        quality_levels: vec![50, 60, 70, 75, 80, 85, 90, 95],
+    }
+}
+
+/// Multi-quality sweep: focused params, many quality levels for Pareto curves
+#[cfg(feature = "hybrid-trellis")]
+fn multiq_sweep_config() -> jpegli::hybrid_config::SweepConfig {
+    jpegli::hybrid_config::SweepConfig {
+        // Key aq_lambda_scale values: 0 (no AQ), 2 (default), 4 (aggressive)
+        aq_lambda_scales: vec![0.0, 2.0, 4.0],
+        // Focus on default base_scale1 for now
+        base_scale1_values: vec![14.75],
+        dc_enabled_values: vec![false],
+        aq_exponents: vec![1.0],
+        // Many quality levels for Pareto curves
+        quality_levels: vec![30, 40, 50, 60, 70, 75, 80, 85, 90, 95],
+    }
 }
 
 #[cfg(feature = "hybrid-trellis")]
@@ -189,6 +247,14 @@ struct ImageData {
     pixels: Vec<u8>,
     width: usize,
     height: usize,
+}
+
+#[cfg(feature = "hybrid-trellis")]
+struct EncodingResult {
+    bytes: usize,
+    dssim: f64,
+    ssim2: f64,
+    butteraugli: f64,
 }
 
 #[cfg(feature = "hybrid-trellis")]
@@ -212,65 +278,100 @@ fn load_image(path: &PathBuf) -> Option<ImageData> {
 }
 
 #[cfg(feature = "hybrid-trellis")]
-fn encode_jpegli(img: &ImageData, quality: u8) -> (usize, f64) {
-    let result = jpegli::Encoder::new()
-        .width(img.width as u32)
-        .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
-        .encode(&img.pixels)
-        .expect("jpegli encode");
-
-    let dssim = compute_dssim(&img.pixels, img.width, img.height, &result);
-
-    (result.len(), dssim)
-}
-
-#[cfg(feature = "hybrid-trellis")]
-fn encode_hybrid(
+fn encode_and_measure(
     img: &ImageData,
     quality: u8,
-    config: &jpegli::hybrid_config::HybridConfig,
-) -> (usize, f64) {
-    // Use the full HybridConfig
-    let result = jpegli::Encoder::new()
+    config: Option<&jpegli::hybrid_config::HybridConfig>,
+) -> EncodingResult {
+    // Encode
+    let mut encoder = jpegli::Encoder::new()
         .width(img.width as u32)
         .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
-        .hybrid_config(*config)
-        .encode(&img.pixels)
-        .expect("hybrid encode");
+        .quality(jpegli::quant::Quality::from_quality(quality as f32));
 
-    let dssim = compute_dssim(&img.pixels, img.width, img.height, &result);
+    if let Some(cfg) = config {
+        encoder = encoder.hybrid_config(*cfg);
+    }
 
-    (result.len(), dssim)
+    let jpeg_data = encoder.encode(&img.pixels).expect("encode");
+
+    // Decode
+    let mut decoder = jpeg_decoder::Decoder::new(&jpeg_data[..]);
+    let decoded = decoder.decode().expect("decode");
+
+    // Compute all metrics
+    let dssim = compute_dssim(&img.pixels, &decoded, img.width, img.height);
+    let ssim2 = compute_ssim2(&img.pixels, &decoded, img.width, img.height);
+    let butteraugli = compute_butteraugli_score(&img.pixels, &decoded, img.width, img.height);
+
+    EncodingResult {
+        bytes: jpeg_data.len(),
+        dssim,
+        ssim2,
+        butteraugli,
+    }
 }
 
 #[cfg(feature = "hybrid-trellis")]
-fn compute_dssim(original: &[u8], width: usize, height: usize, jpeg_data: &[u8]) -> f64 {
+fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     use dssim::Dssim;
 
     let attr = Dssim::new();
 
-    // Original
     let orig_rgba: Vec<rgb::RGBA<u8>> = original
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let orig_img = attr
-        .create_image_rgba(&orig_rgba, width, height)
-        .expect("create orig");
+    let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
 
-    // Decoded
-    let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
-    let decoded = decoder.decode().expect("decode");
     let decoded_rgba: Vec<rgb::RGBA<u8>> = decoded
         .chunks(3)
         .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
-    let decoded_img = attr
-        .create_image_rgba(&decoded_rgba, width, height)
-        .expect("create decoded");
+    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, decoded_img);
     dssim.into()
+}
+
+#[cfg(feature = "hybrid-trellis")]
+fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+
+    let orig_rgb = Rgb::new(
+        original
+            .chunks(3)
+            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .collect(),
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
+
+    let decoded_rgb = Rgb::new(
+        decoded
+            .chunks(3)
+            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .collect(),
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
+
+    compute_frame_ssimulacra2(orig_rgb, decoded_rgb).unwrap_or(0.0)
+}
+
+#[cfg(feature = "hybrid-trellis")]
+fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+    use butteraugli::{compute_butteraugli, ButteraugliParams};
+
+    let params = ButteraugliParams::default();
+    match compute_butteraugli(original, decoded, width, height, &params) {
+        Ok(result) => result.score,
+        Err(_) => 99.0,
+    }
 }

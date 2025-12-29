@@ -67,6 +67,10 @@ pub struct EncoderConfig {
     /// Requires the `hybrid-trellis` feature
     #[cfg(feature = "hybrid-trellis")]
     pub hybrid_config: crate::hybrid_config::HybridConfig,
+    /// Custom AQ map (optional). If None, computed automatically.
+    /// Allows pre-scaling the AQ map for size control.
+    #[cfg(feature = "hybrid-trellis")]
+    pub custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
 }
 
 impl Default for EncoderConfig {
@@ -85,6 +89,8 @@ impl Default for EncoderConfig {
             optimize_huffman: true,
             #[cfg(feature = "hybrid-trellis")]
             hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
+            #[cfg(feature = "hybrid-trellis")]
+            custom_aq_map: None,
         }
     }
 }
@@ -266,6 +272,42 @@ impl Encoder {
     #[must_use]
     pub fn hybrid_config(mut self, config: crate::hybrid_config::HybridConfig) -> Self {
         self.config.hybrid_config = config;
+        self
+    }
+
+    /// Sets a custom AQ (adaptive quantization) strength map.
+    ///
+    /// This allows pre-scaling the AQ map to control file size. When the AQ map
+    /// is scaled up, more bits are allocated to complex regions (larger files).
+    /// When scaled down, fewer bits are allocated (smaller files).
+    ///
+    /// If not provided, the AQ map is computed automatically from the image.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use jpegli::adaptive_quant::compute_aq_strength_map;
+    ///
+    /// // Compute AQ map from Y plane
+    /// let mut aq_map = compute_aq_strength_map(&y_plane, width, height, 8);
+    ///
+    /// // Scale down to reduce file size by ~16%
+    /// let scale = aq_map.scale_for_size_reduction(16.0);
+    /// aq_map.scale(scale);
+    ///
+    /// // Use the scaled map
+    /// let jpeg = Encoder::new()
+    ///     .width(width as u32)
+    ///     .height(height as u32)
+    ///     .hybrid_config(HybridConfig::default())
+    ///     .aq_map(aq_map)
+    ///     .encode(&pixels)?;
+    /// ```
+    ///
+    /// Requires the `hybrid-trellis` feature.
+    #[cfg(feature = "hybrid-trellis")]
+    #[must_use]
+    pub fn aq_map(mut self, map: crate::adaptive_quant::AQStrengthMap) -> Self {
+        self.config.custom_aq_map = Some(map);
         self
     }
 
@@ -458,6 +500,34 @@ impl Encoder {
             false, // is_420
         );
 
+        // Compute AQ map from Y plane (XYB's Y is the luma-like channel)
+        // Scale Y plane from [0,1] to [0,255] range for AQ computation
+        let y_plane_scaled: Vec<f32> = y_plane.iter().map(|&v| v * 255.0).collect();
+        let y_quant_01 = y_quant.values[1];
+        #[cfg(feature = "hybrid-trellis")]
+        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
+            custom.clone()
+        } else {
+            compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01)
+        };
+        #[cfg(not(feature = "hybrid-trellis"))]
+        let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
+
+        // Zero-bias parameters for XYB (use YCbCr tables as approximation)
+        // X and Y are luma-like (full-res), B is chroma-like (downsampled)
+        let effective_distance = quant::quant_vals_to_distance(&x_quant, &y_quant, &b_quant);
+        let x_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0); // X uses luma params
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0); // Y uses luma params
+        let b_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1); // B uses chroma params
+
+        // Create hybrid quantization context if enabled
+        #[cfg(feature = "hybrid-trellis")]
+        let hybrid_ctx = if self.config.hybrid_config.enabled {
+            Some(HybridQuantContext::new(self.config.hybrid_config))
+        } else {
+            None
+        };
+
         // Write JPEG structure for XYB mode (no JFIF, just ICC profile)
         self.write_header_xyb(output)?;
         // Write APP14 Adobe marker for RGB colorspace (required by some decoders)
@@ -470,7 +540,8 @@ impl Encoder {
 
         // For optimized Huffman, quantize all blocks first to collect frequencies
         let scan_data = if self.config.optimize_huffman {
-            let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb(
+            #[cfg(feature = "hybrid-trellis")]
+            let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb_with_aq(
                 &x_plane,
                 &y_plane,
                 &b_downsampled,
@@ -481,6 +552,25 @@ impl Encoder {
                 &x_quant,
                 &y_quant,
                 &b_quant,
+                &aq_map,
+                hybrid_ctx.as_ref(),
+            );
+            #[cfg(not(feature = "hybrid-trellis"))]
+            let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb_with_aq_simple(
+                &x_plane,
+                &y_plane,
+                &b_downsampled,
+                width,
+                height,
+                b_width,
+                b_height,
+                &x_quant,
+                &y_quant,
+                &b_quant,
+                &aq_map,
+                &x_zero_bias,
+                &y_zero_bias,
+                &b_zero_bias,
             );
             let (dc_table, ac_table) =
                 self.build_optimized_tables_xyb(&x_blocks, &y_blocks, &b_blocks)?;
@@ -1939,6 +2029,13 @@ impl Encoder {
         // Compute per-block adaptive quantization strength from Y plane
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
+        #[cfg(feature = "hybrid-trellis")]
+        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
+            custom.clone()
+        } else {
+            compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01)
+        };
+        #[cfg(not(feature = "hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
 
         // Create hybrid quantization context if enabled
@@ -2078,6 +2175,13 @@ impl Encoder {
         // Compute per-block adaptive quantization strength from Y plane
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
+        #[cfg(feature = "hybrid-trellis")]
+        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
+            custom.clone()
+        } else {
+            compute_aq_strength_map(y_plane, width, height, y_quant_01)
+        };
+        #[cfg(not(feature = "hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
 
         // Create hybrid quantization context if enabled
@@ -2212,6 +2316,13 @@ impl Encoder {
 
         // Compute per-block adaptive quantization strength from Y plane
         let y_quant_01 = y_quant.values[1];
+        #[cfg(feature = "hybrid-trellis")]
+        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
+            custom.clone()
+        } else {
+            compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01)
+        };
+        #[cfg(not(feature = "hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
 
         // Create hybrid quantization context if enabled
@@ -2790,6 +2901,226 @@ impl Encoder {
                 let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
                 let b_dct = forward_dct_8x8(&b_block);
                 let b_quant_coeffs = quant::quantize_block(&b_dct, &b_quant.values);
+                b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
+            }
+        }
+
+        (x_blocks, y_blocks, b_blocks)
+    }
+
+    /// Quantizes all XYB blocks with jpegli-style adaptive quantization (no trellis).
+    ///
+    /// This version uses the AQ map for per-block modulation with zero-bias,
+    /// matching jpegli's default AQ behavior without hybrid trellis.
+    ///
+    /// For XYB mode:
+    /// - X and Y use luma tables (both are full-resolution "luma-like" channels)
+    /// - B uses chroma tables (downsampled blue channel)
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_all_blocks_xyb_with_aq_simple(
+        &self,
+        x_plane: &[f32],
+        y_plane: &[f32],
+        b_plane: &[f32], // Already downsampled
+        width: usize,
+        height: usize,
+        b_width: usize,
+        b_height: usize,
+        x_quant: &QuantTable,
+        y_quant: &QuantTable,
+        b_quant: &QuantTable,
+        aq_map: &crate::adaptive_quant::AQStrengthMap,
+        x_zero_bias: &ZeroBiasParams,
+        y_zero_bias: &ZeroBiasParams,
+        b_zero_bias: &ZeroBiasParams,
+    ) -> (
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+    ) {
+        // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
+        let mcu_cols = (width + 15) / 16;
+        let mcu_rows = (height + 15) / 16;
+        let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
+        let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
+
+        let mut x_blocks = Vec::with_capacity(num_xy_blocks);
+        let mut y_blocks = Vec::with_capacity(num_xy_blocks);
+        let mut b_blocks = Vec::with_capacity(num_b_blocks);
+
+        for mcu_y in 0..mcu_rows {
+            for mcu_x in 0..mcu_cols {
+                // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
+                for block_y in 0..2 {
+                    for block_x in 0..2 {
+                        let bx = mcu_x * 2 + block_x;
+                        let by = mcu_y * 2 + block_y;
+                        let aq_strength = aq_map.get(bx, by);
+
+                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_dct = forward_dct_8x8(&x_block);
+                        let x_quant_coeffs = quant::quantize_block_with_zero_bias(
+                            &x_dct,
+                            &x_quant.values,
+                            x_zero_bias,
+                            aq_strength,
+                        );
+                        x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
+                    }
+                }
+
+                // Process 4 Y blocks (2×2 arrangement within 16×16 MCU)
+                for block_y in 0..2 {
+                    for block_x in 0..2 {
+                        let bx = mcu_x * 2 + block_x;
+                        let by = mcu_y * 2 + block_y;
+                        let aq_strength = aq_map.get(bx, by);
+
+                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_dct = forward_dct_8x8(&y_block);
+                        let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                            &y_dct,
+                            &y_quant.values,
+                            y_zero_bias,
+                            aq_strength,
+                        );
+                        y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                    }
+                }
+
+                // Process 1 B block (from downsampled plane)
+                // For B channel: Average AQ from 4 parent full-res blocks
+                let b_aq_strength = {
+                    let mut sum = 0.0f32;
+                    for dy in 0..2 {
+                        for dx in 0..2 {
+                            let bx = mcu_x * 2 + dx;
+                            let by = mcu_y * 2 + dy;
+                            sum += aq_map.get(bx, by);
+                        }
+                    }
+                    sum / 4.0
+                };
+
+                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_dct = forward_dct_8x8(&b_block);
+                let b_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    &b_dct,
+                    &b_quant.values,
+                    b_zero_bias,
+                    b_aq_strength,
+                );
+                b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
+            }
+        }
+
+        (x_blocks, y_blocks, b_blocks)
+    }
+
+    /// Quantizes all XYB blocks with adaptive quantization support.
+    ///
+    /// This version uses the AQ map for per-block modulation and optionally
+    /// applies hybrid trellis quantization when enabled.
+    ///
+    /// For XYB mode:
+    /// - X and Y use luma tables (both are full-resolution "luma-like" channels)
+    /// - B uses chroma tables (downsampled blue channel)
+    #[cfg(feature = "hybrid-trellis")]
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_all_blocks_xyb_with_aq(
+        &self,
+        x_plane: &[f32],
+        y_plane: &[f32],
+        b_plane: &[f32], // Already downsampled
+        width: usize,
+        height: usize,
+        b_width: usize,
+        b_height: usize,
+        x_quant: &QuantTable,
+        y_quant: &QuantTable,
+        b_quant: &QuantTable,
+        aq_map: &crate::adaptive_quant::AQStrengthMap,
+        hybrid_ctx: Option<&HybridQuantContext>,
+    ) -> (
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+        Vec<[i16; DCT_BLOCK_SIZE]>,
+    ) {
+        // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
+        let mcu_cols = (width + 15) / 16;
+        let mcu_rows = (height + 15) / 16;
+        let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
+        let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
+
+        let mut x_blocks = Vec::with_capacity(num_xy_blocks);
+        let mut y_blocks = Vec::with_capacity(num_xy_blocks);
+        let mut b_blocks = Vec::with_capacity(num_b_blocks);
+
+        for mcu_y in 0..mcu_rows {
+            for mcu_x in 0..mcu_cols {
+                // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
+                for block_y in 0..2 {
+                    for block_x in 0..2 {
+                        let bx = mcu_x * 2 + block_x;
+                        let by = mcu_y * 2 + block_y;
+                        let aq_strength = aq_map.get(bx, by);
+
+                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_dct = forward_dct_8x8(&x_block);
+
+                        // X is luma-like in XYB, dampen=1.0
+                        let x_quant_coeffs = if let Some(ctx) = hybrid_ctx {
+                            ctx.quantize_block(&x_dct, &x_quant.values, aq_strength, 1.0, true)
+                        } else {
+                            quant::quantize_block(&x_dct, &x_quant.values)
+                        };
+                        x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
+                    }
+                }
+
+                // Process 4 Y blocks (2×2 arrangement within 16×16 MCU)
+                for block_y in 0..2 {
+                    for block_x in 0..2 {
+                        let bx = mcu_x * 2 + block_x;
+                        let by = mcu_y * 2 + block_y;
+                        let aq_strength = aq_map.get(bx, by);
+
+                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_dct = forward_dct_8x8(&y_block);
+
+                        // Y is the primary luma channel in XYB, dampen=1.0
+                        let y_quant_coeffs = if let Some(ctx) = hybrid_ctx {
+                            ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
+                        } else {
+                            quant::quantize_block(&y_dct, &y_quant.values)
+                        };
+                        y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                    }
+                }
+
+                // Process 1 B block (from downsampled plane)
+                // Average AQ from the 4 corresponding full-res blocks
+                let b_aq_strength = {
+                    let mut sum = 0.0f32;
+                    for dy in 0..2 {
+                        for dx in 0..2 {
+                            let bx = mcu_x * 2 + dx;
+                            let by = mcu_y * 2 + dy;
+                            sum += aq_map.get(bx, by);
+                        }
+                    }
+                    sum / 4.0
+                };
+
+                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_dct = forward_dct_8x8(&b_block);
+
+                // B is chroma-like (blue channel), is_luma=false
+                let b_quant_coeffs = if let Some(ctx) = hybrid_ctx {
+                    ctx.quantize_block(&b_dct, &b_quant.values, b_aq_strength, 1.0, false)
+                } else {
+                    quant::quantize_block(&b_dct, &b_quant.values)
+                };
                 b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
             }
         }

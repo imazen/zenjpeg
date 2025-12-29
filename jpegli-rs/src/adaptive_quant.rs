@@ -153,6 +153,95 @@ impl AQStrengthMap {
         let idx = by * self.width_blocks + bx;
         self.strengths.get(idx).copied().unwrap_or(0.08)
     }
+
+    /// Returns the mean AQ strength across all blocks.
+    ///
+    /// This value can be used with [`crate::hybrid_config::should_use_hybrid`]
+    /// to decide whether hybrid trellis will benefit this image.
+    #[must_use]
+    pub fn mean(&self) -> f32 {
+        if self.strengths.is_empty() {
+            return 0.0;
+        }
+        self.strengths.iter().sum::<f32>() / self.strengths.len() as f32
+    }
+
+    /// Returns the standard deviation of AQ strength.
+    #[must_use]
+    pub fn std(&self) -> f32 {
+        if self.strengths.is_empty() {
+            return 0.0;
+        }
+        let mean = self.mean();
+        let variance = self.strengths.iter()
+            .map(|&x| (x - mean).powi(2))
+            .sum::<f32>() / self.strengths.len() as f32;
+        variance.sqrt()
+    }
+
+    /// Returns (min, max, mean, std) statistics for the AQ map.
+    #[must_use]
+    pub fn stats(&self) -> (f32, f32, f32, f32) {
+        if self.strengths.is_empty() {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        let min = self.strengths.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = self.strengths.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mean = self.mean();
+        let std = self.std();
+        (min, max, mean, std)
+    }
+
+    /// Scale all AQ strengths by a factor.
+    ///
+    /// - `scale > 1.0` → more bits to complex regions → LARGER files
+    /// - `scale < 1.0` → fewer bits to complex regions → SMALLER files
+    ///
+    /// This can be used to compensate for hybrid trellis size increase
+    /// without changing the base quality level.
+    pub fn scale(&mut self, factor: f32) {
+        for s in &mut self.strengths {
+            *s *= factor;
+        }
+    }
+
+    /// Scale to achieve a target mean AQ strength.
+    ///
+    /// Useful for normalizing AQ maps to a consistent aggressiveness level.
+    pub fn scale_to_mean(&mut self, target_mean: f32) {
+        let current_mean = self.mean();
+        if current_mean > 0.0 {
+            self.scale(target_mean / current_mean);
+        }
+    }
+
+    /// Estimate scale factor needed to reduce file size by a given percentage.
+    ///
+    /// Based on empirical model: higher AQ strength → more bits to complex
+    /// regions → LARGER files. To reduce size, we need to DECREASE AQ strength.
+    ///
+    /// Model: ~20% size change per 0.1 AQ mean change (empirical from Kodak corpus).
+    /// Note: There's also a baseline overhead (~3-10%) from trellis that can't be
+    /// eliminated by AQ scaling alone.
+    ///
+    /// # Arguments
+    /// * `size_reduction_pct` - Target size reduction (e.g., 15.0 for 15%)
+    ///
+    /// # Returns
+    /// Scale factor to apply to the AQ map (will be < 1.0 for size reduction)
+    #[must_use]
+    pub fn scale_for_size_reduction(&self, size_reduction_pct: f32) -> f32 {
+        // Empirical: ~20% size increase per 0.1 AQ mean increase
+        // To REDUCE by X%, need to DECREASE mean by X/200
+        // (i.e., to reduce by 10%, decrease mean by 0.05)
+        let current_mean = self.mean();
+        if current_mean <= 0.0 {
+            return 1.0;
+        }
+        let mean_decrease_needed = size_reduction_pct / 200.0;
+        let target_mean = (current_mean - mean_decrease_needed).max(0.01);
+        target_mean / current_mean
+    }
 }
 
 /// Computes per-block adaptive quantization strength.
