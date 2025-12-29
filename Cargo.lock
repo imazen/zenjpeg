@@ -694,7 +694,7 @@ dependencies = [
  "lcms2",
  "moxcms",
  "mozjpeg",
- "mozjpeg-oxide",
+ "mozjpeg-rs",
  "multiversion 0.7.4",
  "png",
  "proptest",
@@ -834,8 +834,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mozjpeg-oxide"
-version = "0.2.2"
+name = "mozjpeg-rs"
+version = "0.2.4"
 dependencies = [
  "bytemuck",
  "multiversion 0.8.0",
