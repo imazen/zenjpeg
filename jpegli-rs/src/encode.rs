@@ -1134,14 +1134,13 @@ impl Encoder {
                 });
 
                 // AC 3-63 refinement: bit 0 (Ah=1, Al=0)
-                // TEMP: Skipping second refinement to test first refinement
-                // scans.push(ProgressiveScan {
-                //     components: vec![c],
-                //     ss: 3,
-                //     se: 63,
-                //     ah: 1,
-                //     al: 0,
-                // });
+                scans.push(ProgressiveScan {
+                    components: vec![c],
+                    ss: 3,
+                    se: 63,
+                    ah: 1,
+                    al: 0,
+                });
             } else {
                 // Level 0: no successive approximation (simpler, works)
                 scans.push(ProgressiveScan {
