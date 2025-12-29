@@ -4,9 +4,24 @@
 //! - jpegli's adaptive quantization (WHERE to spend bits - per-block AQ strength)
 //! - mozjpeg's trellis quantization (HOW to spend bits - rate-distortion optimization)
 //!
-//! Theory: AQ analyzes the image globally and assigns per-block "strength" values.
-//! Higher strength = more compression acceptable = coarser quant table.
-//! Trellis then optimizes the actual coefficient values given the scaled quant table.
+//! ## Theory
+//!
+//! AQ analyzes the image globally and assigns per-block "strength" values:
+//! - Low AQ (smooth regions): preserve quality, keep more coefficients
+//! - High AQ (textured regions): more compression acceptable, zero out more
+//!
+//! Trellis uses lambda for rate-distortion tradeoff:
+//! - Higher lambda = favor rate (smaller files)
+//! - Lower lambda = favor distortion (better quality)
+//!
+//! ## Integration
+//!
+//! We map AQ strength to trellis lambda adjustment:
+//! - AQ=0 → lambda unchanged (baseline)
+//! - AQ=0.5 → lambda ~2x (more aggressive compression)
+//!
+//! This is done by adjusting `lambda_log_scale1` in TrellisConfig:
+//! - `new_scale1 = base_scale1 + aq_strength * AQ_LAMBDA_SCALE`
 
 #[cfg(feature = "hybrid-trellis")]
 use mozjpeg_oxide::{
@@ -109,16 +124,30 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
     result
 }
 
-/// Hybrid quantization: scale quant table by AQ, then run trellis.
+/// How much to scale lambda per unit of AQ strength.
 ///
-/// This is the main entry point for hybrid encoding.
+/// This controls the sensitivity of trellis to AQ:
+/// - Higher value = more aggressive compression in textured regions
+/// - Lower value = more uniform compression across image
+///
+/// Since lambda = 2^scale1 / ..., adding 1.0 to scale1 doubles lambda.
+/// With AQ_LAMBDA_SCALE=2.0 and aq_strength=0.5, lambda increases by 2x.
+#[cfg(feature = "hybrid-trellis")]
+const AQ_LAMBDA_SCALE: f32 = 2.0;
+
+/// Hybrid quantization: jpegli AQ + mozjpeg trellis.
+///
+/// This is the main entry point for hybrid encoding. It adjusts the trellis
+/// lambda parameter based on AQ strength:
+/// - Higher AQ (textured) → higher lambda → more aggressive compression
+/// - Lower AQ (smooth) → lower lambda → preserve quality
 ///
 /// # Arguments
 /// * `dct_coeffs` - DCT coefficients in f32 (jpegli format)
 /// * `base_quant` - Base quantization table
-/// * `aq_strength` - Per-block AQ strength from jpegli
+/// * `aq_strength` - Per-block AQ strength from jpegli (typically 0.0 to 0.5)
 /// * `ac_table` - Huffman table for rate estimation
-/// * `config` - Trellis configuration
+/// * `base_config` - Base trellis configuration (will be adjusted per-block)
 ///
 /// # Returns
 /// Quantized coefficients ready for entropy coding
@@ -126,23 +155,22 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
 pub fn hybrid_quantize_block(
     dct_coeffs: &[f32; DCT_BLOCK_SIZE],
     base_quant: &[u16; DCT_BLOCK_SIZE],
-    _aq_strength: f32, // NOTE: AQ not yet integrated into trellis (needs lambda adjustment)
+    aq_strength: f32,
     ac_table: &DerivedTable,
-    config: &TrellisConfig,
+    base_config: &TrellisConfig,
 ) -> [i16; DCT_BLOCK_SIZE] {
-    // NOTE: jpegli uses AQ for zero-bias thresholds, not quant table scaling.
-    // To properly integrate AQ into trellis, we'd need to modify the lambda
-    // (rate-distortion tradeoff) based on aq_strength. For now, we just run
-    // trellis with the base quant table.
-    //
-    // TODO: Integrate AQ into trellis by adjusting lambda per block.
+    // Adjust lambda based on AQ strength:
+    // - Higher AQ → increase lambda_log_scale1 → higher lambda → favor compression
+    // - aq_strength=0.5 with AQ_LAMBDA_SCALE=2.0 → +1.0 to scale1 → 2x lambda
+    let mut config = *base_config;
+    config.lambda_log_scale1 += aq_strength * AQ_LAMBDA_SCALE;
 
     // Convert f32 DCT to i32 (with 8x scaling to match trellis's 8x quant divisor)
     let dct_i32 = dct_f32_to_i32(dct_coeffs);
 
-    // Run trellis quantization
+    // Run trellis quantization with AQ-adjusted lambda
     let mut quantized = [0i16; DCT_BLOCK_SIZE];
-    trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, config);
+    trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, &config);
 
     quantized
 }
