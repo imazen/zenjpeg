@@ -100,13 +100,13 @@ pub mod test_utils;
 // ============================================================================
 
 pub use error::{Error, Result};
-pub use types::{ColorSpace, JpegMode, PixelFormat, SampleDepth, Subsampling};
+pub use types::{ColorSpace, JpegMode, OutputDataType, PixelFormat, SampleDepth, Subsampling};
 
 // Encoder API
 pub use encode::{Encoder, EncoderConfig};
 
 // Decoder API
-pub use decode::{DecodedImage, Decoder, DecoderConfig};
+pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
 
 // Quality settings
 pub use quant::{Quality, QuantTable};

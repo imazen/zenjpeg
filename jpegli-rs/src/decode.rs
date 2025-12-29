@@ -15,8 +15,12 @@
 //! ```
 
 use crate::alloc::{
-    checked_size_2d, try_alloc_dct_blocks, try_alloc_zeroed, validate_dimensions,
+    checked_size_2d, try_alloc_dct_blocks, validate_dimensions,
     DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS,
+};
+use crate::color::{
+    gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
+    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
 };
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
@@ -198,6 +202,41 @@ impl Decoder {
             data: pixels,
         })
     }
+
+    /// Decodes a JPEG image to 32-bit floating point pixels.
+    ///
+    /// This preserves the full 12-bit internal precision of jpegli's decoder
+    /// without quantization to 8-bit. Values are normalized to range 0.0-1.0.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::decode::Decoder;
+    ///
+    /// let decoder = Decoder::new();
+    /// let image = decoder.decode_f32(&jpeg_data)?;
+    /// // image.data contains f32 values in range 0.0-1.0
+    /// ```
+    ///
+    /// Note: ICC profile application is not supported for f32 output.
+    /// If you need ICC profile transformation, decode to u8 first.
+    pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
+        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        parser.decode()?;
+
+        let info = parser.info();
+        let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
+
+        // Convert to output format as f32
+        let pixels = parser.to_pixels_f32(output_format, info.is_xyb)?;
+
+        Ok(DecodedImageF32 {
+            width: info.dimensions.width,
+            height: info.dimensions.height,
+            format: output_format,
+            data: pixels,
+        })
+    }
 }
 
 impl Default for Decoder {
@@ -237,6 +276,79 @@ impl DecodedImage {
     #[must_use]
     pub fn stride(&self) -> usize {
         self.width as usize * self.bytes_per_pixel()
+    }
+}
+
+/// A decoded image with 32-bit floating point pixel data.
+///
+/// This preserves the full 12-bit internal precision of jpegli's decoder
+/// without quantization to 8-bit. Values are in the range 0.0-1.0.
+///
+/// Use this format when you need:
+/// - Maximum precision for further image processing
+/// - HDR workflows
+/// - Scientific/medical imaging applications
+/// - Input to machine learning models
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DecodedImageF32 {
+    /// Image width in pixels
+    pub width: u32,
+    /// Image height in pixels
+    pub height: u32,
+    /// Pixel format of the data
+    pub format: PixelFormat,
+    /// Float pixel data in range 0.0-1.0
+    pub data: Vec<f32>,
+}
+
+impl DecodedImageF32 {
+    /// Returns the image dimensions as a tuple (width, height).
+    #[must_use]
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// Returns the number of channels for this image's format.
+    #[must_use]
+    pub fn channels(&self) -> usize {
+        self.format.num_channels()
+    }
+
+    /// Returns the stride (floats per row) of the image.
+    #[must_use]
+    pub fn stride(&self) -> usize {
+        self.width as usize * self.channels()
+    }
+
+    /// Converts to 8-bit integer format.
+    ///
+    /// Values are scaled from 0.0-1.0 to 0-255 and clamped.
+    #[must_use]
+    pub fn to_u8(&self) -> DecodedImage {
+        let data: Vec<u8> = self
+            .data
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        DecodedImage {
+            width: self.width,
+            height: self.height,
+            format: self.format,
+            data,
+        }
+    }
+
+    /// Converts to 16-bit integer format.
+    ///
+    /// Values are scaled from 0.0-1.0 to 0-65535 and clamped.
+    #[must_use]
+    pub fn to_u16(&self) -> Vec<u16> {
+        self.data
+            .iter()
+            .map(|&v| (v * 65535.0).round().clamp(0.0, 65535.0) as u16)
+            .collect()
     }
 }
 
@@ -1071,6 +1183,10 @@ impl<'a> JpegParser<'a> {
                         continue;
                     }
 
+                    // Pre-compute base y position and check row bounds once
+                    let base_py = by * DCT_SIZE;
+                    let rows_to_copy = DCT_SIZE.min(info.comp_height.saturating_sub(base_py));
+
                     for bx in 0..info.comp_blocks_h {
                         let block_idx = by * info.comp_blocks_h + bx;
                         if block_idx >= self.coeffs[comp_idx].len() {
@@ -1078,14 +1194,13 @@ impl<'a> JpegParser<'a> {
                         }
                         let coeffs = &self.coeffs[comp_idx][block_idx];
 
+                        // Zigzag reorder
                         let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
                         for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
                             natural_coeffs[zi as usize] = coeffs[i];
                         }
 
-                        // For XYB images, use simple dequantization (no bias)
-                        // The ICC profile expects standard JPEG decoding
-                        // For YCbCr, use biased dequantization (jpegli optimization)
+                        // Dequantize and IDCT
                         let dequant = if is_xyb {
                             dequantize_block(&natural_coeffs, quant)
                         } else {
@@ -1093,13 +1208,23 @@ impl<'a> JpegParser<'a> {
                         };
                         let pixels = inverse_dct_8x8(&dequant);
 
-                        // Store as f32, NO level shift yet (matches C++ which adds 128/255 after color transform)
-                        for y in 0..DCT_SIZE {
-                            for x in 0..DCT_SIZE {
-                                let px = bx * DCT_SIZE + x;
-                                let py = by * DCT_SIZE + y;
-                                if px < info.comp_width && py < info.comp_height {
-                                    comp_plane_f32[py * info.comp_width + px] =
+                        // Store pixels - use row-based copy for efficiency
+                        let base_px = bx * DCT_SIZE;
+                        let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
+
+                        if cols_to_copy == DCT_SIZE {
+                            // Fast path: full 8-pixel row copy
+                            for y in 0..rows_to_copy {
+                                let dst_offset = (base_py + y) * info.comp_width + base_px;
+                                let src_offset = y * DCT_SIZE;
+                                comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
+                                    .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+                            }
+                        } else {
+                            // Slow path: partial row copy (edge blocks)
+                            for y in 0..rows_to_copy {
+                                for x in 0..cols_to_copy {
+                                    comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
                                         pixels[y * DCT_SIZE + x];
                                 }
                             }
@@ -1144,65 +1269,264 @@ impl<'a> JpegParser<'a> {
             planes_f32.push(plane_f32);
         }
 
-        // Convert to output format - do color conversion in f32, then convert to u8
+        // Convert to output format using batch conversion functions
         match (self.num_components, format) {
             (1, PixelFormat::Gray) => {
                 // Grayscale: level shift and convert to u8
-                let mut output = try_alloc_zeroed(output_size, "allocating gray output")?;
-                for (i, &y) in planes_f32[0].iter().enumerate() {
-                    output[i] = (y + 128.0).round().clamp(0.0, 255.0) as u8;
-                }
+                let mut output = vec![0u8; output_size];
+                gray_f32_to_gray_u8(&planes_f32[0], &mut output);
                 Ok(output)
             }
             (1, PixelFormat::Rgb) => {
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed(rgb_size, "allocating RGB output")?;
-                for (i, &y) in planes_f32[0].iter().enumerate() {
-                    let val = (y + 128.0).round().clamp(0.0, 255.0) as u8;
-                    rgb[i * 3] = val;
-                    rgb[i * 3 + 1] = val;
-                    rgb[i * 3 + 2] = val;
-                }
+                let mut rgb = vec![0u8; rgb_size];
+                gray_f32_to_rgb_u8(&planes_f32[0], &mut rgb);
                 Ok(rgb)
             }
             (3, PixelFormat::Rgb) => {
                 let rgb_size =
                     checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-                let mut rgb = try_alloc_zeroed(rgb_size, "allocating RGB output")?;
+                let mut rgb = vec![0u8; rgb_size];
 
                 if is_xyb {
                     // XYB mode: Output raw level-shifted values, NO YCbCr→RGB conversion.
                     // The XYB values are stored in YCbCr positions but are NOT YCbCr.
                     // The ICC profile transforms these directly to sRGB.
-                    // This matches jpeg-decoder's behavior which skips color conversion
-                    // when an ICC profile is present.
                     for i in 0..output_size {
-                        rgb[i * 3] = (planes_f32[0][i] + 128.0).round().clamp(0.0, 255.0) as u8;
-                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0).round().clamp(0.0, 255.0) as u8;
-                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0).round().clamp(0.0, 255.0) as u8;
+                        rgb[i * 3] = (planes_f32[0][i] + 128.0).clamp(0.0, 255.0) as u8;
+                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0).clamp(0.0, 255.0) as u8;
+                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0).clamp(0.0, 255.0) as u8;
                     }
                 } else {
-                    // YCbCr to RGB conversion in f32, then convert to u8
-                    for i in 0..output_size {
-                        // Get YCbCr values (still centered around 0 for Y, 0 for Cb/Cr)
-                        let y = planes_f32[0][i];
-                        let cb = planes_f32[1][i]; // Cb is centered around 0 (not 128)
-                        let cr = planes_f32[2][i]; // Cr is centered around 0 (not 128)
+                    // YCbCr to RGB conversion using batch function
+                    ycbcr_planes_f32_to_rgb_u8(&planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb);
+                }
+                Ok(rgb)
+            }
+            _ => Err(Error::UnsupportedFeature {
+                feature: "unsupported color conversion",
+            }),
+        }
+    }
 
-                        // YCbCr to RGB conversion (BT.601)
-                        // R = Y + 1.402 * Cr
-                        // G = Y - 0.344136 * Cb - 0.714136 * Cr
-                        // B = Y + 1.772 * Cb
-                        let r = y + 1.402 * cr;
-                        let g = y - 0.344136 * cb - 0.714136 * cr;
-                        let b = y + 1.772 * cb;
+    /// Convert decoded coefficients to f32 pixels.
+    /// Values are normalized to range 0.0-1.0.
+    fn to_pixels_f32(&self, format: PixelFormat, is_xyb: bool) -> Result<Vec<f32>> {
+        if self.coeffs.is_empty() {
+            return Err(Error::InternalError {
+                reason: "no decoded data",
+            });
+        }
 
-                        // Level shift (+128) and convert to u8
-                        rgb[i * 3] = (r + 128.0).round().clamp(0.0, 255.0) as u8;
-                        rgb[i * 3 + 1] = (g + 128.0).round().clamp(0.0, 255.0) as u8;
-                        rgb[i * 3 + 2] = (b + 128.0).round().clamp(0.0, 255.0) as u8;
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Calculate max sampling factors
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+
+        // MCU dimensions
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Pre-compute component info
+        struct CompInfo {
+            quant_idx: usize,
+            h_samp: usize,
+            v_samp: usize,
+            comp_blocks_h: usize,
+            comp_blocks_v: usize,
+            comp_width: usize,
+            comp_height: usize,
+            is_full_res: bool,
+        }
+
+        let mut comp_infos: Vec<CompInfo> = Vec::new();
+        for comp_idx in 0..self.num_components as usize {
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+            let comp_blocks_h = mcu_cols * h_samp;
+            let comp_blocks_v = mcu_rows * v_samp;
+            let comp_width = checked_size_2d(comp_blocks_h, 8)?;
+            let comp_height = checked_size_2d(comp_blocks_v, 8)?;
+            comp_infos.push(CompInfo {
+                quant_idx: self.components[comp_idx].quant_table_idx as usize,
+                h_samp,
+                v_samp,
+                comp_blocks_h,
+                comp_blocks_v,
+                comp_width,
+                comp_height,
+                is_full_res: h_samp == max_h_samp as usize && v_samp == max_v_samp as usize,
+            });
+        }
+
+        // Initialize bias stats and biases
+        let mut bias_stats = DequantBiasStats::new(self.num_components as usize);
+        let mut component_biases: Vec<[f32; DCT_BLOCK_SIZE]> =
+            vec![[0.0f32; DCT_BLOCK_SIZE]; self.num_components as usize];
+
+        // Allocate component planes as f32
+        let mut comp_planes_f32: Vec<Vec<f32>> = Vec::new();
+        for info in &comp_infos {
+            let comp_plane_size = checked_size_2d(info.comp_width, info.comp_height)?;
+            comp_planes_f32.push(vec![0.0f32; comp_plane_size]);
+        }
+
+        // Process MCU row by MCU row
+        for imcu_row in 0..mcu_rows {
+            for comp_idx in 0..self.num_components as usize {
+                let info = &comp_infos[comp_idx];
+                let quant =
+                    self.quant_tables[info.quant_idx]
+                        .as_ref()
+                        .ok_or(Error::InternalError {
+                            reason: "missing quantization table",
+                        })?;
+
+                // Gather stats for full-res components
+                if info.is_full_res {
+                    for iy in 0..info.v_samp {
+                        let by = imcu_row * info.v_samp + iy;
+                        if by >= info.comp_blocks_v {
+                            continue;
+                        }
+                        for bx in 0..info.comp_blocks_h {
+                            let block_idx = by * info.comp_blocks_h + bx;
+                            if block_idx >= self.coeffs[comp_idx].len() {
+                                continue;
+                            }
+                            let coeffs = &self.coeffs[comp_idx][block_idx];
+                            let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                            for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate()
+                            {
+                                natural_coeffs[zi as usize] = coeffs[i];
+                            }
+                            bias_stats.gather_block(comp_idx, &natural_coeffs);
+                        }
                     }
+
+                    // Recompute biases every 4 MCU rows
+                    if imcu_row % 4 == 3 {
+                        component_biases[comp_idx] = bias_stats.compute_biases(comp_idx);
+                    }
+                }
+
+                // IDCT for this component
+                let biases = &component_biases[comp_idx];
+                let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        let dequant = if is_xyb {
+                            dequantize_block(&natural_coeffs, quant)
+                        } else {
+                            dequantize_block_with_bias(&natural_coeffs, quant, biases)
+                        };
+                        let pixels = inverse_dct_8x8(&dequant);
+
+                        for y in 0..DCT_SIZE {
+                            for x in 0..DCT_SIZE {
+                                let px = bx * DCT_SIZE + x;
+                                let py = by * DCT_SIZE + y;
+                                if px < info.comp_width && py < info.comp_height {
+                                    comp_plane_f32[py * info.comp_width + px] =
+                                        pixels[y * DCT_SIZE + x];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Upsample if needed
+        let output_size = checked_size_2d(width, height)?;
+        let mut planes_f32: Vec<Vec<f32>> = Vec::new();
+
+        for comp_idx in 0..self.num_components as usize {
+            let info = &comp_infos[comp_idx];
+            let comp_plane_f32 = &comp_planes_f32[comp_idx];
+
+            let plane_f32 =
+                if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
+                    let scale_x = max_h_samp as usize / info.h_samp;
+                    let scale_y = max_v_samp as usize / info.v_samp;
+                    let mut upsampled = vec![0.0f32; output_size];
+                    for py in 0..height {
+                        for px in 0..width {
+                            let sx = (px / scale_x).min(info.comp_width - 1);
+                            let sy = (py / scale_y).min(info.comp_height - 1);
+                            upsampled[py * width + px] = comp_plane_f32[sy * info.comp_width + sx];
+                        }
+                    }
+                    upsampled
+                } else {
+                    let mut plane = vec![0.0f32; output_size];
+                    for py in 0..height {
+                        for px in 0..width {
+                            plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
+                        }
+                    }
+                    plane
+                };
+
+            planes_f32.push(plane_f32);
+        }
+
+        // Convert to output format as f32 (values normalized to 0.0-1.0)
+        match (self.num_components, format) {
+            (1, PixelFormat::Gray) => {
+                // Grayscale: level shift and normalize to 0.0-1.0
+                let mut output = vec![0.0f32; output_size];
+                gray_f32_to_gray_f32(&planes_f32[0], &mut output);
+                Ok(output)
+            }
+            (1, PixelFormat::Rgb) => {
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb = vec![0.0f32; rgb_size];
+                gray_f32_to_rgb_f32(&planes_f32[0], &mut rgb);
+                Ok(rgb)
+            }
+            (3, PixelFormat::Rgb) => {
+                let rgb_size =
+                    checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+                let mut rgb = vec![0.0f32; rgb_size];
+
+                if is_xyb {
+                    // XYB mode: Output raw level-shifted values, normalized to 0.0-1.0
+                    for i in 0..output_size {
+                        rgb[i * 3] = ((planes_f32[0][i] + 128.0) / 255.0).clamp(0.0, 1.0);
+                        rgb[i * 3 + 1] = ((planes_f32[1][i] + 128.0) / 255.0).clamp(0.0, 1.0);
+                        rgb[i * 3 + 2] = ((planes_f32[2][i] + 128.0) / 255.0).clamp(0.0, 1.0);
+                    }
+                } else {
+                    // YCbCr to RGB conversion using batch function
+                    ycbcr_planes_f32_to_rgb_f32(&planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb);
                 }
                 Ok(rgb)
             }
@@ -1314,5 +1638,100 @@ mod tests {
         }
         // At quality 95, differences should be small
         assert!(max_diff < 30, "max_diff {} too large", max_diff);
+    }
+
+    #[test]
+    fn test_decode_f32_roundtrip() {
+        // Create a simple 16x16 RGB image
+        let width = 16;
+        let height = 16;
+        let mut input = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                input[idx] = (x * 16) as u8; // R
+                input[idx + 1] = (y * 16) as u8; // G
+                input[idx + 2] = 128; // B
+            }
+        }
+
+        // Encode
+        let encoder = Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .pixel_format(PixelFormat::Rgb)
+            .quality(Quality::from_quality(95.0));
+
+        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+
+        // Decode to f32
+        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+        let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decoding should succeed");
+
+        assert_eq!(decoded_f32.width, width as u32);
+        assert_eq!(decoded_f32.height, height as u32);
+        assert_eq!(decoded_f32.data.len(), width * height * 3);
+
+        // Verify values are in 0.0-1.0 range
+        for &v in &decoded_f32.data {
+            assert!(v >= 0.0 && v <= 1.0, "f32 value {} out of range", v);
+        }
+
+        // Compare with u8 decode - converted f32 should match
+        let decoded_u8 = decoder.decode(&jpeg).expect("u8 decoding should succeed");
+        let converted_u8 = decoded_f32.to_u8();
+
+        // Values should be very close (within 1 due to rounding)
+        let mut max_diff = 0i32;
+        for i in 0..decoded_u8.data.len() {
+            let diff = (decoded_u8.data[i] as i32 - converted_u8.data[i] as i32).abs();
+            max_diff = max_diff.max(diff);
+        }
+        assert!(max_diff <= 1, "f32→u8 conversion differs by {} from direct u8", max_diff);
+    }
+
+    #[test]
+    fn test_decode_f32_precision() {
+        // Create a gradient image to test precision
+        let width = 64;
+        let height = 64;
+        let mut input = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                // Create a smooth gradient
+                let val = ((x + y) * 2) as u8;
+                input[idx] = val;
+                input[idx + 1] = val;
+                input[idx + 2] = val;
+            }
+        }
+
+        // Encode at high quality
+        let encoder = Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .pixel_format(PixelFormat::Rgb)
+            .quality(Quality::from_quality(98.0));
+
+        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+
+        // Decode to f32
+        let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+        let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decoding should succeed");
+
+        // Check that f32 values show more precision than just u8/255
+        // by verifying we have non-quantized intermediate values
+        let mut found_fractional = false;
+        for &v in &decoded_f32.data {
+            let scaled = v * 255.0;
+            let frac = scaled - scaled.round();
+            if frac.abs() > 0.001 && frac.abs() < 0.999 {
+                found_fractional = true;
+                break;
+            }
+        }
+        // f32 should preserve sub-integer precision
+        assert!(found_fractional, "f32 output should have fractional precision");
     }
 }

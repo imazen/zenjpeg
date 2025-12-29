@@ -81,11 +81,254 @@ mod simd {
         output[48..56].copy_from_slice(&t6.to_array());
         output[56..64].copy_from_slice(&t7.to_array());
     }
+
+    /// Fast 1D IDCT on a single row (8 values).
+    /// Uses the AAN (Arai, Agui, Nakajima) scaled IDCT algorithm.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn idct1d_fast(input: &[f32], output: &mut [f32]) {
+        // Scaled IDCT constants (AAN algorithm)
+        // These are cos(k*pi/16) * sqrt(2) factors
+        const A1: f32 = 0.707_106_77; // cos(4*pi/16) * sqrt(2) = 1/sqrt(2)
+        const A2: f32 = 0.541_196_1; // cos(6*pi/16) * sqrt(2)
+        const A3: f32 = 0.707_106_77; // cos(4*pi/16) * sqrt(2) = 1/sqrt(2)
+        const A4: f32 = 1.306_562_96; // cos(2*pi/16) * sqrt(2)
+        const A5: f32 = 0.382_683_43; // cos(6*pi/16)
+
+        let v0 = input[0];
+        let v1 = input[1];
+        let v2 = input[2];
+        let v3 = input[3];
+        let v4 = input[4];
+        let v5 = input[5];
+        let v6 = input[6];
+        let v7 = input[7];
+
+        // Stage 1: Reorder and prepare
+        let t0 = v0;
+        let t1 = v4;
+        let t2 = v2;
+        let t3 = v6;
+        let t4 = v1;
+        let t5 = v5;
+        let t6 = v3;
+        let t7 = v7;
+
+        // Stage 2: First butterfly operations
+        let s0 = t0 + t1;
+        let s1 = t0 - t1;
+        let s2 = t2 * A1 - t3 * A1;
+        let s3 = t2 * A1 + t3 * A1;
+
+        // Stage 3: Even part completion
+        let e0 = s0 + s3;
+        let e1 = s1 + s2;
+        let e2 = s1 - s2;
+        let e3 = s0 - s3;
+
+        // Stage 2: Odd part
+        let p4 = t4 + t7;
+        let p5 = t5 + t6;
+        let p6 = t4 + t6;
+        let p7 = t5 + t7;
+        let z5 = (p6 - p7) * A5;
+
+        let o4 = t4 * A2 + z5 + p4 * (-A2 - A5);
+        let o5 = t5 * A3 + p5 * (-A3);
+        let o6 = t6 * A4 + z5 + p6 * (-A4 + A5);
+        let o7 = t7 * A1;
+
+        let q4 = o4 + o7;
+        let q5 = o5 + o6;
+        let q6 = o5 - o6;
+        let q7 = -o4 + o7;
+
+        // Stage 4: Final combination
+        output[0] = e0 + q4;
+        output[1] = e1 + q5;
+        output[2] = e2 + q6;
+        output[3] = e3 + q7;
+        output[4] = e3 - q7;
+        output[5] = e2 - q6;
+        output[6] = e1 - q5;
+        output[7] = e0 - q4;
+    }
+
+    /// SIMD-optimized 1D IDCT processing 8 rows at once.
+    /// Each f32x8 contains corresponding values from all 8 rows.
+    #[inline]
+    pub fn idct_8rows_simd(block: &mut [f32; 64]) {
+        // Load columns (each lane is from a different row)
+        let mut c0 = f32x8::from([
+            block[0], block[8], block[16], block[24], block[32], block[40], block[48], block[56],
+        ]);
+        let mut c1 = f32x8::from([
+            block[1], block[9], block[17], block[25], block[33], block[41], block[49], block[57],
+        ]);
+        let mut c2 = f32x8::from([
+            block[2], block[10], block[18], block[26], block[34], block[42], block[50], block[58],
+        ]);
+        let mut c3 = f32x8::from([
+            block[3], block[11], block[19], block[27], block[35], block[43], block[51], block[59],
+        ]);
+        let mut c4 = f32x8::from([
+            block[4], block[12], block[20], block[28], block[36], block[44], block[52], block[60],
+        ]);
+        let mut c5 = f32x8::from([
+            block[5], block[13], block[21], block[29], block[37], block[45], block[53], block[61],
+        ]);
+        let mut c6 = f32x8::from([
+            block[6], block[14], block[22], block[30], block[38], block[46], block[54], block[62],
+        ]);
+        let mut c7 = f32x8::from([
+            block[7], block[15], block[23], block[31], block[39], block[47], block[55], block[63],
+        ]);
+
+        // Apply IDCT using the recursive algorithm (vectorized)
+        // ForwardEvenOdd: de-interleave
+        // tmp[0..4] = c0, c2, c4, c6 (even indices)
+        // tmp[4..8] = c1, c3, c5, c7 (odd indices)
+        let t0 = c0;
+        let t1 = c2;
+        let t2 = c4;
+        let t3 = c6;
+        let t4 = c1;
+        let t5 = c3;
+        let t6 = c5;
+        let t7 = c7;
+
+        // IDCT1D<4> on even part [t0, t1, t2, t3]
+        // ForwardEvenOdd<4>: e0=t0, e1=t2, o0=t1, o1=t3
+        let e0 = t0;
+        let e1 = t2;
+        let o0 = t1;
+        let o1 = t3;
+
+        // IDCT1D<2> on [e0, e1]
+        let e00 = e0 + e1;
+        let e01 = e0 - e1;
+
+        // BTranspose<2> and IDCT1D<2> on [o0, o1]
+        let o1b = o1 + o0;
+        let o0b = o0 * f32x8::splat(SQRT2);
+        let o00 = o0b + o1b;
+        let o01 = o0b - o1b;
+
+        // MultiplyAndAdd<4>
+        let wc4_0 = f32x8::splat(WC4[0]);
+        let wc4_1 = f32x8::splat(WC4[1]);
+        let prod0 = wc4_0 * o00;
+        let prod1 = wc4_1 * o01;
+        let r0 = e00 + prod0;
+        let r3 = e00 - prod0;
+        let r1 = e01 + prod1;
+        let r2 = e01 - prod1;
+
+        // BTranspose<4> on odd part [t4, t5, t6, t7]
+        let t7b = t7 + t6;
+        let t6b = t6 + t5;
+        let t5b = t5 + t4;
+        let t4b = t4 * f32x8::splat(SQRT2);
+
+        // IDCT1D<4> on [t4b, t5b, t6b, t7b]
+        let e0o = t4b;
+        let e1o = t6b;
+        let o0o = t5b;
+        let o1o = t7b;
+
+        let e00o = e0o + e1o;
+        let e01o = e0o - e1o;
+
+        let o1bo = o1o + o0o;
+        let o0bo = o0o * f32x8::splat(SQRT2);
+        let o00o = o0bo + o1bo;
+        let o01o = o0bo - o1bo;
+
+        let prod0o = wc4_0 * o00o;
+        let prod1o = wc4_1 * o01o;
+        let r0o = e00o + prod0o;
+        let r3o = e00o - prod0o;
+        let r1o = e01o + prod1o;
+        let r2o = e01o - prod1o;
+
+        // MultiplyAndAdd<8>
+        let wc8 = [
+            f32x8::splat(WC8[0]),
+            f32x8::splat(WC8[1]),
+            f32x8::splat(WC8[2]),
+            f32x8::splat(WC8[3]),
+        ];
+
+        let prod8_0 = wc8[0] * r0o;
+        let prod8_1 = wc8[1] * r1o;
+        let prod8_2 = wc8[2] * r2o;
+        let prod8_3 = wc8[3] * r3o;
+
+        c0 = r0 + prod8_0;
+        c7 = r0 - prod8_0;
+        c1 = r1 + prod8_1;
+        c6 = r1 - prod8_1;
+        c2 = r2 + prod8_2;
+        c5 = r2 - prod8_2;
+        c3 = r3 + prod8_3;
+        c4 = r3 - prod8_3;
+
+        // Store back (scatter to rows)
+        let a0 = c0.to_array();
+        let a1 = c1.to_array();
+        let a2 = c2.to_array();
+        let a3 = c3.to_array();
+        let a4 = c4.to_array();
+        let a5 = c5.to_array();
+        let a6 = c6.to_array();
+        let a7 = c7.to_array();
+
+        for i in 0..8 {
+            block[i * 8] = a0[i];
+            block[i * 8 + 1] = a1[i];
+            block[i * 8 + 2] = a2[i];
+            block[i * 8 + 3] = a3[i];
+            block[i * 8 + 4] = a4[i];
+            block[i * 8 + 5] = a5[i];
+            block[i * 8 + 6] = a6[i];
+            block[i * 8 + 7] = a7[i];
+        }
+    }
+
+    /// Full SIMD-optimized 2D IDCT.
+    pub fn inverse_dct_8x8_simd(input: &[f32; 64]) -> [f32; 64] {
+        let mut block = *input;
+
+        // Column IDCT (process all 8 columns in parallel by operating on rows)
+        idct_8rows_simd(&mut block);
+
+        // Transpose
+        let mut transposed = [0.0f32; 64];
+        transpose_8x8_simd(&block, &mut transposed);
+
+        // Row IDCT
+        idct_8rows_simd(&mut transposed);
+
+        // Transpose back
+        let mut output = [0.0f32; 64];
+        transpose_8x8_simd(&transposed, &mut output);
+
+        // Apply 1/8 scaling
+        let scale = f32x8::splat(1.0 / 8.0);
+        for i in 0..8 {
+            let row = f32x8::from(&output[i * 8..i * 8 + 8]);
+            let scaled = row * scale;
+            output[i * 8..i * 8 + 8].copy_from_slice(&scaled.to_array());
+        }
+
+        output
+    }
 }
 
 /// ForwardEvenOdd: De-interleave even/odd parts (opposite of InverseEvenOdd)
 /// out[i] = in[2*i] for i in 0..N/2
 /// out[N/2+i] = in[2*i+1] for i in 0..N/2
+#[cfg(any(not(feature = "simd"), test))]
 #[inline]
 fn forward_even_odd<const N: usize>(input: &[f32], output: &mut [f32]) {
     let half = N / 2;
@@ -97,6 +340,7 @@ fn forward_even_odd<const N: usize>(input: &[f32], output: &mut [f32]) {
 
 /// BTranspose: Reverse of B transform
 /// First cumulative sum from end to start, then coeff[0] *= sqrt2
+#[cfg(any(not(feature = "simd"), test))]
 #[inline]
 fn b_transpose<const N: usize>(coeff: &mut [f32]) {
     // Cumulative sum from end to start
@@ -109,6 +353,7 @@ fn b_transpose<const N: usize>(coeff: &mut [f32]) {
 /// MultiplyAndAdd: Combine even and odd parts with Wc multipliers
 /// out[i] = in[i] + Wc[i] * in[N/2+i]
 /// out[N-1-i] = in[i] - Wc[i] * in[N/2+i]
+#[cfg(any(not(feature = "simd"), test))]
 #[inline]
 fn multiply_and_add_8(input: &[f32], output: &mut [f32]) {
     for i in 0..4 {
@@ -120,6 +365,7 @@ fn multiply_and_add_8(input: &[f32], output: &mut [f32]) {
     }
 }
 
+#[cfg(any(not(feature = "simd"), test))]
 #[inline]
 fn multiply_and_add_4(input: &[f32], output: &mut [f32]) {
     for i in 0..2 {
@@ -132,6 +378,7 @@ fn multiply_and_add_4(input: &[f32], output: &mut [f32]) {
 }
 
 /// IDCT base case for N=2
+#[cfg(any(not(feature = "simd"), test))]
 #[inline]
 fn idct1d_2(input: &[f32], output: &mut [f32]) {
     let in1 = input[0];
@@ -141,6 +388,7 @@ fn idct1d_2(input: &[f32], output: &mut [f32]) {
 }
 
 /// IDCT for N=4 (recursive)
+#[cfg(any(not(feature = "simd"), test))]
 fn idct1d_4(input: &[f32], output: &mut [f32]) {
     let mut tmp = [0.0f32; 4];
 
@@ -172,6 +420,7 @@ fn idct1d_4(input: &[f32], output: &mut [f32]) {
 }
 
 /// IDCT for N=8 (recursive)
+#[cfg(any(not(feature = "simd"), test))]
 fn idct1d_8(input: &[f32], output: &mut [f32]) {
     let mut tmp = [0.0f32; 8];
 
@@ -202,6 +451,7 @@ fn idct1d_8(input: &[f32], output: &mut [f32]) {
 }
 
 /// 1D IDCT on all 8 rows (no scaling - scaling handled in main function)
+#[cfg(any(not(feature = "simd"), test))]
 fn idct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
         let in_slice = &input[row * 8..(row + 1) * 8];
@@ -211,6 +461,14 @@ fn idct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
             output[row * 8 + i] = out_row[i];
         }
     }
+}
+
+/// Check if all AC coefficients are zero (DC-only block)
+#[inline]
+fn is_dc_only(input: &[f32; DCT_BLOCK_SIZE]) -> bool {
+    // Check if all coefficients after DC are zero
+    // Use a simple threshold check for floating point
+    input[1..].iter().all(|&v| v.abs() < 1e-10)
 }
 
 /// Performs an 8x8 inverse DCT on the input coefficients.
@@ -225,36 +483,48 @@ fn idct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// 8x8 block of pixel values (before level shift adjustment)
 #[must_use]
 pub fn inverse_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    let mut block0 = *input;
-    let mut block1 = [0.0f32; 64];
-
-    // Transpose (use SIMD version when available)
-    #[cfg(feature = "simd")]
-    simd::transpose_8x8_simd(&block0, &mut block1);
-    #[cfg(not(feature = "simd"))]
-    transpose_8x8(&block0, &mut block1);
-
-    // Column IDCT (on transposed = rows of transposed)
-    idct_rows(&block1, &mut block0);
-
-    // Transpose
-    #[cfg(feature = "simd")]
-    simd::transpose_8x8_simd(&block0, &mut block1);
-    #[cfg(not(feature = "simd"))]
-    transpose_8x8(&block0, &mut block1);
-
-    // Row IDCT
-    let mut output = [0.0f32; 64];
-    idct_rows(&block1, &mut output);
-
-    // Apply 1/8 scaling to match forward DCT
-    // Forward DCT uses 1/8 for decoder compatibility, IDCT needs matching 1/8
-    let scale = 1.0 / 8.0;
-    for v in &mut output {
-        *v *= scale;
+    // Fast path: DC-only block (all AC coefficients are zero)
+    // This is very common in JPEGs and can be computed directly
+    if is_dc_only(input) {
+        // For DC-only input, all output pixels have the same value
+        // DC value after IDCT = DC_coeff / 8 (due to 1/8 scaling)
+        let dc_value = input[0] / 8.0;
+        return [dc_value; DCT_BLOCK_SIZE];
     }
 
-    output
+    // Use SIMD-optimized version when available
+    #[cfg(feature = "simd")]
+    {
+        simd::inverse_dct_8x8_simd(input)
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        let mut block0 = *input;
+        let mut block1 = [0.0f32; 64];
+
+        // Transpose
+        transpose_8x8(&block0, &mut block1);
+
+        // Column IDCT (on transposed = rows of transposed)
+        idct_rows(&block1, &mut block0);
+
+        // Transpose
+        transpose_8x8(&block0, &mut block1);
+
+        // Row IDCT
+        let mut output = [0.0f32; 64];
+        idct_rows(&block1, &mut output);
+
+        // Apply 1/8 scaling to match forward DCT
+        // Forward DCT uses 1/8 for decoder compatibility, IDCT needs matching 1/8
+        let scale = 1.0 / 8.0;
+        for v in &mut output {
+            *v *= scale;
+        }
+
+        output
+    }
 }
 
 /// Performs inverse DCT with level shift and clamping to u8.

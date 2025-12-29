@@ -443,6 +443,139 @@ pub fn ycbcr_planes_to_rgb(
     Ok(rgb)
 }
 
+// =============================================================================
+// Batch f32 color conversion for decoder
+// =============================================================================
+
+/// Batch YCbCr to RGB conversion for f32 planes.
+///
+/// Converts separate Y, Cb, Cr f32 planes to interleaved RGB u8.
+/// Input values are in IDCT output range (centered around 0).
+/// Applies level shift (+128) and clamps to 0-255.
+///
+/// This is optimized for the decoder which processes planes separately.
+#[inline(never)]  // Prevent over-inlining for better cache behavior
+pub fn ycbcr_planes_f32_to_rgb_u8(
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    rgb: &mut [u8],
+) {
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+
+    // BT.601 coefficients
+    const CR_TO_R: f32 = 1.402;
+    const CB_TO_G: f32 = -0.344136;
+    const CR_TO_G: f32 = -0.714136;
+    const CB_TO_B: f32 = 1.772;
+
+    for i in 0..num_pixels {
+        let y = y_plane[i];
+        let cb = cb_plane[i];  // Already centered around 0
+        let cr = cr_plane[i];  // Already centered around 0
+
+        // YCbCr to RGB
+        let r = y + CR_TO_R * cr;
+        let g = y + CB_TO_G * cb + CR_TO_G * cr;
+        let b = y + CB_TO_B * cb;
+
+        // Level shift (+128) and clamp to u8
+        let idx = i * 3;
+        rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[idx + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[idx + 2] = (b + 128.0).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Batch YCbCr to RGB conversion for f32 planes to f32 output.
+///
+/// Output values are normalized to 0.0-1.0 range.
+#[inline(never)]
+pub fn ycbcr_planes_f32_to_rgb_f32(
+    y_plane: &[f32],
+    cb_plane: &[f32],
+    cr_plane: &[f32],
+    rgb: &mut [f32],
+) {
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+
+    const CR_TO_R: f32 = 1.402;
+    const CB_TO_G: f32 = -0.344136;
+    const CR_TO_G: f32 = -0.714136;
+    const CB_TO_B: f32 = 1.772;
+
+    for i in 0..num_pixels {
+        let y = y_plane[i];
+        let cb = cb_plane[i];
+        let cr = cr_plane[i];
+
+        let r = y + CR_TO_R * cr;
+        let g = y + CB_TO_G * cb + CR_TO_G * cr;
+        let b = y + CB_TO_B * cb;
+
+        let idx = i * 3;
+        rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
+        rgb[idx + 1] = ((g + 128.0) / 255.0).clamp(0.0, 1.0);
+        rgb[idx + 2] = ((b + 128.0) / 255.0).clamp(0.0, 1.0);
+    }
+}
+
+/// Batch grayscale to RGB conversion for f32 to u8.
+#[inline(never)]
+pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    for (i, &y) in y_plane.iter().enumerate() {
+        let val = (y + 128.0).clamp(0.0, 255.0) as u8;
+        let idx = i * 3;
+        rgb[idx] = val;
+        rgb[idx + 1] = val;
+        rgb[idx + 2] = val;
+    }
+}
+
+/// Batch grayscale to RGB conversion for f32 to f32.
+#[inline(never)]
+pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    for (i, &y) in y_plane.iter().enumerate() {
+        let val = ((y + 128.0) / 255.0).clamp(0.0, 1.0);
+        let idx = i * 3;
+        rgb[idx] = val;
+        rgb[idx + 1] = val;
+        rgb[idx + 2] = val;
+    }
+}
+
+/// Batch level shift for grayscale f32 to u8.
+#[inline(never)]
+pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
+    debug_assert_eq!(y_plane.len(), output.len());
+
+    for (y, out) in y_plane.iter().zip(output.iter_mut()) {
+        *out = (*y + 128.0).clamp(0.0, 255.0) as u8;
+    }
+}
+
+/// Batch level shift for grayscale f32 to f32 (0.0-1.0).
+#[inline(never)]
+pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
+    debug_assert_eq!(y_plane.len(), output.len());
+
+    for (y, out) in y_plane.iter().zip(output.iter_mut()) {
+        *out = ((*y + 128.0) / 255.0).clamp(0.0, 1.0);
+    }
+}
+
 /// Converts BGR to RGB.
 #[inline]
 pub fn bgr_to_rgb(bgr: &[u8; 3]) -> [u8; 3] {
