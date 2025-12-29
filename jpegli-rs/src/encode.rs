@@ -24,6 +24,11 @@ use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use crate::xyb::srgb_to_scaled_xyb;
 
+#[cfg(feature = "hybrid-trellis")]
+use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
+#[cfg(feature = "hybrid-trellis")]
+use mozjpeg_oxide::TrellisConfig;
+
 /// Progressive scan parameters.
 #[derive(Debug, Clone)]
 struct ProgressiveScan {
@@ -83,6 +88,48 @@ impl Default for EncoderConfig {
             #[cfg(feature = "hybrid-trellis")]
             use_hybrid_trellis: false,
         }
+    }
+}
+
+/// Quantization context for hybrid trellis mode.
+///
+/// This struct holds pre-built Huffman tables and trellis config for use
+/// during hybrid quantization (jpegli AQ + mozjpeg trellis).
+#[cfg(feature = "hybrid-trellis")]
+struct HybridQuantContext {
+    huff_tables: StandardHuffmanTables,
+    trellis_config: TrellisConfig,
+}
+
+#[cfg(feature = "hybrid-trellis")]
+impl HybridQuantContext {
+    /// Creates a new hybrid quantization context with AC-only trellis.
+    fn new() -> Self {
+        // Create AC-only trellis config (no DC trellis since jpegli handles DC differently)
+        let mut config = TrellisConfig::default();
+        config.dc_enabled = false; // AC-only for this experiment
+
+        Self {
+            huff_tables: StandardHuffmanTables::new(),
+            trellis_config: config,
+        }
+    }
+
+    /// Quantize a block using hybrid AQ + trellis.
+    fn quantize_block(
+        &self,
+        dct_coeffs: &[f32; DCT_BLOCK_SIZE],
+        quant: &[u16; DCT_BLOCK_SIZE],
+        aq_strength: f32,
+        is_luma: bool,
+    ) -> [i16; DCT_BLOCK_SIZE] {
+        let ac_table = if is_luma {
+            &self.huff_tables.luma_ac
+        } else {
+            &self.huff_tables.chroma_ac
+        };
+
+        hybrid_quantize_block(dct_coeffs, quant, aq_strength, ac_table, &self.trellis_config)
     }
 }
 
@@ -1872,6 +1919,14 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
 
+        // Create hybrid quantization context if enabled
+        #[cfg(feature = "hybrid-trellis")]
+        let hybrid_ctx = if self.config.use_hybrid_trellis {
+            Some(HybridQuantContext::new())
+        } else {
+            None
+        };
+
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
                 // Get per-block aq_strength (C++ AQ produces 0.0-0.2, mean ~0.08)
@@ -1880,12 +1935,26 @@ impl Encoder {
                 // Extract and encode Y block
                 let y_block = self.extract_block(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
+
+                #[cfg(feature = "hybrid-trellis")]
+                let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
+                } else {
+                    quant::quantize_block_with_zero_bias(
+                        &y_dct,
+                        &y_quant.values,
+                        &y_zero_bias,
+                        aq_strength,
+                    )
+                };
+                #[cfg(not(feature = "hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
                     &y_dct,
                     &y_quant.values,
                     &y_zero_bias,
                     aq_strength,
                 );
+
                 let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
                 encoder.encode_block(&y_zigzag, 0, 0, 0)?;
 
@@ -1893,24 +1962,52 @@ impl Encoder {
                     // Cb block
                     let cb_block = self.extract_block(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
+
+                    #[cfg(feature = "hybrid-trellis")]
+                    let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                        ctx.quantize_block(&cb_dct, &c_quant.values, aq_strength, false)
+                    } else {
+                        quant::quantize_block_with_zero_bias(
+                            &cb_dct,
+                            &c_quant.values,
+                            &cb_zero_bias,
+                            aq_strength,
+                        )
+                    };
+                    #[cfg(not(feature = "hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
                         &c_quant.values,
                         &cb_zero_bias,
                         aq_strength,
                     );
+
                     let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
                     encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
 
                     // Cr block
                     let cr_block = self.extract_block(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
+
+                    #[cfg(feature = "hybrid-trellis")]
+                    let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                        ctx.quantize_block(&cr_dct, &c_quant.values, aq_strength, false)
+                    } else {
+                        quant::quantize_block_with_zero_bias(
+                            &cr_dct,
+                            &c_quant.values,
+                            &cr_zero_bias,
+                            aq_strength,
+                        )
+                    };
+                    #[cfg(not(feature = "hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
                         &c_quant.values,
                         &cr_zero_bias,
                         aq_strength,
                     );
+
                     let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
                     encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
                 }
@@ -1961,6 +2058,14 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
 
+        // Create hybrid quantization context if enabled
+        #[cfg(feature = "hybrid-trellis")]
+        let hybrid_ctx = if self.config.use_hybrid_trellis {
+            Some(HybridQuantContext::new())
+        } else {
+            None
+        };
+
         let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
         let mut cr_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
@@ -1972,33 +2077,75 @@ impl Encoder {
 
                 let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
+
+                #[cfg(feature = "hybrid-trellis")]
+                let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
+                } else {
+                    quant::quantize_block_with_zero_bias(
+                        &y_dct,
+                        &y_quant.values,
+                        &y_zero_bias,
+                        aq_strength,
+                    )
+                };
+                #[cfg(not(feature = "hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
                     &y_dct,
                     &y_quant.values,
                     &y_zero_bias,
                     aq_strength,
                 );
+
                 y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
 
                 if is_color {
                     let cb_block = self.extract_block_ycbcr_f32(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
+
+                    #[cfg(feature = "hybrid-trellis")]
+                    let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, false)
+                    } else {
+                        quant::quantize_block_with_zero_bias(
+                            &cb_dct,
+                            &cb_quant.values,
+                            &cb_zero_bias,
+                            aq_strength,
+                        )
+                    };
+                    #[cfg(not(feature = "hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
                         &cb_quant.values,
                         &cb_zero_bias,
                         aq_strength,
                     );
+
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
                     let cr_block = self.extract_block_ycbcr_f32(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
+
+                    #[cfg(feature = "hybrid-trellis")]
+                    let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, false)
+                    } else {
+                        quant::quantize_block_with_zero_bias(
+                            &cr_dct,
+                            &cr_quant.values,
+                            &cr_zero_bias,
+                            aq_strength,
+                        )
+                    };
+                    #[cfg(not(feature = "hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
                         &cr_quant.values,
                         &cr_zero_bias,
                         aq_strength,
                     );
+
                     cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
                 }
             }
@@ -2045,6 +2192,14 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
 
+        // Create hybrid quantization context if enabled
+        #[cfg(feature = "hybrid-trellis")]
+        let hybrid_ctx = if self.config.use_hybrid_trellis {
+            Some(HybridQuantContext::new())
+        } else {
+            None
+        };
+
         let mut y_blocks = Vec::with_capacity(y_blocks_h * y_blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
         let mut cr_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
@@ -2055,12 +2210,26 @@ impl Encoder {
                 let aq_strength = aq_map.get(bx, by);
                 let y_block = self.extract_block_ycbcr_f32(y_plane, y_width, y_height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
+
+                #[cfg(feature = "hybrid-trellis")]
+                let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, true)
+                } else {
+                    quant::quantize_block_with_zero_bias(
+                        &y_dct,
+                        &y_quant.values,
+                        &y_zero_bias,
+                        aq_strength,
+                    )
+                };
+                #[cfg(not(feature = "hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
                     &y_dct,
                     &y_quant.values,
                     &y_zero_bias,
                     aq_strength,
                 );
+
                 y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
             }
         }
@@ -2079,23 +2248,51 @@ impl Encoder {
                     let cb_block =
                         self.extract_block_ycbcr_f32(cb_plane, c_width, c_height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
+
+                    #[cfg(feature = "hybrid-trellis")]
+                    let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, false)
+                    } else {
+                        quant::quantize_block_with_zero_bias(
+                            &cb_dct,
+                            &cb_quant.values,
+                            &cb_zero_bias,
+                            aq_strength,
+                        )
+                    };
+                    #[cfg(not(feature = "hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
                         &cb_quant.values,
                         &cb_zero_bias,
                         aq_strength,
                     );
+
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
                     let cr_block =
                         self.extract_block_ycbcr_f32(cr_plane, c_width, c_height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
+
+                    #[cfg(feature = "hybrid-trellis")]
+                    let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
+                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, false)
+                    } else {
+                        quant::quantize_block_with_zero_bias(
+                            &cr_dct,
+                            &cr_quant.values,
+                            &cr_zero_bias,
+                            aq_strength,
+                        )
+                    };
+                    #[cfg(not(feature = "hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
                         &cr_quant.values,
                         &cr_zero_bias,
                         aq_strength,
                     );
+
                     cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
                 }
             }
