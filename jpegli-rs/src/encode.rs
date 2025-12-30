@@ -27,6 +27,95 @@ use crate::xyb::srgb_to_scaled_xyb;
 #[cfg(feature = "hybrid-trellis")]
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
 
+// ============================================================================
+// Uniform Block Detection and Fast Path
+// ============================================================================
+
+/// Result of uniform block detection.
+#[derive(Debug, Clone, Copy)]
+pub struct UniformBlockResult {
+    /// Whether the block is uniform (all pixels within threshold)
+    pub is_uniform: bool,
+    /// The DC coefficient value (only valid if is_uniform is true)
+    /// This is the mean value, level-shifted by -128 and scaled by 8 for DCT
+    pub dc_value: f32,
+}
+
+/// Check if a level-shifted f32 block is uniform (all values within threshold).
+///
+/// For a perfectly uniform block, the DCT produces:
+/// - DC = mean_value * 8 (due to DCT scaling)
+/// - All AC coefficients = 0
+///
+/// This allows skipping DCT computation entirely for uniform blocks.
+///
+/// # Arguments
+/// * `block` - 64-element array of level-shifted values (after -128 subtraction)
+/// * `threshold` - Maximum allowed variation (e.g., 0.5 for near-uniform, 0.0 for exact)
+///
+/// # Returns
+/// UniformBlockResult with is_uniform flag and precomputed DC value
+#[inline]
+pub fn detect_uniform_block(block: &[f32; DCT_BLOCK_SIZE], threshold: f32) -> UniformBlockResult {
+    let first = block[0];
+    let mut min = first;
+    let mut max = first;
+    let mut sum = 0.0f32;
+
+    for &val in block.iter() {
+        min = min.min(val);
+        max = max.max(val);
+        sum += val;
+    }
+
+    let is_uniform = (max - min) <= threshold;
+
+    // DC coefficient for uniform block = mean * 8 (DCT scaling factor)
+    let dc_value = if is_uniform {
+        (sum / 64.0) * 8.0
+    } else {
+        0.0
+    };
+
+    UniformBlockResult { is_uniform, dc_value }
+}
+
+/// Create quantized coefficients for a uniform block.
+///
+/// For uniform blocks, we can skip DCT entirely:
+/// - DC = quantize(dc_value / quant[0])
+/// - All AC = 0
+#[inline]
+pub fn uniform_block_coeffs(dc_value: f32, quant_dc: u16) -> [i16; DCT_BLOCK_SIZE] {
+    let mut coeffs = [0i16; DCT_BLOCK_SIZE];
+    coeffs[0] = (dc_value / quant_dc as f32).round() as i16;
+    coeffs
+}
+
+/// Statistics for uniform block optimization.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UniformBlockStats {
+    /// Total blocks processed
+    pub total_blocks: usize,
+    /// Blocks detected as uniform
+    pub uniform_blocks: usize,
+    /// DCT operations skipped
+    pub dct_skipped: usize,
+}
+
+impl UniformBlockStats {
+    /// Percentage of blocks that were uniform
+    pub fn uniform_percentage(&self) -> f64 {
+        if self.total_blocks == 0 {
+            0.0
+        } else {
+            100.0 * self.uniform_blocks as f64 / self.total_blocks as f64
+        }
+    }
+}
+
+// ============================================================================
+
 /// Progressive scan parameters.
 #[derive(Debug, Clone)]
 struct ProgressiveScan {

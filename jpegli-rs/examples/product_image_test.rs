@@ -1,0 +1,281 @@
+//! Test jpegli behavior on product-style images with white backgrounds
+//!
+//! Compares quality and size for different encoder strategies on
+//! images with large uniform (white) regions.
+
+use butteraugli::{compute_butteraugli, ButteraugliParams};
+use dssim::Dssim;
+use jpegli::encode::{detect_uniform_block, UniformBlockStats};
+use jpegli::consts::DCT_BLOCK_SIZE;
+
+use std::fs;
+use std::path::PathBuf;
+
+fn main() {
+    println!("=== Product Image Analysis ===\n");
+
+    // Try to find real product images, otherwise generate synthetic ones
+    let corpus_dir = PathBuf::from("/home/lilith/work/codec-eval/corpus/sharpened-800px");
+
+    if corpus_dir.exists() {
+        analyze_real_images(&corpus_dir);
+    }
+
+    // Always run synthetic tests
+    analyze_synthetic_products();
+}
+
+fn analyze_real_images(corpus_dir: &PathBuf) {
+    println!("--- Real Image Analysis ---\n");
+
+    let mut files: Vec<PathBuf> = fs::read_dir(corpus_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "png") &&
+            p.file_name().unwrap().to_string_lossy().contains("product")
+        })
+        .take(5)
+        .collect();
+
+    if files.is_empty() {
+        // Fall back to any images
+        files = fs::read_dir(corpus_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().is_some_and(|e| e == "png") &&
+                !p.file_name().unwrap().to_string_lossy().starts_with("bpp_")
+            })
+            .take(5)
+            .collect();
+    }
+
+    println!("{:40} {:>8} {:>8} {:>10}",
+        "Image", "Uniform%", "White%", "Size");
+    println!("{}", "-".repeat(70));
+
+    for file in &files {
+        let filename = file.file_name().unwrap().to_string_lossy();
+
+        let Ok(f) = fs::File::open(file) else { continue };
+        let decoder = png::Decoder::new(f);
+        let Ok(mut reader) = decoder.read_info() else { continue };
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let Ok(info) = reader.next_frame(&mut buf) else { continue };
+
+        if info.color_type != png::ColorType::Rgb { continue }
+
+        let pixels = &buf[..info.buffer_size()];
+        let width = info.width as usize;
+        let height = info.height as usize;
+
+        // Analyze blocks
+        let (uniform_pct, white_pct) = analyze_image_blocks(pixels, width, height);
+
+        // Encode
+        let result = jpegli::Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .quality(jpegli::quant::Quality::from_quality(85.0))
+            .encode(pixels)
+            .unwrap();
+
+        println!("{:40} {:>7.1}% {:>7.1}% {:>10}",
+            &filename[..filename.len().min(40)], uniform_pct, white_pct, result.len());
+    }
+    println!();
+}
+
+fn analyze_image_blocks(pixels: &[u8], width: usize, height: usize) -> (f64, f64) {
+    let blocks_h = (width + 7) / 8;
+    let blocks_v = (height + 7) / 8;
+    let mut uniform_count = 0usize;
+    let mut white_count = 0usize;
+    let mut total_blocks = 0usize;
+
+    // Convert to Y plane for analysis
+    let y_plane: Vec<f32> = pixels.chunks(3)
+        .map(|rgb| 0.299 * rgb[0] as f32 + 0.587 * rgb[1] as f32 + 0.114 * rgb[2] as f32)
+        .collect();
+
+    for by in 0..blocks_v {
+        for bx in 0..blocks_h {
+            // Extract block
+            let mut block = [0.0f32; 64];
+            let mut is_white = true;
+
+            for y in 0..8 {
+                for x in 0..8 {
+                    let px = (bx * 8 + x).min(width - 1);
+                    let py = (by * 8 + y).min(height - 1);
+                    let idx = py * width + px;
+                    let val = y_plane[idx];
+                    block[y * 8 + x] = val - 128.0; // Level shift
+
+                    // Check if pixel is white (Y > 250)
+                    if val < 250.0 {
+                        is_white = false;
+                    }
+                }
+            }
+
+            total_blocks += 1;
+
+            let result = detect_uniform_block(&block, 2.0); // Threshold of 2 for near-uniform
+            if result.is_uniform {
+                uniform_count += 1;
+            }
+            if is_white {
+                white_count += 1;
+            }
+        }
+    }
+
+    let uniform_pct = 100.0 * uniform_count as f64 / total_blocks as f64;
+    let white_pct = 100.0 * white_count as f64 / total_blocks as f64;
+    (uniform_pct, white_pct)
+}
+
+fn analyze_synthetic_products() {
+    println!("--- Synthetic Product Tests ---\n");
+
+    // Test various product-like scenarios
+    let scenarios = [
+        ("Small product, 90% white bg", 200, 200, 0.90),
+        ("Medium product, 80% white bg", 400, 400, 0.80),
+        ("Large product, 50% white bg", 600, 600, 0.50),
+        ("Full frame product, 10% white bg", 800, 600, 0.10),
+    ];
+
+    let attr = Dssim::new();
+
+    println!("{:35} {:>8} {:>8} {:>10} {:>10} {:>8}",
+        "Scenario", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_win%");
+    println!("{}", "-".repeat(85));
+
+    for (name, width, height, white_fraction) in scenarios {
+        let pixels = create_product_image(width, height, white_fraction);
+
+        // Create reference for quality measurement
+        let orig_rgba: Vec<rgb::RGBA<u8>> = pixels
+            .chunks(3)
+            .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+            .collect();
+        let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
+
+        // Encode with jpegli
+        let jpegli_result = jpegli::Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .quality(jpegli::quant::Quality::from_quality(85.0))
+            .encode(&pixels)
+            .unwrap();
+
+        // Encode with mozjpeg
+        let mozjpeg_result = encode_mozjpeg(&pixels, width, height, 85);
+
+        // Measure quality
+        let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
+        let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
+
+        let size_diff = (jpegli_result.len() as f64 / mozjpeg_result.len() as f64 - 1.0) * 100.0;
+
+        println!("{:35} {:>8} {:>8} {:>10.5} {:>10.5} {:>+7.1}%",
+            name, jpegli_result.len(), mozjpeg_result.len(), j_dssim, m_dssim, -size_diff);
+    }
+
+    println!("\n--- Uniform Block Analysis ---\n");
+
+    // Analyze how many blocks are uniform in each scenario
+    for (name, width, height, white_fraction) in scenarios {
+        let pixels = create_product_image(width, height, white_fraction);
+        let (uniform_pct, white_pct) = analyze_image_blocks(&pixels, width, height);
+        println!("{:35} uniform={:.1}% white={:.1}%", name, uniform_pct, white_pct);
+    }
+
+    println!("\n=== Key Insight ===\n");
+    println!("For images with large white backgrounds:");
+    println!("  - mozjpeg is often SMALLER (better at uniform regions)");
+    println!("  - jpegli preserves EDGES better (AQ allocates bits to product edges)");
+    println!("\nUniform block detection could help jpegli:");
+    println!("  - Skip DCT for uniform blocks (minor speedup)");
+    println!("  - Use zero AQ for uniform blocks (no adaptation needed)");
+    println!("  - Improve Huffman coding (guaranteed zero AC coefficients)");
+}
+
+fn create_product_image(width: usize, height: usize, white_fraction: f64) -> Vec<u8> {
+    let mut pixels = vec![255u8; width * height * 3]; // Start all white
+
+    // Calculate product region (centered)
+    let product_area = (1.0 - white_fraction) * (width * height) as f64;
+    let product_size = (product_area.sqrt()) as usize;
+    let x_start = (width - product_size) / 2;
+    let y_start = (height - product_size) / 2;
+
+    // Create a colorful "product" with texture
+    for y in y_start..(y_start + product_size).min(height) {
+        for x in x_start..(x_start + product_size).min(width) {
+            let idx = (y * width + x) * 3;
+
+            // Create a gradient with some texture
+            let r = (128 + ((x - x_start) * 127 / product_size.max(1))) as u8;
+            let g = (64 + ((y - y_start) * 127 / product_size.max(1))) as u8;
+            let b = (180 - ((x + y) % 80)) as u8;
+
+            // Add some noise/texture
+            let noise = ((x * 17 + y * 31) % 20) as u8;
+
+            pixels[idx] = r.saturating_add(noise / 2);
+            pixels[idx + 1] = g.saturating_add(noise / 3);
+            pixels[idx + 2] = b.saturating_sub(noise / 4);
+        }
+    }
+
+    pixels
+}
+
+fn compute_dssim(
+    attr: &Dssim,
+    orig: &dssim::DssimImage<f32>,
+    jpeg_data: &[u8],
+    width: usize,
+    height: usize,
+) -> f64 {
+    let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
+    let decoded = decoder.decode().expect("decode");
+
+    let decoded_rgba: Vec<rgb::RGBA<u8>> = decoded
+        .chunks(3)
+        .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+        .collect();
+    let decoded_img = attr.create_image_rgba(&decoded_rgba, width, height).unwrap();
+
+    let (dssim, _) = attr.compare(orig, decoded_img);
+    dssim.into()
+}
+
+fn encode_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+    std::panic::catch_unwind(|| {
+        use mozjpeg::{ColorSpace, Compress};
+
+        let mut comp = Compress::new(ColorSpace::JCS_RGB);
+        comp.set_size(width, height);
+        comp.set_quality(quality as f32);
+        comp.set_chroma_sampling_pixel_sizes((1, 1), (1, 1)); // 4:4:4
+
+        let mut started = comp.start_compress(Vec::new()).expect("start");
+
+        let row_stride = width * 3;
+        for y in 0..height {
+            let row_start = y * row_stride;
+            let row = &pixels[row_start..row_start + row_stride];
+            let _ = started.write_scanlines(row);
+        }
+
+        started.finish().expect("finish")
+    })
+    .unwrap_or_default()
+}
