@@ -57,14 +57,14 @@ The encoder is feature-complete and production-ready:
 | Feature | Status |
 |---------|--------|
 | Baseline JPEG | ✅ Working |
-| Progressive JPEG (level 0) | ✅ Working |
+| Progressive JPEG | ✅ Working (levels 0-2) |
 | Adaptive quantization | ✅ Matches C++ jpegli |
 | Huffman optimization | ✅ Working |
-| 4:4:4 / 4:2:0 / 4:2:2 subsampling | ✅ Working |
+| 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 subsampling | ✅ Working |
 | XYB color space | ✅ Working (with ICC) |
 | Grayscale | ✅ Working |
 
-**Encoder Performance**: ~1-3 MP/s (encoding is compute-intensive due to perceptual optimizations)
+**Encoder Performance**: 30-55 MP/s (varies by image complexity and quality setting)
 
 ## Decoder Status
 
@@ -90,18 +90,42 @@ The decoder is functional with 12-bit internal precision (matching C++ jpegli):
 The decoder is slower than alternatives because it uses a float pipeline for 12-bit precision,
 matching C++ jpegli's design. See [Future Goals](#future-goals) for planned optimizations.
 
-## Quality Comparison
+## Encoder Parity with C++ jpegli
 
-Tested on Kodak dataset at various quality levels:
+Tested on CLIC2025 + Kodak datasets (56 images × 20 quality levels = 1,120 encodings per encoder):
 
-| Quality | jpegli-rs DSSIM | mozjpeg DSSIM | jpegli-rs SSIMULACRA2 | mozjpeg SSIMULACRA2 |
-|---------|-----------------|---------------|----------------------|---------------------|
-| Q50 | 0.0050 | 0.0060 | 62.5 | 58.0 |
-| Q70 | 0.0026 | 0.0034 | 72.4 | 67.8 |
-| Q90 | 0.0008 | 0.0011 | 85.0 | 82.0 |
+### Overall Results
+
+| Metric | jpegli-rs | C++ cjpegli | Difference |
+|--------|-----------|-------------|------------|
+| Avg file size | 247,434 bytes | 247,388 bytes | **+0.02%** |
+| Avg DSSIM | 0.00234 | 0.00234 | identical |
+| Avg SSIMULACRA2 | 73.44 | 73.44 | identical |
+| Avg encode time | 37.1 ms | 42.9 ms | **1.15x faster** |
+
+### Performance by Corpus
+
+| Corpus | Images | Avg Size | Encoder | Bytes | Time | Speed |
+|--------|--------|----------|---------|-------|------|-------|
+| Kodak | 24 | 0.4 MP | jpegli-rs | 74,791 | 8.7 ms | **45.2 MP/s** |
+| Kodak | 24 | 0.4 MP | cjpegli | 74,783 | 13.2 ms | 29.8 MP/s |
+| CLIC2025 | 32 | 2.8 MP | jpegli-rs | 376,916 | 58.5 ms | **47.4 MP/s** |
+| CLIC2025 | 32 | 2.8 MP | cjpegli | 376,842 | 65.2 ms | 42.5 MP/s |
+
+jpegli-rs produces **byte-for-byte nearly identical** output to C++ jpegli with **15-50% faster** encoding.
+
+### Quality by Quality Level
+
+| Quality | Avg DSSIM | Avg SSIMULACRA2 | Avg BPP |
+|---------|-----------|-----------------|---------|
+| Q30 | 0.0055 | 56.2 | 0.91 |
+| Q50 | 0.0039 | 63.7 | 1.11 |
+| Q70 | 0.0023 | 72.3 | 1.51 |
+| Q80 | 0.0015 | 77.3 | 1.91 |
+| Q90 | 0.0007 | 84.3 | 2.94 |
+| Q95 | 0.0003 | 88.7 | 4.37 |
 
 Lower DSSIM is better. Higher SSIMULACRA2 is better.
-jpegli-rs achieves **10-17% better quality** at the same file size.
 
 ## Development
 
@@ -126,7 +150,10 @@ See [internal/README.md](../internal/README.md) for details.
 # Decoder performance comparison
 cargo run --release --example decode_benchmark
 
-# Encoder quality comparison
+# Encoder benchmark vs C++ cjpegli (requires cjpegli in PATH)
+cargo run --release --example encode_benchmark
+
+# Encoder quality comparison (jpegli vs mozjpeg)
 cargo run --release --example pareto_comparison
 ```
 
@@ -143,9 +170,9 @@ The current decoder uses f32 arithmetic for 12-bit precision. To reach competiti
 
 ### Encoder Improvements
 
-- [ ] Progressive JPEG level 2 (successive approximation)
 - [ ] Parallel block processing
 - [ ] Memory-efficient streaming API
+- [ ] Further entropy coding optimizations
 
 ## License
 
