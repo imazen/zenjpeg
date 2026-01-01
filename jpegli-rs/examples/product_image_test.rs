@@ -22,15 +22,17 @@ fn main() {
     let corpus_dir = PathBuf::from("/home/lilith/work/codec-eval/corpus/sharpened-800px");
 
     if corpus_dir.exists() {
-        analyze_real_images(&corpus_dir);
+        analyze_real_images(&corpus_dir, &output_dir);
     }
 
     // Always run synthetic tests
     analyze_synthetic_products(&output_dir);
 }
 
-fn analyze_real_images(corpus_dir: &PathBuf) {
+fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf) {
     println!("--- Real Image Analysis ---\n");
+
+    let attr = Dssim::new();
 
     let mut files: Vec<PathBuf> = fs::read_dir(corpus_dir)
         .unwrap()
@@ -57,12 +59,13 @@ fn analyze_real_images(corpus_dir: &PathBuf) {
             .collect();
     }
 
-    println!("{:40} {:>8} {:>8} {:>10}",
-        "Image", "Uniform%", "White%", "Size");
-    println!("{}", "-".repeat(70));
+    println!("{:40} {:>7} {:>7} {:>8} {:>8} {:>6} {:>6}",
+        "Image", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_ba", "m_ba");
+    println!("{}", "-".repeat(95));
 
     for file in &files {
         let filename = file.file_name().unwrap().to_string_lossy();
+        let base_name = filename.trim_end_matches(".png");
 
         let Ok(f) = fs::File::open(file) else { continue };
         let decoder = png::Decoder::new(f);
@@ -76,19 +79,48 @@ fn analyze_real_images(corpus_dir: &PathBuf) {
         let width = info.width as usize;
         let height = info.height as usize;
 
-        // Analyze blocks
-        let (uniform_pct, white_pct) = analyze_image_blocks(pixels, width, height);
+        // Copy original PNG to output directory for easy comparison
+        let orig_dest = output_dir.join(format!("{}_original.png", base_name));
+        let _ = fs::copy(file, &orig_dest);
 
-        // Encode
-        let result = jpegli::Encoder::new()
+        // Create reference for quality measurement
+        let orig_rgba: Vec<rgb::RGBA<u8>> = pixels
+            .chunks(3)
+            .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+            .collect();
+        let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
+
+        // Encode with jpegli
+        let jpegli_result = jpegli::Encoder::new()
             .width(width as u32)
             .height(height as u32)
             .quality(jpegli::quant::Quality::from_quality(85.0))
             .encode(pixels)
             .unwrap();
 
-        println!("{:40} {:>7.1}% {:>7.1}% {:>10}",
-            &filename[..filename.len().min(40)], uniform_pct, white_pct, result.len());
+        // Save jpegli JPEG
+        fs::write(output_dir.join(format!("{}_jpegli_q85.jpg", base_name)), &jpegli_result)
+            .expect("Failed to write jpegli output");
+
+        // Encode with mozjpeg
+        let mozjpeg_result = encode_mozjpeg(pixels, width, height, 85);
+
+        // Save mozjpeg JPEG
+        fs::write(output_dir.join(format!("{}_mozjpeg_q85.jpg", base_name)), &mozjpeg_result)
+            .expect("Failed to write mozjpeg output");
+
+        // Measure DSSIM
+        let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
+        let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
+
+        // Measure Butteraugli
+        let j_ba = compute_butter(pixels, &jpegli_result, width, height);
+        let m_ba = compute_butter(pixels, &mozjpeg_result, width, height);
+
+        println!("{:40} {:>7} {:>7} {:>8.5} {:>8.5} {:>6.2} {:>6.2}",
+            &filename[..filename.len().min(40)],
+            jpegli_result.len(), mozjpeg_result.len(),
+            j_dssim, m_dssim, j_ba, m_ba);
     }
     println!();
 }
