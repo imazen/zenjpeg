@@ -13,6 +13,11 @@ use std::path::PathBuf;
 fn main() {
     println!("=== Product Image Analysis ===\n");
 
+    // Create output directory for comparisons
+    let output_dir = PathBuf::from("product_comparison_outputs");
+    fs::create_dir_all(&output_dir).expect("Failed to create output directory");
+    println!("Saving comparison outputs to: {}\n", output_dir.display());
+
     // Try to find real product images, otherwise generate synthetic ones
     let corpus_dir = PathBuf::from("/home/lilith/work/codec-eval/corpus/sharpened-800px");
 
@@ -21,7 +26,7 @@ fn main() {
     }
 
     // Always run synthetic tests
-    analyze_synthetic_products();
+    analyze_synthetic_products(&output_dir);
 }
 
 fn analyze_real_images(corpus_dir: &PathBuf) {
@@ -138,15 +143,15 @@ fn analyze_image_blocks(pixels: &[u8], width: usize, height: usize) -> (f64, f64
     (uniform_pct, white_pct)
 }
 
-fn analyze_synthetic_products() {
+fn analyze_synthetic_products(output_dir: &PathBuf) {
     println!("--- Synthetic Product Tests (DSSIM + Butteraugli) ---\n");
 
     // Test various product-like scenarios
     let scenarios = [
-        ("Small product, 90% white bg", 200, 200, 0.90),
-        ("Medium product, 80% white bg", 400, 400, 0.80),
-        ("Large product, 50% white bg", 600, 600, 0.50),
-        ("Full frame product, 10% white bg", 800, 600, 0.10),
+        ("Small product, 90% white bg", "small_90white", 200, 200, 0.90),
+        ("Medium product, 80% white bg", "medium_80white", 400, 400, 0.80),
+        ("Large product, 50% white bg", "large_50white", 600, 600, 0.50),
+        ("Full frame product, 10% white bg", "full_10white", 800, 600, 0.10),
     ];
 
     let attr = Dssim::new();
@@ -155,8 +160,11 @@ fn analyze_synthetic_products() {
         "Scenario", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_ba", "m_ba");
     println!("{}", "-".repeat(85));
 
-    for (name, width, height, white_fraction) in scenarios {
+    for (name, filename, width, height, white_fraction) in scenarios {
         let pixels = create_product_image(width, height, white_fraction);
+
+        // Save original PNG
+        save_png(&pixels, width, height, &output_dir.join(format!("{}_original.png", filename)));
 
         // Create reference for quality measurement
         let orig_rgba: Vec<rgb::RGBA<u8>> = pixels
@@ -173,8 +181,16 @@ fn analyze_synthetic_products() {
             .encode(&pixels)
             .unwrap();
 
+        // Save jpegli JPEG
+        fs::write(output_dir.join(format!("{}_jpegli_q85.jpg", filename)), &jpegli_result)
+            .expect("Failed to write jpegli output");
+
         // Encode with mozjpeg
         let mozjpeg_result = encode_mozjpeg(&pixels, width, height, 85);
+
+        // Save mozjpeg JPEG
+        fs::write(output_dir.join(format!("{}_mozjpeg_q85.jpg", filename)), &mozjpeg_result)
+            .expect("Failed to write mozjpeg output");
 
         // Measure DSSIM
         let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
@@ -194,7 +210,7 @@ fn analyze_synthetic_products() {
         "Scenario", "j_RD_dssim", "m_RD_dssim", "j_RD_ba", "m_RD_ba");
     println!("{}", "-".repeat(85));
 
-    for (name, width, height, white_fraction) in scenarios {
+    for (name, _filename, width, height, white_fraction) in scenarios {
         let pixels = create_product_image(width, height, white_fraction);
         let total_pixels = (width * height) as f64;
 
@@ -235,7 +251,7 @@ fn analyze_synthetic_products() {
     println!("\n--- Uniform Block Analysis ---\n");
 
     // Analyze how many blocks are uniform in each scenario
-    for (name, width, height, white_fraction) in scenarios {
+    for (name, _filename, width, height, white_fraction) in scenarios {
         let pixels = create_product_image(width, height, white_fraction);
         let (uniform_pct, white_pct) = analyze_image_blocks(&pixels, width, height);
         println!("{:35} uniform={:.1}% white={:.1}%", name, uniform_pct, white_pct);
@@ -338,4 +354,17 @@ fn compute_butter(orig: &[u8], jpeg_data: &[u8], width: usize, height: usize) ->
     compute_butteraugli(orig, &decoded, width, height, &params)
         .map(|r| r.score)
         .unwrap_or(999.0)
+}
+
+fn save_png(pixels: &[u8], width: usize, height: usize, path: &PathBuf) {
+    use std::io::BufWriter;
+    let file = fs::File::create(path).expect("Failed to create PNG file");
+    let writer = BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(writer, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+
+    let mut writer = encoder.write_header().expect("Failed to write PNG header");
+    writer.write_image_data(pixels).expect("Failed to write PNG data");
 }
