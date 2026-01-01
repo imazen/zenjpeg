@@ -91,9 +91,9 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf, quality_level
         let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
 
         println!("\n{}", filename);
-        println!("{:>3} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7} {:>7} {:>8}",
-            "Q", "jpegli", "mozjpeg", "j_win%", "j_dssim", "m_dssim", "j_ba", "m_ba", "ba_win");
-        println!("{}", "-".repeat(78));
+        println!("{:>3} {:>6} {:>6} {:>6} {:>6} {:>7} {:>7} {:>7} {:>8}",
+            "Q", "j_bpp", "m_bpp", "j_ba", "m_ba", "j_ba*bp", "m_ba*bp", "ba_win", "rd_win");
+        println!("{}", "-".repeat(70));
 
         for &quality in quality_levels {
             let total_pixels = (width * height) as f64;
@@ -133,14 +133,16 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf, quality_level
             let j_ba = compute_butter(pixels, &jpegli_result, width, height);
             let m_ba = compute_butter(pixels, &mozjpeg_result, width, height);
 
-            let size_diff = ((jpegli_result.len() as f64 / mozjpeg_result.len() as f64) - 1.0) * 100.0;
-
-            // Butteraugli: lower is better, so negative diff means jpegli is better
+            // Butteraugli: lower is better
             let ba_winner = if j_ba < m_ba { "jpegli" } else { "mozjpeg" };
 
-            println!("{:>3} {:>8} {:>8} {:>+6.1}% {:>9.5} {:>9.5} {:>7.2} {:>7.2} {:>8}",
-                quality, jpegli_result.len(), mozjpeg_result.len(), size_diff,
-                j_dssim, m_dssim, j_ba, m_ba, ba_winner);
+            // Rate-distortion: Butteraugli * bpp (lower is better)
+            let j_rd = j_ba * j_bpp;
+            let m_rd = m_ba * m_bpp;
+            let rd_winner = if j_rd < m_rd { "jpegli" } else { "mozjpeg" };
+
+            println!("{:>3} {:>6.2} {:>6.2} {:>6.2} {:>6.2} {:>7.3} {:>7.3} {:>7} {:>8}",
+                quality, j_bpp, m_bpp, j_ba, m_ba, j_rd, m_rd, ba_winner, rd_winner);
         }
     }
     println!();
@@ -223,9 +225,9 @@ fn analyze_synthetic_products(output_dir: &PathBuf, quality_levels: &[u8]) {
         let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
 
         println!("\n{}", name);
-        println!("{:>3} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7} {:>7} {:>8}",
-            "Q", "jpegli", "mozjpeg", "j_win%", "j_dssim", "m_dssim", "j_ba", "m_ba", "ba_win");
-        println!("{}", "-".repeat(78));
+        println!("{:>3} {:>6} {:>6} {:>6} {:>6} {:>7} {:>7} {:>7} {:>8}",
+            "Q", "j_bpp", "m_bpp", "j_ba", "m_ba", "j_ba*bp", "m_ba*bp", "ba_win", "rd_win");
+        println!("{}", "-".repeat(70));
 
         for &quality in quality_levels {
             let total_pixels = (width * height) as f64;
@@ -265,14 +267,16 @@ fn analyze_synthetic_products(output_dir: &PathBuf, quality_levels: &[u8]) {
             let j_ba = compute_butter(&pixels, &jpegli_result, width, height);
             let m_ba = compute_butter(&pixels, &mozjpeg_result, width, height);
 
-            let size_diff = ((jpegli_result.len() as f64 / mozjpeg_result.len() as f64) - 1.0) * 100.0;
-
-            // Butteraugli: lower is better, so negative diff means jpegli is better
+            // Butteraugli: lower is better
             let ba_winner = if j_ba < m_ba { "jpegli" } else { "mozjpeg" };
 
-            println!("{:>3} {:>8} {:>8} {:>+6.1}% {:>9.5} {:>9.5} {:>7.2} {:>7.2} {:>8}",
-                quality, jpegli_result.len(), mozjpeg_result.len(), size_diff,
-                j_dssim, m_dssim, j_ba, m_ba, ba_winner);
+            // Rate-distortion: Butteraugli * bpp (lower is better)
+            let j_rd = j_ba * j_bpp;
+            let m_rd = m_ba * m_bpp;
+            let rd_winner = if j_rd < m_rd { "jpegli" } else { "mozjpeg" };
+
+            println!("{:>3} {:>6.2} {:>6.2} {:>6.2} {:>6.2} {:>7.3} {:>7.3} {:>7} {:>8}",
+                quality, j_bpp, m_bpp, j_ba, m_ba, j_rd, m_rd, ba_winner, rd_winner);
         }
     }
 
