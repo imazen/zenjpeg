@@ -13,23 +13,27 @@ use std::path::PathBuf;
 fn main() {
     println!("=== Product Image Analysis ===\n");
 
+    // Quality levels to test
+    let quality_levels = [96, 91, 73, 52, 34, 20, 15];
+
     // Create output directory for comparisons
     let output_dir = PathBuf::from("product_comparison_outputs");
     fs::create_dir_all(&output_dir).expect("Failed to create output directory");
     println!("Saving comparison outputs to: {}\n", output_dir.display());
+    println!("Testing quality levels: {:?}\n", quality_levels);
 
     // Try to find real product images, otherwise generate synthetic ones
     let corpus_dir = PathBuf::from("/home/lilith/work/codec-eval/corpus/sharpened-800px");
 
     if corpus_dir.exists() {
-        analyze_real_images(&corpus_dir, &output_dir);
+        analyze_real_images(&corpus_dir, &output_dir, &quality_levels);
     }
 
     // Always run synthetic tests
-    analyze_synthetic_products(&output_dir);
+    analyze_synthetic_products(&output_dir, &quality_levels);
 }
 
-fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf) {
+fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf, quality_levels: &[u8]) {
     println!("--- Real Image Analysis ---\n");
 
     let attr = Dssim::new();
@@ -59,10 +63,6 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf) {
             .collect();
     }
 
-    println!("{:40} {:>7} {:>7} {:>8} {:>8} {:>6} {:>6}",
-        "Image", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_ba", "m_ba");
-    println!("{}", "-".repeat(95));
-
     for file in &files {
         let filename = file.file_name().unwrap().to_string_lossy();
         let base_name = filename.trim_end_matches(".png");
@@ -90,37 +90,45 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf) {
             .collect();
         let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
 
-        // Encode with jpegli
-        let jpegli_result = jpegli::Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .quality(jpegli::quant::Quality::from_quality(85.0))
-            .encode(pixels)
-            .unwrap();
+        println!("\n{}", filename);
+        println!("{:>3} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7} {:>7}",
+            "Q", "jpegli", "mozjpeg", "j_win%", "j_dssim", "m_dssim", "j_ba", "m_ba");
+        println!("{}", "-".repeat(70));
 
-        // Save jpegli JPEG
-        fs::write(output_dir.join(format!("{}_jpegli_q85.jpg", base_name)), &jpegli_result)
-            .expect("Failed to write jpegli output");
+        for &quality in quality_levels {
+            // Encode with jpegli
+            let jpegli_result = jpegli::Encoder::new()
+                .width(width as u32)
+                .height(height as u32)
+                .quality(jpegli::quant::Quality::from_quality(quality as f32))
+                .encode(pixels)
+                .unwrap();
 
-        // Encode with mozjpeg
-        let mozjpeg_result = encode_mozjpeg(pixels, width, height, 85);
+            // Save jpegli JPEG
+            fs::write(output_dir.join(format!("{}_jpegli_q{}.jpg", base_name, quality)), &jpegli_result)
+                .expect("Failed to write jpegli output");
 
-        // Save mozjpeg JPEG
-        fs::write(output_dir.join(format!("{}_mozjpeg_q85.jpg", base_name)), &mozjpeg_result)
-            .expect("Failed to write mozjpeg output");
+            // Encode with mozjpeg
+            let mozjpeg_result = encode_mozjpeg(pixels, width, height, quality);
 
-        // Measure DSSIM
-        let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
-        let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
+            // Save mozjpeg JPEG
+            fs::write(output_dir.join(format!("{}_mozjpeg_q{}.jpg", base_name, quality)), &mozjpeg_result)
+                .expect("Failed to write mozjpeg output");
 
-        // Measure Butteraugli
-        let j_ba = compute_butter(pixels, &jpegli_result, width, height);
-        let m_ba = compute_butter(pixels, &mozjpeg_result, width, height);
+            // Measure DSSIM
+            let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
+            let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
 
-        println!("{:40} {:>7} {:>7} {:>8.5} {:>8.5} {:>6.2} {:>6.2}",
-            &filename[..filename.len().min(40)],
-            jpegli_result.len(), mozjpeg_result.len(),
-            j_dssim, m_dssim, j_ba, m_ba);
+            // Measure Butteraugli
+            let j_ba = compute_butter(pixels, &jpegli_result, width, height);
+            let m_ba = compute_butter(pixels, &mozjpeg_result, width, height);
+
+            let size_diff = ((jpegli_result.len() as f64 / mozjpeg_result.len() as f64) - 1.0) * 100.0;
+
+            println!("{:>3} {:>8} {:>8} {:>+6.1}% {:>9.5} {:>9.5} {:>7.2} {:>7.2}",
+                quality, jpegli_result.len(), mozjpeg_result.len(), size_diff,
+                j_dssim, m_dssim, j_ba, m_ba);
+        }
     }
     println!();
 }
@@ -175,8 +183,8 @@ fn analyze_image_blocks(pixels: &[u8], width: usize, height: usize) -> (f64, f64
     (uniform_pct, white_pct)
 }
 
-fn analyze_synthetic_products(output_dir: &PathBuf) {
-    println!("--- Synthetic Product Tests (DSSIM + Butteraugli) ---\n");
+fn analyze_synthetic_products(output_dir: &PathBuf, quality_levels: &[u8]) {
+    println!("--- Synthetic Product Tests ---\n");
 
     // Test various product-like scenarios
     let scenarios = [
@@ -187,10 +195,6 @@ fn analyze_synthetic_products(output_dir: &PathBuf) {
     ];
 
     let attr = Dssim::new();
-
-    println!("{:30} {:>7} {:>7} {:>8} {:>8} {:>6} {:>6}",
-        "Scenario", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_ba", "m_ba");
-    println!("{}", "-".repeat(85));
 
     for (name, filename, width, height, white_fraction) in scenarios {
         let pixels = create_product_image(width, height, white_fraction);
@@ -205,88 +209,45 @@ fn analyze_synthetic_products(output_dir: &PathBuf) {
             .collect();
         let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
 
-        // Encode with jpegli
-        let jpegli_result = jpegli::Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .quality(jpegli::quant::Quality::from_quality(85.0))
-            .encode(&pixels)
-            .unwrap();
+        println!("\n{}", name);
+        println!("{:>3} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7} {:>7}",
+            "Q", "jpegli", "mozjpeg", "j_win%", "j_dssim", "m_dssim", "j_ba", "m_ba");
+        println!("{}", "-".repeat(70));
 
-        // Save jpegli JPEG
-        fs::write(output_dir.join(format!("{}_jpegli_q85.jpg", filename)), &jpegli_result)
-            .expect("Failed to write jpegli output");
+        for &quality in quality_levels {
+            // Encode with jpegli
+            let jpegli_result = jpegli::Encoder::new()
+                .width(width as u32)
+                .height(height as u32)
+                .quality(jpegli::quant::Quality::from_quality(quality as f32))
+                .encode(&pixels)
+                .unwrap();
 
-        // Encode with mozjpeg
-        let mozjpeg_result = encode_mozjpeg(&pixels, width, height, 85);
+            // Save jpegli JPEG
+            fs::write(output_dir.join(format!("{}_jpegli_q{}.jpg", filename, quality)), &jpegli_result)
+                .expect("Failed to write jpegli output");
 
-        // Save mozjpeg JPEG
-        fs::write(output_dir.join(format!("{}_mozjpeg_q85.jpg", filename)), &mozjpeg_result)
-            .expect("Failed to write mozjpeg output");
+            // Encode with mozjpeg
+            let mozjpeg_result = encode_mozjpeg(&pixels, width, height, quality);
 
-        // Measure DSSIM
-        let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
-        let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
+            // Save mozjpeg JPEG
+            fs::write(output_dir.join(format!("{}_mozjpeg_q{}.jpg", filename, quality)), &mozjpeg_result)
+                .expect("Failed to write mozjpeg output");
 
-        // Measure Butteraugli
-        let j_ba = compute_butter(&pixels, &jpegli_result, width, height);
-        let m_ba = compute_butter(&pixels, &mozjpeg_result, width, height);
+            // Measure DSSIM
+            let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
+            let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
 
-        println!("{:30} {:>7} {:>7} {:>8.5} {:>8.5} {:>6.2} {:>6.2}",
-            name, jpegli_result.len(), mozjpeg_result.len(), j_dssim, m_dssim, j_ba, m_ba);
-    }
+            // Measure Butteraugli
+            let j_ba = compute_butter(&pixels, &jpegli_result, width, height);
+            let m_ba = compute_butter(&pixels, &mozjpeg_result, width, height);
 
-    // Summary with RD efficiency
-    println!("\n--- Rate-Distortion Comparison ---\n");
-    println!("{:30} {:>12} {:>12} {:>12} {:>12}",
-        "Scenario", "j_RD_dssim", "m_RD_dssim", "j_RD_ba", "m_RD_ba");
-    println!("{}", "-".repeat(85));
+            let size_diff = ((jpegli_result.len() as f64 / mozjpeg_result.len() as f64) - 1.0) * 100.0;
 
-    for (name, _filename, width, height, white_fraction) in scenarios {
-        let pixels = create_product_image(width, height, white_fraction);
-        let total_pixels = (width * height) as f64;
-
-        let orig_rgba: Vec<rgb::RGBA<u8>> = pixels
-            .chunks(3)
-            .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
-            .collect();
-        let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
-
-        let jpegli_result = jpegli::Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .quality(jpegli::quant::Quality::from_quality(85.0))
-            .encode(&pixels)
-            .unwrap();
-        let mozjpeg_result = encode_mozjpeg(&pixels, width, height, 85);
-
-        let j_bpp = (jpegli_result.len() * 8) as f64 / total_pixels;
-        let m_bpp = (mozjpeg_result.len() * 8) as f64 / total_pixels;
-
-        let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
-        let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
-        let j_ba = compute_butter(&pixels, &jpegli_result, width, height);
-        let m_ba = compute_butter(&pixels, &mozjpeg_result, width, height);
-
-        // RD = bpp * metric (lower is better)
-        let j_rd_dssim = j_bpp * j_dssim;
-        let m_rd_dssim = m_bpp * m_dssim;
-        let j_rd_ba = j_bpp * j_ba;
-        let m_rd_ba = m_bpp * m_ba;
-
-        println!("{:30} {:>12.6} {:>12.6} {:>12.4} {:>12.4}",
-            name, j_rd_dssim, m_rd_dssim, j_rd_ba, m_rd_ba);
-    }
-
-    println!("\nNote: Lower RD = better (less bits for same quality)");
-
-    println!("\n--- Uniform Block Analysis ---\n");
-
-    // Analyze how many blocks are uniform in each scenario
-    for (name, _filename, width, height, white_fraction) in scenarios {
-        let pixels = create_product_image(width, height, white_fraction);
-        let (uniform_pct, white_pct) = analyze_image_blocks(&pixels, width, height);
-        println!("{:35} uniform={:.1}% white={:.1}%", name, uniform_pct, white_pct);
+            println!("{:>3} {:>8} {:>8} {:>+6.1}% {:>9.5} {:>9.5} {:>7.2} {:>7.2}",
+                quality, jpegli_result.len(), mozjpeg_result.len(), size_diff,
+                j_dssim, m_dssim, j_ba, m_ba);
+        }
     }
 
     println!("\n=== Key Insight ===\n");
