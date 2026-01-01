@@ -1,4 +1,5 @@
 target/
 comparison_outputs/
+product_comparison_outputs/
 reports/
 *.testdata
