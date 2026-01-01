@@ -96,6 +96,8 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf, quality_level
         println!("{}", "-".repeat(70));
 
         for &quality in quality_levels {
+            let total_pixels = (width * height) as f64;
+
             // Encode with jpegli
             let jpegli_result = jpegli::Encoder::new()
                 .width(width as u32)
@@ -104,15 +106,23 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf, quality_level
                 .encode(pixels)
                 .unwrap();
 
-            // Save jpegli JPEG
-            fs::write(output_dir.join(format!("{}_jpegli_q{}.jpg", base_name, quality)), &jpegli_result)
+            // Calculate bpp for filename
+            let j_bpp = (jpegli_result.len() * 8) as f64 / total_pixels;
+            let j_bpp_100 = (j_bpp * 100.0).round() as u32;
+
+            // Save jpegli JPEG with bpp prefix
+            fs::write(output_dir.join(format!("{}_{:04}_jpegli_q{}.jpg", base_name, j_bpp_100, quality)), &jpegli_result)
                 .expect("Failed to write jpegli output");
 
             // Encode with mozjpeg
             let mozjpeg_result = encode_mozjpeg(pixels, width, height, quality);
 
-            // Save mozjpeg JPEG
-            fs::write(output_dir.join(format!("{}_mozjpeg_q{}.jpg", base_name, quality)), &mozjpeg_result)
+            // Calculate bpp for filename
+            let m_bpp = (mozjpeg_result.len() * 8) as f64 / total_pixels;
+            let m_bpp_100 = (m_bpp * 100.0).round() as u32;
+
+            // Save mozjpeg JPEG with bpp prefix
+            fs::write(output_dir.join(format!("{}_{:04}_mozjpeg_q{}.jpg", base_name, m_bpp_100, quality)), &mozjpeg_result)
                 .expect("Failed to write mozjpeg output");
 
             // Measure DSSIM
@@ -215,6 +225,8 @@ fn analyze_synthetic_products(output_dir: &PathBuf, quality_levels: &[u8]) {
         println!("{}", "-".repeat(70));
 
         for &quality in quality_levels {
+            let total_pixels = (width * height) as f64;
+
             // Encode with jpegli
             let jpegli_result = jpegli::Encoder::new()
                 .width(width as u32)
@@ -223,15 +235,23 @@ fn analyze_synthetic_products(output_dir: &PathBuf, quality_levels: &[u8]) {
                 .encode(&pixels)
                 .unwrap();
 
-            // Save jpegli JPEG
-            fs::write(output_dir.join(format!("{}_jpegli_q{}.jpg", filename, quality)), &jpegli_result)
+            // Calculate bpp for filename
+            let j_bpp = (jpegli_result.len() * 8) as f64 / total_pixels;
+            let j_bpp_100 = (j_bpp * 100.0).round() as u32;
+
+            // Save jpegli JPEG with bpp prefix
+            fs::write(output_dir.join(format!("{}_{:04}_jpegli_q{}.jpg", filename, j_bpp_100, quality)), &jpegli_result)
                 .expect("Failed to write jpegli output");
 
             // Encode with mozjpeg
             let mozjpeg_result = encode_mozjpeg(&pixels, width, height, quality);
 
-            // Save mozjpeg JPEG
-            fs::write(output_dir.join(format!("{}_mozjpeg_q{}.jpg", filename, quality)), &mozjpeg_result)
+            // Calculate bpp for filename
+            let m_bpp = (mozjpeg_result.len() * 8) as f64 / total_pixels;
+            let m_bpp_100 = (m_bpp * 100.0).round() as u32;
+
+            // Save mozjpeg JPEG with bpp prefix
+            fs::write(output_dir.join(format!("{}_{:04}_mozjpeg_q{}.jpg", filename, m_bpp_100, quality)), &mozjpeg_result)
                 .expect("Failed to write mozjpeg output");
 
             // Measure DSSIM
