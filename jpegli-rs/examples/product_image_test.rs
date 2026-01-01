@@ -46,7 +46,7 @@ fn analyze_real_images(corpus_dir: &PathBuf, output_dir: &PathBuf, quality_level
             p.extension().is_some_and(|e| e == "png") &&
             p.file_name().unwrap().to_string_lossy().contains("product")
         })
-        .take(5)
+        .take(10)
         .collect();
 
     if files.is_empty() {
