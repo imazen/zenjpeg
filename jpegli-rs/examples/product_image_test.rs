@@ -13,8 +13,8 @@ use std::path::PathBuf;
 fn main() {
     println!("=== Product Image Analysis ===\n");
 
-    // Quality levels to test
-    let quality_levels = [96, 91, 73, 52, 34, 20, 15];
+    // Quality levels to test (sorted high to low for display)
+    let quality_levels = [96, 91, 85, 80, 73, 60, 52, 34, 20, 15, 10, 5];
 
     // Create output directory for comparisons
     let output_dir = PathBuf::from("product_comparison_outputs");
