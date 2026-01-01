@@ -5,8 +5,7 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
-use jpegli::encode::{detect_uniform_block, UniformBlockStats};
-use jpegli::consts::DCT_BLOCK_SIZE;
+use jpegli::encode::detect_uniform_block;
 
 use std::fs;
 use std::path::PathBuf;
@@ -140,7 +139,7 @@ fn analyze_image_blocks(pixels: &[u8], width: usize, height: usize) -> (f64, f64
 }
 
 fn analyze_synthetic_products() {
-    println!("--- Synthetic Product Tests ---\n");
+    println!("--- Synthetic Product Tests (DSSIM + Butteraugli) ---\n");
 
     // Test various product-like scenarios
     let scenarios = [
@@ -152,8 +151,8 @@ fn analyze_synthetic_products() {
 
     let attr = Dssim::new();
 
-    println!("{:35} {:>8} {:>8} {:>10} {:>10} {:>8}",
-        "Scenario", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_win%");
+    println!("{:30} {:>7} {:>7} {:>8} {:>8} {:>6} {:>6}",
+        "Scenario", "jpegli", "mozjpeg", "j_dssim", "m_dssim", "j_ba", "m_ba");
     println!("{}", "-".repeat(85));
 
     for (name, width, height, white_fraction) in scenarios {
@@ -177,15 +176,61 @@ fn analyze_synthetic_products() {
         // Encode with mozjpeg
         let mozjpeg_result = encode_mozjpeg(&pixels, width, height, 85);
 
-        // Measure quality
+        // Measure DSSIM
         let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
         let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
 
-        let size_diff = (jpegli_result.len() as f64 / mozjpeg_result.len() as f64 - 1.0) * 100.0;
+        // Measure Butteraugli
+        let j_ba = compute_butter(&pixels, &jpegli_result, width, height);
+        let m_ba = compute_butter(&pixels, &mozjpeg_result, width, height);
 
-        println!("{:35} {:>8} {:>8} {:>10.5} {:>10.5} {:>+7.1}%",
-            name, jpegli_result.len(), mozjpeg_result.len(), j_dssim, m_dssim, -size_diff);
+        println!("{:30} {:>7} {:>7} {:>8.5} {:>8.5} {:>6.2} {:>6.2}",
+            name, jpegli_result.len(), mozjpeg_result.len(), j_dssim, m_dssim, j_ba, m_ba);
     }
+
+    // Summary with RD efficiency
+    println!("\n--- Rate-Distortion Comparison ---\n");
+    println!("{:30} {:>12} {:>12} {:>12} {:>12}",
+        "Scenario", "j_RD_dssim", "m_RD_dssim", "j_RD_ba", "m_RD_ba");
+    println!("{}", "-".repeat(85));
+
+    for (name, width, height, white_fraction) in scenarios {
+        let pixels = create_product_image(width, height, white_fraction);
+        let total_pixels = (width * height) as f64;
+
+        let orig_rgba: Vec<rgb::RGBA<u8>> = pixels
+            .chunks(3)
+            .map(|rgb| rgb::RGBA::new(rgb[0], rgb[1], rgb[2], 255))
+            .collect();
+        let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
+
+        let jpegli_result = jpegli::Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .quality(jpegli::quant::Quality::from_quality(85.0))
+            .encode(&pixels)
+            .unwrap();
+        let mozjpeg_result = encode_mozjpeg(&pixels, width, height, 85);
+
+        let j_bpp = (jpegli_result.len() * 8) as f64 / total_pixels;
+        let m_bpp = (mozjpeg_result.len() * 8) as f64 / total_pixels;
+
+        let j_dssim = compute_dssim(&attr, &orig_img, &jpegli_result, width, height);
+        let m_dssim = compute_dssim(&attr, &orig_img, &mozjpeg_result, width, height);
+        let j_ba = compute_butter(&pixels, &jpegli_result, width, height);
+        let m_ba = compute_butter(&pixels, &mozjpeg_result, width, height);
+
+        // RD = bpp * metric (lower is better)
+        let j_rd_dssim = j_bpp * j_dssim;
+        let m_rd_dssim = m_bpp * m_dssim;
+        let j_rd_ba = j_bpp * j_ba;
+        let m_rd_ba = m_bpp * m_ba;
+
+        println!("{:30} {:>12.6} {:>12.6} {:>12.4} {:>12.4}",
+            name, j_rd_dssim, m_rd_dssim, j_rd_ba, m_rd_ba);
+    }
+
+    println!("\nNote: Lower RD = better (less bits for same quality)");
 
     println!("\n--- Uniform Block Analysis ---\n");
 
@@ -212,17 +257,22 @@ fn create_product_image(width: usize, height: usize, white_fraction: f64) -> Vec
     // Calculate product region (centered)
     let product_area = (1.0 - white_fraction) * (width * height) as f64;
     let product_size = (product_area.sqrt()) as usize;
-    let x_start = (width - product_size) / 2;
-    let y_start = (height - product_size) / 2;
+
+    // Clamp product size to fit within image bounds
+    let product_width = product_size.min(width);
+    let product_height = product_size.min(height);
+
+    let x_start = (width - product_width) / 2;
+    let y_start = (height - product_height) / 2;
 
     // Create a colorful "product" with texture
-    for y in y_start..(y_start + product_size).min(height) {
-        for x in x_start..(x_start + product_size).min(width) {
+    for y in y_start..(y_start + product_height) {
+        for x in x_start..(x_start + product_width) {
             let idx = (y * width + x) * 3;
 
             // Create a gradient with some texture
-            let r = (128 + ((x - x_start) * 127 / product_size.max(1))) as u8;
-            let g = (64 + ((y - y_start) * 127 / product_size.max(1))) as u8;
+            let r = (128 + ((x - x_start) * 127 / product_width.max(1))) as u8;
+            let g = (64 + ((y - y_start) * 127 / product_height.max(1))) as u8;
             let b = (180 - ((x + y) % 80)) as u8;
 
             // Add some noise/texture
@@ -278,4 +328,14 @@ fn encode_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: u8) -> Ve
         started.finish().expect("finish")
     })
     .unwrap_or_default()
+}
+
+fn compute_butter(orig: &[u8], jpeg_data: &[u8], width: usize, height: usize) -> f64 {
+    let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
+    let decoded = decoder.decode().expect("decode");
+
+    let params = ButteraugliParams::default();
+    compute_butteraugli(orig, &decoded, width, height, &params)
+        .map(|r| r.score)
+        .unwrap_or(999.0)
 }
