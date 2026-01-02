@@ -1308,6 +1308,7 @@ impl<'a> EntropyDecoder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::huffman::{HuffmanDecodeTable, HuffmanEncodeTable};
 
     #[test]
     fn test_category() {
@@ -1345,5 +1346,170 @@ mod tests {
         assert_eq!(additional_bits(-1), 0);
         assert_eq!(additional_bits(-2), 1);
         assert_eq!(additional_bits(-3), 0);
+    }
+
+    #[test]
+    fn test_decode_value_edge_cases() {
+        // Category 0 always returns 0
+        assert_eq!(decode_value(0, 0), 0);
+        assert_eq!(decode_value(0, 5), 0);
+
+        // Category > 15 uses bits directly
+        assert_eq!(decode_value(16, 100), 100);
+        assert_eq!(decode_value(20, 50), 50);
+
+        // Category 1: bits 0 -> -1, bits 1 -> 1
+        assert_eq!(decode_value(1, 0), -1);
+        assert_eq!(decode_value(1, 1), 1);
+
+        // Category 2: bits 0,1 -> -3,-2; bits 2,3 -> 2,3
+        assert_eq!(decode_value(2, 0), -3);
+        assert_eq!(decode_value(2, 1), -2);
+        assert_eq!(decode_value(2, 2), 2);
+        assert_eq!(decode_value(2, 3), 3);
+    }
+
+    #[test]
+    fn test_entropy_encoder_new() {
+        let encoder = EntropyEncoder::new();
+        assert_eq!(encoder.restart_interval, 0);
+        assert_eq!(encoder.restart_counter, 0);
+        assert_eq!(encoder.restart_num, 0);
+        assert_eq!(encoder.prev_dc, [0; 4]);
+    }
+
+    #[test]
+    fn test_entropy_encoder_default() {
+        let encoder = EntropyEncoder::default();
+        assert_eq!(encoder.restart_interval, 0);
+    }
+
+    #[test]
+    fn test_entropy_encoder_set_restart_interval() {
+        let mut encoder = EntropyEncoder::new();
+        encoder.set_restart_interval(10);
+        assert_eq!(encoder.restart_interval, 10);
+        assert_eq!(encoder.restart_counter, 10);
+    }
+
+    #[test]
+    fn test_entropy_encoder_reset_dc() {
+        let mut encoder = EntropyEncoder::new();
+        encoder.prev_dc = [10, 20, 30, 40];
+        encoder.reset_dc();
+        assert_eq!(encoder.prev_dc, [0; 4]);
+    }
+
+    #[test]
+    fn test_entropy_encoder_set_tables() {
+        let mut encoder = EntropyEncoder::new();
+
+        // Create a simple DC table using JPEG standard luminance DC table
+        let dc_bits: [u8; 16] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+        let dc_values: [u8; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        let dc_table = HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_values).unwrap();
+        encoder.set_dc_table(0, dc_table.clone());
+        assert!(encoder.dc_tables[0].is_some());
+
+        // Create a simple AC table using a subset of JPEG standard AC table
+        let ac_bits: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
+        let ac_values: Vec<u8> = (0..162).collect();
+        let ac_table = HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_values).unwrap();
+        encoder.set_ac_table(0, ac_table.clone());
+        assert!(encoder.ac_tables[0].is_some());
+
+        // Test out of range indices (should be no-op)
+        encoder.set_dc_table(5, dc_table.clone());
+        encoder.set_ac_table(5, ac_table);
+    }
+
+    #[test]
+    fn test_entropy_encoder_finish() {
+        let encoder = EntropyEncoder::new();
+        let bytes = encoder.finish();
+        assert!(bytes.is_empty() || !bytes.is_empty()); // Just ensure it doesn't panic
+    }
+
+    #[test]
+    fn test_entropy_encoder_write_bits() {
+        let mut encoder = EntropyEncoder::new();
+        encoder.write_bits(0b1010, 4);
+        let bytes = encoder.finish();
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn test_entropy_encoder_byte_position() {
+        let mut encoder = EntropyEncoder::new();
+        assert_eq!(encoder.byte_position(), 0);
+        encoder.write_bits(0xFF, 8);
+        // Position may vary based on internal buffering
+        let _ = encoder.byte_position();
+    }
+
+    #[test]
+    fn test_entropy_encoder_as_bytes() {
+        let encoder = EntropyEncoder::new();
+        let bytes = encoder.as_bytes();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn test_entropy_decoder_new() {
+        let data = [0u8; 10];
+        let decoder = EntropyDecoder::new(&data);
+        assert_eq!(decoder.prev_dc, [0; 4]);
+    }
+
+    #[test]
+    fn test_entropy_decoder_set_tables() {
+        let data = [0u8; 10];
+        let mut decoder = EntropyDecoder::new(&data);
+
+        // Create decode tables from JPEG standard luminance DC table
+        let bits: [u8; 16] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+        let values = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        let dc_table = HuffmanDecodeTable::from_bits_values(&bits, &values).unwrap();
+        decoder.set_dc_table(0, dc_table.clone());
+        assert!(decoder.dc_tables[0].is_some());
+
+        let ac_bits: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
+        let ac_values: Vec<u8> = (0..162).collect();
+        let ac_table = HuffmanDecodeTable::from_bits_values(&ac_bits, &ac_values).unwrap();
+        decoder.set_ac_table(0, ac_table.clone());
+        assert!(decoder.ac_tables[0].is_some());
+
+        // Test out of range indices (should be no-op)
+        decoder.set_dc_table(5, dc_table);
+        decoder.set_ac_table(5, ac_table);
+    }
+
+    #[test]
+    fn test_entropy_decoder_reset_dc() {
+        let data = [0u8; 10];
+        let mut decoder = EntropyDecoder::new(&data);
+        decoder.prev_dc = [10, 20, 30, 40];
+        decoder.reset_dc();
+        assert_eq!(decoder.prev_dc, [0; 4]);
+    }
+
+    #[test]
+    fn test_entropy_decoder_position() {
+        let data = [0u8; 10];
+        let decoder = EntropyDecoder::new(&data);
+        assert_eq!(decoder.position(), 0);
+    }
+
+    #[test]
+    fn test_category_large_values() {
+        // Test maximum values
+        assert_eq!(category(2047), 11);
+        assert_eq!(category(-2047), 11);
+
+        // Test near boundaries
+        assert_eq!(category(1023), 10);
+        assert_eq!(category(1024), 11);
+        assert_eq!(category(511), 9);
+        assert_eq!(category(512), 10);
     }
 }

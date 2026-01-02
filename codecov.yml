@@ -1,0 +1,74 @@
+# Codecov configuration for jpegli-rs
+# https://docs.codecov.io/docs/codecov-yaml
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"  # Coverage range for badge colors
+  status:
+    project:
+      default:
+        target: auto  # Use previous coverage as baseline
+        threshold: 1%  # Allow 1% decrease without failing
+        if_ci_failed: error
+    patch:
+      default:
+        target: 80%  # New code should have 80%+ coverage
+        threshold: 5%
+
+# Define coverage for key codec paths
+flags:
+  encode:
+    paths:
+      - jpegli-rs/src/encode.rs
+      - jpegli-rs/src/entropy.rs
+      - jpegli-rs/src/huffman.rs
+      - jpegli-rs/src/huffman_opt.rs
+      - jpegli-rs/src/dct.rs
+      - jpegli-rs/src/quant.rs
+      - jpegli-rs/src/adaptive_quant.rs
+      - jpegli-rs/src/color.rs
+      - jpegli-rs/src/xyb.rs
+      - jpegli-rs/src/scan_script.rs
+    carryforward: true
+
+  decode:
+    paths:
+      - jpegli-rs/src/decode.rs
+      - jpegli-rs/src/idct.rs
+      - jpegli-rs/src/entropy.rs
+      - jpegli-rs/src/huffman.rs
+      - jpegli-rs/src/color.rs
+      - jpegli-rs/src/icc.rs
+    carryforward: true
+
+  core:
+    paths:
+      - jpegli-rs/src/types.rs
+      - jpegli-rs/src/error.rs
+      - jpegli-rs/src/consts.rs
+      - jpegli-rs/src/bitstream.rs
+    carryforward: true
+
+# Ignore test utilities and examples from coverage requirements
+ignore:
+  - "jpegli-rs/src/test_utils.rs"
+  - "jpegli-rs/examples/**"
+  - "jpegli-rs/benches/**"
+  - "internal/**"
+
+comment:
+  layout: "header, diff, flags, files"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+  hide_project_coverage: false
+
+parsers:
+  gcov:
+    branch_detection:
+      conditional: true
+      loop: true
+      macro: false
+      method: false

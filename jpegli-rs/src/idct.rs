@@ -658,4 +658,232 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_inverse_dct_blocks() {
+        // Create DC-only blocks (only first coefficient non-zero)
+        let mut block1 = [0.0f32; DCT_BLOCK_SIZE];
+        block1[0] = 64.0;
+        let mut block2 = [0.0f32; DCT_BLOCK_SIZE];
+        block2[0] = 32.0;
+        let blocks = vec![block1, block2];
+
+        let results = inverse_dct_blocks(&blocks);
+        assert_eq!(results.len(), 2);
+
+        // DC-only blocks should produce constant outputs
+        let first_val = results[0][0];
+        for &v in &results[0] {
+            assert!((v - first_val).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_inverse_dct_8x8_u8_negative() {
+        // Test negative DC that would underflow
+        let mut input = [0.0f32; DCT_BLOCK_SIZE];
+        input[0] = -2000.0; // Very negative DC
+
+        let output = inverse_dct_8x8_u8(&input);
+        // All values should be clamped to 0
+        for &v in &output {
+            assert_eq!(v, 0);
+        }
+    }
+
+    #[test]
+    fn test_is_dc_only() {
+        let dc_only = [
+            100.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        assert!(is_dc_only(&dc_only));
+
+        let not_dc_only = [
+            100.0f32, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        assert!(!is_dc_only(&not_dc_only));
+    }
+
+    #[test]
+    fn test_transpose_8x8() {
+        let mut input = [0.0f32; 64];
+        for i in 0..64 {
+            input[i] = i as f32;
+        }
+        let mut output = [0.0f32; 64];
+        transpose_8x8(&input, &mut output);
+
+        // Check that output[col*8 + row] = input[row*8 + col]
+        for row in 0..8 {
+            for col in 0..8 {
+                assert_eq!(output[col * 8 + row], input[row * 8 + col]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_idct1d_2() {
+        let input = [3.0f32, 1.0];
+        let mut output = [0.0f32; 2];
+        idct1d_2(&input, &mut output);
+        assert_eq!(output[0], 4.0); // 3 + 1
+        assert_eq!(output[1], 2.0); // 3 - 1
+    }
+
+    #[test]
+    fn test_forward_even_odd() {
+        let input = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+        let mut output = [0.0f32; 8];
+        forward_even_odd::<8>(&input, &mut output);
+        // Even: 0, 2, 4, 6; Odd: 1, 3, 5, 7
+        assert_eq!(output[0], 0.0);
+        assert_eq!(output[1], 2.0);
+        assert_eq!(output[2], 4.0);
+        assert_eq!(output[3], 6.0);
+        assert_eq!(output[4], 1.0);
+        assert_eq!(output[5], 3.0);
+        assert_eq!(output[6], 5.0);
+        assert_eq!(output[7], 7.0);
+    }
+
+    #[test]
+    fn test_b_transpose() {
+        let mut coeff = [1.0f32, 2.0, 3.0, 4.0];
+        b_transpose::<4>(&mut coeff);
+        // After cumulative sum from end: [1, 2+1=3, 3+2=5, 4+3=7] -> [1, 3, 5, 7]
+        // But wait, it's from end to start: [1+2, 2+3, 3+4, 4] = [3, 5, 7, 4]
+        // Actually: for i in (1..N).rev() means i = 3,2,1
+        // coeff[3] += coeff[2] -> 4+3=7
+        // coeff[2] += coeff[1] -> 3+2=5
+        // coeff[1] += coeff[0] -> 2+1=3
+        // Then coeff[0] *= sqrt2 -> 1 * sqrt2 ≈ 1.414
+        assert!((coeff[0] - SQRT2).abs() < 0.001);
+        assert_eq!(coeff[1], 3.0);
+        // coeff[2] depends on intermediate state
+    }
+
+    #[test]
+    fn test_multiply_and_add_4() {
+        let input = [10.0f32, 20.0, 5.0, 8.0]; // even: 10, 20; odd: 5, 8
+        let mut output = [0.0f32; 4];
+        multiply_and_add_4(&input, &mut output);
+        // output[0] = 10 + WC4[0] * 5
+        // output[3] = 10 - WC4[0] * 5
+        // output[1] = 20 + WC4[1] * 8
+        // output[2] = 20 - WC4[1] * 8
+        assert!((output[0] - (10.0 + WC4[0] * 5.0)).abs() < 0.001);
+        assert!((output[3] - (10.0 - WC4[0] * 5.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_multiply_and_add_8() {
+        let input = [1.0f32, 2.0, 3.0, 4.0, 0.5, 0.6, 0.7, 0.8];
+        let mut output = [0.0f32; 8];
+        multiply_and_add_8(&input, &mut output);
+        // Check a few values
+        assert!((output[0] - (1.0 + WC8[0] * 0.5)).abs() < 0.001);
+        assert!((output[7] - (1.0 - WC8[0] * 0.5)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_idct1d_4() {
+        let input = [10.0f32, 5.0, 2.0, 1.0];
+        let mut output = [0.0f32; 4];
+        idct1d_4(&input, &mut output);
+        // Just verify it doesn't panic and produces reasonable values
+        for v in &output {
+            assert!(v.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_idct1d_8() {
+        let input = [64.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let mut output = [0.0f32; 8];
+        idct1d_8(&input, &mut output);
+        // DC-only input should produce constant output
+        let first = output[0];
+        for v in &output {
+            assert!((v - first).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_idct_rows() {
+        let mut input = [0.0f32; 64];
+        input[0] = 64.0; // DC only
+        let mut output = [0.0f32; 64];
+        idct_rows(&input, &mut output);
+        // First row should have uniform values
+        let first = output[0];
+        for i in 0..8 {
+            assert!((output[i] - first).abs() < 0.01);
+        }
+    }
+
+    #[cfg(feature = "simd")]
+    #[test]
+    fn test_simd_transpose_matches_scalar() {
+        let mut input = [0.0f32; 64];
+        for i in 0..64 {
+            input[i] = (i as f32 * 1.5).sin() * 100.0;
+        }
+
+        let mut scalar_output = [0.0f32; 64];
+        let mut simd_output = [0.0f32; 64];
+
+        transpose_8x8(&input, &mut scalar_output);
+        simd::transpose_8x8_simd(&input, &mut simd_output);
+
+        for i in 0..64 {
+            assert!(
+                (scalar_output[i] - simd_output[i]).abs() < 0.001,
+                "Mismatch at {}: {} vs {}",
+                i,
+                scalar_output[i],
+                simd_output[i]
+            );
+        }
+    }
+
+    #[cfg(feature = "simd")]
+    #[test]
+    fn test_simd_idct_matches_scalar() {
+        // Test with random input
+        let mut input = [0.0f32; 64];
+        for i in 0..64 {
+            input[i] = ((i * 17) as f32).sin() * 50.0;
+        }
+
+        let simd_result = simd::inverse_dct_8x8_simd(&input);
+
+        // Compare with scalar implementation
+        let mut block0 = input;
+        let mut block1 = [0.0f32; 64];
+
+        transpose_8x8(&block0, &mut block1);
+        idct_rows(&block1, &mut block0);
+        transpose_8x8(&block0, &mut block1);
+        let mut scalar_result = [0.0f32; 64];
+        idct_rows(&block1, &mut scalar_result);
+        for v in &mut scalar_result {
+            *v /= 8.0;
+        }
+
+        for i in 0..64 {
+            assert!(
+                (scalar_result[i] - simd_result[i]).abs() < 0.1,
+                "SIMD/scalar mismatch at {}: {} vs {}",
+                i,
+                scalar_result[i],
+                simd_result[i]
+            );
+        }
+    }
 }
