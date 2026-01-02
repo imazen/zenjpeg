@@ -15,8 +15,8 @@
 //! ```
 
 use crate::alloc::{
-    checked_size_2d, try_alloc_dct_blocks, validate_dimensions,
-    DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS,
+    checked_size_2d, try_alloc_dct_blocks, validate_dimensions, DEFAULT_MAX_MEMORY,
+    DEFAULT_MAX_PIXELS,
 };
 use crate::color::{
     gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
@@ -859,8 +859,24 @@ impl<'a> JpegParser<'a> {
         }
 
         // Decode MCUs with proper interleaving
+        let mut mcu_count = 0u32;
+        let restart_interval = self.restart_interval as u32;
+        let mut next_restart_num = 0u8;
+
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
+                // Check for restart marker
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Align to byte boundary (discard padding bits)
+                    decoder.align_to_byte();
+                    // Read and verify restart marker
+                    decoder.read_restart_marker(next_restart_num)?;
+                    // Update expected marker number (cycles 0-7)
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    // Reset DC predictors
+                    decoder.reset_dc();
+                }
+
                 // For each component in the scan
                 for (comp_idx, dc_table, ac_table) in scan_components {
                     let h_samp = self.components[*comp_idx].h_samp_factor as usize;
@@ -883,6 +899,8 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                 }
+
+                mcu_count += 1;
             }
         }
 
@@ -951,10 +969,27 @@ impl<'a> JpegParser<'a> {
         // EOB run tracking for AC scans
         let mut eob_run = 0u16;
 
+        // Restart marker handling
+        let mut mcu_count = 0u32;
+        let restart_interval = self.restart_interval as u32;
+        let mut next_restart_num = 0u8;
+
         if is_dc_scan {
             // DC scan (interleaved or single component)
             for mcu_y in 0..mcu_rows {
                 for mcu_x in 0..mcu_cols {
+                    // Check for restart marker
+                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                        // Align to byte boundary (discard padding bits)
+                        decoder.align_to_byte();
+                        // Read and verify restart marker
+                        decoder.read_restart_marker(next_restart_num)?;
+                        // Update expected marker number (cycles 0-7)
+                        next_restart_num = (next_restart_num + 1) & 7;
+                        // Reset DC predictors
+                        decoder.reset_dc();
+                    }
+
                     for (comp_idx, dc_table, _ac_table) in scan_components {
                         let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                         let v_samp = self.components[*comp_idx].v_samp_factor as usize;
@@ -982,6 +1017,8 @@ impl<'a> JpegParser<'a> {
                             }
                         }
                     }
+
+                    mcu_count += 1;
                 }
             }
         } else {
@@ -998,8 +1035,25 @@ impl<'a> JpegParser<'a> {
             let v_samp = self.components[comp_idx].v_samp_factor as usize;
             let comp_blocks_h = mcu_cols * h_samp;
 
+            // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
+            mcu_count = 0;
+            next_restart_num = 0;
+
             for mcu_y in 0..mcu_rows {
                 for mcu_x in 0..mcu_cols {
+                    // Check for restart marker
+                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                        // Align to byte boundary (discard padding bits)
+                        decoder.align_to_byte();
+                        // Read and verify restart marker
+                        decoder.read_restart_marker(next_restart_num)?;
+                        // Update expected marker number (cycles 0-7)
+                        next_restart_num = (next_restart_num + 1) & 7;
+                        // Reset DC predictors and EOB run
+                        decoder.reset_dc();
+                        eob_run = 0;
+                    }
+
                     for v in 0..v_samp {
                         for h in 0..h_samp {
                             let block_x = mcu_x * h_samp + h;
@@ -1029,6 +1083,8 @@ impl<'a> JpegParser<'a> {
                             }
                         }
                     }
+
+                    mcu_count += 1;
                 }
             }
         }
@@ -1300,7 +1356,12 @@ impl<'a> JpegParser<'a> {
                     }
                 } else {
                     // YCbCr to RGB conversion using batch function
-                    ycbcr_planes_f32_to_rgb_u8(&planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb);
+                    ycbcr_planes_f32_to_rgb_u8(
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
+                    );
                 }
                 Ok(rgb)
             }
@@ -1526,7 +1587,12 @@ impl<'a> JpegParser<'a> {
                     }
                 } else {
                     // YCbCr to RGB conversion using batch function
-                    ycbcr_planes_f32_to_rgb_f32(&planes_f32[0], &planes_f32[1], &planes_f32[2], &mut rgb);
+                    ycbcr_planes_f32_to_rgb_f32(
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
+                    );
                 }
                 Ok(rgb)
             }
@@ -1666,7 +1732,9 @@ mod tests {
 
         // Decode to f32
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decoding should succeed");
+        let decoded_f32 = decoder
+            .decode_f32(&jpeg)
+            .expect("f32 decoding should succeed");
 
         assert_eq!(decoded_f32.width, width as u32);
         assert_eq!(decoded_f32.height, height as u32);
@@ -1687,7 +1755,11 @@ mod tests {
             let diff = (decoded_u8.data[i] as i32 - converted_u8.data[i] as i32).abs();
             max_diff = max_diff.max(diff);
         }
-        assert!(max_diff <= 1, "f32→u8 conversion differs by {} from direct u8", max_diff);
+        assert!(
+            max_diff <= 1,
+            "f32→u8 conversion differs by {} from direct u8",
+            max_diff
+        );
     }
 
     #[test]
@@ -1718,7 +1790,9 @@ mod tests {
 
         // Decode to f32
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
-        let decoded_f32 = decoder.decode_f32(&jpeg).expect("f32 decoding should succeed");
+        let decoded_f32 = decoder
+            .decode_f32(&jpeg)
+            .expect("f32 decoding should succeed");
 
         // Check that f32 values show more precision than just u8/255
         // by verifying we have non-quantized intermediate values
@@ -1732,6 +1806,9 @@ mod tests {
             }
         }
         // f32 should preserve sub-integer precision
-        assert!(found_fractional, "f32 output should have fractional precision");
+        assert!(
+            found_fractional,
+            "f32 output should have fractional precision"
+        );
     }
 }

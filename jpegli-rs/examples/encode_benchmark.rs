@@ -28,9 +28,7 @@ fn main() {
             .unwrap_or_else(|_| "/home/lilith/work/codec-corpus/clic2025/validation".to_string()),
     );
 
-    let max_files: Option<usize> = env::var("MAX_FILES")
-        .ok()
-        .and_then(|s| s.parse().ok());
+    let max_files: Option<usize> = env::var("MAX_FILES").ok().and_then(|s| s.parse().ok());
 
     // 20 quality levels spread across the useful range
     let qualities: Vec<u8> = env::var("QUALITIES")
@@ -38,8 +36,7 @@ fn main() {
         .map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect())
         .unwrap_or_else(|| {
             vec![
-                30, 35, 40, 45, 50, 55, 60, 65, 70, 72,
-                75, 78, 80, 82, 85, 88, 90, 92, 95, 97,
+                30, 35, 40, 45, 50, 55, 60, 65, 70, 72, 75, 78, 80, 82, 85, 88, 90, 92, 95, 97,
             ]
         });
 
@@ -132,7 +129,13 @@ struct BenchmarkResult {
     ssimulacra2: f64,
 }
 
-fn print_result(corpus: &str, img: &ImageData, quality: u8, encoder: &str, result: &BenchmarkResult) {
+fn print_result(
+    corpus: &str,
+    img: &ImageData,
+    quality: u8,
+    encoder: &str,
+    result: &BenchmarkResult,
+) {
     let pixels = img.width * img.height;
     let bpp = 8.0 * result.bytes as f64 / pixels as f64;
     let encode_ms = result.encode_time.as_secs_f64() * 1000.0;
@@ -231,9 +234,9 @@ fn benchmark_cpp_encode(input_path: &PathBuf, img: &ImageData, quality: u8) -> B
             .arg(&output_path)
             .arg("-q")
             .arg(quality.to_string())
-            .arg("--chroma_subsampling=444")  // Match jpegli-rs default
+            .arg("--chroma_subsampling=444") // Match jpegli-rs default
             .arg("-p")
-            .arg("0")  // Sequential (no progressive) to match jpegli-rs
+            .arg("0") // Sequential (no progressive) to match jpegli-rs
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -317,7 +320,13 @@ fn compute_ssimulacra2(original: &[u8], decoded: &[u8], width: usize, height: us
     let orig_rgb = match Rgb::new(
         original
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -331,7 +340,13 @@ fn compute_ssimulacra2(original: &[u8], decoded: &[u8], width: usize, height: us
     let decoded_rgb = match Rgb::new(
         decoded
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
