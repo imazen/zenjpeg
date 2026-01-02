@@ -186,11 +186,8 @@ impl<'a> BitReader<'a> {
             if next == 0x00 {
                 // Byte stuffing - skip the 0x00
                 self.position += 1;
-            } else if (0xD0..=0xD7).contains(&next) {
-                // Restart marker - skip it and continue
-                self.position += 1;
             } else {
-                // Found a marker - don't consume these bytes as data
+                // Found a marker (including restart markers 0xD0-0xD7)
                 // Rewind position to before the FF so the parser can read the marker
                 self.position -= 1;
                 self.marker_found = Some(next);
@@ -282,6 +279,55 @@ impl<'a> BitReader<'a> {
     /// Aligns to the next byte boundary.
     pub fn align_to_byte(&mut self) {
         self.bits_in_buffer = 0;
+    }
+
+    /// Reads and verifies a restart marker.
+    ///
+    /// Call this after aligning to byte boundary when a restart marker is expected.
+    /// Returns Ok(()) if the expected marker was found, Err otherwise.
+    ///
+    /// # Arguments
+    /// * `expected_num` - Expected restart marker number (0-7)
+    pub fn read_restart_marker(&mut self, expected_num: u8) -> Result<()> {
+        // Clear the marker_found flag since we're explicitly reading the marker
+        self.marker_found = None;
+
+        // Read first byte - should be 0xFF
+        if self.position >= self.data.len() {
+            return Err(Error::InvalidJpegData {
+                reason: "unexpected end of data before restart marker",
+            });
+        }
+        let first = self.data[self.position];
+        if first != 0xFF {
+            return Err(Error::InvalidJpegData {
+                reason: "expected 0xFF for restart marker",
+            });
+        }
+        self.position += 1;
+
+        // Read second byte - should be 0xD0 + expected_num
+        if self.position >= self.data.len() {
+            return Err(Error::InvalidJpegData {
+                reason: "unexpected end of data in restart marker",
+            });
+        }
+        let second = self.data[self.position];
+        let expected_marker = 0xD0 + (expected_num & 7);
+        if second != expected_marker {
+            // Check if it's a different restart marker (resync case)
+            if (0xD0..=0xD7).contains(&second) {
+                return Err(Error::InvalidJpegData {
+                    reason: "restart marker sequence mismatch",
+                });
+            }
+            return Err(Error::InvalidJpegData {
+                reason: "expected restart marker not found",
+            });
+        }
+        self.position += 1;
+
+        Ok(())
     }
 
     /// Reads a raw byte (assumes byte-aligned).

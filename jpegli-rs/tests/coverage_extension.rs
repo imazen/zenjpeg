@@ -735,7 +735,23 @@ mod xyb_coverage {
             .expect("XYB progressive encode failed");
 
         // Should have SOF2 (progressive)
-        assert!(jpeg.windows(2).any(|w| w == [0xFF, 0xC2]));
+        assert!(
+            jpeg.windows(2).any(|w| w == [0xFF, 0xC2]),
+            "Missing SOF2 marker"
+        );
+
+        // Should have APP14 Adobe marker (0xFF 0xEE)
+        assert!(
+            jpeg.windows(2).any(|w| w == [0xFF, 0xEE]),
+            "XYB progressive should have APP14 Adobe marker"
+        );
+
+        // Should have ICC profile marker (APP2 with ICC_PROFILE signature)
+        // APP2 marker: FF E2, then 2-byte length, then "ICC_PROFILE\0" (12 bytes)
+        let has_icc = jpeg
+            .windows(16)
+            .any(|w| w[0] == 0xFF && w[1] == 0xE2 && &w[4..16] == b"ICC_PROFILE\0");
+        assert!(has_icc, "XYB progressive should have ICC profile");
 
         // Verify JPEG is valid and can decode
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");

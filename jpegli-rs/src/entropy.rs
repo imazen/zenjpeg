@@ -1079,6 +1079,22 @@ impl<'a> EntropyDecoder<'a> {
         self.reader.position()
     }
 
+    /// Aligns to byte boundary (call before reading restart marker).
+    pub fn align_to_byte(&mut self) {
+        self.reader.align_to_byte();
+    }
+
+    /// Reads and verifies a restart marker.
+    ///
+    /// Call this after aligning to byte boundary when a restart marker is expected.
+    /// Returns Ok(()) if the expected marker was found, Err otherwise.
+    ///
+    /// # Arguments
+    /// * `expected_num` - Expected restart marker number (0-7)
+    pub fn read_restart_marker(&mut self, expected_num: u8) -> Result<()> {
+        self.reader.read_restart_marker(expected_num)
+    }
+
     // ===== Progressive decoding methods =====
 
     /// Decodes DC coefficient for progressive first scan (ah=0).

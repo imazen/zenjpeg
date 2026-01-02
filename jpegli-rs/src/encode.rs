@@ -615,6 +615,71 @@ impl Encoder {
         Ok(std::mem::take(output))
     }
 
+    /// Encodes progressive JPEG using XYB color space.
+    ///
+    /// This uses the same progressive scan structure as YCbCr encoding
+    /// but with XYB color conversion and appropriate headers (ICC profile, APP14).
+    fn encode_progressive_xyb(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut output = Vec::with_capacity(data.len() / 4);
+
+        // Convert sRGB to scaled XYB
+        let (x_plane, y_plane, b_plane) = self.convert_to_scaled_xyb(data)?;
+
+        // XYB progressive uses 4:4:4 (no B channel downsampling unlike baseline XYB)
+        // This is because progressive scans work best with same-size components
+
+        // Generate XYB quantization tables
+        let x_quant =
+            quant::generate_quant_table(self.config.quality, 0, ColorSpace::Rgb, true, false);
+        let y_quant =
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::Rgb, true, false);
+        let b_quant =
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::Rgb, true, false);
+
+        // Quantize all blocks for progressive encoding
+        // Use X, Y, B as if they were Y, Cb, Cr for the progressive structure
+        let (x_blocks, y_blocks, b_blocks) =
+            self.quantize_all_blocks(&x_plane, &y_plane, &b_plane, &x_quant, &y_quant, &b_quant)?;
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+
+        // Write XYB-specific headers
+        self.write_header_xyb(&mut output)?;
+        // Write APP14 Adobe marker for RGB (required by some decoders)
+        self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
+                                                 // Write XYB ICC profile
+        self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
+        // Write quantization tables
+        self.write_quant_tables(&mut output, &x_quant, &y_quant, &b_quant)?;
+        // Write SOF2 frame header for progressive
+        self.write_frame_header(&mut output)?;
+
+        // Use standard Huffman tables (optimized tables could be added later)
+        self.write_huffman_tables(&mut output)?;
+        let tables: Option<OptimizedHuffmanTables> = None;
+
+        if self.config.restart_interval > 0 {
+            self.write_restart_interval(&mut output)?;
+        }
+
+        // Get progressive scan script
+        let scans = self.get_progressive_scan_script(is_color);
+
+        // Encode each scan (reusing the YCbCr progressive scan logic)
+        for scan in &scans {
+            self.write_progressive_scan_header(&mut output, scan, is_color)?;
+            let scan_data = self.encode_progressive_scan(
+                &x_blocks, &y_blocks, &b_blocks, scan, is_color, &tables,
+            )?;
+            output.extend_from_slice(&scan_data);
+        }
+
+        // Write EOI
+        output.push(0xFF);
+        output.push(MARKER_EOI);
+
+        Ok(output)
+    }
+
     /// Converts input data to scaled XYB planes.
     ///
     /// Performs the full conversion: sRGB u8 → linear RGB → XYB → scaled XYB
@@ -761,6 +826,11 @@ impl Encoder {
     /// 4. AC 3-63 refine: Ss=3, Se=63, Ah=2, Al=1 (bit 1 refinement)
     /// 5. AC 3-63 refine: Ss=3, Se=63, Ah=1, Al=0 (bit 0 refinement)
     fn encode_progressive(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // XYB progressive mode - route to specialized encoder
+        if self.config.use_xyb {
+            return self.encode_progressive_xyb(data);
+        }
+
         // Use tokenization-based approach when optimizing Huffman tables
         if self.config.optimize_huffman {
             return self.encode_progressive_optimized(data);
