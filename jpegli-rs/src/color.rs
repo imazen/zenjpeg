@@ -454,7 +454,7 @@ pub fn ycbcr_planes_to_rgb(
 /// Applies level shift (+128) and clamps to 0-255.
 ///
 /// This is optimized for the decoder which processes planes separately.
-#[inline(never)]  // Prevent over-inlining for better cache behavior
+#[inline(never)] // Prevent over-inlining for better cache behavior
 pub fn ycbcr_planes_f32_to_rgb_u8(
     y_plane: &[f32],
     cb_plane: &[f32],
@@ -475,8 +475,8 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
 
     for i in 0..num_pixels {
         let y = y_plane[i];
-        let cb = cb_plane[i];  // Already centered around 0
-        let cr = cr_plane[i];  // Already centered around 0
+        let cb = cb_plane[i]; // Already centered around 0
+        let cr = cr_plane[i]; // Already centered around 0
 
         // YCbCr to RGB
         let r = y + CR_TO_R * cr;
@@ -794,5 +794,175 @@ mod tests {
                 assert_eq!(b_simd[i], b_scalar, "B mismatch at {}", i);
             }
         }
+    }
+
+    #[test]
+    fn test_rgb_to_ycbcr_f32() {
+        // Test f32 version matches u8 version
+        let (y, cb, cr) = rgb_to_ycbcr_f32(255.0, 0.0, 0.0); // Red
+        assert!((y - 76.0).abs() < 1.0);
+        assert!((cb - 85.0).abs() < 1.0);
+        assert!((cr - 255.0).abs() < 1.0);
+
+        let (y, cb, cr) = rgb_to_ycbcr_f32(0.0, 255.0, 0.0); // Green
+        assert!((y - 150.0).abs() < 1.0);
+
+        let (y, cb, cr) = rgb_to_ycbcr_f32(0.0, 0.0, 255.0); // Blue
+        assert!((y - 29.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_ycbcr_to_rgb_f32() {
+        // Test f32 conversion
+        let (r, g, b) = ycbcr_to_rgb_f32(128.0, 128.0, 128.0); // Gray
+        assert!((r - 128.0).abs() < 1.0);
+        assert!((g - 128.0).abs() < 1.0);
+        assert!((b - 128.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_convert_rgb_to_ycbcr_buffer() {
+        let mut buffer = [255, 0, 0, 0, 255, 0, 0, 0, 255]; // RGB: red, green, blue
+        convert_rgb_to_ycbcr_buffer(&mut buffer);
+        // After conversion, first pixel should have Y ~ 76 (red)
+        assert!((buffer[0] as i16 - 76).abs() <= 1);
+    }
+
+    #[test]
+    fn test_convert_ycbcr_to_rgb_buffer() {
+        let mut buffer = [128, 128, 128, 128, 128, 128]; // Gray YCbCr
+        convert_ycbcr_to_rgb_buffer(&mut buffer);
+        // Should convert back to gray RGB
+        assert!((buffer[0] as i16 - 128).abs() <= 1);
+        assert!((buffer[1] as i16 - 128).abs() <= 1);
+        assert!((buffer[2] as i16 - 128).abs() <= 1);
+    }
+
+    #[test]
+    fn test_rgb_to_ycbcr_planes() {
+        let rgb = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128]; // 4 pixels
+        let (y, cb, cr) = rgb_to_ycbcr_planes(&rgb, 2, 2).unwrap();
+        assert_eq!(y.len(), 4);
+        assert_eq!(cb.len(), 4);
+        assert_eq!(cr.len(), 4);
+        // Red pixel should have Y ~ 76
+        assert!((y[0] as i16 - 76).abs() <= 1);
+    }
+
+    #[test]
+    fn test_ycbcr_planes_to_rgb() {
+        let y = vec![128u8, 128, 128, 128];
+        let cb = vec![128u8, 128, 128, 128];
+        let cr = vec![128u8, 128, 128, 128];
+        let rgb = ycbcr_planes_to_rgb(&y, &cb, &cr, 2, 2).unwrap();
+        assert_eq!(rgb.len(), 12); // 4 pixels * 3 channels
+                                   // All pixels should be gray
+        for i in 0..4 {
+            assert!((rgb[i * 3] as i16 - 128).abs() <= 1);
+        }
+    }
+
+    #[test]
+    fn test_ycbcr_planes_f32_to_rgb_u8() {
+        // Create f32 planes (centered around 0 for IDCT output)
+        let y = vec![0.0f32; 4];
+        let cb = vec![0.0f32; 4];
+        let cr = vec![0.0f32; 4];
+        let mut rgb = vec![0u8; 12];
+        ycbcr_planes_f32_to_rgb_u8(&y, &cb, &cr, &mut rgb);
+        // All should be gray (128 after level shift)
+        for i in 0..4 {
+            assert_eq!(rgb[i * 3], 128);
+            assert_eq!(rgb[i * 3 + 1], 128);
+            assert_eq!(rgb[i * 3 + 2], 128);
+        }
+    }
+
+    #[test]
+    fn test_ycbcr_planes_f32_to_rgb_f32() {
+        let y = vec![0.0f32; 4];
+        let cb = vec![0.0f32; 4];
+        let cr = vec![0.0f32; 4];
+        let mut rgb = vec![0.0f32; 12];
+        ycbcr_planes_f32_to_rgb_f32(&y, &cb, &cr, &mut rgb);
+        // All should be ~0.5 (128/255)
+        for i in 0..4 {
+            assert!((rgb[i * 3] - 0.502).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_gray_f32_to_rgb_u8() {
+        let y = vec![0.0f32, 127.0, -128.0]; // 0+128=128, 127+128=255, -128+128=0
+        let mut rgb = vec![0u8; 9];
+        gray_f32_to_rgb_u8(&y, &mut rgb);
+        assert_eq!(rgb[0], 128); // R
+        assert_eq!(rgb[1], 128); // G
+        assert_eq!(rgb[2], 128); // B
+        assert_eq!(rgb[3], 255); // Second pixel R
+        assert_eq!(rgb[6], 0); // Third pixel R
+    }
+
+    #[test]
+    fn test_gray_f32_to_rgb_f32() {
+        let y = vec![0.0f32; 2];
+        let mut rgb = vec![0.0f32; 6];
+        gray_f32_to_rgb_f32(&y, &mut rgb);
+        // Should be ~0.5
+        for v in &rgb {
+            assert!((*v - 0.502).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_gray_f32_to_gray_u8() {
+        let y = vec![0.0f32, 127.0, -128.0];
+        let mut output = vec![0u8; 3];
+        gray_f32_to_gray_u8(&y, &mut output);
+        assert_eq!(output[0], 128);
+        assert_eq!(output[1], 255);
+        assert_eq!(output[2], 0);
+    }
+
+    #[test]
+    fn test_gray_f32_to_gray_f32() {
+        let y = vec![0.0f32, 127.0];
+        let mut output = vec![0.0f32; 2];
+        gray_f32_to_gray_f32(&y, &mut output);
+        assert!((output[0] - 0.502).abs() < 0.01);
+        assert!((output[1] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_rgb_to_cmyk() {
+        // White -> CMYK(0,0,0,0)
+        let (c, m, y, k) = rgb_to_cmyk(255, 255, 255);
+        assert_eq!((c, m, y, k), (0, 0, 0, 0));
+
+        // Black -> CMYK(0,0,0,255)
+        let (c, m, y, k) = rgb_to_cmyk(0, 0, 0);
+        assert_eq!(k, 255);
+
+        // Red -> Cyan=0
+        let (c, _, _, _) = rgb_to_cmyk(255, 0, 0);
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn test_extract_channel() {
+        let data = vec![10, 20, 30, 40, 50, 60]; // 2 RGB pixels
+        let red = extract_channel(&data, PixelFormat::Rgb, 0).unwrap();
+        assert_eq!(red, vec![10, 40]);
+        let green = extract_channel(&data, PixelFormat::Rgb, 1).unwrap();
+        assert_eq!(green, vec![20, 50]);
+        let blue = extract_channel(&data, PixelFormat::Rgb, 2).unwrap();
+        assert_eq!(blue, vec![30, 60]);
+    }
+
+    #[test]
+    fn test_extract_channel_rgba() {
+        let data = vec![10, 20, 30, 255, 40, 50, 60, 128]; // 2 RGBA pixels
+        let alpha = extract_channel(&data, PixelFormat::Rgba, 3).unwrap();
+        assert_eq!(alpha, vec![255, 128]);
     }
 }

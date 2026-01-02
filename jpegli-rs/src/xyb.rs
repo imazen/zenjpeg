@@ -357,4 +357,215 @@ mod tests {
             assert!(x.abs() < 0.01, "X should be ~0 for gray, got {}", x);
         }
     }
+
+    #[test]
+    fn test_scale_unscale_roundtrip() {
+        let test_values = [
+            (0.0f32, 0.0f32, 0.0f32),
+            (0.1, 0.5, 0.3),
+            (-0.1, 0.8, 0.6),
+            (0.05, 0.3, 0.4),
+        ];
+
+        for (x, y, b) in test_values {
+            let (sx, sy, sb) = scale_xyb(x, y, b);
+            let (x2, y2, b2) = unscale_xyb(sx, sy, sb);
+
+            assert!((x - x2).abs() < 1e-5, "X mismatch: {} vs {}", x, x2);
+            assert!((y - y2).abs() < 1e-5, "Y mismatch: {} vs {}", y, y2);
+            assert!((b - b2).abs() < 1e-5, "B mismatch: {} vs {}", b, b2);
+        }
+    }
+
+    #[test]
+    fn test_srgb_scaled_xyb_roundtrip() {
+        let test_colors = [
+            (0u8, 0u8, 0u8),
+            (255u8, 255u8, 255u8),
+            (255u8, 0u8, 0u8),
+            (128u8, 128u8, 128u8),
+        ];
+
+        for (r, g, b) in test_colors {
+            let (sx, sy, sb) = srgb_to_scaled_xyb(r, g, b);
+            let (r2, g2, b2) = scaled_xyb_to_srgb(sx, sy, sb);
+
+            assert!(
+                (r as i16 - r2 as i16).abs() <= 2,
+                "R mismatch for ({},{},{}): {} vs {}",
+                r,
+                g,
+                b,
+                r,
+                r2
+            );
+            assert!(
+                (g as i16 - g2 as i16).abs() <= 2,
+                "G mismatch for ({},{},{}): {} vs {}",
+                r,
+                g,
+                b,
+                g,
+                g2
+            );
+            assert!(
+                (b as i16 - b2 as i16).abs() <= 2,
+                "B mismatch for ({},{},{}): {} vs {}",
+                r,
+                g,
+                b,
+                b,
+                b2
+            );
+        }
+    }
+
+    #[test]
+    fn test_linear_rgb_xyb_direct() {
+        // Test linear RGB to XYB conversion directly
+        let (x, y, b) = linear_rgb_to_xyb(0.5, 0.5, 0.5);
+        // Gray should have X near 0
+        assert!(x.abs() < 0.01, "X should be ~0 for gray, got {}", x);
+
+        // Y should be positive for mid-gray
+        assert!(y > 0.0, "Y should be positive, got {}", y);
+
+        // Roundtrip
+        let (r, g, b_out) = xyb_to_linear_rgb(x, y, b);
+        assert!((r - 0.5).abs() < 0.01);
+        assert!((g - 0.5).abs() < 0.01);
+        assert!((b_out - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_srgb_linear_edge_cases() {
+        // Test sRGB to linear at boundaries
+        assert_eq!(srgb_to_linear(0.0), 0.0);
+        assert!((srgb_to_linear(1.0) - 1.0).abs() < 1e-6);
+
+        // Test near the 0.04045 threshold
+        let below = srgb_to_linear(0.04);
+        let above = srgb_to_linear(0.05);
+        assert!(below < above);
+
+        // Test linear to sRGB at boundaries
+        assert_eq!(linear_to_srgb(0.0), 0.0);
+        assert!((linear_to_srgb(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_rgb_buffer_to_xyb_planes() {
+        // 2x2 image with different colors
+        let rgb = vec![
+            255, 0, 0, // Red
+            0, 255, 0, // Green
+            0, 0, 255, // Blue
+            128, 128, 128, // Gray
+        ];
+
+        let (x_plane, y_plane, b_plane) = rgb_buffer_to_xyb_planes(&rgb, 2, 2);
+
+        assert_eq!(x_plane.len(), 4);
+        assert_eq!(y_plane.len(), 4);
+        assert_eq!(b_plane.len(), 4);
+
+        // Gray should have X near 0
+        assert!(x_plane[3].abs() < 0.01);
+    }
+
+    #[test]
+    fn test_rgb_buffer_to_scaled_xyb_planes() {
+        let rgb = vec![128, 128, 128, 255, 255, 255]; // 2 pixels
+
+        let (x_plane, y_plane, b_plane) = rgb_buffer_to_scaled_xyb_planes(&rgb, 2, 1);
+
+        assert_eq!(x_plane.len(), 2);
+        assert_eq!(y_plane.len(), 2);
+        assert_eq!(b_plane.len(), 2);
+
+        // Values should be in reasonable ranges for JPEG
+        for v in &x_plane {
+            assert!(v.is_finite());
+        }
+        for v in &y_plane {
+            assert!(v.is_finite());
+        }
+        for v in &b_plane {
+            assert!(v.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_xyb_planes_to_rgb_buffer() {
+        // Create XYB planes for a gray image
+        let x_plane = vec![0.0f32; 4];
+        let y_plane = vec![0.5f32; 4];
+        let b_plane = vec![0.5f32; 4];
+
+        let rgb = xyb_planes_to_rgb_buffer(&x_plane, &y_plane, &b_plane, 2, 2);
+
+        assert_eq!(rgb.len(), 12); // 4 pixels * 3 channels
+    }
+
+    #[test]
+    fn test_mixed_cbrt_cube() {
+        // Test that mixed_cbrt and mixed_cube are inverses
+        let test_values = [-1.0f32, -0.5, 0.0, 0.5, 1.0, 2.0, -2.0];
+
+        for v in test_values {
+            let cbrt = mixed_cbrt(v);
+            let back = mixed_cube(cbrt);
+            assert!(
+                (v - back).abs() < 1e-6,
+                "Roundtrip failed for {}: got {}",
+                v,
+                back
+            );
+        }
+    }
+
+    #[test]
+    fn test_xyb_extreme_colors() {
+        // Test with extreme colors to ensure no overflow/underflow
+        let extreme_colors = [
+            (0u8, 0u8, 0u8),       // Black
+            (255u8, 255u8, 255u8), // White
+            (255u8, 0u8, 0u8),     // Pure red
+            (0u8, 255u8, 0u8),     // Pure green
+            (0u8, 0u8, 255u8),     // Pure blue
+            (255u8, 255u8, 0u8),   // Yellow
+            (255u8, 0u8, 255u8),   // Magenta
+            (0u8, 255u8, 255u8),   // Cyan
+        ];
+
+        for (r, g, b) in extreme_colors {
+            let (x, y, b_xyb) = srgb_to_xyb(r, g, b);
+            assert!(x.is_finite(), "X not finite for ({},{},{})", r, g, b);
+            assert!(y.is_finite(), "Y not finite for ({},{},{})", r, g, b);
+            assert!(b_xyb.is_finite(), "B not finite for ({},{},{})", r, g, b);
+
+            let (sx, sy, sb) = scale_xyb(x, y, b_xyb);
+            assert!(
+                sx.is_finite(),
+                "Scaled X not finite for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                sy.is_finite(),
+                "Scaled Y not finite for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                sb.is_finite(),
+                "Scaled B not finite for ({},{},{})",
+                r,
+                g,
+                b
+            );
+        }
+    }
 }

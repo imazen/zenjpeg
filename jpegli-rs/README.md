@@ -3,6 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/jpegli-rs.svg)](https://crates.io/crates/jpegli-rs)
 [![Documentation](https://docs.rs/jpegli-rs/badge.svg)](https://docs.rs/jpegli-rs)
 [![CI](https://github.com/imazen/jpegli-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jpegli-rs/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/imazen/jpegli-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jpegli-rs)
 [![License: AGPL-3.0-or-later](https://img.shields.io/crates/l/jpegli-rs.svg)](LICENSE)
 
 Pure Rust implementation of **jpegli** - Google's improved JPEG encoder/decoder from the JPEG XL project.
