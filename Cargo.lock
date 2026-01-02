@@ -836,6 +836,8 @@ dependencies = [
 [[package]]
 name = "mozjpeg-rs"
 version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a599639941ff2316b17d6ec9133bbb345fa38668f5cef5bd09455342b6568db1"
 dependencies = [
  "bytemuck",
  "multiversion 0.8.0",
