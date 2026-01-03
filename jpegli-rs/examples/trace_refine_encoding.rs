@@ -13,7 +13,7 @@ fn main() {
         .width(8)
         .height(8)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive);
 

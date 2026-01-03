@@ -28,7 +28,7 @@ fn test_s440_progressive_roundtrip() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S440)
         .mode(JpegMode::Progressive);
 
@@ -67,7 +67,7 @@ fn test_all_subsampling_progressive() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0))
+            .jpegli_quality(Quality::from_quality(90.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive);
 
@@ -112,7 +112,7 @@ fn test_progressive_subsampling_various_sizes() {
                 .width(width as u32)
                 .height(height as u32)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(85.0))
+                .jpegli_quality(Quality::from_quality(85.0))
                 .subsampling(*subsampling)
                 .mode(JpegMode::Progressive);
 

@@ -89,7 +89,7 @@ fn main() {
         .width(width as u32)
         .height(height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::Quality::from_quality(90.0))
+        .jpegli_quality(jpegli::Quality::from_quality(90.0))
         .encode(&rgb_data)
         .expect("jpegli encode failed");
     println!("jpegli-rs output: {} bytes", jpegli_jpeg.len());

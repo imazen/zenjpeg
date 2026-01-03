@@ -109,7 +109,7 @@ fn compare_image(png_path: &str, name: &str) -> Option<CompareResult> {
     let rust_jpeg = jpegli::encode::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::Traditional(90.0))
+        .jpegli_quality(jpegli::quant::Quality::Traditional(90.0))
         .encode(&rgb)
         .ok()?;
 
@@ -185,7 +185,7 @@ fn detailed_histogram(png_path: &str, name: &str) -> Option<(Vec<usize>, u8)> {
     let rust_jpeg = jpegli::encode::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::Traditional(90.0))
+        .jpegli_quality(jpegli::quant::Quality::Traditional(90.0))
         .encode(&rgb)
         .ok()?;
 

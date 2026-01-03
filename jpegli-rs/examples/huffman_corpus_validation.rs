@@ -107,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let jpeg_standard = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .optimize_huffman(false)
             .encode(&pixels)?;
 
@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let jpeg_optimized = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .optimize_huffman(true)
             .encode(&pixels)?;
 

@@ -388,7 +388,7 @@ fn test_multi_decoder_compatibility() {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(jpegli::Quality::from_quality(config.quality as f32))
+            .jpegli_quality(jpegli::Quality::from_quality(config.quality as f32))
             .subsampling(config.subsampling)
             .mode(config.mode)
             .encode(&original)
@@ -473,7 +473,7 @@ fn test_multi_decoder_complex_image() {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(jpegli::Quality::from_quality(config.quality as f32))
+            .jpegli_quality(jpegli::Quality::from_quality(config.quality as f32))
             .subsampling(config.subsampling)
             .mode(config.mode)
             .encode(&original)
@@ -519,7 +519,7 @@ fn benchmark_decoders() {
         .width(width as u32)
         .height(height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::Quality::from_quality(85.0))
+        .jpegli_quality(jpegli::Quality::from_quality(85.0))
         .encode(&original)
         .expect("encode failed");
 
@@ -577,7 +577,7 @@ fn test_grayscale_compatibility() {
         .width(width as u32)
         .height(height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::Quality::from_quality(90.0))
+        .jpegli_quality(jpegli::Quality::from_quality(90.0))
         .encode(&original)
         .expect("encode failed");
 

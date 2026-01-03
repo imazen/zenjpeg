@@ -63,7 +63,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     jpegli::encode::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::Traditional(quality))
+        .jpegli_quality(jpegli::quant::Quality::Traditional(quality))
         .encode(rgb)
         .expect("Rust encoding failed")
 }

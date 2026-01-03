@@ -75,7 +75,7 @@ fuzz_target!(|input: EncodeInput| {
         .width(width)
         .height(height)
         .pixel_format(pixel_format)
-        .quality(Quality::from_quality(quality_val))
+        .jpegli_quality(Quality::from_quality(quality_val))
         .subsampling(subsampling)
         .mode(mode)
         .optimize_huffman(input.optimize_huffman);

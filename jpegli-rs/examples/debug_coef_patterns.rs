@@ -34,7 +34,7 @@ fn test_pattern(name: &str, data: &[u8], w: u32, h: u32) -> bool {
         .width(w)
         .height(h)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive)
         .encode(data)

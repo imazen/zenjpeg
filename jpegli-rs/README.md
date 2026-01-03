@@ -36,13 +36,32 @@ let jpeg_data = Encoder::new()
     .width(800)
     .height(600)
     .pixel_format(PixelFormat::Rgb)
-    .quality(Quality::default())  // Q90
+    .jpegli_quality(Quality::default())  // Q90
     .encode(&rgb_pixels)?;
 
 // Decode JPEG to RGB
 let decoded = jpegli::Decoder::new().decode(&jpeg_data)?;
 println!("{}x{}", decoded.width, decoded.height);
 let rgb_pixels: &[u8] = &decoded.data;
+```
+
+### Matching mozjpeg Quality
+
+```rust
+use jpegli::{Encoder, QualityConversion, QualityComparisonMetric, Subsampling};
+
+// Convert mozjpeg Q85 to equivalent jpegli quality
+let conversion = QualityConversion::mozjpeg_equivalent(
+    85,
+    Subsampling::S444,
+    QualityComparisonMetric::Dssim,
+);
+
+let jpeg_data = Encoder::new()
+    .width(800)
+    .height(600)
+    .equivalent_quality(conversion)
+    .encode(&rgb_pixels)?;
 ```
 
 ## Feature Flags

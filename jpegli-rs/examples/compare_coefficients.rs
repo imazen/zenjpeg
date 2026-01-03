@@ -35,7 +35,7 @@ fn main() {
     let rust_jpeg = jpegli::encode::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::Traditional(90.0))
+        .jpegli_quality(jpegli::quant::Quality::Traditional(90.0))
         .encode(&original)
         .expect("Failed to encode");
 

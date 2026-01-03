@@ -26,7 +26,7 @@ fn main() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true);
     let jpeg = encoder.encode(&rgb).expect("encode");
     println!("   Encoded: {} bytes", jpeg.len());
@@ -46,7 +46,7 @@ fn main() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true)
         .optimize_huffman(false);
     let jpeg = encoder.encode(&rgb).expect("encode");
@@ -67,7 +67,7 @@ fn main() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(false);
     let jpeg = encoder.encode(&rgb).expect("encode");
     println!("   Encoded: {} bytes", jpeg.len());
@@ -87,7 +87,7 @@ fn main() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(false)
         .optimize_huffman(false);
     let jpeg = encoder.encode(&rgb).expect("encode");

@@ -62,7 +62,7 @@ fn encode_rust(
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
+        .jpegli_quality(Quality::from_quality(quality as f32))
         .subsampling(subsampling)
         .encode(pixels)
         .expect("Rust encode failed")

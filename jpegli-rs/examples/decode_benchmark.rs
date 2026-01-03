@@ -19,7 +19,7 @@ fn main() {
     let jpeg = jpegli::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::Quality::from_quality(85.0))
+        .jpegli_quality(jpegli::Quality::from_quality(85.0))
         .encode(&pixels)
         .expect("encoding failed");
 
@@ -117,7 +117,7 @@ fn main() {
     let jpeg_4k = jpegli::Encoder::new()
         .width(width_4k)
         .height(height_4k)
-        .quality(jpegli::Quality::from_quality(85.0))
+        .jpegli_quality(jpegli::Quality::from_quality(85.0))
         .encode(&pixels_4k)
         .expect("encoding 4K failed");
 

@@ -291,7 +291,7 @@ fn encode_and_measure(
     let mut encoder = jpegli::Encoder::new()
         .width(img.width as u32)
         .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32));
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32));
 
     if let Some(cfg) = config {
         encoder = encoder.hybrid_config(*cfg);

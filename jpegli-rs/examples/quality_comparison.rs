@@ -105,7 +105,7 @@ fn main() {
         let rust_jpeg = jpegli::encode::Encoder::new()
             .width(info.width)
             .height(info.height)
-            .quality(jpegli::quant::Quality::Traditional(q as f32))
+            .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
 
@@ -153,7 +153,7 @@ fn main() {
         let rust_jpeg = jpegli::encode::Encoder::new()
             .width(info.width)
             .height(info.height)
-            .quality(jpegli::quant::Quality::Traditional(q as f32))
+            .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
 
@@ -203,7 +203,7 @@ fn main() {
         let rust_result = jpegli::encode::Encoder::new()
             .width(info.width)
             .height(info.height)
-            .quality(jpegli::quant::Quality::Traditional(q as f32))
+            .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .use_xyb(true)
             .encode(&rgb);
 

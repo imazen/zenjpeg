@@ -71,7 +71,7 @@ fn encode_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
         .width(width)
         .height(height)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(quality.into()))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality.into()))
         .encode(rgb)
         .expect("jpegli encode")
 }

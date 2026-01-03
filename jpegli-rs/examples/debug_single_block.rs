@@ -17,7 +17,7 @@ fn main() {
         .width(9)
         .height(9)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .mode(jpegli::types::JpegMode::Baseline)
         .encode(&data)
         .expect("encode failed");
@@ -35,7 +35,7 @@ fn main() {
         .width(9)
         .height(9)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive)
         .encode(&data)

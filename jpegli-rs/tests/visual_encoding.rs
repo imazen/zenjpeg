@@ -84,7 +84,7 @@ fn test_visual_encoding_quality_levels() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q as f32));
+            .jpegli_quality(Quality::from_quality(q as f32));
 
         match encoder.encode(&rgb_data) {
             Ok(jpeg_data) => {
@@ -131,7 +131,7 @@ fn test_visual_encoding_with_aq() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(70.0));
+        .jpegli_quality(Quality::from_quality(70.0));
 
     match encoder.encode(&rgb_data) {
         Ok(jpeg_data) => {

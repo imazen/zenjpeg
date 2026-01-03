@@ -16,7 +16,7 @@ fn test_pattern(name: &str, data: &[u8], width: u32, height: u32) {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive)
         .encode(data)

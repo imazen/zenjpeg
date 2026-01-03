@@ -491,7 +491,7 @@ fn encode_rust(rgb: &[u8], width: usize, height: usize, quality: u8) -> Result<V
         .width(width as u32)
         .height(height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
+        .jpegli_quality(Quality::from_quality(quality as f32))
         .optimize_huffman(true)
         .encode(rgb)
         .map_err(|e| e.to_string())

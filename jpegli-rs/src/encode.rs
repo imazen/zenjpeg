@@ -185,8 +185,56 @@ impl Encoder {
         self
     }
 
-    /// Sets the quality.
+    /// Sets the quality using jpegli's native quality scale.
+    ///
+    /// Use `Quality::from_quality(90.0)` for traditional JPEG quality (1-100)
+    /// or `Quality::from_distance(1.0)` for butteraugli distance.
     #[must_use]
+    pub fn jpegli_quality(mut self, quality: Quality) -> Self {
+        self.config.quality = quality;
+        self
+    }
+
+    /// Sets the quality to match another encoder's visual quality.
+    ///
+    /// This converts quality settings from other encoders (like mozjpeg) to
+    /// equivalent jpegli quality values that produce similar visual results.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use jpegli::{Encoder, QualityConversion, QualityComparisonMetric, Subsampling};
+    ///
+    /// // Match mozjpeg Q85 visual quality
+    /// let conversion = QualityConversion::mozjpeg_equivalent(
+    ///     85,
+    ///     Subsampling::S444,
+    ///     QualityComparisonMetric::Dssim,
+    /// );
+    ///
+    /// let encoder = Encoder::new()
+    ///     .width(800)
+    ///     .height(600)
+    ///     .equivalent_quality(conversion);
+    /// ```
+    #[must_use]
+    pub fn equivalent_quality(
+        mut self,
+        conversion: crate::quality_conversion::QualityConversion,
+    ) -> Self {
+        self.config.quality = conversion.to_jpegli_quality();
+        self
+    }
+
+    /// Sets the quality.
+    ///
+    /// **Deprecated:** Use `jpegli_quality()` for explicit jpegli quality, or
+    /// `equivalent_quality()` to match other encoders like mozjpeg.
+    #[must_use]
+    #[deprecated(
+        since = "0.4.0",
+        note = "Use jpegli_quality() or equivalent_quality() instead"
+    )]
     pub fn quality(mut self, quality: Quality) -> Self {
         self.config.quality = quality;
         self
@@ -3508,7 +3556,7 @@ mod tests {
         let encoder = Encoder::new()
             .width(640)
             .height(480)
-            .quality(Quality::from_quality(90.0));
+            .jpegli_quality(Quality::from_quality(90.0));
 
         assert_eq!(encoder.config.width, 640);
         assert_eq!(encoder.config.height, 480);
@@ -3529,7 +3577,7 @@ mod tests {
             .width(8)
             .height(8)
             .pixel_format(PixelFormat::Gray)
-            .quality(Quality::from_quality(90.0));
+            .jpegli_quality(Quality::from_quality(90.0));
 
         let data = vec![128u8; 64];
         let result = encoder.encode(&data);
@@ -3551,7 +3599,7 @@ mod tests {
             .width(16)
             .height(16)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0))
+            .jpegli_quality(Quality::from_quality(90.0))
             .use_xyb(true);
 
         // Create a simple gradient test image
@@ -3588,7 +3636,7 @@ mod tests {
             .width(32)
             .height(32)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .use_xyb(true);
 
         // Create a test pattern
@@ -3634,7 +3682,7 @@ mod tests {
         let encoder = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .optimize_huffman(true);
 
         let result = encoder.encode(&data);
@@ -3706,7 +3754,7 @@ mod tests {
         let jpeg_standard = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .optimize_huffman(false)
             .encode(&data)
             .expect("Standard encoding failed");
@@ -3715,7 +3763,7 @@ mod tests {
         let jpeg_optimized = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .optimize_huffman(true)
             .encode(&data)
             .expect("Optimized encoding failed");
@@ -3762,7 +3810,7 @@ mod tests {
         let jpeg_standard = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .use_xyb(true)
             .optimize_huffman(false)
             .encode(&data)
@@ -3772,7 +3820,7 @@ mod tests {
         let jpeg_optimized = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .use_xyb(true)
             .optimize_huffman(true)
             .encode(&data)

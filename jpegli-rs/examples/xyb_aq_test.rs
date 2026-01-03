@@ -33,7 +33,7 @@ fn main() {
     let baseline = jpegli::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::from_quality(80.0))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(80.0))
         .encode(pixels)
         .expect("baseline encode");
     println!("YCbCr baseline: {} bytes", baseline.len());
@@ -42,7 +42,7 @@ fn main() {
     let xyb_baseline = jpegli::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::from_quality(80.0))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(80.0))
         .use_xyb(true)
         .encode(pixels)
         .expect("XYB baseline encode");
@@ -56,7 +56,7 @@ fn main() {
         let xyb_hybrid = jpegli::Encoder::new()
             .width(width)
             .height(height)
-            .quality(jpegli::quant::Quality::from_quality(80.0))
+            .jpegli_quality(jpegli::quant::Quality::from_quality(80.0))
             .use_xyb(true)
             .hybrid_config(HybridConfig::default())
             .encode(pixels)

@@ -435,13 +435,25 @@ impl<'a> JpegParser<'a> {
 
     fn read_marker(&mut self) -> Result<u8> {
         loop {
+            // Skip until we find 0xFF
             let byte = self.read_u8()?;
             if byte != 0xFF {
                 continue;
             }
 
-            let marker = self.read_u8()?;
-            if marker != 0x00 && marker != 0xFF {
+            // Skip fill bytes (consecutive 0xFF)
+            loop {
+                let marker = self.read_u8()?;
+                if marker == 0xFF {
+                    // Fill byte, keep looking
+                    continue;
+                }
+                if marker == 0x00 {
+                    // Byte stuffing (0xFF 0x00 = literal 0xFF in data)
+                    // This shouldn't happen in marker parsing, but skip it
+                    break;
+                }
+                // Found a real marker
                 return Ok(marker);
             }
         }
@@ -711,12 +723,25 @@ impl<'a> JpegParser<'a> {
         self.read_header()?;
 
         // Continue parsing until we hit SOS
+        let mut scan_count = 0;
         loop {
+            let marker_pos = self.position;
             let marker = self.read_marker()?;
 
             match marker {
                 MARKER_SOS => {
+                    scan_count += 1;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "DEBUG: Scan {} at position 0x{:06X}",
+                        scan_count, marker_pos
+                    );
                     self.parse_scan()?;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "DEBUG: After scan {}, position is 0x{:06X}",
+                        scan_count, self.position
+                    );
                     // After scan, look for more markers
                 }
                 MARKER_DQT => self.parse_quant_table()?,
@@ -1716,7 +1741,7 @@ mod tests {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(PixelFormat::Gray)
-            .quality(Quality::from_quality(95.0));
+            .jpegli_quality(Quality::from_quality(95.0));
 
         let jpeg = encoder.encode(&input).expect("encoding should succeed");
 
@@ -1764,7 +1789,7 @@ mod tests {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(95.0));
+            .jpegli_quality(Quality::from_quality(95.0));
 
         let jpeg = encoder.encode(&input).expect("encoding should succeed");
 
@@ -1806,7 +1831,7 @@ mod tests {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(95.0));
+            .jpegli_quality(Quality::from_quality(95.0));
 
         let jpeg = encoder.encode(&input).expect("encoding should succeed");
 
@@ -1864,7 +1889,7 @@ mod tests {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(98.0));
+            .jpegli_quality(Quality::from_quality(98.0));
 
         let jpeg = encoder.encode(&input).expect("encoding should succeed");
 

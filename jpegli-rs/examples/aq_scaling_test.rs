@@ -128,7 +128,7 @@ fn encode_baseline(img: &ImageData, quality: u8) -> EncodingResult {
     let jpeg_data = jpegli::Encoder::new()
         .width(img.width as u32)
         .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32))
         .encode(&img.pixels)
         .expect("baseline encode");
 
@@ -180,7 +180,7 @@ fn encode_hybrid(
     let jpeg_data = jpegli::Encoder::new()
         .width(img.width as u32)
         .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32))
         .hybrid_config(HybridConfig::default())
         .aq_map(aq_map)
         .encode(&img.pixels)

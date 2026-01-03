@@ -57,7 +57,7 @@ fn main() {
                 jpegli::Encoder::new()
                     .width(width)
                     .height(height)
-                    .quality(jpegli::quant::Quality::from_quality(q as f32))
+                    .jpegli_quality(jpegli::quant::Quality::from_quality(q as f32))
                     .use_xyb(true)
                     .hybrid_config(HybridConfig::default())
                     .encode(pixels)
@@ -67,7 +67,7 @@ fn main() {
             let rust_jpeg = jpegli::Encoder::new()
                 .width(width)
                 .height(height)
-                .quality(jpegli::quant::Quality::from_quality(q as f32))
+                .jpegli_quality(jpegli::quant::Quality::from_quality(q as f32))
                 .use_xyb(true)
                 .encode(pixels)
                 .expect("encode");

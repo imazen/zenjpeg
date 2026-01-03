@@ -162,7 +162,7 @@ fn process_image(
         .width(width as u32)
         .height(height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32));
+        .jpegli_quality(Quality::from_quality(quality as f32));
 
     let jpeg_data = encoder
         .encode(&rgb_data)

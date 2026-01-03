@@ -231,7 +231,7 @@ fn encode_and_compare(
     let jpegli_result = jpegli::Encoder::new()
         .width(width as u32)
         .height(height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32))
         .encode(pixels)
         .unwrap();
     let _jpegli_time = start.elapsed();
@@ -241,7 +241,7 @@ fn encode_and_compare(
     let hybrid_result = jpegli::Encoder::new()
         .width(width as u32)
         .height(height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32))
         .hybrid_trellis(true)
         .encode(pixels)
         .unwrap();

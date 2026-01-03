@@ -24,7 +24,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(quality));
+        .jpegli_quality(Quality::from_quality(quality));
     encoder.encode(&img.pixels).expect("encode failed")
 }
 
@@ -339,7 +339,7 @@ fn test_decode_pixel_range() {
     let encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(100.0));
+        .jpegli_quality(Quality::from_quality(100.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();

@@ -197,7 +197,7 @@ fn benchmark_rust_encode(img: &ImageData, quality: u8) -> BenchmarkResult {
         let data = jpegli::Encoder::new()
             .width(img.width as u32)
             .height(img.height as u32)
-            .quality(jpegli::quant::Quality::from_quality(quality as f32))
+            .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32))
             .encode(&img.pixels)
             .expect("jpegli-rs encode failed");
         let elapsed = start.elapsed();

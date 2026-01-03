@@ -82,7 +82,7 @@ mod encode_coverage {
             let encoder = Encoder::new()
                 .width(64)
                 .height(64)
-                .quality(Quality::from_quality(q));
+                .jpegli_quality(Quality::from_quality(q));
             let jpeg = encoder
                 .encode(&img.pixels)
                 .expect(&format!("Q{} failed", q));
@@ -98,7 +98,7 @@ mod encode_coverage {
             let encoder = Encoder::new()
                 .width(64)
                 .height(64)
-                .quality(Quality::from_distance(d));
+                .jpegli_quality(Quality::from_distance(d));
             let jpeg = encoder
                 .encode(&img.pixels)
                 .expect(&format!("dist {} failed", d));
@@ -281,7 +281,7 @@ mod encode_coverage {
         let encoder = Encoder::new()
             .width(1024)
             .height(768)
-            .quality(Quality::from_quality(85.0));
+            .jpegli_quality(Quality::from_quality(85.0));
         let jpeg = encoder.encode(&img.pixels).expect("large failed");
         assert!(jpeg.len() > 10000, "Large image too small");
     }
@@ -392,7 +392,7 @@ mod decode_coverage {
         Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(quality))
+            .jpegli_quality(Quality::from_quality(quality))
             .encode(&img.pixels)
             .expect("encode failed")
     }
@@ -694,7 +694,7 @@ mod decode_coverage {
         let jpeg = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(100.0))
+            .jpegli_quality(Quality::from_quality(100.0))
             .encode(&img.pixels)
             .expect("encode failed");
 
@@ -720,7 +720,7 @@ mod roundtrip_coverage {
         let jpeg = Encoder::new()
             .width(width)
             .height(height)
-            .quality(Quality::from_quality(quality))
+            .jpegli_quality(Quality::from_quality(quality))
             .encode(&img.pixels)
             .expect("encode failed");
 
