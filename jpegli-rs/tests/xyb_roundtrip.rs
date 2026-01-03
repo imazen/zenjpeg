@@ -198,3 +198,186 @@ fn test_srgb_linear_precision() {
         max_error
     );
 }
+
+/// Test XYB roundtrip quality: compare Rust XYB vs C++ cjpegli XYB.
+/// Both should have similar DSSIM when decoded with ICC transform.
+#[test]
+#[ignore = "requires C++ cjpegli build"]
+fn test_xyb_roundtrip_loss_vs_cpp() {
+    use dssim::Dssim;
+    use rgb::RGBA8;
+    use std::fs;
+    use std::io::Write;
+    use std::process::Command;
+
+    fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
+        data.chunks(3)
+            .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
+            .collect()
+    }
+
+    fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Result<()> {
+        let mut file = fs::File::create(path)?;
+        writeln!(file, "P6")?;
+        writeln!(file, "{} {}", width, height)?;
+        writeln!(file, "255")?;
+        file.write_all(rgb)?;
+        Ok(())
+    }
+
+    // Check if cjpegli is available
+    let cjpegli_path = jpegli::test_utils::require_cjpegli();
+
+    // Create a meaningful test image (gradient with some texture)
+    let width = 64;
+    let height = 64;
+    let mut rgb_data = vec![0u8; width * height * 3];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            // Create gradient + noise pattern
+            rgb_data[idx] = ((x * 4) % 256) as u8;
+            rgb_data[idx + 1] = ((y * 4) % 256) as u8;
+            rgb_data[idx + 2] = (((x + y) * 2) % 256) as u8;
+        }
+    }
+
+    // Save as PPM for cjpegli
+    let ppm_path = "/tmp/test_xyb_roundtrip.ppm";
+    write_ppm(ppm_path, &rgb_data, width, height).expect("Failed to write PPM");
+
+    // Encode with C++ cjpegli in XYB mode
+    let cpp_jpeg_path = "/tmp/test_xyb_roundtrip_cpp.jpg";
+    let output = Command::new(&cjpegli_path)
+        .args([ppm_path, cpp_jpeg_path, "--xyb", "-q", "90"])
+        .output()
+        .expect("Failed to run cjpegli");
+
+    if !output.status.success() {
+        panic!(
+            "cjpegli failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let cpp_jpeg = fs::read(cpp_jpeg_path).expect("Failed to read C++ JPEG");
+
+    // Encode with Rust in XYB mode
+    let rust_jpeg = jpegli::encode::Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .pixel_format(jpegli::types::PixelFormat::Rgb)
+        .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
+        .use_xyb(true)
+        .encode(&rgb_data)
+        .expect("Rust encoding failed");
+
+    println!("C++ JPEG size: {} bytes", cpp_jpeg.len());
+    println!("Rust JPEG size: {} bytes", rust_jpeg.len());
+
+    // Decode both with our decoder (which applies ICC transform)
+    let cpp_decoded = jpegli::Decoder::new()
+        .apply_icc(true)
+        .decode(&cpp_jpeg)
+        .expect("C++ JPEG decode failed");
+
+    let rust_decoded = jpegli::Decoder::new()
+        .apply_icc(true)
+        .decode(&rust_jpeg)
+        .expect("Rust JPEG decode failed");
+
+    // Compute DSSIM for both vs original
+    let dssim = Dssim::new();
+
+    // Convert to RGBA for DSSIM
+    let orig_rgba = rgb_to_rgba(&rgb_data);
+    let cpp_rgba = rgb_to_rgba(&cpp_decoded.data);
+    let rust_rgba = rgb_to_rgba(&rust_decoded.data);
+
+    let orig_img = dssim
+        .create_image_rgba(&orig_rgba, width, height)
+        .expect("create orig image");
+    let cpp_img = dssim
+        .create_image_rgba(
+            &cpp_rgba,
+            cpp_decoded.width as usize,
+            cpp_decoded.height as usize,
+        )
+        .expect("create cpp image");
+    let rust_img = dssim
+        .create_image_rgba(
+            &rust_rgba,
+            rust_decoded.width as usize,
+            rust_decoded.height as usize,
+        )
+        .expect("create rust image");
+
+    let (cpp_dssim, _) = dssim.compare(&orig_img, cpp_img);
+    let (rust_dssim, _) = dssim.compare(&orig_img, rust_img);
+
+    println!("C++ JPEG DSSIM: {:.6}", cpp_dssim);
+    println!("Rust JPEG DSSIM: {:.6}", rust_dssim);
+
+    // Compute max pixel difference
+    let cpp_max_diff: i16 = cpp_decoded
+        .data
+        .iter()
+        .zip(rgb_data.iter())
+        .map(|(a, b)| (*a as i16 - *b as i16).abs())
+        .max()
+        .unwrap_or(0);
+
+    let rust_max_diff: i16 = rust_decoded
+        .data
+        .iter()
+        .zip(rgb_data.iter())
+        .map(|(a, b)| (*a as i16 - *b as i16).abs())
+        .max()
+        .unwrap_or(0);
+
+    println!("C++ max pixel diff vs original: {}", cpp_max_diff);
+    println!("Rust max pixel diff vs original: {}", rust_max_diff);
+
+    // Assertions:
+    // 1. Both should have good quality (DSSIM < 0.01 at Q90)
+    assert!(
+        f64::from(cpp_dssim) < 0.01,
+        "C++ XYB DSSIM too high: {}",
+        cpp_dssim
+    );
+    assert!(
+        f64::from(rust_dssim) < 0.01,
+        "Rust XYB DSSIM too high: {}",
+        rust_dssim
+    );
+
+    // 2. Rust should be within 50% of C++ quality (allowing for implementation differences)
+    let dssim_ratio = f64::from(rust_dssim) / f64::from(cpp_dssim).max(1e-10);
+    println!("DSSIM ratio (Rust/C++): {:.2}x", dssim_ratio);
+    assert!(
+        dssim_ratio < 2.0,
+        "Rust XYB quality significantly worse than C++: {}x",
+        dssim_ratio
+    );
+
+    // 3. File sizes should be similar (within 20%)
+    let size_ratio = rust_jpeg.len() as f64 / cpp_jpeg.len() as f64;
+    println!("Size ratio (Rust/C++): {:.2}x", size_ratio);
+    assert!(
+        size_ratio > 0.8 && size_ratio < 1.2,
+        "Rust XYB file size significantly different from C++: {}x",
+        size_ratio
+    );
+
+    println!("\nXYB roundtrip comparison PASSED!");
+    println!(
+        "  C++ cjpegli: {} bytes, DSSIM {:.6}",
+        cpp_jpeg.len(),
+        cpp_dssim
+    );
+    println!(
+        "  Rust jpegli: {} bytes, DSSIM {:.6}",
+        rust_jpeg.len(),
+        rust_dssim
+    );
+}

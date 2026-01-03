@@ -362,3 +362,4 @@ fn test_icc_profile_embedding() {
         icc_profile.len()
     );
 }
+
