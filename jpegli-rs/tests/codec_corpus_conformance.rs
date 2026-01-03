@@ -661,7 +661,10 @@ fn test_jpeg_conformance_valid() {
 
     println!(
         "\nValid conformance: {} decoded, {} unsupported, {} known bugs, {} unexpected failures",
-        success, unsupported, known_bugs, unexpected_failures.len()
+        success,
+        unsupported,
+        known_bugs,
+        unexpected_failures.len()
     );
 
     // Print unexpected failures for debugging
