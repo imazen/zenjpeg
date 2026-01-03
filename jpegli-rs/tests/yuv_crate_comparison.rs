@@ -4,6 +4,10 @@
 //! 1. Standard `rgb_to_yuv420` matches our BT.601 math
 //! 2. Sharp YUV produces intentionally different (better) chroma at edges
 //!
+//! Uses `YuvConversionMode::Professional` for highest precision comparison.
+//! With professional mode, max difference is 0.50 (pure rounding to u8).
+//! With balanced mode, max difference was ~1.08 (integer math precision loss).
+//!
 //! Run with: cargo test --features sharp-yuv --test yuv_crate_comparison -- --nocapture
 
 #![cfg(feature = "sharp-yuv")]
@@ -204,7 +208,7 @@ fn convert_yuv_crate_standard(
         width as u32 * 3,
         YuvRange::Full,
         YuvStandardMatrix::Bt601,
-        YuvConversionMode::Balanced,
+        YuvConversionMode::Professional,
     )
     .expect("rgb_to_yuv420 failed");
 
@@ -390,7 +394,7 @@ fn test_brute_force_single_pixels() {
                     6, // stride = 2 pixels * 3 bytes
                     YuvRange::Full,
                     YuvStandardMatrix::Bt601,
-                    YuvConversionMode::Balanced,
+                    YuvConversionMode::Professional,
                 )
                 .expect("conversion failed");
 
