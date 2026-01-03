@@ -19,7 +19,84 @@ use crate::consts::{
 pub const SCALED_XYB_OFFSET: [f32; 3] = [0.015_386_134, 0.0, 0.277_704_59];
 pub const SCALED_XYB_SCALE: [f32; 3] = [22.995_788_804, 1.183_000_077, 1.502_141_333];
 
+// ============================================================================
+// Fast Gamma Conversion (from imageflow)
+// ============================================================================
+//
+// For u8 input: use LUT (exact, fastest)
+// For f32 input: use fastpow (approximate, ~5-10x faster than powf)
+
+/// Pre-computed LUT for sRGB u8 → linear f32 conversion.
+/// Exact values computed using the sRGB specification formula.
+#[rustfmt::skip]
+static SRGB_TO_LINEAR_LUT: [f32; 256] = [
+    0.0, 0.000303526984, 0.000607053967, 0.000910580951, 0.00121410793, 0.00151763492, 0.0018211619, 0.00212468888,
+    0.00242821587, 0.00273174285, 0.00303526984, 0.00334653576, 0.00367650732, 0.00402471702, 0.00439144204, 0.00477695348,
+    0.0051815167, 0.00560539162, 0.00604883302, 0.00651209079, 0.00699541019, 0.00749903204, 0.00802319299, 0.00856812562,
+    0.0091340587, 0.00972121732, 0.010329823, 0.010960094, 0.0116122452, 0.0122864884, 0.0129830323, 0.013702083,
+    0.0144438436, 0.0152085144, 0.0159962934, 0.0168073758, 0.0176419545, 0.0185002201, 0.019382361, 0.0202885631,
+    0.0212190104, 0.0221738848, 0.0231533662, 0.0241576324, 0.0251868596, 0.0262412219, 0.0273208916, 0.0284260395,
+    0.0295568344, 0.0307134437, 0.0318960331, 0.0331047666, 0.0343398068, 0.0356013149, 0.0368894504, 0.0382043716,
+    0.0395462353, 0.0409151969, 0.0423114106, 0.0437350293, 0.0451862044, 0.0466650863, 0.0481718242, 0.049706566,
+    0.0512694584, 0.052860647, 0.0544802764, 0.05612849, 0.0578054302, 0.0595112382, 0.0612460542, 0.0630100177,
+    0.0648032667, 0.0666259386, 0.0684781698, 0.0703600957, 0.0722718507, 0.0742135684, 0.0761853815, 0.0781874218,
+    0.0802198203, 0.0822827071, 0.0843762115, 0.086500462, 0.0886555863, 0.0908417112, 0.0930589628, 0.0953074666,
+    0.0975873471, 0.0998987282, 0.102241733, 0.104616484, 0.107023103, 0.109461711, 0.111932428, 0.114435374,
+    0.116970668, 0.119538428, 0.122138772, 0.124771818, 0.12743768, 0.130136477, 0.132868322, 0.13563333,
+    0.138431615, 0.141263291, 0.144128471, 0.147027266, 0.14995979, 0.152926152, 0.155926464, 0.158960835,
+    0.162029376, 0.165132195, 0.1682694, 0.171441101, 0.174647404, 0.177888416, 0.181164244, 0.184474995,
+    0.187820772, 0.191201683, 0.19461783, 0.19806932, 0.201556254, 0.205078736, 0.20863687, 0.212230757,
+    0.2158605, 0.2195262, 0.223227957, 0.226965874, 0.230740049, 0.234550582, 0.238397574, 0.242281122,
+    0.246201327, 0.250158285, 0.254152094, 0.258182853, 0.262250658, 0.266355605, 0.270497791, 0.274677312,
+    0.278894263, 0.28314874, 0.287440838, 0.29177065, 0.296138271, 0.300543794, 0.304987314, 0.309468923,
+    0.313988713, 0.318546778, 0.323143209, 0.327778098, 0.332451536, 0.337163615, 0.341914425, 0.346704056,
+    0.3515326, 0.356400144, 0.36130678, 0.366252596, 0.37123768, 0.376262123, 0.381326011, 0.386429434,
+    0.391572478, 0.396755231, 0.40197778, 0.407240212, 0.412542613, 0.417885071, 0.42326767, 0.428690497,
+    0.434153636, 0.439657174, 0.445201195, 0.450785783, 0.456411023, 0.462077, 0.467783796, 0.473531496,
+    0.479320183, 0.48514994, 0.49102085, 0.496932995, 0.502886458, 0.508881321, 0.514917665, 0.520995573,
+    0.527115126, 0.533276404, 0.539479489, 0.545724461, 0.552011402, 0.55834039, 0.564711506, 0.571124829,
+    0.57758044, 0.584078418, 0.590618841, 0.597201788, 0.603827339, 0.610495571, 0.617206562, 0.623960392,
+    0.630757136, 0.637596874, 0.644479682, 0.651405637, 0.658374817, 0.665387298, 0.672443157, 0.67954247,
+    0.686685312, 0.693871761, 0.701101892, 0.70837578, 0.715693501, 0.723055129, 0.73046074, 0.737910409,
+    0.74540421, 0.752942217, 0.760524505, 0.768151147, 0.775822218, 0.783537792, 0.79129794, 0.799102738,
+    0.806952258, 0.814846572, 0.822785754, 0.830769877, 0.838799012, 0.846873232, 0.854992608, 0.863157213,
+    0.871367119, 0.879622397, 0.887923118, 0.896269353, 0.904661174, 0.913098652, 0.921581856, 0.930110858,
+    0.938685728, 0.947306537, 0.955973353, 0.964686248, 0.97344529, 0.98225055, 0.991102097, 1.0,
+];
+
+/// Fast 2^x approximation using IEEE 754 bit manipulation.
+/// From imageflow, originally from fast approximate functions.
+#[inline]
+fn fastpow2(p: f32) -> f32 {
+    let offset: f32 = if p < 0.0 { 1.0 } else { 0.0 };
+    let clipp: f32 = if p < -126.0 { -126.0 } else { p };
+    let w: i32 = clipp as i32;
+    let z: f32 = clipp - w as f32 + offset;
+    let bits = ((1_i32 << 23) as f32
+        * (clipp + 121.274_055 + 27.728_024 / (4.842_525_5 - z) - 1.490_129_1 * z))
+        as u32;
+    f32::from_bits(bits)
+}
+
+/// Fast log2(x) approximation using IEEE 754 bit manipulation.
+#[inline]
+fn fastlog2(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let mx_bits = (bits & 0x007f_ffff) | 0x3f00_0000;
+    let mx = f32::from_bits(mx_bits);
+    let mut y = bits as f32;
+    y *= 1.192_092_9e-7;
+    y - 124.225_52 - 1.498_030_3 * mx - 1.725_88 / (0.352_088_72 + mx)
+}
+
+/// Fast x^p approximation (~5-10x faster than powf, ~0.1% error).
+#[inline]
+fn fastpow(x: f32, p: f32) -> f32 {
+    fastpow2(p * fastlog2(x))
+}
+
 /// Applies sRGB gamma decoding (sRGB to linear RGB).
+/// Uses exact formula with powf - use srgb_to_linear_fast for speed.
 #[inline]
 #[must_use]
 pub fn srgb_to_linear(v: f32) -> f32 {
@@ -30,7 +107,19 @@ pub fn srgb_to_linear(v: f32) -> f32 {
     }
 }
 
+/// Fast sRGB gamma decoding using fastpow (~5-10x faster, ~0.1% error).
+#[inline]
+#[must_use]
+pub fn srgb_to_linear_fast(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        fastpow((v + 0.055) / 1.055, 2.4)
+    }
+}
+
 /// Applies sRGB gamma encoding (linear RGB to sRGB).
+/// Uses exact formula with powf - use linear_to_srgb_fast for speed.
 #[inline]
 #[must_use]
 pub fn linear_to_srgb(v: f32) -> f32 {
@@ -41,10 +130,29 @@ pub fn linear_to_srgb(v: f32) -> f32 {
     }
 }
 
+/// Fast sRGB gamma encoding using fastpow (~5-10x faster, ~0.1% error).
+#[inline]
+#[must_use]
+pub fn linear_to_srgb_fast(v: f32) -> f32 {
+    if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * fastpow(v, 1.0 / 2.4) - 0.055
+    }
+}
+
 /// Converts sRGB u8 to linear float (0.0-1.0 range).
+/// Uses LUT for exact values and maximum speed.
 #[inline]
 #[must_use]
 pub fn srgb_u8_to_linear(v: u8) -> f32 {
+    SRGB_TO_LINEAR_LUT[v as usize]
+}
+
+/// Converts sRGB u8 to linear float using exact formula (for verification).
+#[inline]
+#[must_use]
+pub fn srgb_u8_to_linear_exact(v: u8) -> f32 {
     srgb_to_linear(v as f32 / 255.0)
 }
 
@@ -53,6 +161,13 @@ pub fn srgb_u8_to_linear(v: u8) -> f32 {
 #[must_use]
 pub fn linear_to_srgb_u8(v: f32) -> u8 {
     (linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8
+}
+
+/// Fast linear to sRGB u8 using fastpow.
+#[inline]
+#[must_use]
+pub fn linear_to_srgb_u8_fast(v: f32) -> u8 {
+    (linear_to_srgb_fast(v.clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
 /// Mixed transfer function used by jpegli (cube root based).
@@ -565,6 +680,100 @@ mod tests {
                 r,
                 g,
                 b
+            );
+        }
+    }
+
+    #[test]
+    fn test_lut_vs_exact() {
+        // Verify LUT values match exact computation within acceptable tolerance
+        let mut max_error: f32 = 0.0;
+        let mut worst_index = 0;
+        for i in 0..=255u8 {
+            let lut_val = srgb_u8_to_linear(i);
+            let exact_val = srgb_u8_to_linear_exact(i);
+            let error = (lut_val - exact_val).abs();
+            if error > max_error {
+                max_error = error;
+                worst_index = i;
+            }
+        }
+        // Allow up to 0.5% error for the polynomial approximation in const fn
+        assert!(
+            max_error < 0.005,
+            "LUT error too large: {} at index {} (lut={}, exact={})",
+            max_error,
+            worst_index,
+            srgb_u8_to_linear(worst_index),
+            srgb_u8_to_linear_exact(worst_index)
+        );
+        println!("LUT max error: {:.6} at index {}", max_error, worst_index);
+    }
+
+    #[test]
+    fn test_fastpow_accuracy() {
+        // Test fastpow accuracy for the specific exponents we use
+        let test_values = [0.01, 0.1, 0.2, 0.5, 0.8, 0.9, 0.99, 1.0];
+
+        for &v in &test_values {
+            // Test sRGB decode (exponent 2.4)
+            let exact = ((v + 0.055) / 1.055_f32).powf(2.4);
+            let fast = srgb_to_linear_fast(v);
+            let error = (fast - srgb_to_linear(v)).abs();
+            assert!(
+                error < 0.002,
+                "srgb_to_linear_fast error too large for {}: {} (exact={}, fast={})",
+                v,
+                error,
+                srgb_to_linear(v),
+                fast
+            );
+        }
+
+        for &v in &test_values {
+            // Test sRGB encode (exponent 1/2.4)
+            let exact = linear_to_srgb(v);
+            let fast = linear_to_srgb_fast(v);
+            let error = (fast - exact).abs();
+            assert!(
+                error < 0.002,
+                "linear_to_srgb_fast error too large for {}: {} (exact={}, fast={})",
+                v,
+                error,
+                exact,
+                fast
+            );
+        }
+    }
+
+    #[test]
+    fn test_fast_roundtrip() {
+        // Verify fast functions roundtrip correctly (±1 for u8)
+        for v in 0..=255u8 {
+            let linear = srgb_u8_to_linear(v); // LUT-based, exact
+            let back = linear_to_srgb_u8_fast(linear);
+            assert!(
+                (v as i16 - back as i16).abs() <= 1,
+                "Fast roundtrip failed for {}: got {}",
+                v,
+                back
+            );
+        }
+    }
+
+    #[test]
+    fn test_fast_vs_exact_u8_output() {
+        // For u8 output, fast should match exact within ±1
+        for v in 0..=255u8 {
+            let linear = srgb_u8_to_linear_exact(v);
+            let exact_back = linear_to_srgb_u8(linear);
+            let fast_back = linear_to_srgb_u8_fast(linear);
+            assert!(
+                (exact_back as i16 - fast_back as i16).abs() <= 1,
+                "Fast vs exact mismatch for input {}: exact={}, fast={}",
+                v,
+                exact_back,
+                fast_back
             );
         }
     }

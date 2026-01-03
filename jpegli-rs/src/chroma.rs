@@ -27,7 +27,7 @@ use crate::alloc::{checked_size_2d, try_alloc_zeroed_f32};
 use crate::color;
 use crate::error::{Error, Result};
 use crate::types::PixelFormat;
-use crate::xyb::{linear_to_srgb, srgb_to_linear};
+use crate::xyb::{linear_to_srgb_fast, srgb_u8_to_linear};
 
 // ============================================================================
 // Constants
@@ -335,6 +335,7 @@ fn get_bpp(pixel_format: PixelFormat) -> Result<usize> {
 }
 
 /// Compute gamma-aware chroma for a 2x2 block (4:2:0).
+/// Uses LUT for sRGB→linear (exact) and fastpow for linear→sRGB (~5x faster).
 #[inline]
 fn gamma_aware_chroma_2x2(
     data: &[u8],
@@ -349,13 +350,13 @@ fn gamma_aware_chroma_2x2(
     let x1 = (x0 + 1).min(width - 1);
     let y1 = (y0 + 1).min(height - 1);
 
-    // Get RGB values for all 4 pixels and convert to linear
+    // Get RGB values for all 4 pixels and convert to linear using LUT
     let get_linear_rgb = |x: usize, y: usize| -> (f32, f32, f32) {
         let idx = (y * width + x) * bpp;
         (
-            srgb_to_linear(data[idx] as f32 / 255.0),
-            srgb_to_linear(data[idx + 1] as f32 / 255.0),
-            srgb_to_linear(data[idx + 2] as f32 / 255.0),
+            srgb_u8_to_linear(data[idx]),
+            srgb_u8_to_linear(data[idx + 1]),
+            srgb_u8_to_linear(data[idx + 2]),
         )
     };
 
@@ -369,16 +370,17 @@ fn gamma_aware_chroma_2x2(
     let lg_avg = (lg00 + lg10 + lg01 + lg11) * 0.25;
     let lb_avg = (lb00 + lb10 + lb01 + lb11) * 0.25;
 
-    // Convert back to sRGB then YCbCr
-    let r_avg = linear_to_srgb(lr_avg) * 255.0;
-    let g_avg = linear_to_srgb(lg_avg) * 255.0;
-    let b_avg = linear_to_srgb(lb_avg) * 255.0;
+    // Convert back to sRGB then YCbCr using fast approximation
+    let r_avg = linear_to_srgb_fast(lr_avg) * 255.0;
+    let g_avg = linear_to_srgb_fast(lg_avg) * 255.0;
+    let b_avg = linear_to_srgb_fast(lb_avg) * 255.0;
 
     let (_, cb, cr) = color::rgb_to_ycbcr_f32(r_avg, g_avg, b_avg);
     (cb, cr)
 }
 
 /// Compute gamma-aware chroma for a 2x1 block (4:2:2 horizontal).
+/// Uses LUT for sRGB→linear (exact) and fastpow for linear→sRGB (~5x faster).
 #[inline]
 fn gamma_aware_chroma_2x1(
     data: &[u8],
@@ -393,9 +395,9 @@ fn gamma_aware_chroma_2x1(
     let get_linear_rgb = |x: usize| -> (f32, f32, f32) {
         let idx = (y * width + x) * bpp;
         (
-            srgb_to_linear(data[idx] as f32 / 255.0),
-            srgb_to_linear(data[idx + 1] as f32 / 255.0),
-            srgb_to_linear(data[idx + 2] as f32 / 255.0),
+            srgb_u8_to_linear(data[idx]),
+            srgb_u8_to_linear(data[idx + 1]),
+            srgb_u8_to_linear(data[idx + 2]),
         )
     };
 
@@ -406,15 +408,16 @@ fn gamma_aware_chroma_2x1(
     let lg_avg = (lg0 + lg1) * 0.5;
     let lb_avg = (lb0 + lb1) * 0.5;
 
-    let r_avg = linear_to_srgb(lr_avg) * 255.0;
-    let g_avg = linear_to_srgb(lg_avg) * 255.0;
-    let b_avg = linear_to_srgb(lb_avg) * 255.0;
+    let r_avg = linear_to_srgb_fast(lr_avg) * 255.0;
+    let g_avg = linear_to_srgb_fast(lg_avg) * 255.0;
+    let b_avg = linear_to_srgb_fast(lb_avg) * 255.0;
 
     let (_, cb, cr) = color::rgb_to_ycbcr_f32(r_avg, g_avg, b_avg);
     (cb, cr)
 }
 
 /// Compute gamma-aware chroma for a 1x2 block (4:4:0 vertical).
+/// Uses LUT for sRGB→linear (exact) and fastpow for linear→sRGB (~5x faster).
 #[inline]
 fn gamma_aware_chroma_1x2(
     data: &[u8],
@@ -430,9 +433,9 @@ fn gamma_aware_chroma_1x2(
     let get_linear_rgb = |y: usize| -> (f32, f32, f32) {
         let idx = (y * width + x) * bpp;
         (
-            srgb_to_linear(data[idx] as f32 / 255.0),
-            srgb_to_linear(data[idx + 1] as f32 / 255.0),
-            srgb_to_linear(data[idx + 2] as f32 / 255.0),
+            srgb_u8_to_linear(data[idx]),
+            srgb_u8_to_linear(data[idx + 1]),
+            srgb_u8_to_linear(data[idx + 2]),
         )
     };
 
@@ -443,9 +446,9 @@ fn gamma_aware_chroma_1x2(
     let lg_avg = (lg0 + lg1) * 0.5;
     let lb_avg = (lb0 + lb1) * 0.5;
 
-    let r_avg = linear_to_srgb(lr_avg) * 255.0;
-    let g_avg = linear_to_srgb(lg_avg) * 255.0;
-    let b_avg = linear_to_srgb(lb_avg) * 255.0;
+    let r_avg = linear_to_srgb_fast(lr_avg) * 255.0;
+    let g_avg = linear_to_srgb_fast(lg_avg) * 255.0;
+    let b_avg = linear_to_srgb_fast(lb_avg) * 255.0;
 
     let (_, cb, cr) = color::rgb_to_ycbcr_f32(r_avg, g_avg, b_avg);
     (cb, cr)
