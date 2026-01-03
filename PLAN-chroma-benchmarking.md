@@ -83,15 +83,15 @@ enum DownsamplingMethod {
 
 ### 2. Benchmark Test Matrix
 
-| Pipeline | Color Conv | Downsampling | Subsampling | Test |
-|----------|------------|--------------|-------------|------|
-| P1 | f32 | None | 4:4:4 | baseline |
-| P2 | f32 | Box | 4:2:0 | current Intrinsic |
-| P3 | f32 | Box+Smooth | 4:2:0 | current Intrinsic+smoothing |
-| P4 | yuv Balanced | Box | 4:2:0 | current Fast |
-| P5 | yuv Balanced | Sharp | 4:2:0 | current Sharp |
-| P6 | f32 | GammaAware | 4:2:0 | TODO: ideal path |
-| P7 | yuv Professional | Sharp | 4:2:0 | max yuv precision |
+| Pipeline | Color Conv | Downsampling | Subsampling | Test | Status |
+|----------|------------|--------------|-------------|------|--------|
+| P1 | f32 | None | 4:4:4 | baseline | ✅ |
+| P2 | f32 | Box | 4:2:0 | current Intrinsic | ✅ |
+| P3 | f32 | Box+Smooth | 4:2:0 | current Intrinsic+smoothing | ✅ |
+| P4 | yuv Balanced | Box | 4:2:0 | current Fast | ✅ |
+| P5 | yuv Balanced | Sharp | 4:2:0 | current Sharp | ✅ |
+| P6 | f32 | GammaAware | 4:2:0 | f32 gamma-aware path | ✅ IMPLEMENTED |
+| P7 | yuv Professional | Sharp | 4:2:0 | max yuv precision | pending |
 
 ### 3. Metrics to Measure
 
@@ -131,13 +131,15 @@ From existing corpora:
 
 ### Phase 2: Implement Missing Variants
 
-1. **GammaAwareF32 downsampling**:
-   - Decode Cb/Cr from gamma to linear (sRGB transfer function)
-   - Bilinear interpolation in linear space
-   - Encode back to gamma space
-   - All in f32
+1. **GammaAwareF32 downsampling**: ✅ IMPLEMENTED
+   - Converts RGB to linear space (sRGB transfer function)
+   - Averages RGB values in linear space for each 2x2/2x1/1x2 block
+   - Converts back to sRGB then to YCbCr
+   - All in f32 precision
+   - Supports 4:2:0, 4:2:2, and 4:4:0 subsampling
+   - Use via: `set_internal_pathway(P_F32_GAMMA_AWARE)`
 
-2. **YuvCrateProfessional**: Add `professional_mode` feature flag
+2. **YuvCrateProfessional**: Add `professional_mode` feature flag (pending)
 
 ### Phase 3: Run Comprehensive Benchmarks
 
