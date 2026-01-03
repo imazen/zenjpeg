@@ -90,8 +90,9 @@ enum DownsamplingMethod {
 | P3 | f32 | Box+Smooth | 4:2:0 | current Intrinsic+smoothing | ✅ |
 | P4 | yuv Balanced | Box | 4:2:0 | current Fast | ✅ |
 | P5 | yuv Balanced | Sharp | 4:2:0 | current Sharp | ✅ |
-| P6 | f32 | GammaAware | 4:2:0 | f32 gamma-aware path | ✅ IMPLEMENTED |
-| P7 | yuv Professional | Sharp | 4:2:0 | max yuv precision | pending |
+| P6 | f32 | GammaAware | 4:2:0 | f32 gamma-aware single-pass | ✅ IMPLEMENTED |
+| P7 | f32 | GammaAwareIterative | 4:2:0 | f32 gamma-aware iterative (Sharp YUV style) | ✅ IMPLEMENTED |
+| P8 | yuv Professional | Sharp | 4:2:0 | max yuv precision | pending |
 
 ### 3. Metrics to Measure
 
@@ -139,7 +140,16 @@ From existing corpora:
    - Supports 4:2:0, 4:2:2, and 4:4:0 subsampling
    - Use via: `set_internal_pathway(P_F32_GAMMA_AWARE)`
 
-2. **YuvCrateProfessional**: Add `professional_mode` feature flag (pending)
+2. **GammaAwareIterative downsampling**: ✅ IMPLEMENTED
+   - Similar to Sharp YUV algorithm from libwebp
+   - Starts with gamma-aware estimate as initial guess
+   - Iteratively refines Cb/Cr by minimizing reconstruction error
+   - Handles out-of-gamut clipping by adjusting chroma values
+   - 4 iterations (matches libwebp)
+   - Supports 4:2:0, 4:2:2, and 4:4:0 subsampling
+   - Use via: `set_internal_pathway(P_F32_GAMMA_AWARE_ITERATIVE)`
+
+3. **YuvCrateProfessional**: Add `professional_mode` feature flag (pending)
 
 ### Phase 3: Run Comprehensive Benchmarks
 
