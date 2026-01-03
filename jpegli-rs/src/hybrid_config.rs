@@ -3,54 +3,69 @@
 //! This module exposes all tunable knobs for the hybrid AQ+trellis approach,
 //! enabling systematic parameter sweeps and optimization.
 //!
-//! ## Adaptive Mode
+//! # ⚠️ Experimental Status
 //!
-//! The hybrid trellis approach benefits some images more than others. Based on
-//! sweep testing, **AQ mean** (average per-block complexity) predicts effectiveness
-//! with r=0.989 correlation:
+//! **All findings in this module are preliminary and not statistically validated.**
+//! Testing was performed on ~5 images at a few quality levels - far too small a sample
+//! for reliable conclusions. The correlation coefficients, improvement percentages,
+//! and threshold values should be treated as rough starting points, not established facts.
 //!
-//! - `aq_mean > 0.25`: Complex/textured images benefit significantly (+20-40% DSSIM)
-//! - `aq_mean ≤ 0.25`: Simple images see marginal benefit (+9-12% DSSIM)
+//! ## Adaptive Mode (Preliminary)
 //!
-//! Use [`should_use_hybrid`] to make per-image decisions.
+//! Early testing suggested **AQ mean** (average per-block complexity) might predict
+//! which images benefit from hybrid trellis. However, the sample size was too small
+//! for statistical validity:
+//!
+//! - `aq_mean > 0.25`: Complex images appeared to benefit more in limited testing
+//! - `aq_mean ≤ 0.25`: Simple images showed smaller improvements
+//!
+//! Use [`should_use_hybrid`] as a heuristic, but verify on your own data.
+//!
+//! ## Parameters That Appeared Unhelpful (Limited Testing)
+//!
+//! The following were tested but showed no clear benefit or made things worse:
+//!
+//! - **`dc_enabled`**: DC trellis optimization - disabled by default, no clear wins observed
+//! - **`aq_exponent != 1.0`**: Non-linear AQ mapping (sqrt, squared) - no improvement seen
+//! - **`quality_adaptive`**: Scaling lambda by quality dampen - not clearly beneficial
+//! - **`chroma_scale != 1.0`**: Separate chroma scaling - not tuned, kept at 1.0
+//! - **`num_loops > 1`**: Multiple trellis passes - slower without clear quality gain
+//! - **`aq_threshold > 0`**: Minimum AQ cutoff - no benefit observed
+//!
+//! These remain configurable for further experimentation.
 
 #[cfg(feature = "experimental-hybrid-trellis")]
 use mozjpeg_rs::TrellisConfig;
 
-/// Threshold for AQ mean above which hybrid trellis is recommended.
-/// Based on sweep testing: r=0.989 correlation with DSSIM improvement.
-/// Images with aq_mean > 0.25 see >20% DSSIM improvement from hybrid.
+/// Threshold for AQ mean above which hybrid trellis might be beneficial.
+///
+/// **Note:** This threshold is a rough heuristic from very limited testing (~5 images).
+/// The claimed correlation was not statistically validated. Use as a starting point only.
 pub const AQ_MEAN_THRESHOLD: f32 = 0.25;
 
-/// Predict whether hybrid trellis will significantly benefit this image.
+/// Heuristic to predict whether hybrid trellis might benefit this image.
 ///
-/// Returns `true` if the image is complex enough to benefit from hybrid trellis.
-/// This avoids the encoding overhead for simple images where benefit is marginal.
+/// Returns `true` if the image complexity (AQ mean) exceeds the threshold.
+///
+/// **⚠️ Preliminary:** This heuristic is based on very limited testing and may not
+/// generalize. Consider running your own benchmarks on representative images.
 ///
 /// # Arguments
 /// * `aq_mean` - Mean AQ strength across all blocks (from [`crate::adaptive_quant::AQStrengthMap`])
-///
-/// # Example
-/// ```ignore
-/// let aq_map = compute_aq_strength_map(&y_plane, width, height, y_quant_01);
-/// let aq_mean = aq_map.mean();
-/// if should_use_hybrid(aq_mean) {
-///     encoder = encoder.hybrid_config(HybridConfig::default());
-/// }
-/// ```
 pub fn should_use_hybrid(aq_mean: f32) -> bool {
     aq_mean > AQ_MEAN_THRESHOLD
 }
 
-/// Estimate expected DSSIM improvement from hybrid trellis.
+/// Rough estimate of DSSIM improvement from hybrid trellis.
 ///
-/// Based on linear regression: improvement ≈ 85 * aq_mean - 5
-/// (r² = 0.978 on test set)
+/// **⚠️ Not validated:** This linear model was fit on ~5 images and should not be
+/// trusted for production decisions. The coefficients (85, -5) are arbitrary
+/// starting points that need validation on larger, more diverse datasets.
 ///
 /// # Returns
-/// Estimated percentage improvement in DSSIM (0-50 range typically)
+/// Estimated percentage improvement in DSSIM (unreliable)
 pub fn estimate_hybrid_improvement(aq_mean: f32) -> f32 {
-    // Linear model from sweep: y = 85x - 5 (approximately)
+    // Unvalidated linear model - treat with skepticism
     (85.0 * aq_mean - 5.0).max(0.0)
 }
 
@@ -103,12 +118,12 @@ pub struct HybridConfig {
 }
 
 impl Default for HybridConfig {
-    /// Default configuration optimized for best efficiency (quality per byte).
+    /// Default configuration - a reasonable starting point.
     ///
-    /// Based on sweep testing across 5 images and 10 quality levels:
-    /// - aq_lambda_scale=0.0 gives ~23% DSSIM improvement with only 12% size increase
-    /// - This is more efficient than higher aq_lambda_scale values
-    /// - At Q75: efficiency=1.85 (23% quality gain / 12.4% size increase)
+    /// **Note:** These defaults emerged from limited testing (~5 images) and may not
+    /// be optimal for your use case. The efficiency claims below are preliminary:
+    /// - aq_lambda_scale=0.0 appeared most efficient in limited testing
+    /// - Your mileage may vary significantly on different image types
     fn default() -> Self {
         Self {
             enabled: true,
@@ -142,10 +157,10 @@ impl HybridConfig {
         }
     }
 
-    /// Preset favoring smaller file sizes.
+    /// Preset favoring smaller file sizes (unvalidated).
     ///
-    /// Based on sweep: lower base_lambda_scale1 reduces size while maintaining
-    /// good quality. At base_s1=14.0: only +8% size vs +16% DSSIM improvement.
+    /// Uses lower base_lambda_scale1 which appeared to reduce size in limited testing.
+    /// The specific values are not rigorously validated.
     pub fn favor_size() -> Self {
         Self {
             enabled: true,
@@ -156,10 +171,10 @@ impl HybridConfig {
         }
     }
 
-    /// Preset favoring maximum quality improvement.
+    /// Preset favoring quality improvement (unvalidated).
     ///
-    /// Based on sweep: aq_lambda_scale=4.0 gives best quality (25% DSSIM gain)
-    /// but at cost of 17% larger files. Good for archival/high-quality use.
+    /// Uses higher aq_lambda_scale which appeared to improve quality in limited testing,
+    /// potentially at the cost of larger files. Not rigorously validated.
     pub fn favor_quality() -> Self {
         Self {
             enabled: true,
@@ -170,10 +185,10 @@ impl HybridConfig {
         }
     }
 
-    /// Balanced preset: good quality with moderate size increase.
+    /// Balanced preset (unvalidated).
     ///
-    /// Based on sweep: aq_lambda_scale=2.0 gives 24% DSSIM improvement
-    /// with 15% size increase. Good middle ground.
+    /// Middle-ground settings between favor_size() and favor_quality().
+    /// Not rigorously validated - use as a starting point for experimentation.
     pub fn balanced() -> Self {
         Self {
             enabled: true,
@@ -405,7 +420,7 @@ mod tests {
     fn test_default_config() {
         let config = HybridConfig::default();
         assert!(config.enabled);
-        // Default is 0.0 for best efficiency (sweep-optimized)
+        // Default is 0.0 (appeared most efficient in limited testing)
         assert_eq!(config.aq_lambda_scale, 0.0);
         assert_eq!(config.base_lambda_scale1, 14.75);
     }
