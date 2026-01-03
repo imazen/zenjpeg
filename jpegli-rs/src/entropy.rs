@@ -910,6 +910,13 @@ pub struct EntropyDecoder<'a> {
     prev_dc: [i16; 4],
 }
 
+/// Saved state of an EntropyDecoder for speculative decoding.
+#[derive(Clone, Copy)]
+pub struct EntropyDecoderState {
+    reader_state: crate::bitstream::BitReaderState,
+    prev_dc: [i16; 4],
+}
+
 impl<'a> EntropyDecoder<'a> {
     /// Creates a new entropy decoder.
     pub fn new(data: &'a [u8]) -> Self {
@@ -1082,6 +1089,21 @@ impl<'a> EntropyDecoder<'a> {
     /// Aligns to byte boundary (call before reading restart marker).
     pub fn align_to_byte(&mut self) {
         self.reader.align_to_byte();
+    }
+
+    /// Saves the current decoder state for potential rollback.
+    #[must_use]
+    pub fn save_state(&self) -> EntropyDecoderState {
+        EntropyDecoderState {
+            reader_state: self.reader.save_state(),
+            prev_dc: self.prev_dc,
+        }
+    }
+
+    /// Restores a previously saved state.
+    pub fn restore_state(&mut self, state: EntropyDecoderState) {
+        self.reader.restore_state(state.reader_state);
+        self.prev_dc = state.prev_dc;
     }
 
     /// Reads and verifies a restart marker.

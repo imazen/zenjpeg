@@ -96,6 +96,12 @@ The decoder is functional with 12-bit internal precision (matching C++ jpegli):
 The decoder is slower than alternatives because it uses a float pipeline for 12-bit precision,
 matching C++ jpegli's design. See [Future Goals](#future-goals) for planned optimizations.
 
+**Note on decoder output:** The jpegli-rs decoder uses Laplacian dequantization biases
+(matching C++ djpegli), which produces slightly different output than standard decoders
+like jpeg-decoder or zune-jpeg. This is intentional and improves reconstruction accuracy
+for typical photographic content. For synthetic test images, this may result in higher
+(worse) butteraugli/DSSIM scores when compared against the original.
+
 ## Encoder Parity with C++ jpegli
 
 Tested on CLIC2025 + Kodak datasets (56 images × 20 quality levels = 1,120 encodings per encoder):

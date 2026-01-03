@@ -897,6 +897,20 @@ impl<'a> JpegParser<'a> {
                     let v_samp = self.components[*comp_idx].v_samp_factor as usize;
                     let comp_blocks_h = mcu_cols * h_samp;
 
+                    // Calculate actual content dimensions for this component
+                    // Some encoders omit padding blocks beyond the image bounds
+                    let comp_width = (self.width as usize * h_samp + max_h_samp as usize - 1)
+                        / max_h_samp as usize;
+                    let comp_height = (self.height as usize * v_samp + max_v_samp as usize - 1)
+                        / max_v_samp as usize;
+                    let actual_blocks_h = (comp_width + 7) / 8;
+                    let actual_blocks_v = (comp_height + 7) / 8;
+
+                    // For single-component images with unusual sampling (grayscale with h/v > 1),
+                    // some encoders omit padding blocks entirely. Detect this case.
+                    let is_single_component_oversample =
+                        scan_components.len() == 1 && (h_samp > 1 || v_samp > 1);
+
                     // Decode all blocks for this component in this MCU
                     for v in 0..v_samp {
                         for h in 0..h_samp {
@@ -904,12 +918,55 @@ impl<'a> JpegParser<'a> {
                             let block_y = mcu_y * v_samp + v;
                             let block_idx = block_y * comp_blocks_h + block_x;
 
-                            let coeffs = decoder.decode_block(
-                                *comp_idx,
-                                *dc_table as usize,
-                                *ac_table as usize,
-                            )?;
-                            self.coeffs[*comp_idx][block_idx] = coeffs;
+                            // Check if this block is beyond actual image bounds (padding)
+                            let is_padding =
+                                block_x >= actual_blocks_h || block_y >= actual_blocks_v;
+
+                            if is_padding && is_single_component_oversample {
+                                // Single-component with oversampling: skip padding blocks
+                                // These encoders typically omit them
+                                self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                continue;
+                            }
+
+                            if is_padding {
+                                // For padding blocks in multi-component images, use speculative decoding
+                                // Most encoders include them, but some might not
+                                let saved_state = decoder.save_state();
+                                match decoder.decode_block(
+                                    *comp_idx,
+                                    *dc_table as usize,
+                                    *ac_table as usize,
+                                ) {
+                                    Ok(coeffs) => {
+                                        // Encoder included padding block
+                                        self.coeffs[*comp_idx][block_idx] = coeffs;
+                                    }
+                                    Err(Error::UnexpectedEof { .. }) => {
+                                        // Encoder omitted padding block - restore state and fill zeros
+                                        decoder.restore_state(saved_state);
+                                        self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                    }
+                                    Err(e) => {
+                                        // Other error - also restore and skip
+                                        decoder.restore_state(saved_state);
+                                        self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                        // Log but don't fail on padding block errors
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "DEBUG: Padding block ({},{}) error: {:?}",
+                                            block_x, block_y, e
+                                        );
+                                    }
+                                }
+                            } else {
+                                let coeffs = decoder.decode_block(
+                                    *comp_idx,
+                                    *dc_table as usize,
+                                    *ac_table as usize,
+                                )?;
+                                self.coeffs[*comp_idx][block_idx] = coeffs;
+                            }
                         }
                     }
                 }
