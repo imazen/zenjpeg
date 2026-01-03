@@ -1118,59 +1118,54 @@ impl<'a> JpegParser<'a> {
             let (comp_idx, _dc_table, ac_table) = scan_components[0];
             let h_samp = self.components[comp_idx].h_samp_factor as usize;
             let v_samp = self.components[comp_idx].v_samp_factor as usize;
+
+            // For non-interleaved AC scans, blocks are encoded in raster order
+            // NOT in interleaved MCU order. Each MCU contains exactly 1 block.
             let comp_blocks_h = mcu_cols * h_samp;
+            let comp_blocks_v = mcu_rows * v_samp;
+            let total_blocks = comp_blocks_h * comp_blocks_v;
 
             // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
             mcu_count = 0;
             next_restart_num = 0;
 
-            for mcu_y in 0..mcu_rows {
-                for mcu_x in 0..mcu_cols {
-                    // Check for restart marker
-                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                        // Align to byte boundary (discard padding bits)
-                        decoder.align_to_byte();
-                        // Read and verify restart marker
-                        decoder.read_restart_marker(next_restart_num)?;
-                        // Update expected marker number (cycles 0-7)
-                        next_restart_num = (next_restart_num + 1) & 7;
-                        // Reset DC predictors and EOB run
-                        decoder.reset_dc();
-                        eob_run = 0;
-                    }
-
-                    for v in 0..v_samp {
-                        for h in 0..h_samp {
-                            let block_x = mcu_x * h_samp + h;
-                            let block_y = mcu_y * v_samp + v;
-                            let block_idx = block_y * comp_blocks_h + block_x;
-
-                            if is_first_scan {
-                                // AC first scan
-                                decoder.decode_ac_first(
-                                    &mut self.coeffs[comp_idx][block_idx],
-                                    ac_table as usize,
-                                    ss,
-                                    se,
-                                    al,
-                                    &mut eob_run,
-                                )?;
-                            } else {
-                                // AC refinement scan
-                                decoder.decode_ac_refine(
-                                    &mut self.coeffs[comp_idx][block_idx],
-                                    ac_table as usize,
-                                    ss,
-                                    se,
-                                    al,
-                                    &mut eob_run,
-                                )?;
-                            }
-                        }
-                    }
-
-                    mcu_count += 1;
+            for block_idx in 0..total_blocks {
+                // Check for restart marker
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Align to byte boundary (discard padding bits)
+                    decoder.align_to_byte();
+                    // Read and verify restart marker
+                    decoder.read_restart_marker(next_restart_num)?;
+                    // Update expected marker number (cycles 0-7)
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    // Reset DC predictors and EOB run
+                    decoder.reset_dc();
+                    eob_run = 0;
                 }
+
+                if is_first_scan {
+                    // AC first scan
+                    decoder.decode_ac_first(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        ac_table as usize,
+                        ss,
+                        se,
+                        al,
+                        &mut eob_run,
+                    )?;
+                } else {
+                    // AC refinement scan
+                    decoder.decode_ac_refine(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        ac_table as usize,
+                        ss,
+                        se,
+                        al,
+                        &mut eob_run,
+                    )?;
+                }
+
+                mcu_count += 1;
             }
         }
 
