@@ -270,22 +270,16 @@ fn test_encode_progressive_smaller_than_baseline() {
 fn test_encode_optimized_huffman() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let config_optimized = EncoderConfig {
-        width: 256,
-        height: 256,
-        optimize_huffman: true,
-        ..Default::default()
-    };
-    let encoder_opt = Encoder::from_config(config_optimized);
+    let encoder_opt = Encoder::new()
+        .width(256)
+        .height(256)
+        .optimize_huffman(true);
     let jpeg_opt = encoder_opt.encode(&img.pixels).expect("optimized failed");
 
-    let config_fixed = EncoderConfig {
-        width: 256,
-        height: 256,
-        optimize_huffman: false,
-        ..Default::default()
-    };
-    let encoder_fixed = Encoder::from_config(config_fixed);
+    let encoder_fixed = Encoder::new()
+        .width(256)
+        .height(256)
+        .optimize_huffman(false);
     let jpeg_fixed = encoder_fixed.encode(&img.pixels).expect("fixed failed");
 
     // Optimized should be smaller or equal

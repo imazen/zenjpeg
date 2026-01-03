@@ -34,15 +34,11 @@ fn compare_rust_cpp_420() {
     println!("Image: {}x{}", width, height);
 
     // Encode with Rust 4:2:0
-    let config = jpegli::encode::EncoderConfig {
-        width,
-        height,
-        quality: jpegli::Quality::from_quality(85.0),
-        subsampling: jpegli::types::Subsampling::S420,
-        ..Default::default()
-    };
-
-    let encoder = jpegli::encode::Encoder::from_config(config);
+    let encoder = jpegli::encode::Encoder::new()
+        .width(width)
+        .height(height)
+        .quality(jpegli::Quality::from_quality(85.0))
+        .subsampling(jpegli::types::Subsampling::S420);
     let rust_jpeg = encoder.encode(&pixels).expect("encode");
     fs::write("/tmp/rust_420_flower.jpg", &rust_jpeg).unwrap();
     println!("Rust 4:2:0: {} bytes", rust_jpeg.len());
@@ -85,14 +81,11 @@ fn compare_rust_cpp_420() {
     }
 
     // Also compare 4:4:4
-    let config444 = jpegli::encode::EncoderConfig {
-        width,
-        height,
-        quality: jpegli::Quality::from_quality(85.0),
-        subsampling: jpegli::types::Subsampling::S444,
-        ..Default::default()
-    };
-    let encoder444 = jpegli::encode::Encoder::from_config(config444);
+    let encoder444 = jpegli::encode::Encoder::new()
+        .width(width)
+        .height(height)
+        .quality(jpegli::Quality::from_quality(85.0))
+        .subsampling(jpegli::types::Subsampling::S444);
     let rust_444 = encoder444.encode(&pixels).expect("encode");
     println!("Rust 4:4:4: {} bytes", rust_444.len());
 

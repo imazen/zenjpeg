@@ -54,7 +54,7 @@ fn validate_file(path: &Path) {
 
     // Test with zune-jpeg
     print!("  zune-jpeg: ");
-    match zune_jpeg::JpegDecoder::new(&data).decode() {
+    match zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&data)).decode() {
         Ok(pixels) => println!("OK ({} bytes decoded)", pixels.len()),
         Err(e) => println!("ERROR: {:?}", e),
     }

@@ -28,15 +28,11 @@ fn roundtrip_with_subsampling(
     quality: f32,
     subsampling: Subsampling,
 ) -> (f64, u8, usize) {
-    let config = EncoderConfig {
-        width: img.width,
-        height: img.height,
-        quality: Quality::from_quality(quality),
-        subsampling,
-        ..Default::default()
-    };
-
-    let encoder = Encoder::from_config(config);
+    let encoder = Encoder::new()
+        .width(img.width)
+        .height(img.height)
+        .quality(Quality::from_quality(quality))
+        .subsampling(subsampling);
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();

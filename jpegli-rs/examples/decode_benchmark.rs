@@ -4,6 +4,7 @@
 //!
 //! Usage: cargo run --release --example decode_benchmark
 
+use std::io::Cursor;
 use std::time::Instant;
 use zune_jpeg::JpegDecoder;
 
@@ -39,7 +40,7 @@ fn main() {
     // Warmup
     let _ = jpegli::Decoder::new().decode(&jpeg);
     let _ = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg)).decode();
-    let mut zune = JpegDecoder::new(&jpeg);
+    let mut zune = JpegDecoder::new(Cursor::new(&jpeg));
     let _ = zune.decode();
 
     let iterations = 20;
@@ -85,7 +86,7 @@ fn main() {
     // Benchmark zune-jpeg
     let start = Instant::now();
     for _ in 0..iterations {
-        let mut decoder = JpegDecoder::new(&jpeg);
+        let mut decoder = JpegDecoder::new(Cursor::new(&jpeg));
         let _ = decoder.decode().unwrap();
     }
     let zune_time = start.elapsed() / iterations;
@@ -156,7 +157,7 @@ fn main() {
 
     let start = Instant::now();
     for _ in 0..iterations_4k {
-        let mut decoder = JpegDecoder::new(&jpeg_4k);
+        let mut decoder = JpegDecoder::new(Cursor::new(&jpeg_4k));
         let _ = decoder.decode().unwrap();
     }
     let zune_4k_time = start.elapsed() / iterations_4k;
