@@ -25,7 +25,6 @@ multiversion = { workspace = true }
 lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
 jpeg-decoder = { workspace = true, optional = true }
-butteraugli = { workspace = true }
 # Hybrid trellis quantization from mozjpeg
 mozjpeg-rs = { workspace = true, optional = true }
 # For FFI comparison testing against C++ jpegli (internal development only)
@@ -39,6 +38,7 @@ codec-eval = { version = "0.2", optional = true }
 yuv = { workspace = true, optional = true }
 
 [dev-dependencies]
+butteraugli = { workspace = true }
 chrono = "0.4"
 approx = { workspace = true }
 proptest = { workspace = true }

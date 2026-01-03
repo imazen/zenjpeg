@@ -88,9 +88,6 @@ pub mod hybrid;
 #[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid_config;
 
-// Quality metrics - re-export from the butteraugli crate
-pub use butteraugli;
-
 // Test utilities (available for tests and examples)
 // Hidden from docs but always available for integration tests
 #[doc(hidden)]
