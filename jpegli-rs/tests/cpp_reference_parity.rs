@@ -200,7 +200,7 @@ fn test_file_size_parity() {
                 .width(width)
                 .height(height)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(point.quality as f32));
+                .jpegli_quality(Quality::from_quality(point.quality as f32));
 
             let rust_jpeg = match encoder.encode(&pixels) {
                 Ok(data) => data,
@@ -288,7 +288,7 @@ fn test_dssim_parity() {
                 .width(width)
                 .height(height)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(point.quality as f32));
+                .jpegli_quality(Quality::from_quality(point.quality as f32));
 
             let rust_jpeg = match encoder.encode(&pixels) {
                 Ok(data) => data,

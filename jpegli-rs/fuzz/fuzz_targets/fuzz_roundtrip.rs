@@ -65,7 +65,7 @@ fuzz_target!(|input: RoundtripInput| {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality_val))
+        .jpegli_quality(Quality::from_quality(quality_val))
         .subsampling(subsampling)
         .mode(mode);
 

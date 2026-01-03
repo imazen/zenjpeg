@@ -117,7 +117,7 @@ fn compare_to_original(png_path: &str, name: &str) -> Option<CompareResult> {
     let rust_jpeg = jpegli::encode::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::Traditional(90.0))
+        .jpegli_quality(jpegli::quant::Quality::Traditional(90.0))
         .encode(&original)
         .ok()?;
 

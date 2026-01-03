@@ -19,7 +19,7 @@ fn main() {
             .width(size)
             .height(size)
             .pixel_format(PixelFormat::Gray)
-            .quality(Quality::from_quality(75.0))
+            .jpegli_quality(Quality::from_quality(75.0))
             .optimize_huffman(false)
             .mode(JpegMode::Progressive)
             .encode(&data)

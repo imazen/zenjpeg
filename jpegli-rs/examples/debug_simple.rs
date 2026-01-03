@@ -14,7 +14,7 @@ fn test_size(width: u32, height: u32, label: &str) {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
@@ -57,7 +57,7 @@ fn main() {
             .width(*width)
             .height(*height)
             .pixel_format(*format)
-            .quality(Quality::from_quality(90.0))
+            .jpegli_quality(Quality::from_quality(90.0))
             .optimize_huffman(false)
             .mode(JpegMode::Progressive);
 
@@ -74,7 +74,7 @@ fn main() {
             .width(*width)
             .height(*height)
             .pixel_format(*format)
-            .quality(Quality::from_quality(90.0))
+            .jpegli_quality(Quality::from_quality(90.0))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive);
 
@@ -100,7 +100,7 @@ fn main() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive);
 
@@ -228,7 +228,7 @@ fn main() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 

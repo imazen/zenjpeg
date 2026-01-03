@@ -25,7 +25,7 @@ fn test_progressive_grayscale_gradient() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
@@ -76,7 +76,7 @@ fn test_progressive_solid_gray() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
@@ -110,7 +110,7 @@ fn test_progressive_rgb() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
@@ -146,7 +146,7 @@ fn test_progressive_has_multiple_scans() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .mode(JpegMode::Progressive);
 
     let jpeg_data = encoder.encode(&data).expect("Encoding should succeed");
@@ -189,7 +189,7 @@ fn test_progressive_optimized_smaller() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive);
 
@@ -202,7 +202,7 @@ fn test_progressive_optimized_smaller() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
@@ -247,7 +247,7 @@ fn test_progressive_optimized_external_decode() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 
@@ -304,7 +304,7 @@ fn test_progressive_optimized_larger_image() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -315,7 +315,7 @@ fn test_progressive_optimized_larger_image() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -352,7 +352,7 @@ fn test_progressive_optimized_solid_color() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -389,7 +389,7 @@ fn test_progressive_optimized_high_frequency() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -426,7 +426,7 @@ fn test_progressive_optimized_quality_levels() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(quality))
+            .jpegli_quality(Quality::from_quality(quality))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
             .encode(&data)
@@ -462,7 +462,7 @@ fn test_progressive_optimized_single_block() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -492,7 +492,7 @@ fn test_progressive_optimized_grayscale_sizes() {
             .width(size)
             .height(size)
             .pixel_format(PixelFormat::Gray)
-            .quality(Quality::from_quality(85.0))
+            .jpegli_quality(Quality::from_quality(85.0))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
             .encode(&data)
@@ -517,7 +517,7 @@ fn test_progressive_optimized_scan_structure() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -571,7 +571,7 @@ fn test_progressive_optimized_non_square() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -598,7 +598,7 @@ fn test_progressive_optimized_non_square() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
+        .jpegli_quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
@@ -627,7 +627,7 @@ fn test_progressive_optimized_odd_dimensions() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(85.0))
+            .jpegli_quality(Quality::from_quality(85.0))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
             .encode(&data)
@@ -664,7 +664,7 @@ fn test_baseline_still_works() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline);
 
     let jpeg_data = encoder
@@ -713,7 +713,7 @@ fn test_progressive_all_quality_levels() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q as f32))
+            .jpegli_quality(Quality::from_quality(q as f32))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
             .encode(&data)
@@ -833,7 +833,7 @@ fn test_progressive_quality_various_content() {
                 .width(tc.width)
                 .height(tc.height)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(q))
+                .jpegli_quality(Quality::from_quality(q))
                 .optimize_huffman(true)
                 .mode(JpegMode::Progressive)
                 .encode(&data)
@@ -878,7 +878,7 @@ fn test_progressive_extreme_low_quality() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q))
+            .jpegli_quality(Quality::from_quality(q))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
             .encode(&data)

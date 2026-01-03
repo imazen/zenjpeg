@@ -153,7 +153,7 @@ fn encode_jpegli(img: &ImageData, quality: u8) -> EncodingResult {
     let jpeg_data = jpegli::Encoder::new()
         .width(img.width as u32)
         .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32))
         .encode(&img.pixels)
         .expect("jpegli encode");
 
@@ -198,7 +198,7 @@ fn encode_adaptive_hybrid(img: &ImageData, quality: u8) -> EncodingResult {
     let mut encoder = jpegli::Encoder::new()
         .width(img.width as u32)
         .height(img.height as u32)
-        .quality(jpegli::quant::Quality::from_quality(quality as f32));
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality as f32));
 
     // Adaptive: use hybrid only for complex images
     if should_use_hybrid(img.aq_mean) {

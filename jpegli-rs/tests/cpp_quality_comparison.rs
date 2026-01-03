@@ -68,7 +68,7 @@ fn test_cpp_quality_comparison() {
             .width(width)
             .height(height)
             .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q as f32))
+            .jpegli_quality(Quality::from_quality(q as f32))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
             .encode(&data)

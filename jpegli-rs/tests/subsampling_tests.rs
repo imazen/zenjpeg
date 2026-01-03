@@ -341,7 +341,7 @@ fn test_grayscale_no_subsampling() {
         .width(128)
         .height(128)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0));
+        .jpegli_quality(Quality::from_quality(90.0));
 
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
@@ -420,7 +420,7 @@ fn test_rgb_has_three_components() {
     let encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");
@@ -434,7 +434,7 @@ fn test_grayscale_has_one_component() {
         .width(64)
         .height(64)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");

@@ -154,7 +154,7 @@ fn test_xyb_encode_decode() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true);
 
     // Try encoding - this tests that the XYB flag doesn't break encoding

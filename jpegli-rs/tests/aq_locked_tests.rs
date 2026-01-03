@@ -141,7 +141,7 @@ fn test_encoding_with_zero_bias_valid() {
         .width(width as u32)
         .height(height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .encode(&rgb)
         .expect("encoding failed");
 
@@ -191,7 +191,7 @@ fn test_quality_affects_size() {
             .width(width as u32)
             .height(height as u32)
             .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(Quality::from_quality(q))
+            .jpegli_quality(Quality::from_quality(q))
             .encode(&rgb)
             .expect("encoding failed")
             .len()

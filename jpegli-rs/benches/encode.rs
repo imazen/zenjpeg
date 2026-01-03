@@ -31,7 +31,7 @@ fn bench_encode(c: &mut Criterion) {
                         .width(size as u32)
                         .height(size as u32)
                         .pixel_format(PixelFormat::Rgb)
-                        .quality(Quality::from_quality(90.0));
+                        .jpegli_quality(Quality::from_quality(90.0));
                     encoder.encode(black_box(data))
                 });
             },
@@ -53,7 +53,7 @@ fn bench_quality_levels(c: &mut Criterion) {
                     .width(512)
                     .height(512)
                     .pixel_format(PixelFormat::Rgb)
-                    .quality(Quality::from_quality(quality as f32));
+                    .jpegli_quality(Quality::from_quality(quality as f32));
                 encoder.encode(black_box(data))
             });
         });

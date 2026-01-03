@@ -88,7 +88,7 @@ fn test_q100_rust_vs_cpp() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(100.0))
+        .jpegli_quality(Quality::from_quality(100.0))
         .optimize_huffman(true)
         .mode(JpegMode::Baseline)
         .encode(&rgb)

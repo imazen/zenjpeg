@@ -16,7 +16,7 @@ fn test_content(width: u32, height: u32, name: &str, fill_fn: impl Fn(u32, u32, 
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true);
 
     let jpeg = encoder.encode(&rgb).expect("encode");

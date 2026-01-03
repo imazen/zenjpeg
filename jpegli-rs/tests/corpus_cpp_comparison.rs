@@ -97,7 +97,7 @@ fn register_rust_jpegli(session: &mut EvalSession) {
                 .width(width as u32)
                 .height(height as u32)
                 .pixel_format(jpegli::PixelFormat::Rgb)
-                .quality(Quality::from_quality(quality));
+                .jpegli_quality(Quality::from_quality(quality));
 
             let encoded = encoder
                 .encode(&rgb_data)

@@ -79,7 +79,7 @@ fn test_file_size_parity_synthetic() {
     let encoder = Encoder::new()
         .width(256)
         .height(256)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
 
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
@@ -109,7 +109,7 @@ fn test_file_size_scaling() {
             let encoder = Encoder::new()
                 .width(256)
                 .height(256)
-                .quality(Quality::from_quality(q));
+                .jpegli_quality(Quality::from_quality(q));
             (q, encoder.encode(&img.pixels).unwrap().len())
         })
         .collect();
@@ -202,7 +202,7 @@ fn test_quality_vs_cpp_decoded() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let rust_jpeg = encoder.encode(&original).expect("Rust encode failed");
 
     let decoder = Decoder::new();
@@ -239,7 +239,7 @@ fn test_marker_structure() {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Check required markers
@@ -278,7 +278,7 @@ fn test_progressive_marker_structure() {
         .width(128)
         .height(128)
         .mode(JpegMode::Progressive)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let sof2_count = count_markers(&jpeg, 0xC2);
@@ -333,7 +333,7 @@ fn test_quant_tables_present() {
     let encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // RGB JPEG should have 2 quant tables (luma and chroma)
@@ -355,13 +355,13 @@ fn test_quant_tables_vary_with_quality() {
     let q50_encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(50.0));
+        .jpegli_quality(Quality::from_quality(50.0));
     let q50_jpeg = q50_encoder.encode(&img.pixels).expect("encode Q50 failed");
 
     let q95_encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(95.0));
+        .jpegli_quality(Quality::from_quality(95.0));
     let q95_jpeg = q95_encoder.encode(&img.pixels).expect("encode Q95 failed");
 
     let q50_table = extract_dqt_table(&q50_jpeg, 0).unwrap();
@@ -390,7 +390,7 @@ fn test_jpeg_decoder_compatibility() {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(90.0));
+        .jpegli_quality(Quality::from_quality(90.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Decode with jpeg-decoder crate
@@ -409,11 +409,13 @@ fn test_zune_jpeg_compatibility() {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(90.0));
+        .jpegli_quality(Quality::from_quality(90.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Decode with zune-jpeg
-    let mut decoder = zune_jpeg::JpegDecoder::new(&jpeg);
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    let cursor = ZCursor::new(&jpeg);
+    let mut decoder = zune_jpeg::JpegDecoder::new(cursor);
     let decoded = decoder.decode().expect("zune-jpeg failed");
     let info = decoder.info().unwrap();
 
@@ -471,7 +473,7 @@ fn test_huffman_tables_present() {
     let encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let (dc_count, ac_count) = count_dht_tables(&jpeg);
@@ -506,7 +508,7 @@ fn test_sof_parameters() {
     let encoder = Encoder::new()
         .width(320)
         .height(240)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let (precision, height, width, components) = extract_sof_params(&jpeg).expect("SOF not found");

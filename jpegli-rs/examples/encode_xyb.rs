@@ -26,7 +26,7 @@ fn main() {
     let jpeg = jpegli::Encoder::new()
         .width(width)
         .height(height)
-        .quality(jpegli::quant::Quality::from_quality(quality))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(quality))
         .use_xyb(true)
         .encode(pixels)
         .expect("Encode failed");

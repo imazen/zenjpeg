@@ -24,7 +24,7 @@
 //!     .width(640)
 //!     .height(480)
 //!     .color_space(ColorSpace::Rgb)
-//!     .quality(Quality::from_distance(1.0))
+//!     .jpegli_quality(Quality::from_distance(1.0))
 //!     .build()?;
 //!
 //! let jpeg_data = encoder.encode(pixels)?;
@@ -42,6 +42,7 @@
 pub mod decode;
 pub mod encode;
 pub mod error;
+pub mod quality_conversion;
 pub mod quant;
 pub mod types;
 
@@ -109,4 +110,5 @@ pub use encode::{Encoder, EncoderConfig};
 pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
 
 // Quality settings
+pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
 pub use quant::{Quality, QuantTable};

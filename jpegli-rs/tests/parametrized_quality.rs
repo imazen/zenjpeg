@@ -24,7 +24,7 @@ fn roundtrip_quality(
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(quality));
+        .jpegli_quality(Quality::from_quality(quality));
 
     let jpeg_data = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();

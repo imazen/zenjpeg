@@ -315,7 +315,7 @@ fn encode_jpeg(
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality))
+        .jpegli_quality(Quality::from_quality(quality))
         .subsampling(subsampling)
         .optimize_huffman(optimize_huffman)
         .encode(rgb)

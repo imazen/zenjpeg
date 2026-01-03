@@ -25,7 +25,7 @@ fn test_size(size: u32, pattern: &str, optimize: bool) -> bool {
         .width(size)
         .height(size)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .optimize_huffman(optimize)
         .mode(JpegMode::Progressive)
         .encode(&data)

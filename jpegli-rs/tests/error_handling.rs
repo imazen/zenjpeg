@@ -73,7 +73,7 @@ fn test_encode_quality_boundary_low() {
     let encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(1.0));
+        .jpegli_quality(Quality::from_quality(1.0));
     let result = encoder.encode(&img.pixels);
     assert!(result.is_ok(), "Q1 should be valid");
 }
@@ -84,7 +84,7 @@ fn test_encode_quality_boundary_high() {
     let encoder = Encoder::new()
         .width(64)
         .height(64)
-        .quality(Quality::from_quality(100.0));
+        .jpegli_quality(Quality::from_quality(100.0));
     let result = encoder.encode(&img.pixels);
     assert!(result.is_ok(), "Q100 should be valid");
 }

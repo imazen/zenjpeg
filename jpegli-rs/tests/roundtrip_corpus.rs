@@ -29,7 +29,7 @@ fn roundtrip_metrics(img: &TestImage, quality: f32, mode: JpegMode) -> (f64, u8,
     let encoder = Encoder::new()
         .width(img.width)
         .height(img.height)
-        .quality(Quality::from_quality(quality))
+        .jpegli_quality(Quality::from_quality(quality))
         .mode(mode);
 
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
@@ -294,7 +294,7 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0));
+        .jpegli_quality(Quality::from_quality(90.0));
 
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();
@@ -324,7 +324,7 @@ fn test_encode_deterministic() {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
 
     let jpeg1 = encoder.encode(&img.pixels).expect("encode 1 failed");
     let jpeg2 = encoder.encode(&img.pixels).expect("encode 2 failed");
@@ -338,7 +338,7 @@ fn test_decode_deterministic() {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -372,7 +372,7 @@ fn test_compression_ratio() {
         let encoder = Encoder::new()
             .width(img.width)
             .height(img.height)
-            .quality(Quality::from_quality(85.0));
+            .jpegli_quality(Quality::from_quality(85.0));
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let ratio = raw_size as f64 / jpeg.len() as f64;

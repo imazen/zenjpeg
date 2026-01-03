@@ -20,7 +20,7 @@ fn main() {
     let jpeg = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true)
         .encode(&rgb)
         .expect("encode");

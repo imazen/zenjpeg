@@ -50,7 +50,7 @@ fn test_xyb_cpp_comparison() {
         .width(width as u32)
         .height(height as u32)
         .pixel_format(jpegli::types::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(90.0))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .use_xyb(true)
         .encode(&rgb_data)
         .expect("Rust encoding failed");
@@ -328,7 +328,7 @@ fn test_icc_profile_embedding() {
         .width(width as u32)
         .height(height as u32)
         .pixel_format(jpegli::types::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(90.0))
+        .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .use_xyb(true)
         .encode(&rgb_data)
         .expect("Encoding failed");

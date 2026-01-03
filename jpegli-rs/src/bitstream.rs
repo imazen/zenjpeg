@@ -168,6 +168,11 @@ impl<'a> BitReader<'a> {
     }
 
     /// Reads the next byte, handling byte unstuffing.
+    ///
+    /// According to JPEG spec (ITU-T T.81), when we encounter 0xFF:
+    /// - 0xFF 0x00: Byte stuffing, represents the data byte 0xFF
+    /// - 0xFF 0xXX (where XX != 0x00 and XX != 0xFF): A marker
+    /// - 0xFF 0xFF...: Fill bytes, skip until non-0xFF byte found
     fn read_byte(&mut self) -> Result<u8> {
         // If we've already found a marker, don't read more data
         if self.marker_found.is_some() {
@@ -186,6 +191,11 @@ impl<'a> BitReader<'a> {
         self.position += 1;
 
         if byte == 0xFF {
+            // Skip any fill bytes (consecutive 0xFF)
+            while self.position < self.data.len() && self.data[self.position] == 0xFF {
+                self.position += 1;
+            }
+
             if self.position >= self.data.len() {
                 return Err(Error::UnexpectedEof {
                     context: "after 0xFF byte",

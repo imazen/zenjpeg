@@ -219,7 +219,7 @@ mod entropy_coverage {
         let encoder = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(10.0));
+            .jpegli_quality(Quality::from_quality(10.0));
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 100);
 
@@ -227,7 +227,7 @@ mod entropy_coverage {
         let encoder = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(100.0));
+            .jpegli_quality(Quality::from_quality(100.0));
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 100);
     }
@@ -241,7 +241,7 @@ mod entropy_coverage {
             .width(128)
             .height(128)
             .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(90.0));
+            .jpegli_quality(Quality::from_quality(90.0));
         let jpeg = encoder
             .encode(&img.pixels)
             .expect("progressive encode failed");
@@ -264,7 +264,7 @@ mod entropy_coverage {
             .width(128)
             .height(128)
             .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(80.0));
+            .jpegli_quality(Quality::from_quality(80.0));
         let jpeg = encoder
             .encode(&img.pixels)
             .expect("progressive encode failed");
@@ -282,7 +282,7 @@ mod entropy_coverage {
             .width(128)
             .height(128)
             .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(90.0));
+            .jpegli_quality(Quality::from_quality(90.0));
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -389,7 +389,7 @@ mod idct_coverage {
             let jpeg = Encoder::new()
                 .width(64)
                 .height(64)
-                .quality(Quality::from_quality(q))
+                .jpegli_quality(Quality::from_quality(q))
                 .encode(&img.pixels)
                 .expect("encode failed");
 
@@ -406,7 +406,7 @@ mod idct_coverage {
             .width(256)
             .height(256)
             .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(70.0))
+            .jpegli_quality(Quality::from_quality(70.0))
             .encode(&img.pixels)
             .expect("encode failed");
 
@@ -487,7 +487,7 @@ mod decode_coverage {
         let jpeg = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(30.0))
+            .jpegli_quality(Quality::from_quality(30.0))
             .encode(&img.pixels)
             .expect("encode failed");
 
@@ -631,7 +631,7 @@ mod encode_coverage {
         let jpeg_low = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(1.0))
+            .jpegli_quality(Quality::from_quality(1.0))
             .encode(&img.pixels)
             .expect("low Q encode failed");
 
@@ -639,7 +639,7 @@ mod encode_coverage {
         let jpeg_high = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(100.0))
+            .jpegli_quality(Quality::from_quality(100.0))
             .encode(&img.pixels)
             .expect("high Q encode failed");
 
@@ -681,7 +681,7 @@ mod xyb_coverage {
             .width(64)
             .height(64)
             .use_xyb(true)
-            .quality(Quality::from_quality(90.0))
+            .jpegli_quality(Quality::from_quality(90.0))
             .encode(&img.pixels)
             .expect("XYB encode failed");
 
@@ -866,7 +866,7 @@ mod aq_coverage {
             let jpeg = Encoder::new()
                 .width(img.width)
                 .height(img.height)
-                .quality(Quality::from_quality(85.0))
+                .jpegli_quality(Quality::from_quality(85.0))
                 .encode(&img.pixels)
                 .expect(&format!("pattern {} encode failed", i));
 
@@ -884,7 +884,7 @@ mod aq_coverage {
             let jpeg = Encoder::new()
                 .width(64)
                 .height(64)
-                .quality(Quality::from_quality(q))
+                .jpegli_quality(Quality::from_quality(q))
                 .encode(&img.pixels)
                 .expect(&format!("Q{} encode failed", q));
 
@@ -910,7 +910,7 @@ mod scan_script_coverage {
             .width(128)
             .height(128)
             .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(80.0))
+            .jpegli_quality(Quality::from_quality(80.0))
             .encode(&img.pixels)
             .expect("progressive encode failed");
 
@@ -974,14 +974,14 @@ mod quant_coverage {
         let jpeg_q10 = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(10.0))
+            .jpegli_quality(Quality::from_quality(10.0))
             .encode(&img.pixels)
             .expect("Q10 encode failed");
 
         let jpeg_q90 = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(90.0))
+            .jpegli_quality(Quality::from_quality(90.0))
             .encode(&img.pixels)
             .expect("Q90 encode failed");
 

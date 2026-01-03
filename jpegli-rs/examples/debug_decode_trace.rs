@@ -15,7 +15,7 @@ fn main() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S444)
         .mode(JpegMode::Progressive);
 

@@ -86,7 +86,7 @@ fn test_encode_quality_levels(quality: f32) {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(quality));
+        .jpegli_quality(Quality::from_quality(quality));
 
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "Q{} JPEG too small", quality);
@@ -108,7 +108,7 @@ fn test_encode_quality_affects_size() {
             let encoder = Encoder::new()
                 .width(256)
                 .height(256)
-                .quality(Quality::from_quality(q));
+                .jpegli_quality(Quality::from_quality(q));
             encoder.encode(&img.pixels).unwrap().len()
         })
         .collect();
@@ -139,7 +139,7 @@ fn test_encode_distance_quality(distance: f32) {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_distance(distance));
+        .jpegli_quality(Quality::from_distance(distance));
 
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "Distance {} JPEG too small", distance);
@@ -239,7 +239,7 @@ fn test_encode_progressive_smaller_than_baseline() {
         .width(256)
         .height(256)
         .mode(JpegMode::Baseline)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let baseline_jpeg = baseline_encoder
         .encode(&img.pixels)
         .expect("baseline failed");
@@ -248,7 +248,7 @@ fn test_encode_progressive_smaller_than_baseline() {
         .width(256)
         .height(256)
         .mode(JpegMode::Progressive)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
     let progressive_jpeg = progressive_encoder
         .encode(&img.pixels)
         .expect("progressive failed");
@@ -349,7 +349,7 @@ fn test_encode_solid_color() {
         let encoder = Encoder::new()
             .width(64)
             .height(64)
-            .quality(Quality::from_quality(95.0));
+            .jpegli_quality(Quality::from_quality(95.0));
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -367,7 +367,7 @@ fn test_encode_checkerboard() {
     let encoder = Encoder::new()
         .width(128)
         .height(128)
-        .quality(Quality::from_quality(95.0));
+        .jpegli_quality(Quality::from_quality(95.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -387,7 +387,7 @@ fn test_encode_color_bars() {
     let encoder = Encoder::new()
         .width(128)
         .height(64)
-        .quality(Quality::from_quality(90.0));
+        .jpegli_quality(Quality::from_quality(90.0));
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -425,7 +425,7 @@ fn test_encode_large_image() {
     let encoder = Encoder::new()
         .width(1024)
         .height(768)
-        .quality(Quality::from_quality(85.0));
+        .jpegli_quality(Quality::from_quality(85.0));
 
     let jpeg = encoder.encode(&img.pixels).expect("encode large failed");
     assert!(jpeg.len() > 10000, "Large JPEG suspiciously small");

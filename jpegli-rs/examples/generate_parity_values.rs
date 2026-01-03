@@ -69,7 +69,7 @@ fn main() {
                 .width(width as u32)
                 .height(height as u32)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(q as f32))
+                .jpegli_quality(Quality::from_quality(q as f32))
                 .subsampling(subsampling)
                 .optimize_huffman(optimize)
                 .encode(&rgb)

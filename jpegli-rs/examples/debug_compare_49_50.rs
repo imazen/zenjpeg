@@ -12,7 +12,7 @@ fn encode(width: u32, height: u32, data: &[u8]) -> Vec<u8> {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive)
         .encode(data)

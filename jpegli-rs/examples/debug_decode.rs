@@ -15,7 +15,7 @@ fn main() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true);
 
     let jpeg = encoder.encode(&rgb).expect("encode");
@@ -51,7 +51,7 @@ fn main() {
     let encoder_ycbcr = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(false);
 
     let jpeg_ycbcr = encoder_ycbcr.encode(&rgb).expect("encode ycbcr");
@@ -81,7 +81,7 @@ fn main() {
     let encoder_xyb = Encoder::new()
         .width(width)
         .height(height)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .use_xyb(true);
 
     let jpeg_xyb = encoder_xyb.encode(&rgb).expect("encode xyb 64x64");

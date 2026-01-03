@@ -15,7 +15,7 @@ fn main() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(false)
         .mode(JpegMode::Progressive);
 
@@ -35,7 +35,7 @@ fn main() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
+        .jpegli_quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive);
 

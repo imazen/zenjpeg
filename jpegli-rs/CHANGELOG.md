@@ -11,12 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Multi-decoder compatibility test: validates jpegli-rs output works with jpeg-decoder, zune-jpeg, and mozjpeg
 - Butteraugli-based quality thresholds in decoder compatibility tests
+- **Quality conversion API**: `QualityConversion` and `QualityComparisonMetric` for matching other encoders
+  - `QualityConversion::mozjpeg_equivalent()` - Convert mozjpeg quality to equivalent jpegli quality
+  - `QualityConversion::try_mozjpeg_equivalent()` - Same but returns `None` for unmapped values
+  - Supports DSSIM, SSIMULACRA2, and Butteraugli metrics
+  - Pre-computed tables for 4:4:4 and 4:2:0 subsampling modes
+- `Encoder::jpegli_quality()` - Explicit method for setting jpegli native quality
+- `Encoder::equivalent_quality()` - Set quality by matching another encoder
 
 ### Changed
 
 - Updated butteraugli to 0.3.1 with `unsafe-perf` feature for 1.5x faster quality metrics
 - Updated zune-jpeg to 0.5 (API changes for ZCursor wrapper)
 - Updated mozjpeg-rs to 0.2.5
+
+### Deprecated
+
+- `Encoder::quality()` - Use `jpegli_quality()` or `equivalent_quality()` instead
 
 ### Notes
 

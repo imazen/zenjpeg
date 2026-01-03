@@ -21,7 +21,7 @@ fn test_size(width: u32, height: u32) {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(75.0))
+        .jpegli_quality(Quality::from_quality(75.0))
         .optimize_huffman(false) // Test direct encoding
         .mode(JpegMode::Progressive)
         .encode(&data)

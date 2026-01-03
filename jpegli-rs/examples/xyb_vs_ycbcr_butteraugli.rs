@@ -55,7 +55,7 @@ fn main() {
         let xyb_jpeg = jpegli::Encoder::new()
             .width(width as u32)
             .height(height as u32)
-            .quality(jpegli::quant::Quality::from_quality(q as f32))
+            .jpegli_quality(jpegli::quant::Quality::from_quality(q as f32))
             .use_xyb(true)
             .encode(pixels)
             .expect("XYB encode");
@@ -65,7 +65,7 @@ fn main() {
         let ycbcr_jpeg = jpegli::Encoder::new()
             .width(width as u32)
             .height(height as u32)
-            .quality(jpegli::quant::Quality::from_quality(q as f32))
+            .jpegli_quality(jpegli::quant::Quality::from_quality(q as f32))
             .use_xyb(false)
             .encode(pixels)
             .expect("YCbCr encode");
