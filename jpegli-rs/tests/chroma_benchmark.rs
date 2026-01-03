@@ -65,12 +65,12 @@ fn generate_gradient_v(width: usize, height: usize) -> Vec<u8> {
 fn generate_color_stripes(width: usize, height: usize, stripe_width: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
     let colors = [
-        [255u8, 0, 0],   // Red
-        [0, 255, 0],     // Green
-        [0, 0, 255],     // Blue
-        [255, 255, 0],   // Yellow
-        [255, 0, 255],   // Magenta
-        [0, 255, 255],   // Cyan
+        [255u8, 0, 0], // Red
+        [0, 255, 0],   // Green
+        [0, 0, 255],   // Blue
+        [255, 255, 0], // Yellow
+        [255, 0, 255], // Magenta
+        [0, 255, 255], // Cyan
     ];
 
     for y in 0..height {
@@ -232,12 +232,8 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
         .map(|rgb| RGBA::new(rgb[0], rgb[1], rgb[2], 255))
         .collect();
 
-    let orig_img = attr
-        .create_image_rgba(&orig_rgba, width, height)
-        .unwrap();
-    let dec_img = attr
-        .create_image_rgba(&dec_rgba, width, height)
-        .unwrap();
+    let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
+    let dec_img = attr.create_image_rgba(&dec_rgba, width, height).unwrap();
 
     let (dssim, _) = attr.compare(&orig_img, dec_img);
     dssim.into()
@@ -339,10 +335,7 @@ impl TestCaseResults {
     }
 
     fn best_size(&self) -> &MethodResult {
-        self.results
-            .iter()
-            .min_by_key(|r| r.file_size)
-            .unwrap()
+        self.results.iter().min_by_key(|r| r.file_size).unwrap()
     }
 
     fn fastest(&self) -> &MethodResult {
@@ -491,10 +484,22 @@ fn test_gradient_h_quality() {
 
     // Verify all methods produce valid results
     for r in &results {
-        assert!(!r.results.is_empty(), "Should have results for {}", r.subsampling);
+        assert!(
+            !r.results.is_empty(),
+            "Should have results for {}",
+            r.subsampling
+        );
         for method in &r.results {
-            assert!(method.dssim < 0.1, "{} should have reasonable quality", method.name);
-            assert!(method.file_size > 0, "{} should produce output", method.name);
+            assert!(
+                method.dssim < 0.1,
+                "{} should have reasonable quality",
+                method.name
+            );
+            assert!(
+                method.file_size > 0,
+                "{} should produce output",
+                method.name
+            );
         }
     }
 }
@@ -622,10 +627,22 @@ fn test_comprehensive_benchmark() {
     let test_cases: Vec<(&str, Vec<u8>)> = vec![
         ("Horizontal Gradient", generate_gradient_h(width, height)),
         ("Vertical Gradient", generate_gradient_v(width, height)),
-        ("Color Stripes (4px)", generate_color_stripes(width, height, 4)),
-        ("Color Stripes (2px)", generate_color_stripes(width, height, 2)),
-        ("Checkerboard (4x4)", generate_checkerboard(width, height, 4)),
-        ("Checkerboard (2x2)", generate_checkerboard(width, height, 2)),
+        (
+            "Color Stripes (4px)",
+            generate_color_stripes(width, height, 4),
+        ),
+        (
+            "Color Stripes (2px)",
+            generate_color_stripes(width, height, 2),
+        ),
+        (
+            "Checkerboard (4x4)",
+            generate_checkerboard(width, height, 4),
+        ),
+        (
+            "Checkerboard (2x2)",
+            generate_checkerboard(width, height, 2),
+        ),
         ("Natural Pattern", generate_natural_pattern(width, height)),
         ("Thin Lines", generate_thin_lines(width, height)),
     ];
@@ -693,7 +710,10 @@ fn test_all_pathways_valid() {
         ("YUV Box", Some(P_YUV_BOX)),
         ("YUV Sharp", Some(P_YUV_SHARP)),
         ("F32 Gamma-Aware", Some(P_F32_GAMMA_AWARE)),
-        ("F32 Gamma-Aware Iterative", Some(P_F32_GAMMA_AWARE_ITERATIVE)),
+        (
+            "F32 Gamma-Aware Iterative",
+            Some(P_F32_GAMMA_AWARE_ITERATIVE),
+        ),
     ];
 
     let pathways_422 = [
@@ -702,7 +722,10 @@ fn test_all_pathways_valid() {
         ("YUV Box", Some(P_YUV_BOX)),
         ("YUV Sharp", Some(P_YUV_SHARP)),
         ("F32 Gamma-Aware", Some(P_F32_GAMMA_AWARE)),
-        ("F32 Gamma-Aware Iterative", Some(P_F32_GAMMA_AWARE_ITERATIVE)),
+        (
+            "F32 Gamma-Aware Iterative",
+            Some(P_F32_GAMMA_AWARE_ITERATIVE),
+        ),
     ];
 
     let pathways_440 = [
@@ -710,37 +733,66 @@ fn test_all_pathways_valid() {
         ("F32 Box", Some(P_F32_BOX)),
         // YUV crate doesn't support 4:4:0
         ("F32 Gamma-Aware", Some(P_F32_GAMMA_AWARE)),
-        ("F32 Gamma-Aware Iterative", Some(P_F32_GAMMA_AWARE_ITERATIVE)),
+        (
+            "F32 Gamma-Aware Iterative",
+            Some(P_F32_GAMMA_AWARE_ITERATIVE),
+        ),
     ];
 
-    let pathways_444 = [
-        ("Auto", None),
-        ("F32 None", Some(P_F32_NONE)),
-    ];
+    let pathways_444 = [("Auto", None), ("F32 None", Some(P_F32_NONE))];
 
     // Test 4:2:0
     for (name, pathway) in &pathways_420 {
-        let result = encode_with_method(&data, width as u32, height as u32, Subsampling::S420, *pathway);
+        let result = encode_with_method(
+            &data,
+            width as u32,
+            height as u32,
+            Subsampling::S420,
+            *pathway,
+        );
         assert!(result.is_ok(), "{} should work with 4:2:0", name);
         let jpeg = result.unwrap().jpeg_data;
-        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "{} should produce valid JPEG", name);
+        assert_eq!(
+            &jpeg[0..2],
+            &[0xFF, 0xD8],
+            "{} should produce valid JPEG",
+            name
+        );
     }
 
     // Test 4:2:2
     for (name, pathway) in &pathways_422 {
-        let result = encode_with_method(&data, width as u32, height as u32, Subsampling::S422, *pathway);
+        let result = encode_with_method(
+            &data,
+            width as u32,
+            height as u32,
+            Subsampling::S422,
+            *pathway,
+        );
         assert!(result.is_ok(), "{} should work with 4:2:2", name);
     }
 
     // Test 4:4:0
     for (name, pathway) in &pathways_440 {
-        let result = encode_with_method(&data, width as u32, height as u32, Subsampling::S440, *pathway);
+        let result = encode_with_method(
+            &data,
+            width as u32,
+            height as u32,
+            Subsampling::S440,
+            *pathway,
+        );
         assert!(result.is_ok(), "{} should work with 4:4:0", name);
     }
 
     // Test 4:4:4
     for (name, pathway) in &pathways_444 {
-        let result = encode_with_method(&data, width as u32, height as u32, Subsampling::S444, *pathway);
+        let result = encode_with_method(
+            &data,
+            width as u32,
+            height as u32,
+            Subsampling::S444,
+            *pathway,
+        );
         assert!(result.is_ok(), "{} should work with 4:4:4", name);
     }
 }
@@ -753,21 +805,33 @@ fn test_performance_comparison() {
     let data = generate_natural_pattern(width, height);
     let iterations = 5;
 
-    println!("\nPerformance comparison ({} iterations, {}x{} image)", iterations, width, height);
+    println!(
+        "\nPerformance comparison ({} iterations, {}x{} image)",
+        iterations, width, height
+    );
     println!("{:-<60}", "");
 
     let pathways = [
         ("Auto", Subsampling::S420, None),
         ("F32 Box", Subsampling::S420, Some(P_F32_BOX)),
         ("YUV Sharp", Subsampling::S420, Some(P_YUV_SHARP)),
-        ("F32 Gamma-Aware", Subsampling::S420, Some(P_F32_GAMMA_AWARE)),
-        ("F32 Gamma-Aware Iterative", Subsampling::S420, Some(P_F32_GAMMA_AWARE_ITERATIVE)),
+        (
+            "F32 Gamma-Aware",
+            Subsampling::S420,
+            Some(P_F32_GAMMA_AWARE),
+        ),
+        (
+            "F32 Gamma-Aware Iterative",
+            Subsampling::S420,
+            Some(P_F32_GAMMA_AWARE_ITERATIVE),
+        ),
     ];
 
     for (name, subsampling, pathway) in &pathways {
         let mut times = Vec::new();
         for _ in 0..iterations {
-            let result = encode_with_method(&data, width as u32, height as u32, *subsampling, *pathway);
+            let result =
+                encode_with_method(&data, width as u32, height as u32, *subsampling, *pathway);
             if let Ok(r) = result {
                 times.push(r.encode_time_us);
             }
@@ -777,7 +841,10 @@ fn test_performance_comparison() {
             let avg = times.iter().sum::<u128>() / times.len() as u128;
             let min = *times.iter().min().unwrap();
             let max = *times.iter().max().unwrap();
-            println!("{:<30} avg: {:>8}us  min: {:>8}us  max: {:>8}us", name, avg, min, max);
+            println!(
+                "{:<30} avg: {:>8}us  min: {:>8}us  max: {:>8}us",
+                name, avg, min, max
+            );
         }
     }
 }
@@ -791,13 +858,34 @@ fn test_gamma_aware_vs_box_differs() {
     let data = generate_color_stripes(width, height, 2);
 
     // Encode with box filter
-    let box_result = encode_with_method(&data, width as u32, height as u32, Subsampling::S420, Some(P_F32_BOX)).unwrap();
+    let box_result = encode_with_method(
+        &data,
+        width as u32,
+        height as u32,
+        Subsampling::S420,
+        Some(P_F32_BOX),
+    )
+    .unwrap();
 
     // Encode with gamma-aware
-    let gamma_result = encode_with_method(&data, width as u32, height as u32, Subsampling::S420, Some(P_F32_GAMMA_AWARE)).unwrap();
+    let gamma_result = encode_with_method(
+        &data,
+        width as u32,
+        height as u32,
+        Subsampling::S420,
+        Some(P_F32_GAMMA_AWARE),
+    )
+    .unwrap();
 
     // Encode with gamma-aware iterative
-    let iter_result = encode_with_method(&data, width as u32, height as u32, Subsampling::S420, Some(P_F32_GAMMA_AWARE_ITERATIVE)).unwrap();
+    let iter_result = encode_with_method(
+        &data,
+        width as u32,
+        height as u32,
+        Subsampling::S420,
+        Some(P_F32_GAMMA_AWARE_ITERATIVE),
+    )
+    .unwrap();
 
     // They should produce different file sizes (different encoded coefficients)
     // Note: sizes might be similar for some images, but the actual data should differ
@@ -828,6 +916,8 @@ fn test_gamma_aware_vs_box_differs() {
     println!("  Gamma-Aware vs Iterative: {} pixels", gamma_iter_diff);
 
     // Gamma-aware should produce different results than box
-    assert!(box_gamma_diff > 0 || box_iter_diff > 0,
-        "Gamma-aware methods should produce different results than box filter");
+    assert!(
+        box_gamma_diff > 0 || box_iter_diff > 0,
+        "Gamma-aware methods should produce different results than box filter"
+    );
 }
