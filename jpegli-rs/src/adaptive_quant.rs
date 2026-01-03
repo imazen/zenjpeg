@@ -340,20 +340,6 @@ pub fn compute_aq_strength_map_impl(
         &mut quant_field,
     );
 
-    // Debug: print after fuzzy erosion
-    if std::env::var("DEBUG_AQ").is_ok() {
-        let qf_min = quant_field.iter().copied().fold(f32::INFINITY, f32::min);
-        let qf_max = quant_field
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let qf_mean: f32 = quant_field.iter().sum::<f32>() / quant_field.len().max(1) as f32;
-        eprintln!(
-            "DEBUG after fuzzy_erosion: min={:.4}, max={:.4}, mean={:.4}",
-            qf_min, qf_max, qf_mean
-        );
-    }
-
     // 3. PerBlockModulations
     // C++ uses y_quant_01 = quant_table[1] (first AC coefficient)
     // This is passed in directly from the quant table, NOT computed from distance
@@ -366,31 +352,6 @@ pub fn compute_aq_strength_map_impl(
         height_blocks,
         &mut quant_field,
     );
-
-    // Debug: print intermediate values (always for now during development)
-    if std::env::var("DEBUG_AQ").is_ok() {
-        let qf_min = quant_field.iter().copied().fold(f32::INFINITY, f32::min);
-        let qf_max = quant_field
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let qf_mean: f32 = quant_field.iter().sum::<f32>() / quant_field.len().max(1) as f32;
-        eprintln!(
-            "DEBUG quant_field after modulations: min={:.4}, max={:.4}, mean={:.4}",
-            qf_min, qf_max, qf_mean
-        );
-
-        let pe_min = pre_erosion.iter().copied().fold(f32::INFINITY, f32::min);
-        let pe_max = pre_erosion
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let pe_mean: f32 = pre_erosion.iter().sum::<f32>() / pre_erosion.len().max(1) as f32;
-        eprintln!(
-            "DEBUG pre_erosion: min={:.4}, max={:.4}, mean={:.4}",
-            pe_min, pe_max, pe_mean
-        );
-    }
 
     // 4. Final transform: quant_field -> aq_strength
     let strengths: Vec<f32> = quant_field

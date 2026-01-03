@@ -295,10 +295,7 @@ mod entropy_coverage {
 
         // Create encoder with restart interval
         // Note: restart interval support may have decoder compatibility issues
-        let encoder = Encoder::new()
-            .width(256)
-            .height(256)
-            .restart_interval(10);
+        let encoder = Encoder::new().width(256).height(256).restart_interval(10);
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         // Check for DRI marker (defines restart interval)

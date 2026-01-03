@@ -191,10 +191,7 @@ mod encode_coverage {
     #[test]
     fn encode_optimized_huffman() {
         let img = generate_gradient_d(256, 256, 3);
-        let encoder_opt = Encoder::new()
-            .width(256)
-            .height(256)
-            .optimize_huffman(true);
+        let encoder_opt = Encoder::new().width(256).height(256).optimize_huffman(true);
         let jpeg_opt = encoder_opt.encode(&img.pixels).expect("optimized failed");
 
         let encoder_fixed = Encoder::new()
