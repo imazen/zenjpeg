@@ -21,15 +21,15 @@ use crate::huffman_opt::{
     FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer,
 };
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
-use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
+use crate::types::{ChromaConversion, ColorSpace, JpegMode, PixelFormat, Subsampling};
 use crate::xyb::srgb_to_scaled_xyb;
 
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
 
 use yuv::{
-    rgb_to_sharp_yuv420, rgb_to_sharp_yuv422, SharpYuvGammaTransfer, YuvChromaSubsampling,
-    YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+    rgb_to_sharp_yuv420, rgb_to_sharp_yuv422, rgb_to_yuv420, rgb_to_yuv422, SharpYuvGammaTransfer,
+    YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
 };
 
 /// Progressive scan parameters.
@@ -71,12 +71,16 @@ pub struct EncoderConfig {
     /// Input smoothing factor (0-100, 0 = disabled).
     /// Applies a 3x3 weighted blur to chroma planes before downsampling
     /// to reduce aliasing artifacts. Matches libjpeg/jpegli smoothing_factor.
+    /// Only used with `ChromaConversion::Intrinsic`.
     pub smoothing_factor: u8,
-    /// Use Sharp YUV chroma downsampling.
-    /// Sharp YUV uses bi-linear interpolation with gamma correction to better
-    /// preserve color on edges and thin lines. Actually 10-50% FASTER than
-    /// standard downsampling due to the yuv crate's optimized SIMD implementation.
-    pub sharp_yuv: bool,
+    /// Chroma conversion method for RGB to YCbCr.
+    ///
+    /// Controls how chroma planes are computed:
+    /// - `Intrinsic`: Our f32 conversion (best for 4:4:4)
+    /// - `Fast`: yuv crate SIMD path (simple box filter)
+    /// - `Sharp`: yuv crate Sharp YUV (gamma-aware, best edges)
+    /// - `Auto`: Sharp for 4:2:0/4:2:2/4:4:0, Intrinsic for 4:4:4
+    pub chroma_conversion: ChromaConversion,
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
     /// Requires the `experimental-hybrid-trellis` feature
     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -103,8 +107,8 @@ impl Default for EncoderConfig {
             optimize_huffman: true,
             // Match C++ jpegli default: smoothing_factor = 0 (disabled)
             smoothing_factor: 0,
-            // Sharp YUV enabled by default for better edge/color quality
-            sharp_yuv: true,
+            // Auto selects Sharp for subsampled, Intrinsic for 4:4:4
+            chroma_conversion: ChromaConversion::Auto,
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -326,21 +330,32 @@ impl Encoder {
         self
     }
 
-    /// Enables Sharp YUV chroma downsampling.
+    /// Set chroma conversion method.
     ///
-    /// Sharp YUV uses bi-linear interpolation with gamma correction to better
-    /// preserve color on edges and thin lines. This is the same algorithm used
-    /// by WebP's "sharp YUV" mode.
+    /// Controls how RGB is converted to YCbCr chroma planes:
+    /// - `Intrinsic`: Our f32 conversion (best for 4:4:4, uses smoothing_factor)
+    /// - `Fast`: yuv crate SIMD path (simple box filter, fast)
+    /// - `Sharp`: yuv crate Sharp YUV (gamma-aware, best quality for edges)
+    /// - `Auto`: Sharp for 4:2:0/4:2:2/4:4:0, Intrinsic for 4:4:4
     ///
-    /// **Trade-offs:**
-    /// - ~68% slower encoding
-    /// - Significantly better color preservation on edges/thin lines
-    /// - Most beneficial for synthetic images, graphics, and text
+    /// Sharp YUV is often 10-50% FASTER than Intrinsic due to optimized SIMD.
+    #[must_use]
+    pub fn chroma_conversion(mut self, method: ChromaConversion) -> Self {
+        self.config.chroma_conversion = method;
+        self
+    }
+
+    /// Convenience method: enable Sharp YUV chroma downsampling.
     ///
-    /// Only affects 4:2:0 and 4:2:2 subsampling modes.
+    /// - `enable = true` → `ChromaConversion::Sharp`
+    /// - `enable = false` → `ChromaConversion::Intrinsic`
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
-        self.config.sharp_yuv = enable;
+        self.config.chroma_conversion = if enable {
+            ChromaConversion::Sharp
+        } else {
+            ChromaConversion::Intrinsic
+        };
         self
     }
 
@@ -461,12 +476,22 @@ impl Encoder {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
-        // Sharp YUV path: performs color conversion + downsampling in one optimized step
-        if self.config.sharp_yuv {
+        // Resolve Auto to concrete method based on subsampling
+        let chroma_method = self
+            .config
+            .chroma_conversion
+            .resolve(self.config.subsampling);
+
+        // yuv crate path (Sharp or Fast): performs color conversion + downsampling in one step
+        if matches!(
+            chroma_method,
+            ChromaConversion::Sharp | ChromaConversion::Fast
+        ) {
+            let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
             match self.config.subsampling {
                 Subsampling::S420 => {
                     let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        self.convert_sharp_yuv_420(data)?;
+                        self.convert_yuv_crate_420(data, use_sharp)?;
                     return self.encode_baseline_ycbcr_with_planes(
                         output,
                         y_plane,
@@ -478,7 +503,7 @@ impl Encoder {
                 }
                 Subsampling::S422 => {
                     let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        self.convert_sharp_yuv_422(data)?;
+                        self.convert_yuv_crate_422(data, use_sharp)?;
                     return self.encode_baseline_ycbcr_with_planes(
                         output,
                         y_plane,
@@ -488,12 +513,13 @@ impl Encoder {
                         c_height,
                     );
                 }
-                // Sharp YUV doesn't support 4:4:0 or 4:4:4, fall through to standard path
+                // yuv crate doesn't support 4:4:0 or 4:4:4, fall through to Intrinsic path
                 _ => {}
             }
         }
 
-        // Standard path: convert to YCbCr using f32 precision throughout (matches C++ jpegli)
+        // Intrinsic path: convert to YCbCr using f32 precision throughout (matches C++ jpegli)
+        // TODO: Add proper edge handling and gamma-aware conversion
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Handle chroma subsampling (with optional input smoothing)
@@ -1033,23 +1059,23 @@ impl Encoder {
         Ok(result)
     }
 
-    /// Converts RGB to YCbCr using Sharp YUV algorithm for 4:2:0 subsampling.
+    /// Converts RGB to YCbCr using yuv crate for 4:2:0 subsampling.
     ///
-    /// Sharp YUV uses bi-linear interpolation with gamma correction to better
-    /// preserve color on edges and thin lines. Returns Y at full resolution,
-    /// Cb/Cr already downsampled to half resolution.
+    /// If `use_sharp` is true, uses Sharp YUV (gamma-aware, better edges).
+    /// If `use_sharp` is false, uses standard conversion (fast, simple box filter).
     ///
     /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
-    fn convert_sharp_yuv_420(
+    fn convert_yuv_crate_420(
         &self,
         data: &[u8],
+        use_sharp: bool,
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
         let c_width = (width + 1) / 2;
         let c_height = (height + 1) / 2;
 
-        // Allocate YUV planar image for Sharp YUV output
+        // Allocate YUV planar image
         let mut yuv_image =
             YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv420);
 
@@ -1057,15 +1083,15 @@ impl Encoder {
         let (rgb_data, rgb_stride) = match self.config.pixel_format {
             PixelFormat::Rgb => (data, width as u32 * 3),
             PixelFormat::Rgba => {
-                // Sharp YUV supports RGBA directly, but we'll convert for simplicity
-                // TODO: Use rgba_to_sharp_yuv420 instead
+                // Convert RGBA to RGB
                 let mut rgb = Vec::with_capacity(width * height * 3);
                 for i in 0..(width * height) {
                     rgb.push(data[i * 4]);
                     rgb.push(data[i * 4 + 1]);
                     rgb.push(data[i * 4 + 2]);
                 }
-                return self.convert_sharp_yuv_420_rgb(&rgb, width, height, c_width, c_height);
+                return self
+                    .convert_yuv_crate_420_rgb(&rgb, width, height, c_width, c_height, use_sharp);
             }
             PixelFormat::Bgr => {
                 // Convert BGR to RGB
@@ -1075,7 +1101,8 @@ impl Encoder {
                     rgb.push(data[i * 3 + 1]); // G
                     rgb.push(data[i * 3]); // B
                 }
-                return self.convert_sharp_yuv_420_rgb(&rgb, width, height, c_width, c_height);
+                return self
+                    .convert_yuv_crate_420_rgb(&rgb, width, height, c_width, c_height, use_sharp);
             }
             PixelFormat::Bgra => {
                 // Convert BGRA to RGB
@@ -1085,7 +1112,8 @@ impl Encoder {
                     rgb.push(data[i * 4 + 1]); // G
                     rgb.push(data[i * 4]); // B
                 }
-                return self.convert_sharp_yuv_420_rgb(&rgb, width, height, c_width, c_height);
+                return self
+                    .convert_yuv_crate_420_rgb(&rgb, width, height, c_width, c_height, use_sharp);
             }
             PixelFormat::Gray => {
                 // Grayscale: Y = pixel value, Cb/Cr = 128
@@ -1101,23 +1129,37 @@ impl Encoder {
             }
             PixelFormat::Cmyk => {
                 return Err(Error::InvalidColorFormat {
-                    reason: "Sharp YUV does not support CMYK input",
+                    reason: "yuv crate does not support CMYK input",
                 });
             }
         };
 
-        // Perform Sharp YUV conversion
-        rgb_to_sharp_yuv420(
-            &mut yuv_image,
-            rgb_data,
-            rgb_stride,
-            YuvRange::Full,              // JPEG uses full range (0-255)
-            YuvStandardMatrix::Bt601,    // Standard JPEG matrix
-            SharpYuvGammaTransfer::Srgb, // sRGB input
-        )
-        .map_err(|e| Error::IoError {
-            reason: format!("Sharp YUV conversion failed: {:?}", e),
-        })?;
+        // Perform YUV conversion (sharp or standard)
+        if use_sharp {
+            rgb_to_sharp_yuv420(
+                &mut yuv_image,
+                rgb_data,
+                rgb_stride,
+                YuvRange::Full,              // JPEG uses full range (0-255)
+                YuvStandardMatrix::Bt601,    // Standard JPEG matrix
+                SharpYuvGammaTransfer::Srgb, // sRGB input
+            )
+            .map_err(|e| Error::IoError {
+                reason: format!("Sharp YUV conversion failed: {:?}", e),
+            })?;
+        } else {
+            rgb_to_yuv420(
+                &mut yuv_image,
+                rgb_data,
+                rgb_stride,
+                YuvRange::Full,
+                YuvStandardMatrix::Bt601,
+                YuvConversionMode::Balanced, // Fast path uses balanced mode
+            )
+            .map_err(|e| Error::IoError {
+                reason: format!("YUV conversion failed: {:?}", e),
+            })?;
+        }
 
         // Convert u8 planes to f32
         let num_pixels = checked_size_2d(width, height)?;
@@ -1149,29 +1191,44 @@ impl Encoder {
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
 
-    /// Helper for Sharp YUV with pre-converted RGB data.
-    fn convert_sharp_yuv_420_rgb(
+    /// Helper for yuv crate with pre-converted RGB data.
+    fn convert_yuv_crate_420_rgb(
         &self,
         rgb: &[u8],
         width: usize,
         height: usize,
         c_width: usize,
         c_height: usize,
+        use_sharp: bool,
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
         let mut yuv_image =
             YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv420);
 
-        rgb_to_sharp_yuv420(
-            &mut yuv_image,
-            rgb,
-            width as u32 * 3,
-            YuvRange::Full,
-            YuvStandardMatrix::Bt601,
-            SharpYuvGammaTransfer::Srgb,
-        )
-        .map_err(|e| Error::IoError {
-            reason: format!("Sharp YUV conversion failed: {:?}", e),
-        })?;
+        if use_sharp {
+            rgb_to_sharp_yuv420(
+                &mut yuv_image,
+                rgb,
+                width as u32 * 3,
+                YuvRange::Full,
+                YuvStandardMatrix::Bt601,
+                SharpYuvGammaTransfer::Srgb,
+            )
+            .map_err(|e| Error::IoError {
+                reason: format!("Sharp YUV conversion failed: {:?}", e),
+            })?;
+        } else {
+            rgb_to_yuv420(
+                &mut yuv_image,
+                rgb,
+                width as u32 * 3,
+                YuvRange::Full,
+                YuvStandardMatrix::Bt601,
+                YuvConversionMode::Balanced,
+            )
+            .map_err(|e| Error::IoError {
+                reason: format!("YUV conversion failed: {:?}", e),
+            })?;
+        }
 
         let num_pixels = checked_size_2d(width, height)?;
         let c_size = checked_size_2d(c_width, c_height)?;
@@ -1199,10 +1256,14 @@ impl Encoder {
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
 
-    /// Converts RGB to YCbCr using Sharp YUV algorithm for 4:2:2 subsampling.
-    fn convert_sharp_yuv_422(
+    /// Converts RGB to YCbCr using yuv crate for 4:2:2 subsampling.
+    ///
+    /// If `use_sharp` is true, uses Sharp YUV (gamma-aware, better edges).
+    /// If `use_sharp` is false, uses standard conversion (fast, simple box filter).
+    fn convert_yuv_crate_422(
         &self,
         data: &[u8],
+        use_sharp: bool,
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
@@ -1231,7 +1292,7 @@ impl Encoder {
                 &rgb_data
             }
             PixelFormat::Gray => {
-                // Grayscale doesn't benefit from Sharp YUV
+                // Grayscale doesn't benefit from yuv crate conversion
                 let num_pixels = checked_size_2d(width, height)?;
                 let mut y_plane = try_alloc_zeroed_f32(num_pixels, "Y plane")?;
                 let c_size = checked_size_2d(c_width, height)?;
@@ -1244,7 +1305,7 @@ impl Encoder {
             }
             PixelFormat::Cmyk => {
                 return Err(Error::InvalidColorFormat {
-                    reason: "Sharp YUV does not support CMYK input",
+                    reason: "yuv crate does not support CMYK input",
                 });
             }
         };
@@ -1252,17 +1313,31 @@ impl Encoder {
         let mut yuv_image =
             YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv422);
 
-        rgb_to_sharp_yuv422(
-            &mut yuv_image,
-            rgb_ref,
-            width as u32 * 3,
-            YuvRange::Full,
-            YuvStandardMatrix::Bt601,
-            SharpYuvGammaTransfer::Srgb,
-        )
-        .map_err(|e| Error::IoError {
-            reason: format!("Sharp YUV 422 conversion failed: {:?}", e),
-        })?;
+        if use_sharp {
+            rgb_to_sharp_yuv422(
+                &mut yuv_image,
+                rgb_ref,
+                width as u32 * 3,
+                YuvRange::Full,
+                YuvStandardMatrix::Bt601,
+                SharpYuvGammaTransfer::Srgb,
+            )
+            .map_err(|e| Error::IoError {
+                reason: format!("Sharp YUV 422 conversion failed: {:?}", e),
+            })?;
+        } else {
+            rgb_to_yuv422(
+                &mut yuv_image,
+                rgb_ref,
+                width as u32 * 3,
+                YuvRange::Full,
+                YuvStandardMatrix::Bt601,
+                YuvConversionMode::Balanced,
+            )
+            .map_err(|e| Error::IoError {
+                reason: format!("YUV 422 conversion failed: {:?}", e),
+            })?;
+        }
 
         let num_pixels = checked_size_2d(width, height)?;
         let c_size = checked_size_2d(c_width, height)?;
