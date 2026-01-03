@@ -171,6 +171,66 @@ impl Subsampling {
     }
 }
 
+/// Chroma conversion method for RGB to YCbCr.
+///
+/// Controls how chroma (Cb/Cr) planes are computed during encoding.
+/// Different methods trade off between speed and quality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum ChromaConversion {
+    /// Our internal f32 YCbCr conversion.
+    ///
+    /// Best for 4:4:4 subsampling where no chroma downsampling is needed.
+    /// Uses BT.601 coefficients with f32 precision throughout.
+    ///
+    /// TODO: Add proper edge handling and gamma-aware conversion.
+    Intrinsic,
+
+    /// yuv crate fast path (SIMD-optimized, simple box filter).
+    ///
+    /// Uses the yuv crate's standard conversion functions with optimized
+    /// SIMD implementations. Good for speed when chroma accuracy is less critical.
+    Fast,
+
+    /// yuv crate Sharp YUV (gamma-aware, best quality).
+    ///
+    /// Uses bi-linear interpolation with gamma correction to better preserve
+    /// color on edges and thin lines. Best choice for:
+    /// - Synthetic images, graphics, text
+    /// - Any content with sharp color transitions
+    ///
+    /// Despite the algorithmic complexity, often 10-50% FASTER than Intrinsic
+    /// due to the yuv crate's optimized SIMD and single-pass conversion.
+    Sharp,
+
+    /// Auto-select based on subsampling mode.
+    ///
+    /// - 4:4:4 → Intrinsic (no chroma downsampling needed)
+    /// - 4:2:0/4:2:2/4:4:0 → Sharp (best quality for downsampled chroma)
+    #[default]
+    Auto,
+}
+
+impl ChromaConversion {
+    /// Returns true if this conversion uses the yuv crate.
+    #[must_use]
+    pub const fn uses_yuv_crate(self) -> bool {
+        matches!(self, Self::Fast | Self::Sharp)
+    }
+
+    /// Resolve Auto to a concrete method based on subsampling.
+    #[must_use]
+    pub const fn resolve(self, subsampling: Subsampling) -> Self {
+        match self {
+            Self::Auto => match subsampling {
+                Subsampling::S444 => Self::Intrinsic,
+                Subsampling::S420 | Subsampling::S422 | Subsampling::S440 => Self::Sharp,
+            },
+            other => other,
+        }
+    }
+}
+
 /// JPEG encoding mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
