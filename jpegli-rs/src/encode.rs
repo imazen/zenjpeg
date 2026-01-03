@@ -2,6 +2,255 @@
 //!
 //! This module provides the main encoder interface for creating JPEG images.
 
+// ============================================================================
+// Internal Chroma Pipeline (undocumented, for benchmarking)
+// ============================================================================
+//
+// These types allow external benchmarks to test different chroma conversion
+// and downsampling strategies without committing to a public API.
+//
+// Use `Encoder::set_internal_pathway(u64)` to configure.
+//
+// Pathway encoding (u64):
+//   Bits 0-7:   ColorConversionMethod (0=Auto, 1=IntrinsicF32, 2=YuvBalanced, 3=YuvProfessional)
+//   Bits 8-15:  DownsamplingMethod (0=Auto, 1=None, 2=Box, 3=BoxSmoothed, 4=Sharp, 5=GammaAwareF32)
+//   Bits 16-23: Smoothing factor (0-100, only for BoxSmoothed)
+//   Bits 24-63: Reserved (must be 0)
+//
+// ============================================================================
+
+/// Internal color conversion method (not public API).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+enum ColorConversionMethod {
+    /// Auto-select based on other settings
+    #[default]
+    Auto = 0,
+    /// Our f32 BT.601 conversion (highest precision)
+    IntrinsicF32 = 1,
+    /// yuv crate with Balanced precision (good SIMD performance)
+    YuvBalanced = 2,
+    /// yuv crate with Professional precision (requires feature flag)
+    YuvProfessional = 3,
+}
+
+/// Internal downsampling method (not public API).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+enum DownsamplingMethod {
+    /// Auto-select based on subsampling mode
+    #[default]
+    Auto = 0,
+    /// No downsampling (4:4:4 only)
+    None = 1,
+    /// Simple box filter (2x2, 2x1, or 1x2 averaging)
+    Box = 2,
+    /// Box filter with pre-smoothing (3x3 blur before box)
+    BoxSmoothed = 3,
+    /// yuv crate Sharp YUV (gamma-aware bilinear)
+    Sharp = 4,
+    /// Our f32 gamma-aware bilinear (TODO: not yet implemented)
+    GammaAwareF32 = 5,
+}
+
+/// Internal chroma pipeline configuration (not public API).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ChromaPipeline {
+    color_conversion: ColorConversionMethod,
+    downsampling: DownsamplingMethod,
+    smoothing_factor: u8,
+}
+
+impl ChromaPipeline {
+    /// Decode from u64 pathway value.
+    fn from_u64(value: u64) -> Result<Self> {
+        // Check reserved bits are zero
+        if value & 0xFFFF_FFFF_FF00_0000 != 0 {
+            return Err(Error::InvalidColorFormat {
+                reason: "internal pathway: reserved bits must be zero",
+            });
+        }
+
+        let color_byte = (value & 0xFF) as u8;
+        let downsample_byte = ((value >> 8) & 0xFF) as u8;
+        let smoothing = ((value >> 16) & 0xFF) as u8;
+
+        let color_conversion = match color_byte {
+            0 => ColorConversionMethod::Auto,
+            1 => ColorConversionMethod::IntrinsicF32,
+            2 => ColorConversionMethod::YuvBalanced,
+            3 => ColorConversionMethod::YuvProfessional,
+            _ => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "internal pathway: invalid color conversion method (0-3)",
+                })
+            }
+        };
+
+        let downsampling = match downsample_byte {
+            0 => DownsamplingMethod::Auto,
+            1 => DownsamplingMethod::None,
+            2 => DownsamplingMethod::Box,
+            3 => DownsamplingMethod::BoxSmoothed,
+            4 => DownsamplingMethod::Sharp,
+            5 => DownsamplingMethod::GammaAwareF32,
+            _ => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "internal pathway: invalid downsampling method (0-5)",
+                })
+            }
+        };
+
+        if smoothing > 100 {
+            return Err(Error::InvalidColorFormat {
+                reason: "internal pathway: smoothing factor must be 0-100",
+            });
+        }
+
+        Ok(Self {
+            color_conversion,
+            downsampling,
+            smoothing_factor: smoothing,
+        })
+    }
+
+    /// Encode to u64 pathway value.
+    #[allow(dead_code)]
+    fn to_u64(self) -> u64 {
+        (self.color_conversion as u64)
+            | ((self.downsampling as u64) << 8)
+            | ((self.smoothing_factor as u64) << 16)
+    }
+
+    /// Validate pipeline against encoder config.
+    fn validate(&self, subsampling: Subsampling) -> Result<()> {
+        // Check downsampling method compatibility
+        match self.downsampling {
+            DownsamplingMethod::None => {
+                if subsampling != Subsampling::S444 {
+                    return Err(Error::InvalidColorFormat {
+                        reason: "internal pathway: None downsampling only valid for 4:4:4",
+                    });
+                }
+            }
+            DownsamplingMethod::Sharp => {
+                // Sharp YUV only supports 4:2:0 and 4:2:2
+                if !matches!(subsampling, Subsampling::S420 | Subsampling::S422) {
+                    return Err(Error::InvalidColorFormat {
+                        reason: "internal pathway: Sharp only supports 4:2:0 and 4:2:2",
+                    });
+                }
+            }
+            DownsamplingMethod::GammaAwareF32 => {
+                // GammaAwareF32 only makes sense with subsampling (not 4:4:4)
+                if subsampling == Subsampling::S444 {
+                    return Err(Error::InvalidColorFormat {
+                        reason: "internal pathway: GammaAwareF32 not valid for 4:4:4 (no downsampling needed)",
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        // Check color conversion compatibility
+        match self.color_conversion {
+            ColorConversionMethod::YuvProfessional => {
+                // Would need feature flag check here
+                // For now, treat as not available
+                return Err(Error::UnsupportedFeature {
+                    feature: "internal pathway: YuvProfessional requires professional_mode feature",
+                });
+            }
+            ColorConversionMethod::YuvBalanced => {
+                // yuv crate doesn't support 4:4:0
+                if subsampling == Subsampling::S440 {
+                    return Err(Error::InvalidColorFormat {
+                        reason: "internal pathway: yuv crate doesn't support 4:4:0",
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        // Smoothing only makes sense with BoxSmoothed
+        if self.smoothing_factor > 0 && self.downsampling != DownsamplingMethod::BoxSmoothed {
+            return Err(Error::InvalidColorFormat {
+                reason: "internal pathway: smoothing_factor only valid with BoxSmoothed",
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Resolve Auto values to concrete methods based on config.
+    #[allow(dead_code)]
+    fn resolve(mut self, subsampling: Subsampling) -> Self {
+        // Resolve color conversion
+        if self.color_conversion == ColorConversionMethod::Auto {
+            self.color_conversion = ColorConversionMethod::IntrinsicF32;
+        }
+
+        // Resolve downsampling
+        if self.downsampling == DownsamplingMethod::Auto {
+            self.downsampling = match subsampling {
+                Subsampling::S444 => DownsamplingMethod::None,
+                Subsampling::S420 | Subsampling::S422 => DownsamplingMethod::Sharp,
+                Subsampling::S440 => DownsamplingMethod::Box, // Sharp doesn't support 4:4:0
+            };
+        }
+
+        self
+    }
+}
+
+// ============================================================================
+// Pathway Constants (for benchmarking)
+// ============================================================================
+
+/// Internal pathway constants for benchmarking.
+/// Use with `Encoder::set_internal_pathway()`.
+#[doc(hidden)]
+pub mod internal_pathway {
+    // Color conversion methods (bits 0-7)
+    pub const COLOR_AUTO: u64 = 0;
+    pub const COLOR_INTRINSIC_F32: u64 = 1;
+    pub const COLOR_YUV_BALANCED: u64 = 2;
+    pub const COLOR_YUV_PROFESSIONAL: u64 = 3;
+
+    // Downsampling methods (bits 8-15)
+    pub const DOWNSAMPLE_AUTO: u64 = 0 << 8;
+    pub const DOWNSAMPLE_NONE: u64 = 1 << 8;
+    pub const DOWNSAMPLE_BOX: u64 = 2 << 8;
+    pub const DOWNSAMPLE_BOX_SMOOTHED: u64 = 3 << 8;
+    pub const DOWNSAMPLE_SHARP: u64 = 4 << 8;
+    pub const DOWNSAMPLE_GAMMA_AWARE_F32: u64 = 5 << 8;
+
+    /// Create a pathway with smoothing factor (bits 16-23).
+    /// Only valid with `DOWNSAMPLE_BOX_SMOOTHED`.
+    #[inline]
+    pub const fn with_smoothing(pathway: u64, factor: u8) -> u64 {
+        pathway | ((factor as u64) << 16)
+    }
+
+    // Pre-defined pipeline combinations for common benchmarks
+    /// f32 color conversion, no downsampling (4:4:4 only)
+    pub const P_F32_NONE: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_NONE;
+    /// f32 color conversion, box filter downsampling
+    pub const P_F32_BOX: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX;
+    /// f32 color conversion, box filter with smoothing=50
+    pub const P_F32_BOX_SMOOTH50: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX_SMOOTHED | (50 << 16);
+    /// yuv crate balanced, box filter (Fast path)
+    pub const P_YUV_BOX: u64 = COLOR_YUV_BALANCED | DOWNSAMPLE_BOX;
+    /// yuv crate balanced, sharp downsampling (Sharp path)
+    pub const P_YUV_SHARP: u64 = COLOR_YUV_BALANCED | DOWNSAMPLE_SHARP;
+    /// f32 color + gamma-aware downsampling (TODO: not yet implemented)
+    pub const P_F32_GAMMA_AWARE: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_F32;
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
 use crate::adaptive_quant::compute_aq_strength_map;
 use crate::alloc::{
     checked_size_2d, try_alloc_filled, try_alloc_zeroed_f32, validate_dimensions,
@@ -89,6 +338,11 @@ pub struct EncoderConfig {
     /// Allows pre-scaling the AQ map for size control.
     #[cfg(feature = "experimental-hybrid-trellis")]
     pub custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
+
+    // Internal pipeline override (not public API, for benchmarking)
+    // When Some, overrides chroma_conversion and smoothing_factor
+    #[doc(hidden)]
+    pub(crate) internal_pipeline: Option<ChromaPipeline>,
 }
 
 impl Default for EncoderConfig {
@@ -113,6 +367,7 @@ impl Default for EncoderConfig {
             hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
+            internal_pipeline: None,
         }
     }
 }
@@ -366,6 +621,35 @@ impl Encoder {
         self
     }
 
+    /// Sets an internal chroma pipeline for benchmarking (undocumented API).
+    ///
+    /// This method is intentionally not documented in the public API.
+    /// It allows external benchmarks to test different chroma conversion
+    /// and downsampling strategies without committing to a stable API.
+    ///
+    /// # Pathway Encoding (u64)
+    ///
+    /// - Bits 0-7: Color conversion (0=Auto, 1=IntrinsicF32, 2=YuvBalanced, 3=YuvProfessional)
+    /// - Bits 8-15: Downsampling (0=Auto, 1=None, 2=Box, 3=BoxSmoothed, 4=Sharp, 5=GammaAwareF32)
+    /// - Bits 16-23: Smoothing factor (0-100, only for BoxSmoothed)
+    /// - Bits 24-63: Reserved (must be 0)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reserved bits are non-zero
+    /// - Invalid color conversion or downsampling method value
+    /// - Smoothing factor > 100
+    /// - Incompatible combination (e.g., Sharp with 4:4:4, None with 4:2:0)
+    /// - Unimplemented method (e.g., GammaAwareF32, YuvProfessional)
+    #[doc(hidden)]
+    pub fn set_internal_pathway(mut self, pathway: u64) -> Result<Self> {
+        let pipeline = ChromaPipeline::from_u64(pathway)?;
+        pipeline.validate(self.config.subsampling)?;
+        self.config.internal_pipeline = Some(pipeline);
+        Ok(self)
+    }
+
     /// Enable hybrid quantization (jpegli AQ + mozjpeg trellis).
     ///
     /// This combines jpegli's adaptive quantization (which determines WHERE
@@ -483,6 +767,33 @@ impl Encoder {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
+        // Check if internal_pipeline specifies GammaAwareF32 downsampling
+        if let Some(ref pipeline) = self.config.internal_pipeline {
+            if pipeline.downsampling == DownsamplingMethod::GammaAwareF32 {
+                // Use f32 gamma-aware path
+                let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                    match self.config.subsampling {
+                        Subsampling::S420 => self.convert_gamma_aware_420(data)?,
+                        Subsampling::S422 => self.convert_gamma_aware_422(data)?,
+                        Subsampling::S440 => self.convert_gamma_aware_440(data)?,
+                        Subsampling::S444 => {
+                            // Should not happen - validation prevents this
+                            return Err(Error::InvalidColorFormat {
+                                reason: "GammaAwareF32 not valid for 4:4:4",
+                            });
+                        }
+                    };
+                return self.encode_baseline_ycbcr_with_planes(
+                    output,
+                    y_plane,
+                    cb_plane_final,
+                    cr_plane_final,
+                    c_width,
+                    c_height,
+                );
+            }
+        }
+
         // Resolve Auto to concrete method based on subsampling
         let chroma_method = self
             .config
@@ -526,7 +837,6 @@ impl Encoder {
         }
 
         // Intrinsic path: convert to YCbCr using f32 precision throughout (matches C++ jpegli)
-        // TODO: Add proper edge handling and gamma-aware conversion
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Handle chroma subsampling (with optional input smoothing)
@@ -1011,6 +1321,297 @@ impl Encoder {
         }
 
         Ok(result)
+    }
+
+    // ========================================================================
+    // Gamma-Aware Chroma Downsampling (f32 precision)
+    // ========================================================================
+    //
+    // These functions perform chroma downsampling with proper gamma handling:
+    // 1. Convert RGB pixels to linear space (remove sRGB gamma)
+    // 2. Average the linear RGB values in each 2x2/2x1/1x2 block
+    // 3. Convert back to sRGB gamma
+    // 4. Compute YCbCr from the averaged sRGB values
+    //
+    // This produces better chroma values on sharp edges and thin colored lines
+    // compared to naive box-filtering of already-converted chroma planes.
+    // ========================================================================
+
+    /// Converts RGB to YCbCr with gamma-aware chroma downsampling for 4:2:0.
+    ///
+    /// This is the f32-native alternative to yuv crate's Sharp YUV:
+    /// - Y channel computed at full resolution from each pixel
+    /// - Cb/Cr computed by averaging RGB in linear space, then converting to YCbCr
+    ///
+    /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
+    fn convert_gamma_aware_420(
+        &self,
+        data: &[u8],
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
+        use crate::xyb::{linear_to_srgb, srgb_to_linear};
+
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let c_width = (width + 1) / 2;
+        let c_height = (height + 1) / 2;
+
+        // Allocate output planes
+        let y_size = checked_size_2d(width, height)?;
+        let c_size = checked_size_2d(c_width, c_height)?;
+        let mut y_plane = try_alloc_zeroed_f32(y_size, "Y plane")?;
+        let mut cb_plane = try_alloc_zeroed_f32(c_size, "Cb plane")?;
+        let mut cr_plane = try_alloc_zeroed_f32(c_size, "Cr plane")?;
+
+        // Extract RGB data based on pixel format
+        let (rgb_data, bpp) = match self.config.pixel_format {
+            PixelFormat::Rgb => (data, 3),
+            PixelFormat::Rgba => (data, 4),
+            PixelFormat::Bgr | PixelFormat::Bgra => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "BGR/BGRA not yet supported for gamma-aware conversion",
+                });
+            }
+            _ => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "Unsupported pixel format for gamma-aware conversion",
+                });
+            }
+        };
+
+        // First pass: compute Y at full resolution
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * bpp;
+                let r = rgb_data[idx] as f32;
+                let g = rgb_data[idx + 1] as f32;
+                let b = rgb_data[idx + 2] as f32;
+
+                // BT.601 Y computation
+                let y_val = color::rgb_to_ycbcr_f32(r, g, b).0;
+                y_plane[y * width + x] = y_val;
+            }
+        }
+
+        // Second pass: compute Cb/Cr with gamma-aware downsampling
+        for cy in 0..c_height {
+            for cx in 0..c_width {
+                // Get 2x2 block coordinates
+                let x0 = cx * 2;
+                let y0 = cy * 2;
+                let x1 = (x0 + 1).min(width - 1);
+                let y1 = (y0 + 1).min(height - 1);
+
+                // Get RGB values for all 4 pixels
+                let get_rgb = |x: usize, y: usize| -> (f32, f32, f32) {
+                    let idx = (y * width + x) * bpp;
+                    (
+                        rgb_data[idx] as f32 / 255.0,
+                        rgb_data[idx + 1] as f32 / 255.0,
+                        rgb_data[idx + 2] as f32 / 255.0,
+                    )
+                };
+
+                let (r00, g00, b00) = get_rgb(x0, y0);
+                let (r10, g10, b10) = get_rgb(x1, y0);
+                let (r01, g01, b01) = get_rgb(x0, y1);
+                let (r11, g11, b11) = get_rgb(x1, y1);
+
+                // Convert to linear space
+                let lr00 = srgb_to_linear(r00);
+                let lg00 = srgb_to_linear(g00);
+                let lb00 = srgb_to_linear(b00);
+
+                let lr10 = srgb_to_linear(r10);
+                let lg10 = srgb_to_linear(g10);
+                let lb10 = srgb_to_linear(b10);
+
+                let lr01 = srgb_to_linear(r01);
+                let lg01 = srgb_to_linear(g01);
+                let lb01 = srgb_to_linear(b01);
+
+                let lr11 = srgb_to_linear(r11);
+                let lg11 = srgb_to_linear(g11);
+                let lb11 = srgb_to_linear(b11);
+
+                // Average in linear space
+                let lr_avg = (lr00 + lr10 + lr01 + lr11) * 0.25;
+                let lg_avg = (lg00 + lg10 + lg01 + lg11) * 0.25;
+                let lb_avg = (lb00 + lb10 + lb01 + lb11) * 0.25;
+
+                // Convert back to sRGB
+                let r_avg = linear_to_srgb(lr_avg) * 255.0;
+                let g_avg = linear_to_srgb(lg_avg) * 255.0;
+                let b_avg = linear_to_srgb(lb_avg) * 255.0;
+
+                // Convert to YCbCr (we only need Cb and Cr)
+                let (_, cb, cr) = color::rgb_to_ycbcr_f32(r_avg, g_avg, b_avg);
+
+                cb_plane[cy * c_width + cx] = cb;
+                cr_plane[cy * c_width + cx] = cr;
+            }
+        }
+
+        Ok((y_plane, cb_plane, cr_plane, c_width, c_height))
+    }
+
+    /// Converts RGB to YCbCr with gamma-aware chroma downsampling for 4:2:2.
+    ///
+    /// Similar to 4:2:0 but only downsamples horizontally (2x1 blocks).
+    ///
+    /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
+    fn convert_gamma_aware_422(
+        &self,
+        data: &[u8],
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
+        use crate::xyb::{linear_to_srgb, srgb_to_linear};
+
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let c_width = (width + 1) / 2;
+
+        // Allocate output planes
+        let y_size = checked_size_2d(width, height)?;
+        let c_size = checked_size_2d(c_width, height)?;
+        let mut y_plane = try_alloc_zeroed_f32(y_size, "Y plane")?;
+        let mut cb_plane = try_alloc_zeroed_f32(c_size, "Cb plane")?;
+        let mut cr_plane = try_alloc_zeroed_f32(c_size, "Cr plane")?;
+
+        let (rgb_data, bpp) = match self.config.pixel_format {
+            PixelFormat::Rgb => (data, 3),
+            PixelFormat::Rgba => (data, 4),
+            _ => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "Unsupported pixel format for gamma-aware conversion",
+                });
+            }
+        };
+
+        // First pass: compute Y at full resolution
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * bpp;
+                let r = rgb_data[idx] as f32;
+                let g = rgb_data[idx + 1] as f32;
+                let b = rgb_data[idx + 2] as f32;
+                y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
+            }
+        }
+
+        // Second pass: gamma-aware horizontal downsampling for Cb/Cr
+        for y in 0..height {
+            for cx in 0..c_width {
+                let x0 = cx * 2;
+                let x1 = (x0 + 1).min(width - 1);
+
+                let get_rgb = |x: usize| -> (f32, f32, f32) {
+                    let idx = (y * width + x) * bpp;
+                    (
+                        rgb_data[idx] as f32 / 255.0,
+                        rgb_data[idx + 1] as f32 / 255.0,
+                        rgb_data[idx + 2] as f32 / 255.0,
+                    )
+                };
+
+                let (r0, g0, b0) = get_rgb(x0);
+                let (r1, g1, b1) = get_rgb(x1);
+
+                // Convert to linear and average
+                let lr_avg = (srgb_to_linear(r0) + srgb_to_linear(r1)) * 0.5;
+                let lg_avg = (srgb_to_linear(g0) + srgb_to_linear(g1)) * 0.5;
+                let lb_avg = (srgb_to_linear(b0) + srgb_to_linear(b1)) * 0.5;
+
+                // Convert back to sRGB then YCbCr
+                let r_avg = linear_to_srgb(lr_avg) * 255.0;
+                let g_avg = linear_to_srgb(lg_avg) * 255.0;
+                let b_avg = linear_to_srgb(lb_avg) * 255.0;
+
+                let (_, cb, cr) = color::rgb_to_ycbcr_f32(r_avg, g_avg, b_avg);
+                cb_plane[y * c_width + cx] = cb;
+                cr_plane[y * c_width + cx] = cr;
+            }
+        }
+
+        Ok((y_plane, cb_plane, cr_plane, c_width, height))
+    }
+
+    /// Converts RGB to YCbCr with gamma-aware chroma downsampling for 4:4:0.
+    ///
+    /// Similar to 4:2:0 but only downsamples vertically (1x2 blocks).
+    ///
+    /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
+    fn convert_gamma_aware_440(
+        &self,
+        data: &[u8],
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
+        use crate::xyb::{linear_to_srgb, srgb_to_linear};
+
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let c_height = (height + 1) / 2;
+
+        // Allocate output planes
+        let y_size = checked_size_2d(width, height)?;
+        let c_size = checked_size_2d(width, c_height)?;
+        let mut y_plane = try_alloc_zeroed_f32(y_size, "Y plane")?;
+        let mut cb_plane = try_alloc_zeroed_f32(c_size, "Cb plane")?;
+        let mut cr_plane = try_alloc_zeroed_f32(c_size, "Cr plane")?;
+
+        let (rgb_data, bpp) = match self.config.pixel_format {
+            PixelFormat::Rgb => (data, 3),
+            PixelFormat::Rgba => (data, 4),
+            _ => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "Unsupported pixel format for gamma-aware conversion",
+                });
+            }
+        };
+
+        // First pass: compute Y at full resolution
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * bpp;
+                let r = rgb_data[idx] as f32;
+                let g = rgb_data[idx + 1] as f32;
+                let b = rgb_data[idx + 2] as f32;
+                y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
+            }
+        }
+
+        // Second pass: gamma-aware vertical downsampling for Cb/Cr
+        for cy in 0..c_height {
+            let y0 = cy * 2;
+            let y1 = (y0 + 1).min(height - 1);
+
+            for x in 0..width {
+                let get_rgb = |y: usize| -> (f32, f32, f32) {
+                    let idx = (y * width + x) * bpp;
+                    (
+                        rgb_data[idx] as f32 / 255.0,
+                        rgb_data[idx + 1] as f32 / 255.0,
+                        rgb_data[idx + 2] as f32 / 255.0,
+                    )
+                };
+
+                let (r0, g0, b0) = get_rgb(y0);
+                let (r1, g1, b1) = get_rgb(y1);
+
+                // Convert to linear and average
+                let lr_avg = (srgb_to_linear(r0) + srgb_to_linear(r1)) * 0.5;
+                let lg_avg = (srgb_to_linear(g0) + srgb_to_linear(g1)) * 0.5;
+                let lb_avg = (srgb_to_linear(b0) + srgb_to_linear(b1)) * 0.5;
+
+                // Convert back to sRGB then YCbCr
+                let r_avg = linear_to_srgb(lr_avg) * 255.0;
+                let g_avg = linear_to_srgb(lg_avg) * 255.0;
+                let b_avg = linear_to_srgb(lb_avg) * 255.0;
+
+                let (_, cb, cr) = color::rgb_to_ycbcr_f32(r_avg, g_avg, b_avg);
+                cb_plane[cy * width + x] = cb;
+                cr_plane[cy * width + x] = cr;
+            }
+        }
+
+        Ok((y_plane, cb_plane, cr_plane, width, c_height))
     }
 
     /// Applies input smoothing to a plane before downsampling.
@@ -4566,5 +5167,379 @@ mod tests {
 
         assert!(jpeg.len() > 0);
         assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    }
+
+    // ========================================================================
+    // Internal Pathway Tests (for benchmarking infrastructure)
+    // ========================================================================
+
+    #[test]
+    fn test_internal_pathway_valid_f32_none_444() {
+        use internal_pathway::*;
+
+        // P_F32_NONE should work with 4:4:4
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S444)
+            .set_internal_pathway(P_F32_NONE);
+
+        assert!(encoder.is_ok(), "P_F32_NONE with 4:4:4 should be valid");
+    }
+
+    #[test]
+    fn test_internal_pathway_valid_yuv_sharp_420() {
+        use internal_pathway::*;
+
+        // P_YUV_SHARP should work with 4:2:0
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(P_YUV_SHARP);
+
+        assert!(encoder.is_ok(), "P_YUV_SHARP with 4:2:0 should be valid");
+    }
+
+    #[test]
+    fn test_internal_pathway_valid_f32_box_420() {
+        use internal_pathway::*;
+
+        // P_F32_BOX should work with 4:2:0
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(P_F32_BOX);
+
+        assert!(encoder.is_ok(), "P_F32_BOX with 4:2:0 should be valid");
+    }
+
+    #[test]
+    fn test_internal_pathway_valid_f32_box_smooth50() {
+        use internal_pathway::*;
+
+        // P_F32_BOX_SMOOTH50 should work with 4:2:0
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(P_F32_BOX_SMOOTH50);
+
+        assert!(
+            encoder.is_ok(),
+            "P_F32_BOX_SMOOTH50 with 4:2:0 should be valid"
+        );
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_none_with_420() {
+        use internal_pathway::*;
+
+        // DOWNSAMPLE_NONE with 4:2:0 should fail
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_NONE);
+
+        assert!(encoder.is_err(), "DOWNSAMPLE_NONE with 4:2:0 should fail");
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_sharp_with_444() {
+        use internal_pathway::*;
+
+        // DOWNSAMPLE_SHARP with 4:4:4 should fail
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S444)
+            .set_internal_pathway(COLOR_YUV_BALANCED | DOWNSAMPLE_SHARP);
+
+        assert!(encoder.is_err(), "DOWNSAMPLE_SHARP with 4:4:4 should fail");
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_sharp_with_440() {
+        use internal_pathway::*;
+
+        // DOWNSAMPLE_SHARP with 4:4:0 should fail (yuv crate doesn't support it)
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S440)
+            .set_internal_pathway(COLOR_YUV_BALANCED | DOWNSAMPLE_SHARP);
+
+        assert!(encoder.is_err(), "DOWNSAMPLE_SHARP with 4:4:0 should fail");
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_yuv_balanced_with_440() {
+        use internal_pathway::*;
+
+        // COLOR_YUV_BALANCED with 4:4:0 should fail (yuv crate doesn't support 4:4:0)
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S440)
+            .set_internal_pathway(COLOR_YUV_BALANCED | DOWNSAMPLE_BOX);
+
+        assert!(
+            encoder.is_err(),
+            "COLOR_YUV_BALANCED with 4:4:0 should fail"
+        );
+    }
+
+    #[test]
+    fn test_internal_pathway_gamma_aware_420() {
+        use internal_pathway::*;
+
+        // DOWNSAMPLE_GAMMA_AWARE_F32 should work with 4:2:0
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(P_F32_GAMMA_AWARE);
+
+        assert!(
+            encoder.is_ok(),
+            "DOWNSAMPLE_GAMMA_AWARE_F32 should work with 4:2:0"
+        );
+    }
+
+    #[test]
+    fn test_internal_pathway_gamma_aware_invalid_with_444() {
+        use internal_pathway::*;
+
+        // DOWNSAMPLE_GAMMA_AWARE_F32 should fail with 4:4:4 (no downsampling needed)
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S444)
+            .set_internal_pathway(P_F32_GAMMA_AWARE);
+
+        assert!(
+            encoder.is_err(),
+            "DOWNSAMPLE_GAMMA_AWARE_F32 should fail with 4:4:4"
+        );
+    }
+
+    #[test]
+    fn test_internal_pathway_gamma_aware_encode_420() {
+        use internal_pathway::*;
+
+        // Create a simple gradient test image
+        let width = 32u32;
+        let height = 32u32;
+        let mut data = vec![0u8; (width * height * 3) as usize];
+
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
+                data[idx] = (x * 8) as u8; // R
+                data[idx + 1] = (y * 8) as u8; // G
+                data[idx + 2] = ((x + y) * 4) as u8; // B
+            }
+        }
+
+        let encoder = Encoder::new()
+            .width(width)
+            .height(height)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(P_F32_GAMMA_AWARE)
+            .expect("Should create encoder");
+
+        let result = encoder.encode(&data);
+        assert!(
+            result.is_ok(),
+            "Gamma-aware 4:2:0 encoding failed: {:?}",
+            result.err()
+        );
+
+        let jpeg = result.unwrap();
+        // Verify it's a valid JPEG
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Should start with SOI");
+        assert_eq!(
+            &jpeg[jpeg.len() - 2..],
+            &[0xFF, 0xD9],
+            "Should end with EOI"
+        );
+        assert!(jpeg.len() > 100, "JPEG should have reasonable size");
+    }
+
+    #[test]
+    fn test_internal_pathway_gamma_aware_encode_422() {
+        use internal_pathway::*;
+
+        let width = 32u32;
+        let height = 32u32;
+        let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+        let encoder = Encoder::new()
+            .width(width)
+            .height(height)
+            .subsampling(Subsampling::S422)
+            .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_F32)
+            .expect("Should create encoder");
+
+        let result = encoder.encode(&data);
+        assert!(
+            result.is_ok(),
+            "Gamma-aware 4:2:2 encoding failed: {:?}",
+            result.err()
+        );
+
+        let jpeg = result.unwrap();
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn test_internal_pathway_gamma_aware_encode_440() {
+        use internal_pathway::*;
+
+        let width = 32u32;
+        let height = 32u32;
+        let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+        let encoder = Encoder::new()
+            .width(width)
+            .height(height)
+            .subsampling(Subsampling::S440)
+            .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_F32)
+            .expect("Should create encoder");
+
+        let result = encoder.encode(&data);
+        assert!(
+            result.is_ok(),
+            "Gamma-aware 4:4:0 encoding failed: {:?}",
+            result.err()
+        );
+
+        let jpeg = result.unwrap();
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn test_internal_pathway_unimplemented_yuv_professional() {
+        use internal_pathway::*;
+
+        // COLOR_YUV_PROFESSIONAL should fail (requires feature)
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(COLOR_YUV_PROFESSIONAL | DOWNSAMPLE_BOX);
+
+        assert!(
+            encoder.is_err(),
+            "COLOR_YUV_PROFESSIONAL should fail (not implemented)"
+        );
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_color_byte() {
+        // Invalid color conversion byte (4+)
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S444)
+            .set_internal_pathway(4); // Invalid color byte
+
+        assert!(encoder.is_err(), "Color byte 4 should be invalid");
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_downsample_byte() {
+        use internal_pathway::*;
+
+        // Invalid downsampling byte (6+)
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S444)
+            .set_internal_pathway(COLOR_INTRINSIC_F32 | (6 << 8));
+
+        assert!(encoder.is_err(), "Downsample byte 6 should be invalid");
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_smoothing_over_100() {
+        use internal_pathway::*;
+
+        // Smoothing > 100 should fail
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(with_smoothing(
+                COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX_SMOOTHED,
+                101,
+            ));
+
+        assert!(encoder.is_err(), "Smoothing factor 101 should be invalid");
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_smoothing_without_box_smoothed() {
+        use internal_pathway::*;
+
+        // Smoothing with non-BoxSmoothed downsampling should fail
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S420)
+            .set_internal_pathway(with_smoothing(COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX, 50));
+
+        assert!(
+            encoder.is_err(),
+            "Smoothing with DOWNSAMPLE_BOX should fail"
+        );
+    }
+
+    #[test]
+    fn test_internal_pathway_invalid_reserved_bits() {
+        use internal_pathway::*;
+
+        // Reserved bits (24-63) should cause failure
+        let encoder = Encoder::new()
+            .width(16)
+            .height(16)
+            .subsampling(Subsampling::S444)
+            .set_internal_pathway(P_F32_NONE | (1u64 << 24));
+
+        assert!(encoder.is_err(), "Reserved bit 24 should be invalid");
+    }
+
+    #[test]
+    fn test_internal_pathway_with_smoothing_helper() {
+        use internal_pathway::*;
+
+        // with_smoothing helper should work correctly
+        let pathway = with_smoothing(COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX_SMOOTHED, 75);
+        assert_eq!(pathway & 0xFF, COLOR_INTRINSIC_F32);
+        assert_eq!((pathway >> 8) & 0xFF, 3); // DOWNSAMPLE_BOX_SMOOTHED = 3
+        assert_eq!((pathway >> 16) & 0xFF, 75);
+    }
+
+    #[test]
+    fn test_internal_pathway_pipeline_encode_decode() {
+        use internal_pathway::*;
+
+        // Test that ChromaPipeline roundtrips correctly
+        let pipeline = ChromaPipeline::from_u64(P_F32_BOX_SMOOTH50).unwrap();
+        assert_eq!(
+            pipeline.color_conversion,
+            ColorConversionMethod::IntrinsicF32
+        );
+        assert_eq!(pipeline.downsampling, DownsamplingMethod::BoxSmoothed);
+        assert_eq!(pipeline.smoothing_factor, 50);
+
+        // Test encode/decode roundtrip
+        let encoded = pipeline.to_u64();
+        let decoded = ChromaPipeline::from_u64(encoded).unwrap();
+        assert_eq!(decoded.color_conversion, pipeline.color_conversion);
+        assert_eq!(decoded.downsampling, pipeline.downsampling);
+        assert_eq!(decoded.smoothing_factor, pipeline.smoothing_factor);
     }
 }
