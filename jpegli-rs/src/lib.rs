@@ -57,6 +57,8 @@ pub mod alloc;
 #[doc(hidden)]
 pub mod bitstream;
 #[doc(hidden)]
+pub mod chroma;
+#[doc(hidden)]
 pub mod color;
 #[doc(hidden)]
 pub mod consts;
