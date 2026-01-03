@@ -15,7 +15,7 @@
 //! Use [`should_use_hybrid`] to make per-image decisions.
 
 #[cfg(feature = "hybrid-trellis")]
-use mozjpeg_oxide::TrellisConfig;
+use mozjpeg_rs::TrellisConfig;
 
 /// Threshold for AQ mean above which hybrid trellis is recommended.
 /// Based on sweep testing: r=0.989 correlation with DSSIM improvement.

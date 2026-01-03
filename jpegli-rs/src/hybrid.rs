@@ -24,7 +24,7 @@
 //! - `new_scale1 = base_scale1 + aq_strength * AQ_LAMBDA_SCALE`
 
 #[cfg(feature = "hybrid-trellis")]
-use mozjpeg_oxide::{
+use mozjpeg_rs::{
     consts::{AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES},
     huffman::{DerivedTable, HuffTable},
     trellis::trellis_quantize_block,
