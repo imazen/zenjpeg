@@ -1233,10 +1233,11 @@ impl<'a> EntropyDecoder<'a> {
                 if coeffs[k] != 0 {
                     let bit = self.reader.read_bits(1)? as i16;
                     if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                        // Use saturating arithmetic to prevent overflow on malformed input
                         if coeffs[k] > 0 {
-                            coeffs[k] += bit_val;
+                            coeffs[k] = coeffs[k].saturating_add(bit_val);
                         } else {
-                            coeffs[k] -= bit_val;
+                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
                         }
                     }
                 }
@@ -1267,10 +1268,11 @@ impl<'a> EntropyDecoder<'a> {
                             if coeffs[j] != 0 {
                                 let bit = self.reader.read_bits(1)? as i16;
                                 if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                                    // Use saturating arithmetic to prevent overflow on malformed input
                                     if coeffs[j] > 0 {
-                                        coeffs[j] += bit_val;
+                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
                                     } else {
-                                        coeffs[j] -= bit_val;
+                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
                                     }
                                 }
                             }
@@ -1285,10 +1287,11 @@ impl<'a> EntropyDecoder<'a> {
                             if coeffs[j] != 0 {
                                 let bit = self.reader.read_bits(1)? as i16;
                                 if bit != 0 && (coeffs[j] & bit_val) == 0 {
+                                    // Use saturating arithmetic to prevent overflow on malformed input
                                     if coeffs[j] > 0 {
-                                        coeffs[j] += bit_val;
+                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
                                     } else {
-                                        coeffs[j] -= bit_val;
+                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
                                     }
                                 }
                             }
@@ -1311,10 +1314,11 @@ impl<'a> EntropyDecoder<'a> {
                     // Apply refinement bit for previously-nonzero coefficient
                     let bit = self.reader.read_bits(1)? as i16;
                     if bit != 0 && (coeffs[k] & bit_val) == 0 {
+                        // Use saturating arithmetic to prevent overflow on malformed input
                         if coeffs[k] > 0 {
-                            coeffs[k] += bit_val;
+                            coeffs[k] = coeffs[k].saturating_add(bit_val);
                         } else {
-                            coeffs[k] -= bit_val;
+                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
                         }
                     }
                 } else if num_zeros_to_skip > 0 {
