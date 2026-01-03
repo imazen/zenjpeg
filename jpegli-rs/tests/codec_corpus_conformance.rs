@@ -558,6 +558,341 @@ fn test_fuzz_corpus_vs_reference() {
 }
 
 // ============================================================================
+// JPEG Conformance Test Suite
+// ============================================================================
+
+/// Test valid JPEGs that MUST decode correctly.
+/// These are reference images, camera samples, and feature variants.
+#[test]
+fn test_jpeg_conformance_valid() {
+    let corpus_dir = match find_codec_corpus() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("Skipping: codec-corpus not found");
+            return;
+        }
+    };
+
+    let valid_dir = corpus_dir.join("jpeg-conformance/valid");
+    if !valid_dir.exists() {
+        eprintln!(
+            "Skipping: jpeg-conformance/valid not found at {:?}",
+            valid_dir
+        );
+        return;
+    }
+
+    let files = collect_jpeg_files(&valid_dir);
+    println!("Testing {} valid JPEG conformance files", files.len());
+
+    let decoder = Decoder::new();
+    let mut success = 0;
+    let mut failures = Vec::new();
+
+    for file in &files {
+        let data = match fs::read(file) {
+            Ok(d) => d,
+            Err(e) => {
+                failures.push((file.clone(), format!("read error: {}", e)));
+                continue;
+            }
+        };
+
+        let filename = file.file_name().unwrap().to_string_lossy();
+
+        match decoder.decode(&data) {
+            Ok(img) => {
+                success += 1;
+                println!("{}: OK {}x{}", filename, img.width, img.height);
+                assert!(img.width > 0, "Width should be positive");
+                assert!(img.height > 0, "Height should be positive");
+                assert!(!img.data.is_empty(), "Data should not be empty");
+            }
+            Err(e) => {
+                // Some valid files may use features we don't support yet
+                // (arithmetic coding, 12-bit, CMYK)
+                let err_str = format!("{:?}", e);
+                if err_str.contains("Arithmetic")
+                    || err_str.contains("12-bit")
+                    || err_str.contains("12Bit")
+                    || err_str.contains("CMYK")
+                    || err_str.contains("Cmyk")
+                    || err_str.contains("YCCK")
+                    || err_str.contains("Ycck")
+                {
+                    println!("{}: SKIP (unsupported feature) - {:?}", filename, e);
+                } else {
+                    failures.push((file.clone(), format!("{:?}", e)));
+                    eprintln!("{}: FAIL - {:?}", filename, e);
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nValid conformance: {} decoded, {} failed",
+        success,
+        failures.len()
+    );
+
+    // Print all failures for debugging
+    if !failures.is_empty() {
+        eprintln!("\nFailed files:");
+        for (path, err) in &failures {
+            eprintln!("  {:?}: {}", path.file_name().unwrap(), err);
+        }
+    }
+
+    // Valid files MUST decode (except unsupported features)
+    assert!(
+        failures.is_empty(),
+        "All valid conformance files should decode (except unsupported features)"
+    );
+}
+
+/// Test invalid JPEGs that MUST be rejected gracefully.
+/// The decoder MUST return an error, not panic or crash.
+#[test]
+fn test_jpeg_conformance_invalid() {
+    let corpus_dir = match find_codec_corpus() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("Skipping: codec-corpus not found");
+            return;
+        }
+    };
+
+    let invalid_dir = corpus_dir.join("jpeg-conformance/invalid");
+    if !invalid_dir.exists() {
+        eprintln!(
+            "Skipping: jpeg-conformance/invalid not found at {:?}",
+            invalid_dir
+        );
+        return;
+    }
+
+    let files = collect_jpeg_files(&invalid_dir);
+    println!("Testing {} invalid JPEG conformance files", files.len());
+
+    let decoder = Decoder::new();
+    let mut rejected = 0;
+    let mut panics = 0;
+    let mut unexpectedly_decoded = Vec::new();
+
+    for file in &files {
+        let data = match fs::read(file) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let filename = file.file_name().unwrap().to_string_lossy();
+
+        // Use catch_unwind to detect panics
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data)));
+
+        match result {
+            Ok(Ok(img)) => {
+                // Unexpectedly decoded - may be lenient behavior
+                unexpectedly_decoded.push(filename.to_string());
+                println!(
+                    "{}: UNEXPECTED SUCCESS {}x{}",
+                    filename, img.width, img.height
+                );
+            }
+            Ok(Err(_)) => {
+                rejected += 1;
+                // Expected - invalid file was rejected
+            }
+            Err(_) => {
+                panics += 1;
+                eprintln!("{}: PANIC!", filename);
+            }
+        }
+    }
+
+    println!(
+        "\nInvalid conformance: {} rejected, {} panics, {} unexpected success",
+        rejected,
+        panics,
+        unexpectedly_decoded.len()
+    );
+
+    if !unexpectedly_decoded.is_empty() {
+        println!("\nUnexpectedly decoded (may be lenient):");
+        for name in &unexpectedly_decoded {
+            println!("  {}", name);
+        }
+    }
+
+    // CRITICAL: No panics allowed on invalid files
+    assert_eq!(panics, 0, "Invalid files must not cause panics");
+
+    // Invalid files SHOULD be rejected, but lenient decoders may accept some
+    // This is a soft assertion - we just report
+}
+
+/// Test non-conformant JPEGs that MAY be rejected or recovered.
+/// Documents our decoder's behavior on edge cases.
+#[test]
+fn test_jpeg_conformance_non_conformant() {
+    let corpus_dir = match find_codec_corpus() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("Skipping: codec-corpus not found");
+            return;
+        }
+    };
+
+    let non_conformant_dir = corpus_dir.join("jpeg-conformance/non-conformant");
+    if !non_conformant_dir.exists() {
+        eprintln!(
+            "Skipping: jpeg-conformance/non-conformant not found at {:?}",
+            non_conformant_dir
+        );
+        return;
+    }
+
+    let decoder = Decoder::new();
+
+    // Test each subcategory
+    let categories = [
+        "truncated",
+        "extraneous-data",
+        "marker-quirks",
+        "metadata-quirks",
+    ];
+
+    for category in categories {
+        let category_dir = non_conformant_dir.join(category);
+        if !category_dir.exists() {
+            continue;
+        }
+
+        let files = collect_jpeg_files(&category_dir);
+        println!("\n=== {} ({} files) ===", category, files.len());
+
+        let mut accepted = 0;
+        let mut rejected = 0;
+        let mut panics = 0;
+
+        for file in &files {
+            let data = match fs::read(file) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            let filename = file.file_name().unwrap().to_string_lossy();
+
+            // Use catch_unwind to detect panics
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data)));
+
+            match result {
+                Ok(Ok(img)) => {
+                    accepted += 1;
+                    println!(
+                        "  {}: ACCEPTED (lenient) {}x{}",
+                        filename, img.width, img.height
+                    );
+                }
+                Ok(Err(e)) => {
+                    rejected += 1;
+                    println!("  {}: REJECTED (strict) - {:?}", filename, e);
+                }
+                Err(_) => {
+                    panics += 1;
+                    eprintln!("  {}: PANIC!", filename);
+                }
+            }
+        }
+
+        println!(
+            "  Summary: {} accepted, {} rejected, {} panics",
+            accepted, rejected, panics
+        );
+
+        // CRITICAL: No panics allowed, even on non-conformant files
+        assert_eq!(
+            panics, 0,
+            "Non-conformant files in {} must not cause panics",
+            category
+        );
+    }
+}
+
+/// Compare our decoder behavior with jpeg-decoder on conformance suite.
+#[test]
+fn test_jpeg_conformance_vs_reference() {
+    let corpus_dir = match find_codec_corpus() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("Skipping: codec-corpus not found");
+            return;
+        }
+    };
+
+    let valid_dir = corpus_dir.join("jpeg-conformance/valid");
+    if !valid_dir.exists() {
+        eprintln!("Skipping: jpeg-conformance/valid not found");
+        return;
+    }
+
+    let files = collect_jpeg_files(&valid_dir);
+    println!("Comparing {} valid files against jpeg-decoder", files.len());
+
+    let jpegli_decoder = Decoder::new();
+    let mut both_succeed = 0;
+    let mut jpegli_only = 0;
+    let mut reference_only = 0;
+    let mut both_fail = 0;
+
+    for file in &files {
+        let data = match fs::read(file) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let filename = file.file_name().unwrap().to_string_lossy();
+
+        let jpegli_result = jpegli_decoder.decode(&data);
+        let ref_result = jpeg_decoder::Decoder::new(&data[..]).decode();
+
+        match (jpegli_result.is_ok(), ref_result.is_ok()) {
+            (true, true) => {
+                both_succeed += 1;
+            }
+            (true, false) => {
+                jpegli_only += 1;
+                println!("{}: jpegli succeeds, jpeg-decoder fails", filename);
+            }
+            (false, true) => {
+                reference_only += 1;
+                println!("{}: jpeg-decoder succeeds, jpegli fails", filename);
+            }
+            (false, false) => {
+                both_fail += 1;
+            }
+        }
+    }
+
+    println!("\nConformance comparison:");
+    println!("  Both succeed:       {}", both_succeed);
+    println!("  jpegli only:        {}", jpegli_only);
+    println!("  jpeg-decoder only:  {}", reference_only);
+    println!("  Both fail:          {}", both_fail);
+
+    // We should match or exceed jpeg-decoder on valid files
+    // (reference_only should be 0 or very low)
+    if reference_only > 0 {
+        eprintln!(
+            "WARNING: {} files decode with jpeg-decoder but not jpegli",
+            reference_only
+        );
+    }
+}
+
+// ============================================================================
 // Stress Test
 // ============================================================================
 
