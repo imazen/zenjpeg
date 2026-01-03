@@ -27,7 +27,6 @@ use crate::xyb::srgb_to_scaled_xyb;
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
 
-#[cfg(feature = "sharp-yuv")]
 use yuv::{
     rgb_to_sharp_yuv420, rgb_to_sharp_yuv422, SharpYuvGammaTransfer, YuvChromaSubsampling,
     YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
@@ -73,11 +72,10 @@ pub struct EncoderConfig {
     /// Applies a 3x3 weighted blur to chroma planes before downsampling
     /// to reduce aliasing artifacts. Matches libjpeg/jpegli smoothing_factor.
     pub smoothing_factor: u8,
-    /// Use Sharp YUV chroma downsampling (requires `sharp-yuv` feature).
+    /// Use Sharp YUV chroma downsampling.
     /// Sharp YUV uses bi-linear interpolation with gamma correction to better
     /// preserve color on edges and thin lines. Actually 10-50% FASTER than
     /// standard downsampling due to the yuv crate's optimized SIMD implementation.
-    #[cfg(feature = "sharp-yuv")]
     pub sharp_yuv: bool,
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
     /// Requires the `experimental-hybrid-trellis` feature
@@ -105,9 +103,8 @@ impl Default for EncoderConfig {
             optimize_huffman: true,
             // Match C++ jpegli default: smoothing_factor = 0 (disabled)
             smoothing_factor: 0,
-            // Sharp YUV disabled by default (requires feature flag)
-            #[cfg(feature = "sharp-yuv")]
-            sharp_yuv: false,
+            // Sharp YUV enabled by default for better edge/color quality
+            sharp_yuv: true,
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -341,8 +338,6 @@ impl Encoder {
     /// - Most beneficial for synthetic images, graphics, and text
     ///
     /// Only affects 4:2:0 and 4:2:2 subsampling modes.
-    /// Requires the `sharp-yuv` feature.
-    #[cfg(feature = "sharp-yuv")]
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.config.sharp_yuv = enable;
@@ -467,7 +462,6 @@ impl Encoder {
         let height = self.config.height as usize;
 
         // Sharp YUV path: performs color conversion + downsampling in one optimized step
-        #[cfg(feature = "sharp-yuv")]
         if self.config.sharp_yuv {
             match self.config.subsampling {
                 Subsampling::S420 => {
@@ -1046,7 +1040,6 @@ impl Encoder {
     /// Cb/Cr already downsampled to half resolution.
     ///
     /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
-    #[cfg(feature = "sharp-yuv")]
     fn convert_sharp_yuv_420(
         &self,
         data: &[u8],
@@ -1157,7 +1150,6 @@ impl Encoder {
     }
 
     /// Helper for Sharp YUV with pre-converted RGB data.
-    #[cfg(feature = "sharp-yuv")]
     fn convert_sharp_yuv_420_rgb(
         &self,
         rgb: &[u8],
@@ -1208,7 +1200,6 @@ impl Encoder {
     }
 
     /// Converts RGB to YCbCr using Sharp YUV algorithm for 4:2:2 subsampling.
-    #[cfg(feature = "sharp-yuv")]
     fn convert_sharp_yuv_422(
         &self,
         data: &[u8],
@@ -4401,7 +4392,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "sharp-yuv")]
     fn test_sharp_yuv_420() {
         // Test Sharp YUV with 4:2:0 produces valid JPEG
         let width = 64u32;
@@ -4427,11 +4417,12 @@ mod tests {
             .encode(&data)
             .expect("Sharp YUV 4:2:0 encoding failed");
 
-        // Encode with standard downsampling
+        // Encode with standard downsampling (Sharp YUV disabled)
         let jpeg_standard = Encoder::new()
             .width(width)
             .height(height)
             .subsampling(Subsampling::S420)
+            .sharp_yuv(false)
             .jpegli_quality(Quality::from_quality(90.0))
             .encode(&data)
             .expect("Standard 4:2:0 encoding failed");
@@ -4453,7 +4444,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "sharp-yuv")]
     fn test_sharp_yuv_422() {
         // Test Sharp YUV with 4:2:2 produces valid JPEG
         let width = 64u32;
@@ -4475,7 +4465,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "sharp-yuv")]
     fn test_sharp_yuv_falls_back_for_444() {
         // 4:4:4 should work with sharp_yuv=true (falls back to standard path)
         let width = 32u32;
