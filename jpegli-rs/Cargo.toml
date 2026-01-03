@@ -35,6 +35,8 @@ mozjpeg-rs = { workspace = true, optional = true }
 # jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
 # For corpus comparison testing
 codec-eval = { version = "0.2", optional = true }
+# Sharp YUV chroma downsampling (better color on edges)
+yuv = { workspace = true, optional = true }
 
 [dev-dependencies]
 chrono = "0.4"
@@ -73,6 +75,11 @@ debug-tokens = []
 test-utils = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
 experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
+# Enable Sharp YUV chroma downsampling (better color on edges)
+# Uses gamma-aware bi-linear interpolation for higher quality chroma at edges/thin lines.
+# Despite the algorithmic complexity, benchmarks show Sharp YUV is 10-50% FASTER than
+# standard downsampling because the yuv crate uses optimized SIMD and single-pass conversion.
+sharp-yuv = ["dep:yuv"]
 
 [[bench]]
 name = "encode"

@@ -54,6 +54,7 @@ libloading = "0.8"
 # Published crates
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }
 mozjpeg-rs = "0.2.5"
+yuv = "0.8"
 
 # SIMD dispatch
 multiversion = "0.7"
