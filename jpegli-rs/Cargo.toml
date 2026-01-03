@@ -70,7 +70,7 @@ debug-tokens = []
 # Enable test utilities (image generation, quality verification)
 test-utils = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
-hybrid-trellis = ["dep:mozjpeg-rs"]
+experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 
 [[bench]]
 name = "encode"

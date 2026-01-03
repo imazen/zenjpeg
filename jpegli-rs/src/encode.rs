@@ -24,7 +24,7 @@ use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use crate::xyb::srgb_to_scaled_xyb;
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
 
 /// Progressive scan parameters.
@@ -64,12 +64,12 @@ pub struct EncoderConfig {
     /// Use optimized Huffman tables
     pub optimize_huffman: bool,
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
-    /// Requires the `hybrid-trellis` feature
-    #[cfg(feature = "hybrid-trellis")]
+    /// Requires the `experimental-hybrid-trellis` feature
+    #[cfg(feature = "experimental-hybrid-trellis")]
     pub hybrid_config: crate::hybrid_config::HybridConfig,
     /// Custom AQ map (optional). If None, computed automatically.
     /// Allows pre-scaling the AQ map for size control.
-    #[cfg(feature = "hybrid-trellis")]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     pub custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
 }
 
@@ -87,9 +87,9 @@ impl Default for EncoderConfig {
             restart_interval: 0,
             // Match C++ jpegli default: optimize_coding = true
             optimize_huffman: true,
-            #[cfg(feature = "hybrid-trellis")]
+            #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
-            #[cfg(feature = "hybrid-trellis")]
+            #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
         }
     }
@@ -99,13 +99,13 @@ impl Default for EncoderConfig {
 ///
 /// This struct holds pre-built Huffman tables and hybrid config for use
 /// during hybrid quantization (jpegli AQ + mozjpeg trellis).
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 struct HybridQuantContext {
     huff_tables: StandardHuffmanTables,
     config: crate::hybrid_config::HybridConfig,
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 impl HybridQuantContext {
     /// Creates a new hybrid quantization context with the given config.
     fn new(config: crate::hybrid_config::HybridConfig) -> Self {
@@ -250,8 +250,8 @@ impl Encoder {
     /// to spend bits based on image content) with mozjpeg's trellis quantization
     /// (which optimizes HOW to spend bits via rate-distortion optimization).
     ///
-    /// Requires the `hybrid-trellis` feature.
-    #[cfg(feature = "hybrid-trellis")]
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub fn hybrid_trellis(mut self, enable: bool) -> Self {
         if enable {
@@ -267,8 +267,8 @@ impl Encoder {
     /// Allows fine-tuning all hybrid AQ+trellis parameters.
     /// See [`HybridConfig`](crate::hybrid_config::HybridConfig) for available options.
     ///
-    /// Requires the `hybrid-trellis` feature.
-    #[cfg(feature = "hybrid-trellis")]
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub fn hybrid_config(mut self, config: crate::hybrid_config::HybridConfig) -> Self {
         self.config.hybrid_config = config;
@@ -303,8 +303,8 @@ impl Encoder {
     ///     .encode(&pixels)?;
     /// ```
     ///
-    /// Requires the `hybrid-trellis` feature.
-    #[cfg(feature = "hybrid-trellis")]
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub fn aq_map(mut self, map: crate::adaptive_quant::AQStrengthMap) -> Self {
         self.config.custom_aq_map = Some(map);
@@ -504,13 +504,13 @@ impl Encoder {
         // Scale Y plane from [0,1] to [0,255] range for AQ computation
         let y_plane_scaled: Vec<f32> = y_plane.iter().map(|&v| v * 255.0).collect();
         let y_quant_01 = y_quant.values[1];
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
             custom.clone()
         } else {
             compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01)
         };
-        #[cfg(not(feature = "hybrid-trellis"))]
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
 
         // Zero-bias parameters for XYB (use YCbCr tables as approximation)
@@ -521,7 +521,7 @@ impl Encoder {
         let b_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1); // B uses chroma params
 
         // Create hybrid quantization context if enabled
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let hybrid_ctx = if self.config.hybrid_config.enabled {
             Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
@@ -540,7 +540,7 @@ impl Encoder {
 
         // For optimized Huffman, quantize all blocks first to collect frequencies
         let scan_data = if self.config.optimize_huffman {
-            #[cfg(feature = "hybrid-trellis")]
+            #[cfg(feature = "experimental-hybrid-trellis")]
             let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb_with_aq(
                 &x_plane,
                 &y_plane,
@@ -555,7 +555,7 @@ impl Encoder {
                 &aq_map,
                 hybrid_ctx.as_ref(),
             );
-            #[cfg(not(feature = "hybrid-trellis"))]
+            #[cfg(not(feature = "experimental-hybrid-trellis"))]
             let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb_with_aq_simple(
                 &x_plane,
                 &y_plane,
@@ -2098,17 +2098,17 @@ impl Encoder {
         // Compute per-block adaptive quantization strength from Y plane
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
             custom.clone()
         } else {
             compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01)
         };
-        #[cfg(not(feature = "hybrid-trellis"))]
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
 
         // Create hybrid quantization context if enabled
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let hybrid_ctx = if self.config.hybrid_config.enabled {
             Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
@@ -2124,7 +2124,7 @@ impl Encoder {
                 let y_block = self.extract_block(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
 
-                #[cfg(feature = "hybrid-trellis")]
+                #[cfg(feature = "experimental-hybrid-trellis")]
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                     ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
@@ -2135,7 +2135,7 @@ impl Encoder {
                         aq_strength,
                     )
                 };
-                #[cfg(not(feature = "hybrid-trellis"))]
+                #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
                     &y_dct,
                     &y_quant.values,
@@ -2151,7 +2151,7 @@ impl Encoder {
                     let cb_block = self.extract_block(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
 
-                    #[cfg(feature = "hybrid-trellis")]
+                    #[cfg(feature = "experimental-hybrid-trellis")]
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cb_dct, &c_quant.values, aq_strength, 1.0, false)
                     } else {
@@ -2162,7 +2162,7 @@ impl Encoder {
                             aq_strength,
                         )
                     };
-                    #[cfg(not(feature = "hybrid-trellis"))]
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
                         &c_quant.values,
@@ -2177,7 +2177,7 @@ impl Encoder {
                     let cr_block = self.extract_block(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
 
-                    #[cfg(feature = "hybrid-trellis")]
+                    #[cfg(feature = "experimental-hybrid-trellis")]
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cr_dct, &c_quant.values, aq_strength, 1.0, false)
                     } else {
@@ -2188,7 +2188,7 @@ impl Encoder {
                             aq_strength,
                         )
                     };
-                    #[cfg(not(feature = "hybrid-trellis"))]
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
                         &c_quant.values,
@@ -2244,17 +2244,17 @@ impl Encoder {
         // Compute per-block adaptive quantization strength from Y plane
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
             custom.clone()
         } else {
             compute_aq_strength_map(y_plane, width, height, y_quant_01)
         };
-        #[cfg(not(feature = "hybrid-trellis"))]
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
 
         // Create hybrid quantization context if enabled
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let hybrid_ctx = if self.config.hybrid_config.enabled {
             Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
@@ -2273,7 +2273,7 @@ impl Encoder {
                 let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
 
-                #[cfg(feature = "hybrid-trellis")]
+                #[cfg(feature = "experimental-hybrid-trellis")]
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                     ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
@@ -2284,7 +2284,7 @@ impl Encoder {
                         aq_strength,
                     )
                 };
-                #[cfg(not(feature = "hybrid-trellis"))]
+                #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
                     &y_dct,
                     &y_quant.values,
@@ -2298,7 +2298,7 @@ impl Encoder {
                     let cb_block = self.extract_block_ycbcr_f32(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
 
-                    #[cfg(feature = "hybrid-trellis")]
+                    #[cfg(feature = "experimental-hybrid-trellis")]
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
                     } else {
@@ -2309,7 +2309,7 @@ impl Encoder {
                             aq_strength,
                         )
                     };
-                    #[cfg(not(feature = "hybrid-trellis"))]
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
                         &cb_quant.values,
@@ -2322,7 +2322,7 @@ impl Encoder {
                     let cr_block = self.extract_block_ycbcr_f32(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
 
-                    #[cfg(feature = "hybrid-trellis")]
+                    #[cfg(feature = "experimental-hybrid-trellis")]
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
                     } else {
@@ -2333,7 +2333,7 @@ impl Encoder {
                             aq_strength,
                         )
                     };
-                    #[cfg(not(feature = "hybrid-trellis"))]
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
                         &cr_quant.values,
@@ -2385,17 +2385,17 @@ impl Encoder {
 
         // Compute per-block adaptive quantization strength from Y plane
         let y_quant_01 = y_quant.values[1];
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
             custom.clone()
         } else {
             compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01)
         };
-        #[cfg(not(feature = "hybrid-trellis"))]
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
 
         // Create hybrid quantization context if enabled
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let hybrid_ctx = if self.config.hybrid_config.enabled {
             Some(HybridQuantContext::new(self.config.hybrid_config))
         } else {
@@ -2413,7 +2413,7 @@ impl Encoder {
                 let y_block = self.extract_block_ycbcr_f32(y_plane, y_width, y_height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
 
-                #[cfg(feature = "hybrid-trellis")]
+                #[cfg(feature = "experimental-hybrid-trellis")]
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                     ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
@@ -2424,7 +2424,7 @@ impl Encoder {
                         aq_strength,
                     )
                 };
-                #[cfg(not(feature = "hybrid-trellis"))]
+                #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias(
                     &y_dct,
                     &y_quant.values,
@@ -2451,7 +2451,7 @@ impl Encoder {
                         self.extract_block_ycbcr_f32(cb_plane, c_width, c_height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
 
-                    #[cfg(feature = "hybrid-trellis")]
+                    #[cfg(feature = "experimental-hybrid-trellis")]
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
                     } else {
@@ -2462,7 +2462,7 @@ impl Encoder {
                             aq_strength,
                         )
                     };
-                    #[cfg(not(feature = "hybrid-trellis"))]
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cb_dct,
                         &cb_quant.values,
@@ -2476,7 +2476,7 @@ impl Encoder {
                         self.extract_block_ycbcr_f32(cr_plane, c_width, c_height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
 
-                    #[cfg(feature = "hybrid-trellis")]
+                    #[cfg(feature = "experimental-hybrid-trellis")]
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
                     } else {
@@ -2487,7 +2487,7 @@ impl Encoder {
                             aq_strength,
                         )
                     };
-                    #[cfg(not(feature = "hybrid-trellis"))]
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
                         &cr_dct,
                         &cr_quant.values,
@@ -3095,7 +3095,7 @@ impl Encoder {
     /// For XYB mode:
     /// - X and Y use luma tables (both are full-resolution "luma-like" channels)
     /// - B uses chroma tables (downsampled blue channel)
-    #[cfg(feature = "hybrid-trellis")]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     #[allow(clippy::too_many_arguments)]
     fn quantize_all_blocks_xyb_with_aq(
         &self,

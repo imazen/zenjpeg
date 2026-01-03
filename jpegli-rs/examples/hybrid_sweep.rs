@@ -11,13 +11,13 @@
 //! Run with:
 //! ```
 //! # Quick sweep (few params, fast)
-//! cargo run --release --example hybrid_sweep --features hybrid-trellis
+//! cargo run --release --example hybrid_sweep --features experimental-hybrid-trellis
 //!
 //! # Comprehensive sweep (many params, slower)
-//! SWEEP=comprehensive cargo run --release --example hybrid_sweep --features hybrid-trellis
+//! SWEEP=comprehensive cargo run --release --example hybrid_sweep --features experimental-hybrid-trellis
 //!
 //! # Save results with timestamp
-//! cargo run --release --example hybrid_sweep --features hybrid-trellis \
+//! cargo run --release --example hybrid_sweep --features experimental-hybrid-trellis \
 //!   > sweep_$(date +%Y%m%d_%H%M%S).csv
 //! ```
 
@@ -26,13 +26,13 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
-#[cfg(not(feature = "hybrid-trellis"))]
+#[cfg(not(feature = "experimental-hybrid-trellis"))]
 fn main() {
-    eprintln!("This example requires the hybrid-trellis feature.");
-    eprintln!("Run with: cargo run --release --example hybrid_sweep --features hybrid-trellis");
+    eprintln!("This example requires the experimental-hybrid-trellis feature.");
+    eprintln!("Run with: cargo run --release --example hybrid_sweep --features experimental-hybrid-trellis");
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn main() {
     use jpegli::hybrid_config::SweepConfig;
 
@@ -219,7 +219,7 @@ fn main() {
 }
 
 /// Pareto-focused sweep: vary quality to get size variation, test key params
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn pareto_sweep_config() -> jpegli::hybrid_config::SweepConfig {
     jpegli::hybrid_config::SweepConfig {
         aq_lambda_scales: vec![0.0, 1.0, 2.0, 3.0, 4.0, 6.0],
@@ -231,7 +231,7 @@ fn pareto_sweep_config() -> jpegli::hybrid_config::SweepConfig {
 }
 
 /// Multi-quality sweep: focused params, many quality levels for Pareto curves
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn multiq_sweep_config() -> jpegli::hybrid_config::SweepConfig {
     jpegli::hybrid_config::SweepConfig {
         // Key aq_lambda_scale values: 0 (no AQ), 2 (default), 4 (aggressive)
@@ -245,7 +245,7 @@ fn multiq_sweep_config() -> jpegli::hybrid_config::SweepConfig {
     }
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 struct ImageData {
     name: String,
     pixels: Vec<u8>,
@@ -253,7 +253,7 @@ struct ImageData {
     height: usize,
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 struct EncodingResult {
     bytes: usize,
     dssim: f64,
@@ -261,7 +261,7 @@ struct EncodingResult {
     butteraugli: f64,
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn load_image(path: &PathBuf) -> Option<ImageData> {
     let file = std::fs::File::open(path).ok()?;
     let decoder = png::Decoder::new(file);
@@ -281,7 +281,7 @@ fn load_image(path: &PathBuf) -> Option<ImageData> {
     })
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn encode_and_measure(
     img: &ImageData,
     quality: u8,
@@ -316,7 +316,7 @@ fn encode_and_measure(
     }
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     use dssim::Dssim;
 
@@ -340,7 +340,7 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     dssim.into()
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -383,7 +383,7 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     compute_frame_ssimulacra2(orig_rgb, decoded_rgb).unwrap_or(0.0)
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     use butteraugli::{compute_butteraugli, ButteraugliParams};
 

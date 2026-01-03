@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```
-//! cargo run --release --example xyb_aq_test --features hybrid-trellis
+//! cargo run --release --example xyb_aq_test --features experimental-hybrid-trellis
 //! ```
 
 fn main() {
@@ -49,7 +49,7 @@ fn main() {
     println!("XYB baseline:   {} bytes", xyb_baseline.len());
 
     // 3. XYB with hybrid trellis
-    #[cfg(feature = "hybrid-trellis")]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     {
         use jpegli::hybrid_config::HybridConfig;
 
@@ -89,9 +89,9 @@ fn main() {
         );
     }
 
-    #[cfg(not(feature = "hybrid-trellis"))]
+    #[cfg(not(feature = "experimental-hybrid-trellis"))]
     {
-        println!("(hybrid-trellis feature not enabled)");
+        println!("(experimental-hybrid-trellis feature not enabled)");
     }
 }
 

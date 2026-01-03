@@ -51,7 +51,7 @@ fn main() {
             let cpp_bytes = std::fs::metadata(&cpp_path).map(|m| m.len()).unwrap_or(0);
 
             // Rust XYB with hybrid trellis (matches C jpegli's AQ)
-            #[cfg(feature = "hybrid-trellis")]
+            #[cfg(feature = "experimental-hybrid-trellis")]
             let rust_jpeg = {
                 use jpegli::hybrid_config::HybridConfig;
                 jpegli::Encoder::new()
@@ -63,7 +63,7 @@ fn main() {
                     .encode(pixels)
                     .expect("encode")
             };
-            #[cfg(not(feature = "hybrid-trellis"))]
+            #[cfg(not(feature = "experimental-hybrid-trellis"))]
             let rust_jpeg = jpegli::Encoder::new()
                 .width(width)
                 .height(height)

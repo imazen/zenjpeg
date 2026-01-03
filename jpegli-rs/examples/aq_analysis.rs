@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```
-//! cargo run --release --example aq_analysis --features hybrid-trellis -- /path/to/images
+//! cargo run --release --example aq_analysis --features experimental-hybrid-trellis -- /path/to/images
 //! ```
 
 use jpegli::adaptive_quant::compute_aq_strength_map;

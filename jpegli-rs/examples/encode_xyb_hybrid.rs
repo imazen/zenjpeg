@@ -23,7 +23,7 @@ fn main() {
     let height = info.height;
 
     // Encode XYB JPEG with hybrid
-    #[cfg(feature = "hybrid-trellis")]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     let jpeg = {
         use jpegli::hybrid_config::HybridConfig;
         jpegli::Encoder::new()
@@ -36,7 +36,7 @@ fn main() {
             .expect("Encode failed")
     };
 
-    #[cfg(not(feature = "hybrid-trellis"))]
+    #[cfg(not(feature = "experimental-hybrid-trellis"))]
     let jpeg = {
         jpegli::Encoder::new()
             .width(width)

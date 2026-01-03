@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```
-//! cargo run --release --example aq_scaling_test --features hybrid-trellis
+//! cargo run --release --example aq_scaling_test --features experimental-hybrid-trellis
 //! ```
 
 use std::env;
@@ -143,7 +143,7 @@ fn encode_baseline(img: &ImageData, quality: u8) -> EncodingResult {
     }
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn encode_hybrid(
     img: &ImageData,
     quality: u8,
@@ -197,7 +197,7 @@ fn encode_hybrid(
     }
 }
 
-#[cfg(not(feature = "hybrid-trellis"))]
+#[cfg(not(feature = "experimental-hybrid-trellis"))]
 fn encode_hybrid(
     img: &ImageData,
     quality: u8,
