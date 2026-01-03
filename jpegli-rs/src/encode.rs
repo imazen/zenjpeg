@@ -322,6 +322,10 @@ impl Encoder {
     /// This matches libjpeg/jpegli's `smoothing_factor` parameter.
     /// Default is 0 (disabled), which is also jpegli's default.
     ///
+    /// **Important**: Only works with [`ChromaConversion::Intrinsic`].
+    /// The yuv crate paths (Fast, Sharp) perform conversion + downsampling
+    /// in a single pass, so there's no intermediate chroma plane to blur.
+    ///
     /// Only affects chroma subsampling modes (4:2:0, 4:2:2, 4:4:0).
     /// Has no effect on 4:4:4 mode since no downsampling occurs.
     #[must_use]
@@ -333,10 +337,13 @@ impl Encoder {
     /// Set chroma conversion method.
     ///
     /// Controls how RGB is converted to YCbCr chroma planes:
-    /// - `Intrinsic`: Our f32 conversion (best for 4:4:4, uses smoothing_factor)
-    /// - `Fast`: yuv crate SIMD path (simple box filter, fast)
-    /// - `Sharp`: yuv crate Sharp YUV (gamma-aware, best quality for edges)
-    /// - `Auto`: Sharp for 4:2:0/4:2:2/4:4:0, Intrinsic for 4:4:4
+    /// - [`ChromaConversion::Intrinsic`]: Our f32 conversion with box filter
+    ///   downsampling. Supports `smoothing_factor` for pre-blur.
+    /// - [`ChromaConversion::Fast`]: yuv crate SIMD path with box filter.
+    ///   Fast but may have color bleeding on edges.
+    /// - [`ChromaConversion::Sharp`]: yuv crate Sharp YUV (gamma-aware bilinear).
+    ///   Best quality for edges, graphics, and text.
+    /// - [`ChromaConversion::Auto`]: Sharp for 4:2:0/4:2:2, Intrinsic for 4:4:4/4:4:0
     ///
     /// Sharp YUV is often 10-50% FASTER than Intrinsic due to optimized SIMD.
     #[must_use]
