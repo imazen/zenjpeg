@@ -27,7 +27,7 @@ moxcms = { workspace = true, optional = true }
 jpeg-decoder = { workspace = true, optional = true }
 butteraugli = { workspace = true }
 # Hybrid trellis quantization from mozjpeg
-mozjpeg-oxide = { workspace = true, optional = true }
+mozjpeg-rs = { workspace = true, optional = true }
 # For FFI comparison testing against C++ jpegli (internal development only)
 # This dependency is NOT published to crates.io - it requires building the C++ jpegli
 # from source via cmake. Only works in a local checkout with the C++ submodule:
@@ -70,7 +70,7 @@ debug-tokens = []
 # Enable test utilities (image generation, quality verification)
 test-utils = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
-hybrid-trellis = ["dep:mozjpeg-oxide"]
+hybrid-trellis = ["dep:mozjpeg-rs"]
 
 [[bench]]
 name = "encode"
