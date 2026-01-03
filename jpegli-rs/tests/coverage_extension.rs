@@ -295,13 +295,10 @@ mod entropy_coverage {
 
         // Create encoder with restart interval
         // Note: restart interval support may have decoder compatibility issues
-        let config = EncoderConfig {
-            width: 256,
-            height: 256,
-            restart_interval: 10,
-            ..Default::default()
-        };
-        let encoder = Encoder::from_config(config);
+        let encoder = Encoder::new()
+            .width(256)
+            .height(256)
+            .restart_interval(10);
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         // Check for DRI marker (defines restart interval)
@@ -553,13 +550,10 @@ mod encode_coverage {
 
         // Test restart interval encoding (decoder may have issues with restart markers)
         for interval in [1, 5, 10, 50, 100] {
-            let config = EncoderConfig {
-                width: 512,
-                height: 512,
-                restart_interval: interval,
-                ..Default::default()
-            };
-            let encoder = Encoder::from_config(config);
+            let encoder = Encoder::new()
+                .width(512)
+                .height(512)
+                .restart_interval(interval);
             let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
             // Verify DRI marker is present
@@ -651,13 +645,10 @@ mod encode_coverage {
     fn encode_with_fixed_huffman() {
         let img = generate_gradient_d(128, 128, 3);
 
-        let config = EncoderConfig {
-            width: 128,
-            height: 128,
-            optimize_huffman: false,
-            ..Default::default()
-        };
-        let encoder = Encoder::from_config(config);
+        let encoder = Encoder::new()
+            .width(128)
+            .height(128)
+            .optimize_huffman(false);
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -814,24 +805,18 @@ mod huffman_coverage {
 
         for (name, img) in patterns {
             // With optimization
-            let config_opt = EncoderConfig {
-                width: 128,
-                height: 128,
-                optimize_huffman: true,
-                ..Default::default()
-            };
-            let jpeg_opt = Encoder::from_config(config_opt)
+            let jpeg_opt = Encoder::new()
+                .width(128)
+                .height(128)
+                .optimize_huffman(true)
                 .encode(&img.pixels)
                 .expect(&format!("{} optimized encode failed", name));
 
             // Without optimization
-            let config_fixed = EncoderConfig {
-                width: 128,
-                height: 128,
-                optimize_huffman: false,
-                ..Default::default()
-            };
-            let jpeg_fixed = Encoder::from_config(config_fixed)
+            let jpeg_fixed = Encoder::new()
+                .width(128)
+                .height(128)
+                .optimize_huffman(false)
                 .encode(&img.pixels)
                 .expect(&format!("{} fixed encode failed", name));
 

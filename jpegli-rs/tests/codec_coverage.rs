@@ -191,22 +191,16 @@ mod encode_coverage {
     #[test]
     fn encode_optimized_huffman() {
         let img = generate_gradient_d(256, 256, 3);
-        let config = EncoderConfig {
-            width: 256,
-            height: 256,
-            optimize_huffman: true,
-            ..Default::default()
-        };
-        let encoder = Encoder::from_config(config);
-        let jpeg_opt = encoder.encode(&img.pixels).expect("optimized failed");
+        let encoder_opt = Encoder::new()
+            .width(256)
+            .height(256)
+            .optimize_huffman(true);
+        let jpeg_opt = encoder_opt.encode(&img.pixels).expect("optimized failed");
 
-        let config_fixed = EncoderConfig {
-            width: 256,
-            height: 256,
-            optimize_huffman: false,
-            ..Default::default()
-        };
-        let encoder_fixed = Encoder::from_config(config_fixed);
+        let encoder_fixed = Encoder::new()
+            .width(256)
+            .height(256)
+            .optimize_huffman(false);
         let jpeg_fixed = encoder_fixed.encode(&img.pixels).expect("fixed failed");
 
         // Optimized should generally be smaller or similar
@@ -335,19 +329,16 @@ mod encode_coverage {
     #[test]
     fn encode_full_config() {
         let img = generate_gradient_d(128, 128, 3);
-        let config = EncoderConfig {
-            width: 128,
-            height: 128,
-            pixel_format: PixelFormat::Rgb,
-            quality: Quality::from_quality(90.0),
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S444,
-            use_xyb: false,
-            optimize_huffman: true,
-            restart_interval: 0,
-            ..Default::default()
-        };
-        let encoder = Encoder::from_config(config);
+        let encoder = Encoder::new()
+            .width(128)
+            .height(128)
+            .pixel_format(PixelFormat::Rgb)
+            .quality(Quality::from_quality(90.0))
+            .mode(JpegMode::Baseline)
+            .subsampling(Subsampling::S444)
+            .use_xyb(false)
+            .optimize_huffman(true)
+            .restart_interval(0);
         let jpeg = encoder.encode(&img.pixels).expect("full config failed");
         verify_jpeg_structure(&jpeg);
     }
