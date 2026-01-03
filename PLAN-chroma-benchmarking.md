@@ -214,3 +214,63 @@ jpegli-rs/benches/
 2. Phase 2 (implement): Add GammaAwareF32 downsampling
 3. Phase 3 (measure): Run full benchmark suite
 4. Phase 4-5 (simplify): Refactor based on results
+
+---
+
+## Benchmark Results (2026-01-03)
+
+### Key Findings
+
+#### 1. YUV Crate Does NOT Cause Quality Loss for Box Filtering
+F32 Box and YUV Box (Fast) produce **identical DSSIM** scores:
+| Pattern | F32 Box DSSIM | YUV Box DSSIM |
+|---------|---------------|---------------|
+| Horizontal Gradient 4:2:0 | 0.000091 | 0.000091 |
+| Vertical Gradient 4:2:0 | 0.000122 | 0.000122 |
+| Natural Pattern 4:2:0 | 0.000217 | 0.000217 |
+
+The yuv crate's integer math produces identical results to our f32 path for box filtering.
+
+#### 2. YUV Sharp Produces Better Quality Than YUV Box (as expected)
+After fixing the internal_pipeline code path (commit 77476be):
+| Pattern | YUV Box DSSIM | YUV Sharp DSSIM | Improvement |
+|---------|---------------|-----------------|-------------|
+| Horizontal Gradient 4:2:0 | 0.000091 | 0.000079 | 14% |
+| Natural Pattern 4:2:0 | 0.000217 | 0.000190 | 12% |
+
+#### 3. F32 Gamma-Aware Often Beats YUV Sharp
+| Pattern | F32 Gamma-Aware | YUV Sharp | Winner |
+|---------|-----------------|-----------|--------|
+| Horizontal Gradient 4:2:0 | 0.000070 | 0.000079 | F32 |
+| Natural Pattern 4:2:0 | 0.000151 | 0.000190 | F32 |
+| Vertical Gradient 4:2:0 | 0.000106 | 0.000104 | YUV Sharp |
+| Thin Lines 4:2:0 | 0.033062 | 0.015798 | YUV Sharp |
+
+For some patterns (thin lines), YUV Sharp is better. For most smooth content, F32 Gamma-Aware wins.
+
+#### 4. Performance After LUT+fastpow Optimization
+After adding exact sRGB→linear LUT and fastpow (commit 13a7540):
+| Method | Time (512x512) | vs Box Filter |
+|--------|----------------|---------------|
+| F32 Box | ~3.5ms | baseline |
+| YUV Box (Fast) | ~2.4ms | 0.7x faster |
+| YUV Sharp | ~4.6ms | 1.3x slower |
+| F32 Gamma-Aware | ~5.4ms | 1.5x slower |
+| F32 Gamma-Aware Iterative | ~9.3ms | 2.7x slower |
+
+### Answers to Questions
+
+1. **Should we keep yuv crate?** YES for Sharp YUV - it handles edge cases better
+2. **Is professional_mode worth it?** Not tested yet
+3. **Do we need 4:4:0 support?** YES - F32 path provides it, yuv crate doesn't
+4. **XYB gamma-aware B channel?** Not urgent - XYB mode is less common
+
+### Recommendation
+
+**Default path for chroma downsampling:**
+- **4:2:0/4:2:2**: Use YUV Sharp - good balance of quality and speed, handles edges well
+- **4:4:0**: Use F32 Gamma-Aware - yuv crate doesn't support this mode
+- **4:4:4**: No downsampling needed - use F32 intrinsic color conversion
+
+**For users who want maximum quality:**
+- F32 Gamma-Aware Iterative provides marginal improvements but 2-3x slower
