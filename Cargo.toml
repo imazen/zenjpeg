@@ -16,8 +16,7 @@ description = "Pure Rust JPEG encoder/decoder - port of Google's jpegli"
 # Core
 wide = "0.7"
 bytemuck = { version = "1.14", features = ["derive"] }
-arrayref = "0.3"
-rgb = "0.8"
+rgb = { version = "0.8", features = ["as-bytes"] }
 imgref = "1.10"
 
 # Serialization (for test data)
@@ -56,8 +55,6 @@ butteraugli = { version = "0.3", features = ["unsafe-perf"] }
 mozjpeg-rs = "0.2.5"
 yuv = { version = "0.8", features = ["professional_mode"] }
 
-# SIMD dispatch
-multiversion = "0.7"
 
 [workspace.lints.rust]
 unsafe_code = "warn"

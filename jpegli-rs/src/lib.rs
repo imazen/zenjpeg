@@ -42,6 +42,7 @@
 pub mod decode;
 pub mod encode;
 pub mod error;
+pub mod pixel;
 pub mod quality_conversion;
 pub mod quant;
 pub mod types;
@@ -109,3 +110,9 @@ pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
 // Quality settings
 pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
 pub use quant::{Quality, QuantTable};
+
+// Pixel types for typed encode/decode API
+pub use pixel::{Gray16, Gray8, Pixel, RGB16, RGB8, RGBA16, RGBA8};
+
+// Re-export imgref for convenient image buffer handling
+pub use imgref::{Img, ImgRef, ImgRefMut, ImgVec};
