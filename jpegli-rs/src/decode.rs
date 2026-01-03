@@ -183,15 +183,25 @@ impl Decoder {
         let mut pixels = parser.to_pixels(output_format, info.is_xyb)?;
 
         // Apply ICC profile if enabled and present
+        // Note: ICC transform failures are non-fatal - we fall back to un-color-managed pixels
+        // rather than failing the decode, since the JPEG itself decoded successfully
         #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
         if self.config.apply_icc && output_format == PixelFormat::Rgb {
             if let Some(ref icc_profile) = parser.icc_profile {
-                pixels = apply_icc_transform(
+                match apply_icc_transform(
                     &pixels,
                     info.dimensions.width as usize,
                     info.dimensions.height as usize,
                     icc_profile,
-                )?;
+                ) {
+                    Ok(transformed) => pixels = transformed,
+                    Err(_e) => {
+                        // ICC transform failed - continue with un-color-managed pixels
+                        // This can happen with unusual profiles that CMS libraries don't support
+                        #[cfg(debug_assertions)]
+                        eprintln!("Warning: ICC profile transform failed, using original colors: {_e:?}");
+                    }
+                }
             }
         }
 

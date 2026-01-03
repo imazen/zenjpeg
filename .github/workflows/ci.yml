@@ -63,6 +63,8 @@ jobs:
         run: cargo test -p jpegli-rs --no-default-features --features simd
       - name: Test cms-lcms2
         run: cargo test -p jpegli-rs --no-default-features --features simd,cms-lcms2
+      - name: Test cms-moxcms
+        run: cargo test -p jpegli-rs --no-default-features --features simd,cms-moxcms
 
   msrv:
     name: MSRV (1.70)
