@@ -159,8 +159,8 @@ cargo run --release --example decode_benchmark
 # Encoder benchmark vs C++ cjpegli (requires cjpegli in PATH)
 cargo run --release --example encode_benchmark
 
-# Encoder quality comparison (jpegli vs mozjpeg)
-cargo run --release --example pareto_comparison
+# Multi-decoder compatibility test
+cargo test --test multi_decoder_compatibility -- --nocapture
 ```
 
 ## Future Goals

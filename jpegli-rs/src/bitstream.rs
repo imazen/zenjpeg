@@ -253,7 +253,8 @@ impl<'a> BitReader<'a> {
                 context: "not enough bits to read",
             });
         }
-        let bits = ((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32;
+        let bits =
+            ((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32;
         self.bits_in_buffer -= count;
         Ok(bits)
     }

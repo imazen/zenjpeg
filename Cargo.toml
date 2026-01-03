@@ -31,9 +31,10 @@ moxcms = "0.6"
 
 # Image I/O (for testing)
 png = "0.17"
-zune-jpeg = "0.4"      # Reference decoder for comparison
-mozjpeg = "0.10"       # For encoder comparison
-jpeg-decoder = "0.3"   # Another reference decoder
+zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
+mozjpeg = "0.10"       # For encoder/decoder comparison (C wrapper)
+jpeg-decoder = "0.3"   # Reference decoder (used by image crate)
+turbojpeg = "1.3"      # libjpeg-turbo wrapper (fastest C decoder)
 
 # Quality metrics
 dssim = "3.2"
@@ -51,8 +52,8 @@ libc = "0.2"
 libloading = "0.8"
 
 # Published crates
-butteraugli = "0.3"
-mozjpeg-rs = "0.2"
+butteraugli = { version = "0.3", features = ["unsafe-perf"] }
+mozjpeg-rs = "0.2.5"
 
 # SIMD dispatch
 multiversion = "0.7"

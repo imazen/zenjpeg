@@ -850,12 +850,26 @@ impl<'a> JpegParser<'a> {
         for (_comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
-            if let Some(table) = &self.dc_tables[dc_idx] {
-                decoder.set_dc_table(dc_idx, table.clone());
-            }
-            if let Some(table) = &self.ac_tables[ac_idx] {
-                decoder.set_ac_table(ac_idx, table.clone());
-            }
+
+            // Use explicit table if provided, otherwise use standard JPEG tables.
+            // MJPEG files often omit DHT markers and expect standard tables.
+            let dc_table_to_use = self.dc_tables[dc_idx].clone().unwrap_or_else(|| {
+                if dc_idx == 0 {
+                    HuffmanDecodeTable::std_dc_luminance()
+                } else {
+                    HuffmanDecodeTable::std_dc_chrominance()
+                }
+            });
+            decoder.set_dc_table(dc_idx, dc_table_to_use);
+
+            let ac_table_to_use = self.ac_tables[ac_idx].clone().unwrap_or_else(|| {
+                if ac_idx == 0 {
+                    HuffmanDecodeTable::std_ac_luminance()
+                } else {
+                    HuffmanDecodeTable::std_ac_chrominance()
+                }
+            });
+            decoder.set_ac_table(ac_idx, ac_table_to_use);
         }
 
         // Decode MCUs with proper interleaving
@@ -954,12 +968,26 @@ impl<'a> JpegParser<'a> {
         for (_comp_idx, dc_table, ac_table) in scan_components {
             let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
             let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
-            if let Some(table) = &self.dc_tables[dc_idx] {
-                decoder.set_dc_table(dc_idx, table.clone());
-            }
-            if let Some(table) = &self.ac_tables[ac_idx] {
-                decoder.set_ac_table(ac_idx, table.clone());
-            }
+
+            // Use explicit table if provided, otherwise use standard JPEG tables.
+            // MJPEG files often omit DHT markers and expect standard tables.
+            let dc_table_to_use = self.dc_tables[dc_idx].clone().unwrap_or_else(|| {
+                if dc_idx == 0 {
+                    HuffmanDecodeTable::std_dc_luminance()
+                } else {
+                    HuffmanDecodeTable::std_dc_chrominance()
+                }
+            });
+            decoder.set_dc_table(dc_idx, dc_table_to_use);
+
+            let ac_table_to_use = self.ac_tables[ac_idx].clone().unwrap_or_else(|| {
+                if ac_idx == 0 {
+                    HuffmanDecodeTable::std_ac_luminance()
+                } else {
+                    HuffmanDecodeTable::std_ac_chrominance()
+                }
+            });
+            decoder.set_ac_table(ac_idx, ac_table_to_use);
         }
 
         // Determine scan type
