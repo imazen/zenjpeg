@@ -854,6 +854,76 @@ impl Encoder {
                         c_height,
                     );
                 }
+                DownsamplingMethod::Sharp => {
+                    // Use yuv crate Sharp YUV path
+                    match self.config.subsampling {
+                        Subsampling::S420 => {
+                            let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                                self.convert_yuv_crate_420(data, true)?;
+                            return self.encode_baseline_ycbcr_with_planes(
+                                output,
+                                y_plane,
+                                cb_plane_final,
+                                cr_plane_final,
+                                c_width,
+                                c_height,
+                            );
+                        }
+                        Subsampling::S422 => {
+                            let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                                self.convert_yuv_crate_422(data, true)?;
+                            return self.encode_baseline_ycbcr_with_planes(
+                                output,
+                                y_plane,
+                                cb_plane_final,
+                                cr_plane_final,
+                                c_width,
+                                c_height,
+                            );
+                        }
+                        Subsampling::S440 => {
+                            // yuv crate doesn't support 4:4:0, fall through
+                        }
+                        Subsampling::S444 => {
+                            // No downsampling needed
+                        }
+                    }
+                }
+                DownsamplingMethod::Box => {
+                    // Use yuv crate Box filter path (non-sharp)
+                    match self.config.subsampling {
+                        Subsampling::S420 => {
+                            let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                                self.convert_yuv_crate_420(data, false)?;
+                            return self.encode_baseline_ycbcr_with_planes(
+                                output,
+                                y_plane,
+                                cb_plane_final,
+                                cr_plane_final,
+                                c_width,
+                                c_height,
+                            );
+                        }
+                        Subsampling::S422 => {
+                            let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                                self.convert_yuv_crate_422(data, false)?;
+                            return self.encode_baseline_ycbcr_with_planes(
+                                output,
+                                y_plane,
+                                cb_plane_final,
+                                cr_plane_final,
+                                c_width,
+                                c_height,
+                            );
+                        }
+                        Subsampling::S440 => {
+                            // yuv crate doesn't support 4:4:0, fall through
+                        }
+                        Subsampling::S444 => {
+                            // No downsampling needed
+                        }
+                    }
+                }
                 _ => {}
             }
         }
