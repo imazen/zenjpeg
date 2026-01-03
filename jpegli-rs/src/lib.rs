@@ -82,9 +82,9 @@ pub mod transfer_functions;
 pub mod xyb;
 
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid;
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid_config;
 
 // Quality metrics - re-export from the butteraugli crate

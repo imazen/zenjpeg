@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```
-//! cargo run --release --example pareto_comparison --features hybrid-trellis
+//! cargo run --release --example pareto_comparison --features experimental-hybrid-trellis
 //! ```
 
 use std::env;
@@ -191,7 +191,7 @@ fn encode_mozjpeg(img: &ImageData, quality: u8) -> EncodingResult {
     )
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn encode_adaptive_hybrid(img: &ImageData, quality: u8) -> EncodingResult {
     use jpegli::hybrid_config::{should_use_hybrid, HybridConfig};
 
@@ -216,9 +216,9 @@ fn encode_adaptive_hybrid(img: &ImageData, quality: u8) -> EncodingResult {
     )
 }
 
-#[cfg(not(feature = "hybrid-trellis"))]
+#[cfg(not(feature = "experimental-hybrid-trellis"))]
 fn encode_adaptive_hybrid(img: &ImageData, quality: u8) -> EncodingResult {
-    // Fallback to jpegli if hybrid-trellis not enabled
+    // Fallback to jpegli if experimental-hybrid-trellis not enabled
     encode_jpegli(img, quality)
 }
 

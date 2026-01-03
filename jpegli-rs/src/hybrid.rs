@@ -23,7 +23,7 @@
 //! This is done by adjusting `lambda_log_scale1` in TrellisConfig:
 //! - `new_scale1 = base_scale1 + aq_strength * AQ_LAMBDA_SCALE`
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 use mozjpeg_rs::{
     consts::{AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES},
     huffman::{DerivedTable, HuffTable},
@@ -38,13 +38,13 @@ use crate::consts::DCT_BLOCK_SIZE;
 /// Trellis quantization needs Huffman tables to estimate bit costs.
 /// Using standard JPEG tables is a reasonable approximation when
 /// optimized tables aren't available yet.
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 pub struct StandardHuffmanTables {
     pub luma_ac: DerivedTable,
     pub chroma_ac: DerivedTable,
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 impl StandardHuffmanTables {
     /// Create standard Huffman tables for trellis.
     pub fn new() -> Self {
@@ -75,7 +75,7 @@ impl StandardHuffmanTables {
     }
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 impl Default for StandardHuffmanTables {
     fn default() -> Self {
         Self::new()
@@ -135,7 +135,7 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
 ///
 /// Since lambda = 2^scale1 / ..., adding 1.0 to scale1 doubles lambda.
 /// With AQ_LAMBDA_SCALE=2.0 and aq_strength=0.5, lambda increases by 2x.
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 const AQ_LAMBDA_SCALE: f32 = 2.0;
 
 /// Hybrid quantization: jpegli AQ + mozjpeg trellis.
@@ -154,7 +154,7 @@ const AQ_LAMBDA_SCALE: f32 = 2.0;
 ///
 /// # Returns
 /// Quantized coefficients ready for entropy coding
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 pub fn hybrid_quantize_block(
     dct_coeffs: &[f32; DCT_BLOCK_SIZE],
     base_quant: &[u16; DCT_BLOCK_SIZE],

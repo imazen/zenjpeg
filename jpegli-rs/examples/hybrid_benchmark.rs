@@ -1,17 +1,17 @@
 //! Benchmark comparing hybrid AQ+trellis vs standard jpegli
 //!
 //! Run with:
-//! cargo run --release --example hybrid_benchmark --features hybrid-trellis
+//! cargo run --release --example hybrid_benchmark --features experimental-hybrid-trellis
 
 use std::time::Instant;
 
-#[cfg(not(feature = "hybrid-trellis"))]
+#[cfg(not(feature = "experimental-hybrid-trellis"))]
 fn main() {
-    eprintln!("This example requires the hybrid-trellis feature.");
-    eprintln!("Run with: cargo run --release --example hybrid_benchmark --features hybrid-trellis");
+    eprintln!("This example requires the experimental-hybrid-trellis feature.");
+    eprintln!("Run with: cargo run --release --example hybrid_benchmark --features experimental-hybrid-trellis");
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn main() {
     use jpegli::{
         adaptive_quant::compute_aq_strength_map,
@@ -311,7 +311,7 @@ fn main() {
 }
 
 /// Scale standard luminance quant table for quality level
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn scale_quant_for_quality(quality: u8) -> [u16; 64] {
     const STD_LUMA_QUANT: [u16; 64] = [
         16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69,

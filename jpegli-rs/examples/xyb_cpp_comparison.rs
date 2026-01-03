@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```
-//! cargo run --release --example xyb_cpp_comparison --features hybrid-trellis
+//! cargo run --release --example xyb_cpp_comparison --features experimental-hybrid-trellis
 //! ```
 
 use std::process::Command;
@@ -65,7 +65,7 @@ fn main() {
         let cpp_bytes = std::fs::metadata(&cpp_path).map(|m| m.len()).unwrap_or(0);
 
         // 2. Encode with Rust (XYB + hybrid)
-        #[cfg(feature = "hybrid-trellis")]
+        #[cfg(feature = "experimental-hybrid-trellis")]
         let rust_jpeg = {
             use jpegli::hybrid_config::HybridConfig;
 
@@ -79,7 +79,7 @@ fn main() {
                 .expect("Rust encode")
         };
 
-        #[cfg(not(feature = "hybrid-trellis"))]
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let rust_jpeg = {
             jpegli::Encoder::new()
                 .width(width)

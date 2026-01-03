@@ -14,7 +14,7 @@
 //!
 //! Use [`should_use_hybrid`] to make per-image decisions.
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 use mozjpeg_rs::TrellisConfig;
 
 /// Threshold for AQ mean above which hybrid trellis is recommended.
@@ -276,7 +276,7 @@ impl HybridConfig {
     }
 
     /// Convert to mozjpeg TrellisConfig for a specific block.
-    #[cfg(feature = "hybrid-trellis")]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     pub fn to_trellis_config(
         &self,
         aq_strength: f32,

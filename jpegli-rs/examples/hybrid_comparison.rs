@@ -1,24 +1,24 @@
 //! Comparison benchmark: jpegli vs hybrid (AQ+trellis) vs mozjpeg
 //!
 //! Run with:
-//! cargo run --release --example hybrid_comparison --features hybrid-trellis
+//! cargo run --release --example hybrid_comparison --features experimental-hybrid-trellis
 //!
 //! Or with a specific directory:
-//! cargo run --release --example hybrid_comparison --features hybrid-trellis -- /path/to/images
+//! cargo run --release --example hybrid_comparison --features experimental-hybrid-trellis -- /path/to/images
 
 use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
 
-#[cfg(not(feature = "hybrid-trellis"))]
+#[cfg(not(feature = "experimental-hybrid-trellis"))]
 fn main() {
-    eprintln!("This example requires the hybrid-trellis feature.");
+    eprintln!("This example requires the experimental-hybrid-trellis feature.");
     eprintln!(
-        "Run with: cargo run --release --example hybrid_comparison --features hybrid-trellis"
+        "Run with: cargo run --release --example hybrid_comparison --features experimental-hybrid-trellis"
     );
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn main() {
     // Find images to test
     let args: Vec<String> = env::args().collect();
@@ -193,7 +193,7 @@ fn main() {
     );
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 struct CompareResult {
     name: String,
     jpegli_size: usize,
@@ -204,7 +204,7 @@ struct CompareResult {
     mozjpeg_dssim: f64,
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn encode_and_compare(
     pixels: &[u8],
     width: usize,
@@ -278,7 +278,7 @@ fn encode_and_compare(
     }
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn compute_dssim(
     attr: &dssim::Dssim,
     orig: &dssim::DssimImage<f32>,
@@ -301,7 +301,7 @@ fn compute_dssim(
     dssim.into()
 }
 
-#[cfg(feature = "hybrid-trellis")]
+#[cfg(feature = "experimental-hybrid-trellis")]
 fn encode_mozjpeg(pixels: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
     std::panic::catch_unwind(|| {
         use mozjpeg::{ColorSpace, Compress};
