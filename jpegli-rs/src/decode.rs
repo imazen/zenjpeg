@@ -1084,50 +1084,87 @@ impl<'a> JpegParser<'a> {
         let mut next_restart_num = 0u8;
 
         if is_dc_scan {
-            // DC scan (interleaved or single component)
-            for mcu_y in 0..mcu_rows {
-                for mcu_x in 0..mcu_cols {
+            // DC scan - can be interleaved (multiple components) or non-interleaved (single component)
+            // For non-interleaved scans, blocks are in raster order (like AC scans)
+            // For interleaved scans, blocks follow MCU order
+
+            if scan_components.len() == 1 {
+                // Non-interleaved DC scan: blocks in raster order (like AC scans)
+                let (comp_idx, dc_table, _ac_table) = scan_components[0];
+                let h_samp = self.components[comp_idx].h_samp_factor as usize;
+                let v_samp = self.components[comp_idx].v_samp_factor as usize;
+                let comp_blocks_h = mcu_cols * h_samp;
+                let comp_blocks_v = mcu_rows * v_samp;
+                let total_blocks = comp_blocks_h * comp_blocks_v;
+
+                for block_idx in 0..total_blocks {
                     // Check for restart marker
                     if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                        // Align to byte boundary (discard padding bits)
                         decoder.align_to_byte();
-                        // Read and verify restart marker
                         decoder.read_restart_marker(next_restart_num)?;
-                        // Update expected marker number (cycles 0-7)
                         next_restart_num = (next_restart_num + 1) & 7;
-                        // Reset DC predictors
                         decoder.reset_dc();
                     }
 
-                    for (comp_idx, dc_table, _ac_table) in scan_components {
-                        let h_samp = self.components[*comp_idx].h_samp_factor as usize;
-                        let v_samp = self.components[*comp_idx].v_samp_factor as usize;
-                        let comp_blocks_h = mcu_cols * h_samp;
-
-                        for v in 0..v_samp {
-                            for h in 0..h_samp {
-                                let block_x = mcu_x * h_samp + h;
-                                let block_y = mcu_y * v_samp + v;
-                                let block_idx = block_y * comp_blocks_h + block_x;
-
-                                if is_first_scan {
-                                    // DC first scan
-                                    let dc = decoder.decode_dc_first(
-                                        *comp_idx,
-                                        *dc_table as usize,
-                                        al,
-                                    )?;
-                                    self.coeffs[*comp_idx][block_idx][0] = dc;
-                                } else {
-                                    // DC refinement scan
-                                    let bit = decoder.decode_dc_refine(al)?;
-                                    self.coeffs[*comp_idx][block_idx][0] |= bit;
-                                }
-                            }
-                        }
+                    if is_first_scan {
+                        let dc = decoder.decode_dc_first(comp_idx, dc_table as usize, al)?;
+                        self.coeffs[comp_idx][block_idx][0] = dc;
+                    } else {
+                        let bit = decoder.decode_dc_refine(al)?;
+                        self.coeffs[comp_idx][block_idx][0] |= bit;
                     }
 
                     mcu_count += 1;
+                }
+            } else {
+                // Interleaved DC scan: blocks in MCU order
+                for mcu_y in 0..mcu_rows {
+                    for mcu_x in 0..mcu_cols {
+                        // Check for restart marker
+                        if restart_interval > 0
+                            && mcu_count > 0
+                            && mcu_count % restart_interval == 0
+                        {
+                            // Align to byte boundary (discard padding bits)
+                            decoder.align_to_byte();
+                            // Read and verify restart marker
+                            decoder.read_restart_marker(next_restart_num)?;
+                            // Update expected marker number (cycles 0-7)
+                            next_restart_num = (next_restart_num + 1) & 7;
+                            // Reset DC predictors
+                            decoder.reset_dc();
+                        }
+
+                        for (comp_idx, dc_table, _ac_table) in scan_components {
+                            let h_samp = self.components[*comp_idx].h_samp_factor as usize;
+                            let v_samp = self.components[*comp_idx].v_samp_factor as usize;
+                            let comp_blocks_h = mcu_cols * h_samp;
+
+                            for v in 0..v_samp {
+                                for h in 0..h_samp {
+                                    let block_x = mcu_x * h_samp + h;
+                                    let block_y = mcu_y * v_samp + v;
+                                    let block_idx = block_y * comp_blocks_h + block_x;
+
+                                    if is_first_scan {
+                                        // DC first scan
+                                        let dc = decoder.decode_dc_first(
+                                            *comp_idx,
+                                            *dc_table as usize,
+                                            al,
+                                        )?;
+                                        self.coeffs[*comp_idx][block_idx][0] = dc;
+                                    } else {
+                                        // DC refinement scan
+                                        let bit = decoder.decode_dc_refine(al)?;
+                                        self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                    }
+                                }
+                            }
+                        }
+
+                        mcu_count += 1;
+                    }
                 }
             }
         } else {
