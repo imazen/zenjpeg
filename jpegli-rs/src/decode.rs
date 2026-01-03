@@ -199,7 +199,9 @@ impl Decoder {
                         // ICC transform failed - continue with un-color-managed pixels
                         // This can happen with unusual profiles that CMS libraries don't support
                         #[cfg(debug_assertions)]
-                        eprintln!("Warning: ICC profile transform failed, using original colors: {_e:?}");
+                        eprintln!(
+                            "Warning: ICC profile transform failed, using original colors: {_e:?}"
+                        );
                     }
                 }
             }
