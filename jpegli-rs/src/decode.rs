@@ -722,26 +722,13 @@ impl<'a> JpegParser<'a> {
         self.position = 2; // Skip SOI
         self.read_header()?;
 
-        // Continue parsing until we hit SOS
-        let mut scan_count = 0;
+        // Continue parsing until we hit EOI
         loop {
-            let marker_pos = self.position;
             let marker = self.read_marker()?;
 
             match marker {
                 MARKER_SOS => {
-                    scan_count += 1;
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "DEBUG: Scan {} at position 0x{:06X}",
-                        scan_count, marker_pos
-                    );
                     self.parse_scan()?;
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "DEBUG: After scan {}, position is 0x{:06X}",
-                        scan_count, self.position
-                    );
                     // After scan, look for more markers
                 }
                 MARKER_DQT => self.parse_quant_table()?,
@@ -1170,24 +1157,40 @@ impl<'a> JpegParser<'a> {
 
                 if is_first_scan {
                     // AC first scan
-                    decoder.decode_ac_first(
+                    match decoder.decode_ac_first(
                         &mut self.coeffs[comp_idx][block_idx],
                         ac_table as usize,
                         ss,
                         se,
                         al,
                         &mut eob_run,
-                    )?;
+                    ) {
+                        Ok(()) => {}
+                        Err(Error::UnexpectedEof { .. }) => {
+                            // End of scan data - remaining blocks have zeros (implicit EOB)
+                            // This is normal in progressive JPEG when encoder uses
+                            // implicit EOB at end of scan
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
                 } else {
                     // AC refinement scan
-                    decoder.decode_ac_refine(
+                    match decoder.decode_ac_refine(
                         &mut self.coeffs[comp_idx][block_idx],
                         ac_table as usize,
                         ss,
                         se,
                         al,
                         &mut eob_run,
-                    )?;
+                    ) {
+                        Ok(()) => {}
+                        Err(Error::UnexpectedEof { .. }) => {
+                            // End of scan data - remaining blocks unchanged
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
 
                 mcu_count += 1;
