@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated zune-jpeg to 0.5 (API changes for ZCursor wrapper)
 - Updated mozjpeg-rs to 0.2.5
 
+### Notes
+
+- **Decoder Laplacian biases (expected behavior)**: The jpegli-rs decoder produces slightly
+  different output than standard decoders (jpeg-decoder, zune-jpeg) because it uses Laplacian
+  dequantization biases matching C++ djpegli. This shifts reconstructed values toward zero
+  and typically improves quality for photographic content. For synthetic test images, this
+  may result in higher (worse) butteraugli scores vs the original, but this matches the
+  intended C++ jpegli behavior.
+
 ## [0.3.0] - 2026-01-02
 
 ### Added

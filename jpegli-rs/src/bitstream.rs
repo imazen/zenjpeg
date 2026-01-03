@@ -145,6 +145,15 @@ pub struct BitReader<'a> {
     marker_found: Option<u8>,
 }
 
+/// Saved state of a BitReader for speculative decoding.
+#[derive(Clone, Copy)]
+pub struct BitReaderState {
+    position: usize,
+    bit_buffer: u64,
+    bits_in_buffer: u8,
+    marker_found: Option<u8>,
+}
+
 impl<'a> BitReader<'a> {
     /// Creates a new bit reader.
     #[must_use]
@@ -294,6 +303,25 @@ impl<'a> BitReader<'a> {
     /// Aligns to the next byte boundary.
     pub fn align_to_byte(&mut self) {
         self.bits_in_buffer = 0;
+    }
+
+    /// Saves the current reader state for potential rollback.
+    #[must_use]
+    pub fn save_state(&self) -> BitReaderState {
+        BitReaderState {
+            position: self.position,
+            bit_buffer: self.bit_buffer,
+            bits_in_buffer: self.bits_in_buffer,
+            marker_found: self.marker_found,
+        }
+    }
+
+    /// Restores a previously saved state.
+    pub fn restore_state(&mut self, state: BitReaderState) {
+        self.position = state.position;
+        self.bit_buffer = state.bit_buffer;
+        self.bits_in_buffer = state.bits_in_buffer;
+        self.marker_found = state.marker_found;
     }
 
     /// Reads and verifies a restart marker.
