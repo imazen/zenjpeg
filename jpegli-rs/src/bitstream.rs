@@ -130,15 +130,16 @@ impl Default for BitWriter {
 /// Bit reader for JPEG decoding.
 ///
 /// Reads bits with byte unstuffing (0xFF 0x00 -> 0xFF).
+/// Uses a 64-bit buffer matching the jpegli C++ implementation for safety.
 #[derive(Debug)]
 pub struct BitReader<'a> {
     /// Input data
     data: &'a [u8],
     /// Current byte position
     position: usize,
-    /// Current bit accumulator
-    bit_buffer: u32,
-    /// Number of bits in accumulator
+    /// Current bit accumulator (64-bit to match C++ jpegli)
+    bit_buffer: u64,
+    /// Number of bits in accumulator (0-64)
     bits_in_buffer: u8,
     /// Whether we've hit a marker
     marker_found: Option<u8>,
@@ -202,33 +203,46 @@ impl<'a> BitReader<'a> {
 
     /// Fills the bit buffer to have at least `count` bits.
     /// Returns Ok(true) if filled, Ok(false) if end of data but some bits available.
+    ///
+    /// Matches C++ jpegli FillBitWindow() logic:
+    /// - Only fill if bits_in_buffer <= 16 (need more bits)
+    /// - Keep filling while bits_in_buffer <= 56 (room for another byte)
+    /// - 64-bit buffer ensures no overflow
     fn fill_buffer(&mut self, count: u8) -> Result<bool> {
-        while self.bits_in_buffer < count {
-            match self.read_byte() {
-                Ok(byte) => {
-                    self.bit_buffer = (self.bit_buffer << 8) | (byte as u32);
-                    self.bits_in_buffer += 8;
+        // Only refill if we need more bits
+        if self.bits_in_buffer < count {
+            // Fill while we have room for another byte (56 + 8 = 64)
+            while self.bits_in_buffer <= 56 {
+                match self.read_byte() {
+                    Ok(byte) => {
+                        self.bit_buffer = (self.bit_buffer << 8) | (byte as u64);
+                        self.bits_in_buffer += 8;
+                    }
+                    Err(_) => {
+                        // Can't read more bytes, but might have enough bits already
+                        break;
+                    }
                 }
-                Err(_) => {
-                    // Can't read more bytes, but might have enough bits already
-                    return Ok(false);
+                // Stop early if we have enough
+                if self.bits_in_buffer >= count {
+                    break;
                 }
             }
         }
-        Ok(true)
+        Ok(self.bits_in_buffer >= count)
     }
 
     /// Peeks at the next `count` bits without consuming them.
     /// Returns Err if not enough bits available.
     pub fn peek_bits(&mut self, count: u8) -> Result<u32> {
-        debug_assert!(count <= 24);
+        debug_assert!(count <= 32);
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
             return Err(Error::UnexpectedEof {
                 context: "not enough bits in buffer",
             });
         }
-        Ok((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1 << count) - 1))
+        Ok(((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32)
     }
 
     /// Reads `count` bits from the stream.
@@ -239,7 +253,7 @@ impl<'a> BitReader<'a> {
                 context: "not enough bits to read",
             });
         }
-        let bits = (self.bit_buffer >> (self.bits_in_buffer - count)) & ((1 << count) - 1);
+        let bits = ((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32;
         self.bits_in_buffer -= count;
         Ok(bits)
     }
