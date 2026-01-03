@@ -1,6 +1,9 @@
 //! Codec corpus conformance tests.
 //!
 //! Tests decoder against JPEG test images and fuzz corpus from codec-corpus:
+//! - jpeg-conformance/valid: Valid JPEGs that MUST decode correctly
+//! - jpeg-conformance/invalid: Invalid JPEGs that MUST be rejected (not panic)
+//! - jpeg-conformance/non-conformant: Edge cases - behavior varies by decoder
 //! - zune/fuzz-corpus/jpeg: 1836 fuzz-generated JPEGs
 //! - zune/test-images/jpeg: Specialized edge case images
 //! - image-rs/test-images/jpg: Additional test images

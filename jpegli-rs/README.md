@@ -47,9 +47,12 @@ let rgb_pixels: &[u8] = &decoded.data;
 
 ## Feature Flags
 
-- `simd` (default) - Enable SIMD acceleration
-- `cms-lcms2` - Use lcms2 for color management (C dependency)
-- `cms-moxcms` - Use moxcms for color management (pure Rust)
+| Feature | Description |
+|---------|-------------|
+| `simd` (default) | Enable SIMD acceleration via `wide` crate |
+| `cms-lcms2` | Color management via lcms2 (C dependency) |
+| `cms-moxcms` | Color management via moxcms (pure Rust) |
+| `experimental-hybrid-trellis` | Hybrid quantization: jpegli AQ + mozjpeg trellis (experimental, unvalidated) |
 
 ## Encoder Status
 
@@ -63,6 +66,7 @@ The encoder is feature-complete and production-ready:
 | Huffman optimization | ✅ Working |
 | 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 subsampling | ✅ Working |
 | XYB color space | ✅ Working (with ICC) |
+| Restart markers | ✅ Working (encode & decode) |
 | Grayscale | ✅ Working |
 
 **Encoder Performance**: 30-55 MP/s (varies by image complexity and quality setting)
@@ -76,6 +80,7 @@ The decoder is functional with 12-bit internal precision (matching C++ jpegli):
 | Baseline JPEG | ✅ Working |
 | Progressive JPEG | ✅ Working |
 | All subsampling modes | ✅ Working |
+| Restart markers | ✅ Working (RST0-RST7 validation) |
 | ICC profile extraction | ✅ Working |
 | XYB decoding (with CMS) | ✅ Working |
 | f32 output format | ✅ Working |
@@ -192,7 +197,7 @@ from the JPEG XL project by Google.
 ## AI-Generated Code Notice
 
 This crate was developed with significant assistance from Claude (Anthropic).
-While extensively tested against the C++ reference implementation with 170+ tests,
+While extensively tested against the C++ reference implementation with 220+ tests,
 not all code paths have been manually reviewed.
 
 Before production use in critical applications:
