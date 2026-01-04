@@ -745,3 +745,110 @@ fn test_algorithm_edge_cases() {
 
     println!();
 }
+
+/// Test cases specifically designed to find where algorithms might diverge.
+/// These target edge cases in tie-breaking and depth limiting.
+#[test]
+fn test_find_algorithm_divergence() {
+    use jpegli::huffman::build_code_lengths;
+    use jpegli::huffman_classic::generate_code_lengths;
+
+    println!("\n{}", "=".repeat(80));
+    println!("SEARCHING FOR ALGORITHM DIVERGENCE");
+    println!("{}\n", "=".repeat(80));
+
+    let mut divergent_cases = 0;
+    let mut total_cases = 0;
+
+    // Test 1: Many symbols with same frequency (tie-breaking stress test)
+    // Note: 255 symbols can cause overflow in mozjpeg algorithm (u8 bits counter)
+    for num_symbols in [2, 4, 8, 16, 32, 64, 128] {
+        total_cases += 1;
+        let mut moz_freq = [0i64; 257];
+        let mut jpg_freq = Vec::with_capacity(num_symbols + 1);
+
+        for i in 0..num_symbols {
+            moz_freq[i] = 100; // All same frequency
+            jpg_freq.push(100u64);
+        }
+        jpg_freq.push(1); // Pseudo-symbol
+
+        let moz_lengths = generate_code_lengths(&mut moz_freq).unwrap();
+        let jpg_depths = build_code_lengths(&jpg_freq, 16);
+
+        let mut differs = false;
+        for i in 0..num_symbols {
+            if moz_lengths[i] != jpg_depths[i] {
+                differs = true;
+                break;
+            }
+        }
+
+        if differs {
+            divergent_cases += 1;
+            println!("DIVERGENCE at {} equal-frequency symbols", num_symbols);
+        }
+    }
+
+    // Test 2: Power-of-2 frequencies that might cause depth limit issues
+    // Keep values under i32::MAX to avoid overflow in mozjpeg algorithm
+    for max_power in [10, 15, 20] {
+        total_cases += 1;
+        let n = max_power.min(255);
+        let mut moz_freq = [0i64; 257];
+        let mut jpg_freq: Vec<u64> = Vec::with_capacity(n + 1);
+
+        for i in 0..n {
+            // Use smaller values to avoid overflow
+            let freq = (1u32 << i.min(20)) as u64;
+            moz_freq[i] = freq as i64;
+            jpg_freq.push(freq);
+        }
+        jpg_freq.push(1); // Pseudo-symbol
+
+        let moz_lengths = generate_code_lengths(&mut moz_freq).unwrap();
+        let jpg_depths = build_code_lengths(&jpg_freq, 16);
+
+        let mut differs = false;
+        for i in 0..n {
+            if moz_lengths[i] != jpg_depths[i] {
+                differs = true;
+                break;
+            }
+        }
+
+        if differs {
+            divergent_cases += 1;
+            println!("DIVERGENCE at power-of-2 with {} symbols", n);
+        }
+    }
+
+    // Test 3: Near-depth-limit cases (keep values reasonable to avoid overflow)
+    for spread in [100, 1000, 10000] {
+        total_cases += 1;
+        let mut moz_freq = [0i64; 257];
+        let mut jpg_freq: Vec<u64> = Vec::with_capacity(257);
+
+        // Create distribution that's likely to hit depth limit
+        for i in 0..256 {
+            let freq = spread / (i as i64 + 1);
+            moz_freq[i] = freq.max(1);
+            jpg_freq.push(freq.max(1) as u64);
+        }
+        jpg_freq.push(1); // Pseudo-symbol
+
+        let moz_lengths = generate_code_lengths(&mut moz_freq).unwrap();
+        let jpg_depths = build_code_lengths(&jpg_freq, 16);
+
+        let moz_cost: u64 = (0..256).map(|i| moz_freq[i] as u64 * moz_lengths[i] as u64).sum();
+        let jpg_cost: u64 = (0..256).map(|i| jpg_freq[i] * jpg_depths[i] as u64).sum();
+
+        if moz_cost != jpg_cost {
+            divergent_cases += 1;
+            println!("DIVERGENCE at spread={}: moz_cost={}, jpg_cost={}", spread, moz_cost, jpg_cost);
+        }
+    }
+
+    println!("\nResults: {}/{} cases diverged", divergent_cases, total_cases);
+    println!();
+}
