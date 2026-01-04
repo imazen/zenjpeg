@@ -1,8 +1,8 @@
 # XYB Progressive Quality Bug Investigation
 
-**Status:** Bug confirmed and partially diagnosed, NOT YET FIXED
-**Severity:** Critical - 93% of pixels decode incorrectly
-**Date:** 2026-01-04
+**Status:** PARTIALLY FIXED - corruption reduced from 93% to 50%, MCU ordering issue identified
+**Severity:** High - 50% of pixels still decode incorrectly (down from 93%)
+**Date:** 2026-01-04 (Updated)
 
 ## Bug Summary
 
@@ -401,6 +401,84 @@ The XYB Progressive bug is confirmed and partially diagnosed. Adaptive Quantizat
 
 ---
 
+## Update: 2026-01-04 (Later Same Day)
+
+### Bugs Fixed
+
+**Bug 1: Huffman Context Assignment (encode.rs:1442-1449)**
+- **Problem**: All AC scans used context `num_components` (3 for XYB)
+- **Fix**: Use component-specific contexts: `num_components + component_index` (3, 4, 5)
+- **Matches**: YCbCr progressive (which works correctly)
+
+**Bug 2: Scan Header Table Selectors (encode.rs:2499-2508)**
+- **Problem**: All XYB components wrote `0x00` (DC table 0, AC table 0)
+- **Fix**: Use luma/chroma split - component 0 uses table 0, components 1-2 use table 1
+- **Matches**: YCbCr behavior and Huffman table generation
+
+### Results After Fixes
+
+- ✅ Progressive JPEG now decodes successfully (was failing completely before)
+- ✅ Pixel corruption reduced from **93% (11,253/12,288)** to **50% (6,116/12,288)**
+- ✅ First 4 pixels now match perfectly between baseline and progressive
+- ✅ Quantized coefficients confirmed identical between modes
+
+### Remaining 50% Corruption - Diagnosis
+
+Created diagnostic tools (`analyze_pixel_differences.rs`, `test_ycbcr_progressive_pattern.rs`) which revealed:
+
+**Checkerboard Pattern:**
+```
+..XXXXXX
+XXXXXX..
+..XXXXXX
+XXXXXX..
+```
+- Blocks (0,0), (1,0), (0,1), (1,1) are correct (25% of blocks)
+- All other blocks are corrupted (75% of blocks)
+
+**Channel-Specific Corruption:**
+- **B channel: ✅ Perfect** (0 differences!)
+- **R channel: ❌ 3072 pixels corrupt**
+- **G channel: ❌ 3044 pixels corrupt**
+
+**Key Finding: YCbCr 4:4:4 Progressive Works Perfectly**
+- YCbCr 4:4:4 progressive: 0 pixels differ (100% correct)
+- Same tokenization/replay infrastructure as XYB
+- Proves bug is XYB-specific, likely related to subsampling
+
+### Root Cause Hypothesis: MCU Ordering Issue
+
+XYB uses **2:2:1 subsampling** (frame header declares R:2×2, G:2×2, B:1×1):
+- MCU size: 16×16 pixels
+- X and Y: 2×2 blocks per MCU (64 blocks total in 8×8 grid)
+- B: 1×1 block per MCU (16 blocks total in 4×4 grid)
+
+**Theory:** Progressive non-interleaved scans should use **raster order** within each component, but the decoder may be expecting **MCU order** for components with 2×2 sampling factors.
+
+**Supporting evidence:**
+1. B channel (1×1 sampling) is **perfect** - uses simple raster order
+2. X/Y channels (2×2 sampling) have **checkerboard corruption** - MCU order mismatch
+3. Pattern matches MCU boundaries (every 2×2 block group)
+
+### Next Steps
+
+1. **Investigate C++ reference implementation:**
+   - How does `cjpegli` order blocks for XYB progressive?
+   - Does it use MCU order or raster order for 2×2 sampled components?
+   - Check `lib/jpegli/encode.cc` progressive scan encoding
+
+2. **Implement MCU ordering if needed:**
+   - Convert block arrays from raster to MCU order before tokenization
+   - OR adjust frame header sampling factors to use 1:1:1 (no subsampling)
+   - Verify with C++ reference which approach is correct
+
+3. **Test the fix:**
+   - Run `compare_xyb_decoded.rs` - should show 0 pixels differ
+   - Run `analyze_pixel_differences.rs` - should show no checkerboard pattern
+   - Verify B channel remains perfect
+
+---
+
 **Investigation Date:** 2026-01-04
 **Investigator:** Claude (Anthropic)
-**Status:** Open - requires continued investigation
+**Status:** Partially fixed - MCU ordering issue identified, requires C++ reference check
