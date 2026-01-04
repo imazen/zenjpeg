@@ -2274,9 +2274,11 @@ impl Encoder {
 
         // ========== GENERATE OPTIMIZED TABLES ==========
         // Use histogram clustering to find optimal table assignments
-        // max_clusters=2 for baseline JPEG compatibility (up to 4 supported)
+        // Limit to 2 tables per type for now (luma + chroma) until
+        // DHT writing and table storage support variable cluster counts.
+        // force_baseline=false still enables per-scan context collection.
         let (context_map, num_dc_tables, tables) =
-            token_buffer.generate_optimized_tables(2, 2, num_components)?;
+            token_buffer.generate_optimized_tables(2, 2, num_components, false)?;
 
         // Convert to OptimizedHuffmanTables format for compatibility
         let opt_tables =
