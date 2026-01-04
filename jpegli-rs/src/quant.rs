@@ -779,6 +779,191 @@ impl DequantBiasStats {
     }
 }
 
+// =============================================================================
+// Custom Quantization Matrices (Escape Hatch for Experimentation)
+// =============================================================================
+
+/// Custom base quantization matrices for experimentation.
+///
+/// **This is an undocumented escape hatch for research purposes.**
+///
+/// The default jpegli matrices (`BASE_QUANT_MATRIX_YCBCR` and `BASE_QUANT_MATRIX_XYB`)
+/// were derived through numerical optimization against the Butteraugli perceptual
+/// metric. According to C++ comments:
+///
+/// > "Global scale is chosen in a way that butteraugli 3-norm matches libjpeg
+/// > with the same quality setting. Fitted for quality 90 on jyrki31 corpus."
+///
+/// The base matrices themselves appear to have been optimized (likely via gradient
+/// descent or similar) to minimize Butteraugli distance at a given bitrate. The
+/// per-frequency values are NOT derived from any closed-form formula - they are
+/// the result of empirical optimization.
+///
+/// ## How Quantization Works
+///
+/// Final quant value = base_matrix[k] × distance_to_scale(distance, k) × global_scale
+///
+/// Where:
+/// - `base_matrix[k]` is the per-frequency base value (what this struct overrides)
+/// - `distance_to_scale()` applies non-linear scaling for high-quality settings
+/// - `global_scale` is `GLOBAL_SCALE_YCBCR` (1.74) or `GLOBAL_SCALE_XYB` (1.44)
+///
+/// ## Matrix Layout
+///
+/// - YCbCr: 192 values = 3 components × 64 coefficients (Y, Cb, Cr in row-major 8×8)
+/// - XYB: 192 values = 3 components × 64 coefficients (X, Y, B in row-major 8×8)
+/// - Standard: 128 values = 2 tables × 64 coefficients (luminance, chrominance)
+///
+/// Coefficient ordering is row-major within each 8×8 block (NOT zigzag).
+#[derive(Debug, Clone, Default)]
+pub struct CustomQuantMatrices {
+    /// Custom YCbCr base matrix (192 f32 values: Y[64], Cb[64], Cr[64])
+    /// If None, uses `BASE_QUANT_MATRIX_YCBCR`
+    pub ycbcr: Option<[f32; 192]>,
+
+    /// Custom XYB base matrix (192 f32 values: X[64], Y[64], B[64])
+    /// If None, uses `BASE_QUANT_MATRIX_XYB`
+    pub xyb: Option<[f32; 192]>,
+
+    /// Custom global scale for YCbCr (default: 1.73966010)
+    pub global_scale_ycbcr: Option<f32>,
+
+    /// Custom global scale for XYB (default: 1.43951668)
+    pub global_scale_xyb: Option<f32>,
+
+    /// Custom frequency exponents for non-linear distance scaling (64 values)
+    /// If None, uses `FREQUENCY_EXPONENT`
+    pub frequency_exponents: Option<[f32; 64]>,
+}
+
+impl CustomQuantMatrices {
+    /// Create empty custom matrices (all defaults)
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set custom YCbCr base matrix
+    #[must_use]
+    pub fn with_ycbcr(mut self, matrix: [f32; 192]) -> Self {
+        self.ycbcr = Some(matrix);
+        self
+    }
+
+    /// Set custom XYB base matrix
+    #[must_use]
+    pub fn with_xyb(mut self, matrix: [f32; 192]) -> Self {
+        self.xyb = Some(matrix);
+        self
+    }
+
+    /// Set custom global scale for YCbCr
+    #[must_use]
+    pub fn with_global_scale_ycbcr(mut self, scale: f32) -> Self {
+        self.global_scale_ycbcr = Some(scale);
+        self
+    }
+
+    /// Set custom global scale for XYB
+    #[must_use]
+    pub fn with_global_scale_xyb(mut self, scale: f32) -> Self {
+        self.global_scale_xyb = Some(scale);
+        self
+    }
+
+    /// Set custom frequency exponents
+    #[must_use]
+    pub fn with_frequency_exponents(mut self, exponents: [f32; 64]) -> Self {
+        self.frequency_exponents = Some(exponents);
+        self
+    }
+
+    /// Get the base matrix value for a given component and coefficient index
+    #[inline]
+    pub(crate) fn get_ycbcr_base(&self, component: usize, coeff: usize) -> f32 {
+        let idx = component.min(2) * 64 + coeff;
+        self.ycbcr
+            .map(|m| m[idx])
+            .unwrap_or(BASE_QUANT_MATRIX_YCBCR[idx])
+    }
+
+    /// Get the base matrix value for XYB
+    #[inline]
+    pub(crate) fn get_xyb_base(&self, component: usize, coeff: usize) -> f32 {
+        let idx = component.min(2) * 64 + coeff;
+        self.xyb
+            .map(|m| m[idx])
+            .unwrap_or(BASE_QUANT_MATRIX_XYB[idx])
+    }
+
+    /// Get the global scale for YCbCr
+    #[inline]
+    pub(crate) fn get_global_scale_ycbcr(&self) -> f32 {
+        self.global_scale_ycbcr.unwrap_or(GLOBAL_SCALE_YCBCR)
+    }
+
+    /// Get the global scale for XYB
+    #[inline]
+    pub(crate) fn get_global_scale_xyb(&self) -> f32 {
+        self.global_scale_xyb.unwrap_or(GLOBAL_SCALE_XYB)
+    }
+
+    /// Get the frequency exponent for a coefficient
+    #[inline]
+    pub(crate) fn get_frequency_exponent(&self, coeff: usize) -> f32 {
+        self.frequency_exponents
+            .map(|e| e[coeff])
+            .unwrap_or(FREQUENCY_EXPONENT[coeff])
+    }
+
+    /// Compute distance_to_scale with custom frequency exponents
+    #[inline]
+    pub(crate) fn distance_to_scale(&self, distance: f32, freq_idx: usize) -> f32 {
+        if distance < DIST_THRESHOLD {
+            return distance;
+        }
+        let exp = self.get_frequency_exponent(freq_idx);
+        let mul = DIST_THRESHOLD.powf(1.0 - exp);
+        (0.5 * distance).max(mul * distance.powf(exp))
+    }
+}
+
+/// Generate a quantization table using custom matrices.
+///
+/// This is the internal function that respects custom matrix overrides.
+#[must_use]
+pub fn generate_quant_table_custom(
+    distance: f32,
+    component: usize,
+    use_xyb: bool,
+    custom: &CustomQuantMatrices,
+) -> QuantTable {
+    let mut values = [0u16; DCT_BLOCK_SIZE];
+
+    if use_xyb {
+        let global_scale = custom.get_global_scale_xyb();
+        for i in 0..DCT_BLOCK_SIZE {
+            let base_val = custom.get_xyb_base(component, i);
+            let scale = custom.distance_to_scale(distance, i) * global_scale;
+            let q = (base_val * scale).round();
+            values[i] = (q as u16).clamp(1, 255);
+        }
+    } else {
+        let global_scale = custom.get_global_scale_ycbcr();
+        for i in 0..DCT_BLOCK_SIZE {
+            let base_val = custom.get_ycbcr_base(component, i);
+            let scale = custom.distance_to_scale(distance, i) * global_scale;
+            let q = (base_val * scale).round();
+            values[i] = (q as u16).clamp(1, 255);
+        }
+    }
+
+    QuantTable {
+        values,
+        precision: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

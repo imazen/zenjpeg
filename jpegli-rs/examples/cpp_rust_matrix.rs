@@ -232,10 +232,7 @@ fn main() {
     println!("{}", "-".repeat(150));
 
     // Image configurations
-    let sizes = [
-        (64, 64, "Small"),
-        (512, 512, "Medium"),
-    ];
+    let sizes = [(64, 64, "Small"), (512, 512, "Medium")];
 
     let modes = [Mode::Baseline, Mode::Progressive];
     let colors = [ColorMode::YCbCr, ColorMode::XYB];
