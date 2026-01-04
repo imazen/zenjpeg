@@ -449,27 +449,28 @@ fn apply_perturbation(state: &mut OptState, pert: &Perturbation) {
 
 /// Generate random perturbation
 fn random_perturbation(rng: &mut Rng, temperature: f64) -> Perturbation {
-    let scale = temperature.sqrt() as f32; // Scale perturbation with temperature
+    // Higher base scale for larger moves + temperature scaling
+    let scale = (temperature.sqrt() * 3.0) as f32;
 
     match rng.gen_range(0..100) {
         0..=49 => {
             // Single base matrix value (50%)
             Perturbation::SingleBase {
                 idx: rng.gen_range(0..192),
-                delta: rng.gen_range_f32(-2.0..2.0) * scale,
+                delta: rng.gen_range_f32(-3.0..3.0) * scale,
             }
         }
         50..=69 => {
             // Frequency exponent (20%)
             Perturbation::FreqExp {
                 idx: rng.gen_range(0..64),
-                delta: rng.gen_range_f32(-0.1..0.1) * scale,
+                delta: rng.gen_range_f32(-0.15..0.15) * scale,
             }
         }
         70..=79 => {
             // Global scale (10%)
             Perturbation::GlobalScale {
-                delta: rng.gen_range_f32(-0.1..0.1) * scale,
+                delta: rng.gen_range_f32(-0.2..0.2) * scale,
             }
         }
         80..=89 => {
@@ -477,15 +478,15 @@ fn random_perturbation(rng: &mut Rng, temperature: f64) -> Perturbation {
             let start = rng.gen_range(0..192);
             Perturbation::BlockBase {
                 start,
-                count: rng.gen_range(2..8),
-                delta: rng.gen_range_f32(-1.0..1.0) * scale,
+                count: rng.gen_range(2..12),
+                delta: rng.gen_range_f32(-2.0..2.0) * scale,
             }
         }
         _ => {
             // Component scale (10%)
             Perturbation::ComponentScale {
                 component: rng.gen_range(0..3),
-                factor: 1.0 + rng.gen_range_f32(-0.05..0.05) * scale,
+                factor: 1.0 + rng.gen_range_f32(-0.1..0.1) * scale,
             }
         }
     }
@@ -718,31 +719,32 @@ fn evaluate_state_profiled(
     (total_quality / images.len() as f64, total_size)
 }
 
-/// Fitness function: maximize quality per byte
-fn fitness(ssim2: f64, size: usize, target_quality: f64) -> f64 {
-    // Objective: maximize SSIMULACRA2 while being size-competitive
-    // We want high quality (close to 100) with reasonable file size
-    //
-    // Score = ssim2 + penalty_for_size_increase
-    // If size is larger than baseline, penalize proportionally
-    // If quality drops, penalize heavily
+/// Fitness function: Maximize quality while penalizing size deviation
+fn fitness(ssim2: f64, size: usize, total_pixels: usize, target_bpp: f64) -> f64 {
+    let bpp = (size * 8) as f64 / total_pixels as f64;
 
-    // Base score is just the quality
-    let quality_score = ssim2;
+    // Pure quality mode if target_bpp is 0
+    if target_bpp <= 0.0 {
+        return ssim2;
+    }
 
-    // Size efficiency: bits per pixel normalized
-    // Lower is better, but we don't want to sacrifice quality
-    let _bpp = size as f64 * 8.0;
+    // Symmetric penalty with hard cap: strongly penalize going over target
+    // This helps stay within bpp budget while maximizing quality
+    let bpp_diff = bpp - target_bpp;
+    let lambda = 20.0; // Penalty per bpp deviation
 
-    // If we're above target quality, bonus; below, penalty
-    let quality_delta = ssim2 - target_quality;
-    let quality_bonus = if quality_delta > 0.0 {
-        quality_delta * 0.5 // Modest bonus for exceeding target
+    if bpp_diff > 0.0 {
+        // Over target: quadratic penalty to strongly discourage
+        ssim2 - lambda * bpp_diff - 50.0 * bpp_diff * bpp_diff
     } else {
-        quality_delta * 2.0 // Heavy penalty for missing target
-    };
+        // Under target: linear bonus (smaller is better)
+        ssim2 - lambda * 0.3 * bpp_diff.abs()
+    }
+}
 
-    quality_score + quality_bonus
+/// Compute total pixels across all images
+fn total_pixels(images: &[TestImage]) -> usize {
+    images.iter().map(|img| img.width * img.height).sum()
 }
 
 /// Load images from corpus directory
@@ -777,11 +779,13 @@ fn optimize(
     quality: u8,
     iterations: usize,
     seed: u64,
+    target_bpp: f64,
     checkpoint_path: Option<&Path>,
     initial_state: Option<OptState>,
 ) -> OptState {
     let mut rng = Rng::new(seed);
     let profile_stats = ProfileStats::default();
+    let pixels = total_pixels(images);
 
     // Initialize state
     let mut current = initial_state.unwrap_or_else(OptState::new);
@@ -792,32 +796,36 @@ fn optimize(
     let baseline = OptState::new();
     let (baseline_ssim2, baseline_size) =
         evaluate_state_profiled(&baseline, images, quality, &profile_stats);
+    let baseline_bpp = (baseline_size * 8) as f64 / pixels as f64;
     println!(
-        "\nBaseline: SSIM2={:.4}, size={} bytes",
-        baseline_ssim2, baseline_size
+        "\nBaseline: SSIM2={:.4}, size={} bytes, bpp={:.3}",
+        baseline_ssim2, baseline_size, baseline_bpp
     );
+    println!("Target bpp: {:.3}", target_bpp);
 
-    let target_quality = baseline_ssim2; // Try to match or exceed baseline quality
-
-    let mut current_fitness = fitness(current_ssim2, current_size, target_quality);
+    let mut current_fitness = fitness(current_ssim2, current_size, pixels, target_bpp);
     let mut best = current.clone();
     let mut best_fitness = current_fitness;
     let mut best_ssim2 = current_ssim2;
     let mut best_size = current_size;
+    let mut best_bpp = (current_size * 8) as f64 / pixels as f64;
 
     println!(
-        "Initial: SSIM2={:.4}, size={} bytes, fitness={:.4}",
-        current_ssim2, current_size, current_fitness
+        "Initial: SSIM2={:.4}, bpp={:.3}, fitness={:.4}",
+        current_ssim2, best_bpp, current_fitness
     );
 
-    // Annealing schedule
-    let initial_temp: f64 = 1.0;
-    let final_temp: f64 = 0.01;
+    // Annealing schedule - higher initial temp for more exploration
+    let initial_temp: f64 = 10.0;
+    let final_temp: f64 = 0.001;
     let cooling_rate = (final_temp / initial_temp).powf(1.0 / iterations as f64);
 
     let mut temperature = initial_temp;
     let mut accepted = 0;
     let mut improved = 0;
+    let mut stagnant = 0; // Track iterations without improvement
+    let reheat_threshold = 200; // Reheat if stuck this long
+    let reheat_temp = 5.0; // Temperature to reheat to
 
     let start = Instant::now();
     let checkpoint_interval = 100;
@@ -831,7 +839,8 @@ fn optimize(
         // Evaluate
         let (cand_ssim2, cand_size) =
             evaluate_state_profiled(&candidate, images, quality, &profile_stats);
-        let cand_fitness = fitness(cand_ssim2, cand_size, target_quality);
+        let cand_bpp = (cand_size * 8) as f64 / pixels as f64;
+        let cand_fitness = fitness(cand_ssim2, cand_size, pixels, target_bpp);
 
         // Accept or reject
         let delta = cand_fitness - current_fitness;
@@ -852,8 +861,21 @@ fn optimize(
                 best_fitness = cand_fitness;
                 best_ssim2 = cand_ssim2;
                 best_size = cand_size;
+                best_bpp = cand_bpp;
                 improved += 1;
+                stagnant = 0;
+            } else {
+                stagnant += 1;
             }
+        } else {
+            stagnant += 1;
+        }
+
+        // Reheat if stuck for too long
+        if stagnant >= reheat_threshold && temperature < reheat_temp {
+            temperature = reheat_temp;
+            stagnant = 0;
+            println!("  [Reheating to T={:.2} at iteration {}]", temperature, i + 1);
         }
 
         // Cool down
@@ -866,13 +888,13 @@ fn optimize(
             let eta = (iterations - i - 1) as f64 / rate;
 
             println!(
-                "[{:5}/{:5}] T={:.4} best_ssim2={:.4} best_size={} ({:+.1}%) accept={:.1}% improve={} ETA={:.0}s",
+                "[{:5}/{:5}] T={:.4} SSIM2={:.4} bpp={:.3} (target={:.3}) accept={:.1}% improve={} ETA={:.0}s",
                 i + 1,
                 iterations,
                 temperature,
                 best_ssim2,
-                best_size,
-                100.0 * (best_size as f64 - baseline_size as f64) / baseline_size as f64,
+                best_bpp,
+                target_bpp,
                 100.0 * accepted as f64 / (i + 1) as f64,
                 improved,
                 eta
@@ -890,13 +912,13 @@ fn optimize(
 
     println!("\n=== Optimization Complete ===");
     println!(
-        "Final best: SSIM2={:.4}, size={} bytes",
-        best_ssim2, best_size
+        "Best: SSIM2={:.4}, bpp={:.3} (target={:.3})",
+        best_ssim2, best_bpp, target_bpp
     );
     println!(
-        "vs baseline: SSIM2 {:+.4}, size {:+.1}%",
+        "vs baseline: SSIM2 {:+.4}, bpp {:+.3}",
         best_ssim2 - baseline_ssim2,
-        100.0 * (best_size as f64 - baseline_size as f64) / baseline_size as f64
+        best_bpp - baseline_bpp
     );
     println!(
         "Accepted: {}/{} ({:.1}%)",
@@ -917,6 +939,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --quality <N>      Target quality level (default: 85)");
+    eprintln!("  --target-bpp <N>   Target bits per pixel (default: baseline bpp)");
     eprintln!("  --iterations <N>   SA iterations (default: 10000)");
     eprintln!("  --max-images <N>   Max images to load (default: 20)");
     eprintln!("  --output <file>    Output file for best matrices (JSON)");
@@ -940,6 +963,7 @@ fn main() {
 
     // Parse options
     let mut quality: u8 = 85;
+    let mut target_bpp: Option<f64> = None;
     let mut iterations: usize = 10000;
     let mut max_images: usize = 20;
     let mut output_path: Option<PathBuf> = None;
@@ -951,6 +975,10 @@ fn main() {
         match args[i].as_str() {
             "--quality" => {
                 quality = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(85);
+                i += 2;
+            }
+            "--target-bpp" => {
+                target_bpp = args.get(i + 1).and_then(|s| s.parse().ok());
                 i += 2;
             }
             "--iterations" => {
@@ -1009,6 +1037,31 @@ fn main() {
             .and_then(|json| OptState::from_json(&json))
     });
 
+    // If no target bpp specified, compute baseline bpp
+    let target_bpp = target_bpp.unwrap_or_else(|| {
+        println!("Computing baseline bpp...");
+        let baseline = OptState::new();
+        let pixels = total_pixels(&images);
+        let custom = baseline.to_custom_matrices();
+        let total_size: usize = images
+            .iter()
+            .map(|img| {
+                Encoder::new()
+                    .width(img.width as u32)
+                    .height(img.height as u32)
+                    .pixel_format(PixelFormat::Rgb)
+                    .jpegli_quality(Quality::from_quality(quality.into()))
+                    .custom_quant_matrices(custom.clone())
+                    .encode(&img.rgb)
+                    .unwrap()
+                    .len()
+            })
+            .sum();
+        let bpp = (total_size * 8) as f64 / pixels as f64;
+        println!("Baseline bpp: {:.3}", bpp);
+        bpp
+    });
+
     // Checkpoint path
     let checkpoint_path = output_path
         .as_ref()
@@ -1020,6 +1073,7 @@ fn main() {
         quality,
         iterations,
         seed,
+        target_bpp,
         checkpoint_path.as_deref(),
         initial_state,
     );
