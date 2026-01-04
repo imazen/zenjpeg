@@ -1399,8 +1399,19 @@ impl Encoder {
         let b_quant =
             quant::generate_quant_table(self.config.quality, 2, ColorSpace::Rgb, true, false);
 
-        // Quantize all blocks
-        let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb(
+        // Compute AQ map from Y plane (same as baseline XYB)
+        let y_plane_scaled: Vec<f32> = y_plane.iter().map(|&v| v * 255.0).collect();
+        let y_quant_01 = y_quant.values[1];
+        let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
+
+        // Generate zero-bias parameters (same as baseline XYB)
+        let effective_distance = quant::quant_vals_to_distance(&x_quant, &y_quant, &b_quant);
+        let x_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0); // X uses luma params
+        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0); // Y uses luma params
+        let b_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1); // B uses chroma params
+
+        // Quantize all blocks WITH adaptive quantization (same as baseline)
+        let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb_with_aq_simple(
             &x_plane,
             &y_plane,
             &b_downsampled,
@@ -1411,6 +1422,10 @@ impl Encoder {
             &x_quant,
             &y_quant,
             &b_quant,
+            &aq_map,
+            &x_zero_bias,
+            &y_zero_bias,
+            &b_zero_bias,
         );
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
@@ -1421,12 +1436,16 @@ impl Encoder {
         // ========== PASS 1: TOKENIZATION ==========
         let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
 
-        for scan in scans.iter() {
-            // For XYB: all components use table 0 (luma-like treatment)
+        for (scan_idx, scan) in scans.iter().enumerate() {
+            // Calculate context for this scan (same as YCbCr)
+            // Context determines which Huffman table histogram to use
             let context = if scan.ss == 0 && scan.se == 0 {
-                0 // DC: all components use context 0
+                // DC scan: use component index as context (0=X, 1=Y, 2=B)
+                scan.components[0]
             } else {
-                num_components as u8 // AC: all components use context 3
+                // AC scan: use num_components + component_index as context
+                // This ensures each component gets its own AC Huffman table
+                (num_components as u8) + scan.components[0]
             };
 
             if scan.ss == 0 && scan.se == 0 {
@@ -2463,14 +2482,13 @@ impl Encoder {
             output.push(comp_id);
 
             // DC/AC table selectors
-            // For XYB: all components use table 0 (matches baseline XYB)
-            // For YCbCr: luma uses 0, chroma uses 1
-            let table_selector = if self.config.use_xyb {
-                0x00 // DC table 0, AC table 0 for all XYB components
-            } else if is_color && comp_idx > 0 {
-                0x11 // DC table 1, AC table 1 for chroma
+            // Both XYB and YCbCr use luma/chroma split:
+            //   Component 0 (X/Y) uses table 0
+            //   Components 1, 2 (Y,B / Cb,Cr) use table 1
+            let table_selector = if is_color && comp_idx > 0 {
+                0x11 // DC table 1, AC table 1 for chroma (components 1, 2)
             } else {
-                0x00 // DC table 0, AC table 0 for luma
+                0x00 // DC table 0, AC table 0 for luma (component 0)
             };
             output.push(table_selector);
         }
