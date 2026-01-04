@@ -372,6 +372,11 @@ pub struct EncoderConfig {
     // When Some, overrides chroma_conversion, smoothing_factor, and huffman_method
     #[doc(hidden)]
     pub(crate) internal_pipeline: Option<InternalPipeline>,
+
+    /// Custom quantization matrices (escape hatch for experimentation).
+    /// Not part of public API - use Encoder::custom_quant_matrices() method.
+    #[doc(hidden)]
+    pub(crate) custom_quant_matrices: Option<crate::quant::CustomQuantMatrices>,
 }
 
 impl Default for EncoderConfig {
@@ -397,6 +402,7 @@ impl Default for EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
             internal_pipeline: None,
+            custom_quant_matrices: None,
         }
     }
 }
@@ -650,6 +656,38 @@ impl Encoder {
         self
     }
 
+    /// Sets custom base quantization matrices for experimentation.
+    ///
+    /// **This is an undocumented escape hatch for research purposes.**
+    ///
+    /// See [`CustomQuantMatrices`](crate::quant::CustomQuantMatrices) for details
+    /// on the matrix format and how quantization works.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use jpegli::quant::CustomQuantMatrices;
+    ///
+    /// // Create custom matrices by modifying the defaults
+    /// let mut custom_ycbcr = jpegli::consts::BASE_QUANT_MATRIX_YCBCR;
+    /// // Modify DC coefficient (index 0) for Y channel
+    /// custom_ycbcr[0] *= 0.8; // 20% smaller DC quantization step
+    ///
+    /// let custom = CustomQuantMatrices::new()
+    ///     .with_ycbcr(custom_ycbcr);
+    ///
+    /// let jpeg = Encoder::new()
+    ///     .width(800)
+    ///     .height(600)
+    ///     .custom_quant_matrices(custom)
+    ///     .encode(&pixels)?;
+    /// ```
+    #[doc(hidden)]
+    #[must_use]
+    pub fn custom_quant_matrices(mut self, custom: crate::quant::CustomQuantMatrices) -> Self {
+        self.config.custom_quant_matrices = Some(custom);
+        self
+    }
+
     /// Sets an internal chroma pipeline for benchmarking (undocumented API).
     ///
     /// This method is intentionally not documented in the public API.
@@ -777,6 +815,26 @@ impl Encoder {
             _ => Err(Error::UnsupportedFeature {
                 feature: "extended/lossless encoding",
             }),
+        }
+    }
+
+    /// Generate a quantization table, using custom matrices if configured.
+    ///
+    /// This helper method respects the `custom_quant_matrices` config option.
+    #[inline]
+    fn gen_quant_table(&self, component: usize, use_xyb: bool, is_420: bool) -> QuantTable {
+        let distance = self.config.quality.to_distance();
+
+        if let Some(ref custom) = self.config.custom_quant_matrices {
+            quant::generate_quant_table_custom(distance, component, use_xyb, custom)
+        } else {
+            quant::generate_quant_table(
+                self.config.quality,
+                component,
+                ColorSpace::YCbCr, // ColorSpace is not used by generate_quant_table when use_xyb is set
+                use_xyb,
+                is_420,
+            )
         }
     }
 
@@ -1056,12 +1114,9 @@ impl Encoder {
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
         let is_420 = self.config.subsampling == Subsampling::S420;
-        let y_quant =
-            quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false, is_420);
-        let cb_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false, is_420);
-        let cr_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false, is_420);
+        let y_quant = self.gen_quant_table(0, false, is_420);
+        let cb_quant = self.gen_quant_table(1, false, is_420);
+        let cr_quant = self.gen_quant_table(2, false, is_420);
 
         // Quantize all blocks first (needed for both standard and optimized encoding)
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
@@ -1139,27 +1194,9 @@ impl Encoder {
 
         // Generate XYB quantization tables (one per component)
         // XYB mode doesn't use 4:2:0 quality compensation
-        let x_quant = quant::generate_quant_table(
-            self.config.quality,
-            0, // X component
-            ColorSpace::Rgb,
-            true,
-            false, // is_420
-        );
-        let y_quant = quant::generate_quant_table(
-            self.config.quality,
-            1, // Y component (luma-like)
-            ColorSpace::Rgb,
-            true,
-            false, // is_420
-        );
-        let b_quant = quant::generate_quant_table(
-            self.config.quality,
-            2, // B component
-            ColorSpace::Rgb,
-            true,
-            false, // is_420
-        );
+        let x_quant = self.gen_quant_table(0, true, false); // X component
+        let y_quant = self.gen_quant_table(1, true, false); // Y component (luma-like)
+        let b_quant = self.gen_quant_table(2, true, false); // B component
 
         // Compute AQ map from Y plane (XYB's Y is the luma-like channel)
         // Scale Y plane from [0,1] to [0,255] range for AQ computation
@@ -1310,12 +1347,9 @@ impl Encoder {
 
         // Generate XYB quantization tables
         // Use separate quantization tables for each component (matches C++ jpegli XYB mode)
-        let x_quant =
-            quant::generate_quant_table(self.config.quality, 0, ColorSpace::Rgb, true, false);
-        let y_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::Rgb, true, false);
-        let b_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::Rgb, true, false);
+        let x_quant = self.gen_quant_table(0, true, false);
+        let y_quant = self.gen_quant_table(1, true, false);
+        let b_quant = self.gen_quant_table(2, true, false);
 
         // Quantize all blocks for progressive encoding
         // Use X, Y, B as if they were Y, Cb, Cr for the progressive structure
@@ -1392,12 +1426,9 @@ impl Encoder {
         let b_height = (height + 1) / 2;
 
         // Generate XYB quantization tables
-        let x_quant =
-            quant::generate_quant_table(self.config.quality, 0, ColorSpace::Rgb, true, false);
-        let y_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::Rgb, true, false);
-        let b_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::Rgb, true, false);
+        let x_quant = self.gen_quant_table(0, true, false);
+        let y_quant = self.gen_quant_table(1, true, false);
+        let b_quant = self.gen_quant_table(2, true, false);
 
         // Compute AQ map from Y plane (same as baseline XYB)
         let y_plane_scaled: Vec<f32> = y_plane.iter().map(|&v| v * 255.0).collect();
@@ -1451,7 +1482,7 @@ impl Encoder {
         // ========== PASS 1: TOKENIZATION ==========
         let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
 
-        for (_scan_idx, scan) in scans.iter().enumerate() {
+        for scan in scans.iter() {
             // Calculate context for this scan
             // XYB: all components share same Huffman table (context 0 for DC, 3 for AC)
             // YCbCr: component-specific contexts for luma/chroma split
@@ -2084,12 +2115,9 @@ impl Encoder {
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Progressive mode uses 4:4:4, so is_420 = false
-        let y_quant =
-            quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false, false);
-        let cb_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false, false);
-        let cr_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false, false);
+        let y_quant = self.gen_quant_table(0, false, false);
+        let cb_quant = self.gen_quant_table(1, false, false);
+        let cr_quant = self.gen_quant_table(2, false, false);
 
         // Quantize all blocks to get full-precision coefficients
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
@@ -2149,12 +2177,9 @@ impl Encoder {
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Progressive mode uses 4:4:4, so is_420 = false
-        let y_quant =
-            quant::generate_quant_table(self.config.quality, 0, ColorSpace::YCbCr, false, false);
-        let cb_quant =
-            quant::generate_quant_table(self.config.quality, 1, ColorSpace::YCbCr, false, false);
-        let cr_quant =
-            quant::generate_quant_table(self.config.quality, 2, ColorSpace::YCbCr, false, false);
+        let y_quant = self.gen_quant_table(0, false, false);
+        let cb_quant = self.gen_quant_table(1, false, false);
+        let cr_quant = self.gen_quant_table(2, false, false);
 
         // Quantize all blocks to get full-precision coefficients
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
@@ -5852,14 +5877,15 @@ mod tests {
     fn test_internal_pathway_invalid_reserved_bits() {
         use internal_pathway::*;
 
-        // Reserved bits (24-63) should cause failure
+        // Reserved bits (32-63) should cause failure
+        // Note: bits 24-31 are the huffman method byte, not reserved
         let encoder = Encoder::new()
             .width(16)
             .height(16)
             .subsampling(Subsampling::S444)
-            .set_internal_pathway(P_F32_NONE | (1u64 << 24));
+            .set_internal_pathway(P_F32_NONE | (1u64 << 32));
 
-        assert!(encoder.is_err(), "Reserved bit 24 should be invalid");
+        assert!(encoder.is_err(), "Reserved bit 32 should be invalid");
     }
 
     #[test]
