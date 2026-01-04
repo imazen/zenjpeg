@@ -69,7 +69,7 @@ This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from 
 
 | Feature | Impact | Status |
 |---------|--------|--------|
-| Progressive level 2 | ~2-3% smaller files | ✗ Level 0 works, level 2 refinement broken |
+| Progressive level 2 | ~2-3% smaller files | ✓ Working for YCbCr, ✗ Broken for XYB |
 | Per-block adaptive quant | ~3-4% smaller files | ✓ Implemented (matches C++ at 0.022 DSSIM gap) |
 | Huffman optimization | ~3-4% smaller files | ✓ Implemented |
 | 4:4:4 subsampling | Quality improvement | ✓ Implemented |
@@ -401,11 +401,13 @@ jpegli-rs/
    - 155/185 test cases match C++ exactly (huffman_opt.rs)
    - 26 cases where mozjpeg algorithm is better, 4 where C++ is better
 
-3. ⚠️ **Progressive JPEG** - Level 0 works, level 2 needs refinement fix
-   - Level 0 (DC + AC scans, no successive approximation): ✓ WORKING
-   - Level 2 (with successive approximation): ✗ Refinement encoding produces invalid bitstream
-   - Tests: `tests/progressive_encoding.rs` - 5 passing tests
-   - TODO: Fix AC refinement scan encoding for full progressive level 2 support
+3. ✓ **Progressive JPEG Level 2** - WORKING for YCbCr, broken for XYB
+   - Level 2 YCbCr (with successive approximation): ✓ WORKING
+   - 13 scans (1 DC interleaved + 12 AC non-interleaved with refinement)
+   - All external decoders pass (mozjpeg, zune-jpeg, jpeg-decoder)
+   - XYB + Progressive: ✗ BROKEN (decoder fails, invalid bitstream)
+   - Tests: `examples/verify_progressive_support.rs` - comprehensive verification
+   - See: `docs/progressive_status.md` for detailed status report
 
 4. ? **Remaining ~2-3% gap**
    - May be DCT/entropy precision differences
@@ -699,7 +701,8 @@ CORPUS_DIR=/mnt/v/work/corpus/CID22-512 cargo test --test quality_mapping test_q
 **Still pending**:
 | Feature | Est. Impact | Status |
 |---------|-------------|--------|
-| Progressive level 2 | ~2-3% | Level 0 works, SA refinement broken |
+| Progressive level 2 (YCbCr) | ~2-3% | ✓ WORKING - needs global Huffman optimization |
+| Progressive XYB | ~2-3% | ✗ BROKEN - encoder produces invalid bitstream |
 
 **Current comparison** (4:4:4, AQ, sequential, optimized Huffman):
 | Mode | C++ | Rust | Diff |
