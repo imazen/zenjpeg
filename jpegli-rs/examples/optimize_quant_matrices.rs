@@ -447,37 +447,46 @@ fn apply_perturbation(state: &mut OptState, pert: &Perturbation) {
     }
 }
 
-/// Generate random perturbation - micro-optimization mode
+/// Generate random perturbation - balanced exploration/exploitation
 fn random_perturbation(rng: &mut Rng, temperature: f64) -> Perturbation {
-    // Smaller perturbations for fine-tuning near optimum
-    let scale = (temperature.sqrt() * 0.5) as f32;
+    // Scale with temperature: larger at high temp, smaller at low temp
+    let scale = (temperature.sqrt() * 2.0) as f32;
 
     match rng.gen_range(0..100) {
-        0..=59 => {
-            // Single base matrix value (60%) - focus on single-element tweaks
+        0..=49 => {
+            // Single base matrix value (50%)
             Perturbation::SingleBase {
                 idx: rng.gen_range(0..192),
-                delta: rng.gen_range_f32(-0.5..0.5) * scale,
+                delta: rng.gen_range_f32(-1.5..1.5) * scale,
             }
         }
-        60..=79 => {
-            // Frequency exponent (20%) - small adjustments
+        50..=69 => {
+            // Frequency exponent (20%)
             Perturbation::FreqExp {
                 idx: rng.gen_range(0..64),
-                delta: rng.gen_range_f32(-0.03..0.03) * scale,
+                delta: rng.gen_range_f32(-0.08..0.08) * scale,
+            }
+        }
+        70..=79 => {
+            // Global scale (10%)
+            Perturbation::GlobalScale {
+                delta: rng.gen_range_f32(-0.08..0.08) * scale,
             }
         }
         80..=89 => {
-            // Global scale (10%) - tiny adjustments
-            Perturbation::GlobalScale {
-                delta: rng.gen_range_f32(-0.02..0.02) * scale,
+            // Block of values (10%)
+            let start = rng.gen_range(0..192);
+            Perturbation::BlockBase {
+                start,
+                count: rng.gen_range(2..8),
+                delta: rng.gen_range_f32(-1.0..1.0) * scale,
             }
         }
         _ => {
-            // Component scale (10%) - small component adjustments
+            // Component scale (10%)
             Perturbation::ComponentScale {
                 component: rng.gen_range(0..3),
-                factor: 1.0 + rng.gen_range_f32(-0.01..0.01) * scale,
+                factor: 1.0 + rng.gen_range_f32(-0.05..0.05) * scale,
             }
         }
     }
