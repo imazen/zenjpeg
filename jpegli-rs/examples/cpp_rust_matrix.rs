@@ -195,7 +195,7 @@ fn run_comparison(rgb: &[u8], config: Config, label: &str) -> Option<Result> {
     let cpp_size = cpp_jpeg.len();
 
     println!(
-        "{:12} | {:4}x{:4} | {:11} | {:6} | {:9} | Q{:2} | Rust: {:7} | C++: {:7} | Δ: {:+7} ({:+5.1}%)",
+        "{:12} | {:4}x{:4} | {:11} | {:6} | {:9} | Q{:2} | {:>7} | {:>7} | {:>+8} | {:>+6.1}%",
         label,
         config.width,
         config.height,
@@ -216,9 +216,9 @@ fn run_comparison(rgb: &[u8], config: Config, label: &str) -> Option<Result> {
 }
 
 fn main() {
-    println!("\n{}", "=".repeat(140));
+    println!("\n{}", "=".repeat(150));
     println!(" COMPREHENSIVE RUST vs C++ MATRIX COMPARISON");
-    println!("{}\n", "=".repeat(140));
+    println!("{}\n", "=".repeat(150));
 
     if jpegli::test_utils::find_cjpegli().is_none() {
         println!("ERROR: C++ cjpegli not found. Build internal/jpegli-cpp first.");
@@ -226,22 +226,21 @@ fn main() {
     }
 
     println!(
-        "{:12} | {:9} | {:11} | {:6} | {:9} | {:3} | {:7} | {:7} | {:7}",
-        "Image Type", "Size", "Mode", "Color", "Huffman", "Q", "Rust", "C++", "Δ (%)"
+        "{:12} | {:9} | {:11} | {:6} | {:9} | {:3} | {:>7} | {:>7} | {:>8} | {:>7}",
+        "Image Type", "Size", "Mode", "Color", "Huffman", "Q", "Rust", "C++", "Δ bytes", "Δ %"
     );
-    println!("{}", "-".repeat(140));
+    println!("{}", "-".repeat(150));
 
     // Image configurations
     let sizes = [
         (64, 64, "Small"),
         (512, 512, "Medium"),
-        (2048, 2048, "Large"),
     ];
 
     let modes = [Mode::Baseline, Mode::Progressive];
     let colors = [ColorMode::YCbCr, ColorMode::XYB];
     let huffmans = [HuffmanMode::Fixed, HuffmanMode::Optimized];
-    let qualities = [50, 70, 90];
+    let qualities = [90];
 
     // Test simple gradients
     println!("\n--- SIMPLE GRADIENTS (low complexity) ---");
@@ -251,6 +250,10 @@ fn main() {
         for &mode in &modes {
             for &color in &colors {
                 for &huffman in &huffmans {
+                    // Skip progressive + fixed (not supported in Rust)
+                    if mode == Mode::Progressive && huffman == HuffmanMode::Fixed {
+                        continue;
+                    }
                     for &quality in &qualities {
                         let config = Config {
                             width: *width,
@@ -276,6 +279,10 @@ fn main() {
         for &mode in &modes {
             for &color in &colors {
                 for &huffman in &huffmans {
+                    // Skip progressive + fixed (not supported in Rust)
+                    if mode == Mode::Progressive && huffman == HuffmanMode::Fixed {
+                        continue;
+                    }
                     for &quality in &qualities {
                         let config = Config {
                             width: *width,
@@ -293,7 +300,7 @@ fn main() {
         }
     }
 
-    println!("\n{}", "=".repeat(140));
+    println!("\n{}", "=".repeat(150));
     println!("KEY INSIGHTS TO LOOK FOR:");
     println!("1. When is progressive SMALLER than baseline? (should be on larger, complex images)");
     println!(
@@ -302,5 +309,5 @@ fn main() {
     println!("3. How much do progressive scan headers cost? (matters for small images)");
     println!("4. How does Rust compare to C++ across this matrix?");
     println!("5. Is Huffman optimization beneficial for both baseline and progressive?");
-    println!("{}\n", "=".repeat(140));
+    println!("{}\n", "=".repeat(150));
 }
