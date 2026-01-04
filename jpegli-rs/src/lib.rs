@@ -73,6 +73,8 @@ pub mod huffman_classic;
 #[doc(hidden)]
 pub mod huffman_opt;
 #[doc(hidden)]
+pub mod huffman_types;
+#[doc(hidden)]
 pub mod icc;
 #[doc(hidden)]
 pub mod idct;
