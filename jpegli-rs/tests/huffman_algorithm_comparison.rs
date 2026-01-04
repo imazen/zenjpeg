@@ -4,9 +4,12 @@
 //! and compares their compression efficiency.
 //!
 //! Algorithms:
-//! - `JpegliCreateTree`: jpegli C++ style (sorted two-pointer merge with retry)
 //! - `MozjpegClassic`: libjpeg/mozjpeg style (others[] chain with Section K.2 limiting)
+//! - `JpegliTree`: jpegli C++ style (sorted two-pointer merge with retry)
+//!
+//! Run with: cargo test --test huffman_algorithm_comparison -- --nocapture
 
+use jpegli::huffman_types::{compare_algorithms, SymbolFrequencies};
 use jpegli::types::HuffmanMethod;
 use jpegli::{Encoder, JpegMode, PixelFormat, Quality, Subsampling};
 
@@ -419,4 +422,326 @@ fn test_grayscale_huffman_optimization() {
         verify_decodable(&jpeg, width, height),
         "Grayscale with optimized Huffman should be decodable"
     );
+}
+
+// =============================================================================
+// New unified type-based comparison tests
+// =============================================================================
+
+/// Create a realistic DC histogram (differential values, centered around 0)
+fn create_dc_histogram() -> SymbolFrequencies {
+    let mut freq = SymbolFrequencies::new();
+    // DC categories: 0=no diff, 1=small, ..., 11=large
+    // Category 0 (0 bits): very common in smooth areas
+    freq.add(0, 15000);
+    // Category 1 (-1, 1): common
+    freq.add(1, 8000);
+    // Category 2 (-3..-2, 2..3): fairly common
+    freq.add(2, 5000);
+    // Category 3 (-7..-4, 4..7)
+    freq.add(3, 3000);
+    // Category 4 (-15..-8, 8..15)
+    freq.add(4, 1500);
+    // Category 5-7: less common
+    freq.add(5, 800);
+    freq.add(6, 400);
+    freq.add(7, 200);
+    // Category 8-11: rare (large jumps)
+    freq.add(8, 50);
+    freq.add(9, 20);
+    freq.add(10, 5);
+    freq.add(11, 1);
+    freq
+}
+
+/// Create a realistic AC histogram (run-length encoded)
+fn create_ac_histogram() -> SymbolFrequencies {
+    let mut freq = SymbolFrequencies::new();
+
+    // Symbol 0x00 = EOB (End of Block) - very common
+    freq.add(0x00, 50000);
+
+    // Symbol 0xF0 = ZRL (16 zeros) - uncommon
+    freq.add(0xF0, 500);
+
+    // Common AC coefficients (run=0, size=1..4)
+    freq.add(0x01, 25000); // run=0, size=1 (coeff -1 or 1)
+    freq.add(0x02, 15000); // run=0, size=2 (-3..-2, 2..3)
+    freq.add(0x03, 8000);  // run=0, size=3 (-7..-4, 4..7)
+    freq.add(0x04, 4000);  // run=0, size=4
+
+    // run=1 (one zero before coeff)
+    freq.add(0x11, 10000); // run=1, size=1
+    freq.add(0x12, 5000);  // run=1, size=2
+    freq.add(0x13, 2500);  // run=1, size=3
+    freq.add(0x14, 1200);  // run=1, size=4
+
+    // run=2
+    freq.add(0x21, 4000);
+    freq.add(0x22, 2000);
+    freq.add(0x23, 1000);
+
+    // run=3-5
+    freq.add(0x31, 2000);
+    freq.add(0x32, 1000);
+    freq.add(0x41, 1000);
+    freq.add(0x42, 500);
+    freq.add(0x51, 500);
+
+    // Higher runs (rarer)
+    for run in 6..16 {
+        freq.add((run << 4) | 1, 200 / (run as u64 + 1));
+    }
+
+    // Higher sizes (rarer)
+    freq.add(0x05, 2000);
+    freq.add(0x06, 1000);
+    freq.add(0x07, 500);
+    freq.add(0x08, 100);
+    freq.add(0x09, 50);
+    freq.add(0x0A, 10);
+
+    freq
+}
+
+/// Comprehensive comparison of both algorithms on various histogram patterns.
+#[test]
+fn test_unified_algorithm_comparison() {
+    println!("\n{}", "=".repeat(80));
+    println!("UNIFIED HUFFMAN ALGORITHM COMPARISON");
+    println!("{}\n", "=".repeat(80));
+
+    let test_cases: Vec<(&str, SymbolFrequencies)> = vec![
+        ("DC Luma (typical)", create_dc_histogram()),
+        ("AC Luma (typical)", create_ac_histogram()),
+        ("Uniform distribution", {
+            let mut f = SymbolFrequencies::new();
+            for i in 0..=255 {
+                f.add(i, 100);
+            }
+            f
+        }),
+        ("Highly skewed (zipf-like)", {
+            let mut f = SymbolFrequencies::new();
+            for i in 0..=255 {
+                f.add(i, (10000 / (i as u64 + 1)).max(1));
+            }
+            f
+        }),
+        ("Sparse (few symbols)", {
+            let mut f = SymbolFrequencies::new();
+            f.add(0, 10000);
+            f.add(1, 1000);
+            f.add(17, 500);
+            f.add(33, 100);
+            f
+        }),
+    ];
+
+    println!(
+        "{:<30} {:>12} {:>12} {:>12} {:>8}",
+        "Histogram", "mozjpeg", "jpegli", "Diff", "Better"
+    );
+    println!("{}", "-".repeat(80));
+
+    let mut mozjpeg_wins = 0;
+    let mut jpegli_wins = 0;
+    let mut ties = 0;
+
+    for (name, freq) in &test_cases {
+        let (mozjpeg_len, jpegli_len, moz_cost, jpg_cost) =
+            compare_algorithms(freq).expect("Both algorithms should succeed");
+
+        // Verify both are valid
+        assert!(mozjpeg_len.is_valid(), "{}: mozjpeg invalid", name);
+        assert!(jpegli_len.is_valid(), "{}: jpegli invalid", name);
+
+        let diff = jpg_cost as i64 - moz_cost as i64;
+        let winner = if diff < 0 {
+            jpegli_wins += 1;
+            "jpegli"
+        } else if diff > 0 {
+            mozjpeg_wins += 1;
+            "mozjpeg"
+        } else {
+            ties += 1;
+            "tie"
+        };
+
+        println!(
+            "{:<30} {:>12} {:>12} {:>+12} {:>8}",
+            name, moz_cost, jpg_cost, diff, winner
+        );
+    }
+
+    println!("{}", "-".repeat(80));
+    println!(
+        "Summary: mozjpeg wins {}, jpegli wins {}, ties {}",
+        mozjpeg_wins, jpegli_wins, ties
+    );
+    println!();
+}
+
+/// Test both algorithms on histograms extracted from actual encoding patterns.
+/// This uses synthetic "photo-like" and "graphic-like" distributions.
+#[test]
+fn test_algorithm_on_content_types() {
+    println!("\n{}", "=".repeat(80));
+    println!("ALGORITHM COMPARISON BY CONTENT TYPE");
+    println!("{}\n", "=".repeat(80));
+
+    // Photo-like: many small coefficients, smooth falloff
+    let photo_ac = {
+        let mut f = SymbolFrequencies::new();
+        f.add(0x00, 100000); // EOB very common
+        // Exponential falloff for run/size combinations
+        for run in 0u8..16 {
+            for size in 1u8..=10 {
+                let divisor = (run as u64 + 1) * (size as u64 + 1) * (size as u64 + 1);
+                let count = (50000.0 / divisor as f64) as u64;
+                if count > 0 {
+                    f.add((run << 4) | size, count);
+                }
+            }
+        }
+        f
+    };
+
+    // Graphic-like: more zeros, sharper edges
+    let graphic_ac = {
+        let mut f = SymbolFrequencies::new();
+        f.add(0x00, 150000); // Even more EOBs
+        f.add(0xF0, 5000);   // More ZRLs
+        // Bimodal: either small or larger coefficients
+        f.add(0x01, 30000);
+        f.add(0x02, 5000);
+        f.add(0x05, 8000);  // Spike at size 5
+        f.add(0x06, 6000);
+        f.add(0x11, 10000);
+        f.add(0x21, 5000);
+        f
+    };
+
+    // Text-like: very sparse, mostly EOB
+    let text_ac = {
+        let mut f = SymbolFrequencies::new();
+        f.add(0x00, 200000); // Almost all EOB
+        f.add(0x01, 5000);
+        f.add(0x02, 1000);
+        f.add(0x11, 500);
+        f
+    };
+
+    let test_cases: Vec<(&str, SymbolFrequencies)> = vec![
+        ("Photo (smooth gradients)", photo_ac),
+        ("Graphic (sharp edges)", graphic_ac),
+        ("Text (sparse blocks)", text_ac),
+    ];
+
+    println!(
+        "{:<30} {:>12} {:>12} {:>10} {:>8}",
+        "Content Type", "mozjpeg", "jpegli", "Diff %", "Better"
+    );
+    println!("{}", "-".repeat(80));
+
+    for (name, freq) in &test_cases {
+        let (_moz_len, _jpg_len, moz_cost, jpg_cost) =
+            compare_algorithms(freq).expect("Both should work");
+
+        let diff_pct = (jpg_cost as f64 - moz_cost as f64) / moz_cost as f64 * 100.0;
+        let winner = if jpg_cost < moz_cost {
+            "jpegli"
+        } else if moz_cost < jpg_cost {
+            "mozjpeg"
+        } else {
+            "tie"
+        };
+
+        println!(
+            "{:<30} {:>12} {:>12} {:>+10.2}% {:>8}",
+            name, moz_cost, jpg_cost, diff_pct, winner
+        );
+    }
+
+    println!();
+}
+
+/// Test edge cases where algorithms might diverge significantly.
+#[test]
+fn test_algorithm_edge_cases() {
+    println!("\n{}", "=".repeat(80));
+    println!("ALGORITHM EDGE CASES");
+    println!("{}\n", "=".repeat(80));
+
+    // Single dominant symbol
+    let single_dominant = {
+        let mut f = SymbolFrequencies::new();
+        f.add(0, 100000);
+        f.add(1, 1);
+        f
+    };
+
+    // Two equal symbols
+    let two_equal = {
+        let mut f = SymbolFrequencies::new();
+        f.add(0, 50000);
+        f.add(1, 50000);
+        f
+    };
+
+    // Many symbols with count 1
+    let many_rare = {
+        let mut f = SymbolFrequencies::new();
+        for i in 0..=200 {
+            f.add(i, 1);
+        }
+        f
+    };
+
+    // Power-of-2 distribution
+    let power_of_2 = {
+        let mut f = SymbolFrequencies::new();
+        for i in 0..16 {
+            f.add(i, 1u64 << (15 - i));
+        }
+        f
+    };
+
+    let test_cases: Vec<(&str, SymbolFrequencies)> = vec![
+        ("Single dominant + 1 rare", single_dominant),
+        ("Two equal symbols", two_equal),
+        ("200 symbols, count=1 each", many_rare),
+        ("Power-of-2 distribution", power_of_2),
+    ];
+
+    println!(
+        "{:<30} {:>12} {:>12} {:>12} {:>10}",
+        "Edge Case", "mozjpeg", "jpegli", "Diff bits", "Diff %"
+    );
+    println!("{}", "-".repeat(80));
+
+    for (name, freq) in &test_cases {
+        let result = compare_algorithms(freq);
+
+        match result {
+            Ok((_moz_len, _jpg_len, moz_cost, jpg_cost)) => {
+                let diff = jpg_cost as i64 - moz_cost as i64;
+                let diff_pct = if moz_cost > 0 {
+                    diff as f64 / moz_cost as f64 * 100.0
+                } else {
+                    0.0
+                };
+
+                println!(
+                    "{:<30} {:>12} {:>12} {:>+12} {:>+10.2}%",
+                    name, moz_cost, jpg_cost, diff, diff_pct
+                );
+            }
+            Err(e) => {
+                println!("{:<30} ERROR: {}", name, e);
+            }
+        }
+    }
+
+    println!();
 }
