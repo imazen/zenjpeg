@@ -447,46 +447,37 @@ fn apply_perturbation(state: &mut OptState, pert: &Perturbation) {
     }
 }
 
-/// Generate random perturbation
+/// Generate random perturbation - micro-optimization mode
 fn random_perturbation(rng: &mut Rng, temperature: f64) -> Perturbation {
-    // Higher base scale for larger moves + temperature scaling
-    let scale = (temperature.sqrt() * 3.0) as f32;
+    // Smaller perturbations for fine-tuning near optimum
+    let scale = (temperature.sqrt() * 0.5) as f32;
 
     match rng.gen_range(0..100) {
-        0..=49 => {
-            // Single base matrix value (50%)
+        0..=59 => {
+            // Single base matrix value (60%) - focus on single-element tweaks
             Perturbation::SingleBase {
                 idx: rng.gen_range(0..192),
-                delta: rng.gen_range_f32(-3.0..3.0) * scale,
+                delta: rng.gen_range_f32(-0.5..0.5) * scale,
             }
         }
-        50..=69 => {
-            // Frequency exponent (20%)
+        60..=79 => {
+            // Frequency exponent (20%) - small adjustments
             Perturbation::FreqExp {
                 idx: rng.gen_range(0..64),
-                delta: rng.gen_range_f32(-0.15..0.15) * scale,
-            }
-        }
-        70..=79 => {
-            // Global scale (10%)
-            Perturbation::GlobalScale {
-                delta: rng.gen_range_f32(-0.2..0.2) * scale,
+                delta: rng.gen_range_f32(-0.03..0.03) * scale,
             }
         }
         80..=89 => {
-            // Block of values (10%)
-            let start = rng.gen_range(0..192);
-            Perturbation::BlockBase {
-                start,
-                count: rng.gen_range(2..12),
-                delta: rng.gen_range_f32(-2.0..2.0) * scale,
+            // Global scale (10%) - tiny adjustments
+            Perturbation::GlobalScale {
+                delta: rng.gen_range_f32(-0.02..0.02) * scale,
             }
         }
         _ => {
-            // Component scale (10%)
+            // Component scale (10%) - small component adjustments
             Perturbation::ComponentScale {
                 component: rng.gen_range(0..3),
-                factor: 1.0 + rng.gen_range_f32(-0.1..0.1) * scale,
+                factor: 1.0 + rng.gen_range_f32(-0.01..0.01) * scale,
             }
         }
     }
@@ -719,7 +710,70 @@ fn evaluate_state_profiled(
     (total_quality / images.len() as f64, total_size)
 }
 
-/// Fitness function: Maximize quality while penalizing size deviation
+/// Baseline Pareto curve data points (bpp, ssim2) from jpegli at various Q levels
+/// These are measured once at startup and used to compute Pareto distance
+#[derive(Clone)]
+struct ParetoCurve {
+    /// (bpp, ssim2) points sorted by bpp ascending
+    points: Vec<(f64, f64)>,
+}
+
+impl ParetoCurve {
+    fn new() -> Self {
+        Self { points: Vec::new() }
+    }
+
+    fn add_point(&mut self, bpp: f64, ssim2: f64) {
+        self.points.push((bpp, ssim2));
+        self.points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    }
+
+    /// Get expected SSIM2 at given bpp by linear interpolation on Pareto curve
+    fn expected_ssim2_at_bpp(&self, bpp: f64) -> f64 {
+        if self.points.is_empty() {
+            return 0.0;
+        }
+
+        // Find bracketing points
+        let mut lower = None;
+        let mut upper = None;
+
+        for &(b, s) in &self.points {
+            if b <= bpp {
+                lower = Some((b, s));
+            }
+            if b >= bpp && upper.is_none() {
+                upper = Some((b, s));
+            }
+        }
+
+        match (lower, upper) {
+            (Some((b1, s1)), Some((b2, s2))) if (b2 - b1).abs() > 0.001 => {
+                // Interpolate
+                let t = (bpp - b1) / (b2 - b1);
+                s1 + t * (s2 - s1)
+            }
+            (Some((_, s)), None) => s, // Beyond upper bound
+            (None, Some((_, s))) => s, // Below lower bound
+            (Some((_, s)), Some(_)) => s, // Same point
+            _ => 0.0,
+        }
+    }
+
+    /// Compute vertical distance from Pareto curve (positive = above/better)
+    fn distance_above_pareto(&self, bpp: f64, ssim2: f64) -> f64 {
+        let expected = self.expected_ssim2_at_bpp(bpp);
+        ssim2 - expected
+    }
+}
+
+/// Fitness function: Distance above the Pareto curve
+/// Positive = better than baseline, negative = worse
+fn fitness_pareto(ssim2: f64, bpp: f64, pareto: &ParetoCurve) -> f64 {
+    pareto.distance_above_pareto(bpp, ssim2)
+}
+
+/// Legacy fitness function (for backward compatibility)
 fn fitness(ssim2: f64, size: usize, total_pixels: usize, target_bpp: f64) -> f64 {
     let bpp = (size * 8) as f64 / total_pixels as f64;
 
@@ -728,16 +782,13 @@ fn fitness(ssim2: f64, size: usize, total_pixels: usize, target_bpp: f64) -> f64
         return ssim2;
     }
 
-    // Symmetric penalty with hard cap: strongly penalize going over target
-    // This helps stay within bpp budget while maximizing quality
+    // Symmetric penalty with hard cap
     let bpp_diff = bpp - target_bpp;
-    let lambda = 20.0; // Penalty per bpp deviation
+    let lambda = 20.0;
 
     if bpp_diff > 0.0 {
-        // Over target: quadratic penalty to strongly discourage
         ssim2 - lambda * bpp_diff - 50.0 * bpp_diff * bpp_diff
     } else {
-        // Under target: linear bonus (smaller is better)
         ssim2 - lambda * 0.3 * bpp_diff.abs()
     }
 }
@@ -745,6 +796,45 @@ fn fitness(ssim2: f64, size: usize, total_pixels: usize, target_bpp: f64) -> f64
 /// Compute total pixels across all images
 fn total_pixels(images: &[TestImage]) -> usize {
     images.iter().map(|img| img.width * img.height).sum()
+}
+
+/// Measure baseline Pareto curve by encoding at various Q levels
+fn measure_pareto_curve(images: &[TestImage], q_levels: &[u8]) -> ParetoCurve {
+    let pixels = total_pixels(images);
+    let mut pareto = ParetoCurve::new();
+
+    println!("\nMeasuring baseline Pareto curve:");
+    println!("  Q  |  SSIM2  |  bpp  |  size");
+    println!("-----|---------|-------|--------");
+
+    for &q in q_levels {
+        let mut total_ssim2 = 0.0;
+        let mut total_size = 0;
+
+        for img in images {
+            let jpeg = Encoder::new()
+                .width(img.width as u32)
+                .height(img.height as u32)
+                .pixel_format(PixelFormat::Rgb)
+                .jpegli_quality(Quality::from_quality(q.into()))
+                .encode(&img.rgb)
+                .expect("encode failed");
+
+            let decoded = decode_jpeg(&jpeg).expect("decode failed");
+            let ssim2 = compute_ssim2_with_ref(&img.ssim2_ref, &decoded, img.width, img.height);
+
+            total_ssim2 += ssim2;
+            total_size += jpeg.len();
+        }
+
+        let avg_ssim2 = total_ssim2 / images.len() as f64;
+        let bpp = (total_size * 8) as f64 / pixels as f64;
+
+        println!(" Q{:2} | {:.4} | {:.3} | {}", q, avg_ssim2, bpp, total_size);
+        pareto.add_point(bpp, avg_ssim2);
+    }
+
+    pareto
 }
 
 /// Load images from corpus directory
@@ -773,13 +863,13 @@ fn load_corpus(corpus_dir: &Path, max_images: usize) -> Vec<TestImage> {
     images
 }
 
-/// Simulated annealing optimizer
+/// Simulated annealing optimizer with Pareto-distance fitness
 fn optimize(
     images: &[TestImage],
     quality: u8,
     iterations: usize,
     seed: u64,
-    target_bpp: f64,
+    pareto: &ParetoCurve,
     checkpoint_path: Option<&Path>,
     initial_state: Option<OptState>,
 ) -> OptState {
@@ -791,32 +881,33 @@ fn optimize(
     let mut current = initial_state.unwrap_or_else(OptState::new);
     let (current_ssim2, current_size) =
         evaluate_state_profiled(&current, images, quality, &profile_stats);
+    let current_bpp = (current_size * 8) as f64 / pixels as f64;
 
-    // Establish baseline
+    // Show baseline comparison
     let baseline = OptState::new();
     let (baseline_ssim2, baseline_size) =
         evaluate_state_profiled(&baseline, images, quality, &profile_stats);
     let baseline_bpp = (baseline_size * 8) as f64 / pixels as f64;
+    let baseline_dist = pareto.distance_above_pareto(baseline_bpp, baseline_ssim2);
     println!(
-        "\nBaseline: SSIM2={:.4}, size={} bytes, bpp={:.3}",
-        baseline_ssim2, baseline_size, baseline_bpp
+        "\nBaseline Q{}: SSIM2={:.4}, bpp={:.3}, pareto_dist={:+.4}",
+        quality, baseline_ssim2, baseline_bpp, baseline_dist
     );
-    println!("Target bpp: {:.3}", target_bpp);
 
-    let mut current_fitness = fitness(current_ssim2, current_size, pixels, target_bpp);
+    let mut current_fitness = fitness_pareto(current_ssim2, current_bpp, pareto);
     let mut best = current.clone();
     let mut best_fitness = current_fitness;
     let mut best_ssim2 = current_ssim2;
     let mut best_size = current_size;
-    let mut best_bpp = (current_size * 8) as f64 / pixels as f64;
+    let mut best_bpp = current_bpp;
 
     println!(
-        "Initial: SSIM2={:.4}, bpp={:.3}, fitness={:.4}",
+        "Initial: SSIM2={:.4}, bpp={:.3}, pareto_dist={:+.4}",
         current_ssim2, best_bpp, current_fitness
     );
 
-    // Annealing schedule - higher initial temp for more exploration
-    let initial_temp: f64 = 10.0;
+    // Annealing schedule - lower temp for fine-tuning mode
+    let initial_temp: f64 = 1.0;
     let final_temp: f64 = 0.001;
     let cooling_rate = (final_temp / initial_temp).powf(1.0 / iterations as f64);
 
@@ -824,8 +915,8 @@ fn optimize(
     let mut accepted = 0;
     let mut improved = 0;
     let mut stagnant = 0; // Track iterations without improvement
-    let reheat_threshold = 200; // Reheat if stuck this long
-    let reheat_temp = 5.0; // Temperature to reheat to
+    let reheat_threshold = 500; // Longer threshold for fine-tuning
+    let reheat_temp = 0.5; // Lower reheat temp for fine-tuning
 
     let start = Instant::now();
     let checkpoint_interval = 100;
@@ -840,7 +931,7 @@ fn optimize(
         let (cand_ssim2, cand_size) =
             evaluate_state_profiled(&candidate, images, quality, &profile_stats);
         let cand_bpp = (cand_size * 8) as f64 / pixels as f64;
-        let cand_fitness = fitness(cand_ssim2, cand_size, pixels, target_bpp);
+        let cand_fitness = fitness_pareto(cand_ssim2, cand_bpp, pareto);
 
         // Accept or reject
         let delta = cand_fitness - current_fitness;
@@ -888,13 +979,13 @@ fn optimize(
             let eta = (iterations - i - 1) as f64 / rate;
 
             println!(
-                "[{:5}/{:5}] T={:.4} SSIM2={:.4} bpp={:.3} (target={:.3}) accept={:.1}% improve={} ETA={:.0}s",
+                "[{:5}/{:5}] T={:.4} SSIM2={:.4} bpp={:.3} pareto_dist={:+.4} accept={:.1}% improve={} ETA={:.0}s",
                 i + 1,
                 iterations,
                 temperature,
                 best_ssim2,
                 best_bpp,
-                target_bpp,
+                best_fitness,
                 100.0 * accepted as f64 / (i + 1) as f64,
                 improved,
                 eta
@@ -912,8 +1003,8 @@ fn optimize(
 
     println!("\n=== Optimization Complete ===");
     println!(
-        "Best: SSIM2={:.4}, bpp={:.3} (target={:.3})",
-        best_ssim2, best_bpp, target_bpp
+        "Best: SSIM2={:.4}, bpp={:.3}, pareto_dist={:+.4}",
+        best_ssim2, best_bpp, best_fitness
     );
     println!(
         "vs baseline: SSIM2 {:+.4}, bpp {:+.3}",
@@ -939,12 +1030,13 @@ fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --quality <N>      Target quality level (default: 85)");
-    eprintln!("  --target-bpp <N>   Target bits per pixel (default: baseline bpp)");
     eprintln!("  --iterations <N>   SA iterations (default: 10000)");
     eprintln!("  --max-images <N>   Max images to load (default: 20)");
     eprintln!("  --output <file>    Output file for best matrices (JSON)");
     eprintln!("  --resume <file>    Resume from checkpoint");
     eprintln!("  --seed <N>         Random seed (default: 42)");
+    eprintln!();
+    eprintln!("Fitness is Pareto distance: positive = above baseline curve (better)");
 }
 
 fn main() {
@@ -963,7 +1055,6 @@ fn main() {
 
     // Parse options
     let mut quality: u8 = 85;
-    let mut target_bpp: Option<f64> = None;
     let mut iterations: usize = 10000;
     let mut max_images: usize = 20;
     let mut output_path: Option<PathBuf> = None;
@@ -975,10 +1066,6 @@ fn main() {
         match args[i].as_str() {
             "--quality" => {
                 quality = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(85);
-                i += 2;
-            }
-            "--target-bpp" => {
-                target_bpp = args.get(i + 1).and_then(|s| s.parse().ok());
                 i += 2;
             }
             "--iterations" => {
@@ -1037,30 +1124,10 @@ fn main() {
             .and_then(|json| OptState::from_json(&json))
     });
 
-    // If no target bpp specified, compute baseline bpp
-    let target_bpp = target_bpp.unwrap_or_else(|| {
-        println!("Computing baseline bpp...");
-        let baseline = OptState::new();
-        let pixels = total_pixels(&images);
-        let custom = baseline.to_custom_matrices();
-        let total_size: usize = images
-            .iter()
-            .map(|img| {
-                Encoder::new()
-                    .width(img.width as u32)
-                    .height(img.height as u32)
-                    .pixel_format(PixelFormat::Rgb)
-                    .jpegli_quality(Quality::from_quality(quality.into()))
-                    .custom_quant_matrices(custom.clone())
-                    .encode(&img.rgb)
-                    .unwrap()
-                    .len()
-            })
-            .sum();
-        let bpp = (total_size * 8) as f64 / pixels as f64;
-        println!("Baseline bpp: {:.3}", bpp);
-        bpp
-    });
+    // Measure baseline Pareto curve at multiple Q levels
+    let q_levels: Vec<u8> = (60..=98).step_by(2).collect();
+    let pareto = measure_pareto_curve(&images, &q_levels);
+    println!("\nPareto curve has {} points", pareto.points.len());
 
     // Checkpoint path
     let checkpoint_path = output_path
@@ -1073,7 +1140,7 @@ fn main() {
         quality,
         iterations,
         seed,
-        target_bpp,
+        &pareto,
         checkpoint_path.as_deref(),
         initial_state,
     );
