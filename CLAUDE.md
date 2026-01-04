@@ -69,7 +69,7 @@ This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from 
 
 | Feature | Impact | Status |
 |---------|--------|--------|
-| Progressive level 2 | ~2-3% smaller files | ✓ Working for YCbCr, ✗ Broken for XYB |
+| Progressive level 2 | ~2-3% smaller files | ✓ Working (YCbCr, XYB, Grayscale) |
 | Per-block adaptive quant | ~3-4% smaller files | ✓ Implemented (matches C++ at 0.022 DSSIM gap) |
 | Huffman optimization | ~3-4% smaller files | ✓ Implemented |
 | 4:4:4 subsampling | Quality improvement | ✓ Implemented |
@@ -373,7 +373,7 @@ jpegli-rs/
 - [✓] Butteraugli metric - **FULL RUST IMPLEMENTATION** (3,500+ lines, C++ parity tests)
   - Note: 7x7 minimum dimension requirement causes some test failures
 - [⚠️] XYB encoding pipeline - Color conversion complete, end-to-end validation pending
-- [⚠️] Progressive JPEG - Level 0 works, level 2 (SA refinement) broken
+- [✓] Progressive JPEG - Level 2 with successive approximation working (YCbCr, XYB, Grayscale)
 
 ## Test Infrastructure (Verified)
 
@@ -401,12 +401,14 @@ jpegli-rs/
    - 155/185 test cases match C++ exactly (huffman_opt.rs)
    - 26 cases where mozjpeg algorithm is better, 4 where C++ is better
 
-3. ✓ **Progressive JPEG Level 2** - WORKING for YCbCr, broken for XYB
-   - Level 2 YCbCr (with successive approximation): ✓ WORKING
-   - 13 scans (1 DC interleaved + 12 AC non-interleaved with refinement)
-   - All external decoders pass (mozjpeg, zune-jpeg, jpeg-decoder)
-   - XYB + Progressive: ✗ BROKEN (decoder fails, invalid bitstream)
-   - Tests: `examples/verify_progressive_support.rs` - comprehensive verification
+3. ✓ **Progressive JPEG Level 2** - FULLY WORKING (YCbCr, XYB, Grayscale)
+   - Level 2 with successive approximation: ✓ WORKING
+   - YCbCr: 13 scans (1 DC interleaved + 12 AC with refinement)
+   - XYB: 15 scans (3 DC non-interleaved + 12 AC with refinement)
+   - Grayscale: 5 scans (1 DC + 4 AC with refinement)
+   - All external decoders pass (jpegli-rs, mozjpeg, zune-jpeg, jpeg-decoder)
+   - Fixed in commits: 50d2cf4 (scan headers) + ac4ab61 (encoding logic)
+   - Tests: `tests/progressive_encoding.rs` - 19 passing tests
    - See: `docs/progressive_status.md` for detailed status report
 
 4. ? **Remaining ~2-3% gap**
