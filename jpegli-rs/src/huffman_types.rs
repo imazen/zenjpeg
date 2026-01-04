@@ -281,6 +281,112 @@ impl HuffmanTableSet {
     }
 }
 
+// =============================================================================
+// Huffman Algorithm Trait and Implementations
+// =============================================================================
+
+/// Which Huffman algorithm to use for code length generation.
+///
+/// Both algorithms produce valid Huffman codes that satisfy:
+/// - All code lengths <= 16 bits
+/// - Kraft sum < 2^16 (strictly less, due to pseudo-symbol 256)
+///
+/// They differ in:
+/// - Tie-breaking when symbols have equal frequency
+/// - Depth limiting strategy (retry vs tree manipulation)
+/// - Performance characteristics
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum HuffmanAlgorithm {
+    /// mozjpeg/libjpeg classic algorithm (JPEG Section K.2).
+    ///
+    /// This is the well-tested, standard algorithm used by libjpeg since 1991.
+    /// Uses `others[]` chain tracking and Section K.2 tree manipulation for
+    /// depth limiting.
+    ///
+    /// **Status**: Working, produces valid bitstreams.
+    #[default]
+    MozjpegClassic,
+
+    /// jpegli C++ algorithm (sorted two-pointer merge with retry).
+    ///
+    /// This is the algorithm from Google's jpegli in the JPEG XL project.
+    /// Uses sorted merge with sentinels. If tree exceeds depth limit, retries
+    /// with boosted minimum frequencies.
+    ///
+    /// **Status**: Needs investigation - may produce larger files than expected.
+    JpegliTree,
+}
+
+impl HuffmanAlgorithm {
+    /// Generates optimal code lengths from symbol frequencies.
+    ///
+    /// Both algorithms handle the pseudo-symbol 256 internally, so the input
+    /// only needs frequencies for symbols 0-255. The output excludes symbol 256.
+    ///
+    /// # Errors
+    /// Returns an error if the algorithm fails (only possible with mozjpeg on overflow).
+    pub fn generate_code_lengths(&self, frequencies: &SymbolFrequencies) -> Result<CodeLengths> {
+        match self {
+            HuffmanAlgorithm::MozjpegClassic => generate_lengths_mozjpeg(frequencies),
+            HuffmanAlgorithm::JpegliTree => generate_lengths_jpegli(frequencies),
+        }
+    }
+
+    /// Generates an optimized table from symbol frequencies.
+    pub fn generate_table(&self, frequencies: &SymbolFrequencies) -> Result<OptimizedTable> {
+        let lengths = self.generate_code_lengths(frequencies)?;
+        OptimizedTable::from_code_lengths(&lengths)
+    }
+}
+
+/// mozjpeg/libjpeg algorithm implementation.
+fn generate_lengths_mozjpeg(frequencies: &SymbolFrequencies) -> Result<CodeLengths> {
+    use crate::huffman_classic::generate_code_lengths;
+
+    // Convert to the format mozjpeg expects: [i64; 257] with pseudo-symbol
+    let mut freq = [0i64; 257];
+    for (i, &count) in frequencies.as_slice().iter().enumerate() {
+        freq[i] = count as i64;
+    }
+    // generate_code_lengths sets freq[256] = 1 internally
+
+    let lengths_array = generate_code_lengths(&mut freq)?;
+    Ok(CodeLengths::from_array(lengths_array))
+}
+
+/// jpegli C++ algorithm implementation.
+fn generate_lengths_jpegli(frequencies: &SymbolFrequencies) -> Result<CodeLengths> {
+    use crate::huffman::build_code_lengths;
+
+    // Convert to the format jpegli expects: Vec<u64> with pseudo-symbol appended
+    let mut freqs: Vec<u64> = frequencies.as_slice().to_vec();
+    freqs.push(1); // Pseudo-symbol 256
+
+    let depths = build_code_lengths(&freqs, 16);
+
+    // depths includes symbol 256, but we only want 0-255
+    let mut lengths = [0u8; 256];
+    lengths.copy_from_slice(&depths[..256]);
+
+    Ok(CodeLengths::from_array(lengths))
+}
+
+/// Compares the two algorithms on the same frequencies.
+///
+/// Returns (mozjpeg_lengths, jpegli_lengths, mozjpeg_cost, jpegli_cost).
+/// Lower cost = better compression.
+pub fn compare_algorithms(
+    frequencies: &SymbolFrequencies,
+) -> Result<(CodeLengths, CodeLengths, u64, u64)> {
+    let mozjpeg = HuffmanAlgorithm::MozjpegClassic.generate_code_lengths(frequencies)?;
+    let jpegli = HuffmanAlgorithm::JpegliTree.generate_code_lengths(frequencies)?;
+
+    let mozjpeg_cost = mozjpeg.estimate_cost(frequencies);
+    let jpegli_cost = jpegli.estimate_cost(frequencies);
+
+    Ok((mozjpeg, jpegli, mozjpeg_cost, jpegli_cost))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +462,103 @@ mod tests {
 
         // Cost = 100*1 + 10*3 = 130
         assert_eq!(lengths.estimate_cost(&freq), 130);
+    }
+
+    #[test]
+    fn test_algorithm_mozjpeg_produces_valid_code() {
+        let mut freq = SymbolFrequencies::new();
+        freq.add(0, 1000); // Very common
+        freq.add(1, 100);
+        freq.add(2, 10);
+        freq.add(3, 1);
+
+        let lengths = HuffmanAlgorithm::MozjpegClassic
+            .generate_code_lengths(&freq)
+            .unwrap();
+
+        assert!(lengths.is_valid());
+        assert!(lengths.max_length() <= 16);
+        // Most frequent should have shortest code
+        assert!(lengths.get(0) <= lengths.get(3));
+    }
+
+    #[test]
+    fn test_algorithm_jpegli_produces_valid_code() {
+        let mut freq = SymbolFrequencies::new();
+        freq.add(0, 1000);
+        freq.add(1, 100);
+        freq.add(2, 10);
+        freq.add(3, 1);
+
+        let lengths = HuffmanAlgorithm::JpegliTree
+            .generate_code_lengths(&freq)
+            .unwrap();
+
+        assert!(lengths.is_valid());
+        assert!(lengths.max_length() <= 16);
+        // Most frequent should have shortest code
+        assert!(lengths.get(0) <= lengths.get(3));
+    }
+
+    #[test]
+    fn test_algorithm_comparison_same_input() {
+        let mut freq = SymbolFrequencies::new();
+        // Realistic AC histogram pattern
+        freq.add(0, 10000); // EOB - very common
+        freq.add(1, 5000);  // Small coefficients
+        freq.add(17, 3000); // Run=1, size=1
+        freq.add(33, 2000); // Run=2, size=1
+        for i in 2..16 {
+            freq.add(i, (1000 / (i as u64 + 1)) as u64);
+        }
+
+        let (mozjpeg, jpegli, moz_cost, jpg_cost) = compare_algorithms(&freq).unwrap();
+
+        // Both should be valid
+        assert!(mozjpeg.is_valid());
+        assert!(jpegli.is_valid());
+
+        // Print comparison for debugging
+        println!("mozjpeg cost: {} bits", moz_cost);
+        println!("jpegli cost:  {} bits", jpg_cost);
+        println!(
+            "difference:   {} bits ({:.2}%)",
+            (moz_cost as i64 - jpg_cost as i64).abs(),
+            ((moz_cost as f64 - jpg_cost as f64) / moz_cost as f64 * 100.0).abs()
+        );
+
+        // Costs should be close (within 1%)
+        let max_diff = (moz_cost.max(jpg_cost) as f64 * 0.01) as u64 + 1;
+        assert!(
+            (moz_cost as i64 - jpg_cost as i64).unsigned_abs() <= max_diff,
+            "Costs differ by more than 1%: mozjpeg={}, jpegli={}",
+            moz_cost,
+            jpg_cost
+        );
+    }
+
+    #[test]
+    fn test_optimized_table_from_frequencies() {
+        let mut freq = SymbolFrequencies::new();
+        freq.add(0, 100);
+        freq.add(1, 50);
+        freq.add(2, 25);
+
+        let table = HuffmanAlgorithm::MozjpegClassic
+            .generate_table(&freq)
+            .unwrap();
+
+        // Should be able to encode all symbols
+        let (code0, len0) = table.encode(0);
+        let (code1, len1) = table.encode(1);
+        let (code2, len2) = table.encode(2);
+
+        assert!(len0 > 0);
+        assert!(len1 > 0);
+        assert!(len2 > 0);
+        // Most frequent should have shortest code
+        assert!(len0 <= len2);
+        // Codes should be distinct
+        assert!(code0 != code1 || len0 != len1);
     }
 }
