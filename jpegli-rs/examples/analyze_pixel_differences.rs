@@ -78,7 +78,11 @@ fn main() {
         }
     }
 
-    println!("Total pixels differing: {}/{}", total_diffs, rust_base_decoded.len() / 3);
+    println!(
+        "Total pixels differing: {}/{}",
+        total_diffs,
+        rust_base_decoded.len() / 3
+    );
     println!("R channel differences: {}", r_diffs);
     println!("G channel differences: {}", g_diffs);
     println!("B channel differences: {}", b_diffs);

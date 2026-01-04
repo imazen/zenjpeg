@@ -29,7 +29,10 @@ fn main() {
     println!("\nDecoding with jpegli-rs...");
     match Decoder::new().decode(&jpeg) {
         Ok(decoded) => {
-            println!("✓ Decoded successfully: {}x{}", decoded.width, decoded.height);
+            println!(
+                "✓ Decoded successfully: {}x{}",
+                decoded.width, decoded.height
+            );
             println!("  First pixel: {:?}", &decoded.data[0..3]);
         }
         Err(e) => {

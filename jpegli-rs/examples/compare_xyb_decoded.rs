@@ -131,7 +131,10 @@ fn main() {
         let idx = i * 3;
         println!(
             "  Pixel {}: R={:3} G={:3} B={:3}",
-            i, rust_base_decoded[idx], rust_base_decoded[idx + 1], rust_base_decoded[idx + 2]
+            i,
+            rust_base_decoded[idx],
+            rust_base_decoded[idx + 1],
+            rust_base_decoded[idx + 2]
         );
     }
 
@@ -140,7 +143,10 @@ fn main() {
         let idx = i * 3;
         println!(
             "  Pixel {}: R={:3} G={:3} B={:3}",
-            i, rust_prog_decoded[idx], rust_prog_decoded[idx + 1], rust_prog_decoded[idx + 2]
+            i,
+            rust_prog_decoded[idx],
+            rust_prog_decoded[idx + 1],
+            rust_prog_decoded[idx + 2]
         );
     }
 
@@ -150,7 +156,10 @@ fn main() {
             let idx = i * 3;
             println!(
                 "  Pixel {}: R={:3} G={:3} B={:3}",
-                i, cpp_base[idx], cpp_base[idx + 1], cpp_base[idx + 2]
+                i,
+                cpp_base[idx],
+                cpp_base[idx + 1],
+                cpp_base[idx + 2]
             );
         }
     }
@@ -161,7 +170,10 @@ fn main() {
             let idx = i * 3;
             println!(
                 "  Pixel {}: R={:3} G={:3} B={:3}",
-                i, cpp_prog[idx], cpp_prog[idx + 1], cpp_prog[idx + 2]
+                i,
+                cpp_prog[idx],
+                cpp_prog[idx + 1],
+                cpp_prog[idx + 2]
             );
         }
     }

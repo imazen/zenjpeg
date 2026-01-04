@@ -21,7 +21,10 @@ fn analyze_dht(path: &str) {
             // DHT marker
             let length = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
             dht_num += 1;
-            println!("\nDHT #{} at offset {}, total length: {} bytes", dht_num, i, length);
+            println!(
+                "\nDHT #{} at offset {}, total length: {} bytes",
+                dht_num, i, length
+            );
 
             // Parse tables within this DHT
             let mut offset = i + 4;
@@ -34,7 +37,8 @@ fn analyze_dht(path: &str) {
                 let table_class = info >> 4; // 0 = DC, 1 = AC
                 let table_id = info & 0x0F;
 
-                println!("  Table #{}: {} table {}",
+                println!(
+                    "  Table #{}: {} table {}",
                     table_count,
                     if table_class == 0 { "DC" } else { "AC" },
                     table_id

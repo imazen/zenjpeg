@@ -1167,6 +1167,51 @@ impl ProgressiveTokenBuffer {
         Ok((2, tables)) // Always 2 DC tables
     }
 
+    /// Generates optimized Huffman tables for XYB mode.
+    ///
+    /// In XYB mode, all components use the same Huffman table (no luma/chroma split).
+    /// This function merges all DC contexts and all AC contexts into single tables.
+    pub fn generate_xyb_tables(&self, num_dc_contexts: usize) -> Result<OptimizedHuffmanTables> {
+        // Merge all DC contexts into one table
+        let mut dc_merged = FrequencyCounter::new();
+        for ctx in 0..num_dc_contexts {
+            dc_merged.add(&self.counters[ctx]);
+        }
+
+        // Merge all AC contexts into one table
+        let ac_start = num_dc_contexts;
+        let mut ac_merged = FrequencyCounter::new();
+        for counter in self.counters[ac_start..].iter() {
+            ac_merged.add(counter);
+        }
+
+        // Generate DC table
+        let dc_table = if dc_merged.is_empty_histogram() {
+            let mut default = FrequencyCounter::new();
+            default.count(0);
+            default.generate_table_with_dht()?
+        } else {
+            dc_merged.generate_table_with_dht()?
+        };
+
+        // Generate AC table
+        let ac_table = if ac_merged.is_empty_histogram() {
+            let mut default = FrequencyCounter::new();
+            default.count(0); // EOB
+            default.generate_table_with_dht()?
+        } else {
+            ac_merged.generate_table_with_dht()?
+        };
+
+        // XYB uses same table for all components, so luma = chroma
+        Ok(OptimizedHuffmanTables {
+            dc_luma: dc_table.clone(),
+            ac_luma: ac_table.clone(),
+            dc_chroma: dc_table,
+            ac_chroma: ac_table,
+        })
+    }
+
     /// Dumps all tokens to a JSON file for C++ comparison.
     #[cfg(feature = "debug-tokens")]
     pub fn dump_tokens(&self, path: &str) -> std::io::Result<()> {

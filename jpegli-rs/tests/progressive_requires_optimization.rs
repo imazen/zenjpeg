@@ -1,6 +1,6 @@
 //! Test that progressive mode requires Huffman optimization
 
-use jpegli::{Encoder, PixelFormat, Error};
+use jpegli::{Encoder, Error, PixelFormat};
 
 #[test]
 fn test_progressive_requires_huffman_optimization() {

@@ -55,10 +55,14 @@ fn parse_dht_table(dht_data: &[u8]) -> String {
 
         let tc_th = dht_data[offset];
         let tc = (tc_th >> 4) & 0x0F; // Table class (0=DC, 1=AC)
-        let th = tc_th & 0x0F;         // Table identifier
+        let th = tc_th & 0x0F; // Table identifier
 
-        result.push_str(&format!("\n  Table class: {} ({}), ID: {}\n",
-            tc, if tc == 0 { "DC" } else { "AC" }, th));
+        result.push_str(&format!(
+            "\n  Table class: {} ({}), ID: {}\n",
+            tc,
+            if tc == 0 { "DC" } else { "AC" },
+            th
+        ));
 
         offset += 1;
 
@@ -81,8 +85,11 @@ fn parse_dht_table(dht_data: &[u8]) -> String {
 
         // Read symbol values
         if offset + total_codes as usize > dht_data.len() {
-            result.push_str(&format!("  ERROR: Expected {} symbols but only {} bytes remain\n",
-                total_codes, dht_data.len() - offset));
+            result.push_str(&format!(
+                "  ERROR: Expected {} symbols but only {} bytes remain\n",
+                total_codes,
+                dht_data.len() - offset
+            ));
             break;
         }
 
@@ -170,7 +177,10 @@ fn main() {
             .unwrap();
 
         if !output.status.success() {
-            eprintln!("C++ encoding failed: {}", String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "C++ encoding failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
 

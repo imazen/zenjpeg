@@ -66,7 +66,11 @@ fn main() {
         }
     }
 
-    println!("Total pixels differing: {}/{}", total_diffs, base_decoded.len() / 3);
+    println!(
+        "Total pixels differing: {}/{}",
+        total_diffs,
+        base_decoded.len() / 3
+    );
     println!();
 
     if total_diffs == 0 {

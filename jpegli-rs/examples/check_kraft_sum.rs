@@ -86,7 +86,10 @@ fn main() {
         let sum = kraft_sum(bits);
         let total: usize = bits.iter().map(|&b| b as usize).sum();
 
-        println!("{} table (id={}): {} symbols, Kraft sum = {}", table_type, th, total, sum);
+        println!(
+            "{} table (id={}): {} symbols, Kraft sum = {}",
+            table_type, th, total, sum
+        );
         print!("  Bits: ");
         for &b in bits.iter() {
             print!("{} ", b);

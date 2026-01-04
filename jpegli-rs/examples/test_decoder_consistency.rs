@@ -62,9 +62,12 @@ fn main() {
 
     println!("\nDecode 1 vs Decode 2:");
     println!("  Max diff: {}", max_diff);
-    println!("  Pixels differ: {} / {} ({:.2}%)",
-        diff_count, decoded1.data.len(),
-        (diff_count as f64 / decoded1.data.len() as f64) * 100.0);
+    println!(
+        "  Pixels differ: {} / {} ({:.2}%)",
+        diff_count,
+        decoded1.data.len(),
+        (diff_count as f64 / decoded1.data.len() as f64) * 100.0
+    );
 
     if max_diff == 0 {
         println!("\n✓ DECODER IS DETERMINISTIC - same input produces same output");
@@ -113,9 +116,12 @@ fn main() {
 
     println!("\nDecode 1 vs Decode 2:");
     println!("  Max diff: {}", max_diff);
-    println!("  Pixels differ: {} / {} ({:.2}%)",
-        diff_count, prog_decoded1.data.len(),
-        (diff_count as f64 / prog_decoded1.data.len() as f64) * 100.0);
+    println!(
+        "  Pixels differ: {} / {} ({:.2}%)",
+        diff_count,
+        prog_decoded1.data.len(),
+        (diff_count as f64 / prog_decoded1.data.len() as f64) * 100.0
+    );
 
     if max_diff == 0 {
         println!("\n✓ DECODER IS DETERMINISTIC");

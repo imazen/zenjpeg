@@ -48,7 +48,12 @@ fn main() {
 
         match &jpegli_result {
             Ok(img) => {
-                println!("✓ Decoded: {}x{}, {} bytes", img.width, img.height, img.data.len());
+                println!(
+                    "✓ Decoded: {}x{}, {} bytes",
+                    img.width,
+                    img.height,
+                    img.data.len()
+                );
             }
             Err(e) => {
                 println!("✗ Failed: {:?}", e);
@@ -64,7 +69,12 @@ fn main() {
         match &zune_result {
             Ok(pixels) => {
                 let info = zune_decoder.info().unwrap();
-                println!("✓ Decoded: {}x{}, {} bytes", info.width, info.height, pixels.len());
+                println!(
+                    "✓ Decoded: {}x{}, {} bytes",
+                    info.width,
+                    info.height,
+                    pixels.len()
+                );
             }
             Err(e) => {
                 println!("✗ Failed: {:?}", e);
@@ -93,11 +103,8 @@ fn main() {
                             jpegli_img.data[idx + 1],
                             jpegli_img.data[idx + 2],
                         ];
-                        let zune_rgb = [
-                            zune_pixels[idx],
-                            zune_pixels[idx + 1],
-                            zune_pixels[idx + 2],
-                        ];
+                        let zune_rgb =
+                            [zune_pixels[idx], zune_pixels[idx + 1], zune_pixels[idx + 2]];
 
                         let diff = [
                             (jpegli_rgb[0] as i16 - zune_rgb[0] as i16).abs(),
@@ -122,7 +129,8 @@ fn main() {
             for i in (0..jpegli_img.data.len().min(zune_pixels.len())).step_by(3) {
                 for c in 0..3 {
                     if i + c < jpegli_img.data.len() && i + c < zune_pixels.len() {
-                        let diff = (jpegli_img.data[i + c] as i16 - zune_pixels[i + c] as i16).abs();
+                        let diff =
+                            (jpegli_img.data[i + c] as i16 - zune_pixels[i + c] as i16).abs();
                         max_diff[c] = max_diff[c].max(diff);
                         if diff > 0 {
                             diff_count[c] += 1;
@@ -160,7 +168,10 @@ fn main() {
             for diff_val in 0..20 {
                 if combined_hist[diff_val] > 0 {
                     let pct = (combined_hist[diff_val] as f64 / (total_pixels * 3) as f64) * 100.0;
-                    println!("  Diff {:2}: {:7} pixels ({:5.2}%)", diff_val, combined_hist[diff_val], pct);
+                    println!(
+                        "  Diff {:2}: {:7} pixels ({:5.2}%)",
+                        diff_val, combined_hist[diff_val], pct
+                    );
                 }
             }
         }

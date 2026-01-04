@@ -21,7 +21,7 @@ fn main() {
         .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
-        .optimize_huffman(false)  // Use standard IJG tables
+        .optimize_huffman(false) // Use standard IJG tables
         .encode(rgb)
         .unwrap();
 
@@ -39,7 +39,7 @@ fn main() {
         .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
-        .optimize_huffman(true)  // Build image-specific tables
+        .optimize_huffman(true) // Build image-specific tables
         .encode(rgb)
         .unwrap();
 

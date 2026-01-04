@@ -45,7 +45,10 @@ fn main() {
             .unwrap();
 
         if !output.status.success() {
-            eprintln!("C++ encoding failed: {}", String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "C++ encoding failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
 
@@ -56,8 +59,12 @@ fn main() {
         println!("=== Test 1: jpegli-rs decoder ===");
         match Decoder::new().decode(&cpp_jpeg) {
             Ok(decoded) => {
-                println!("✓ Success: {}x{}, {} bytes",
-                    decoded.width, decoded.height, decoded.data.len());
+                println!(
+                    "✓ Success: {}x{}, {} bytes",
+                    decoded.width,
+                    decoded.height,
+                    decoded.data.len()
+                );
                 println!("  Format: {:?}\n", decoded.format);
             }
             Err(e) => {
@@ -71,8 +78,12 @@ fn main() {
         match zune_decoder.decode() {
             Ok(pixels) => {
                 let info = zune_decoder.info().unwrap();
-                println!("✓ Success: {}x{}, {} bytes",
-                    info.width, info.height, pixels.len());
+                println!(
+                    "✓ Success: {}x{}, {} bytes",
+                    info.width,
+                    info.height,
+                    pixels.len()
+                );
                 println!("  SOF: {:?}\n", info.sof);
             }
             Err(e) => {
@@ -86,8 +97,12 @@ fn main() {
         match libjpeg_decoder.decode() {
             Ok(pixels) => {
                 let info = libjpeg_decoder.info().unwrap();
-                println!("✓ Success: {}x{}, {} bytes",
-                    info.width, info.height, pixels.len());
+                println!(
+                    "✓ Success: {}x{}, {} bytes",
+                    info.width,
+                    info.height,
+                    pixels.len()
+                );
                 println!("  Pixel format: {:?}\n", info.pixel_format);
             }
             Err(e) => {
@@ -116,20 +131,31 @@ fn main() {
                 }
 
                 println!("Max pixel difference: {}", max_diff);
-                println!("Pixels different: {} / {} ({:.2}%)",
-                    diff_count, jpegli_img.data.len(),
-                    (diff_count as f64 / jpegli_img.data.len() as f64) * 100.0);
+                println!(
+                    "Pixels different: {} / {} ({:.2}%)",
+                    diff_count,
+                    jpegli_img.data.len(),
+                    (diff_count as f64 / jpegli_img.data.len() as f64) * 100.0
+                );
 
                 if max_diff == 0 {
-                    println!("\n✓ PERFECT MATCH: jpegli-rs and zune-jpeg produce identical output!");
+                    println!(
+                        "\n✓ PERFECT MATCH: jpegli-rs and zune-jpeg produce identical output!"
+                    );
                 } else if max_diff <= 2 {
                     println!("\n✓ EXCELLENT: Minor differences only (rounding)");
                 } else {
-                    println!("\n⚠ DIFFERENCES: Outputs differ by up to {} (investigate)", max_diff);
+                    println!(
+                        "\n⚠ DIFFERENCES: Outputs differ by up to {} (investigate)",
+                        max_diff
+                    );
                 }
             } else {
-                println!("⚠ Size mismatch: jpegli-rs={} bytes, zune-jpeg={} bytes",
-                    jpegli_img.data.len(), zune_pixels.len());
+                println!(
+                    "⚠ Size mismatch: jpegli-rs={} bytes, zune-jpeg={} bytes",
+                    jpegli_img.data.len(),
+                    zune_pixels.len()
+                );
             }
         }
 

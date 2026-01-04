@@ -104,8 +104,10 @@ fn dump_first_sos(label: &str, jpeg_data: &[u8]) {
                 let tables = jpeg_data[offset + 1];
                 let dc_table = tables >> 4;
                 let ac_table = tables & 0x0F;
-                println!("    Component {}: ID={} ('{}'/'0x{:02X}'), DC table={}, AC table={}",
-                    comp, comp_id, comp_id as char, comp_id, dc_table, ac_table);
+                println!(
+                    "    Component {}: ID={} ('{}'/'0x{:02X}'), DC table={}, AC table={}",
+                    comp, comp_id, comp_id as char, comp_id, dc_table, ac_table
+                );
                 offset += 2;
             }
 
