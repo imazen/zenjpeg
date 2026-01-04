@@ -55,19 +55,23 @@ enum DownsamplingMethod {
     GammaAwareIterative = 6,
 }
 
-/// Internal chroma pipeline configuration (not public API).
+/// Internal pipeline configuration (not public API).
+///
+/// Controls low-level encoder behavior for benchmarking and testing.
+/// Includes chroma conversion, Huffman optimization, and other internal settings.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct ChromaPipeline {
+pub(crate) struct InternalPipeline {
     color_conversion: ColorConversionMethod,
     downsampling: DownsamplingMethod,
     smoothing_factor: u8,
+    huffman_method: crate::types::HuffmanMethod,
 }
 
-impl ChromaPipeline {
+impl InternalPipeline {
     /// Decode from u64 pathway value.
     fn from_u64(value: u64) -> Result<Self> {
         // Check reserved bits are zero
-        if value & 0xFFFF_FFFF_FF00_0000 != 0 {
+        if value & 0xFFFF_FFFF_0000_0000 != 0 {
             return Err(Error::InvalidColorFormat {
                 reason: "internal pathway: reserved bits must be zero",
             });
@@ -76,6 +80,7 @@ impl ChromaPipeline {
         let color_byte = (value & 0xFF) as u8;
         let downsample_byte = ((value >> 8) & 0xFF) as u8;
         let smoothing = ((value >> 16) & 0xFF) as u8;
+        let huffman_byte = ((value >> 24) & 0xFF) as u8;
 
         let color_conversion = match color_byte {
             0 => ColorConversionMethod::Auto,
@@ -110,19 +115,35 @@ impl ChromaPipeline {
             });
         }
 
+        let huffman_method = match huffman_byte {
+            0 => crate::types::HuffmanMethod::JpegliCreateTree,
+            1 => crate::types::HuffmanMethod::MozjpegClassic,
+            _ => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "internal pathway: invalid Huffman method (0-1)",
+                })
+            }
+        };
+
         Ok(Self {
             color_conversion,
             downsampling,
             smoothing_factor: smoothing,
+            huffman_method,
         })
     }
 
     /// Encode to u64 pathway value.
     #[allow(dead_code)]
     fn to_u64(self) -> u64 {
+        let huffman_value = match self.huffman_method {
+            crate::types::HuffmanMethod::JpegliCreateTree => 0,
+            crate::types::HuffmanMethod::MozjpegClassic => 1,
+        };
         (self.color_conversion as u64)
             | ((self.downsampling as u64) << 8)
             | ((self.smoothing_factor as u64) << 16)
+            | ((huffman_value as u64) << 24)
     }
 
     /// Validate pipeline against encoder config.
@@ -348,9 +369,9 @@ pub struct EncoderConfig {
     pub custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
 
     // Internal pipeline override (not public API, for benchmarking)
-    // When Some, overrides chroma_conversion and smoothing_factor
+    // When Some, overrides chroma_conversion, smoothing_factor, and huffman_method
     #[doc(hidden)]
-    pub(crate) internal_pipeline: Option<ChromaPipeline>,
+    pub(crate) internal_pipeline: Option<InternalPipeline>,
 }
 
 impl Default for EncoderConfig {
@@ -652,7 +673,7 @@ impl Encoder {
     /// - Unimplemented method (e.g., YuvProfessional)
     #[doc(hidden)]
     pub fn set_internal_pathway(mut self, pathway: u64) -> Result<Self> {
-        let pipeline = ChromaPipeline::from_u64(pathway)?;
+        let pipeline = InternalPipeline::from_u64(pathway)?;
         pipeline.validate(self.config.subsampling)?;
         self.config.internal_pipeline = Some(pipeline);
         Ok(self)
@@ -1261,12 +1282,18 @@ impl Encoder {
     /// but with XYB color conversion and appropriate headers (ICC profile, APP14).
     fn encode_progressive_xyb(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut output = Vec::with_capacity(data.len() / 4);
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
 
         // Convert sRGB to scaled XYB
         let (x_plane, y_plane, b_plane) = self.convert_to_scaled_xyb(data)?;
 
-        // XYB progressive uses 4:4:4 (no B channel downsampling unlike baseline XYB)
-        // This is because progressive scans work best with same-size components
+        // Downsample B channel to match C++ XYB behavior (2x2,2x2,1x1 subsampling)
+        // Apply input smoothing before downsampling (matches C++ jpegli behavior)
+        let b_smooth = self.apply_input_smoothing(&b_plane, width, height)?;
+        let b_downsampled = self.downsample_2x2_f32(&b_smooth, width, height)?;
+        let b_width = (width + 1) / 2;
+        let b_height = (height + 1) / 2;
 
         // Generate XYB quantization tables
         let x_quant =
@@ -1278,8 +1305,19 @@ impl Encoder {
 
         // Quantize all blocks for progressive encoding
         // Use X, Y, B as if they were Y, Cb, Cr for the progressive structure
-        let (x_blocks, y_blocks, b_blocks) =
-            self.quantize_all_blocks(&x_plane, &y_plane, &b_plane, &x_quant, &y_quant, &b_quant)?;
+        // Note: B is downsampled, so use b_downsampled instead of b_plane
+        let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb(
+            &x_plane,
+            &y_plane,
+            &b_downsampled,
+            width,
+            height,
+            b_width,
+            b_height,
+            &x_quant,
+            &y_quant,
+            &b_quant,
+        );
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Write XYB-specific headers
@@ -1290,8 +1328,8 @@ impl Encoder {
         self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
         // Write quantization tables
         self.write_quant_tables(&mut output, &x_quant, &y_quant, &b_quant)?;
-        // Write SOF2 frame header for progressive
-        self.write_frame_header(&mut output)?;
+        // Write SOF2 frame header for progressive XYB (with correct component IDs and subsampling)
+        self.write_frame_header_xyb_progressive(&mut output)?;
 
         // Use standard Huffman tables (optimized tables could be added later)
         self.write_huffman_tables(&mut output)?;
@@ -2040,10 +2078,12 @@ impl Encoder {
         // num_dc_tables tells us where DC ends and AC begins
 
         let dc_luma = tables.first().cloned().unwrap_or_else(|| {
-            // Create a minimal default table
+            // Create a minimal default table using jpegli algorithm
             let mut counter = FrequencyCounter::new();
             counter.count(0);
-            counter.generate_table_with_dht().unwrap()
+            counter
+                .generate_table_with_method(crate::types::HuffmanMethod::JpegliCreateTree)
+                .unwrap()
         });
 
         // DC chroma is the second DC table if it exists
@@ -2057,7 +2097,9 @@ impl Encoder {
         let ac_luma = tables.get(num_dc_tables).cloned().unwrap_or_else(|| {
             let mut counter = FrequencyCounter::new();
             counter.count(0);
-            counter.generate_table_with_dht().unwrap()
+            counter
+                .generate_table_with_method(crate::types::HuffmanMethod::JpegliCreateTree)
+                .unwrap()
         });
 
         // AC chroma is the second AC table if it exists
@@ -2144,8 +2186,10 @@ impl Encoder {
         let num_components = if is_color { 3 } else { 1 };
         let mut scans = Vec::new();
 
-        // For 4:4:4 subsampling, DC can be interleaved
-        let dc_interleaved = matches!(self.config.subsampling, Subsampling::S444);
+        // For XYB mode, always use non-interleaved DC scans (matches C++ jpegli)
+        // For 4:4:4 YCbCr subsampling, DC can be interleaved
+        let dc_interleaved =
+            !self.config.use_xyb && matches!(self.config.subsampling, Subsampling::S444);
 
         // DC first scan
         if dc_interleaved && is_color {
@@ -2245,14 +2289,29 @@ impl Encoder {
         output.push(num_components);
 
         for &comp_idx in &scan.components {
-            // Component ID (1-based for YCbCr)
-            let comp_id = comp_idx + 1;
+            // Component ID: 1-based for YCbCr, or 'R','G','B' for XYB
+            let comp_id = if self.config.use_xyb {
+                match comp_idx {
+                    0 => b'R', // 82
+                    1 => b'G', // 71
+                    2 => b'B', // 66
+                    _ => comp_idx + 1,
+                }
+            } else {
+                comp_idx + 1
+            };
             output.push(comp_id);
 
             // DC/AC table selectors
-            // For DC scans (ss=0): use DC table for the component
-            // For AC scans (ss>0): use AC table for the component
-            let table_selector = if is_color && comp_idx > 0 {
+            // For XYB progressive:
+            //   - DC scans (ss=0): DC table matches component (0/1/2), AC table always 0
+            //   - AC scans (ss>0): both DC and AC tables match component (0/1/2)
+            // For YCbCr: luma uses 0, chroma uses 1
+            let table_selector = if self.config.use_xyb {
+                let dc_table = comp_idx;
+                let ac_table = if scan.ss == 0 { 0 } else { comp_idx };
+                (dc_table << 4) | ac_table
+            } else if is_color && comp_idx > 0 {
                 0x11 // DC table 1, AC table 1 for chroma
             } else {
                 0x00 // DC table 0, AC table 0 for luma
@@ -2848,6 +2907,39 @@ impl Encoder {
     fn write_frame_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOF0); // Baseline DCT
+
+        // 3 components: R, G, B
+        let length = 8u16 + 3 * 3; // 17 bytes
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        output.push(8); // Sample precision
+        output.push((self.config.height >> 8) as u8);
+        output.push(self.config.height as u8);
+        output.push((self.config.width >> 8) as u8);
+        output.push(self.config.width as u8);
+        output.push(3); // Number of components
+
+        // XYB sampling: R:2×2, G:2×2, B:1×1
+        // This means R and G are full resolution, B is 1/4 resolution
+        output.push(b'R'); // Component ID = 'R' (82)
+        output.push(0x22); // 2x2 sampling
+        output.push(0); // Quant table 0
+
+        output.push(b'G'); // Component ID = 'G' (71)
+        output.push(0x22); // 2x2 sampling
+        output.push(1); // Quant table 1
+
+        output.push(b'B'); // Component ID = 'B' (66)
+        output.push(0x11); // 1x1 sampling (subsampled)
+        output.push(2); // Quant table 2
+
+        Ok(())
+    }
+
+    fn write_frame_header_xyb_progressive(&self, output: &mut Vec<u8>) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_SOF2); // Progressive DCT
 
         // 3 components: R, G, B
         let length = 8u16 + 3 * 3; // 17 bytes
@@ -3636,14 +3728,21 @@ impl Encoder {
             }
         }
 
-        // Build optimized tables with DHT data
-        let dc_luma = dc_luma_freq.generate_table_with_dht()?;
-        let ac_luma = ac_luma_freq.generate_table_with_dht()?;
+        // Determine which Huffman algorithm to use
+        let huffman_method = self
+            .config
+            .internal_pipeline
+            .map(|p| p.huffman_method)
+            .unwrap_or(crate::types::HuffmanMethod::JpegliCreateTree);
+
+        // Build optimized tables with DHT data using selected algorithm
+        let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
+        let ac_luma = ac_luma_freq.generate_table_with_method(huffman_method)?;
 
         let (dc_chroma, ac_chroma) = if is_color {
             (
-                dc_chroma_freq.generate_table_with_dht()?,
-                ac_chroma_freq.generate_table_with_dht()?,
+                dc_chroma_freq.generate_table_with_method(huffman_method)?,
+                ac_chroma_freq.generate_table_with_method(huffman_method)?,
             )
         } else {
             // Use standard tables for grayscale (won't be used but needed for structure)
@@ -4257,9 +4356,16 @@ impl Encoder {
             prev_dc_b = b_blocks[mcu_idx][0];
         }
 
-        // Generate optimized tables
-        let dc_table = dc_freq.generate_table_with_dht()?;
-        let ac_table = ac_freq.generate_table_with_dht()?;
+        // Determine which Huffman algorithm to use
+        let huffman_method = self
+            .config
+            .internal_pipeline
+            .map(|p| p.huffman_method)
+            .unwrap_or(crate::types::HuffmanMethod::JpegliCreateTree);
+
+        // Generate optimized tables using selected algorithm
+        let dc_table = dc_freq.generate_table_with_method(huffman_method)?;
+        let ac_table = ac_freq.generate_table_with_method(huffman_method)?;
 
         Ok((dc_table, ac_table))
     }
@@ -5481,8 +5587,8 @@ mod tests {
     fn test_internal_pathway_pipeline_encode_decode() {
         use internal_pathway::*;
 
-        // Test that ChromaPipeline roundtrips correctly
-        let pipeline = ChromaPipeline::from_u64(P_F32_BOX_SMOOTH50).unwrap();
+        // Test that InternalPipeline roundtrips correctly
+        let pipeline = InternalPipeline::from_u64(P_F32_BOX_SMOOTH50).unwrap();
         assert_eq!(
             pipeline.color_conversion,
             ColorConversionMethod::IntrinsicF32
@@ -5492,7 +5598,7 @@ mod tests {
 
         // Test encode/decode roundtrip
         let encoded = pipeline.to_u64();
-        let decoded = ChromaPipeline::from_u64(encoded).unwrap();
+        let decoded = InternalPipeline::from_u64(encoded).unwrap();
         assert_eq!(decoded.color_conversion, pipeline.color_conversion);
         assert_eq!(decoded.downsampling, pipeline.downsampling);
         assert_eq!(decoded.smoothing_factor, pipeline.smoothing_factor);
