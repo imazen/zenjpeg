@@ -36,17 +36,25 @@ The CLAUDE.md documentation claiming "refinement broken" is **OUTDATED**. All YC
 
 **Analysis**: Optimized Huffman with progressive works! Achieves **58% compression** vs standard Huffman (167,936 → 70,161 bytes).
 
-### ❌ TEST 4: XYB + Progressive
+### ⚠️ TEST 4: XYB + Progressive (PARTIAL FIX)
 - **Size**: 140,006 bytes
 - **Scans**: 15 (3 DC non-interleaved + 12 AC)
 - **Successive Approximation**: YES ✓
-- **Decoder Results**:
+- **Decoder Results** (BEFORE Huffman table fix):
   - jpegli-rs: ✗ **UnexpectedEof** ("not enough bits to read")
   - zune-jpeg: ✓ PASS
   - mozjpeg: ✗ **PANIC/CRASH**
   - jpeg-decoder: ✗ **"scan makes use of unset dc huffman table"**
 
-**Analysis**: XYB progressive encoder produces invalid bitstream. zune-jpeg decodes it (lenient), but our decoder and jpeg-decoder fail, mozjpeg crashes.
+**Decoder Results** (AFTER Huffman table fix - commit 50d2cf4):
+  - jpegli-rs: ✗ **UnexpectedEof** ("not enough bits to read")
+  - zune-jpeg: ✓ PASS
+  - mozjpeg: ✓ **PASS** ← FIXED!
+  - jpeg-decoder: ✗ **"unexpected huffman code"** (different error)
+
+**Analysis**:
+- **Fixed**: Huffman table assignment (scan headers referenced tables 0/1/2, but only 0/1 existed)
+- **Remaining**: Bitstream encoding issue with AC refinement scans (2/4 decoders work)
 
 ### ✅ TEST 5: Grayscale Progressive
 - **Size**: 51,764 bytes
@@ -85,21 +93,25 @@ The CLAUDE.md documentation claiming "refinement broken" is **OUTDATED**. All YC
 
 ## What's Broken ❌
 
-### 1. XYB + Progressive Mode
-**Problem**: Encoder produces invalid bitstream
+### 1. XYB + Progressive Mode (PARTIALLY FIXED)
+**Status**: mozjpeg now works, but jpegli-rs and jpeg-decoder still fail
 
-**Symptoms**:
-- Our decoder: UnexpectedEof ("not enough bits to read")
-- jpeg-decoder: "scan makes use of unset dc huffman table"
-- mozjpeg: PANIC/CRASH
-- zune-jpeg: Decodes (but may be lenient/buggy)
+**Fixed (commit 50d2cf4)**:
+- ✅ Huffman table assignment - scan headers referenced tables 0/1/2, but only 0/1 existed
+- ✅ mozjpeg now successfully decodes XYB progressive JPEGs (was crashing)
+- ✅ jpeg-decoder error changed from "unset dc huffman table" to "unexpected huffman code"
 
-**Root causes** (likely):
-1. **Huffman table assignment** - XYB components may be using wrong table IDs
-2. **MCU ordering** - Block ordering may be incorrect for XYB
-3. **Bitstream encoding** - Refinement scans may have bit errors
+**Still broken**:
+- ❌ Our decoder: UnexpectedEof ("not enough bits to read")
+- ❌ jpeg-decoder: "unexpected huffman code"
+- ✅ mozjpeg: WORKS
+- ✅ zune-jpeg: WORKS
 
-**Impact**: Cannot use XYB with progressive mode
+**Remaining issue**: Bitstream encoding for AC refinement scans
+- 2 out of 4 decoders work, suggesting encoder is mostly correct
+- Likely a subtle encoding issue or decoder-side XYB progressive handling
+
+**Impact**: Limited XYB progressive support (works with mozjpeg/zune-jpeg)
 
 ### 2. Global Huffman Optimization for Progressive
 **Problem**: Huffman tables are optimized per-scan, not globally
