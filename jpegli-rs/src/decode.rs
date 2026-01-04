@@ -973,7 +973,7 @@ impl<'a> JpegParser<'a> {
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                     }
-                                    Err(e) => {
+                                    Err(_e) => {
                                         // Other error - also restore and skip
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
@@ -981,7 +981,7 @@ impl<'a> JpegParser<'a> {
                                         #[cfg(debug_assertions)]
                                         eprintln!(
                                             "DEBUG: Padding block ({},{}) error: {:?}",
-                                            block_x, block_y, e
+                                            block_x, block_y, _e
                                         );
                                     }
                                 }
