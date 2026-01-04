@@ -505,7 +505,7 @@ mod tests {
         let mut freq = SymbolFrequencies::new();
         // Realistic AC histogram pattern
         freq.add(0, 10000); // EOB - very common
-        freq.add(1, 5000);  // Small coefficients
+        freq.add(1, 5000); // Small coefficients
         freq.add(17, 3000); // Run=1, size=1
         freq.add(33, 2000); // Run=2, size=1
         for i in 2..16 {

@@ -251,10 +251,7 @@ fn test_encoder_matrix() {
     for result in &results {
         let status = match &result.encode_result {
             EncodeOutcome::Success => {
-                if result.jpegli_decode
-                    && result.jpeg_decoder
-                    && result.zune_jpeg
-                    && result.mozjpeg
+                if result.jpegli_decode && result.jpeg_decoder && result.zune_jpeg && result.mozjpeg
                 {
                     pass_count += 1;
                     "OK"
@@ -308,13 +305,55 @@ fn test_common_configurations() {
 
     let configs: Vec<(&str, JpegMode, Subsampling, bool, bool)> = vec![
         // (name, mode, subsampling, optimize_huffman, use_xyb)
-        ("baseline_444_fixed", JpegMode::Baseline, Subsampling::S444, false, false),
-        ("baseline_444_opt", JpegMode::Baseline, Subsampling::S444, true, false),
-        ("baseline_420_opt", JpegMode::Baseline, Subsampling::S420, true, false),
-        ("progressive_444_opt", JpegMode::Progressive, Subsampling::S444, true, false),
-        ("progressive_420_opt", JpegMode::Progressive, Subsampling::S420, true, false),
-        ("xyb_baseline_opt", JpegMode::Baseline, Subsampling::S444, true, true),
-        ("xyb_progressive_opt", JpegMode::Progressive, Subsampling::S444, true, true),
+        (
+            "baseline_444_fixed",
+            JpegMode::Baseline,
+            Subsampling::S444,
+            false,
+            false,
+        ),
+        (
+            "baseline_444_opt",
+            JpegMode::Baseline,
+            Subsampling::S444,
+            true,
+            false,
+        ),
+        (
+            "baseline_420_opt",
+            JpegMode::Baseline,
+            Subsampling::S420,
+            true,
+            false,
+        ),
+        (
+            "progressive_444_opt",
+            JpegMode::Progressive,
+            Subsampling::S444,
+            true,
+            false,
+        ),
+        (
+            "progressive_420_opt",
+            JpegMode::Progressive,
+            Subsampling::S420,
+            true,
+            false,
+        ),
+        (
+            "xyb_baseline_opt",
+            JpegMode::Baseline,
+            Subsampling::S444,
+            true,
+            true,
+        ),
+        (
+            "xyb_progressive_opt",
+            JpegMode::Progressive,
+            Subsampling::S444,
+            true,
+            true,
+        ),
     ];
 
     println!("\n=== Common Configuration Smoke Test ===\n");
@@ -376,7 +415,10 @@ fn test_progressive_fixed_huffman_errors() {
                 "Expected error about Progressive + fixed Huffman, got: {}",
                 err_str
             );
-            println!("✓ Progressive + Fixed Huffman correctly errors: {}", err_str);
+            println!(
+                "✓ Progressive + Fixed Huffman correctly errors: {}",
+                err_str
+            );
         }
         Ok(_) => {
             panic!("Expected error for Progressive + Fixed Huffman, but encoding succeeded!");

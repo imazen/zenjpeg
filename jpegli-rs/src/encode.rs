@@ -1552,6 +1552,10 @@ impl Encoder {
         // ========== GENERATE OPTIMIZED TABLES ==========
         // XYB mode uses merged tables (all components share one DC and one AC table)
         let opt_tables = token_buffer.generate_xyb_tables(num_components)?;
+        // For XYB, all contexts map to table 0 (DC contexts 0..3 -> 0, AC contexts 3..6 -> 1)
+        let xyb_context_map: Vec<usize> = (0..6)
+            .map(|c| if c < num_components { 0 } else { 1 })
+            .collect();
 
         // ========== WRITE JPEG STRUCTURE ==========
         self.write_header_xyb(&mut output)?;
@@ -1568,10 +1572,24 @@ impl Encoder {
         }
 
         // ========== PASS 2: REPLAY TOKENS ==========
+        // XYB uses 1 DC table and 1 AC table (all components share)
+        let xyb_num_dc_tables = 1;
         for (scan_idx, scan) in scans.iter().enumerate() {
-            self.write_progressive_scan_header(&mut output, scan, is_color)?;
-            let scan_data =
-                self.replay_progressive_scan(&token_buffer, scan_idx, scan, is_color, &opt_tables)?;
+            self.write_progressive_scan_header_with_context(
+                &mut output,
+                scan,
+                is_color,
+                &xyb_context_map,
+                xyb_num_dc_tables,
+            )?;
+            let scan_data = self.replay_progressive_scan(
+                &token_buffer,
+                scan_idx,
+                scan,
+                is_color,
+                &opt_tables,
+                &xyb_context_map,
+            )?;
             output.extend_from_slice(&scan_data);
         }
 
@@ -2255,9 +2273,10 @@ impl Encoder {
         }
 
         // ========== GENERATE OPTIMIZED TABLES ==========
-        // Use explicit luma/chroma grouping to ensure table assignment matches
-        // what the replay code expects (luma=0, chroma=1)
-        let (num_dc_tables, tables) = token_buffer.generate_luma_chroma_tables(num_components)?;
+        // Use histogram clustering to find optimal table assignments
+        // max_clusters=2 for baseline JPEG compatibility (up to 4 supported)
+        let (context_map, num_dc_tables, tables) =
+            token_buffer.generate_optimized_tables(2, 2, num_components)?;
 
         // Convert to OptimizedHuffmanTables format for compatibility
         let opt_tables =
@@ -2278,12 +2297,24 @@ impl Encoder {
         // ========== PASS 2: REPLAY TOKENS ==========
         // Encode each scan by replaying tokens with optimized tables
         for (scan_idx, scan) in scans.iter().enumerate() {
-            // Write SOS header
-            self.write_progressive_scan_header(&mut output, scan, is_color)?;
+            // Write SOS header with context-based table selection
+            self.write_progressive_scan_header_with_context(
+                &mut output,
+                scan,
+                is_color,
+                &context_map,
+                num_dc_tables,
+            )?;
 
             // Replay tokens for this scan
-            let scan_data =
-                self.replay_progressive_scan(&token_buffer, scan_idx, scan, is_color, &opt_tables)?;
+            let scan_data = self.replay_progressive_scan(
+                &token_buffer,
+                scan_idx,
+                scan,
+                is_color,
+                &opt_tables,
+                &context_map,
+            )?;
             output.extend_from_slice(&scan_data);
         }
 
@@ -2348,6 +2379,11 @@ impl Encoder {
     }
 
     /// Replays tokens for a progressive scan with optimized tables.
+    ///
+    /// # Arguments
+    /// * `context_map` - Maps context indices to table indices (from clustering)
+    ///   - DC contexts 0..num_components map to DC table indices (0 or 1)
+    ///   - AC contexts num_components.. map to total table indices (num_dc_tables + 0 or 1)
     fn replay_progressive_scan(
         &self,
         token_buffer: &ProgressiveTokenBuffer,
@@ -2355,8 +2391,10 @@ impl Encoder {
         scan: &ProgressiveScan,
         is_color: bool,
         tables: &OptimizedHuffmanTables,
+        context_map: &[usize],
     ) -> Result<Vec<u8>> {
         let mut encoder = EntropyEncoder::new();
+        let num_components = if is_color { 3 } else { 1 };
 
         // Set up Huffman tables
         encoder.set_dc_table(0, tables.dc_luma.table.clone());
@@ -2378,45 +2416,49 @@ impl Encoder {
                 reason: "Scan info not found",
             })?;
 
-        // For XYB mode, all components use table 0 (no luma/chroma split)
-        // For YCbCr mode, component 0 uses table 0, components 1-2 use table 1
-        let use_xyb = self.config.use_xyb;
+        // Count DC tables to compute AC table offset
+        // context_map[0..num_components] are DC indices (0-based)
+        // context_map[num_components..] are AC indices (offset by num_dc_tables)
+        let num_dc_tables = context_map[..num_components]
+            .iter()
+            .max()
+            .map_or(1, |&m| m + 1);
 
         if scan.ss == 0 && scan.se == 0 {
             // DC scan: replay DC tokens
+            // Use context_map directly for DC (component index -> table index)
             let tokens = token_buffer.scan_tokens(scan_idx);
-            // Create context map for DC (component index -> table index)
-            let context_to_table: Vec<usize> = (0..4)
+            let dc_context_map: Vec<usize> = (0..4)
                 .map(|c| {
-                    if use_xyb {
-                        0 // XYB: all components use table 0
-                    } else if is_color && c > 0 {
-                        1 // YCbCr: chroma uses table 1
+                    if c < num_components && c < context_map.len() {
+                        context_map[c]
                     } else {
-                        0 // YCbCr: luma uses table 0
+                        0
                     }
                 })
                 .collect();
-            encoder.write_dc_tokens(tokens, &context_to_table)?;
+            encoder.write_dc_tokens(tokens, &dc_context_map)?;
         } else if scan.ah == 0 {
             // AC first scan: replay AC tokens
+            // AC context = num_components + component_index
+            // AC table index = context_map[ac_context] - num_dc_tables
             let tokens = token_buffer.scan_tokens(scan_idx);
-            let table_idx = if use_xyb {
-                0 // XYB: all components use table 0
-            } else if is_color && scan.components[0] > 0 {
-                1 // YCbCr: chroma uses table 1
+            let component = scan.components[0] as usize;
+            let ac_context = num_components + component;
+            let table_idx = if ac_context < context_map.len() {
+                context_map[ac_context].saturating_sub(num_dc_tables)
             } else {
-                0 // YCbCr: luma uses table 0
+                0
             };
             encoder.write_ac_first_tokens(tokens, table_idx)?;
         } else {
             // AC refinement scan: replay refinement tokens
-            let table_idx = if use_xyb {
-                0 // XYB: all components use table 0
-            } else if is_color && scan.components[0] > 0 {
-                1 // YCbCr: chroma uses table 1
+            let component = scan.components[0] as usize;
+            let ac_context = num_components + component;
+            let table_idx = if ac_context < context_map.len() {
+                context_map[ac_context].saturating_sub(num_dc_tables)
             } else {
-                0 // YCbCr: luma uses table 0
+                0
             };
             encoder.write_ac_refinement_tokens(scan_info, table_idx)?;
         }
@@ -2514,13 +2556,52 @@ impl Encoder {
         scans
     }
 
-    /// Writes SOS header for a progressive scan.
+    /// Writes SOS header for a progressive scan (legacy, hardcoded table selection).
     fn write_progressive_scan_header(
         &self,
         output: &mut Vec<u8>,
         scan: &ProgressiveScan,
         is_color: bool,
     ) -> Result<()> {
+        // Use hardcoded luma/chroma mapping: luma=0, chroma=1
+        let num_components = if is_color { 3 } else { 1 };
+        let context_map: Vec<usize> = (0..6)
+            .map(|c| {
+                if c < num_components {
+                    // DC: component 0 → 0, components 1,2 → 1
+                    if is_color && c > 0 {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    // AC: component 0 → 2, components 1,2 → 3
+                    if is_color && (c - num_components) > 0 {
+                        3
+                    } else {
+                        2
+                    }
+                }
+            })
+            .collect();
+        self.write_progressive_scan_header_with_context(output, scan, is_color, &context_map, 2)
+    }
+
+    /// Writes SOS header for a progressive scan with context-based table selection.
+    ///
+    /// # Arguments
+    /// * `context_map` - Maps context indices to table indices from clustering
+    /// * `num_dc_tables` - Number of DC tables (AC tables start at this offset)
+    fn write_progressive_scan_header_with_context(
+        &self,
+        output: &mut Vec<u8>,
+        scan: &ProgressiveScan,
+        is_color: bool,
+        context_map: &[usize],
+        num_dc_tables: usize,
+    ) -> Result<()> {
+        let num_components_total = if is_color { 3 } else { 1 };
+
         output.push(0xFF);
         output.push(MARKER_SOS);
 
@@ -2545,16 +2626,17 @@ impl Encoder {
             };
             output.push(comp_id);
 
-            // DC/AC table selectors
-            // XYB: all components use table 0 (only write 1 DC + 1 AC table)
-            // YCbCr: luma uses table 0, chroma uses table 1
-            let table_selector = if self.config.use_xyb {
-                0x00 // DC table 0, AC table 0 for all XYB components
-            } else if is_color && comp_idx > 0 {
-                0x11 // DC table 1, AC table 1 for chroma (components 1, 2)
-            } else {
-                0x00 // DC table 0, AC table 0 for luma (component 0)
-            };
+            // DC/AC table selectors from context_map
+            let dc_context = comp_idx as usize;
+            let ac_context = num_components_total + comp_idx as usize;
+
+            let dc_table = context_map.get(dc_context).copied().unwrap_or(0);
+            let ac_table = context_map
+                .get(ac_context)
+                .map(|&t| t.saturating_sub(num_dc_tables))
+                .unwrap_or(0);
+
+            let table_selector = ((dc_table as u8) << 4) | (ac_table as u8);
             output.push(table_selector);
         }
 

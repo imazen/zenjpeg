@@ -58,7 +58,9 @@
 
 use crate::error::Result;
 use crate::huffman::HuffmanEncodeTable;
-use crate::huffman_classic::{depths_to_bits_values, generate_code_lengths, generate_optimal_table};
+use crate::huffman_classic::{
+    depths_to_bits_values, generate_code_lengths, generate_optimal_table,
+};
 
 /// An optimized Huffman table with its DHT marker representation.
 ///
