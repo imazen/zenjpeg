@@ -737,6 +737,61 @@ impl ParetoCurve {
         self.points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     }
 
+    /// Load Pareto curve from zenjpeg benchmark CSV
+    /// CSV format: source_hash,source_name,width,height,variance,edge_density,
+    ///             chroma_complexity,uniform_block_fraction,config_key,quality,
+    ///             cache_version,size_bytes,bpp,butteraugli,ssimulacra2,dssim,
+    ///             encode_time_ms,timestamp
+    fn from_zenjpeg_csv(path: &Path, config_key: &str) -> Option<Self> {
+        use std::collections::HashMap;
+        use std::io::{BufRead, BufReader};
+
+        let file = fs::File::open(path).ok()?;
+        let reader = BufReader::new(file);
+
+        // Aggregate by quality level
+        let mut by_quality: HashMap<u8, (f64, f64, usize)> = HashMap::new();
+
+        for line in reader.lines().filter_map(|l| l.ok()) {
+            let fields: Vec<&str> = line.split(',').collect();
+            if fields.len() < 15 {
+                continue;
+            }
+
+            // Check config matches
+            if fields[8] != config_key {
+                continue;
+            }
+
+            let quality: u8 = fields[9].parse().ok()?;
+            let bpp: f64 = fields[12].parse().ok()?;
+            let ssim2: f64 = fields[14].parse().ok()?;
+
+            let entry = by_quality.entry(quality).or_insert((0.0, 0.0, 0));
+            entry.0 += bpp;
+            entry.1 += ssim2;
+            entry.2 += 1;
+        }
+
+        if by_quality.is_empty() {
+            return None;
+        }
+
+        let mut curve = ParetoCurve::new();
+        for (_, (bpp_sum, ssim2_sum, count)) in by_quality {
+            let avg_bpp = bpp_sum / count as f64;
+            let avg_ssim2 = ssim2_sum / count as f64;
+            curve.add_point(avg_bpp, avg_ssim2);
+        }
+
+        println!(
+            "Loaded {} Pareto points from CSV ({})",
+            curve.points.len(),
+            config_key
+        );
+        Some(curve)
+    }
+
     /// Get expected SSIM2 at given bpp by linear interpolation on Pareto curve
     fn expected_ssim2_at_bpp(&self, bpp: f64) -> f64 {
         if self.points.is_empty() {
@@ -776,10 +831,16 @@ impl ParetoCurve {
     }
 }
 
-/// Fitness function: Distance above the Pareto curve
+/// Fitness function: Distance above the Pareto curve with bpp penalty
 /// Positive = better than baseline, negative = worse
-fn fitness_pareto(ssim2: f64, bpp: f64, pareto: &ParetoCurve) -> f64 {
-    pareto.distance_above_pareto(bpp, ssim2)
+/// Penalizes moving to very different bpp to prevent exploiting curve shape
+fn fitness_pareto(ssim2: f64, bpp: f64, pareto: &ParetoCurve, target_bpp: f64) -> f64 {
+    let pareto_dist = pareto.distance_above_pareto(bpp, ssim2);
+
+    // Penalize deviation from target bpp to encourage staying at same operating point
+    let bpp_penalty = 5.0 * (bpp - target_bpp).abs();
+
+    pareto_dist - bpp_penalty
 }
 
 /// Legacy fitness function (for backward compatibility)
@@ -903,7 +964,9 @@ fn optimize(
         quality, baseline_ssim2, baseline_bpp, baseline_dist
     );
 
-    let mut current_fitness = fitness_pareto(current_ssim2, current_bpp, pareto);
+    // Use baseline bpp as target to stay at same operating point
+    let target_bpp = baseline_bpp;
+    let mut current_fitness = fitness_pareto(current_ssim2, current_bpp, pareto, target_bpp);
     let mut best = current.clone();
     let mut best_fitness = current_fitness;
     let mut best_ssim2 = current_ssim2;
@@ -940,7 +1003,7 @@ fn optimize(
         let (cand_ssim2, cand_size) =
             evaluate_state_profiled(&candidate, images, quality, &profile_stats);
         let cand_bpp = (cand_size * 8) as f64 / pixels as f64;
-        let cand_fitness = fitness_pareto(cand_ssim2, cand_bpp, pareto);
+        let cand_fitness = fitness_pareto(cand_ssim2, cand_bpp, pareto, target_bpp);
 
         // Accept or reject
         let delta = cand_fitness - current_fitness;
@@ -1133,10 +1196,21 @@ fn main() {
             .and_then(|json| OptState::from_json(&json))
     });
 
-    // Measure baseline Pareto curve at multiple Q levels
-    let q_levels: Vec<u8> = (60..=98).step_by(2).collect();
-    let pareto = measure_pareto_curve(&images, &q_levels);
-    println!("\nPareto curve has {} points", pareto.points.len());
+    // Try loading Pareto curve from zenjpeg benchmark CSV, fall back to measuring
+    let zenjpeg_csv = PathBuf::from("/home/lilith/work/zenjpeg/heuristic_outputs/results.csv");
+    let pareto = if zenjpeg_csv.exists() {
+        ParetoCurve::from_zenjpeg_csv(&zenjpeg_csv, "jpegli-444")
+            .unwrap_or_else(|| {
+                println!("Failed to load from CSV, measuring locally...");
+                let q_levels: Vec<u8> = (60..=98).step_by(2).collect();
+                measure_pareto_curve(&images, &q_levels)
+            })
+    } else {
+        println!("Zenjpeg CSV not found, measuring Pareto curve...");
+        let q_levels: Vec<u8> = (60..=98).step_by(2).collect();
+        measure_pareto_curve(&images, &q_levels)
+    };
+    println!("Pareto curve has {} points", pareto.points.len());
 
     // Checkpoint path
     let checkpoint_path = output_path
