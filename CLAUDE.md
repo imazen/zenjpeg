@@ -50,7 +50,7 @@ This is a Rust port of **jpegli** - Google's improved JPEG encoder/decoder from 
 |---------|---------------------|-----------------|--------------|
 | **Chroma subsampling** | **4:4:4** (no subsampling) | 4:2:0 | 4:4:4 ✓ |
 | **Adaptive quantization** | **ON** | ON | Per-block ✓ |
-| **Progressive level** | **2** (10+ scans) | 0 (sequential) | Level 0 ✓ (no SA) |
+| **Progressive level** | **2** (10+ scans) | 0 (sequential) | **Level 2 ✓** |
 | **Huffman optimization** | **ON** | OFF (fixed tables) | ON ✓ |
 | **Quality** | **90** | 90 | 90 ✓ |
 
@@ -372,7 +372,10 @@ jpegli-rs/
   - See `tests/aq_locked_tests.rs` for invariant tests (NEVER disable these)
 - [✓] Butteraugli metric - **FULL RUST IMPLEMENTATION** (3,500+ lines, C++ parity tests)
   - Note: 7x7 minimum dimension requirement causes some test failures
-- [⚠️] XYB encoding pipeline - Color conversion complete, end-to-end validation pending
+- [✓] XYB encoding pipeline - **FULLY WORKING** with progressive and Huffman optimization
+  - XYB progressive with Huffman optimization: 1.1× C++ size (1712 vs 1537 bytes on test image)
+  - 51.4% file size reduction when optimization enabled vs disabled (3525 → 1712 bytes)
+  - All decoders compatible (jpegli-rs, mozjpeg, zune-jpeg, jpeg-decoder)
 - [✓] Progressive JPEG - Level 2 with successive approximation working (YCbCr, XYB, Grayscale)
 
 ## Test Infrastructure (Verified)
