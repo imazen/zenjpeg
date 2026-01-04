@@ -20,7 +20,7 @@
 
 use jpegli::quant::{CustomQuantMatrices, Quality};
 use jpegli::{Encoder, PixelFormat};
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use ssimulacra2::{ColorPrimaries, Rgb, Ssim2Reference, TransferCharacteristic};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -489,12 +489,14 @@ fn random_perturbation(rng: &mut Rng, temperature: f64) -> Perturbation {
     }
 }
 
-/// Test image data
+/// Test image data with precomputed SSIM2 reference
 struct TestImage {
     rgb: Vec<u8>,
     width: usize,
     height: usize,
     name: String,
+    /// Precomputed SSIM2 reference with all scales (provides ~2x speedup)
+    ssim2_ref: Ssim2Reference,
 }
 
 /// Load PNG image
@@ -530,36 +532,60 @@ fn load_png(path: &Path) -> Option<TestImage> {
         .unwrap_or("unknown")
         .to_string();
 
+    // Precompute SSIM2 reference once at load time (includes blur, variance at all scales)
+    let rgb_frame = Rgb::new(
+        rgb.chunks(3)
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
+            .collect(),
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .ok()?;
+    let ssim2_ref = Ssim2Reference::new(rgb_frame).ok()?;
+
     Some(TestImage {
         rgb,
         width,
         height,
         name,
+        ssim2_ref,
     })
 }
 
-/// Compute SSIMULACRA2 score (higher = better, 100 = identical)
-fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
-    let to_rgb = |data: &[u8]| {
-        Rgb::new(
-            data.chunks(3)
-                .map(|c| {
-                    [
-                        c[0] as f32 / 255.0,
-                        c[1] as f32 / 255.0,
-                        c[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-            width,
-            height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap()
-    };
+/// Compute SSIMULACRA2 score using precomputed reference (higher = better, 100 = identical)
+fn compute_ssim2_with_ref(
+    reference: &Ssim2Reference,
+    decoded: &[u8],
+    width: usize,
+    height: usize,
+) -> f64 {
+    let decoded_rgb = Rgb::new(
+        decoded
+            .chunks(3)
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
+            .collect(),
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
 
-    compute_frame_ssimulacra2(to_rgb(original), to_rgb(decoded)).unwrap_or(0.0)
+    reference.compare(decoded_rgb).unwrap_or(0.0)
 }
 
 /// Decode JPEG using zune-jpeg (faster than jpeg-decoder)
@@ -638,9 +664,9 @@ fn evaluate_state_profiled(
         let decoded = decode_jpeg(&jpeg).expect("decode failed");
         stats.decode_ns += t1.elapsed().as_nanos();
 
-        // Measure quality
+        // Measure quality (using precomputed reference)
         let t2 = Instant::now();
-        let quality_score = compute_ssim2(&img.rgb, &decoded, img.width, img.height);
+        let quality_score = compute_ssim2_with_ref(&img.ssim2_ref, &decoded, img.width, img.height);
         stats.ssim2_ns += t2.elapsed().as_nanos();
 
         total_quality += quality_score;
