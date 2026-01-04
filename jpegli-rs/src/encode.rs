@@ -386,9 +386,8 @@ impl Default for EncoderConfig {
             subsampling: Subsampling::S444,
             use_xyb: false,
             restart_interval: 0,
-            // TEMPORARY: Disable Huffman optimization due to Kraft sum issue
-            // TODO: Fix tree construction to leave slack space without removing used symbols
-            optimize_huffman: false,
+            // Huffman optimization enabled by default (pseudo-symbol 256 approach ensures Kraft sum < 2^16)
+            optimize_huffman: true,
             // Match C++ jpegli default: smoothing_factor = 0 (disabled)
             smoothing_factor: 0,
             // Auto selects Sharp for subsampled, Intrinsic for 4:4:4
