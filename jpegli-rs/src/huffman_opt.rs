@@ -121,6 +121,35 @@ impl Default for FrequencyCounter {
     }
 }
 
+/// Converts code lengths (depths) to JPEG DHT format (bits, values).
+///
+/// The depths array contains the bit length for each symbol 0-255.
+/// Returns (bits, values) where:
+/// - bits[i] = number of codes with length i+1 (1-16 bits)
+/// - values = symbols sorted by code length, then by symbol value
+fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
+    let mut bits = [0u8; 16];
+    let mut symbols_by_length: Vec<Vec<u8>> = vec![Vec::new(); 16];
+
+    // Group symbols by their code length
+    for (symbol, &depth) in depths.iter().enumerate().take(256) {
+        if depth > 0 && depth <= 16 {
+            bits[depth as usize - 1] += 1;
+            symbols_by_length[depth as usize - 1].push(symbol as u8);
+        }
+    }
+
+    // Sort symbols within each length group (for canonical codes)
+    for symbols in &mut symbols_by_length {
+        symbols.sort_unstable();
+    }
+
+    // Flatten into values array
+    let values: Vec<u8> = symbols_by_length.into_iter().flatten().collect();
+
+    (bits, values)
+}
+
 impl FrequencyCounter {
     /// Creates a new frequency counter with all counts at zero.
     #[must_use]
@@ -179,6 +208,45 @@ impl FrequencyCounter {
             bits,
             values,
         })
+    }
+
+    /// Generates Huffman table using specified algorithm.
+    ///
+    /// # Arguments
+    /// * `method` - Which Huffman algorithm to use (jpegli or mozjpeg)
+    ///
+    /// Returns the encoding table plus DHT data for JPEG file.
+    pub fn generate_table_with_method(
+        &self,
+        method: crate::types::HuffmanMethod,
+    ) -> Result<OptimizedTable> {
+        use crate::types::HuffmanMethod;
+
+        match method {
+            HuffmanMethod::JpegliCreateTree => {
+                // Use jpegli's CreateHuffmanTree algorithm from huffman.rs
+                let freqs: Vec<u64> = self.counts[..256]
+                    .iter()
+                    .map(|&c| c.max(0) as u64)
+                    .collect();
+
+                let depths = crate::huffman::build_code_lengths(&freqs, 16);
+
+                // Convert depths to (bits, values) format
+                let (bits, values) = depths_to_bits_values(&depths);
+                let table = HuffmanEncodeTable::from_bits_values(&bits, &values)?;
+
+                Ok(OptimizedTable {
+                    table,
+                    bits,
+                    values,
+                })
+            }
+            HuffmanMethod::MozjpegClassic => {
+                // Use classic mozjpeg algorithm (current implementation)
+                self.generate_table_with_dht()
+            }
+        }
     }
 
     /// Generates code lengths without building the full table.

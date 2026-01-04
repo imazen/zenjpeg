@@ -102,7 +102,8 @@ pub mod test_utils;
 
 pub use error::{Error, Result};
 pub use types::{
-    ChromaConversion, ColorSpace, JpegMode, OutputDataType, PixelFormat, SampleDepth, Subsampling,
+    ChromaConversion, ColorSpace, HuffmanMethod, JpegMode, OutputDataType, PixelFormat,
+    SampleDepth, Subsampling,
 };
 
 // Encoder API
