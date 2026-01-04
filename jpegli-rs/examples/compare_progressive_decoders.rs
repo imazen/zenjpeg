@@ -80,8 +80,8 @@ fn main() {
             }
         }
 
-        // Test 3: jpeg-decoder (libjpeg-turbo)
-        println!("=== Test 3: jpeg-decoder (libjpeg-turbo) ===");
+        // Test 3: jpeg-decoder (pure Rust)
+        println!("=== Test 3: jpeg-decoder (pure Rust) ===");
         let mut libjpeg_decoder = jpeg_decoder::Decoder::new(&cpp_jpeg[..]);
         match libjpeg_decoder.decode() {
             Ok(pixels) => {

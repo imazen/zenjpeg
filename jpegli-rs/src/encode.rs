@@ -3039,20 +3039,23 @@ impl Encoder {
         output.push((total_len >> 8) as u8);
         output.push(total_len as u8);
 
+        // Write DC tables first (class 0), then AC tables (class 1)
+        // This matches C++ jpegli and is expected by zune-jpeg
+
         // DC luminance (class 0, id 0)
         output.push(0x00);
         output.extend_from_slice(&tables.dc_luma.bits);
         output.extend_from_slice(&tables.dc_luma.values);
 
-        // AC luminance (class 1, id 0)
-        output.push(0x10);
-        output.extend_from_slice(&tables.ac_luma.bits);
-        output.extend_from_slice(&tables.ac_luma.values);
-
         // DC chrominance (class 0, id 1)
         output.push(0x01);
         output.extend_from_slice(&tables.dc_chroma.bits);
         output.extend_from_slice(&tables.dc_chroma.values);
+
+        // AC luminance (class 1, id 0)
+        output.push(0x10);
+        output.extend_from_slice(&tables.ac_luma.bits);
+        output.extend_from_slice(&tables.ac_luma.values);
 
         // AC chrominance (class 1, id 1)
         output.push(0x11);
