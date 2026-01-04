@@ -404,19 +404,33 @@ jpegli-rs/
    - 155/185 test cases match C++ exactly (huffman_opt.rs)
    - 26 cases where mozjpeg algorithm is better, 4 where C++ is better
 
-3. ✓ **Progressive JPEG Level 2** - FULLY WORKING (YCbCr, XYB, Grayscale)
+3. ✓ **Progressive JPEG Level 2** - WORKING (with size gap for complex images)
    - Level 2 with successive approximation: ✓ WORKING
    - YCbCr: 13 scans (1 DC interleaved + 12 AC with refinement)
    - XYB: 15 scans (3 DC non-interleaved + 12 AC with refinement)
    - Grayscale: 5 scans (1 DC + 4 AC with refinement)
    - All external decoders pass (jpegli-rs, mozjpeg, zune-jpeg, jpeg-decoder)
-   - Fixed in commits: 50d2cf4 (scan headers) + ac4ab61 (encoding logic)
    - Tests: `tests/progressive_encoding.rs` - 19 passing tests
-   - See: `docs/progressive_status.md` for detailed status report
 
-4. ? **Remaining ~2-3% gap**
-   - May be DCT/entropy precision differences
-   - May be subtle floating-point accumulation differences
+   **Progressive File Size Gap:**
+   | Image Type | Rust | C++ | Gap |
+   |------------|------|-----|-----|
+   | Simple gradients 512×512 | 8736 | 8736 | 0% ✓ |
+   | Complex patterns 512×512 | 37958 | 33079 | +14.7% |
+
+   **Gap Analysis:**
+   - DC scan + AC First scans: Match C++ exactly (no gap)
+   - AC Refinement scans: +71% bloated vs C++ (main issue)
+   - On-demand DHT emission: Implemented (4 DHT markers like C++)
+   - Root cause: Unknown - refinement scan encoding produces more bits
+
+4. ? **AC Refinement Scan Bloat** - INVESTIGATION NEEDED
+   - AC refinement scans (Ah>0) are 58-71% larger than C++
+   - DC and AC first-pass scans match C++ exactly
+   - Possible causes being investigated:
+     - Token/symbol generation differences
+     - EOB run handling differences
+     - Refinement bit accumulation differences
 
 **Verification test:** `cargo test --test parity_enforcement -- --ignored --nocapture`
 
