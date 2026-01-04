@@ -2303,14 +2303,10 @@ impl Encoder {
             output.push(comp_id);
 
             // DC/AC table selectors
-            // For XYB progressive:
-            //   - DC scans (ss=0): DC table matches component (0/1/2), AC table always 0
-            //   - AC scans (ss>0): both DC and AC tables match component (0/1/2)
+            // For XYB: all components use table 0 (matches baseline XYB)
             // For YCbCr: luma uses 0, chroma uses 1
             let table_selector = if self.config.use_xyb {
-                let dc_table = comp_idx;
-                let ac_table = if scan.ss == 0 { 0 } else { comp_idx };
-                (dc_table << 4) | ac_table
+                0x00 // DC table 0, AC table 0 for all XYB components
             } else if is_color && comp_idx > 0 {
                 0x11 // DC table 1, AC table 1 for chroma
             } else {
