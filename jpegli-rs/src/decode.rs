@@ -60,7 +60,7 @@ impl Default for DecoderConfig {
     fn default() -> Self {
         Self {
             output_format: None,
-            fancy_upsampling: false,
+            fancy_upsampling: true,
             block_smoothing: false,
             // Apply ICC by default when CMS is available
             apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
@@ -180,7 +180,8 @@ impl Decoder {
 
         // Convert to output format
         // For XYB images, use simple dequantization so ICC profile works correctly
-        let mut pixels = parser.to_pixels(output_format, info.is_xyb)?;
+        let mut pixels =
+            parser.to_pixels(output_format, info.is_xyb, self.config.fancy_upsampling)?;
 
         // Apply ICC profile if enabled and present
         // Note: ICC transform failures are non-fatal - we fall back to un-color-managed pixels
@@ -240,7 +241,8 @@ impl Decoder {
         let output_format = self.config.output_format.unwrap_or(PixelFormat::Rgb);
 
         // Convert to output format as f32
-        let pixels = parser.to_pixels_f32(output_format, info.is_xyb)?;
+        let pixels =
+            parser.to_pixels_f32(output_format, info.is_xyb, self.config.fancy_upsampling)?;
 
         Ok(DecodedImageF32 {
             width: info.dimensions.width,
@@ -1277,7 +1279,131 @@ impl<'a> JpegParser<'a> {
         }
     }
 
-    fn to_pixels(&self, format: PixelFormat, is_xyb: bool) -> Result<Vec<u8>> {
+    // Fancy upsampling with triangle filter (3:1 weights)
+    // Applies separable 3:1 interpolation: (3 * near + far) / 4
+    fn upsample_fancy(
+        input: &[f32],
+        in_width: usize,
+        in_height: usize,
+        out_width: usize,
+        out_height: usize,
+        scale_x: usize,
+        scale_y: usize,
+    ) -> Vec<f32> {
+        // Dispatch to specialized implementation based on scale factors
+        match (scale_x, scale_y) {
+            (1, 1) => input.to_vec(), // No upsampling needed
+            (2, 1) => Self::upsample_h2v1(input, in_width, in_height, out_width, out_height),
+            (1, 2) => Self::upsample_h1v2(input, in_width, in_height, out_width, out_height),
+            (2, 2) => Self::upsample_h2v2(input, in_width, in_height, out_width, out_height),
+            _ => panic!("Unsupported upsampling scale: {}x{}", scale_x, scale_y),
+        }
+    }
+
+    // Horizontal 2x upsampling (4:2:2)
+    #[inline]
+    fn upsample_h2v1(
+        input: &[f32],
+        in_width: usize,
+        in_height: usize,
+        out_width: usize,
+        _out_height: usize,
+    ) -> Vec<f32> {
+        let mut output = vec![0.0f32; out_width * in_height];
+
+        for y in 0..in_height {
+            for out_x in 0..out_width {
+                // Map output x to input x (divide by 2 for 2x scaling)
+                let in_x = out_x / 2;
+                let curr = input[y * in_width + in_x];
+
+                // Determine if this is left or right half of input pixel
+                if out_x % 2 == 0 {
+                    // Left half: blend with left neighbor
+                    let left = if in_x > 0 {
+                        input[y * in_width + in_x - 1]
+                    } else {
+                        curr
+                    };
+                    output[y * out_width + out_x] = (3.0 * curr + left) * 0.25;
+                } else {
+                    // Right half: blend with right neighbor
+                    let right = if in_x + 1 < in_width {
+                        input[y * in_width + in_x + 1]
+                    } else {
+                        curr
+                    };
+                    output[y * out_width + out_x] = (3.0 * curr + right) * 0.25;
+                }
+            }
+        }
+
+        output
+    }
+
+    // Vertical 2x upsampling (4:4:0)
+    #[inline]
+    fn upsample_h1v2(
+        input: &[f32],
+        in_width: usize,
+        in_height: usize,
+        _out_width: usize,
+        out_height: usize,
+    ) -> Vec<f32> {
+        let mut output = vec![0.0f32; in_width * out_height];
+
+        for out_y in 0..out_height {
+            for x in 0..in_width {
+                // Map output y to input y (divide by 2 for 2x scaling)
+                let in_y = out_y / 2;
+                let curr = input[in_y * in_width + x];
+
+                // Determine if this is top or bottom half of input pixel
+                if out_y % 2 == 0 {
+                    // Top half: blend with above neighbor
+                    let above = if in_y > 0 {
+                        input[(in_y - 1) * in_width + x]
+                    } else {
+                        curr
+                    };
+                    output[out_y * in_width + x] = (3.0 * curr + above) * 0.25;
+                } else {
+                    // Bottom half: blend with below neighbor
+                    let below = if in_y + 1 < in_height {
+                        input[(in_y + 1) * in_width + x]
+                    } else {
+                        curr
+                    };
+                    output[out_y * in_width + x] = (3.0 * curr + below) * 0.25;
+                }
+            }
+        }
+
+        output
+    }
+
+    // Both horizontal and vertical 2x upsampling (4:2:0)
+    // Apply separably: horizontal first, then vertical
+    #[inline]
+    fn upsample_h2v2(
+        input: &[f32],
+        in_width: usize,
+        in_height: usize,
+        out_width: usize,
+        out_height: usize,
+    ) -> Vec<f32> {
+        // First upsample horizontally
+        let h_upsampled = Self::upsample_h2v1(input, in_width, in_height, out_width, in_height);
+        // Then upsample vertically
+        Self::upsample_h1v2(&h_upsampled, out_width, in_height, out_width, out_height)
+    }
+
+    fn to_pixels(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        fancy_upsampling: bool,
+    ) -> Result<Vec<u8>> {
         if self.coeffs.is_empty() {
             return Err(Error::InternalError {
                 reason: "no decoded data",
@@ -1455,10 +1581,26 @@ impl<'a> JpegParser<'a> {
             let info = &comp_infos[comp_idx];
             let comp_plane_f32 = &comp_planes_f32[comp_idx];
 
-            let plane_f32 =
-                if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
-                    let scale_x = max_h_samp as usize / info.h_samp;
-                    let scale_y = max_v_samp as usize / info.v_samp;
+            let plane_f32 = if info.h_samp < max_h_samp as usize
+                || info.v_samp < max_v_samp as usize
+            {
+                let scale_x = max_h_samp as usize / info.h_samp;
+                let scale_y = max_v_samp as usize / info.v_samp;
+
+                if fancy_upsampling {
+                    // Triangle filter (3:1 weights) - separable implementation
+                    // First upsample horizontally, then vertically
+                    Self::upsample_fancy(
+                        comp_plane_f32,
+                        info.comp_width,
+                        info.comp_height,
+                        width,
+                        height,
+                        scale_x,
+                        scale_y,
+                    )
+                } else {
+                    // Box filter (nearest neighbor)
                     let mut upsampled = vec![0.0f32; output_size];
                     for py in 0..height {
                         for px in 0..width {
@@ -1468,16 +1610,17 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                     upsampled
-                } else {
-                    // Full resolution - just clip to image dimensions
-                    let mut plane = vec![0.0f32; output_size];
-                    for py in 0..height {
-                        for px in 0..width {
-                            plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
-                        }
+                }
+            } else {
+                // Full resolution - just clip to image dimensions
+                let mut plane = vec![0.0f32; output_size];
+                for py in 0..height {
+                    for px in 0..width {
+                        plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
                     }
-                    plane
-                };
+                }
+                plane
+            };
 
             planes_f32.push(plane_f32);
         }
@@ -1530,7 +1673,12 @@ impl<'a> JpegParser<'a> {
 
     /// Convert decoded coefficients to f32 pixels.
     /// Values are normalized to range 0.0-1.0.
-    fn to_pixels_f32(&self, format: PixelFormat, is_xyb: bool) -> Result<Vec<f32>> {
+    fn to_pixels_f32(
+        &self,
+        format: PixelFormat,
+        is_xyb: bool,
+        fancy_upsampling: bool,
+    ) -> Result<Vec<f32>> {
         if self.coeffs.is_empty() {
             return Err(Error::InternalError {
                 reason: "no decoded data",
@@ -1689,10 +1837,25 @@ impl<'a> JpegParser<'a> {
             let info = &comp_infos[comp_idx];
             let comp_plane_f32 = &comp_planes_f32[comp_idx];
 
-            let plane_f32 =
-                if info.h_samp < max_h_samp as usize || info.v_samp < max_v_samp as usize {
-                    let scale_x = max_h_samp as usize / info.h_samp;
-                    let scale_y = max_v_samp as usize / info.v_samp;
+            let plane_f32 = if info.h_samp < max_h_samp as usize
+                || info.v_samp < max_v_samp as usize
+            {
+                let scale_x = max_h_samp as usize / info.h_samp;
+                let scale_y = max_v_samp as usize / info.v_samp;
+
+                if fancy_upsampling {
+                    // Triangle filter (3:1 weights) - separable implementation
+                    Self::upsample_fancy(
+                        comp_plane_f32,
+                        info.comp_width,
+                        info.comp_height,
+                        width,
+                        height,
+                        scale_x,
+                        scale_y,
+                    )
+                } else {
+                    // Box filter (nearest neighbor)
                     let mut upsampled = vec![0.0f32; output_size];
                     for py in 0..height {
                         for px in 0..width {
@@ -1702,15 +1865,16 @@ impl<'a> JpegParser<'a> {
                         }
                     }
                     upsampled
-                } else {
-                    let mut plane = vec![0.0f32; output_size];
-                    for py in 0..height {
-                        for px in 0..width {
-                            plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
-                        }
+                }
+            } else {
+                let mut plane = vec![0.0f32; output_size];
+                for py in 0..height {
+                    for px in 0..width {
+                        plane[py * width + px] = comp_plane_f32[py * info.comp_width + px];
                     }
-                    plane
-                };
+                }
+                plane
+            };
 
             planes_f32.push(plane_f32);
         }
