@@ -37,7 +37,7 @@ turbojpeg = "1.3"      # libjpeg-turbo wrapper (fastest C decoder)
 
 # Quality metrics
 dssim = "3.2"
-ssimulacra2 = { path = "../ssimulacra2/ssimulacra2", features = ["blur-simd", "rayon"] }
+ssimulacra2 = { git = "https://github.com/imazen/ssimulacra2", branch = "perf-simd-precompute", features = ["blur-simd", "rayon"] }
 rayon = "1.10"
 
 # Testing

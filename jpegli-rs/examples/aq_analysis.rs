@@ -5,12 +5,59 @@
 //! cargo run --release --example aq_analysis --features experimental-hybrid-trellis -- /path/to/images
 //! ```
 
-use jpegli::adaptive_quant::compute_aq_strength_map;
-use jpegli::hybrid_config::{estimate_hybrid_improvement, should_use_hybrid, AQ_MEAN_THRESHOLD};
-use std::env;
-use std::path::PathBuf;
-
+#[cfg(not(feature = "experimental-hybrid-trellis"))]
 fn main() {
+    eprintln!("This example requires the 'experimental-hybrid-trellis' feature.");
+    eprintln!("Run with: cargo run --release --example aq_analysis --features experimental-hybrid-trellis");
+}
+
+#[cfg(feature = "experimental-hybrid-trellis")]
+fn main() {
+    use jpegli::adaptive_quant::compute_aq_strength_map;
+    use jpegli::hybrid_config::{estimate_hybrid_improvement, should_use_hybrid, AQ_MEAN_THRESHOLD};
+    use std::env;
+    use std::path::PathBuf;
+
+    struct AQStats {
+        min: f32,
+        max: f32,
+        mean: f32,
+        std: f32,
+    }
+
+    fn analyze_image(path: &PathBuf) -> Option<AQStats> {
+        let file = std::fs::File::open(path).ok()?;
+        let decoder = png::Decoder::new(file);
+        let mut reader = decoder.read_info().ok()?;
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).ok()?;
+
+        if info.color_type != png::ColorType::Rgb {
+            return None;
+        }
+
+        let width = info.width as usize;
+        let height = info.height as usize;
+        let pixels = &buf[..info.buffer_size()];
+
+        // Extract Y plane
+        let y_plane: Vec<f32> = pixels
+            .chunks(3)
+            .map(|c| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32)
+            .collect();
+
+        // Use y_quant_01 = 8 (typical for Q75)
+        let aq_map = compute_aq_strength_map(&y_plane, width, height, 8);
+        let (min, max, mean, std) = aq_map.stats();
+
+        Some(AQStats {
+            min,
+            max,
+            mean,
+            std,
+        })
+    }
+
     let args: Vec<String> = env::args().collect();
     let image_dir = if args.len() > 1 {
         PathBuf::from(&args[1])
@@ -44,7 +91,7 @@ fn main() {
     let mut total_skip = 0;
 
     for path in &files {
-        if let Some(stats) = analyze_image(path) {
+        if let Some(stats) = analyze_image(&path) {
             let use_hybrid = should_use_hybrid(stats.mean);
             let est_improvement = estimate_hybrid_improvement(stats.mean);
 
@@ -71,44 +118,4 @@ fn main() {
     println!("\n=== Summary ===");
     println!("Images where hybrid recommended: {}", total_use);
     println!("Images where hybrid skipped:     {}", total_skip);
-}
-
-struct AQStats {
-    min: f32,
-    max: f32,
-    mean: f32,
-    std: f32,
-}
-
-fn analyze_image(path: &PathBuf) -> Option<AQStats> {
-    let file = std::fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-
-    if info.color_type != png::ColorType::Rgb {
-        return None;
-    }
-
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let pixels = &buf[..info.buffer_size()];
-
-    // Extract Y plane
-    let y_plane: Vec<f32> = pixels
-        .chunks(3)
-        .map(|c| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32)
-        .collect();
-
-    // Use y_quant_01 = 8 (typical for Q75)
-    let aq_map = compute_aq_strength_map(&y_plane, width, height, 8);
-    let (min, max, mean, std) = aq_map.stats();
-
-    Some(AQStats {
-        min,
-        max,
-        mean,
-        std,
-    })
 }

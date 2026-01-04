@@ -694,7 +694,7 @@ dependencies = [
  "rgb",
  "serde",
  "serde_json",
- "ssimulacra2 0.5.1",
+ "ssimulacra2 0.5.1 (git+https://github.com/imazen/ssimulacra2?branch=perf-simd-precompute)",
  "test-case",
  "wide 0.7.33",
  "yuv",
@@ -1307,12 +1307,12 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 [[package]]
 name = "ssimulacra2"
 version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "700cb4e17f98c3f36756815b18dbec2b2e3c4f5028e9cdee3e23dd8c285e736c"
 dependencies = [
- "multiversion 0.7.4",
  "num-traits",
  "rayon",
  "thiserror",
- "wide 1.1.1",
  "yuvxyb",
  "yuvxyb-math",
 ]
@@ -1320,12 +1320,13 @@ dependencies = [
 [[package]]
 name = "ssimulacra2"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "700cb4e17f98c3f36756815b18dbec2b2e3c4f5028e9cdee3e23dd8c285e736c"
+source = "git+https://github.com/imazen/ssimulacra2?branch=perf-simd-precompute#64d957b529f9f987684c8c815272053eec60747b"
 dependencies = [
+ "multiversion 0.7.4",
  "num-traits",
  "rayon",
  "thiserror",
+ "wide 1.1.1",
  "yuvxyb",
  "yuvxyb-math",
 ]
