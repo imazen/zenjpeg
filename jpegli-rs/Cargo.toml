@@ -50,6 +50,7 @@ bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg = { workspace = true }
 jpeg-decoder = { workspace = true }
+rayon = { workspace = true }
 # Note: turbojpeg conflicts with mozjpeg (duplicate libjpeg symbols)
 # turbojpeg = { workspace = true }
 
