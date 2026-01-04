@@ -13,39 +13,33 @@ use std::io::Cursor;
 fn test_decoder(name: &str, jpeg_data: &[u8]) -> (bool, Option<String>) {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        match name {
-            "jpegli-rs" => {
-                match Decoder::new().decode(jpeg_data) {
-                    Ok(decoded) => (true, Some(format!("{}x{}", decoded.width, decoded.height))),
-                    Err(e) => (false, Some(format!("{:?}", e))),
-                }
+    let result = catch_unwind(AssertUnwindSafe(|| match name {
+        "jpegli-rs" => match Decoder::new().decode(jpeg_data) {
+            Ok(decoded) => (true, Some(format!("{}x{}", decoded.width, decoded.height))),
+            Err(e) => (false, Some(format!("{:?}", e))),
+        },
+        "zune-jpeg" => {
+            let mut decoder = zune_jpeg::JpegDecoder::new(Cursor::new(jpeg_data));
+            match decoder.decode() {
+                Ok(_) => (true, None),
+                Err(e) => (false, Some(format!("{:?}", e))),
             }
-            "zune-jpeg" => {
-                let mut decoder = zune_jpeg::JpegDecoder::new(Cursor::new(jpeg_data));
-                match decoder.decode() {
-                    Ok(_) => (true, None),
-                    Err(e) => (false, Some(format!("{:?}", e))),
-                }
-            }
-            "mozjpeg" => {
-                match mozjpeg::Decompress::new_mem(jpeg_data) {
-                    Ok(decoder) => match decoder.rgb() {
-                        Ok(_) => (true, None),
-                        Err(e) => (false, Some(format!("{:?}", e))),
-                    }
-                    Err(e) => (false, Some(format!("{:?}", e))),
-                }
-            }
-            "jpeg-decoder" => {
-                let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
-                match decoder.decode() {
-                    Ok(_) => (true, None),
-                    Err(e) => (false, Some(format!("{:?}", e))),
-                }
-            }
-            _ => (false, Some("Unknown decoder".to_string())),
         }
+        "mozjpeg" => match mozjpeg::Decompress::new_mem(jpeg_data) {
+            Ok(decoder) => match decoder.rgb() {
+                Ok(_) => (true, None),
+                Err(e) => (false, Some(format!("{:?}", e))),
+            },
+            Err(e) => (false, Some(format!("{:?}", e))),
+        },
+        "jpeg-decoder" => {
+            let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
+            match decoder.decode() {
+                Ok(_) => (true, None),
+                Err(e) => (false, Some(format!("{:?}", e))),
+            }
+        }
+        _ => (false, Some("Unknown decoder".to_string())),
     }));
 
     match result {
@@ -136,7 +130,11 @@ fn main() {
         .encode(rgb)
         .unwrap();
 
-    println!("Size: {} bytes, Scans: {}", baseline.len(), count_scans(&baseline));
+    println!(
+        "Size: {} bytes, Scans: {}",
+        baseline.len(),
+        count_scans(&baseline)
+    );
     for decoder_name in &decoders {
         let (ok, info) = test_decoder(decoder_name, &baseline);
         let status = if ok { "✓" } else { "✗" };
@@ -159,8 +157,12 @@ fn main() {
         .unwrap();
 
     let has_sa = has_successive_approximation(&prog_std);
-    println!("Size: {} bytes, Scans: {}, SA: {}",
-        prog_std.len(), count_scans(&prog_std), if has_sa { "YES" } else { "NO" });
+    println!(
+        "Size: {} bytes, Scans: {}, SA: {}",
+        prog_std.len(),
+        count_scans(&prog_std),
+        if has_sa { "YES" } else { "NO" }
+    );
 
     for decoder_name in &decoders {
         let (ok, info) = test_decoder(decoder_name, &prog_std);
@@ -184,8 +186,12 @@ fn main() {
         .unwrap();
 
     let has_sa = has_successive_approximation(&prog_opt);
-    println!("Size: {} bytes, Scans: {}, SA: {}",
-        prog_opt.len(), count_scans(&prog_opt), if has_sa { "YES" } else { "NO" });
+    println!(
+        "Size: {} bytes, Scans: {}, SA: {}",
+        prog_opt.len(),
+        count_scans(&prog_opt),
+        if has_sa { "YES" } else { "NO" }
+    );
 
     for decoder_name in &decoders {
         let (ok, info) = test_decoder(decoder_name, &prog_opt);
@@ -210,8 +216,12 @@ fn main() {
         .unwrap();
 
     let has_sa = has_successive_approximation(&xyb_prog);
-    println!("Size: {} bytes, Scans: {}, SA: {}",
-        xyb_prog.len(), count_scans(&xyb_prog), if has_sa { "YES" } else { "NO" });
+    println!(
+        "Size: {} bytes, Scans: {}, SA: {}",
+        xyb_prog.len(),
+        count_scans(&xyb_prog),
+        if has_sa { "YES" } else { "NO" }
+    );
 
     for decoder_name in &decoders {
         let (ok, info) = test_decoder(decoder_name, &xyb_prog);
@@ -225,7 +235,8 @@ fn main() {
     println!("─────────────────────────────────────────────────────────────\n");
 
     // Convert to grayscale
-    let gray: Vec<u8> = rgb.chunks(3)
+    let gray: Vec<u8> = rgb
+        .chunks(3)
         .map(|px| (0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32) as u8)
         .collect();
 
@@ -240,8 +251,12 @@ fn main() {
         .unwrap();
 
     let has_sa = has_successive_approximation(&gray_prog);
-    println!("Size: {} bytes, Scans: {}, SA: {}",
-        gray_prog.len(), count_scans(&gray_prog), if has_sa { "YES" } else { "NO" });
+    println!(
+        "Size: {} bytes, Scans: {}, SA: {}",
+        gray_prog.len(),
+        count_scans(&gray_prog),
+        if has_sa { "YES" } else { "NO" }
+    );
 
     for decoder_name in &decoders {
         let (ok, info) = test_decoder(decoder_name, &gray_prog);
@@ -256,16 +271,43 @@ fn main() {
     println!("═══════════════════════════════════════════════════════════════\n");
 
     println!("Scan counts:");
-    println!("  Baseline:            {} scan (expected: 1)", count_scans(&baseline));
-    println!("  Progressive+Std:     {} scans (expected: 10+ for Level 2)", count_scans(&prog_std));
+    println!(
+        "  Baseline:            {} scan (expected: 1)",
+        count_scans(&baseline)
+    );
+    println!(
+        "  Progressive+Std:     {} scans (expected: 10+ for Level 2)",
+        count_scans(&prog_std)
+    );
     println!("  Progressive+Opt:     {} scans", count_scans(&prog_opt));
     println!("  XYB+Progressive:     {} scans", count_scans(&xyb_prog));
     println!("  Gray+Progressive:    {} scans", count_scans(&gray_prog));
 
     println!("\nSuccessive Approximation detected:");
-    println!("  Progressive+Std:     {}", if has_successive_approximation(&prog_std) { "YES ✓" } else { "NO ✗" });
-    println!("  Progressive+Opt:     {}", if has_successive_approximation(&prog_opt) { "YES ✓" } else { "NO ✗" });
-    println!("  XYB+Progressive:     {}", if has_successive_approximation(&xyb_prog) { "YES ✓" } else { "NO ✗" });
+    println!(
+        "  Progressive+Std:     {}",
+        if has_successive_approximation(&prog_std) {
+            "YES ✓"
+        } else {
+            "NO ✗"
+        }
+    );
+    println!(
+        "  Progressive+Opt:     {}",
+        if has_successive_approximation(&prog_opt) {
+            "YES ✓"
+        } else {
+            "NO ✗"
+        }
+    );
+    println!(
+        "  XYB+Progressive:     {}",
+        if has_successive_approximation(&xyb_prog) {
+            "YES ✓"
+        } else {
+            "NO ✗"
+        }
+    );
 
     println!("\nExpected for Level 2 (3 components):");
     println!("  - 1 DC scan (interleaved) OR 3 DC scans (non-interleaved)");

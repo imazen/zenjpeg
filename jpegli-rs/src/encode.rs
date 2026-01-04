@@ -1427,6 +1427,21 @@ impl Encoder {
             &y_zero_bias,
             &b_zero_bias,
         );
+
+        // quantize_all_blocks_xyb_with_aq_simple produces blocks in MCU order:
+        // - x_blocks[mcu_idx*4..mcu_idx*4+4] = 4 X blocks for mcu_idx
+        // - y_blocks[mcu_idx*4..mcu_idx*4+4] = 4 Y blocks for mcu_idx
+        // - b_blocks[mcu_idx] = 1 B block for mcu_idx
+        //
+        // But for non-interleaved progressive scans, the JPEG decoder expects
+        // blocks in RASTER order (row by row), not MCU order.
+        // So we must reorder X and Y blocks from MCU order to raster order.
+        // B blocks don't need reordering since B has 1×1 sampling (1 block per MCU).
+        let blocks_x = (width + 7) / 8;
+        let blocks_y = (height + 7) / 8;
+        let x_blocks_raster = Self::reorder_mcu_to_raster(&x_blocks, blocks_x, blocks_y);
+        let y_blocks_raster = Self::reorder_mcu_to_raster(&y_blocks, blocks_x, blocks_y);
+
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
 
@@ -1436,27 +1451,36 @@ impl Encoder {
         // ========== PASS 1: TOKENIZATION ==========
         let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
 
-        for (scan_idx, scan) in scans.iter().enumerate() {
-            // Calculate context for this scan (same as YCbCr)
-            // Context determines which Huffman table histogram to use
+        for (_scan_idx, scan) in scans.iter().enumerate() {
+            // Calculate context for this scan
+            // XYB: all components share same Huffman table (context 0 for DC, 3 for AC)
+            // YCbCr: component-specific contexts for luma/chroma split
             let context = if scan.ss == 0 && scan.se == 0 {
-                // DC scan: use component index as context (0=X, 1=Y, 2=B)
-                scan.components[0]
+                // DC scan: XYB uses context 0 for all, YCbCr uses component index
+                if self.config.use_xyb {
+                    0 // All XYB components use DC context 0
+                } else {
+                    scan.components[0] // YCbCr: component-specific DC context
+                }
             } else {
-                // AC scan: use num_components + component_index as context
-                // This ensures each component gets its own AC Huffman table
-                (num_components as u8) + scan.components[0]
+                // AC scan: XYB uses context 3 for all, YCbCr uses component-specific
+                if self.config.use_xyb {
+                    num_components as u8 // All XYB components use AC context 3
+                } else {
+                    (num_components as u8) + scan.components[0] // YCbCr: offset contexts
+                }
             };
 
             if scan.ss == 0 && scan.se == 0 {
-                // DC scan
+                // DC scan - for XYB, DC scans are non-interleaved (one component per scan)
+                // Use raster-ordered blocks for X and Y (decoder expects raster order)
                 let blocks: Vec<&[[i16; DCT_BLOCK_SIZE]]> = scan
                     .components
                     .iter()
                     .map(|&c| match c {
-                        0 => x_blocks.as_slice(),
-                        1 => y_blocks.as_slice(),
-                        2 => b_blocks.as_slice(),
+                        0 => x_blocks_raster.as_slice(),
+                        1 => y_blocks_raster.as_slice(),
+                        2 => b_blocks.as_slice(), // B has 1×1 sampling, already in raster order
                         _ => &[][..],
                     })
                     .collect();
@@ -1464,11 +1488,11 @@ impl Encoder {
                     scan.components.iter().map(|&c| c as usize).collect();
                 token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
             } else if scan.ah == 0 {
-                // AC first scan
+                // AC first scan - use raster-ordered blocks for X and Y
                 let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
-                    0 => &x_blocks,
-                    1 => &y_blocks,
-                    2 => &b_blocks,
+                    0 => &x_blocks_raster,
+                    1 => &y_blocks_raster,
+                    2 => &b_blocks, // B has 1×1 sampling, already in raster order
                     _ => {
                         return Err(Error::InternalError {
                             reason: "Invalid component",
@@ -1477,11 +1501,11 @@ impl Encoder {
                 };
                 token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
             } else {
-                // AC refinement scan
+                // AC refinement scan - use raster-ordered blocks for X and Y
                 let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
-                    0 => &x_blocks,
-                    1 => &y_blocks,
-                    2 => &b_blocks,
+                    0 => &x_blocks_raster,
+                    1 => &y_blocks_raster,
+                    2 => &b_blocks, // B has 1×1 sampling, already in raster order
                     _ => {
                         return Err(Error::InternalError {
                             reason: "Invalid component",
@@ -1495,9 +1519,8 @@ impl Encoder {
         }
 
         // ========== GENERATE OPTIMIZED TABLES ==========
-        let (num_dc_tables, tables) = token_buffer.generate_luma_chroma_tables(num_components)?;
-        let opt_tables =
-            self.build_progressive_huffman_tables(&tables, num_components, num_dc_tables)?;
+        // XYB mode uses merged tables (all components share one DC and one AC table)
+        let opt_tables = token_buffer.generate_xyb_tables(num_components)?;
 
         // ========== WRITE JPEG STRUCTURE ==========
         self.write_header_xyb(&mut output)?;
@@ -2330,29 +2353,45 @@ impl Encoder {
                 reason: "Scan info not found",
             })?;
 
+        // For XYB mode, all components use table 0 (no luma/chroma split)
+        // For YCbCr mode, component 0 uses table 0, components 1-2 use table 1
+        let use_xyb = self.config.use_xyb;
+
         if scan.ss == 0 && scan.se == 0 {
             // DC scan: replay DC tokens
             let tokens = token_buffer.scan_tokens(scan_idx);
             // Create context map for DC (component index -> table index)
             let context_to_table: Vec<usize> = (0..4)
-                .map(|c| if is_color && c > 0 { 1 } else { 0 })
+                .map(|c| {
+                    if use_xyb {
+                        0 // XYB: all components use table 0
+                    } else if is_color && c > 0 {
+                        1 // YCbCr: chroma uses table 1
+                    } else {
+                        0 // YCbCr: luma uses table 0
+                    }
+                })
                 .collect();
             encoder.write_dc_tokens(tokens, &context_to_table)?;
         } else if scan.ah == 0 {
             // AC first scan: replay AC tokens
             let tokens = token_buffer.scan_tokens(scan_idx);
-            let table_idx = if is_color && scan.components[0] > 0 {
-                1
+            let table_idx = if use_xyb {
+                0 // XYB: all components use table 0
+            } else if is_color && scan.components[0] > 0 {
+                1 // YCbCr: chroma uses table 1
             } else {
-                0
+                0 // YCbCr: luma uses table 0
             };
             encoder.write_ac_first_tokens(tokens, table_idx)?;
         } else {
             // AC refinement scan: replay refinement tokens
-            let table_idx = if is_color && scan.components[0] > 0 {
-                1
+            let table_idx = if use_xyb {
+                0 // XYB: all components use table 0
+            } else if is_color && scan.components[0] > 0 {
+                1 // YCbCr: chroma uses table 1
             } else {
-                0
+                0 // YCbCr: luma uses table 0
             };
             encoder.write_ac_refinement_tokens(scan_info, table_idx)?;
         }
@@ -2482,10 +2521,11 @@ impl Encoder {
             output.push(comp_id);
 
             // DC/AC table selectors
-            // Both XYB and YCbCr use luma/chroma split:
-            //   Component 0 (X/Y) uses table 0
-            //   Components 1, 2 (Y,B / Cb,Cr) use table 1
-            let table_selector = if is_color && comp_idx > 0 {
+            // XYB: all components use table 0 (only write 1 DC + 1 AC table)
+            // YCbCr: luma uses table 0, chroma uses table 1
+            let table_selector = if self.config.use_xyb {
+                0x00 // DC table 0, AC table 0 for all XYB components
+            } else if is_color && comp_idx > 0 {
                 0x11 // DC table 1, AC table 1 for chroma (components 1, 2)
             } else {
                 0x00 // DC table 0, AC table 0 for luma (component 0)
@@ -4167,6 +4207,55 @@ impl Encoder {
         }
 
         Ok(encoder.finish())
+    }
+
+    /// Reorders blocks from MCU order to raster order for XYB progressive encoding.
+    ///
+    /// For non-interleaved progressive scans, the JPEG decoder expects blocks
+    /// in raster order (row by row), not MCU order.
+    ///
+    /// XYB quantization produces blocks in MCU order:
+    /// - MCU 0: (0,0), (1,0), (0,1), (1,1) at indices 0,1,2,3
+    /// - MCU 1: (2,0), (3,0), (2,1), (3,1) at indices 4,5,6,7
+    ///
+    /// But progressive scans need raster order:
+    /// - Row 0: (0,0), (1,0), (2,0), (3,0), ... at indices 0,1,2,3,...
+    /// - Row 1: (0,1), (1,1), (2,1), (3,1), ... at indices 8,9,10,11,...
+    fn reorder_mcu_to_raster(
+        mcu_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        blocks_x: usize,
+        blocks_y: usize,
+    ) -> Vec<[i16; DCT_BLOCK_SIZE]> {
+        let total_blocks = blocks_x * blocks_y;
+        let mut raster = vec![[0i16; DCT_BLOCK_SIZE]; total_blocks];
+
+        let mcu_cols = (blocks_x + 1) / 2;
+
+        // Iterate through MCU-ordered blocks and place in raster order
+        for (mcu_idx, chunk) in mcu_blocks.chunks(4).enumerate() {
+            let mcu_x = mcu_idx % mcu_cols;
+            let mcu_y = mcu_idx / mcu_cols;
+
+            // Within each MCU, blocks are in order: (0,0), (1,0), (0,1), (1,1)
+            // which corresponds to positions:
+            // [0]: (mcu_x*2 + 0, mcu_y*2 + 0) = top-left
+            // [1]: (mcu_x*2 + 1, mcu_y*2 + 0) = top-right
+            // [2]: (mcu_x*2 + 0, mcu_y*2 + 1) = bottom-left
+            // [3]: (mcu_x*2 + 1, mcu_y*2 + 1) = bottom-right
+            for (i, block) in chunk.iter().enumerate() {
+                let dx = i % 2;
+                let dy = i / 2;
+                let bx = mcu_x * 2 + dx;
+                let by = mcu_y * 2 + dy;
+
+                if bx < blocks_x && by < blocks_y {
+                    let raster_idx = by * blocks_x + bx;
+                    raster[raster_idx] = *block;
+                }
+            }
+        }
+
+        raster
     }
 
     /// Collects symbol frequencies from a block for Huffman optimization.

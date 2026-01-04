@@ -114,8 +114,12 @@ fn main() {
 
         // Check Kraft inequality
         let (kraft_ok, sum, max) = check_kraft_inequality(bits);
-        println!("  Kraft inequality: sum={}, max={}, valid={}",
-            sum, max, if kraft_ok { "✓" } else { "✗" });
+        println!(
+            "  Kraft inequality: sum={}, max={}, valid={}",
+            sum,
+            max,
+            if kraft_ok { "✓" } else { "✗" }
+        );
 
         if !kraft_ok {
             all_valid = false;
@@ -124,7 +128,11 @@ fn main() {
 
         // Check total symbols
         let total_symbols: usize = bits.iter().map(|&b| b as usize).sum();
-        println!("  Total symbols: {} (values.len={})", total_symbols, values.len());
+        println!(
+            "  Total symbols: {} (values.len={})",
+            total_symbols,
+            values.len()
+        );
 
         if total_symbols != values.len() {
             all_valid = false;
@@ -143,8 +151,10 @@ fn main() {
             let max_at_length = 1 << length; // 2^length
             if count as u32 > max_at_length {
                 all_valid = false;
-                println!("  ERROR: {} codes at length {} (max possible: {})",
-                    count, length, max_at_length);
+                println!(
+                    "  ERROR: {} codes at length {} (max possible: {})",
+                    count, length, max_at_length
+                );
             }
         }
 
@@ -215,8 +225,12 @@ fn main() {
                 println!("Table #{}: {} (class={}, id={})", i + 1, table_type, tc, th);
 
                 let (kraft_ok, sum, max) = check_kraft_inequality(bits);
-                println!("  Kraft inequality: sum={}, max={}, valid={}",
-                    sum, max, if kraft_ok { "✓" } else { "✗" });
+                println!(
+                    "  Kraft inequality: sum={}, max={}, valid={}",
+                    sum,
+                    max,
+                    if kraft_ok { "✓" } else { "✗" }
+                );
 
                 print!("  Bit lengths: ");
                 for &b in bits.iter() {

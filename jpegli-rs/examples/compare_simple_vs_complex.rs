@@ -86,7 +86,10 @@ fn main() {
         let sum = kraft_sum(bits);
         let total: usize = bits.iter().map(|&b| b as usize).sum();
 
-        println!("{} (id={}): {} symbols, Kraft sum={}", table_type, th, total, sum);
+        println!(
+            "{} (id={}): {} symbols, Kraft sum={}",
+            table_type, th, total, sum
+        );
         print!("  Bits: ");
         for &b in bits.iter() {
             print!("{} ", b);
@@ -94,8 +97,10 @@ fn main() {
         println!();
     }
 
-    println!("\n=== FULL IMAGE ({}x{}, complex) - zune-jpeg: FAIL ===\n",
-        info.width, info.height);
+    println!(
+        "\n=== FULL IMAGE ({}x{}, complex) - zune-jpeg: FAIL ===\n",
+        info.width, info.height
+    );
     let full_opt = Encoder::new()
         .width(info.width)
         .height(info.height)
@@ -111,7 +116,10 @@ fn main() {
         let sum = kraft_sum(bits);
         let total: usize = bits.iter().map(|&b| b as usize).sum();
 
-        println!("{} (id={}): {} symbols, Kraft sum={}", table_type, th, total, sum);
+        println!(
+            "{} (id={}): {} symbols, Kraft sum={}",
+            table_type, th, total, sum
+        );
         print!("  Bits: ");
         for &b in bits.iter() {
             print!("{} ", b);

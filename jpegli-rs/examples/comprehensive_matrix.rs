@@ -33,12 +33,24 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 fn compute_ssim2(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     let orig_f32: Vec<[f32; 3]> = orig
         .chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
 
     let dec_f32: Vec<[f32; 3]> = decoded
         .chunks(3)
-        .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
         .collect();
 
     let orig_rgb = Rgb::new(
@@ -194,7 +206,13 @@ fn main() {
                 for &(use_xyb, color_label) in &colors {
                     for &(optimize, huff_label) in &huffmans {
                         let rust_result = test_rust(
-                            &rgb, *width, *height, progressive, use_xyb, optimize, quality,
+                            &rgb,
+                            *width,
+                            *height,
+                            progressive,
+                            use_xyb,
+                            optimize,
+                            quality,
                         );
 
                         let cpp_result = test_cpp(
@@ -215,8 +233,16 @@ fn main() {
                                 let ssim2_diff = r.ssim2 - c.ssim2;
 
                                 // Flag issues
-                                let size_flag = if size_diff.abs() > 20.0 { "⚠️ " } else { "" };
-                                let ssim_flag = if ssim2_diff.abs() > 2.0 { "⚠️ " } else { "" };
+                                let size_flag = if size_diff.abs() > 20.0 {
+                                    "⚠️ "
+                                } else {
+                                    ""
+                                };
+                                let ssim_flag = if ssim2_diff.abs() > 2.0 {
+                                    "⚠️ "
+                                } else {
+                                    ""
+                                };
 
                                 println!(
                                     "{:10} | {:6} | {:5} | {:8} | {:4} | {:14} {:14.2} | {:14} {:14.2} | {:>+7.1}% {} | {:>+6.2} {}",

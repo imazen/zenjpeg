@@ -117,8 +117,12 @@ fn test_config(
 
     Command::new(&cjpegli).args(&prog_args).output().ok();
 
-    let cpp_base_size = fs::metadata("/tmp/cpp_base.jpg").map(|m| m.len() as usize).ok();
-    let cpp_prog_size = fs::metadata("/tmp/cpp_prog.jpg").map(|m| m.len() as usize).ok();
+    let cpp_base_size = fs::metadata("/tmp/cpp_base.jpg")
+        .map(|m| m.len() as usize)
+        .ok();
+    let cpp_prog_size = fs::metadata("/tmp/cpp_prog.jpg")
+        .map(|m| m.len() as usize)
+        .ok();
 
     if let (Some(cpp_base), Some(cpp_prog)) = (cpp_base_size, cpp_prog_size) {
         let cpp_diff = cpp_prog as i32 - cpp_base as i32;

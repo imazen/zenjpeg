@@ -11,19 +11,16 @@ fn main() {
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 3;
-            data[idx] = ((x * 255) / width) as u8;     // R gradient
+            data[idx] = ((x * 255) / width) as u8; // R gradient
             data[idx + 1] = ((y * 255) / height) as u8; // G gradient
-            data[idx + 2] = 128;                        // B constant
+            data[idx + 2] = 128; // B constant
         }
     }
 
     println!("Test image: {}x{} gradient\n", width, height);
 
     // Test modes
-    let modes = [
-        ("Baseline", false),
-        ("Progressive", true),
-    ];
+    let modes = [("Baseline", false), ("Progressive", true)];
 
     for (mode_name, progressive) in &modes {
         println!("=== {} Mode ===", mode_name);
@@ -45,7 +42,10 @@ fn main() {
             .unwrap();
 
         println!("   Rust XYB encoded: {} bytes", rust_xyb.len());
-        let rust_path = format!("/tmp/xyb_matrix_rust_{}.jpg", if *progressive { "prog" } else { "base" });
+        let rust_path = format!(
+            "/tmp/xyb_matrix_rust_{}.jpg",
+            if *progressive { "prog" } else { "base" }
+        );
         std::fs::write(&rust_path, &rust_xyb).unwrap();
 
         // 2. Rust YCbCr encoder (baseline)
@@ -75,8 +75,10 @@ fn main() {
                 "/tmp/test_input.ppm",
                 "/tmp/xyb_matrix_cpp.jpg",
                 "--xyb",
-                "-p", if *progressive { "2" } else { "0" },
-                "-q", "90",
+                "-p",
+                if *progressive { "2" } else { "0" },
+                "-q",
+                "90",
             ])
             .output();
 

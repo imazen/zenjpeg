@@ -45,7 +45,10 @@ fn analyze_jpeg(data: &[u8], label: &str) {
                     let scan_start = i + 2 + length;
                     let mut scan_end = scan_start;
                     while scan_end + 1 < data.len() {
-                        if data[scan_end] == 0xFF && data[scan_end + 1] != 0x00 && data[scan_end + 1] != 0xFF {
+                        if data[scan_end] == 0xFF
+                            && data[scan_end + 1] != 0x00
+                            && data[scan_end + 1] != 0xFF
+                        {
                             break;
                         }
                         scan_end += 1;
@@ -74,10 +77,20 @@ fn analyze_jpeg(data: &[u8], label: &str) {
                         println!();
 
                         // Count patterns
-                        let zeros = data[scan_start..scan_end].iter().filter(|&&b| b == 0x00).count();
-                        let ffs = data[scan_start..scan_end].iter().filter(|&&b| b == 0xFF).count();
-                        println!("      Zeros: {}, 0xFF: {}, Others: {}",
-                                 zeros, ffs, scan_size - zeros - ffs);
+                        let zeros = data[scan_start..scan_end]
+                            .iter()
+                            .filter(|&&b| b == 0x00)
+                            .count();
+                        let ffs = data[scan_start..scan_end]
+                            .iter()
+                            .filter(|&&b| b == 0xFF)
+                            .count();
+                        println!(
+                            "      Zeros: {}, 0xFF: {}, Others: {}",
+                            zeros,
+                            ffs,
+                            scan_size - zeros - ffs
+                        );
                     }
 
                     i = scan_end;
@@ -129,7 +142,10 @@ fn analyze_jpeg(data: &[u8], label: &str) {
     }
 
     println!("\nSummary:");
-    println!("  DHT tables: {} ({} bytes total)", dht_count, dht_total_size);
+    println!(
+        "  DHT tables: {} ({} bytes total)",
+        dht_count, dht_total_size
+    );
     println!("  Scans: {}", scan_num);
 }
 

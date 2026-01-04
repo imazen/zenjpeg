@@ -45,7 +45,8 @@ fn main() {
         let mut zune_baseline = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&cpp_baseline));
         let zune_baseline_pixels = zune_baseline.decode().unwrap();
 
-        let baseline_diff = compare_pixels(&jpegli_baseline.data, &zune_baseline_pixels, "Baseline");
+        let baseline_diff =
+            compare_pixels(&jpegli_baseline.data, &zune_baseline_pixels, "Baseline");
 
         // Test 2: C++ progressive JPEG
         println!("\n=== C++ Progressive JPEG ===");
@@ -59,10 +60,15 @@ fn main() {
         println!("Size: {} bytes", cpp_progressive.len());
 
         let jpegli_progressive = Decoder::new().decode(&cpp_progressive).unwrap();
-        let mut zune_progressive = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&cpp_progressive));
+        let mut zune_progressive =
+            zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&cpp_progressive));
         let zune_progressive_pixels = zune_progressive.decode().unwrap();
 
-        let progressive_diff = compare_pixels(&jpegli_progressive.data, &zune_progressive_pixels, "Progressive");
+        let progressive_diff = compare_pixels(
+            &jpegli_progressive.data,
+            &zune_progressive_pixels,
+            "Progressive",
+        );
 
         // Test 3: Rust baseline
         println!("\n=== Rust Baseline JPEG ===");
@@ -77,16 +83,30 @@ fn main() {
         println!("Size: {} bytes", rust_baseline.len());
 
         let jpegli_rust_baseline = Decoder::new().decode(&rust_baseline).unwrap();
-        let mut zune_rust_baseline = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&rust_baseline));
+        let mut zune_rust_baseline =
+            zune_jpeg::JpegDecoder::new(std::io::Cursor::new(&rust_baseline));
         let zune_rust_baseline_pixels = zune_rust_baseline.decode().unwrap();
 
-        let rust_baseline_diff = compare_pixels(&jpegli_rust_baseline.data, &zune_rust_baseline_pixels, "Rust Baseline");
+        let rust_baseline_diff = compare_pixels(
+            &jpegli_rust_baseline.data,
+            &zune_rust_baseline_pixels,
+            "Rust Baseline",
+        );
 
         // Summary
         println!("\n=== Summary ===");
-        println!("C++ Baseline:    max_diff={}, differ={:.1}%", baseline_diff.0, baseline_diff.1);
-        println!("C++ Progressive: max_diff={}, differ={:.1}%", progressive_diff.0, progressive_diff.1);
-        println!("Rust Baseline:   max_diff={}, differ={:.1}%", rust_baseline_diff.0, rust_baseline_diff.1);
+        println!(
+            "C++ Baseline:    max_diff={}, differ={:.1}%",
+            baseline_diff.0, baseline_diff.1
+        );
+        println!(
+            "C++ Progressive: max_diff={}, differ={:.1}%",
+            progressive_diff.0, progressive_diff.1
+        );
+        println!(
+            "Rust Baseline:   max_diff={}, differ={:.1}%",
+            rust_baseline_diff.0, rust_baseline_diff.1
+        );
 
         if baseline_diff.0 == 0 {
             println!("\n✓ Baseline decoding is pixel-perfect!");
@@ -109,8 +129,14 @@ fn compare_pixels(jpegli: &[u8], zune: &[u8], label: &str) -> (i16, f64) {
     }
 
     let pct = (diff_count as f64 / jpegli.len() as f64) * 100.0;
-    println!("{}: max_diff={}, pixels_differ={}/{} ({:.1}%)",
-        label, max_diff, diff_count, jpegli.len(), pct);
+    println!(
+        "{}: max_diff={}, pixels_differ={}/{} ({:.1}%)",
+        label,
+        max_diff,
+        diff_count,
+        jpegli.len(),
+        pct
+    );
 
     (max_diff, pct)
 }

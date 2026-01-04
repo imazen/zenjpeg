@@ -66,7 +66,10 @@ fn main() {
     println!("\n=== Test 3: Our own decoder ===");
     match jpegli::Decoder::new().decode(&jpeg_opt) {
         Ok(decoded) => {
-            println!("✓ Optimized/jpegli-rs: SUCCESS ({}x{})", decoded.width, decoded.height);
+            println!(
+                "✓ Optimized/jpegli-rs: SUCCESS ({}x{})",
+                decoded.width, decoded.height
+            );
         }
         Err(e) => {
             println!("✗ Optimized/jpegli-rs: FAILED - {:?}", e);

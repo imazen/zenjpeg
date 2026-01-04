@@ -14,7 +14,10 @@ fn benchmark_decoder(name: &str, jpeg_data: &[u8], iterations: usize) -> Option<
                 total_pixels += decoded.data.len();
             }
             let elapsed = start.elapsed();
-            Some((elapsed.as_secs_f64() / iterations as f64, total_pixels / iterations))
+            Some((
+                elapsed.as_secs_f64() / iterations as f64,
+                total_pixels / iterations,
+            ))
         }
         "zune-jpeg" => {
             let start = Instant::now();
@@ -25,7 +28,10 @@ fn benchmark_decoder(name: &str, jpeg_data: &[u8], iterations: usize) -> Option<
                 total_pixels += pixels.len();
             }
             let elapsed = start.elapsed();
-            Some((elapsed.as_secs_f64() / iterations as f64, total_pixels / iterations))
+            Some((
+                elapsed.as_secs_f64() / iterations as f64,
+                total_pixels / iterations,
+            ))
         }
         "mozjpeg" => {
             let start = Instant::now();
@@ -36,7 +42,10 @@ fn benchmark_decoder(name: &str, jpeg_data: &[u8], iterations: usize) -> Option<
                 total_pixels += image.width() * image.height() * 3;
             }
             let elapsed = start.elapsed();
-            Some((elapsed.as_secs_f64() / iterations as f64, total_pixels / iterations))
+            Some((
+                elapsed.as_secs_f64() / iterations as f64,
+                total_pixels / iterations,
+            ))
         }
         "jpeg-decoder" => {
             let start = Instant::now();
@@ -47,7 +56,10 @@ fn benchmark_decoder(name: &str, jpeg_data: &[u8], iterations: usize) -> Option<
                 total_pixels += pixels.len();
             }
             let elapsed = start.elapsed();
-            Some((elapsed.as_secs_f64() / iterations as f64, total_pixels / iterations))
+            Some((
+                elapsed.as_secs_f64() / iterations as f64,
+                total_pixels / iterations,
+            ))
         }
         _ => None,
     }
@@ -70,7 +82,12 @@ fn main() {
     let info = reader.next_frame(&mut buf).unwrap();
     let rgb = &buf[..info.buffer_size()];
 
-    println!("Test image: {}x{} RGB ({} bytes)\n", info.width, info.height, rgb.len());
+    println!(
+        "Test image: {}x{} RGB ({} bytes)\n",
+        info.width,
+        info.height,
+        rgb.len()
+    );
 
     // Encode with standard Huffman
     let jpeg_std = Encoder::new()
@@ -95,23 +112,41 @@ fn main() {
     let iterations = 100;
     let decoders = ["jpegli-rs", "zune-jpeg", "mozjpeg", "jpeg-decoder"];
 
-    println!("=== Standard Huffman ({} bytes, {} iterations) ===\n", jpeg_std.len(), iterations);
+    println!(
+        "=== Standard Huffman ({} bytes, {} iterations) ===\n",
+        jpeg_std.len(),
+        iterations
+    );
     for decoder_name in &decoders {
         if let Some((time, pixel_count)) = benchmark_decoder(decoder_name, &jpeg_std, iterations) {
             let throughput = format_throughput(rgb.len(), time);
-            println!("{:15} {:8.3} ms/decode  {}  ({} pixels)",
-                decoder_name, time * 1000.0, throughput, pixel_count);
+            println!(
+                "{:15} {:8.3} ms/decode  {}  ({} pixels)",
+                decoder_name,
+                time * 1000.0,
+                throughput,
+                pixel_count
+            );
         } else {
             println!("{:15} FAILED", decoder_name);
         }
     }
 
-    println!("\n=== Optimized Huffman ({} bytes, {} iterations) ===\n", jpeg_opt.len(), iterations);
+    println!(
+        "\n=== Optimized Huffman ({} bytes, {} iterations) ===\n",
+        jpeg_opt.len(),
+        iterations
+    );
     for decoder_name in &decoders {
         if let Some((time, pixel_count)) = benchmark_decoder(decoder_name, &jpeg_opt, iterations) {
             let throughput = format_throughput(rgb.len(), time);
-            println!("{:15} {:8.3} ms/decode  {}  ({} pixels)",
-                decoder_name, time * 1000.0, throughput, pixel_count);
+            println!(
+                "{:15} {:8.3} ms/decode  {}  ({} pixels)",
+                decoder_name,
+                time * 1000.0,
+                throughput,
+                pixel_count
+            );
         } else {
             println!("{:15} FAILED", decoder_name);
         }
@@ -130,6 +165,15 @@ fn main() {
     let fastest_time = times[0].1;
     for (name, time) in &times {
         let relative = time / fastest_time;
-        println!("{:15} {:5.2}x {}", name, relative, if *name == times[0].0 { "← fastest" } else { "" });
+        println!(
+            "{:15} {:5.2}x {}",
+            name,
+            relative,
+            if *name == times[0].0 {
+                "← fastest"
+            } else {
+                ""
+            }
+        );
     }
 }

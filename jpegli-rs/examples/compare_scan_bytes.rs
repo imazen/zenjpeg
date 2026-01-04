@@ -40,7 +40,10 @@ fn extract_scan(data: &[u8], target_scan: usize) -> Vec<u8> {
                 let mut scan_end = scan_start;
 
                 while scan_end + 1 < data.len() {
-                    if data[scan_end] == 0xFF && data[scan_end + 1] != 0x00 && data[scan_end + 1] != 0xFF {
+                    if data[scan_end] == 0xFF
+                        && data[scan_end + 1] != 0x00
+                        && data[scan_end + 1] != 0xFF
+                    {
                         break;
                     }
                     scan_end += 1;

@@ -8,9 +8,9 @@ fn main() {
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 3;
-            data[idx] = ((x * 255) / width) as u8;     // R gradient
+            data[idx] = ((x * 255) / width) as u8; // R gradient
             data[idx + 1] = ((y * 255) / height) as u8; // G gradient
-            data[idx + 2] = 128;                        // B constant
+            data[idx + 2] = 128; // B constant
         }
     }
 
@@ -42,12 +42,16 @@ fn main() {
 
     println!("Without optimization: {} bytes", jpeg_no_opt.len());
     println!("With optimization:    {} bytes", jpeg_opt.len());
-    println!("Reduction:            {} bytes ({:.1}%)",
+    println!(
+        "Reduction:            {} bytes ({:.1}%)",
         jpeg_no_opt.len() as i32 - jpeg_opt.len() as i32,
-        100.0 * (1.0 - jpeg_opt.len() as f64 / jpeg_no_opt.len() as f64));
+        100.0 * (1.0 - jpeg_opt.len() as f64 / jpeg_no_opt.len() as f64)
+    );
 
     println!("\nC++ reference (from earlier): 1537 bytes");
-    println!("Rust optimized gap:           {} bytes ({:.1}× larger)",
+    println!(
+        "Rust optimized gap:           {} bytes ({:.1}× larger)",
         jpeg_opt.len() as i32 - 1537,
-        jpeg_opt.len() as f64 / 1537.0);
+        jpeg_opt.len() as f64 / 1537.0
+    );
 }

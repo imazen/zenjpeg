@@ -8,9 +8,9 @@ fn main() {
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 3;
-            data[idx] = ((x * 255) / width) as u8;     // R gradient
+            data[idx] = ((x * 255) / width) as u8; // R gradient
             data[idx + 1] = ((y * 255) / height) as u8; // G gradient
-            data[idx + 2] = 128;                        // B constant
+            data[idx + 2] = 128; // B constant
         }
     }
 
@@ -57,7 +57,10 @@ fn analyze_scans(data: &[u8]) {
             let scan_start = i + 2 + length;
             let mut scan_end = scan_start;
             while scan_end + 1 < data.len() {
-                if data[scan_end] == 0xFF && data[scan_end + 1] != 0x00 && data[scan_end + 1] != 0xFF {
+                if data[scan_end] == 0xFF
+                    && data[scan_end + 1] != 0x00
+                    && data[scan_end + 1] != 0xFF
+                {
                     break;
                 }
                 scan_end += 1;
@@ -66,14 +69,12 @@ fn analyze_scans(data: &[u8]) {
 
             // Show ALL scans for AC coefficients (Ss >= 1)
             if ss >= 1 {
-                let scan_type = if ah == 0 {
-                    "First"
-                } else {
-                    "Refine"
-                };
+                let scan_type = if ah == 0 { "First" } else { "Refine" };
 
-                println!("Scan #{}: {} Ss={}, Se={}, Ah={}, Al={} → {} bytes",
-                    scan_num, scan_type, ss, se, ah, al, scan_size);
+                println!(
+                    "Scan #{}: {} Ss={}, Se={}, Ah={}, Al={} → {} bytes",
+                    scan_num, scan_type, ss, se, ah, al, scan_size
+                );
 
                 if scan_size > 100 {
                     println!("  ⚠️  HUGE SCAN! Expected ~2-30 bytes for gradient");
@@ -84,7 +85,10 @@ fn analyze_scans(data: &[u8]) {
                     let ffs = scan_data.iter().filter(|&&b| b == 0xFF).count();
                     let others = scan_size - zeros - ffs;
 
-                    println!("  Byte distribution: {} zeros, {} 0xFF, {} others", zeros, ffs, others);
+                    println!(
+                        "  Byte distribution: {} zeros, {} 0xFF, {} others",
+                        zeros, ffs, others
+                    );
 
                     // Show first 64 bytes
                     println!("  First 64 bytes:");

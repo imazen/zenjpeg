@@ -32,7 +32,12 @@ fn analyze_jpeg(path: &str) {
                 0xC0 | 0xC2 => {
                     // SOF
                     let length = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
-                    println!("SOF{} at {}: length {}", if marker == 0xC0 { "0" } else { "2" }, i, length);
+                    println!(
+                        "SOF{} at {}: length {}",
+                        if marker == 0xC0 { "0" } else { "2" },
+                        i,
+                        length
+                    );
                     i += 2 + length;
                 }
                 0xC4 => {
@@ -55,7 +60,10 @@ fn analyze_jpeg(path: &str) {
                     let num_components = data[i + 4];
                     sos_count += 1;
 
-                    println!("\nSOS #{} at {}: {} component(s)", sos_count, i, num_components);
+                    println!(
+                        "\nSOS #{} at {}: {} component(s)",
+                        sos_count, i, num_components
+                    );
 
                     let mut offset = i + 5;
                     for comp in 0..num_components {
@@ -63,8 +71,10 @@ fn analyze_jpeg(path: &str) {
                         let tables = data[offset + 1];
                         let dc_table = tables >> 4;
                         let ac_table = tables & 0x0F;
-                        println!("  Component {}: ID={} ('{}'), DC={}, AC={}",
-                            comp, comp_id, comp_id as char, dc_table, ac_table);
+                        println!(
+                            "  Component {}: ID={} ('{}'), DC={}, AC={}",
+                            comp, comp_id, comp_id as char, dc_table, ac_table
+                        );
                         offset += 2;
                     }
 
@@ -80,7 +90,10 @@ fn analyze_jpeg(path: &str) {
                     let scan_start = i + 2 + length;
                     let mut scan_end = scan_start;
                     while scan_end + 1 < data.len() {
-                        if data[scan_end] == 0xFF && data[scan_end + 1] != 0x00 && data[scan_end + 1] != 0xFF {
+                        if data[scan_end] == 0xFF
+                            && data[scan_end + 1] != 0x00
+                            && data[scan_end + 1] != 0xFF
+                        {
                             break;
                         }
                         scan_end += 1;
@@ -115,7 +128,13 @@ fn analyze_jpeg(path: &str) {
     println!("DHT markers: {}", dht_count);
     println!("DQT markers: {}", dqt_count);
     println!("Scans: {}", sos_count);
-    println!("Total scan data: {} bytes", scan_sizes.iter().sum::<usize>());
-    println!("Average scan size: {:.1} bytes", scan_sizes.iter().sum::<usize>() as f64 / scan_sizes.len() as f64);
+    println!(
+        "Total scan data: {} bytes",
+        scan_sizes.iter().sum::<usize>()
+    );
+    println!(
+        "Average scan size: {:.1} bytes",
+        scan_sizes.iter().sum::<usize>() as f64 / scan_sizes.len() as f64
+    );
     println!("Scan sizes: {:?}", scan_sizes);
 }

@@ -96,24 +96,30 @@ fn main() {
     println!("Testing C++ cjpegli defaults...");
 
     // Write test input
-    std::fs::write("/tmp/test_baseline_prog.ppm", format!(
-        "P6\n{} {}\n255\n",
-        width, height
-    ).as_bytes()).unwrap();
-    std::fs::write("/tmp/test_baseline_prog.ppm",
-        format!("P6\n{} {}\n255\n", width, height).into_bytes()
-        .into_iter()
-        .chain(data.iter().copied())
-        .collect::<Vec<u8>>()
-    ).unwrap();
+    std::fs::write(
+        "/tmp/test_baseline_prog.ppm",
+        format!("P6\n{} {}\n255\n", width, height).as_bytes(),
+    )
+    .unwrap();
+    std::fs::write(
+        "/tmp/test_baseline_prog.ppm",
+        format!("P6\n{} {}\n255\n", width, height)
+            .into_bytes()
+            .into_iter()
+            .chain(data.iter().copied())
+            .collect::<Vec<u8>>(),
+    )
+    .unwrap();
 
     // Test C++ baseline (progressive level 0)
     std::process::Command::new("internal/jpegli-cpp/build/tools/cjpegli")
         .args(&[
             "/tmp/test_baseline_prog.ppm",
             "/tmp/cpp_baseline.jpg",
-            "-p", "0",  // Baseline
-            "-q", "90",
+            "-p",
+            "0", // Baseline
+            "-q",
+            "90",
         ])
         .output()
         .ok();
@@ -123,15 +129,17 @@ fn main() {
         .args(&[
             "/tmp/test_baseline_prog.ppm",
             "/tmp/cpp_progressive.jpg",
-            "-p", "2",  // Progressive level 2 (default)
-            "-q", "90",
+            "-p",
+            "2", // Progressive level 2 (default)
+            "-q",
+            "90",
         ])
         .output()
         .ok();
 
     if let (Ok(baseline_meta), Ok(prog_meta)) = (
         std::fs::metadata("/tmp/cpp_baseline.jpg"),
-        std::fs::metadata("/tmp/cpp_progressive.jpg")
+        std::fs::metadata("/tmp/cpp_progressive.jpg"),
     ) {
         let baseline_size = baseline_meta.len();
         let prog_size = prog_meta.len();

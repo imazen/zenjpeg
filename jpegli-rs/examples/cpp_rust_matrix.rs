@@ -140,11 +140,7 @@ fn encode_cpp(ppm_path: &str, config: Config) -> Option<Vec<u8>> {
 
     let output_path = format!(
         "/tmp/cpp_{}_{}_{}_{}_q{}.jpg",
-        config.width,
-        config.mode,
-        config.color,
-        config.huffman,
-        config.quality
+        config.width, config.mode, config.color, config.huffman, config.quality
     );
 
     let mut args = vec![ppm_path.to_string(), output_path.clone()];
@@ -170,13 +166,13 @@ fn encode_cpp(ppm_path: &str, config: Config) -> Option<Vec<u8>> {
     args.push("-q".to_string());
     args.push(config.quality.to_string());
 
-    let output = Command::new(cjpegli_path)
-        .args(&args)
-        .output()
-        .ok()?;
+    let output = Command::new(cjpegli_path).args(&args).output().ok()?;
 
     if !output.status.success() {
-        eprintln!("C++ encoding failed: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "C++ encoding failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return None;
     }
 
@@ -213,7 +209,10 @@ fn run_comparison(rgb: &[u8], config: Config, label: &str) -> Option<Result> {
         100.0 * (rust_size as f64 - cpp_size as f64) / cpp_size as f64
     );
 
-    Some(Result { rust_size, cpp_size })
+    Some(Result {
+        rust_size,
+        cpp_size,
+    })
 }
 
 fn main() {
@@ -297,7 +296,9 @@ fn main() {
     println!("\n{}", "=".repeat(140));
     println!("KEY INSIGHTS TO LOOK FOR:");
     println!("1. When is progressive SMALLER than baseline? (should be on larger, complex images)");
-    println!("2. How much overhead does XYB ICC profile add? (~720 bytes - matters for small images)");
+    println!(
+        "2. How much overhead does XYB ICC profile add? (~720 bytes - matters for small images)"
+    );
     println!("3. How much do progressive scan headers cost? (matters for small images)");
     println!("4. How does Rust compare to C++ across this matrix?");
     println!("5. Is Huffman optimization beneficial for both baseline and progressive?");
