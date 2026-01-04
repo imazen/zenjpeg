@@ -69,6 +69,8 @@ pub mod entropy;
 #[doc(hidden)]
 pub mod huffman;
 #[doc(hidden)]
+pub mod huffman_classic;
+#[doc(hidden)]
 pub mod huffman_opt;
 #[doc(hidden)]
 pub mod icc;
