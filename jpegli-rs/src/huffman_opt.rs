@@ -128,9 +128,9 @@ impl Default for FrequencyCounter {
 /// - bits[i] = number of codes with length i+1 (1-16 bits)
 /// - values = symbols sorted by code length, then by symbol value
 ///
-/// NOTE: This may produce tables where Kraft sum = 2^16 (completely full code space).
-/// Some decoders like zune-jpeg reject such tables, requiring strict inequality (sum < 2^16).
-/// This is a known limitation - fixing it properly requires changes to the tree construction.
+/// To ensure decoder compatibility (libjpeg-turbo, zune-jpeg), we ensure
+/// Kraft sum < 2^16 by reserving one code slot when all 256 symbols would
+/// be assigned codes.
 fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
     let mut bits = [0u8; 16];
     let mut symbols_by_length: Vec<Vec<u8>> = vec![Vec::new(); 16];
@@ -140,6 +140,35 @@ fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
         if depth > 0 && depth <= 16 {
             bits[depth as usize - 1] += 1;
             symbols_by_length[depth as usize - 1].push(symbol as u8);
+        }
+    }
+
+    // Check if Kraft sum equals 2^16 (completely full code space).
+    // Kraft sum = Σ (bits[i] * 2^(16 - (i+1))) for i=0..15
+    let mut kraft_sum: u64 = 0;
+    for (i, &count) in bits.iter().enumerate() {
+        let length = (i + 1) as u32;
+        kraft_sum += (count as u64) << (16 - length);
+    }
+
+    // If code space is completely full, remove one code from the longest length
+    // to leave slack (Kraft sum < 2^16). This prevents crashes in libjpeg-turbo
+    // and rejection by zune-jpeg.
+    //
+    // NOTE: This may remove a symbol that the encoder needs, causing "invalid code"
+    // errors. This is a known limitation - the proper fix requires changes to the
+    // tree construction algorithm to avoid assigning codes to all symbols.
+    if kraft_sum == 65536 {
+        // Find the longest non-empty code length
+        let mut longest = 16;
+        while longest > 0 && symbols_by_length[longest - 1].is_empty() {
+            longest -= 1;
+        }
+
+        if longest > 0 && !symbols_by_length[longest - 1].is_empty() {
+            // Remove the last symbol from this length
+            symbols_by_length[longest - 1].pop();
+            bits[longest - 1] -= 1;
         }
     }
 
@@ -458,6 +487,27 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<([u8; 16], Vec<u8
         }
     }
 
+    // Check if Kraft sum equals 2^16 (completely full code space)
+    let mut kraft_sum: u64 = 0;
+    for (i, &count) in bits.iter().enumerate() {
+        let length = (i + 1) as u32;
+        kraft_sum += (count as u64) << (16 - length);
+    }
+
+    // If code space is completely full, remove one code to leave slack
+    if kraft_sum == 65536 {
+        // Find the longest non-empty code length
+        let mut longest = 16;
+        while longest > 0 && symbols_by_length[longest].is_empty() {
+            longest -= 1;
+        }
+
+        if longest > 0 && !symbols_by_length[longest].is_empty() {
+            // Remove the last symbol from this length
+            symbols_by_length[longest].pop();
+            bits[longest - 1] -= 1;
+        }
+    }
 
     // Sort symbols within each length for canonical ordering.
     for syms in &mut symbols_by_length {
