@@ -135,7 +135,8 @@ fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
     let mut bits = [0u8; 16];
     let mut symbols_by_length: Vec<Vec<u8>> = vec![Vec::new(); 16];
 
-    // Group symbols by their code length
+    // Group symbols by their code length.
+    // Only process symbols 0-255 (pseudo-symbol 256 is already excluded).
     for (symbol, &depth) in depths.iter().enumerate().take(256) {
         if depth > 0 && depth <= 16 {
             bits[depth as usize - 1] += 1;
@@ -143,34 +144,10 @@ fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
         }
     }
 
-    // Check if Kraft sum equals 2^16 (completely full code space).
-    // Kraft sum = Σ (bits[i] * 2^(16 - (i+1))) for i=0..15
-    let mut kraft_sum: u64 = 0;
-    for (i, &count) in bits.iter().enumerate() {
-        let length = (i + 1) as u32;
-        kraft_sum += (count as u64) << (16 - length);
-    }
-
-    // If code space is completely full, remove one code from the longest length
-    // to leave slack (Kraft sum < 2^16). This prevents crashes in libjpeg-turbo
-    // and rejection by zune-jpeg.
-    //
-    // NOTE: This may remove a symbol that the encoder needs, causing "invalid code"
-    // errors. This is a known limitation - the proper fix requires changes to the
-    // tree construction algorithm to avoid assigning codes to all symbols.
-    if kraft_sum == 65536 {
-        // Find the longest non-empty code length
-        let mut longest = 16;
-        while longest > 0 && symbols_by_length[longest - 1].is_empty() {
-            longest -= 1;
-        }
-
-        if longest > 0 && !symbols_by_length[longest - 1].is_empty() {
-            // Remove the last symbol from this length
-            symbols_by_length[longest - 1].pop();
-            bits[longest - 1] -= 1;
-        }
-    }
+    // No Kraft sum check needed! The pseudo-symbol 256 approach naturally creates
+    // slack space in the code tree. Symbol 256 was assigned a code length during
+    // tree construction, but we excluded it from the table above. This means we
+    // have one unused codeword, ensuring Kraft sum < 2^16.
 
     // Sort symbols within each length group (for canonical codes)
     for symbols in &mut symbols_by_length {
@@ -258,14 +235,17 @@ impl FrequencyCounter {
         match method {
             HuffmanMethod::JpegliCreateTree => {
                 // Use jpegli's CreateHuffmanTree algorithm from huffman.rs
-                let freqs: Vec<u64> = self.counts[..256]
+                // IMPORTANT: Include pseudo-symbol 256 with frequency 1 to ensure Kraft sum < 2^16
+                let mut freqs: Vec<u64> = self.counts[..256]
                     .iter()
                     .map(|&c| c.max(0) as u64)
                     .collect();
+                freqs.push(1); // Add pseudo-symbol 256 with frequency 1
 
                 let depths = crate::huffman::build_code_lengths(&freqs, 16);
 
                 // Convert depths to (bits, values) format
+                // depths_to_bits_values already excludes symbol 256 (it only processes 0-255)
                 let (bits, values) = depths_to_bits_values(&depths);
                 let table = HuffmanEncodeTable::from_bits_values(&bits, &values)?;
 
@@ -397,21 +377,22 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
         }
     }
 
-    // Count symbols at each code length.
-    let mut bits = [0u8; MAX_CLEN + 1];
+    // Count symbols at each code length (INCLUDING pseudo-symbol 256).
+    // We need to include it for depth limiting to work correctly.
+    let mut bits_with_pseudo = [0u8; MAX_CLEN + 1];
     for i in 0..num_nz {
         let len = codesize[i].min(MAX_CLEN);
-        bits[len] += 1;
+        bits_with_pseudo[len] += 1;
     }
 
     // Limit code lengths to 16 bits (JPEG requirement).
     // This uses the algorithm from Section K.2 of the JPEG spec:
     // Move symbols from too-deep levels up by splitting shorter codes.
     for i in (17..=MAX_CLEN).rev() {
-        while bits[i] > 0 {
+        while bits_with_pseudo[i] > 0 {
             // Find a level with codes to split.
             let mut j = i - 2;
-            while j > 0 && bits[j] == 0 {
+            while j > 0 && bits_with_pseudo[j] == 0 {
                 j -= 1;
             }
             if j == 0 {
@@ -422,10 +403,10 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
             }
 
             // Move two symbols from level i to i-1, and split one at j.
-            bits[i] -= 2;
-            bits[i - 1] += 1;
-            bits[j + 1] += 2;
-            bits[j] -= 1;
+            bits_with_pseudo[i] -= 2;
+            bits_with_pseudo[i - 1] += 1;
+            bits_with_pseudo[j + 1] += 2;
+            bits_with_pseudo[j] -= 1;
         }
     }
 
@@ -441,26 +422,42 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
 
     let mut lengths = [0u8; 256];
 
-    // Count how many real symbols we have (exclude pseudo-symbol 256)
-    let mut real_symbols: Vec<(usize, usize)> = Vec::new(); // (original_index, codesize)
+    // Collect ALL symbols (including pseudo-symbol 256) with their original codesizes
+    let mut all_symbols: Vec<(usize, usize)> = Vec::new(); // (original_index, codesize)
     for i in 0..num_nz {
         let orig_idx = nz_index[i];
-        if orig_idx < 256 && codesize[i] > 0 {
-            real_symbols.push((orig_idx, codesize[i]));
+        if codesize[i] > 0 {
+            all_symbols.push((orig_idx, codesize[i]));
         }
     }
 
     // Sort by codesize (shortest first), then by symbol index for stability
-    real_symbols.sort_by_key(|&(idx, cs)| (cs, idx));
+    all_symbols.sort_by_key(|&(idx, cs)| (cs, idx));
 
-    // Assign lengths according to the new bits[] distribution
-    let mut sym_iter = real_symbols.iter();
+    // Assign lengths according to the bits_with_pseudo[] distribution
+    // Track what length symbol 256 gets assigned so we can exclude it
+    let mut symbol_256_length: Option<u8> = None;
+    let mut sym_iter = all_symbols.iter();
     for len in 1..=16usize {
-        for _ in 0..bits[len] {
+        for _ in 0..bits_with_pseudo[len] {
             if let Some(&(orig_idx, _)) = sym_iter.next() {
-                lengths[orig_idx] = len as u8;
+                if orig_idx == 256 {
+                    // Found pseudo-symbol 256 - remember its length
+                    symbol_256_length = Some(len as u8);
+                } else if orig_idx < 256 {
+                    // Real symbol - assign its length
+                    lengths[orig_idx] = len as u8;
+                }
             }
         }
+    }
+
+    // Verify we found and excluded symbol 256
+    // (This should always be true since we set freq[256] = 1 at the start)
+    if symbol_256_length.is_none() {
+        return Err(Error::InternalError {
+            reason: "Pseudo-symbol 256 not found in Huffman tree",
+        });
     }
 
     Ok(lengths)
@@ -477,6 +474,7 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<([u8; 16], Vec<u8
     let lengths = generate_code_lengths(freq)?;
 
     // Count symbols at each length.
+    // Note: lengths[] already excludes pseudo-symbol 256, so we only iterate 0-255.
     let mut bits = [0u8; 16];
     let mut symbols_by_length: [Vec<u8>; 17] = Default::default();
 
@@ -487,27 +485,10 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<([u8; 16], Vec<u8
         }
     }
 
-    // Check if Kraft sum equals 2^16 (completely full code space)
-    let mut kraft_sum: u64 = 0;
-    for (i, &count) in bits.iter().enumerate() {
-        let length = (i + 1) as u32;
-        kraft_sum += (count as u64) << (16 - length);
-    }
-
-    // If code space is completely full, remove one code to leave slack
-    if kraft_sum == 65536 {
-        // Find the longest non-empty code length
-        let mut longest = 16;
-        while longest > 0 && symbols_by_length[longest].is_empty() {
-            longest -= 1;
-        }
-
-        if longest > 0 && !symbols_by_length[longest].is_empty() {
-            // Remove the last symbol from this length
-            symbols_by_length[longest].pop();
-            bits[longest - 1] -= 1;
-        }
-    }
+    // No Kraft sum check needed! The pseudo-symbol 256 approach naturally creates
+    // slack space in the code tree. Symbol 256 was assigned a code length during
+    // tree construction, but we excluded it from the final table above. This means
+    // we have one unused codeword, ensuring Kraft sum < 2^16.
 
     // Sort symbols within each length for canonical ordering.
     for syms in &mut symbols_by_length {
