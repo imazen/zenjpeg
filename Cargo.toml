@@ -37,7 +37,7 @@ turbojpeg = "1.3"      # libjpeg-turbo wrapper (fastest C decoder)
 
 # Quality metrics
 dssim = "3.2"
-ssimulacra2 = "0.5"
+ssimulacra2 = { path = "../ssimulacra2/ssimulacra2", features = ["blur-simd"] }
 
 # Testing
 approx = "0.5"
