@@ -104,8 +104,8 @@
    // Decode with zune-jpeg
    let zune_result = zune_jpeg::JpegDecoder::new(&jpeg).decode()?;
 
-   // Decode with jpeg-decoder (libjpeg-turbo)
-   let libjpeg_result = jpeg_decoder::Decoder::new(&jpeg[..]).decode()?;
+   // Decode with jpeg-decoder (pure Rust)
+   let jpeg_decoder_result = jpeg_decoder::Decoder::new(&jpeg[..]).decode()?;
    ```
 
 3. Compare outputs:
@@ -157,8 +157,8 @@ cargo run --example test_progressive_decode -- cpp_prog_ycbcr.jpg
 
 2. Decode with all three decoders:
    - jpegli-rs (our decoder)
-   - zune-jpeg (validation)
-   - jpeg-decoder (libjpeg-turbo validation)
+   - zune-jpeg (pure Rust validation)
+   - jpeg-decoder (pure Rust validation)
 
 3. Compare pixel outputs:
    ```rust
@@ -483,8 +483,8 @@ assert!(decoded.data.len() > 0);
 - `tests/xyb_progressive.rs` - XYB progressive tests
 
 ### Integration Tests
-- Compare with zune-jpeg decoder
-- Compare with jpeg-decoder (libjpeg-turbo)
+- Compare with zune-jpeg decoder (pure Rust)
+- Compare with jpeg-decoder (pure Rust)
 - Compare file sizes with C++ cjpegli
 - Visual comparison (human review)
 
@@ -504,8 +504,8 @@ assert!(decoded.data.len() > 0);
 ### 2. Use Multiple Reference Implementations
 - **C++ jpegli:** Ground truth
 - **zune-jpeg:** Pure Rust decoder reference
-- **jpeg-decoder:** libjpeg-turbo wrapper
-- **mozjpeg:** Encoder reference (Huffman, trellis)
+- **jpeg-decoder:** Pure Rust decoder (alternative reference)
+- **mozjpeg:** C encoder based on libjpeg-turbo (Huffman, trellis reference)
 
 ### 3. Incremental Validation
 - Phase 1 validates Phase 2

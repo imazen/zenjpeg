@@ -127,6 +127,10 @@ impl Default for FrequencyCounter {
 /// Returns (bits, values) where:
 /// - bits[i] = number of codes with length i+1 (1-16 bits)
 /// - values = symbols sorted by code length, then by symbol value
+///
+/// NOTE: This may produce tables where Kraft sum = 2^16 (completely full code space).
+/// Some decoders like zune-jpeg reject such tables, requiring strict inequality (sum < 2^16).
+/// This is a known limitation - fixing it properly requires changes to the tree construction.
 fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
     let mut bits = [0u8; 16];
     let mut symbols_by_length: Vec<Vec<u8>> = vec![Vec::new(); 16];
@@ -396,15 +400,6 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
         }
     }
 
-    // Remove the pseudo-symbol 256 from the longest code length.
-    let mut longest = 16;
-    while longest > 0 && bits[longest] == 0 {
-        longest -= 1;
-    }
-    if longest > 0 {
-        bits[longest] -= 1;
-    }
-
     // Map code lengths back to original symbol indices.
     // After limiting, we need to reassign lengths based on the new bit counts.
     //
@@ -462,6 +457,7 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<([u8; 16], Vec<u8
             bits[length as usize - 1] += 1;
         }
     }
+
 
     // Sort symbols within each length for canonical ordering.
     for syms in &mut symbols_by_length {
