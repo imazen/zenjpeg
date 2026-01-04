@@ -817,8 +817,8 @@ impl ParetoCurve {
                 let t = (bpp - b1) / (b2 - b1);
                 s1 + t * (s2 - s1)
             }
-            (Some((_, s)), None) => s, // Beyond upper bound
-            (None, Some((_, s))) => s, // Below lower bound
+            (Some((_, s)), None) => s,    // Beyond upper bound
+            (None, Some((_, s))) => s,    // Below lower bound
             (Some((_, s)), Some(_)) => s, // Same point
             _ => 0.0,
         }
@@ -1038,7 +1038,11 @@ fn optimize(
         if stagnant >= reheat_threshold && temperature < reheat_temp {
             temperature = reheat_temp;
             stagnant = 0;
-            println!("  [Reheating to T={:.2} at iteration {}]", temperature, i + 1);
+            println!(
+                "  [Reheating to T={:.2} at iteration {}]",
+                temperature,
+                i + 1
+            );
         }
 
         // Cool down
@@ -1199,12 +1203,11 @@ fn main() {
     // Try loading Pareto curve from zenjpeg benchmark CSV, fall back to measuring
     let zenjpeg_csv = PathBuf::from("/home/lilith/work/zenjpeg/heuristic_outputs/results.csv");
     let pareto = if zenjpeg_csv.exists() {
-        ParetoCurve::from_zenjpeg_csv(&zenjpeg_csv, "jpegli-444")
-            .unwrap_or_else(|| {
-                println!("Failed to load from CSV, measuring locally...");
-                let q_levels: Vec<u8> = (60..=98).step_by(2).collect();
-                measure_pareto_curve(&images, &q_levels)
-            })
+        ParetoCurve::from_zenjpeg_csv(&zenjpeg_csv, "jpegli-444").unwrap_or_else(|| {
+            println!("Failed to load from CSV, measuring locally...");
+            let q_levels: Vec<u8> = (60..=98).step_by(2).collect();
+            measure_pareto_curve(&images, &q_levels)
+        })
     } else {
         println!("Zenjpeg CSV not found, measuring Pareto curve...");
         let q_levels: Vec<u8> = (60..=98).step_by(2).collect();

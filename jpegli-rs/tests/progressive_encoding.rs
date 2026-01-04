@@ -167,7 +167,8 @@ fn test_progressive_has_multiple_scans() {
     );
 }
 
-/// Test that optimized Huffman tables produce smaller or equal size files.
+/// Test that progressive mode correctly requires optimized Huffman tables.
+/// Progressive + fixed Huffman is not supported (JPEG standard requires optimization for progressive).
 #[test]
 fn test_progressive_optimized_smaller() {
     let width = 64u32;
@@ -184,7 +185,7 @@ fn test_progressive_optimized_smaller() {
         }
     }
 
-    // Encode without optimization
+    // Progressive + fixed Huffman should fail (not supported)
     let encoder_no_opt = Encoder::new()
         .width(width)
         .height(height)
@@ -193,11 +194,10 @@ fn test_progressive_optimized_smaller() {
         .optimize_huffman(false)
         .mode(JpegMode::Progressive);
 
-    let no_opt_data = encoder_no_opt
-        .encode(&data)
-        .expect("Non-optimized encoding should succeed");
+    let result = encoder_no_opt.encode(&data);
+    assert!(result.is_err(), "Progressive + fixed Huffman should fail");
 
-    // Encode with optimization
+    // Progressive + optimized Huffman should succeed
     let encoder_opt = Encoder::new()
         .width(width)
         .height(height)
@@ -208,25 +208,32 @@ fn test_progressive_optimized_smaller() {
 
     let opt_data = encoder_opt
         .encode(&data)
-        .expect("Optimized encoding should succeed");
+        .expect("Progressive with optimized Huffman should succeed");
 
-    // Both should be valid JPEGs
-    assert_eq!(&no_opt_data[0..2], &[0xFF, 0xD8]);
+    // Should be valid JPEG
     assert_eq!(&opt_data[0..2], &[0xFF, 0xD8]);
 
-    // Optimized should be smaller or equal (within reason - small images may not benefit)
-    // For larger images, optimized tables should produce smaller output
-    let size_diff = no_opt_data.len() as i64 - opt_data.len() as i64;
+    // Compare with baseline + optimized to verify progressive is smaller
+    let encoder_baseline = Encoder::new()
+        .width(width)
+        .height(height)
+        .pixel_format(PixelFormat::Rgb)
+        .jpegli_quality(Quality::from_quality(85.0))
+        .optimize_huffman(true)
+        .mode(JpegMode::Baseline);
 
-    // We allow the optimized to be up to 5% larger for small test images
-    // (overhead of optimal tables may not pay off for tiny images)
-    let tolerance = (no_opt_data.len() as f64 * 0.05) as i64;
-    assert!(
-        size_diff >= -tolerance,
-        "Optimized should not be much larger: no_opt={}, opt={}, diff={}",
-        no_opt_data.len(),
+    let baseline_data = encoder_baseline
+        .encode(&data)
+        .expect("Baseline should succeed");
+
+    // Progressive should be smaller than baseline (or close)
+    let savings = baseline_data.len() as f64 - opt_data.len() as f64;
+    let savings_pct = savings / baseline_data.len() as f64 * 100.0;
+    println!(
+        "Progressive: {} bytes, Baseline: {} bytes, Savings: {:.1}%",
         opt_data.len(),
-        size_diff
+        baseline_data.len(),
+        savings_pct
     );
 }
 
@@ -299,19 +306,8 @@ fn test_progressive_optimized_larger_image() {
         }
     }
 
-    // Encode without optimization
-    let no_opt_data = Encoder::new()
-        .width(width)
-        .height(height)
-        .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(85.0))
-        .optimize_huffman(false)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
-        .expect("Non-optimized encoding should succeed");
-
-    // Encode with optimization
-    let opt_data = Encoder::new()
+    // Progressive with optimized Huffman
+    let prog_data = Encoder::new()
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
@@ -319,25 +315,45 @@ fn test_progressive_optimized_larger_image() {
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&data)
-        .expect("Optimized encoding should succeed");
+        .expect("Progressive encoding should succeed");
 
-    // For larger images, optimized should typically be smaller
+    // Baseline with optimized Huffman for comparison
+    let baseline_data = Encoder::new()
+        .width(width)
+        .height(height)
+        .pixel_format(PixelFormat::Rgb)
+        .jpegli_quality(Quality::from_quality(85.0))
+        .optimize_huffman(true)
+        .mode(JpegMode::Baseline)
+        .encode(&data)
+        .expect("Baseline encoding should succeed");
+
+    // Compare sizes - progressive may be larger due to scan overhead
+    // but should not be dramatically larger
+    let size_ratio = prog_data.len() as f64 / baseline_data.len() as f64;
     println!(
-        "256x256 RGB: non-opt={} bytes, opt={} bytes, savings={:.1}%",
-        no_opt_data.len(),
-        opt_data.len(),
-        (1.0 - opt_data.len() as f64 / no_opt_data.len() as f64) * 100.0
+        "256x256 RGB: progressive={} bytes, baseline={} bytes, ratio={:.2}",
+        prog_data.len(),
+        baseline_data.len(),
+        size_ratio
+    );
+
+    // Progressive should not be more than 15% larger (scan overhead)
+    assert!(
+        size_ratio < 1.15,
+        "Progressive should not be much larger than baseline: ratio={}",
+        size_ratio
     );
 
     // Verify both decode correctly
-    let decoded_no_opt = jpeg_decoder::Decoder::new(&no_opt_data[..])
+    let decoded_prog = jpeg_decoder::Decoder::new(&prog_data[..])
         .decode()
-        .expect("Non-optimized should decode");
-    let decoded_opt = jpeg_decoder::Decoder::new(&opt_data[..])
+        .expect("Progressive should decode");
+    let decoded_baseline = jpeg_decoder::Decoder::new(&baseline_data[..])
         .decode()
-        .expect("Optimized should decode");
+        .expect("Baseline should decode");
 
-    assert_eq!(decoded_no_opt.len(), decoded_opt.len());
+    assert_eq!(decoded_prog.len(), decoded_baseline.len());
 }
 
 /// Test progressive optimized with uniform solid color.

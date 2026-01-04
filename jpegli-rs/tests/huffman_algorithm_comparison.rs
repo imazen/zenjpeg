@@ -181,7 +181,8 @@ fn test_progressive_vs_baseline_sizes() {
         )
         .expect("Progressive encoding should succeed");
 
-        let diff_pct = (baseline.len() as f64 - progressive.len() as f64) / baseline.len() as f64 * 100.0;
+        let diff_pct =
+            (baseline.len() as f64 - progressive.len() as f64) / baseline.len() as f64 * 100.0;
         let status = if diff_pct > 0.0 { "smaller" } else { "larger" };
 
         println!(
@@ -194,8 +195,16 @@ fn test_progressive_vs_baseline_sizes() {
         );
 
         // Both should be decodable
-        assert!(verify_decodable(&baseline, width, height), "Baseline Q{} should be decodable", quality);
-        assert!(verify_decodable(&progressive, width, height), "Progressive Q{} should be decodable", quality);
+        assert!(
+            verify_decodable(&baseline, width, height),
+            "Baseline Q{} should be decodable",
+            quality
+        );
+        assert!(
+            verify_decodable(&progressive, width, height),
+            "Progressive Q{} should be decodable",
+            quality
+        );
     }
 }
 
@@ -416,7 +425,9 @@ fn test_grayscale_huffman_optimization() {
         .optimize_huffman(true)
         .mode(JpegMode::Baseline);
 
-    let jpeg = encoder.encode(&data).expect("Grayscale encoding should work");
+    let jpeg = encoder
+        .encode(&data)
+        .expect("Grayscale encoding should work");
 
     assert!(
         verify_decodable(&jpeg, width, height),
@@ -467,14 +478,14 @@ fn create_ac_histogram() -> SymbolFrequencies {
     // Common AC coefficients (run=0, size=1..4)
     freq.add(0x01, 25000); // run=0, size=1 (coeff -1 or 1)
     freq.add(0x02, 15000); // run=0, size=2 (-3..-2, 2..3)
-    freq.add(0x03, 8000);  // run=0, size=3 (-7..-4, 4..7)
-    freq.add(0x04, 4000);  // run=0, size=4
+    freq.add(0x03, 8000); // run=0, size=3 (-7..-4, 4..7)
+    freq.add(0x04, 4000); // run=0, size=4
 
     // run=1 (one zero before coeff)
     freq.add(0x11, 10000); // run=1, size=1
-    freq.add(0x12, 5000);  // run=1, size=2
-    freq.add(0x13, 2500);  // run=1, size=3
-    freq.add(0x14, 1200);  // run=1, size=4
+    freq.add(0x12, 5000); // run=1, size=2
+    freq.add(0x13, 2500); // run=1, size=3
+    freq.add(0x14, 1200); // run=1, size=4
 
     // run=2
     freq.add(0x21, 4000);
@@ -594,7 +605,7 @@ fn test_algorithm_on_content_types() {
     let photo_ac = {
         let mut f = SymbolFrequencies::new();
         f.add(0x00, 100000); // EOB very common
-        // Exponential falloff for run/size combinations
+                             // Exponential falloff for run/size combinations
         for run in 0u8..16 {
             for size in 1u8..=10 {
                 let divisor = (run as u64 + 1) * (size as u64 + 1) * (size as u64 + 1);
@@ -611,11 +622,11 @@ fn test_algorithm_on_content_types() {
     let graphic_ac = {
         let mut f = SymbolFrequencies::new();
         f.add(0x00, 150000); // Even more EOBs
-        f.add(0xF0, 5000);   // More ZRLs
-        // Bimodal: either small or larger coefficients
+        f.add(0xF0, 5000); // More ZRLs
+                           // Bimodal: either small or larger coefficients
         f.add(0x01, 30000);
         f.add(0x02, 5000);
-        f.add(0x05, 8000);  // Spike at size 5
+        f.add(0x05, 8000); // Spike at size 5
         f.add(0x06, 6000);
         f.add(0x11, 10000);
         f.add(0x21, 5000);
@@ -840,15 +851,23 @@ fn test_find_algorithm_divergence() {
         let moz_lengths = generate_code_lengths(&mut moz_freq).unwrap();
         let jpg_depths = build_code_lengths(&jpg_freq, 16);
 
-        let moz_cost: u64 = (0..256).map(|i| moz_freq[i] as u64 * moz_lengths[i] as u64).sum();
+        let moz_cost: u64 = (0..256)
+            .map(|i| moz_freq[i] as u64 * moz_lengths[i] as u64)
+            .sum();
         let jpg_cost: u64 = (0..256).map(|i| jpg_freq[i] * jpg_depths[i] as u64).sum();
 
         if moz_cost != jpg_cost {
             divergent_cases += 1;
-            println!("DIVERGENCE at spread={}: moz_cost={}, jpg_cost={}", spread, moz_cost, jpg_cost);
+            println!(
+                "DIVERGENCE at spread={}: moz_cost={}, jpg_cost={}",
+                spread, moz_cost, jpg_cost
+            );
         }
     }
 
-    println!("\nResults: {}/{} cases diverged", divergent_cases, total_cases);
+    println!(
+        "\nResults: {}/{} cases diverged",
+        divergent_cases, total_cases
+    );
     println!();
 }
