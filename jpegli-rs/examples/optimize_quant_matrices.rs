@@ -20,10 +20,12 @@
 
 use jpegli::quant::{CustomQuantMatrices, Quality};
 use jpegli::{Encoder, PixelFormat};
+use rayon::prelude::*;
 use ssimulacra2::{ColorPrimaries, Rgb, Ssim2Reference, TransferCharacteristic};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 // Simple PRNG (xoshiro256++) to avoid dependency on rand crate
@@ -596,84 +598,123 @@ fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
     decoder.decode().ok()
 }
 
-/// Profiling stats for the hot loop
-#[derive(Default)]
+/// Profiling stats for the hot loop (thread-safe with atomics)
 struct ProfileStats {
-    encode_ns: u128,
-    decode_ns: u128,
-    ssim2_ns: u128,
-    count: usize,
+    encode_ns: AtomicU64,
+    decode_ns: AtomicU64,
+    ssim2_ns: AtomicU64,
+    count: AtomicU64,
+}
+
+impl Default for ProfileStats {
+    fn default() -> Self {
+        Self {
+            encode_ns: AtomicU64::new(0),
+            decode_ns: AtomicU64::new(0),
+            ssim2_ns: AtomicU64::new(0),
+            count: AtomicU64::new(0),
+        }
+    }
 }
 
 impl ProfileStats {
+    fn add_encode(&self, ns: u64) {
+        self.encode_ns.fetch_add(ns, Ordering::Relaxed);
+    }
+    fn add_decode(&self, ns: u64) {
+        self.decode_ns.fetch_add(ns, Ordering::Relaxed);
+    }
+    fn add_ssim2(&self, ns: u64) {
+        self.ssim2_ns.fetch_add(ns, Ordering::Relaxed);
+    }
+    fn inc_count(&self) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn report(&self) {
-        if self.count == 0 {
+        let count = self.count.load(Ordering::Relaxed);
+        if count == 0 {
             return;
         }
-        let total = self.encode_ns + self.decode_ns + self.ssim2_ns;
-        println!("\n=== Hot Loop Profile ({} evaluations) ===", self.count);
+        let encode = self.encode_ns.load(Ordering::Relaxed) as f64;
+        let decode = self.decode_ns.load(Ordering::Relaxed) as f64;
+        let ssim2 = self.ssim2_ns.load(Ordering::Relaxed) as f64;
+        let total = encode + decode + ssim2;
+
+        println!(
+            "\n=== Hot Loop Profile ({} evaluations, {} threads) ===",
+            count,
+            rayon::current_num_threads()
+        );
         println!(
             "  Encode:  {:>7.2}ms ({:>5.1}%)",
-            self.encode_ns as f64 / 1_000_000.0,
-            100.0 * self.encode_ns as f64 / total as f64
+            encode / 1_000_000.0,
+            100.0 * encode / total
         );
         println!(
             "  Decode:  {:>7.2}ms ({:>5.1}%)",
-            self.decode_ns as f64 / 1_000_000.0,
-            100.0 * self.decode_ns as f64 / total as f64
+            decode / 1_000_000.0,
+            100.0 * decode / total
         );
         println!(
             "  SSIM2:   {:>7.2}ms ({:>5.1}%)",
-            self.ssim2_ns as f64 / 1_000_000.0,
-            100.0 * self.ssim2_ns as f64 / total as f64
+            ssim2 / 1_000_000.0,
+            100.0 * ssim2 / total
         );
-        println!("  Total:   {:>7.2}ms", total as f64 / 1_000_000.0);
+        println!("  Total CPU time: {:>7.2}ms", total / 1_000_000.0);
         println!(
-            "  Per-eval: {:.2}ms",
-            total as f64 / 1_000_000.0 / self.count as f64
+            "  Per-eval (wall): {:.2}ms",
+            total / 1_000_000.0 / count as f64 / rayon::current_num_threads() as f64
         );
     }
 }
 
-/// Encode with custom matrices and measure quality/size
+/// Encode with custom matrices and measure quality/size (parallel across images)
 fn evaluate_state_profiled(
     state: &OptState,
     images: &[TestImage],
     quality: u8,
-    stats: &mut ProfileStats,
+    stats: &ProfileStats,
 ) -> (f64, usize) {
     let custom = state.to_custom_matrices();
-    let mut total_quality = 0.0;
-    let mut total_size = 0;
 
-    for img in images {
-        // Encode
-        let t0 = Instant::now();
-        let jpeg = Encoder::new()
-            .width(img.width as u32)
-            .height(img.height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(quality.into()))
-            .custom_quant_matrices(custom.clone())
-            .encode(&img.rgb)
-            .expect("encode failed");
-        stats.encode_ns += t0.elapsed().as_nanos();
+    // Process all images in parallel
+    let results: Vec<(f64, usize)> = images
+        .par_iter()
+        .map(|img| {
+            // Encode
+            let t0 = Instant::now();
+            let jpeg = Encoder::new()
+                .width(img.width as u32)
+                .height(img.height as u32)
+                .pixel_format(PixelFormat::Rgb)
+                .jpegli_quality(Quality::from_quality(quality.into()))
+                .custom_quant_matrices(custom.clone())
+                .encode(&img.rgb)
+                .expect("encode failed");
+            stats.add_encode(t0.elapsed().as_nanos() as u64);
 
-        // Decode (zune-jpeg is ~3x faster than jpeg-decoder)
-        let t1 = Instant::now();
-        let decoded = decode_jpeg(&jpeg).expect("decode failed");
-        stats.decode_ns += t1.elapsed().as_nanos();
+            // Decode (zune-jpeg is ~3x faster than jpeg-decoder)
+            let t1 = Instant::now();
+            let decoded = decode_jpeg(&jpeg).expect("decode failed");
+            stats.add_decode(t1.elapsed().as_nanos() as u64);
 
-        // Measure quality (using precomputed reference)
-        let t2 = Instant::now();
-        let quality_score = compute_ssim2_with_ref(&img.ssim2_ref, &decoded, img.width, img.height);
-        stats.ssim2_ns += t2.elapsed().as_nanos();
+            // Measure quality (using precomputed reference)
+            let t2 = Instant::now();
+            let quality_score =
+                compute_ssim2_with_ref(&img.ssim2_ref, &decoded, img.width, img.height);
+            stats.add_ssim2(t2.elapsed().as_nanos() as u64);
 
-        total_quality += quality_score;
-        total_size += jpeg.len();
-    }
+            (quality_score, jpeg.len())
+        })
+        .collect();
 
-    stats.count += 1;
+    // Sum up results
+    let (total_quality, total_size) = results
+        .iter()
+        .fold((0.0, 0), |(q, s), (qi, si)| (q + qi, s + si));
+
+    stats.inc_count();
     (total_quality / images.len() as f64, total_size)
 }
 
@@ -740,17 +781,17 @@ fn optimize(
     initial_state: Option<OptState>,
 ) -> OptState {
     let mut rng = Rng::new(seed);
-    let mut profile_stats = ProfileStats::default();
+    let profile_stats = ProfileStats::default();
 
     // Initialize state
     let mut current = initial_state.unwrap_or_else(OptState::new);
     let (current_ssim2, current_size) =
-        evaluate_state_profiled(&current, images, quality, &mut profile_stats);
+        evaluate_state_profiled(&current, images, quality, &profile_stats);
 
     // Establish baseline
     let baseline = OptState::new();
     let (baseline_ssim2, baseline_size) =
-        evaluate_state_profiled(&baseline, images, quality, &mut profile_stats);
+        evaluate_state_profiled(&baseline, images, quality, &profile_stats);
     println!(
         "\nBaseline: SSIM2={:.4}, size={} bytes",
         baseline_ssim2, baseline_size
@@ -789,7 +830,7 @@ fn optimize(
 
         // Evaluate
         let (cand_ssim2, cand_size) =
-            evaluate_state_profiled(&candidate, images, quality, &mut profile_stats);
+            evaluate_state_profiled(&candidate, images, quality, &profile_stats);
         let cand_fitness = fitness(cand_ssim2, cand_size, target_quality);
 
         // Accept or reject
