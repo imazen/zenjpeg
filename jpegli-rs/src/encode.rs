@@ -1582,6 +1582,8 @@ impl Encoder {
         // ========== PASS 2: REPLAY TOKENS ==========
         // XYB uses 1 DC table and 1 AC table (all components share)
         let xyb_num_dc_tables = 1;
+        let xyb_ac_slot_ids = vec![0]; // Single AC table uses slot 0
+        let xyb_tables_emitted = 2; // All tables emitted upfront (1 DC + 1 AC)
         for (scan_idx, scan) in scans.iter().enumerate() {
             self.write_progressive_scan_header_with_context(
                 &mut output,
@@ -1601,6 +1603,8 @@ impl Encoder {
                 &xyb_tables_vec,
                 xyb_num_dc_tables,
                 &xyb_context_map,
+                &xyb_ac_slot_ids,
+                xyb_tables_emitted,
             )?;
             output.extend_from_slice(&scan_data);
         }
@@ -2297,11 +2301,12 @@ impl Encoder {
 
         // ========== GENERATE OPTIMIZED TABLES ==========
         // Use histogram clustering to find optimal table assignments.
-        // Per C++ design: progressive mode uses up to 4 tables per type.
-        // num_dc_contexts = min(num_components, 4) = context_config.ac_offset
-        let (context_map, num_dc_tables, tables) = token_buffer.generate_optimized_tables(
+        // Per C++ design: progressive mode can have more than 4 AC tables,
+        // with slot IDs cycling through 0-3 and redefinition via DHT markers.
+        // We allow up to 12 AC clusters (one per AC scan) to enable this.
+        let (context_map, num_dc_tables, tables, ac_slot_ids) = token_buffer.generate_optimized_tables(
             4,                           // max DC clusters
-            4,                           // max AC clusters
+            12,                          // max AC clusters (allows per-scan specialization)
             context_config.ac_offset,    // num_dc_contexts (always 4 per C++ design, but clamped to actual)
             false,                       // force_baseline
         )?;
@@ -2311,8 +2316,14 @@ impl Encoder {
         self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
         self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
 
-        // Write all Huffman tables (up to 4 DC + 4 AC)
-        self.write_huffman_tables_from_vec(&mut output, &tables, num_dc_tables)?;
+        // Write initial Huffman tables (all DC + up to 4 AC)
+        // Like C++ jpegli, additional AC tables are emitted on-demand before scans that need them.
+        let mut next_dht_index = self.write_huffman_tables_progressive_initial(
+            &mut output,
+            &tables,
+            num_dc_tables,
+            4, // max_initial_ac: emit up to 4 AC tables initially
+        )?;
 
         if self.config.restart_interval > 0 {
             self.write_restart_interval(&mut output)?;
@@ -2321,8 +2332,26 @@ impl Encoder {
         // ========== PASS 2: REPLAY TOKENS ==========
         // Encode each scan by replaying tokens with optimized tables
         for (scan_idx, scan) in scans.iter().enumerate() {
+            // For AC scans (Ss > 0), check if we need to emit a new Huffman table
+            // This matches C++ jpegli behavior: emit tables on-demand for progressive AC scans
+            if scan.ss > 0 {
+                // Get the AC context for this scan
+                let ac_context = context_config.ac_context(scan_idx, 0);
+                // Get the table index from context_map
+                if let Some(&table_idx) = context_map.get(ac_context) {
+                    // If this scan needs the "next" table, emit it now
+                    if table_idx == next_dht_index && table_idx < tables.len() {
+                        // Get the AC table slot ID from ac_slot_ids
+                        let cluster_idx = table_idx.saturating_sub(num_dc_tables);
+                        let ac_slot = ac_slot_ids.get(cluster_idx).copied().unwrap_or(cluster_idx % 4);
+                        self.write_single_ac_table(&mut output, &tables[table_idx], ac_slot)?;
+                        next_dht_index += 1;
+                    }
+                }
+            }
+
             // Write SOS header with context-based table selection
-            self.write_progressive_scan_header_with_context(
+            self.write_progressive_scan_header_with_slot_ids(
                 &mut output,
                 scan_idx,
                 scan,
@@ -2330,6 +2359,7 @@ impl Encoder {
                 &context_config,
                 &context_map,
                 num_dc_tables,
+                &ac_slot_ids,
             )?;
 
             // Replay tokens for this scan
@@ -2342,6 +2372,8 @@ impl Encoder {
                 &tables,
                 num_dc_tables,
                 &context_map,
+                &ac_slot_ids,
+                next_dht_index, // tables_emitted so far
             )?;
             output.extend_from_slice(&scan_data);
         }
@@ -2417,6 +2449,8 @@ impl Encoder {
     /// * `context_map` - Maps context indices to table indices (from clustering)
     ///   - DC contexts 0..ac_offset map to DC table indices (0..num_dc_tables)
     ///   - AC contexts ac_offset.. map to total table indices (num_dc_tables + offset)
+    /// * `ac_slot_ids` - Maps AC table index to JPEG slot ID (0-3)
+    /// * `tables_emitted` - Number of tables emitted so far (DC + AC)
     fn replay_progressive_scan(
         &self,
         token_buffer: &ProgressiveTokenBuffer,
@@ -2427,16 +2461,24 @@ impl Encoder {
         tables: &[OptimizedTable],
         num_dc_tables: usize,
         context_map: &[usize],
+        ac_slot_ids: &[usize],
+        tables_emitted: usize,
     ) -> Result<Vec<u8>> {
         let mut encoder = EntropyEncoder::new();
         let num_components = if is_color { 3 } else { 1 };
 
-        // Set up all Huffman tables (up to 4 DC + 4 AC)
+        // Set up DC Huffman tables (up to 4)
         for (i, table) in tables.iter().take(num_dc_tables).enumerate() {
             encoder.set_dc_table(i, table.table.clone());
         }
-        for (i, table) in tables.iter().skip(num_dc_tables).enumerate() {
-            encoder.set_ac_table(i, table.table.clone());
+
+        // Set up AC Huffman tables using slot IDs
+        // Only load tables that have been emitted via DHT markers
+        let num_ac_emitted = tables_emitted.saturating_sub(num_dc_tables);
+        for (i, table) in tables.iter().skip(num_dc_tables).take(num_ac_emitted).enumerate() {
+            // Use the slot ID from ac_slot_ids (cycles 0-3)
+            let slot = ac_slot_ids.get(i).copied().unwrap_or(i % 4);
+            encoder.set_ac_table(slot, table.table.clone());
         }
 
         if self.config.restart_interval > 0 {
@@ -2474,8 +2516,10 @@ impl Encoder {
             } else {
                 0
             };
+            // Convert table index to slot ID
+            let slot_id = ac_slot_ids.get(table_idx).copied().unwrap_or(table_idx % 4);
             let tokens = token_buffer.scan_tokens(scan_idx);
-            encoder.write_ac_first_tokens(tokens, table_idx)?;
+            encoder.write_ac_first_tokens(tokens, slot_id)?;
         } else {
             // AC refinement scan: replay refinement tokens
             // Use context_config for per-scan AC context lookup
@@ -2485,7 +2529,9 @@ impl Encoder {
             } else {
                 0
             };
-            encoder.write_ac_refinement_tokens(scan_info, table_idx)?;
+            // Convert table index to slot ID
+            let slot_id = ac_slot_ids.get(table_idx).copied().unwrap_or(table_idx % 4);
+            encoder.write_ac_refinement_tokens(scan_info, slot_id)?;
         }
 
         Ok(encoder.finish())
@@ -2526,12 +2572,18 @@ impl Encoder {
 
         // AC scans are always non-interleaved
         // Progressive Level 2 with successive approximation (matches C++ jpegli)
+        //
+        // IMPORTANT: Scan order must match C++ (encode.cc:141-152):
+        // Iterate over scan TYPES first, then components.
+        // This groups similar spectral bands together for better histogram clustering.
+        // C++ order: [all AC 1-2] then [all AC 3-63 first] then [all refinements]
+        // NOT: [Y all scans] then [Cb all scans] then [Cr all scans]
         let use_refinement = true;
 
-        for c in 0..num_components {
-            if use_refinement {
-                // Level 2: with successive approximation
-                // AC 1-2: full precision (low frequency, most visible)
+        if use_refinement {
+            // Level 2: with successive approximation
+            // AC 1-2: full precision (low frequency, most visible) - all components
+            for c in 0..num_components {
                 scans.push(ProgressiveScan {
                     components: vec![c],
                     ss: 1,
@@ -2539,8 +2591,10 @@ impl Encoder {
                     ah: 0,
                     al: 0,
                 });
+            }
 
-                // AC 3-63 first pass: top bits only (Al=2 means bits 2+)
+            // AC 3-63 first pass: top bits only (Al=2 means bits 2+) - all components
+            for c in 0..num_components {
                 scans.push(ProgressiveScan {
                     components: vec![c],
                     ss: 3,
@@ -2548,8 +2602,10 @@ impl Encoder {
                     ah: 0,
                     al: 2,
                 });
+            }
 
-                // AC 3-63 refinement: bit 1 (Ah=2, Al=1)
+            // AC 3-63 refinement: bit 1 (Ah=2, Al=1) - all components
+            for c in 0..num_components {
                 scans.push(ProgressiveScan {
                     components: vec![c],
                     ss: 3,
@@ -2557,8 +2613,10 @@ impl Encoder {
                     ah: 2,
                     al: 1,
                 });
+            }
 
-                // AC 3-63 refinement: bit 0 (Ah=1, Al=0)
+            // AC 3-63 refinement: bit 0 (Ah=1, Al=0) - all components
+            for c in 0..num_components {
                 scans.push(ProgressiveScan {
                     components: vec![c],
                     ss: 3,
@@ -2566,8 +2624,10 @@ impl Encoder {
                     ah: 1,
                     al: 0,
                 });
-            } else {
-                // Level 0: no successive approximation (simpler, works)
+            }
+        } else {
+            // Level 0: no successive approximation (simpler, works)
+            for c in 0..num_components {
                 scans.push(ProgressiveScan {
                     components: vec![c],
                     ss: 1,
@@ -2675,6 +2735,69 @@ impl Encoder {
                 .get(ac_context)
                 .map(|&t| t.saturating_sub(num_dc_tables))
                 .unwrap_or(0);
+
+            let table_selector = ((dc_table as u8) << 4) | (ac_table as u8);
+            output.push(table_selector);
+        }
+
+        output.push(scan.ss); // Spectral selection start
+        output.push(scan.se); // Spectral selection end
+        output.push((scan.ah << 4) | scan.al); // Successive approximation
+
+        Ok(())
+    }
+
+    /// Writes SOS header for a progressive scan with slot ID support.
+    ///
+    /// This version uses `ac_slot_ids` to get the correct JPEG DHT slot for each AC table,
+    /// which is needed when more than 4 AC tables are used (slot IDs cycle through 0-3).
+    fn write_progressive_scan_header_with_slot_ids(
+        &self,
+        output: &mut Vec<u8>,
+        scan_idx: usize,
+        scan: &ProgressiveScan,
+        _is_color: bool,
+        context_config: &ContextConfig,
+        context_map: &[usize],
+        num_dc_tables: usize,
+        ac_slot_ids: &[usize],
+    ) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_SOS);
+
+        let num_components = scan.components.len() as u8;
+        let length = 6u16 + num_components as u16 * 2;
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        output.push(num_components);
+
+        for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
+            // Component ID: 1-based for YCbCr, or 'R','G','B' for XYB
+            let comp_id = if self.config.use_xyb {
+                match comp_idx {
+                    0 => b'R', // 82
+                    1 => b'G', // 71
+                    2 => b'B', // 66
+                    _ => comp_idx + 1,
+                }
+            } else {
+                comp_idx + 1
+            };
+            output.push(comp_id);
+
+            // DC table selector: use DC context (component index)
+            let dc_context = context_config.dc_context(comp_idx as usize);
+            let dc_table = context_map.get(dc_context).copied().unwrap_or(0);
+
+            // AC table selector: use per-scan AC context and slot IDs
+            let ac_context = context_config.ac_context(scan_idx, comp_in_scan);
+            let cluster_idx = context_map
+                .get(ac_context)
+                .map(|&t| t.saturating_sub(num_dc_tables))
+                .unwrap_or(0);
+            // Get the actual JPEG slot ID from ac_slot_ids
+            let ac_table = ac_slot_ids.get(cluster_idx).copied().unwrap_or(cluster_idx % 4);
 
             let table_selector = ((dc_table as u8) << 4) | (ac_table as u8);
             output.push(table_selector);
@@ -3491,6 +3614,84 @@ impl Encoder {
             output.extend_from_slice(&table.bits);
             output.extend_from_slice(&table.values);
         }
+
+        Ok(())
+    }
+
+    /// Writes initial Huffman tables for progressive mode.
+    ///
+    /// Like C++ jpegli, this writes all DC tables plus up to `max_initial_ac` AC tables.
+    /// Additional AC tables are emitted on-demand before the scans that need them.
+    ///
+    /// Returns the number of tables written (next_dht_index).
+    fn write_huffman_tables_progressive_initial(
+        &self,
+        output: &mut Vec<u8>,
+        tables: &[OptimizedTable],
+        num_dc_tables: usize,
+        max_initial_ac: usize,
+    ) -> Result<usize> {
+        // Count how many AC tables to include initially
+        let num_ac_tables = tables.len().saturating_sub(num_dc_tables);
+        let num_initial_ac = num_ac_tables.min(max_initial_ac);
+        let num_initial_tables = num_dc_tables + num_initial_ac;
+
+        if num_initial_tables == 0 {
+            return Ok(0);
+        }
+
+        output.push(0xFF);
+        output.push(MARKER_DHT);
+
+        // Calculate total length
+        let mut total_len = 2; // Length field itself
+        for table in tables.iter().take(num_initial_tables) {
+            total_len += 1 + 16 + table.values.len(); // class/id + bits + values
+        }
+
+        output.push((total_len >> 8) as u8);
+        output.push(total_len as u8);
+
+        // Write DC tables first (class 0)
+        for (i, table) in tables.iter().take(num_dc_tables).enumerate() {
+            let class_id = i as u8; // class 0, id = i
+            output.push(class_id);
+            output.extend_from_slice(&table.bits);
+            output.extend_from_slice(&table.values);
+        }
+
+        // Write initial AC tables (class 1)
+        for (i, table) in tables.iter().skip(num_dc_tables).take(num_initial_ac).enumerate() {
+            let class_id = 0x10 | (i as u8); // class 1, id = i
+            output.push(class_id);
+            output.extend_from_slice(&table.bits);
+            output.extend_from_slice(&table.values);
+        }
+
+        Ok(num_initial_tables)
+    }
+
+    /// Writes a single AC Huffman table as a DHT marker.
+    ///
+    /// This is used for on-demand emission of AC tables in progressive mode.
+    /// The table is written with class 1 and the specified slot ID.
+    fn write_single_ac_table(
+        &self,
+        output: &mut Vec<u8>,
+        table: &OptimizedTable,
+        slot_id: usize,
+    ) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_DHT);
+
+        let total_len = 2 + 1 + 16 + table.values.len();
+        output.push((total_len >> 8) as u8);
+        output.push(total_len as u8);
+
+        let class_id = 0x10 | (slot_id as u8); // class 1 (AC), id = slot_id
+        output.push(class_id);
+        output.extend_from_slice(&table.bits);
+        output.extend_from_slice(&table.values);
 
         Ok(())
     }

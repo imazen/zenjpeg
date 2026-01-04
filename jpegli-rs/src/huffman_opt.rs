@@ -668,10 +668,12 @@ pub fn cluster_histograms(
     let mut slot_costs: Vec<f64> = Vec::new();
 
     // Effective max clusters: 2 for baseline, up to max_clusters otherwise
+    // Note: More clusters can be created than slots (4) - slot IDs cycle with modulo 4
+    // This enables slot redefinition for progressive scans with different symbol distributions
     let effective_max = if force_baseline {
         max_clusters.min(2)
     } else {
-        max_clusters.min(4)
+        max_clusters // Don't cap - allow more clusters to enable on-demand DHT emission
     };
 
     #[cfg(feature = "debug-tokens")]
@@ -851,7 +853,7 @@ impl ProgressiveTokenBuffer {
     #[inline]
     pub fn push_ref(&mut self, token: RefToken) {
         if let Some(info) = self.scan_info.last_mut() {
-            // Count the actual symbol for Huffman table building
+            // Count the symbol for Huffman table building
             // - EOB symbols: 0x00, 0x10, 0x20, ... (high nibble = bits needed for run)
             // - Newly-nonzero: 0x01, 0x11, 0x21, ... (high nibble = run, low nibble = 1)
             // - ZRL: 0xF0
@@ -928,13 +930,14 @@ impl ProgressiveTokenBuffer {
     /// - `context_map`: Maps each context to a table index
     /// - `num_dc_tables`: Number of DC tables (for indexing into tables array)
     /// - `tables`: Optimized Huffman tables for each cluster (DC tables first, then AC)
+    /// - `ac_slot_ids`: Slot IDs for each AC table (0-3), for on-demand DHT emission
     pub fn generate_optimized_tables(
         &self,
         max_dc_clusters: usize,
         max_ac_clusters: usize,
         num_dc_contexts: usize,
         force_baseline: bool,
-    ) -> Result<(Vec<usize>, usize, Vec<OptimizedTable>)> {
+    ) -> Result<(Vec<usize>, usize, Vec<OptimizedTable>, Vec<usize>)> {
         // Split into DC and AC histograms
         let dc_histograms: Vec<_> = self.counters[..num_dc_contexts].to_vec();
         let ac_histograms: Vec<_> = self.counters[num_dc_contexts..].to_vec();
@@ -983,7 +986,10 @@ impl ProgressiveTokenBuffer {
             }
         }
 
-        Ok((context_map, dc_clusters.num_clusters, tables))
+        // AC slot IDs for on-demand DHT emission
+        let ac_slot_ids = ac_clusters.slot_ids.clone();
+
+        Ok((context_map, dc_clusters.num_clusters, tables, ac_slot_ids))
     }
 
     /// Generates optimized Huffman tables with explicit luma/chroma grouping.
@@ -1415,17 +1421,12 @@ impl ProgressiveTokenBuffer {
 
             if !has_content {
                 // All zeros - add to EOB run
-                // First, flush any pending refbits from previous blocks
-                if !pending_refbits.is_empty() {
-                    // Emit pending EOB run with refbits
-                    if eob_run > 0 {
-                        self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
-                        pending_refbits.clear();
-                        eob_run = 0;
-                    }
-                }
+                // DON'T flush pending refbits here - they accumulate with the EOB run
+                // just like C++ does. Only flush when we hit limits.
                 eob_run += 1;
-                if eob_run == 0x7FFF {
+
+                // Flush if we hit the maximum EOB run OR refbits limit
+                if eob_run == 0x7FFF || pending_refbits.len() > 255 {
                     self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
                     pending_refbits.clear();
                     eob_run = 0;
@@ -1477,10 +1478,11 @@ impl ProgressiveTokenBuffer {
                         let symbol = (run << 4) | 1; // Category is always 1 for refinement
                         let ref_token = RefToken::new(symbol, block_refbits.len() as u8);
                         self.push_ref(ref_token);
-                        self.push_refbit(sign);
+                        // Push refinement bits first, then sign bit
                         for &bit in &block_refbits {
                             self.push_refbit(bit);
                         }
+                        self.push_refbit(sign);
                         block_refbits.clear();
                         run = 0;
                     } else {
@@ -1489,10 +1491,27 @@ impl ProgressiveTokenBuffer {
                 }
             }
 
-            // If we have trailing refbits, they go with the next EOB
-            pending_refbits = block_refbits;
-            if run > 0 || !pending_refbits.is_empty() {
+            // If we have trailing refbits or trailing zeros, this block ends with EOB.
+            // Accumulate refbits with any pending ones from previous EOB blocks.
+            if run > 0 || !block_refbits.is_empty() {
+                // Check if adding these refbits would exceed the limit
+                if pending_refbits.len() + block_refbits.len() > 255 {
+                    // Flush current EOB run before starting a new one
+                    if eob_run > 0 {
+                        self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                        pending_refbits.clear();
+                        eob_run = 0;
+                    }
+                }
+                pending_refbits.extend(block_refbits);
                 eob_run += 1;
+
+                // Also check if we've hit the max run or refbits limit after accumulation
+                if eob_run == 0x7FFF || pending_refbits.len() > 255 {
+                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    pending_refbits.clear();
+                    eob_run = 0;
+                }
             }
         }
 
