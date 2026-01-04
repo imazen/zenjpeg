@@ -1281,6 +1281,19 @@ impl Encoder {
     /// This uses the same progressive scan structure as YCbCr encoding
     /// but with XYB color conversion and appropriate headers (ICC profile, APP14).
     fn encode_progressive_xyb(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Progressive mode requires Huffman optimization (already validated in encode_progressive)
+        // But adding explicit check here for safety in case this is called directly
+        if !self.config.optimize_huffman {
+            return Err(Error::UnsupportedFeature {
+                feature: "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+            });
+        }
+
+        // Use optimized Huffman tables if enabled (2-pass encoding)
+        if self.config.optimize_huffman {
+            return self.encode_progressive_xyb_optimized(data);
+        }
+
         let mut output = Vec::with_capacity(data.len() / 4);
         let width = self.config.width as usize;
         let height = self.config.height as usize;
@@ -1349,6 +1362,143 @@ impl Encoder {
             let scan_data = self.encode_progressive_scan(
                 &x_blocks, &y_blocks, &b_blocks, scan, is_color, &tables,
             )?;
+            output.extend_from_slice(&scan_data);
+        }
+
+        // Write EOI
+        output.push(0xFF);
+        output.push(MARKER_EOI);
+
+        Ok(output)
+    }
+
+    /// Encodes progressive XYB JPEG with optimized Huffman tables (2-pass).
+    ///
+    /// This is similar to encode_progressive_optimized() but for XYB color space.
+    /// It performs 2-pass encoding: first tokenizes all scans to collect statistics,
+    /// then builds optimized Huffman tables and replays tokens.
+    fn encode_progressive_xyb_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut output = Vec::with_capacity(data.len() / 4);
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        // Convert sRGB to scaled XYB
+        let (x_plane, y_plane, b_plane) = self.convert_to_scaled_xyb(data)?;
+
+        // Downsample B channel (2x2,2x2,1x1 subsampling for XYB)
+        let b_smooth = self.apply_input_smoothing(&b_plane, width, height)?;
+        let b_downsampled = self.downsample_2x2_f32(&b_smooth, width, height)?;
+        let b_width = (width + 1) / 2;
+        let b_height = (height + 1) / 2;
+
+        // Generate XYB quantization tables
+        let x_quant =
+            quant::generate_quant_table(self.config.quality, 0, ColorSpace::Rgb, true, false);
+        let y_quant =
+            quant::generate_quant_table(self.config.quality, 1, ColorSpace::Rgb, true, false);
+        let b_quant =
+            quant::generate_quant_table(self.config.quality, 2, ColorSpace::Rgb, true, false);
+
+        // Quantize all blocks
+        let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb(
+            &x_plane,
+            &y_plane,
+            &b_downsampled,
+            width,
+            height,
+            b_width,
+            b_height,
+            &x_quant,
+            &y_quant,
+            &b_quant,
+        );
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+        let num_components = if is_color { 3 } else { 1 };
+
+        // Define progressive scan script
+        let scans = self.get_progressive_scan_script(is_color);
+
+        // ========== PASS 1: TOKENIZATION ==========
+        let mut token_buffer = ProgressiveTokenBuffer::new(num_components, scans.len());
+
+        for scan in scans.iter() {
+            // For XYB: all components use table 0 (luma-like treatment)
+            let context = if scan.ss == 0 && scan.se == 0 {
+                0 // DC: all components use context 0
+            } else {
+                num_components as u8 // AC: all components use context 3
+            };
+
+            if scan.ss == 0 && scan.se == 0 {
+                // DC scan
+                let blocks: Vec<&[[i16; DCT_BLOCK_SIZE]]> = scan
+                    .components
+                    .iter()
+                    .map(|&c| match c {
+                        0 => x_blocks.as_slice(),
+                        1 => y_blocks.as_slice(),
+                        2 => b_blocks.as_slice(),
+                        _ => &[][..],
+                    })
+                    .collect();
+                let component_indices: Vec<usize> =
+                    scan.components.iter().map(|&c| c as usize).collect();
+                token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
+            } else if scan.ah == 0 {
+                // AC first scan
+                let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
+                    0 => &x_blocks,
+                    1 => &y_blocks,
+                    2 => &b_blocks,
+                    _ => {
+                        return Err(Error::InternalError {
+                            reason: "Invalid component",
+                        })
+                    }
+                };
+                token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
+            } else {
+                // AC refinement scan
+                let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
+                    0 => &x_blocks,
+                    1 => &y_blocks,
+                    2 => &b_blocks,
+                    _ => {
+                        return Err(Error::InternalError {
+                            reason: "Invalid component",
+                        })
+                    }
+                };
+                token_buffer.tokenize_ac_refinement_scan(
+                    blocks, context, scan.ss, scan.se, scan.ah, scan.al,
+                );
+            }
+        }
+
+        // ========== GENERATE OPTIMIZED TABLES ==========
+        let (num_dc_tables, tables) = token_buffer.generate_luma_chroma_tables(num_components)?;
+        let opt_tables =
+            self.build_progressive_huffman_tables(&tables, num_components, num_dc_tables)?;
+
+        // ========== WRITE JPEG STRUCTURE ==========
+        self.write_header_xyb(&mut output)?;
+        self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
+        self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
+        self.write_quant_tables(&mut output, &x_quant, &y_quant, &b_quant)?;
+        self.write_frame_header_xyb_progressive(&mut output)?;
+
+        // Write optimized Huffman tables (XYB uses only table 0)
+        self.write_huffman_tables_optimized(&mut output, &opt_tables)?;
+
+        if self.config.restart_interval > 0 {
+            self.write_restart_interval(&mut output)?;
+        }
+
+        // ========== PASS 2: REPLAY TOKENS ==========
+        for (scan_idx, scan) in scans.iter().enumerate() {
+            self.write_progressive_scan_header(&mut output, scan, is_color)?;
+            let scan_data =
+                self.replay_progressive_scan(&token_buffer, scan_idx, scan, is_color, &opt_tables)?;
             output.extend_from_slice(&scan_data);
         }
 
@@ -1866,6 +2016,15 @@ impl Encoder {
     /// 4. AC 3-63 refine: Ss=3, Se=63, Ah=2, Al=1 (bit 1 refinement)
     /// 5. AC 3-63 refine: Ss=3, Se=63, Ah=1, Al=0 (bit 0 refinement)
     fn encode_progressive(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Progressive mode requires Huffman optimization because standard JPEG Huffman tables
+        // are designed for baseline/sequential encoding and produce massive bloat (10-100×)
+        // when used with progressive AC refinement scans. This matches C++ cjpegli behavior.
+        if !self.config.optimize_huffman {
+            return Err(Error::UnsupportedFeature {
+                feature: "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+            });
+        }
+
         // XYB progressive mode - route to specialized encoder
         if self.config.use_xyb {
             return self.encode_progressive_xyb(data);
