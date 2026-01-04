@@ -1296,6 +1296,7 @@ impl Encoder {
         let b_height = (height + 1) / 2;
 
         // Generate XYB quantization tables
+        // Use separate quantization tables for each component (matches C++ jpegli XYB mode)
         let x_quant =
             quant::generate_quant_table(self.config.quality, 0, ColorSpace::Rgb, true, false);
         let y_quant =
@@ -2435,7 +2436,15 @@ impl Encoder {
                     }
 
                     let dc = blocks[block_idx][0];
-                    let table = if is_color && comp_idx > 0 { 1 } else { 0 };
+                    // For XYB: all components use table 0
+                    // For YCbCr: luma uses 0, chroma uses 1
+                    let table = if self.config.use_xyb {
+                        0
+                    } else if is_color && comp_idx > 0 {
+                        1
+                    } else {
+                        0
+                    };
 
                     encoder.encode_dc_progressive(dc, comp_num, table, scan.al, scan.ah)?;
                 }
@@ -2472,7 +2481,15 @@ impl Encoder {
             }
         };
 
-        let table_idx = if is_color && comp_idx > 0 { 1 } else { 0 };
+        // For XYB: all components use table 0
+        // For YCbCr: luma uses 0, chroma uses 1
+        let table_idx = if self.config.use_xyb {
+            0
+        } else if is_color && comp_idx > 0 {
+            1
+        } else {
+            0
+        };
 
         let mut eob_run = 0u16;
 
@@ -2528,7 +2545,15 @@ impl Encoder {
             }
         };
 
-        let table_idx = if is_color && comp_idx > 0 { 1 } else { 0 };
+        // For XYB: all components use table 0
+        // For YCbCr: luma uses 0, chroma uses 1
+        let table_idx = if self.config.use_xyb {
+            0
+        } else if is_color && comp_idx > 0 {
+            1
+        } else {
+            0
+        };
 
         let mut eob_run = 0u16;
 
