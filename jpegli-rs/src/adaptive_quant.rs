@@ -48,7 +48,7 @@
 
 use std::f32::consts::PI;
 
-use crate::adaptive_quant_simd::{compute_pre_erosion_simd, per_block_modulations_simd};
+use crate::adaptive_quant_simd::{compute_pre_erosion_simd, fuzzy_erosion_simd, per_block_modulations_simd};
 
 // ============================================================================
 // Constants ported from C++ adaptive_quantization.cc
@@ -329,11 +329,11 @@ pub fn compute_aq_strength_map_impl(
     // (its constants have kInputScaling = 1/255 baked in)
     let pre_erosion = compute_pre_erosion_simd(y_plane, width, height);
 
-    // 2. FuzzyErosion
+    // 2. FuzzyErosion - SIMD accelerated
     let pre_erosion_w = (width + 3) / 4;
     let pre_erosion_h = (height + 3) / 4;
     let mut quant_field = vec![0.0f32; num_blocks];
-    fuzzy_erosion_scalar(
+    fuzzy_erosion_simd(
         &pre_erosion,
         pre_erosion_w,
         pre_erosion_h,
