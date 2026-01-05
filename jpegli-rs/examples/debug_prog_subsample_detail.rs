@@ -150,11 +150,7 @@ fn main() {
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            let sof_name = if sof_type == 0 {
-                "SOF0"
-            } else {
-                "SOF2"
-            };
+            let sof_name = if sof_type == 0 { "SOF0" } else { "SOF2" };
 
             println!(
                 "{:<20} {:>8} {:>8} {:>10} {:>20}",

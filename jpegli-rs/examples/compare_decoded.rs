@@ -226,5 +226,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 
 fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
     use std::io::Cursor;
-    zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data)).decode().ok()
+    zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data))
+        .decode()
+        .ok()
 }

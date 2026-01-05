@@ -12,9 +12,17 @@ fn main() {
 
     println!("Scan script:");
     for (i, scan) in scans.iter().enumerate() {
-        let scan_type = if scan.ss == 0 { "DC" } else if scan.ah == 0 { "AC First" } else { "AC Refine" };
-        println!("  Scan {:2}: {:10} Ss={:2}-{:2}, Ah={}, Al={}, comps={:?}",
-            i, scan_type, scan.ss, scan.se, scan.ah, scan.al, scan.components);
+        let scan_type = if scan.ss == 0 {
+            "DC"
+        } else if scan.ah == 0 {
+            "AC First"
+        } else {
+            "AC Refine"
+        };
+        println!(
+            "  Scan {:2}: {:10} Ss={:2}-{:2}, Ah={}, Al={}, comps={:?}",
+            i, scan_type, scan.ss, scan.se, scan.ah, scan.al, scan.components
+        );
     }
     println!();
 
@@ -39,13 +47,19 @@ fn main() {
             // DC scan
             for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
                 let context = context_config.dc_context(comp_idx as usize);
-                println!("  Scan {:2} (DC) comp {}: context {}", scan_idx, comp_idx, context);
+                println!(
+                    "  Scan {:2} (DC) comp {}: context {}",
+                    scan_idx, comp_idx, context
+                );
             }
         } else {
             // AC scan
             for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
                 let context = context_config.ac_context(scan_idx, comp_in_scan);
-                println!("  Scan {:2} (AC) comp {}: context {}", scan_idx, comp_idx, context);
+                println!(
+                    "  Scan {:2} (AC) comp {}: context {}",
+                    scan_idx, comp_idx, context
+                );
             }
         }
     }

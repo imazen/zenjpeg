@@ -57,8 +57,6 @@ pub mod adaptive_quant_simd;
 #[doc(hidden)]
 pub mod alloc;
 #[doc(hidden)]
-pub mod encode_simd;
-#[doc(hidden)]
 pub mod bitstream;
 #[doc(hidden)]
 pub mod chroma;
@@ -68,6 +66,8 @@ pub mod color;
 pub mod consts;
 #[doc(hidden)]
 pub mod dct;
+#[doc(hidden)]
+pub mod encode_simd;
 #[doc(hidden)]
 pub mod entropy;
 #[doc(hidden)]

@@ -177,8 +177,16 @@ fn srgb_to_linear_poly(x: f32) -> f32 {
         // Evaluate rational polynomial p(x)/q(x) using Horner's method
         // Coefficients are ordered: [degree-0, degree-1, degree-2, degree-3, degree-4]
         // Horner evaluation starts from highest degree: p4*x^4 + p3*x^3 + p2*x^2 + p1*x + p0
-        let p_val = P[4].mul_add(x, P[3]).mul_add(x, P[2]).mul_add(x, P[1]).mul_add(x, P[0]);
-        let q_val = Q[4].mul_add(x, Q[3]).mul_add(x, Q[2]).mul_add(x, Q[1]).mul_add(x, Q[0]);
+        let p_val = P[4]
+            .mul_add(x, P[3])
+            .mul_add(x, P[2])
+            .mul_add(x, P[1])
+            .mul_add(x, P[0]);
+        let q_val = Q[4]
+            .mul_add(x, Q[3])
+            .mul_add(x, Q[2])
+            .mul_add(x, Q[1])
+            .mul_add(x, Q[0]);
         p_val / q_val
     }
 }
@@ -635,11 +643,8 @@ pub fn srgb_to_scaled_xyb_planes_simd(
 
     // Scalar remainder
     for i in (chunks * 8)..num_pixels {
-        let (x, y, b) = srgb_to_scaled_xyb(
-            rgb_data[i * 3],
-            rgb_data[i * 3 + 1],
-            rgb_data[i * 3 + 2],
-        );
+        let (x, y, b) =
+            srgb_to_scaled_xyb(rgb_data[i * 3], rgb_data[i * 3 + 1], rgb_data[i * 3 + 2]);
         x_plane[i] = x;
         y_plane[i] = y;
         b_plane[i] = b;
@@ -1497,13 +1502,21 @@ mod tests {
                 let (rx, ry, rb) = linear_rgb_to_xyb(linear[0], linear[1], linear[2]);
                 let cpp = cpp_results[i];
 
-                let err = (rx - cpp[0]).abs().max((ry - cpp[1]).abs()).max((rb - cpp[2]).abs());
+                let err = (rx - cpp[0])
+                    .abs()
+                    .max((ry - cpp[1]).abs())
+                    .max((rb - cpp[2]).abs());
                 max_err = max_err.max(err);
 
                 assert!(
                     err < 1e-6,
                     "Scalar vs C++ mismatch at {}: rust=({},{},{}), cpp={:?}, err={}",
-                    i, rx, ry, rb, cpp, err
+                    i,
+                    rx,
+                    ry,
+                    rb,
+                    cpp,
+                    err
                 );
             }
             // Verified: max error ~3.58e-7 across all 16.7M colors
@@ -1542,7 +1555,10 @@ mod tests {
                 assert!(
                     err < 1e-5,
                     "SIMD vs C++ mismatch at {}: simd={:?}, cpp={:?}, err={}",
-                    i, simd, cpp, err
+                    i,
+                    simd,
+                    cpp,
+                    err
                 );
             }
             // Both SIMD and C++ should be within ~3.58e-7

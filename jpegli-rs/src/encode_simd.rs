@@ -391,7 +391,10 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, 
 ///
 /// # Returns
 /// Tuple of (Y plane, Cb plane, Cr plane) as f32 vectors
-pub fn rgb_to_ycbcr_planes_simd(rgb_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub fn rgb_to_ycbcr_planes_simd(
+    rgb_data: &[u8],
+    num_pixels: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     // Use uninit allocation since we write to every element
     let mut y_plane = alloc_uninit_f32(num_pixels);
     let mut cb_plane = alloc_uninit_f32(num_pixels);
@@ -483,7 +486,10 @@ pub fn rgb_to_ycbcr_planes_simd(rgb_data: &[u8], num_pixels: usize) -> (Vec<f32>
 }
 
 /// SIMD-optimized RGBA to YCbCr conversion for entire image (ignores alpha).
-pub fn rgba_to_ycbcr_planes_simd(rgba_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub fn rgba_to_ycbcr_planes_simd(
+    rgba_data: &[u8],
+    num_pixels: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     // Use uninit allocation since we write to every element
     let mut y_plane = alloc_uninit_f32(num_pixels);
     let mut cb_plane = alloc_uninit_f32(num_pixels);
@@ -573,7 +579,10 @@ pub fn rgba_to_ycbcr_planes_simd(rgba_data: &[u8], num_pixels: usize) -> (Vec<f3
 
 /// SIMD-optimized grayscale to YCbCr conversion.
 /// Y = gray value, Cb = Cr = 128.0
-pub fn gray_to_ycbcr_planes_simd(gray_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub fn gray_to_ycbcr_planes_simd(
+    gray_data: &[u8],
+    num_pixels: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let mut y_plane = alloc_uninit_f32(num_pixels);
     let mut cb_plane = alloc_uninit_f32(num_pixels);
     let mut cr_plane = alloc_uninit_f32(num_pixels);
@@ -615,7 +624,10 @@ pub fn gray_to_ycbcr_planes_simd(gray_data: &[u8], num_pixels: usize) -> (Vec<f3
 }
 
 /// SIMD-optimized BGR to YCbCr conversion for entire image.
-pub fn bgr_to_ycbcr_planes_simd(bgr_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub fn bgr_to_ycbcr_planes_simd(
+    bgr_data: &[u8],
+    num_pixels: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let mut y_plane = alloc_uninit_f32(num_pixels);
     let mut cb_plane = alloc_uninit_f32(num_pixels);
     let mut cr_plane = alloc_uninit_f32(num_pixels);
@@ -703,7 +715,10 @@ pub fn bgr_to_ycbcr_planes_simd(bgr_data: &[u8], num_pixels: usize) -> (Vec<f32>
 }
 
 /// SIMD-optimized BGRA to YCbCr conversion for entire image (ignores alpha).
-pub fn bgra_to_ycbcr_planes_simd(bgra_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+pub fn bgra_to_ycbcr_planes_simd(
+    bgra_data: &[u8],
+    num_pixels: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let mut y_plane = alloc_uninit_f32(num_pixels);
     let mut cb_plane = alloc_uninit_f32(num_pixels);
     let mut cr_plane = alloc_uninit_f32(num_pixels);
@@ -830,8 +845,14 @@ pub fn extract_block_simd(
             // Load 8 consecutive f32 values
             let row_slice = &plane[row_start..row_start + 8];
             let row = f32x8::from([
-                row_slice[0], row_slice[1], row_slice[2], row_slice[3],
-                row_slice[4], row_slice[5], row_slice[6], row_slice[7],
+                row_slice[0],
+                row_slice[1],
+                row_slice[2],
+                row_slice[3],
+                row_slice[4],
+                row_slice[5],
+                row_slice[6],
+                row_slice[7],
             ]);
 
             // Subtract level shift
@@ -887,8 +908,14 @@ pub fn extract_block_xyb_simd(
             let row_start = (py_start + y) * width + px_start;
             let row_slice = &plane[row_start..row_start + 8];
             let row = f32x8::from([
-                row_slice[0], row_slice[1], row_slice[2], row_slice[3],
-                row_slice[4], row_slice[5], row_slice[6], row_slice[7],
+                row_slice[0],
+                row_slice[1],
+                row_slice[2],
+                row_slice[3],
+                row_slice[4],
+                row_slice[5],
+                row_slice[6],
+                row_slice[7],
             ]);
 
             // XYB: val * 255.0 - 128.0
@@ -925,12 +952,7 @@ pub fn extract_block_xyb_simd(
 /// * `height` - Plane height
 /// * `factor` - Smoothing factor (0-127, 0 = no smoothing)
 #[inline]
-pub fn apply_smoothing_simd(
-    plane: &[f32],
-    width: usize,
-    height: usize,
-    factor: u8,
-) -> Vec<f32> {
+pub fn apply_smoothing_simd(plane: &[f32], width: usize, height: usize, factor: u8) -> Vec<f32> {
     if factor == 0 {
         return plane.to_vec();
     }
@@ -976,66 +998,102 @@ pub fn apply_smoothing_simd(
 
             // Load center row
             let mm = f32x8::from([
-                plane[y * width + x_start], plane[y * width + x_start + 1],
-                plane[y * width + x_start + 2], plane[y * width + x_start + 3],
-                plane[y * width + x_start + 4], plane[y * width + x_start + 5],
-                plane[y * width + x_start + 6], plane[y * width + x_start + 7],
+                plane[y * width + x_start],
+                plane[y * width + x_start + 1],
+                plane[y * width + x_start + 2],
+                plane[y * width + x_start + 3],
+                plane[y * width + x_start + 4],
+                plane[y * width + x_start + 5],
+                plane[y * width + x_start + 6],
+                plane[y * width + x_start + 7],
             ]);
 
             // Load left neighbors (offset -1)
             let ml = f32x8::from([
-                plane[y * width + x_start - 1], plane[y * width + x_start],
-                plane[y * width + x_start + 1], plane[y * width + x_start + 2],
-                plane[y * width + x_start + 3], plane[y * width + x_start + 4],
-                plane[y * width + x_start + 5], plane[y * width + x_start + 6],
+                plane[y * width + x_start - 1],
+                plane[y * width + x_start],
+                plane[y * width + x_start + 1],
+                plane[y * width + x_start + 2],
+                plane[y * width + x_start + 3],
+                plane[y * width + x_start + 4],
+                plane[y * width + x_start + 5],
+                plane[y * width + x_start + 6],
             ]);
 
             // Load right neighbors (offset +1)
             let mr = f32x8::from([
-                plane[y * width + x_start + 1], plane[y * width + x_start + 2],
-                plane[y * width + x_start + 3], plane[y * width + x_start + 4],
-                plane[y * width + x_start + 5], plane[y * width + x_start + 6],
-                plane[y * width + x_start + 7], plane[y * width + x_start + 8],
+                plane[y * width + x_start + 1],
+                plane[y * width + x_start + 2],
+                plane[y * width + x_start + 3],
+                plane[y * width + x_start + 4],
+                plane[y * width + x_start + 5],
+                plane[y * width + x_start + 6],
+                plane[y * width + x_start + 7],
+                plane[y * width + x_start + 8],
             ]);
 
             // Load top row
             let tm = f32x8::from([
-                plane[y_t * width + x_start], plane[y_t * width + x_start + 1],
-                plane[y_t * width + x_start + 2], plane[y_t * width + x_start + 3],
-                plane[y_t * width + x_start + 4], plane[y_t * width + x_start + 5],
-                plane[y_t * width + x_start + 6], plane[y_t * width + x_start + 7],
+                plane[y_t * width + x_start],
+                plane[y_t * width + x_start + 1],
+                plane[y_t * width + x_start + 2],
+                plane[y_t * width + x_start + 3],
+                plane[y_t * width + x_start + 4],
+                plane[y_t * width + x_start + 5],
+                plane[y_t * width + x_start + 6],
+                plane[y_t * width + x_start + 7],
             ]);
             let tl = f32x8::from([
-                plane[y_t * width + x_start - 1], plane[y_t * width + x_start],
-                plane[y_t * width + x_start + 1], plane[y_t * width + x_start + 2],
-                plane[y_t * width + x_start + 3], plane[y_t * width + x_start + 4],
-                plane[y_t * width + x_start + 5], plane[y_t * width + x_start + 6],
+                plane[y_t * width + x_start - 1],
+                plane[y_t * width + x_start],
+                plane[y_t * width + x_start + 1],
+                plane[y_t * width + x_start + 2],
+                plane[y_t * width + x_start + 3],
+                plane[y_t * width + x_start + 4],
+                plane[y_t * width + x_start + 5],
+                plane[y_t * width + x_start + 6],
             ]);
             let tr = f32x8::from([
-                plane[y_t * width + x_start + 1], plane[y_t * width + x_start + 2],
-                plane[y_t * width + x_start + 3], plane[y_t * width + x_start + 4],
-                plane[y_t * width + x_start + 5], plane[y_t * width + x_start + 6],
-                plane[y_t * width + x_start + 7], plane[y_t * width + x_start + 8],
+                plane[y_t * width + x_start + 1],
+                plane[y_t * width + x_start + 2],
+                plane[y_t * width + x_start + 3],
+                plane[y_t * width + x_start + 4],
+                plane[y_t * width + x_start + 5],
+                plane[y_t * width + x_start + 6],
+                plane[y_t * width + x_start + 7],
+                plane[y_t * width + x_start + 8],
             ]);
 
             // Load bottom row
             let bm = f32x8::from([
-                plane[y_b * width + x_start], plane[y_b * width + x_start + 1],
-                plane[y_b * width + x_start + 2], plane[y_b * width + x_start + 3],
-                plane[y_b * width + x_start + 4], plane[y_b * width + x_start + 5],
-                plane[y_b * width + x_start + 6], plane[y_b * width + x_start + 7],
+                plane[y_b * width + x_start],
+                plane[y_b * width + x_start + 1],
+                plane[y_b * width + x_start + 2],
+                plane[y_b * width + x_start + 3],
+                plane[y_b * width + x_start + 4],
+                plane[y_b * width + x_start + 5],
+                plane[y_b * width + x_start + 6],
+                plane[y_b * width + x_start + 7],
             ]);
             let bl = f32x8::from([
-                plane[y_b * width + x_start - 1], plane[y_b * width + x_start],
-                plane[y_b * width + x_start + 1], plane[y_b * width + x_start + 2],
-                plane[y_b * width + x_start + 3], plane[y_b * width + x_start + 4],
-                plane[y_b * width + x_start + 5], plane[y_b * width + x_start + 6],
+                plane[y_b * width + x_start - 1],
+                plane[y_b * width + x_start],
+                plane[y_b * width + x_start + 1],
+                plane[y_b * width + x_start + 2],
+                plane[y_b * width + x_start + 3],
+                plane[y_b * width + x_start + 4],
+                plane[y_b * width + x_start + 5],
+                plane[y_b * width + x_start + 6],
             ]);
             let br = f32x8::from([
-                plane[y_b * width + x_start + 1], plane[y_b * width + x_start + 2],
-                plane[y_b * width + x_start + 3], plane[y_b * width + x_start + 4],
-                plane[y_b * width + x_start + 5], plane[y_b * width + x_start + 6],
-                plane[y_b * width + x_start + 7], plane[y_b * width + x_start + 8],
+                plane[y_b * width + x_start + 1],
+                plane[y_b * width + x_start + 2],
+                plane[y_b * width + x_start + 3],
+                plane[y_b * width + x_start + 4],
+                plane[y_b * width + x_start + 5],
+                plane[y_b * width + x_start + 6],
+                plane[y_b * width + x_start + 7],
+                plane[y_b * width + x_start + 8],
             ]);
 
             // Sum neighbors
@@ -1086,12 +1144,7 @@ pub fn apply_smoothing_simd(
 ///
 /// This is used for XYB decode path where no YCbCr→RGB conversion is needed.
 #[inline]
-pub fn xyb_planes_to_rgb_u8_simd(
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [u8],
-) {
+pub fn xyb_planes_to_rgb_u8_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32], rgb: &mut [u8]) {
     debug_assert_eq!(plane0.len(), plane1.len());
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
@@ -1107,16 +1160,34 @@ pub fn xyb_planes_to_rgb_u8_simd(
 
         // Load 8 values from each plane
         let p0 = f32x8::from([
-            plane0[base], plane0[base + 1], plane0[base + 2], plane0[base + 3],
-            plane0[base + 4], plane0[base + 5], plane0[base + 6], plane0[base + 7],
+            plane0[base],
+            plane0[base + 1],
+            plane0[base + 2],
+            plane0[base + 3],
+            plane0[base + 4],
+            plane0[base + 5],
+            plane0[base + 6],
+            plane0[base + 7],
         ]);
         let p1 = f32x8::from([
-            plane1[base], plane1[base + 1], plane1[base + 2], plane1[base + 3],
-            plane1[base + 4], plane1[base + 5], plane1[base + 6], plane1[base + 7],
+            plane1[base],
+            plane1[base + 1],
+            plane1[base + 2],
+            plane1[base + 3],
+            plane1[base + 4],
+            plane1[base + 5],
+            plane1[base + 6],
+            plane1[base + 7],
         ]);
         let p2 = f32x8::from([
-            plane2[base], plane2[base + 1], plane2[base + 2], plane2[base + 3],
-            plane2[base + 4], plane2[base + 5], plane2[base + 6], plane2[base + 7],
+            plane2[base],
+            plane2[base + 1],
+            plane2[base + 2],
+            plane2[base + 3],
+            plane2[base + 4],
+            plane2[base + 5],
+            plane2[base + 6],
+            plane2[base + 7],
         ]);
 
         // Level shift, clamp
@@ -1148,12 +1219,7 @@ pub fn xyb_planes_to_rgb_u8_simd(
 
 /// SIMD-optimized XYB plane level shift to interleaved RGB f32 (normalized 0-1).
 #[inline]
-pub fn xyb_planes_to_rgb_f32_simd(
-    plane0: &[f32],
-    plane1: &[f32],
-    plane2: &[f32],
-    rgb: &mut [f32],
-) {
+pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32], rgb: &mut [f32]) {
     debug_assert_eq!(plane0.len(), plane1.len());
     debug_assert_eq!(plane0.len(), plane2.len());
     debug_assert_eq!(rgb.len(), plane0.len() * 3);
@@ -1169,16 +1235,34 @@ pub fn xyb_planes_to_rgb_f32_simd(
         let base = chunk * 8;
 
         let p0 = f32x8::from([
-            plane0[base], plane0[base + 1], plane0[base + 2], plane0[base + 3],
-            plane0[base + 4], plane0[base + 5], plane0[base + 6], plane0[base + 7],
+            plane0[base],
+            plane0[base + 1],
+            plane0[base + 2],
+            plane0[base + 3],
+            plane0[base + 4],
+            plane0[base + 5],
+            plane0[base + 6],
+            plane0[base + 7],
         ]);
         let p1 = f32x8::from([
-            plane1[base], plane1[base + 1], plane1[base + 2], plane1[base + 3],
-            plane1[base + 4], plane1[base + 5], plane1[base + 6], plane1[base + 7],
+            plane1[base],
+            plane1[base + 1],
+            plane1[base + 2],
+            plane1[base + 3],
+            plane1[base + 4],
+            plane1[base + 5],
+            plane1[base + 6],
+            plane1[base + 7],
         ]);
         let p2 = f32x8::from([
-            plane2[base], plane2[base + 1], plane2[base + 2], plane2[base + 3],
-            plane2[base + 4], plane2[base + 5], plane2[base + 6], plane2[base + 7],
+            plane2[base],
+            plane2[base + 1],
+            plane2[base + 2],
+            plane2[base + 3],
+            plane2[base + 4],
+            plane2[base + 5],
+            plane2[base + 6],
+            plane2[base + 7],
         ]);
 
         // Level shift, scale to 0-1, clamp
@@ -1261,7 +1345,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Downsample mismatch at {}: SIMD={}, scalar={}, diff={}",
-                i, simd_result[i], scalar_result[i], diff
+                i,
+                simd_result[i],
+                scalar_result[i],
+                diff
             );
         }
     }
@@ -1298,7 +1385,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Downsample 2x1 mismatch at {}: SIMD={}, scalar={}, diff={}",
-                i, simd_result[i], scalar_result[i], diff
+                i,
+                simd_result[i],
+                scalar_result[i],
+                diff
             );
         }
     }
@@ -1335,7 +1425,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Downsample 1x2 mismatch at {}: SIMD={}, scalar={}, diff={}",
-                i, simd_result[i], scalar_result[i], diff
+                i,
+                simd_result[i],
+                scalar_result[i],
+                diff
             );
         }
     }
@@ -1371,17 +1464,23 @@ mod tests {
             assert!(
                 (y_simd[i] - y_scalar[i]).abs() < EPSILON,
                 "Y mismatch at {}: SIMD={}, scalar={}",
-                i, y_simd[i], y_scalar[i]
+                i,
+                y_simd[i],
+                y_scalar[i]
             );
             assert!(
                 (cb_simd[i] - cb_scalar[i]).abs() < EPSILON,
                 "Cb mismatch at {}: SIMD={}, scalar={}",
-                i, cb_simd[i], cb_scalar[i]
+                i,
+                cb_simd[i],
+                cb_scalar[i]
             );
             assert!(
                 (cr_simd[i] - cr_scalar[i]).abs() < EPSILON,
                 "Cr mismatch at {}: SIMD={}, scalar={}",
-                i, cr_simd[i], cr_scalar[i]
+                i,
+                cr_simd[i],
+                cr_scalar[i]
             );
         }
     }
@@ -1407,17 +1506,23 @@ mod tests {
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,
                 "Y mismatch at {}: SIMD={}, scalar={}",
-                i, y_simd[i], y_scalar
+                i,
+                y_simd[i],
+                y_scalar
             );
             assert!(
                 (cb_simd[i] - cb_scalar).abs() < EPSILON,
                 "Cb mismatch at {}: SIMD={}, scalar={}",
-                i, cb_simd[i], cb_scalar
+                i,
+                cb_simd[i],
+                cb_scalar
             );
             assert!(
                 (cr_simd[i] - cr_scalar).abs() < EPSILON,
                 "Cr mismatch at {}: SIMD={}, scalar={}",
-                i, cr_simd[i], cr_scalar
+                i,
+                cr_simd[i],
+                cr_scalar
             );
         }
     }
@@ -1444,17 +1549,23 @@ mod tests {
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,
                 "Y mismatch at {}: SIMD={}, scalar={}",
-                i, y_simd[i], y_scalar
+                i,
+                y_simd[i],
+                y_scalar
             );
             assert!(
                 (cb_simd[i] - cb_scalar).abs() < EPSILON,
                 "Cb mismatch at {}: SIMD={}, scalar={}",
-                i, cb_simd[i], cb_scalar
+                i,
+                cb_simd[i],
+                cb_scalar
             );
             assert!(
                 (cr_simd[i] - cr_scalar).abs() < EPSILON,
                 "Cr mismatch at {}: SIMD={}, scalar={}",
-                i, cr_simd[i], cr_scalar
+                i,
+                cr_simd[i],
+                cr_scalar
             );
         }
     }
@@ -1481,17 +1592,23 @@ mod tests {
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,
                 "Y mismatch at {}: SIMD={}, scalar={}",
-                i, y_simd[i], y_scalar
+                i,
+                y_simd[i],
+                y_scalar
             );
             assert!(
                 (cb_simd[i] - cb_scalar).abs() < EPSILON,
                 "Cb mismatch at {}: SIMD={}, scalar={}",
-                i, cb_simd[i], cb_scalar
+                i,
+                cb_simd[i],
+                cb_scalar
             );
             assert!(
                 (cr_simd[i] - cr_scalar).abs() < EPSILON,
                 "Cr mismatch at {}: SIMD={}, scalar={}",
-                i, cr_simd[i], cr_scalar
+                i,
+                cr_simd[i],
+                cr_scalar
             );
         }
     }
@@ -1513,17 +1630,23 @@ mod tests {
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,
                 "Y mismatch at {}: SIMD={}, scalar={}",
-                i, y_simd[i], y_scalar
+                i,
+                y_simd[i],
+                y_scalar
             );
             assert!(
                 (cb_simd[i] - cb_scalar).abs() < EPSILON,
                 "Cb mismatch at {}: SIMD={}, scalar={}",
-                i, cb_simd[i], cb_scalar
+                i,
+                cb_simd[i],
+                cb_scalar
             );
             assert!(
                 (cr_simd[i] - cr_scalar).abs() < EPSILON,
                 "Cr mismatch at {}: SIMD={}, scalar={}",
-                i, cr_simd[i], cr_scalar
+                i,
+                cr_simd[i],
+                cr_scalar
             );
         }
     }
@@ -1533,9 +1656,7 @@ mod tests {
         // Create a 32x32 plane (4x4 blocks)
         let width = 32usize;
         let height = 32usize;
-        let plane: Vec<f32> = (0..(width * height))
-            .map(|i| (i % 256) as f32)
-            .collect();
+        let plane: Vec<f32> = (0..(width * height)).map(|i| (i % 256) as f32).collect();
 
         // Test interior block at (1, 1) - no edge handling needed
         let block = extract_block_simd(&plane, width, height, 1, 1);
@@ -1549,7 +1670,10 @@ mod tests {
                 assert!(
                     (block[y * 8 + x] - expected).abs() < EPSILON,
                     "Mismatch at ({}, {}): got={}, expected={}",
-                    x, y, block[y * 8 + x], expected
+                    x,
+                    y,
+                    block[y * 8 + x],
+                    expected
                 );
             }
         }
@@ -1560,9 +1684,7 @@ mod tests {
         // Create a 20x20 plane (blocks at edge need clamping)
         let width = 20usize;
         let height = 20usize;
-        let plane: Vec<f32> = (0..(width * height))
-            .map(|i| (i % 256) as f32)
-            .collect();
+        let plane: Vec<f32> = (0..(width * height)).map(|i| (i % 256) as f32).collect();
 
         // Test edge block at (2, 2) - partially outside bounds
         let block = extract_block_simd(&plane, width, height, 2, 2);
@@ -1576,7 +1698,10 @@ mod tests {
                 assert!(
                     (block[y * 8 + x] - expected).abs() < EPSILON,
                     "Mismatch at ({}, {}): got={}, expected={}",
-                    x, y, block[y * 8 + x], expected
+                    x,
+                    y,
+                    block[y * 8 + x],
+                    expected
                 );
             }
         }
@@ -1586,9 +1711,7 @@ mod tests {
     fn test_apply_smoothing_simd() {
         let width = 32usize;
         let height = 32usize;
-        let plane: Vec<f32> = (0..(width * height))
-            .map(|i| (i % 256) as f32)
-            .collect();
+        let plane: Vec<f32> = (0..(width * height)).map(|i| (i % 256) as f32).collect();
 
         let factor = 64u8; // Moderate smoothing
         let result = apply_smoothing_simd(&plane, width, height, factor);
@@ -1609,13 +1732,17 @@ mod tests {
                 let val_bm = plane[(y + 1) * width + x];
                 let val_br = plane[(y + 1) * width + x + 1];
 
-                let neighbors = val_tl + val_tm + val_tr + val_ml + val_mr + val_bl + val_bm + val_br;
+                let neighbors =
+                    val_tl + val_tm + val_tr + val_ml + val_mr + val_bl + val_bm + val_br;
                 let expected = val_mm * kw0 + neighbors * kw1;
 
                 assert!(
                     (result[y * width + x] - expected).abs() < EPSILON,
                     "Smoothing mismatch at ({}, {}): got={}, expected={}",
-                    x, y, result[y * width + x], expected
+                    x,
+                    y,
+                    result[y * width + x],
+                    expected
                 );
             }
         }
@@ -1625,9 +1752,7 @@ mod tests {
     fn test_apply_smoothing_simd_factor_zero() {
         let width = 16usize;
         let height = 16usize;
-        let plane: Vec<f32> = (0..(width * height))
-            .map(|i| (i % 256) as f32)
-            .collect();
+        let plane: Vec<f32> = (0..(width * height)).map(|i| (i % 256) as f32).collect();
 
         // Factor 0 should return a copy
         let result = apply_smoothing_simd(&plane, width, height, 0);

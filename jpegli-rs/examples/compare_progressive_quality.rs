@@ -102,7 +102,8 @@ fn compare_image(png_path: &str, name: &str, quality: u32) -> Option<CompareResu
     let output = Command::new(&cjpegli_path)
         .args([
             "--chroma_subsampling=444",
-            "-p", "2",  // Progressive level 2
+            "-p",
+            "2", // Progressive level 2
             &ppm_path,
             &cpp_jpg_path,
             "-q",
@@ -112,7 +113,10 @@ fn compare_image(png_path: &str, name: &str, quality: u32) -> Option<CompareResu
         .ok()?;
 
     if !output.status.success() {
-        eprintln!("cjpegli failed: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "cjpegli failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return None;
     }
 
@@ -122,8 +126,8 @@ fn compare_image(png_path: &str, name: &str, quality: u32) -> Option<CompareResu
         .width(width)
         .height(height)
         .mode(jpegli::types::JpegMode::Progressive)
-        .optimize_huffman(true)  // Progressive uses optimized Huffman
-        .subsampling(jpegli::types::Subsampling::S444)  // Match C++ --chroma_subsampling=444
+        .optimize_huffman(true) // Progressive uses optimized Huffman
+        .subsampling(jpegli::types::Subsampling::S444) // Match C++ --chroma_subsampling=444
         .jpegli_quality(jpegli::quant::Quality::Traditional(quality as f32))
         .encode(&rgb)
         .ok()?;
@@ -131,11 +135,19 @@ fn compare_image(png_path: &str, name: &str, quality: u32) -> Option<CompareResu
     let cpp_jpeg = fs::read(&cpp_jpg_path).ok()?;
 
     // Use zune-jpeg for decoding (more tolerant than jpeg-decoder)
-    let cpp_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&cpp_jpeg)).decode().ok()?;
-    let rust_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&rust_jpeg)).decode().ok()?;
+    let cpp_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&cpp_jpeg))
+        .decode()
+        .ok()?;
+    let rust_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&rust_jpeg))
+        .decode()
+        .ok()?;
 
     if cpp_decoded.len() != rust_decoded.len() {
-        eprintln!("Size mismatch: C++ {} vs Rust {}", cpp_decoded.len(), rust_decoded.len());
+        eprintln!(
+            "Size mismatch: C++ {} vs Rust {}",
+            cpp_decoded.len(),
+            rust_decoded.len()
+        );
         return None;
     }
 
@@ -184,7 +196,8 @@ fn detailed_histogram(png_path: &str, name: &str, quality: u32) -> Option<(Vec<u
         .args([
             "--noadaptive_quantization",
             "--chroma_subsampling=444",
-            "-p", "2",
+            "-p",
+            "2",
             &ppm_path,
             &cpp_jpg_path,
             "-q",
@@ -203,8 +216,12 @@ fn detailed_histogram(png_path: &str, name: &str, quality: u32) -> Option<(Vec<u
         .ok()?;
 
     let cpp_jpeg = fs::read(&cpp_jpg_path).ok()?;
-    let cpp_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&cpp_jpeg)).decode().ok()?;
-    let rust_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&rust_jpeg)).decode().ok()?;
+    let cpp_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&cpp_jpeg))
+        .decode()
+        .ok()?;
+    let rust_decoded = zune_jpeg::JpegDecoder::new(Cursor::new(&rust_jpeg))
+        .decode()
+        .ok()?;
 
     let mut histogram = vec![0usize; 256];
     let mut max_diff = 0u8;

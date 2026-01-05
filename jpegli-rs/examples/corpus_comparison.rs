@@ -9,8 +9,8 @@
 //! Usage: cargo run --release --example corpus_comparison -- <corpus_dir> <output.html>
 
 use dssim::Dssim;
-use rgb::RGBA8;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use rgb::RGBA8;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -211,7 +211,8 @@ fn encode_mozjpeg(rgb: &[u8], width: usize, height: usize, quality: f32) -> Vec<
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().expect("decode")
 }
 

@@ -102,7 +102,8 @@ fn main() {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().expect("decode")
 }
 

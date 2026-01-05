@@ -60,21 +60,36 @@ fn analyze_scans(data: &[u8]) {
             let scan_start = i + 2 + length;
             let mut scan_end = scan_start;
             while scan_end + 1 < data.len() {
-                if data[scan_end] == 0xFF && data[scan_end + 1] != 0x00 && data[scan_end + 1] != 0xFF {
+                if data[scan_end] == 0xFF
+                    && data[scan_end + 1] != 0x00
+                    && data[scan_end + 1] != 0xFF
+                {
                     break;
                 }
                 scan_end += 1;
             }
             let scan_size = scan_end - scan_start;
 
-            let scan_type = if ss == 0 { "DC" } else if ah == 0 { "AC First" } else { "AC Refine" };
-            
-            println!("Scan #{:2}: {:10} Ss={:2}-{:2}, Ah={}, Al={}, {} comps → {:6} bytes",
-                scan_num, scan_type, ss, se, ah, al, num_components, scan_size);
+            let scan_type = if ss == 0 {
+                "DC"
+            } else if ah == 0 {
+                "AC First"
+            } else {
+                "AC Refine"
+            };
 
-            if ss == 0 { total_dc += scan_size; }
-            else if ah == 0 { total_ac_first += scan_size; }
-            else { total_ac_refine += scan_size; }
+            println!(
+                "Scan #{:2}: {:10} Ss={:2}-{:2}, Ah={}, Al={}, {} comps → {:6} bytes",
+                scan_num, scan_type, ss, se, ah, al, num_components, scan_size
+            );
+
+            if ss == 0 {
+                total_dc += scan_size;
+            } else if ah == 0 {
+                total_ac_first += scan_size;
+            } else {
+                total_ac_refine += scan_size;
+            }
 
             i = scan_end;
         } else {
@@ -86,5 +101,8 @@ fn analyze_scans(data: &[u8]) {
     println!("DC scans:        {:6} bytes", total_dc);
     println!("AC First scans:  {:6} bytes", total_ac_first);
     println!("AC Refine scans: {:6} bytes", total_ac_refine);
-    println!("Sum:             {:6} bytes", total_dc + total_ac_first + total_ac_refine);
+    println!(
+        "Sum:             {:6} bytes",
+        total_dc + total_ac_first + total_ac_refine
+    );
 }

@@ -33,7 +33,9 @@ fn test_decoder(name: &str, jpeg_data: &[u8]) -> (bool, Option<String>) {
             Err(e) => (false, Some(format!("{:?}", e))),
         },
         "jpeg-decoder" => {
-            let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
+            let mut decoder = zune_jpeg::JpegDecoder::new(
+                zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data),
+            );
             match decoder.decode() {
                 Ok(_) => (true, None),
                 Err(e) => (false, Some(format!("{:?}", e))),

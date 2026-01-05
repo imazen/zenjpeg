@@ -51,7 +51,9 @@ fn benchmark_decoder(name: &str, jpeg_data: &[u8], iterations: usize) -> Option<
             let start = Instant::now();
             let mut total_pixels = 0;
             for _ in 0..iterations {
-                let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
+                let mut decoder = zune_jpeg::JpegDecoder::new(
+                    zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data),
+                );
                 let pixels = decoder.decode().ok()?;
                 total_pixels += pixels.len();
             }

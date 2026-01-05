@@ -53,7 +53,13 @@ const CONVERGENCE_THRESHOLD: f32 = 0.1;
 ///
 /// Processes 8 pixels at a time using f32x8 vectors.
 #[cfg(feature = "simd")]
-fn compute_y_plane_from_rgb(data: &[u8], width: usize, height: usize, bpp: usize, y_plane: &mut [f32]) {
+fn compute_y_plane_from_rgb(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    bpp: usize,
+    y_plane: &mut [f32],
+) {
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
     let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
     let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
@@ -115,7 +121,13 @@ fn compute_y_plane_from_rgb(data: &[u8], width: usize, height: usize, bpp: usize
 
 /// Scalar version of Y plane computation.
 #[cfg(not(feature = "simd"))]
-fn compute_y_plane_from_rgb(data: &[u8], width: usize, height: usize, bpp: usize, y_plane: &mut [f32]) {
+fn compute_y_plane_from_rgb(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    bpp: usize,
+    y_plane: &mut [f32],
+) {
     let num_pixels = width * height;
     for i in 0..num_pixels {
         let idx = i * bpp;

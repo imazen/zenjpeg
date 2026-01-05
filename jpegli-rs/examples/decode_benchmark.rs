@@ -39,7 +39,8 @@ fn main() {
 
     // Warmup
     let _ = jpegli::Decoder::new().decode(&jpeg);
-    let _ = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg)).decode();
+    let _ =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg)).decode();
     let mut zune = JpegDecoder::new(Cursor::new(&jpeg));
     let _ = zune.decode();
 
@@ -73,7 +74,8 @@ fn main() {
     // Benchmark jpeg-decoder
     let start = Instant::now();
     for _ in 0..iterations {
-        let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg));
+        let mut decoder =
+            zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg));
         let _ = decoder.decode().unwrap();
     }
     let jpeg_decoder_time = start.elapsed() / iterations;
@@ -145,7 +147,8 @@ fn main() {
 
     let start = Instant::now();
     for _ in 0..iterations_4k {
-        let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_4k));
+        let mut decoder =
+            zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_4k));
         let _ = decoder.decode().unwrap();
     }
     let jpeg_decoder_4k_time = start.elapsed() / iterations_4k;

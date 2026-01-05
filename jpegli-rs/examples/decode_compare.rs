@@ -46,7 +46,12 @@ fn main() {
     // Check if decoded matches original reasonably
     let check_decode = |name: &str, decoded: &[u8]| {
         if decoded.len() != original.len() {
-            println!("{}: SIZE MISMATCH {} vs {}", name, decoded.len(), original.len());
+            println!(
+                "{}: SIZE MISMATCH {} vs {}",
+                name,
+                decoded.len(),
+                original.len()
+            );
             return;
         }
 
@@ -67,10 +72,15 @@ fn main() {
         for i in [0, 100, 500, 1000, 2000, 3000].iter() {
             if *i < original.len() / 3 {
                 let idx = i * 3;
-                println!("    [{:4}] ({},{},{}) vs ({},{},{})",
+                println!(
+                    "    [{:4}] ({},{},{}) vs ({},{},{})",
                     i,
-                    original[idx], original[idx+1], original[idx+2],
-                    decoded[idx], decoded[idx+1], decoded[idx+2]
+                    original[idx],
+                    original[idx + 1],
+                    original[idx + 2],
+                    decoded[idx],
+                    decoded[idx + 1],
+                    decoded[idx + 2]
                 );
             }
         }
@@ -98,7 +108,14 @@ fn main() {
     let cjpegli = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
 
     let _ = std::process::Command::new(cjpegli)
-        .args([png_path, cpp_path, "-q", "85", "--chroma_subsampling=420", "--progressive_level=2"])
+        .args([
+            png_path,
+            cpp_path,
+            "-q",
+            "85",
+            "--chroma_subsampling=420",
+            "--progressive_level=2",
+        ])
         .output();
 
     if let Ok(cpp_jpeg) = fs::read(cpp_path) {

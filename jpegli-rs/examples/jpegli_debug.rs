@@ -569,7 +569,8 @@ fn compare_quality(
 }
 
 fn decode_jpeg(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().map_err(|e| e.to_string())
 }
 

@@ -78,12 +78,7 @@ fn main() {
         match zune_decoder.decode() {
             Ok(pixels) => {
                 let (w, h) = zune_decoder.dimensions().unwrap();
-                println!(
-                    "✓ Success: {}x{}, {} bytes",
-                    w,
-                    h,
-                    pixels.len()
-                );
+                println!("✓ Success: {}x{}, {} bytes", w, h, pixels.len());
                 println!();
             }
             Err(e) => {
@@ -93,16 +88,13 @@ fn main() {
 
         // Test 3: zune-jpeg again (same decoder)
         println!("=== Test 3: zune-jpeg (with ZCursor) ===");
-        let mut libjpeg_decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&cpp_jpeg[..]));
+        let mut libjpeg_decoder = zune_jpeg::JpegDecoder::new(
+            zune_jpeg::zune_core::bytestream::ZCursor::new(&cpp_jpeg[..]),
+        );
         match libjpeg_decoder.decode() {
             Ok(pixels) => {
                 let (w, h) = libjpeg_decoder.dimensions().unwrap();
-                println!(
-                    "✓ Success: {}x{}, {} bytes",
-                    w,
-                    h,
-                    pixels.len()
-                );
+                println!("✓ Success: {}x{}, {} bytes", w, h, pixels.len());
                 println!();
             }
             Err(e) => {
@@ -196,7 +188,9 @@ fn main() {
         }
 
         println!("\nDecoding Rust progressive with zune-jpeg (ZCursor):");
-        let mut libjpeg_decoder2 = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&rust_prog[..]));
+        let mut libjpeg_decoder2 = zune_jpeg::JpegDecoder::new(
+            zune_jpeg::zune_core::bytestream::ZCursor::new(&rust_prog[..]),
+        );
         match libjpeg_decoder2.decode() {
             Ok(_) => {
                 let (w, h) = libjpeg_decoder2.dimensions().unwrap();

@@ -412,11 +412,9 @@ fn fast_log2(x: f32) -> f32 {
     // log2(f) ≈ 1.442695 * ln(f) where ln(f) ≈ (f-1) - (f-1)²/2 + (f-1)³/3
     // = (f-1) * (1.442695 - 0.721348*(f-1) + 0.480899*(f-1)² - 0.360674*(f-1)³)
     let t = f_minus_1;
-    let log2_f = t * (1.442695041
-        + t * (-0.7213475204
-        + t * (0.4808983470
-        + t * (-0.3606737602
-        + t * 0.2885390082))));
+    let log2_f = t
+        * (1.442695041
+            + t * (-0.7213475204 + t * (0.4808983470 + t * (-0.3606737602 + t * 0.2885390082))));
 
     e as f32 + log2_f
 }
@@ -448,7 +446,17 @@ pub fn gamma_modulation_sum_8x8(block: &[f32], stride: usize) -> f32 {
                 let idx = row_start + dx;
                 if idx < block.len() {
                     let val = block[idx] + K_BIAS;
-                    sum = sum + f32x8::from([ratio_of_derivatives_scalar(val, true), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+                    sum = sum
+                        + f32x8::from([
+                            ratio_of_derivatives_scalar(val, true),
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                        ]);
                 }
             }
         }
@@ -496,7 +504,8 @@ pub fn hf_modulation_sum_8x8(
         // Use SIMD: load 8 values, load 8 shifted values, compute abs diff
         if row_start + 8 <= block.len() && block_x + 8 < img_width {
             let p = f32x8::from(unsafe { *(block.as_ptr().add(row_start) as *const [f32; 8]) });
-            let p_right = f32x8::from(unsafe { *(block.as_ptr().add(row_start + 1) as *const [f32; 8]) });
+            let p_right =
+                f32x8::from(unsafe { *(block.as_ptr().add(row_start + 1) as *const [f32; 8]) });
             let h_diff = (p - p_right).abs();
             let h_arr: [f32; 8] = h_diff.into();
             // Only sum first 7 (last pixel in block doesn't have right neighbor within block)
@@ -519,10 +528,19 @@ pub fn hf_modulation_sum_8x8(
             let next_row_start = (dy + 1) * stride;
             if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
                 let p = f32x8::from(unsafe { *(block.as_ptr().add(row_start) as *const [f32; 8]) });
-                let p_below = f32x8::from(unsafe { *(block.as_ptr().add(next_row_start) as *const [f32; 8]) });
+                let p_below = f32x8::from(unsafe {
+                    *(block.as_ptr().add(next_row_start) as *const [f32; 8])
+                });
                 let v_diff = (p - p_below).abs();
                 let v_arr: [f32; 8] = v_diff.into();
-                sum += v_arr[0] + v_arr[1] + v_arr[2] + v_arr[3] + v_arr[4] + v_arr[5] + v_arr[6] + v_arr[7];
+                sum += v_arr[0]
+                    + v_arr[1]
+                    + v_arr[2]
+                    + v_arr[3]
+                    + v_arr[4]
+                    + v_arr[5]
+                    + v_arr[6]
+                    + v_arr[7];
             } else {
                 // Scalar fallback
                 for dx in 0..8 {
@@ -558,7 +576,8 @@ pub fn per_block_modulations_simd(
     let base_level = 0.48 * K_AC_QUANT;
 
     let dampen = if y_quant_01 >= K_DAMPEN_RAMP_START {
-        let d = 1.0 - (y_quant_01 - K_DAMPEN_RAMP_START) / (K_DAMPEN_RAMP_END - K_DAMPEN_RAMP_START);
+        let d =
+            1.0 - (y_quant_01 - K_DAMPEN_RAMP_START) / (K_DAMPEN_RAMP_END - K_DAMPEN_RAMP_START);
         d.max(0.0)
     } else {
         1.0
@@ -709,9 +728,11 @@ pub fn fuzzy_erosion_simd(
         // Pre-fetch row data for better cache utilization
         let row_above_y = (y as isize - 1).clamp(0, pre_erosion_h as isize - 1) as usize;
         let row_below_y = (y as isize + 1).clamp(0, pre_erosion_h as isize - 1) as usize;
-        let row_above = &pre_erosion[row_above_y * pre_erosion_w..(row_above_y + 1) * pre_erosion_w];
+        let row_above =
+            &pre_erosion[row_above_y * pre_erosion_w..(row_above_y + 1) * pre_erosion_w];
         let row_curr = &pre_erosion[y * pre_erosion_w..(y + 1) * pre_erosion_w];
-        let row_below = &pre_erosion[row_below_y * pre_erosion_w..(row_below_y + 1) * pre_erosion_w];
+        let row_below =
+            &pre_erosion[row_below_y * pre_erosion_w..(row_below_y + 1) * pre_erosion_w];
 
         for x in 0..pre_erosion_w {
             let ix = x as isize;
@@ -721,15 +742,15 @@ pub fn fuzzy_erosion_simd(
             let x_right = (ix + 1).clamp(0, pre_erosion_w as isize - 1) as usize;
 
             let vals = [
-                row_above[x_left],   // top-left
-                row_above[x],        // top
-                row_above[x_right],  // top-right
-                row_curr[x_left],    // left
-                row_curr[x],         // center
-                row_curr[x_right],   // right
-                row_below[x_left],   // bottom-left
-                row_below[x],        // bottom
-                row_below[x_right],  // bottom-right
+                row_above[x_left],  // top-left
+                row_above[x],       // top
+                row_above[x_right], // top-right
+                row_curr[x_left],   // left
+                row_curr[x],        // center
+                row_curr[x_right],  // right
+                row_below[x_left],  // bottom-left
+                row_below[x],       // bottom
+                row_below[x_right], // bottom-right
             ];
 
             tmp[y * pre_erosion_w + x] = weighted_min4_of_9(vals);
@@ -827,8 +848,14 @@ mod tests {
     #[test]
     fn test_ratio_of_derivatives_x8_matches_scalar() {
         let inputs = f32x8::from([
-            TEST_INPUTS_RATIO[0], TEST_INPUTS_RATIO[1], TEST_INPUTS_RATIO[2], TEST_INPUTS_RATIO[3],
-            TEST_INPUTS_RATIO[4], TEST_INPUTS_RATIO[5], TEST_INPUTS_RATIO[6], TEST_INPUTS_RATIO[7],
+            TEST_INPUTS_RATIO[0],
+            TEST_INPUTS_RATIO[1],
+            TEST_INPUTS_RATIO[2],
+            TEST_INPUTS_RATIO[3],
+            TEST_INPUTS_RATIO[4],
+            TEST_INPUTS_RATIO[5],
+            TEST_INPUTS_RATIO[6],
+            TEST_INPUTS_RATIO[7],
         ]);
 
         let simd_result = ratio_of_derivatives_x8(inputs);
@@ -840,7 +867,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
-                i, simd_arr[i], scalar_result, diff
+                i,
+                simd_arr[i],
+                scalar_result,
+                diff
             );
         }
     }
@@ -848,8 +878,14 @@ mod tests {
     #[test]
     fn test_ratio_of_derivatives_inv_x8_matches_scalar() {
         let inputs = f32x8::from([
-            TEST_INPUTS_RATIO[8], TEST_INPUTS_RATIO[9], TEST_INPUTS_RATIO[10], TEST_INPUTS_RATIO[11],
-            TEST_INPUTS_RATIO[12], TEST_INPUTS_RATIO[13], TEST_INPUTS_RATIO[14], TEST_INPUTS_RATIO[15],
+            TEST_INPUTS_RATIO[8],
+            TEST_INPUTS_RATIO[9],
+            TEST_INPUTS_RATIO[10],
+            TEST_INPUTS_RATIO[11],
+            TEST_INPUTS_RATIO[12],
+            TEST_INPUTS_RATIO[13],
+            TEST_INPUTS_RATIO[14],
+            TEST_INPUTS_RATIO[15],
         ]);
 
         let simd_result = ratio_of_derivatives_inv_x8(inputs);
@@ -861,7 +897,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
-                i, simd_arr[i], scalar_result, diff
+                i,
+                simd_arr[i],
+                scalar_result,
+                diff
             );
         }
     }
@@ -881,7 +920,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
-                i, simd_arr[i], scalar_result, diff
+                i,
+                simd_arr[i],
+                scalar_result,
+                diff
             );
         }
     }
@@ -903,7 +945,11 @@ mod tests {
             assert!(
                 diff < rel_epsilon,
                 "Mismatch at index {} (input={}): SIMD={}, scalar={}, diff={}",
-                i, input_arr[i], simd_arr[i], scalar_result, diff
+                i,
+                input_arr[i],
+                simd_arr[i],
+                scalar_result,
+                diff
             );
         }
     }
@@ -929,8 +975,14 @@ mod tests {
 
         // Verify SIMD produces same values
         let inputs = f32x8::from([
-            locked_inputs[0], locked_inputs[1], locked_inputs[2], locked_inputs[3],
-            0.0, 0.0, 0.0, 0.0,
+            locked_inputs[0],
+            locked_inputs[1],
+            locked_inputs[2],
+            locked_inputs[3],
+            0.0,
+            0.0,
+            0.0,
+            0.0,
         ]);
         let simd_result = ratio_of_derivatives_x8(inputs);
         let simd_arr: [f32; 8] = simd_result.into();
@@ -939,7 +991,9 @@ mod tests {
             assert!(
                 (simd_arr[i] - locked_outputs_non_inv[i]).abs() < EPSILON,
                 "LOCKED VALUE CHANGED! input={}, expected={}, got={}",
-                locked_inputs[i], locked_outputs_non_inv[i], simd_arr[i]
+                locked_inputs[i],
+                locked_outputs_non_inv[i],
+                simd_arr[i]
             );
         }
     }
@@ -974,7 +1028,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
-                i, simd_arr[i], scalar_result, diff
+                i,
+                simd_arr[i],
+                scalar_result,
+                diff
             );
         }
     }
@@ -996,7 +1053,11 @@ mod tests {
         for x in 0..width {
             let pixel = row[x];
             let left_val = if x == 0 { row[0] } else { row[x - 1] };
-            let right_val = if x == width - 1 { row[width - 1] } else { row[x + 1] };
+            let right_val = if x == width - 1 {
+                row[width - 1]
+            } else {
+                row[x + 1]
+            };
             let top_val = row_above[x];
             let bottom_val = row_below[x];
 
@@ -1013,7 +1074,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Row mismatch at x={}: SIMD={}, scalar={}, diff={}",
-                x, output_simd[x], output_scalar[x], diff
+                x,
+                output_simd[x],
+                output_scalar[x],
+                diff
             );
         }
     }
@@ -1034,7 +1098,11 @@ mod tests {
         for x in 0..width {
             let pixel = row[x];
             let left_val = if x == 0 { row[0] } else { row[x - 1] };
-            let right_val = if x == width - 1 { row[width - 1] } else { row[x + 1] };
+            let right_val = if x == width - 1 {
+                row[width - 1]
+            } else {
+                row[x + 1]
+            };
             let top_val = row_above[x];
             let bottom_val = row_below[x];
 
@@ -1050,7 +1118,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Odd width mismatch at x={}: SIMD={}, scalar={}, diff={}",
-                x, output_simd[x], output_scalar[x], diff
+                x,
+                output_simd[x],
+                output_scalar[x],
+                diff
             );
         }
     }
@@ -1098,7 +1169,11 @@ mod tests {
                     let ix = x as isize;
                     let iy_s = y as isize;
                     let pixel = get(ix, iy_s);
-                    let base = 0.25 * (get(ix - 1, iy_s) + get(ix + 1, iy_s) + get(ix, iy_s - 1) + get(ix, iy_s + 1));
+                    let base = 0.25
+                        * (get(ix - 1, iy_s)
+                            + get(ix + 1, iy_s)
+                            + get(ix, iy_s - 1)
+                            + get(ix, iy_s + 1));
                     let ratio = ratio_of_derivatives_scalar(pixel + GAMMA_OFFSET, false);
                     let diff = ratio * (pixel - base);
                     let diff_sq = (diff * diff).min(LIMIT);
@@ -1126,14 +1201,19 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Pre-erosion mismatch at index {}: SIMD={}, scalar={}, diff={}",
-                i, simd_result[i], scalar_result[i], diff
+                i,
+                simd_result[i],
+                scalar_result[i],
+                diff
             );
         }
     }
 
     #[test]
     fn test_downsample_4x_sum() {
-        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let input = vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
         let mut output = vec![0.0f32; 3];
         downsample_4x_sum(&input, &mut output);
 
@@ -1147,9 +1227,21 @@ mod tests {
     fn test_fast_exp2_accuracy() {
         // Test fast_exp2 against standard exp2 over typical input range
         let test_values = [
-            -10.0, -5.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 5.0, 10.0,
+            -10.0,
+            -5.0,
+            -2.0,
+            -1.0,
+            -0.5,
+            0.0,
+            0.5,
+            1.0,
+            2.0,
+            5.0,
+            10.0,
             -0.74174993, // K_MASK_BASE
-            0.123, -0.456, 3.14159,
+            0.123,
+            -0.456,
+            3.14159,
         ];
 
         for &x in &test_values {
@@ -1161,7 +1253,10 @@ mod tests {
             assert!(
                 rel_err < 5e-4,
                 "fast_exp2({}) = {} vs exp2 = {}, rel_err = {}",
-                x, fast, exact, rel_err
+                x,
+                fast,
+                exact,
+                rel_err
             );
         }
     }
@@ -1172,8 +1267,8 @@ mod tests {
         // The gamma modulation ratio is typically in [0.0001, 0.01] range
         // which gives log2 values in [-13, -7] range
         let test_values = [
-            0.0001, 0.001, 0.01, 0.1, 0.5, 1.0, 2.0, 4.0, 10.0,
-            0.25, 0.75, 1.5, 3.14159, 0.00025, 0.005,
+            0.0001, 0.001, 0.01, 0.1, 0.5, 1.0, 2.0, 4.0, 10.0, 0.25, 0.75, 1.5, 3.14159, 0.00025,
+            0.005,
         ];
 
         for &x in &test_values {
@@ -1186,7 +1281,10 @@ mod tests {
             assert!(
                 abs_err < 0.1,
                 "fast_log2({}) = {} vs log2 = {}, abs_err = {}",
-                x, fast, exact, abs_err
+                x,
+                fast,
+                exact,
+                abs_err
             );
         }
     }
@@ -1198,19 +1296,31 @@ mod tests {
         // 4 smallest are: 1, 2, 3, 4
         // Expected: 0.125*1 + 0.075*2 + 0.06*3 + 0.05*4 = 0.125 + 0.15 + 0.18 + 0.2 = 0.655
         let result = weighted_min4_of_9(vals);
-        assert!((result - 0.655).abs() < 1e-6, "Expected 0.655, got {}", result);
+        assert!(
+            (result - 0.655).abs() < 1e-6,
+            "Expected 0.655, got {}",
+            result
+        );
 
         // Test with already sorted values
         let vals2 = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0_f32];
         let result2 = weighted_min4_of_9(vals2);
-        assert!((result2 - 0.655).abs() < 1e-6, "Expected 0.655, got {}", result2);
+        assert!(
+            (result2 - 0.655).abs() < 1e-6,
+            "Expected 0.655, got {}",
+            result2
+        );
 
         // Test with duplicates
         let vals3 = [5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0_f32];
         // 4 smallest are all 5
         // Expected: 0.125*5 + 0.075*5 + 0.06*5 + 0.05*5 = 5 * 0.31 = 1.55
         let result3 = weighted_min4_of_9(vals3);
-        assert!((result3 - 1.55).abs() < 1e-6, "Expected 1.55, got {}", result3);
+        assert!(
+            (result3 - 1.55).abs() < 1e-6,
+            "Expected 1.55, got {}",
+            result3
+        );
     }
 
     #[test]
@@ -1234,11 +1344,25 @@ mod tests {
 
         // SIMD version
         let mut aq_map_simd = vec![0.0f32; block_w * block_h];
-        fuzzy_erosion_simd(&pre_erosion, pre_erosion_w, pre_erosion_h, block_w, block_h, &mut aq_map_simd);
+        fuzzy_erosion_simd(
+            &pre_erosion,
+            pre_erosion_w,
+            pre_erosion_h,
+            block_w,
+            block_h,
+            &mut aq_map_simd,
+        );
 
         // Scalar reference
         let mut aq_map_scalar = vec![0.0f32; block_w * block_h];
-        fuzzy_erosion_scalar_ref(&pre_erosion, pre_erosion_w, pre_erosion_h, block_w, block_h, &mut aq_map_scalar);
+        fuzzy_erosion_scalar_ref(
+            &pre_erosion,
+            pre_erosion_w,
+            pre_erosion_h,
+            block_w,
+            block_h,
+            &mut aq_map_scalar,
+        );
 
         // Compare
         for i in 0..aq_map_simd.len() {
@@ -1246,7 +1370,10 @@ mod tests {
             assert!(
                 diff < EPSILON,
                 "Fuzzy erosion mismatch at index {}: SIMD={}, scalar={}, diff={}",
-                i, aq_map_simd[i], aq_map_scalar[i], diff
+                i,
+                aq_map_simd[i],
+                aq_map_scalar[i],
+                diff
             );
         }
     }
@@ -1294,7 +1421,10 @@ mod tests {
                     }
                 }
 
-                let weighted = FUZZY_MUL0 * vals[0] + FUZZY_MUL1 * vals[1] + FUZZY_MUL2 * vals[2] + FUZZY_MUL3 * vals[3];
+                let weighted = FUZZY_MUL0 * vals[0]
+                    + FUZZY_MUL1 * vals[1]
+                    + FUZZY_MUL2 * vals[2]
+                    + FUZZY_MUL3 * vals[3];
                 tmp[y * pre_erosion_w + x] = weighted;
             }
         }
@@ -1309,7 +1439,10 @@ mod tests {
             for bx in 0..block_w {
                 let px = bx * 2;
                 let py = by * 2;
-                let sum = get_tmp(px, py) + get_tmp(px + 1, py) + get_tmp(px, py + 1) + get_tmp(px + 1, py + 1);
+                let sum = get_tmp(px, py)
+                    + get_tmp(px + 1, py)
+                    + get_tmp(px, py + 1)
+                    + get_tmp(px + 1, py + 1);
                 aq_map[by * block_w + bx] = sum;
             }
         }

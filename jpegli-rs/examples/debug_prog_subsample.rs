@@ -19,7 +19,8 @@ fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
 }
 
 fn decode_with_mozjpeg(data: &[u8]) -> Result<Vec<u8>, String> {
-    let decompress = mozjpeg::Decompress::new_mem(data).map_err(|e| format!("decompress: {:?}", e))?;
+    let decompress =
+        mozjpeg::Decompress::new_mem(data).map_err(|e| format!("decompress: {:?}", e))?;
     let mut decompressor = decompress.rgb().map_err(|e| format!("rgb: {:?}", e))?;
     let width = decompressor.width();
     let height = decompressor.height();
@@ -155,8 +156,7 @@ fn main() {
     for (sub_name, sub) in &subsamplings {
         let (baseline_size, _, _, _) =
             test_config(width, height, JpegMode::Baseline, *sub, quality);
-        let (prog_size, _, _, _) =
-            test_config(width, height, JpegMode::Progressive, *sub, quality);
+        let (prog_size, _, _, _) = test_config(width, height, JpegMode::Progressive, *sub, quality);
 
         let diff_pct = if baseline_size > 0 {
             (prog_size as f64 - baseline_size as f64) / baseline_size as f64 * 100.0

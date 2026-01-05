@@ -176,7 +176,9 @@ fn process_image(
     fs::write(&jpeg_path, &jpeg_data).map_err(|e| format!("Write: {}", e))?;
 
     // Decode with reference decoder (jpeg-decoder)
-    let mut jpeg_dec = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]));
+    let mut jpeg_dec = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(
+        &jpeg_data[..],
+    ));
     let decoded_rgb = jpeg_dec
         .decode()
         .map_err(|e| format!("JPEG decode: {}", e))?;

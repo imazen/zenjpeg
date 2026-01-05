@@ -25,9 +25,11 @@ fn main() {
             .encode(&data)
             .expect("encode failed");
 
-        let baseline_ok = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_baseline[..]))
-            .decode()
-            .is_ok();
+        let baseline_ok = zune_jpeg::JpegDecoder::new(
+            zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_baseline[..]),
+        )
+        .decode()
+        .is_ok();
 
         // Test with progressive (has refinement)
         let jpeg_prog = Encoder::new()

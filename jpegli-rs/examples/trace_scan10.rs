@@ -17,8 +17,12 @@ fn main() {
     let scan_10_start = find_nth_sos(&rust_jpg, 10);
     let scan_10_end = find_nth_sos(&rust_jpg, 11);
 
-    println!("Scan 10: {:04X} - {:04X} ({} bytes)",
-             scan_10_start, scan_10_end, scan_10_end - scan_10_start);
+    println!(
+        "Scan 10: {:04X} - {:04X} ({} bytes)",
+        scan_10_start,
+        scan_10_end,
+        scan_10_end - scan_10_start
+    );
 
     // Skip SOS header (8 bytes for single-component scan)
     let data_start = scan_10_start + 10; // 2 (marker) + 2 (length) + 6 (params)
@@ -73,7 +77,11 @@ fn find_ac_table(data: &[u8], table_id: u8) -> HuffmanTable {
                         code <<= 1;
                     }
 
-                    return HuffmanTable { symbols, codes, lengths };
+                    return HuffmanTable {
+                        symbols,
+                        codes,
+                        lengths,
+                    };
                 }
             }
             i = end;
@@ -165,17 +173,25 @@ fn decode_ac_refinement_scan(data: &[u8], table: &HuffmanTable) {
                         symbol_num += 1;
                         k += rrrr as usize + 1;
                     } else {
-                        println!("ERROR at block {} symbol {}: unexpected ssss={} (sym=0x{:02X})",
-                                 block_num, symbol_num, ssss, sym);
+                        println!(
+                            "ERROR at block {} symbol {}: unexpected ssss={} (sym=0x{:02X})",
+                            block_num, symbol_num, ssss, sym
+                        );
                         println!("  Bit position: {}", reader.bit_pos);
-                        println!("  Last {} bits decoded: {:0width$b}", code_bits,
-                                 reader.last_code, width = reader.last_len as usize);
+                        println!(
+                            "  Last {} bits decoded: {:0width$b}",
+                            code_bits,
+                            reader.last_code,
+                            width = reader.last_len as usize
+                        );
                         return;
                     }
                 }
                 Err(msg) => {
-                    println!("ERROR at block {} symbol {} k={}: {}",
-                             block_num, symbol_num, k, msg);
+                    println!(
+                        "ERROR at block {} symbol {} k={}: {}",
+                        block_num, symbol_num, k, msg
+                    );
                     println!("  Byte position: {}", reader.byte_pos);
                     println!("  Bit position: {}", reader.bit_pos);
                     // Show context
@@ -196,7 +212,10 @@ fn decode_ac_refinement_scan(data: &[u8], table: &HuffmanTable) {
         }
     }
 
-    println!("Successfully decoded {} blocks, {} symbols", block_num, symbol_num);
+    println!(
+        "Successfully decoded {} blocks, {} symbols",
+        block_num, symbol_num
+    );
 }
 
 fn decode_symbol(reader: &mut BitReader, table: &HuffmanTable) -> Result<(u8, u32), String> {
@@ -216,7 +235,10 @@ fn decode_symbol(reader: &mut BitReader, table: &HuffmanTable) -> Result<(u8, u3
         }
     }
 
-    Err(format!("No match for code {:016b} ({} bits read)", code, 16))
+    Err(format!(
+        "No match for code {:016b} ({} bits read)",
+        code, 16
+    ))
 }
 
 struct BitReader<'a> {

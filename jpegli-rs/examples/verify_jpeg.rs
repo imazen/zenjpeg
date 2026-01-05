@@ -29,7 +29,8 @@ fn main() {
     println!("Wrote {} bytes to /tmp/test_xyb.jpg", jpeg.len());
 
     // Decode with zune-jpeg
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
     match decoder.decode() {
         Ok(pixels) => {
             println!("zune-jpeg: decoded {} bytes of pixels", pixels.len());

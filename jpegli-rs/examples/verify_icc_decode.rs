@@ -28,9 +28,11 @@ fn main() {
                 }
 
                 // Also decode without ICC for comparison
-                let no_icc: Vec<u8> = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]))
-                    .decode()
-                    .expect("decode");
+                let no_icc: Vec<u8> = zune_jpeg::JpegDecoder::new(
+                    zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]),
+                )
+                .decode()
+                .expect("decode");
                 println!("\nFirst 10 pixels (No ICC):");
                 for i in 0..10 {
                     println!(

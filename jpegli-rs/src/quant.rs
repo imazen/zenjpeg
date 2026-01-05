@@ -568,13 +568,25 @@ pub fn quantize_block(
         let k = chunk * 8;
 
         let c = f32x8::from([
-            coeffs[k], coeffs[k + 1], coeffs[k + 2], coeffs[k + 3],
-            coeffs[k + 4], coeffs[k + 5], coeffs[k + 6], coeffs[k + 7],
+            coeffs[k],
+            coeffs[k + 1],
+            coeffs[k + 2],
+            coeffs[k + 3],
+            coeffs[k + 4],
+            coeffs[k + 5],
+            coeffs[k + 6],
+            coeffs[k + 7],
         ]);
 
         let q = f32x8::from([
-            quant[k] as f32, quant[k + 1] as f32, quant[k + 2] as f32, quant[k + 3] as f32,
-            quant[k + 4] as f32, quant[k + 5] as f32, quant[k + 6] as f32, quant[k + 7] as f32,
+            quant[k] as f32,
+            quant[k + 1] as f32,
+            quant[k + 2] as f32,
+            quant[k + 3] as f32,
+            quant[k + 4] as f32,
+            quant[k + 5] as f32,
+            quant[k + 6] as f32,
+            quant[k + 7] as f32,
         ]);
 
         let qval = c / q;
@@ -1458,7 +1470,8 @@ mod tests {
 
         // Run both versions
         let scalar_result = quantize_block_with_zero_bias(&coeffs, &quant, &zero_bias, aq_strength);
-        let simd_result = quantize_block_with_zero_bias_simd(&coeffs, &quant, &zero_bias, aq_strength);
+        let simd_result =
+            quantize_block_with_zero_bias_simd(&coeffs, &quant, &zero_bias, aq_strength);
 
         // Compare
         for i in 0..DCT_BLOCK_SIZE {

@@ -237,16 +237,12 @@ fn main() {
 
     // Compare with zune-jpeg
     println!("\n--- zune-jpeg ---");
-    let mut ref_dec = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&data[..]));
+    let mut ref_dec =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&data[..]));
     match ref_dec.decode() {
         Ok(pixels) => {
             let (w, h) = ref_dec.dimensions().unwrap();
-            println!(
-                "SUCCESS: {}x{}, {} bytes",
-                w,
-                h,
-                pixels.len()
-            );
+            println!("SUCCESS: {}x{}, {} bytes", w, h, pixels.len());
         }
         Err(e) => {
             println!("FAILED: {:?}", e);

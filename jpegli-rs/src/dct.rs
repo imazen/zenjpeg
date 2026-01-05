@@ -284,8 +284,14 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
         for chunk in 0..8 {
             let k = chunk * 8;
             let v = f32x8::from([
-                coefficients[k], coefficients[k + 1], coefficients[k + 2], coefficients[k + 3],
-                coefficients[k + 4], coefficients[k + 5], coefficients[k + 6], coefficients[k + 7],
+                coefficients[k],
+                coefficients[k + 1],
+                coefficients[k + 2],
+                coefficients[k + 3],
+                coefficients[k + 4],
+                coefficients[k + 5],
+                coefficients[k + 6],
+                coefficients[k + 7],
             ]);
             let scaled = v * scale;
             let arr: [f32; 8] = scaled.into();
@@ -322,8 +328,14 @@ pub fn forward_dct_8x8_u8(input: &[u8; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE]
         for chunk in 0..8 {
             let k = chunk * 8;
             let v = f32x8::from([
-                input[k] as f32, input[k + 1] as f32, input[k + 2] as f32, input[k + 3] as f32,
-                input[k + 4] as f32, input[k + 5] as f32, input[k + 6] as f32, input[k + 7] as f32,
+                input[k] as f32,
+                input[k + 1] as f32,
+                input[k + 2] as f32,
+                input[k + 3] as f32,
+                input[k + 4] as f32,
+                input[k + 5] as f32,
+                input[k + 6] as f32,
+                input[k + 7] as f32,
             ]);
             let result = v - level_shift;
             let arr: [f32; 8] = result.into();

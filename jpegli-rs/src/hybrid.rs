@@ -113,8 +113,14 @@ pub fn scale_quant_by_aq(
         for chunk in 0..8 {
             let k = chunk * 8;
             let base_f = f32x8::from([
-                base_quant[k] as f32, base_quant[k + 1] as f32, base_quant[k + 2] as f32, base_quant[k + 3] as f32,
-                base_quant[k + 4] as f32, base_quant[k + 5] as f32, base_quant[k + 6] as f32, base_quant[k + 7] as f32,
+                base_quant[k] as f32,
+                base_quant[k + 1] as f32,
+                base_quant[k + 2] as f32,
+                base_quant[k + 3] as f32,
+                base_quant[k + 4] as f32,
+                base_quant[k + 5] as f32,
+                base_quant[k + 6] as f32,
+                base_quant[k + 7] as f32,
             ]);
             let val = (base_f * mul).round().max(one).min(max_val);
             let arr: [f32; 8] = val.into();
@@ -155,8 +161,14 @@ pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
         for chunk in 0..8 {
             let k = chunk * 8;
             let v = f32x8::from([
-                coeffs[k], coeffs[k + 1], coeffs[k + 2], coeffs[k + 3],
-                coeffs[k + 4], coeffs[k + 5], coeffs[k + 6], coeffs[k + 7],
+                coeffs[k],
+                coeffs[k + 1],
+                coeffs[k + 2],
+                coeffs[k + 3],
+                coeffs[k + 4],
+                coeffs[k + 5],
+                coeffs[k + 6],
+                coeffs[k + 7],
             ]);
             let scaled = (v * scale).round();
             let arr: [f32; 8] = scaled.into();
@@ -249,12 +261,24 @@ pub fn hybrid_quantize_block_simple(
         for chunk in 0..8 {
             let k = chunk * 8;
             let dct = f32x8::from([
-                dct_coeffs[k], dct_coeffs[k + 1], dct_coeffs[k + 2], dct_coeffs[k + 3],
-                dct_coeffs[k + 4], dct_coeffs[k + 5], dct_coeffs[k + 6], dct_coeffs[k + 7],
+                dct_coeffs[k],
+                dct_coeffs[k + 1],
+                dct_coeffs[k + 2],
+                dct_coeffs[k + 3],
+                dct_coeffs[k + 4],
+                dct_coeffs[k + 5],
+                dct_coeffs[k + 6],
+                dct_coeffs[k + 7],
             ]);
             let q = f32x8::from([
-                scaled_quant[k] as f32, scaled_quant[k + 1] as f32, scaled_quant[k + 2] as f32, scaled_quant[k + 3] as f32,
-                scaled_quant[k + 4] as f32, scaled_quant[k + 5] as f32, scaled_quant[k + 6] as f32, scaled_quant[k + 7] as f32,
+                scaled_quant[k] as f32,
+                scaled_quant[k + 1] as f32,
+                scaled_quant[k + 2] as f32,
+                scaled_quant[k + 3] as f32,
+                scaled_quant[k + 4] as f32,
+                scaled_quant[k + 5] as f32,
+                scaled_quant[k + 6] as f32,
+                scaled_quant[k + 7] as f32,
             ]);
             let val = (dct / q).round();
             let arr: [f32; 8] = val.into();
