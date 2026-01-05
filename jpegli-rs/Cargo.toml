@@ -86,19 +86,11 @@ workspace = true
 
 # Examples that require test-utils feature
 [[example]]
-name = "benchmark_xyb_vs_ycbcr"
-required-features = ["test-utils"]
-
-[[example]]
 name = "compare_coefficients"
 required-features = ["test-utils"]
 
 [[example]]
 name = "compare_decoded"
-required-features = ["test-utils"]
-
-[[example]]
-name = "compare_quality"
 required-features = ["test-utils"]
 
 [[example]]
@@ -127,34 +119,6 @@ required-features = ["test-utils"]
 
 [[example]]
 name = "low_q_report"
-required-features = ["test-utils"]
-
-[[example]]
-name = "quality_comparison"
-required-features = ["test-utils"]
-
-[[example]]
-name = "xyb_butteraugli_comparison"
-required-features = ["test-utils"]
-
-[[example]]
-name = "xyb_distance_comparison"
-required-features = ["test-utils"]
-
-[[example]]
-name = "xyb_same_size_comparison"
-required-features = ["test-utils"]
-
-[[example]]
-name = "xyb_ssimulacra2_comparison"
-required-features = ["test-utils"]
-
-[[example]]
-name = "xyb_vs_ycbcr_comparison"
-required-features = ["test-utils"]
-
-[[example]]
-name = "xyb_ycbcr_pareto"
 required-features = ["test-utils"]
 
 # This example requires the `image` crate which is not in workspace dependencies
