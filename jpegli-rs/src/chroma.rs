@@ -25,9 +25,13 @@
 
 use crate::alloc::{checked_size_2d, try_alloc_zeroed_f32};
 use crate::color;
+use crate::consts::{YCBCR_B_TO_Y, YCBCR_G_TO_Y, YCBCR_R_TO_Y};
 use crate::error::{Error, Result};
 use crate::types::PixelFormat;
 use crate::xyb::{linear_to_srgb_fast, srgb_u8_to_linear};
+
+#[cfg(feature = "simd")]
+use wide::f32x8;
 
 // ============================================================================
 // Constants
@@ -40,6 +44,87 @@ const NUM_ITERATIONS: usize = 4;
 /// Convergence threshold for iterative refinement.
 /// If the total Y difference is below this, we've converged.
 const CONVERGENCE_THRESHOLD: f32 = 0.1;
+
+// ============================================================================
+// SIMD Helper Functions
+// ============================================================================
+
+/// Compute Y (luminance) plane from interleaved RGB u8 data using SIMD.
+///
+/// Processes 8 pixels at a time using f32x8 vectors.
+#[cfg(feature = "simd")]
+fn compute_y_plane_from_rgb(data: &[u8], width: usize, height: usize, bpp: usize, y_plane: &mut [f32]) {
+    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+
+    let num_pixels = width * height;
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let rgb_base = base * bpp;
+
+        // Gather 8 RGB pixels
+        let r = f32x8::from([
+            data[rgb_base] as f32,
+            data[rgb_base + bpp] as f32,
+            data[rgb_base + 2 * bpp] as f32,
+            data[rgb_base + 3 * bpp] as f32,
+            data[rgb_base + 4 * bpp] as f32,
+            data[rgb_base + 5 * bpp] as f32,
+            data[rgb_base + 6 * bpp] as f32,
+            data[rgb_base + 7 * bpp] as f32,
+        ]);
+        let g = f32x8::from([
+            data[rgb_base + 1] as f32,
+            data[rgb_base + bpp + 1] as f32,
+            data[rgb_base + 2 * bpp + 1] as f32,
+            data[rgb_base + 3 * bpp + 1] as f32,
+            data[rgb_base + 4 * bpp + 1] as f32,
+            data[rgb_base + 5 * bpp + 1] as f32,
+            data[rgb_base + 6 * bpp + 1] as f32,
+            data[rgb_base + 7 * bpp + 1] as f32,
+        ]);
+        let b = f32x8::from([
+            data[rgb_base + 2] as f32,
+            data[rgb_base + bpp + 2] as f32,
+            data[rgb_base + 2 * bpp + 2] as f32,
+            data[rgb_base + 3 * bpp + 2] as f32,
+            data[rgb_base + 4 * bpp + 2] as f32,
+            data[rgb_base + 5 * bpp + 2] as f32,
+            data[rgb_base + 6 * bpp + 2] as f32,
+            data[rgb_base + 7 * bpp + 2] as f32,
+        ]);
+
+        // Y = R_TO_Y * R + G_TO_Y * G + B_TO_Y * B
+        let y = r_to_y * r + g_to_y * g + b_to_y * b;
+        let arr: [f32; 8] = y.into();
+        y_plane[base..base + 8].copy_from_slice(&arr);
+    }
+
+    // Handle remainder with scalar code
+    for i in (chunks * 8)..num_pixels {
+        let idx = i * bpp;
+        let r = data[idx] as f32;
+        let g = data[idx + 1] as f32;
+        let b = data[idx + 2] as f32;
+        y_plane[i] = color::rgb_to_ycbcr_f32(r, g, b).0;
+    }
+}
+
+/// Scalar version of Y plane computation.
+#[cfg(not(feature = "simd"))]
+fn compute_y_plane_from_rgb(data: &[u8], width: usize, height: usize, bpp: usize, y_plane: &mut [f32]) {
+    let num_pixels = width * height;
+    for i in 0..num_pixels {
+        let idx = i * bpp;
+        let r = data[idx] as f32;
+        let g = data[idx + 1] as f32;
+        let b = data[idx + 2] as f32;
+        y_plane[i] = color::rgb_to_ycbcr_f32(r, g, b).0;
+    }
+}
 
 // ============================================================================
 // Gamma-Aware Downsampling (Single Pass)
@@ -77,16 +162,8 @@ pub fn convert_gamma_aware_420(
 
     let bpp = get_bpp(pixel_format)?;
 
-    // First pass: compute Y at full resolution
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
-            y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
-        }
-    }
+    // First pass: compute Y at full resolution (SIMD-optimized)
+    compute_y_plane_from_rgb(data, width, height, bpp, &mut y_plane);
 
     // Second pass: compute Cb/Cr with gamma-aware downsampling
     for cy in 0..c_height {
@@ -119,16 +196,8 @@ pub fn convert_gamma_aware_422(
 
     let bpp = get_bpp(pixel_format)?;
 
-    // First pass: compute Y at full resolution
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
-            y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
-        }
-    }
+    // First pass: compute Y at full resolution (SIMD-optimized)
+    compute_y_plane_from_rgb(data, width, height, bpp, &mut y_plane);
 
     // Second pass: gamma-aware horizontal downsampling for Cb/Cr
     for y in 0..height {
@@ -161,16 +230,8 @@ pub fn convert_gamma_aware_440(
 
     let bpp = get_bpp(pixel_format)?;
 
-    // First pass: compute Y at full resolution
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
-            y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
-        }
-    }
+    // First pass: compute Y at full resolution (SIMD-optimized)
+    compute_y_plane_from_rgb(data, width, height, bpp, &mut y_plane);
 
     // Second pass: gamma-aware vertical downsampling for Cb/Cr
     for cy in 0..c_height {
@@ -213,16 +274,8 @@ pub fn convert_gamma_aware_iterative_420(
 
     let bpp = get_bpp(pixel_format)?;
 
-    // First pass: compute Y at full resolution
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
-            y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
-        }
-    }
+    // First pass: compute Y at full resolution (SIMD-optimized)
+    compute_y_plane_from_rgb(data, width, height, bpp, &mut y_plane);
 
     // Second pass: iterative gamma-aware chroma optimization
     for cy in 0..c_height {
@@ -253,16 +306,8 @@ pub fn convert_gamma_aware_iterative_422(
 
     let bpp = get_bpp(pixel_format)?;
 
-    // First pass: compute Y at full resolution
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
-            y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
-        }
-    }
+    // First pass: compute Y at full resolution (SIMD-optimized)
+    compute_y_plane_from_rgb(data, width, height, bpp, &mut y_plane);
 
     // Second pass: iterative gamma-aware horizontal downsampling
     for y in 0..height {
@@ -293,16 +338,8 @@ pub fn convert_gamma_aware_iterative_440(
 
     let bpp = get_bpp(pixel_format)?;
 
-    // First pass: compute Y at full resolution
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * bpp;
-            let r = data[idx] as f32;
-            let g = data[idx + 1] as f32;
-            let b = data[idx + 2] as f32;
-            y_plane[y * width + x] = color::rgb_to_ycbcr_f32(r, g, b).0;
-        }
-    }
+    // First pass: compute Y at full resolution (SIMD-optimized)
+    compute_y_plane_from_rgb(data, width, height, bpp, &mut y_plane);
 
     // Second pass: iterative gamma-aware vertical downsampling
     for cy in 0..c_height {
