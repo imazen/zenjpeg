@@ -391,30 +391,30 @@ pub fn xyb_to_linear_rgb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
 
 /// Converts sRGB u8 to XYB using C++ jpegli conventions.
 ///
-/// This matches C++ jpegli's pipeline which uses linear RGB in 0-255 range.
-/// The resulting XYB values are in the larger range (Y up to ~6.2 for white).
+/// This matches C++ jpegli's pipeline which uses linear RGB in 0-1 range.
+/// The resulting XYB values are in the standard range (Y up to ~0.84 for white).
 #[must_use]
 pub fn srgb_to_xyb(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     // Convert sRGB to linear (0-1 range from LUT)
     let lr = srgb_u8_to_linear(r);
     let lg = srgb_u8_to_linear(g);
     let lb = srgb_u8_to_linear(b);
-    // Scale to 0-255 range to match C++ jpegli conventions
-    linear_rgb_to_xyb_255(lr * 255.0, lg * 255.0, lb * 255.0)
+    // Use 0-1 linear RGB (matching C++ jpegli's LinearRGBRowToXYB)
+    linear_rgb_to_xyb(lr, lg, lb)
 }
 
 /// Converts XYB to sRGB u8.
 ///
-/// This handles XYB values in the C++ jpegli convention (larger range).
-/// The inverse linear RGB is in 0-255 range and must be scaled to 0-1 for sRGB conversion.
+/// This handles XYB values in the standard C++ jpegli convention (Y ~0.84 for white).
+/// The inverse linear RGB is in 0-1 range matching the forward conversion.
 #[must_use]
 pub fn xyb_to_srgb(x: f32, y: f32, b: f32) -> (u8, u8, u8) {
     let (lr, lg, lb) = xyb_to_linear_rgb(x, y, b);
-    // Scale from 0-255 back to 0-1 for sRGB conversion
+    // Linear RGB is already in 0-1 range (matching C++ jpegli's conventions)
     (
-        linear_to_srgb_u8(lr / 255.0),
-        linear_to_srgb_u8(lg / 255.0),
-        linear_to_srgb_u8(lb / 255.0),
+        linear_to_srgb_u8(lr),
+        linear_to_srgb_u8(lg),
+        linear_to_srgb_u8(lb),
     )
 }
 
@@ -768,20 +768,20 @@ pub fn linear_rgb_to_xyb_simd_255(pixels: &mut [[f32; 3]]) {
 /// SIMD sRGB u8 to XYB conversion for a batch of pixels.
 ///
 /// Converts sRGB u8 input to XYB f32 output using SIMD acceleration.
-/// This is the full conversion chain: sRGB u8 → linear (0-255) → XYB.
-/// Uses C++ jpegli conventions with 0-255 linear RGB range.
+/// This is the full conversion chain: sRGB u8 → linear (0-1) → XYB.
+/// Uses C++ jpegli conventions with 0-1 linear RGB range.
 pub fn srgb_to_xyb_batch(input: &[[u8; 3]], output: &mut [[f32; 3]]) {
     assert_eq!(input.len(), output.len());
 
-    // Convert to linear RGB in 0-255 range (matching C++ jpegli conventions)
+    // Convert to linear RGB in 0-1 range (matching C++ jpegli conventions)
     for (inp, out) in input.iter().zip(output.iter_mut()) {
-        out[0] = srgb_u8_to_linear(inp[0]) * 255.0;
-        out[1] = srgb_u8_to_linear(inp[1]) * 255.0;
-        out[2] = srgb_u8_to_linear(inp[2]) * 255.0;
+        out[0] = srgb_u8_to_linear(inp[0]);
+        out[1] = srgb_u8_to_linear(inp[1]);
+        out[2] = srgb_u8_to_linear(inp[2]);
     }
 
-    // Apply SIMD XYB conversion (expects 0-255 linear RGB)
-    linear_rgb_to_xyb_simd_255(output);
+    // Apply SIMD XYB conversion (expects 0-1 linear RGB)
+    linear_rgb_to_xyb_simd(output);
 }
 
 /// Converts XYB planes to RGB buffer.
