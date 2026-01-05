@@ -227,6 +227,35 @@ cargo run --release --example encode_benchmark
 cargo test --test multi_decoder_compatibility -- --nocapture
 ```
 
+### Criterion Benchmarks (Rust vs C++ Timing)
+
+Statistically valid performance comparison with noise detection:
+
+```bash
+# Run full benchmark suite (requires cjpegli built)
+cargo bench --bench cpp_comparison
+
+# Save baseline for tracking performance over time
+cargo bench --bench cpp_comparison -- --save-baseline main
+
+# Compare against saved baseline (detects regressions)
+cargo bench --bench cpp_comparison -- --baseline main
+```
+
+The benchmark tests all encoding mode combinations:
+- **Scan modes**: Baseline, Progressive
+- **Huffman**: Fixed, Optimized
+- **Subsampling**: 4:4:4, 4:2:0
+- **Color space**: YCbCr, XYB
+
+Results are saved in `target/criterion/` with HTML reports.
+
+**Quick ad-hoc comparison** (non-statistical):
+```bash
+cargo run --release --example cpp_timing_matrix
+cargo run --release --example cpp_timing_matrix -- --csv results.csv  # track over time
+```
+
 ## Future Goals
 
 ### Decoder Optimization (Target: 100+ MP/s)
