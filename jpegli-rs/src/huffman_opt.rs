@@ -432,6 +432,27 @@ impl ScanTokenInfo {
     pub fn is_dc(&self) -> bool {
         self.ss == 0 && self.se == 0
     }
+
+    /// Debug dump of scan statistics
+    #[allow(dead_code)]
+    pub fn debug_dump(&self, scan_index: usize) {
+        if self.is_refinement() {
+            eprintln!(
+                "=== Rust AC Refinement Scan {} ===\nSs={} Se={} Ah={} Al={}\nnum_blocks=? num_tokens={} num_refbits={} num_eobruns={}",
+                scan_index, self.ss, self.se, self.ah, self.al,
+                self.ref_tokens.len(), self.refbits.len(), self.eobruns.len()
+            );
+            // Print first 20 tokens
+            eprintln!("TOKENS:");
+            for (i, t) in self.ref_tokens.iter().take(20).enumerate() {
+                eprintln!("  [{}] symbol=0x{:02x} refbits={}", i, t.symbol, t.refbits);
+            }
+            if self.ref_tokens.len() > 20 {
+                eprintln!("  ... ({} more tokens)", self.ref_tokens.len() - 20);
+            }
+            eprintln!("=== End Rust AC Refinement Scan {} ===\n", scan_index);
+        }
+    }
 }
 
 /// Result of histogram clustering.
@@ -855,11 +876,21 @@ impl ProgressiveTokenBuffer {
         if let Some(info) = self.scan_info.last_mut() {
             // Count the symbol for Huffman table building
             // - EOB symbols: 0x00, 0x10, 0x20, ... (high nibble = bits needed for run)
-            // - Newly-nonzero: 0x01, 0x11, 0x21, ... (high nibble = run, low nibble = 1)
+            // - Newly-nonzero: 0x01/0x03, 0x11/0x13, ... (high nibble = run, low nibble = 1 or 3)
             // - ZRL: 0xF0
+            // For AC refinement, mask with 0xFD (253) to merge positive/negative
+            // symbols together for histogram building, matching C++ behavior.
+            // Only mask category 1 symbols (low nibble == 1 or 3), not EOB or ZRL.
             let context = info.context as usize;
             if context < self.counters.len() {
-                self.counters[context].count(token.symbol);
+                // Mask only if this is a newly-nonzero symbol (category 1)
+                let low_nibble = token.symbol & 0x0F;
+                let masked_symbol = if low_nibble == 1 || low_nibble == 3 {
+                    token.symbol & 253 // Clear sign bit
+                } else {
+                    token.symbol
+                };
+                self.counters[context].count(masked_symbol);
             }
             info.ref_tokens.push(token);
         }
@@ -1450,39 +1481,55 @@ impl ProgressiveTokenBuffer {
                 let abs_coef = coef.unsigned_abs();
                 let was_nonzero = (abs_coef >> ah) != 0;
 
-                // FIX: Emit ZRL proactively when run reaches 16, BEFORE collecting more refbits.
-                // This ensures each ZRL gets only the refbits from PREV_NZ within its 16-zero span.
-                if run >= 16 {
-                    let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
-                    self.push_ref(ref_token);
-                    for &bit in &block_refbits {
-                        self.push_refbit(bit);
-                    }
-                    block_refbits.clear();
-                    run -= 16;
-                }
-
                 if was_nonzero {
                     // Previously nonzero: emit refinement bit
+                    // Note: No ZRL check here - previously-nonzero coefficients don't
+                    // reset the run counter, they just add a refinement bit.
                     let refbit = ((abs_coef >> al) & 1) as u8;
                     block_refbits.push(refbit);
                 } else {
                     // Check if newly nonzero
                     let newly_nonzero = ((abs_coef >> al) & 1) != 0;
                     if newly_nonzero {
-                        // Note: ZRL emission already handled above when run >= 16,
-                        // so run is guaranteed to be < 16 here.
+                        // Flush any pending EOB run BEFORE emitting newly-nonzero token.
+                        // This matches C++ which resets eob_run when a newly-nonzero is found.
+                        // The EOB run from previous blocks must come BEFORE this block's tokens.
+                        if eob_run > 0 || !pending_refbits.is_empty() {
+                            self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                            pending_refbits.clear();
+                            eob_run = 0;
+                        }
+
+                        // Emit ZRL tokens for runs > 15 ONLY when we're about to emit
+                        // a newly-nonzero token. This matches C++ which only checks
+                        // r > 15 when encountering a nonzero coefficient.
+                        // Pure zeros between newly-nonzero coefficients go into EOB run.
+                        while run >= 16 {
+                            let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
+                            self.push_ref(ref_token);
+                            for &bit in &block_refbits {
+                                self.push_refbit(bit);
+                            }
+                            block_refbits.clear();
+                            run -= 16;
+                        }
 
                         // Emit newly nonzero coefficient
-                        let sign = if coef < 0 { 0 } else { 1 };
-                        let symbol = (run << 4) | 1; // Category is always 1 for refinement
+                        // Match C++ exactly: store sign in bit 1 of symbol
+                        // C++: int symbol = (r << 4u) + 1 + ((mask + 1) << 1);
+                        // mask = -1 for negative → (mask+1)<<1 = 0, so symbol ends with 0x01
+                        // mask = 0 for positive → (mask+1)<<1 = 2, so symbol ends with 0x03
+                        let symbol = if coef < 0 {
+                            (run << 4) | 1 // 0x?1 for negative
+                        } else {
+                            (run << 4) | 3 // 0x?3 for positive
+                        };
                         let ref_token = RefToken::new(symbol, block_refbits.len() as u8);
                         self.push_ref(ref_token);
-                        // Push refinement bits first, then sign bit
+                        // Push only refinement bits (sign is now in symbol, not refbits)
                         for &bit in &block_refbits {
                             self.push_refbit(bit);
                         }
-                        self.push_refbit(sign);
                         block_refbits.clear();
                         run = 0;
                     } else {
@@ -1521,6 +1568,39 @@ impl ProgressiveTokenBuffer {
         }
 
         self.end_scan();
+
+        // Debug: dump tokens and refbits for comparison with C++
+        if std::env::var("DUMP_AC_REFINEMENT").is_ok() {
+            if let Some(info) = self.scan_info.last() {
+                eprintln!("=== Rust AC Refinement Scan (Ss={} Se={} Ah={} Al={}) ===", ss, se, ah, al);
+                eprintln!("num_blocks={} num_tokens={} num_refbits={} num_eobruns={}",
+                          blocks.len(), info.ref_tokens.len(), info.refbits.len(), info.eobruns.len());
+                eprintln!("TOKENS:");
+                for (i, t) in info.ref_tokens.iter().enumerate().take(100) {
+                    eprintln!("  [{}] symbol=0x{:02x} refbits={}", i, t.symbol, t.refbits);
+                }
+                if info.ref_tokens.len() > 100 {
+                    eprintln!("  ... ({} more tokens)", info.ref_tokens.len() - 100);
+                }
+                eprintln!("REFBITS:");
+                eprint!("  ");
+                for (i, &b) in info.refbits.iter().enumerate().take(200) {
+                    eprint!("{}", b);
+                    if (i + 1) % 64 == 0 { eprintln!(); eprint!("  "); }
+                }
+                eprintln!();
+                if info.refbits.len() > 200 {
+                    eprintln!("  ... ({} more refbits)", info.refbits.len() - 200);
+                }
+                eprintln!("EOBRUNS:");
+                eprint!("  ");
+                for &r in info.eobruns.iter().take(50) {
+                    eprint!("{} ", r);
+                }
+                eprintln!();
+                eprintln!("=== End Rust AC Refinement Scan ===\n");
+            }
+        }
     }
 
     /// Emits an EOB run token with associated refinement bits.
