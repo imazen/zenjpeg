@@ -10,10 +10,33 @@ source ~/.cargo/env
 # Navigate to the Rust project
 cd jpegli-rs
 
+# Initialize submodule (CRITICAL: must be on stepbystep2 branch)
+git submodule update --init --remote internal/jpegli-cpp
+
+# Verify submodule is on correct branch
+cd internal/jpegli-cpp && git branch --show-current  # Should show: stepbystep2
+cd ../..
+
 # Build and test
 cargo build
 cargo test
 cargo test --release  # Run with optimizations
+```
+
+## ⚠️ Submodule Branch Requirement
+
+The `internal/jpegli-cpp` submodule **MUST** be on the `stepbystep2` branch, not `main`.
+This branch contains the FFI instrumentation code (`jpegli_test_ffi.cc`) required for
+parity testing.
+
+**If you see this error:**
+```
+ERROR: jpegli_test_ffi.cc not found
+```
+
+**Fix with:**
+```bash
+cd internal/jpegli-cpp && git checkout stepbystep2
 ```
 
 ## Repository Info

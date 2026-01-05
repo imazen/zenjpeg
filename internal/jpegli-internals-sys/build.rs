@@ -103,15 +103,42 @@ fn build_butteraugli_wrapper(
 fn build_jpegli_test_ffi(jpegli_root: &PathBuf, build_dir: &PathBuf, target: &str) {
     let ffi_source = jpegli_root.join("lib/extras/jpegli_test_ffi.cc");
 
-    // Check if the source file exists (only in stepbystep2 branch)
+    // The FFI source MUST exist - it's required for parity testing.
+    // If missing, the jpegli-cpp submodule is likely on the wrong branch.
     if !ffi_source.exists() {
-        println!(
-            "cargo:warning=jpegli_test_ffi.cc not found - FFI functions will not be available"
+        panic!(
+            "\n\n\
+            ========================================================================\n\
+            ERROR: jpegli_test_ffi.cc not found at {:?}\n\
+            \n\
+            The jpegli-cpp submodule appears to be on the wrong branch.\n\
+            \n\
+            Fix with:\n\
+            \n\
+            cd internal/jpegli-cpp && git checkout stepbystep2\n\
+            \n\
+            Or reinitialize the submodule:\n\
+            \n\
+            git submodule update --init --remote internal/jpegli-cpp\n\
+            ========================================================================\n\n",
+            ffi_source
         );
-        return;
+    }
+
+    // Also check for the header
+    let ffi_header = jpegli_root.join("lib/extras/jpegli_test_ffi.h");
+    if !ffi_header.exists() {
+        panic!(
+            "ERROR: jpegli_test_ffi.h not found at {:?}. Submodule may be corrupted.",
+            ffi_header
+        );
     }
 
     println!("cargo:rerun-if-changed={}", ffi_source.display());
+    println!("cargo:rerun-if-changed={}", ffi_header.display());
+
+    // Success message - confirms instrumented C++ is available
+    println!("cargo:warning=✓ Building with instrumented C++ FFI (jpegli_test_ffi)");
 
     let mut build = cc::Build::new();
 
