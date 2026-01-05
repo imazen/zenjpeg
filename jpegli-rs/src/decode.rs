@@ -1440,31 +1440,93 @@ impl<'a> JpegParser<'a> {
     ) -> Vec<f32> {
         let mut output = vec![0.0f32; out_width * out_height];
 
-        for out_y in 0..out_height {
-            for x in 0..out_width {
-                // Clamp x to valid input range (handles non-block-aligned widths)
-                let in_x = x.min(in_width.saturating_sub(1));
-                // Map output y to input y (divide by 2 for 2x scaling)
-                let in_y = out_y / 2;
-                let curr = input[in_y * in_width + in_x];
+        #[cfg(feature = "simd")]
+        {
+            use wide::f32x8;
+            let three = f32x8::splat(3.0);
+            let quarter = f32x8::splat(0.25);
 
-                // Determine if this is top or bottom half of input pixel
-                if out_y % 2 == 0 {
-                    // Top half: blend with above neighbor
-                    let above = if in_y > 0 {
-                        input[(in_y - 1) * in_width + in_x]
-                    } else {
-                        curr
-                    };
-                    output[out_y * out_width + x] = (3.0 * curr + above) * 0.25;
+            for out_y in 0..out_height {
+                let in_y = out_y / 2;
+                let is_top = out_y % 2 == 0;
+                let out_row_start = out_y * out_width;
+
+                // Get neighbor row (above for top, below for bottom)
+                let neighbor_y = if is_top {
+                    in_y.saturating_sub(1)
                 } else {
-                    // Bottom half: blend with below neighbor
-                    let below = if in_y + 1 < in_height {
-                        input[(in_y + 1) * in_width + in_x]
+                    (in_y + 1).min(in_height - 1)
+                };
+
+                let curr_row_start = in_y * in_width;
+                let neighbor_row_start = neighbor_y * in_width;
+
+                // SIMD path: process 8 pixels at a time in interior
+                let simd_width = in_width.min(out_width);
+                let chunks = simd_width / 8;
+
+                for chunk in 0..chunks {
+                    let x = chunk * 8;
+
+                    let curr = f32x8::from([
+                        input[curr_row_start + x],
+                        input[curr_row_start + x + 1],
+                        input[curr_row_start + x + 2],
+                        input[curr_row_start + x + 3],
+                        input[curr_row_start + x + 4],
+                        input[curr_row_start + x + 5],
+                        input[curr_row_start + x + 6],
+                        input[curr_row_start + x + 7],
+                    ]);
+                    let neighbor = f32x8::from([
+                        input[neighbor_row_start + x],
+                        input[neighbor_row_start + x + 1],
+                        input[neighbor_row_start + x + 2],
+                        input[neighbor_row_start + x + 3],
+                        input[neighbor_row_start + x + 4],
+                        input[neighbor_row_start + x + 5],
+                        input[neighbor_row_start + x + 6],
+                        input[neighbor_row_start + x + 7],
+                    ]);
+
+                    let blended = (three * curr + neighbor) * quarter;
+                    let arr: [f32; 8] = blended.into();
+                    output[out_row_start + x..out_row_start + x + 8].copy_from_slice(&arr);
+                }
+
+                // Scalar remainder
+                for x in (chunks * 8)..out_width {
+                    let in_x = x.min(in_width.saturating_sub(1));
+                    let curr = input[curr_row_start + in_x];
+                    let neighbor = input[neighbor_row_start + in_x];
+                    output[out_row_start + x] = (3.0 * curr + neighbor) * 0.25;
+                }
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            for out_y in 0..out_height {
+                for x in 0..out_width {
+                    let in_x = x.min(in_width.saturating_sub(1));
+                    let in_y = out_y / 2;
+                    let curr = input[in_y * in_width + in_x];
+
+                    if out_y % 2 == 0 {
+                        let above = if in_y > 0 {
+                            input[(in_y - 1) * in_width + in_x]
+                        } else {
+                            curr
+                        };
+                        output[out_y * out_width + x] = (3.0 * curr + above) * 0.25;
                     } else {
-                        curr
-                    };
-                    output[out_y * out_width + x] = (3.0 * curr + below) * 0.25;
+                        let below = if in_y + 1 < in_height {
+                            input[(in_y + 1) * in_width + in_x]
+                        } else {
+                            curr
+                        };
+                        output[out_y * out_width + x] = (3.0 * curr + below) * 0.25;
+                    }
                 }
             }
         }
