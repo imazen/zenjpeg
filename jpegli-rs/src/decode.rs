@@ -340,6 +340,39 @@ impl DecodedImageF32 {
     /// Values are scaled from 0.0-1.0 to 0-255 and clamped.
     #[must_use]
     pub fn to_u8(&self) -> DecodedImage {
+        #[cfg(feature = "simd")]
+        let data = {
+            use wide::f32x8;
+            let len = self.data.len();
+            let mut result = Vec::with_capacity(len);
+            // Safety: we write every element below
+            unsafe { result.set_len(len) };
+
+            let scale = f32x8::splat(255.0);
+            let zero = f32x8::splat(0.0);
+            let max_val = f32x8::splat(255.0);
+
+            let chunks = len / 8;
+            for chunk in 0..chunks {
+                let k = chunk * 8;
+                let v = f32x8::from([
+                    self.data[k], self.data[k + 1], self.data[k + 2], self.data[k + 3],
+                    self.data[k + 4], self.data[k + 5], self.data[k + 6], self.data[k + 7],
+                ]);
+                let scaled = (v * scale).round().max(zero).min(max_val);
+                let arr: [f32; 8] = scaled.into();
+                for j in 0..8 {
+                    result[k + j] = arr[j] as u8;
+                }
+            }
+            // Remainder
+            for i in (chunks * 8)..len {
+                result[i] = (self.data[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+            result
+        };
+
+        #[cfg(not(feature = "simd"))]
         let data: Vec<u8> = self
             .data
             .iter()
