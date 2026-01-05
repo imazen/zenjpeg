@@ -14,6 +14,22 @@ use crate::consts::{
 };
 
 // ============================================================================
+// Memory Allocation Helpers
+// ============================================================================
+
+/// Allocate a Vec<f32> without zeroing (all elements will be written before use).
+/// # Safety
+/// The caller MUST write to all elements before reading any.
+#[inline(always)]
+fn alloc_uninit_f32(len: usize) -> Vec<f32> {
+    let mut vec = Vec::with_capacity(len);
+    // SAFETY: We will write to all elements before reading.
+    // This is safe because f32 has no drop logic and no invalid bit patterns.
+    unsafe { vec.set_len(len) };
+    vec
+}
+
+// ============================================================================
 // Chroma Downsampling (2x2 box filter)
 // ============================================================================
 
@@ -31,7 +47,8 @@ use crate::consts::{
 pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
-    let mut result = vec![0.0f32; new_width * new_height];
+    // Use uninit allocation since we write to every element
+    let mut result = alloc_uninit_f32(new_width * new_height);
 
     let scale = f32x8::splat(0.25);
     let chunks = new_width / 8;
@@ -140,9 +157,10 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, 
 /// # Returns
 /// Tuple of (Y plane, Cb plane, Cr plane) as f32 vectors
 pub fn rgb_to_ycbcr_planes_simd(rgb_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut y_plane = vec![0.0f32; num_pixels];
-    let mut cb_plane = vec![0.0f32; num_pixels];
-    let mut cr_plane = vec![0.0f32; num_pixels];
+    // Use uninit allocation since we write to every element
+    let mut y_plane = alloc_uninit_f32(num_pixels);
+    let mut cb_plane = alloc_uninit_f32(num_pixels);
+    let mut cr_plane = alloc_uninit_f32(num_pixels);
 
     // Coefficients as SIMD vectors
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
@@ -231,9 +249,10 @@ pub fn rgb_to_ycbcr_planes_simd(rgb_data: &[u8], num_pixels: usize) -> (Vec<f32>
 
 /// SIMD-optimized RGBA to YCbCr conversion for entire image (ignores alpha).
 pub fn rgba_to_ycbcr_planes_simd(rgba_data: &[u8], num_pixels: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut y_plane = vec![0.0f32; num_pixels];
-    let mut cb_plane = vec![0.0f32; num_pixels];
-    let mut cr_plane = vec![0.0f32; num_pixels];
+    // Use uninit allocation since we write to every element
+    let mut y_plane = alloc_uninit_f32(num_pixels);
+    let mut cb_plane = alloc_uninit_f32(num_pixels);
+    let mut cr_plane = alloc_uninit_f32(num_pixels);
 
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
     let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
