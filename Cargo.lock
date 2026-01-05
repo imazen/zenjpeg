@@ -716,6 +716,7 @@ dependencies = [
  "dssim",
  "fast-ssim2",
  "imgref",
+ "jpegli-bench-utils",
  "jpegli-internals-sys",
  "lcms2",
  "moxcms",

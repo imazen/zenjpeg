@@ -3,6 +3,9 @@
 //! Tests 20 quality levels across CLIC2025 and Kodak corpuses.
 //! Runs each encoding twice and takes the lowest time.
 //!
+//! **DEPRECATED**: For quality comparisons, use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --pareto --output results.csv image.png
+//!
 //! Usage:
 //!   cargo run --release --example encode_benchmark
 //!
