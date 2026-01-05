@@ -30,6 +30,96 @@ fn alloc_uninit_f32(len: usize) -> Vec<f32> {
 }
 
 // ============================================================================
+// Type Conversion Helpers
+// ============================================================================
+
+/// SIMD-optimized conversion from u8 slice to f32 Vec.
+///
+/// Processes 8 elements at a time, converting each u8 to f32.
+/// Used for converting YUV planes from external crates to internal f32 representation.
+///
+/// # Arguments
+/// * `input` - Input slice of u8 values
+///
+/// # Returns
+/// Vec of f32 values
+#[inline]
+pub fn u8_slice_to_f32_simd(input: &[u8]) -> Vec<f32> {
+    let len = input.len();
+    let mut result = alloc_uninit_f32(len);
+
+    let chunks = len / 8;
+
+    // Process 8 elements at a time
+    for i in 0..chunks {
+        let k = i * 8;
+        // Load 8 u8 values and convert to f32
+        let vals = f32x8::from([
+            input[k] as f32,
+            input[k + 1] as f32,
+            input[k + 2] as f32,
+            input[k + 3] as f32,
+            input[k + 4] as f32,
+            input[k + 5] as f32,
+            input[k + 6] as f32,
+            input[k + 7] as f32,
+        ]);
+        let arr: [f32; 8] = vals.into();
+        result[k..k + 8].copy_from_slice(&arr);
+    }
+
+    // Handle remaining elements (scalar)
+    let remainder_start = chunks * 8;
+    for i in remainder_start..len {
+        result[i] = input[i] as f32;
+    }
+
+    result
+}
+
+/// SIMD-optimized conversion from u8 iterator to f32 Vec.
+///
+/// Same as u8_slice_to_f32_simd but works with an iterator that has a known length.
+#[inline]
+pub fn u8_iter_to_f32_simd(input: impl Iterator<Item = u8>, len: usize) -> Vec<f32> {
+    let mut result = alloc_uninit_f32(len);
+    let mut i = 0;
+
+    // Collect into buffer for SIMD processing
+    let mut buf = [0u8; 8];
+    let mut buf_idx = 0;
+
+    for val in input {
+        buf[buf_idx] = val;
+        buf_idx += 1;
+
+        if buf_idx == 8 {
+            let vals = f32x8::from([
+                buf[0] as f32,
+                buf[1] as f32,
+                buf[2] as f32,
+                buf[3] as f32,
+                buf[4] as f32,
+                buf[5] as f32,
+                buf[6] as f32,
+                buf[7] as f32,
+            ]);
+            let arr: [f32; 8] = vals.into();
+            result[i..i + 8].copy_from_slice(&arr);
+            i += 8;
+            buf_idx = 0;
+        }
+    }
+
+    // Handle remaining elements
+    for j in 0..buf_idx {
+        result[i + j] = buf[j] as f32;
+    }
+
+    result
+}
+
+// ============================================================================
 // Chroma Downsampling (2x2 box filter)
 // ============================================================================
 
