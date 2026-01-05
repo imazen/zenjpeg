@@ -519,7 +519,9 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
 
             // YCbCr to RGB
             let r = (y + cr_to_r * cr + offset).max(zero).min(max_val);
-            let g = (y + cb_to_g * cb + cr_to_g * cr + offset).max(zero).min(max_val);
+            let g = (y + cb_to_g * cb + cr_to_g * cr + offset)
+                .max(zero)
+                .min(max_val);
             let b = (y + cb_to_b * cb + offset).max(zero).min(max_val);
 
             let r_arr: [f32; 8] = r.into();
@@ -607,21 +609,41 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
         for chunk in 0..chunks {
             let base = chunk * 8;
             let y = f32x8::from([
-                y_plane[base], y_plane[base + 1], y_plane[base + 2], y_plane[base + 3],
-                y_plane[base + 4], y_plane[base + 5], y_plane[base + 6], y_plane[base + 7],
+                y_plane[base],
+                y_plane[base + 1],
+                y_plane[base + 2],
+                y_plane[base + 3],
+                y_plane[base + 4],
+                y_plane[base + 5],
+                y_plane[base + 6],
+                y_plane[base + 7],
             ]);
             let cb = f32x8::from([
-                cb_plane[base], cb_plane[base + 1], cb_plane[base + 2], cb_plane[base + 3],
-                cb_plane[base + 4], cb_plane[base + 5], cb_plane[base + 6], cb_plane[base + 7],
+                cb_plane[base],
+                cb_plane[base + 1],
+                cb_plane[base + 2],
+                cb_plane[base + 3],
+                cb_plane[base + 4],
+                cb_plane[base + 5],
+                cb_plane[base + 6],
+                cb_plane[base + 7],
             ]);
             let cr = f32x8::from([
-                cr_plane[base], cr_plane[base + 1], cr_plane[base + 2], cr_plane[base + 3],
-                cr_plane[base + 4], cr_plane[base + 5], cr_plane[base + 6], cr_plane[base + 7],
+                cr_plane[base],
+                cr_plane[base + 1],
+                cr_plane[base + 2],
+                cr_plane[base + 3],
+                cr_plane[base + 4],
+                cr_plane[base + 5],
+                cr_plane[base + 6],
+                cr_plane[base + 7],
             ]);
 
             // YCbCr to RGB, level shift, normalize to 0-1
             let r = ((y + cr_to_r * cr + offset) * scale).max(zero).min(one);
-            let g = ((y + cb_to_g * cb + cr_to_g * cr + offset) * scale).max(zero).min(one);
+            let g = ((y + cb_to_g * cb + cr_to_g * cr + offset) * scale)
+                .max(zero)
+                .min(one);
             let b = ((y + cb_to_b * cb + offset) * scale).max(zero).min(one);
 
             let r_arr: [f32; 8] = r.into();
@@ -751,8 +773,14 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
         for chunk in 0..chunks {
             let base = chunk * 8;
             let y = f32x8::from([
-                y_plane[base], y_plane[base + 1], y_plane[base + 2], y_plane[base + 3],
-                y_plane[base + 4], y_plane[base + 5], y_plane[base + 6], y_plane[base + 7],
+                y_plane[base],
+                y_plane[base + 1],
+                y_plane[base + 2],
+                y_plane[base + 3],
+                y_plane[base + 4],
+                y_plane[base + 5],
+                y_plane[base + 6],
+                y_plane[base + 7],
             ]);
 
             let val = ((y + offset) * scale).max(zero).min(one);
@@ -855,8 +883,14 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
         for chunk in 0..chunks {
             let base = chunk * 8;
             let y = f32x8::from([
-                y_plane[base], y_plane[base + 1], y_plane[base + 2], y_plane[base + 3],
-                y_plane[base + 4], y_plane[base + 5], y_plane[base + 6], y_plane[base + 7],
+                y_plane[base],
+                y_plane[base + 1],
+                y_plane[base + 2],
+                y_plane[base + 3],
+                y_plane[base + 4],
+                y_plane[base + 5],
+                y_plane[base + 6],
+                y_plane[base + 7],
             ]);
 
             let val = ((y + offset) * scale).max(zero).min(one);

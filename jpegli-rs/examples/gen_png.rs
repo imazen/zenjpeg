@@ -9,7 +9,7 @@ fn main() {
             })
         })
         .collect();
-    
+
     let mut encoder = png::Encoder::new(std::fs::File::create("/tmp/noise64.png").unwrap(), 64, 64);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);

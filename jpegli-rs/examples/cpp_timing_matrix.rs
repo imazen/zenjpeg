@@ -268,12 +268,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, config: &Config
         .expect("Rust encoding failed")
 }
 
-fn encode_cpp(
-    cjpegli: &Path,
-    input_path: &Path,
-    quality: u8,
-    config: &Config,
-) -> Option<Vec<u8>> {
+fn encode_cpp(cjpegli: &Path, input_path: &Path, quality: u8, config: &Config) -> Option<Vec<u8>> {
     let output_path = format!("/tmp/cpp_timing_{}.jpg", config.name());
 
     let mut args: Vec<String> = vec![
@@ -348,12 +343,7 @@ fn benchmark_config(
     let cpp_decoded = decode_jpeg(&cpp_jpeg);
 
     let max_pixel_diff = compute_max_pixel_diff(&rust_decoded, &cpp_decoded);
-    let dssim = compute_dssim(
-        &rust_decoded,
-        &cpp_decoded,
-        width as usize,
-        height as usize,
-    );
+    let dssim = compute_dssim(&rust_decoded, &cpp_decoded, width as usize, height as usize);
 
     Some(TimingResult {
         rust_time_ms,
@@ -533,7 +523,12 @@ fn main() {
     println!(" RUST vs C++ JPEGLI TIMING BENCHMARK");
     println!("{}", "=".repeat(100));
     println!();
-    println!("Image:      {}x{} ({} pixels)", width, height, width * height);
+    println!(
+        "Image:      {}x{} ({} pixels)",
+        width,
+        height,
+        width * height
+    );
     println!("Quality:    {}", quality);
     println!("Iterations: {}", iterations);
     println!("Configs:    {}", configs.len());
@@ -542,7 +537,16 @@ fn main() {
     // Print header
     println!(
         "{:<20} | {:>8} {:>8} {:>7} | {:>8} {:>8} {:>7} | {:>4} {:>8} {:>6}",
-        "Config", "Rust ms", "C++ ms", "Speedup", "Rust KB", "C++ KB", "Δ Size", "Δpx", "DSSIM", "Valid"
+        "Config",
+        "Rust ms",
+        "C++ ms",
+        "Speedup",
+        "Rust KB",
+        "C++ KB",
+        "Δ Size",
+        "Δpx",
+        "DSSIM",
+        "Valid"
     );
     println!("{}", "-".repeat(115));
 
@@ -554,14 +558,7 @@ fn main() {
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
         match benchmark_config(
-            &rgb,
-            width,
-            height,
-            quality,
-            config,
-            &cjpegli,
-            ppm_path,
-            iterations,
+            &rgb, width, height, quality, config, &cjpegli, ppm_path, iterations,
         ) {
             Some(result) => {
                 let speedup = result.speedup();
@@ -661,7 +658,8 @@ fn main() {
                 .map(|(_, r)| r)
                 .collect();
             if !filtered.is_empty() {
-                let avg: f64 = filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
+                let avg: f64 =
+                    filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
                 println!("  {:12}: {:.2}x avg speedup", scan.name(), avg);
             }
         }
@@ -674,7 +672,8 @@ fn main() {
                 .map(|(_, r)| r)
                 .collect();
             if !filtered.is_empty() {
-                let avg: f64 = filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
+                let avg: f64 =
+                    filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
                 println!("  {:12}: {:.2}x avg speedup", huffman.name(), avg);
             }
         }
@@ -687,7 +686,8 @@ fn main() {
                 .map(|(_, r)| r)
                 .collect();
             if !filtered.is_empty() {
-                let avg: f64 = filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
+                let avg: f64 =
+                    filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
                 println!("  {:12}: {:.2}x avg speedup", chroma.name(), avg);
             }
         }
@@ -700,7 +700,8 @@ fn main() {
                 .map(|(_, r)| r)
                 .collect();
             if !filtered.is_empty() {
-                let avg: f64 = filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
+                let avg: f64 =
+                    filtered.iter().map(|r| r.speedup()).sum::<f64>() / filtered.len() as f64;
                 println!("  {:12}: {:.2}x avg speedup", color.name(), avg);
             }
         }

@@ -37,7 +37,10 @@ fn main() {
                 .output();
             match output {
                 Ok(o) if o.status.success() => println!("djpeg: OK"),
-                Ok(o) => println!("djpeg: FAIL - {}", String::from_utf8_lossy(&o.stderr).trim()),
+                Ok(o) => println!(
+                    "djpeg: FAIL - {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
                 Err(e) => println!("djpeg error: {}", e),
             }
         }

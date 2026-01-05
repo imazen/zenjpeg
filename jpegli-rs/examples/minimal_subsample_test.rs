@@ -29,7 +29,10 @@ fn main() {
         ("prog_440", JpegMode::Progressive, Subsampling::S440),
     ];
 
-    println!("{:<12} {:>8} {:>10} {:>10} {:>10}", "Config", "Size", "mozjpeg", "jpegli", "zune");
+    println!(
+        "{:<12} {:>8} {:>10} {:>10} {:>10}",
+        "Config", "Size", "mozjpeg", "jpegli", "zune"
+    );
     println!("{:-<55}", "");
 
     for (name, mode, sub) in &configs {
@@ -90,10 +93,26 @@ fn main() {
     let cjpegli = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
 
     let cpp_configs = [
-        ("cpp_prog_444", "--chroma_subsampling=444", "--progressive_level=2"),
-        ("cpp_prog_422", "--chroma_subsampling=422", "--progressive_level=2"),
-        ("cpp_prog_420", "--chroma_subsampling=420", "--progressive_level=2"),
-        ("cpp_prog_440", "--chroma_subsampling=440", "--progressive_level=2"),
+        (
+            "cpp_prog_444",
+            "--chroma_subsampling=444",
+            "--progressive_level=2",
+        ),
+        (
+            "cpp_prog_422",
+            "--chroma_subsampling=422",
+            "--progressive_level=2",
+        ),
+        (
+            "cpp_prog_420",
+            "--chroma_subsampling=420",
+            "--progressive_level=2",
+        ),
+        (
+            "cpp_prog_440",
+            "--chroma_subsampling=440",
+            "--progressive_level=2",
+        ),
     ];
 
     for (name, sub, prog) in &cpp_configs {
@@ -108,7 +127,11 @@ fn main() {
                     let cpp_jpeg = fs::read(&out_path).unwrap();
                     println!("{:<15} {:>8} bytes", name, cpp_jpeg.len());
                 } else {
-                    println!("{:<15} FAILED: {:?}", name, String::from_utf8_lossy(&output.stderr));
+                    println!(
+                        "{:<15} FAILED: {:?}",
+                        name,
+                        String::from_utf8_lossy(&output.stderr)
+                    );
                 }
             }
             Err(e) => println!("{:<15} ERROR: {}", name, e),

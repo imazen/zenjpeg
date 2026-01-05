@@ -394,7 +394,8 @@ fn test_jpeg_decoder_compatibility() {
     let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Decode with jpeg-decoder crate
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
     let decoded = decoder.decode().expect("jpeg-decoder failed");
     let (width, height) = decoder.dimensions().unwrap();
 

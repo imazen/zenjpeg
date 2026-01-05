@@ -14,7 +14,9 @@ fn main() {
 #[cfg(feature = "experimental-hybrid-trellis")]
 fn main() {
     use jpegli::adaptive_quant::compute_aq_strength_map;
-    use jpegli::hybrid_config::{estimate_hybrid_improvement, should_use_hybrid, AQ_MEAN_THRESHOLD};
+    use jpegli::hybrid_config::{
+        estimate_hybrid_improvement, should_use_hybrid, AQ_MEAN_THRESHOLD,
+    };
     use std::env;
     use std::path::PathBuf;
 

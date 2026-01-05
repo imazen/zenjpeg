@@ -705,8 +705,10 @@ impl EntropyEncoder {
 
             // Debug: check for missing symbols
             if std::env::var("DEBUG_HUFFMAN_LOOKUP").is_ok() && len == 0 && masked_symbol != 0x00 {
-                eprintln!("WARNING: Symbol 0x{:02X} (masked from 0x{:02X}) has len=0 in table {}",
-                    masked_symbol, ref_token.symbol, table_idx);
+                eprintln!(
+                    "WARNING: Symbol 0x{:02X} (masked from 0x{:02X}) has len=0 in table {}",
+                    masked_symbol, ref_token.symbol, table_idx
+                );
             }
 
             // Check if this is an EOB symbol (low nibble = 0, not ZRL)

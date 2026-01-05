@@ -47,7 +47,11 @@ fn generate_hard_image(width: usize, height: usize, seed: u64) -> Vec<u8> {
                     }
                 }
                 // Second row left: random noise
-                (0, 1) => (next_rand(&mut rng), next_rand(&mut rng), next_rand(&mut rng)),
+                (0, 1) => (
+                    next_rand(&mut rng),
+                    next_rand(&mut rng),
+                    next_rand(&mut rng),
+                ),
                 // Second row right: horizontal stripes (1px)
                 (1, 1) => {
                     if y % 2 == 0 {
@@ -77,9 +81,11 @@ fn generate_hard_image(width: usize, height: usize, seed: u64) -> Vec<u8> {
                 }
                 // Bottom row: gradients with sharp transitions
                 (0, 3) => {
-                    let v = ((x * 255 / width.max(1)) as u8).wrapping_add(
-                        if x % 8 == 0 { 128 } else { 0 }
-                    );
+                    let v = ((x * 255 / width.max(1)) as u8).wrapping_add(if x % 8 == 0 {
+                        128
+                    } else {
+                        0
+                    });
                     (v, 255 - v, 128)
                 }
                 (1, 3) => {
@@ -114,7 +120,11 @@ fn generate_hard_image(width: usize, height: usize, seed: u64) -> Vec<u8> {
                 }
                 _ => {
                     // Fallback: more noise
-                    (next_rand(&mut rng), next_rand(&mut rng), next_rand(&mut rng))
+                    (
+                        next_rand(&mut rng),
+                        next_rand(&mut rng),
+                        next_rand(&mut rng),
+                    )
                 }
             };
 
@@ -138,7 +148,12 @@ fn decode_mozjpeg(data: &[u8]) -> Vec<u8> {
 
 fn check_quality(name: &str, original: &[u8], decoded: &[u8]) -> (u8, f64) {
     if decoded.len() != original.len() {
-        println!("{}: SIZE MISMATCH {} vs {}", name, decoded.len(), original.len());
+        println!(
+            "{}: SIZE MISMATCH {} vs {}",
+            name,
+            decoded.len(),
+            original.len()
+        );
         return (255, 255.0);
     }
 
@@ -182,7 +197,7 @@ fn main() {
                 .width(width as u32)
                 .height(height as u32)
                 .pixel_format(PixelFormat::Rgb)
-                .mode(JpegMode::Baseline)  // Sequential!
+                .mode(JpegMode::Baseline) // Sequential!
                 .subsampling(*sub)
                 .optimize_huffman(true)
                 .jpegli_quality(Quality::from_quality(85.0))
@@ -191,15 +206,22 @@ fn main() {
 
             let decoded = decode_mozjpeg(&rust_jpeg);
             let (max_diff, avg_diff) = check_quality("baseline", &original, &decoded);
-            println!("Baseline {}: size={}, max_diff={}, avg_diff={:.2}",
-                     sub_name, rust_jpeg.len(), max_diff, avg_diff);
+            println!(
+                "Baseline {}: size={}, max_diff={}, avg_diff={:.2}",
+                sub_name,
+                rust_jpeg.len(),
+                max_diff,
+                avg_diff
+            );
         }
     }
     println!();
 
     println!("=== HARD MODE: Progressive + Subsampling Test ===\n");
-    println!("{:<12} {:<6} {:>8} {:>8} {:>8} {:>8}",
-             "Size", "Sub", "RustSz", "CppSz", "MaxDiff", "AvgDiff");
+    println!(
+        "{:<12} {:<6} {:>8} {:>8} {:>8} {:>8}",
+        "Size", "Sub", "RustSz", "CppSz", "MaxDiff", "AvgDiff"
+    );
     println!("{:-<60}", "");
 
     let cjpegli = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
@@ -234,8 +256,12 @@ fn main() {
             let rust_jpeg = match rust_result {
                 Ok(j) => j,
                 Err(e) => {
-                    println!("{:<12} {:<6} ENCODE ERROR: {}",
-                             format!("{}x{}", width, height), sub_name, e);
+                    println!(
+                        "{:<12} {:<6} ENCODE ERROR: {}",
+                        format!("{}x{}", width, height),
+                        sub_name,
+                        e
+                    );
                     continue;
                 }
             };
@@ -244,7 +270,14 @@ fn main() {
             let cpp_path = format!("/tmp/hard_{}x{}_{}_cpp.jpg", width, height, sub_name);
             let cpp_sub = format!("--chroma_subsampling={}", sub_name);
             let _ = std::process::Command::new(cjpegli)
-                .args([&png_path, &cpp_path, "-q", "85", &cpp_sub, "--progressive_level=2"])
+                .args([
+                    &png_path,
+                    &cpp_path,
+                    "-q",
+                    "85",
+                    &cpp_sub,
+                    "--progressive_level=2",
+                ])
                 .output();
 
             let cpp_size = fs::read(&cpp_path).map(|d| d.len()).unwrap_or(0);
@@ -254,14 +287,16 @@ fn main() {
             let (max_diff, avg_diff) = check_quality("rust", &original, &rust_decoded);
 
             let status = if max_diff > 50 { "FAIL" } else { "ok" };
-            println!("{:<12} {:<6} {:>8} {:>8} {:>8} {:>8.2}  {}",
-                     format!("{}x{}", width, height),
-                     sub_name,
-                     rust_jpeg.len(),
-                     cpp_size,
-                     max_diff,
-                     avg_diff,
-                     status);
+            println!(
+                "{:<12} {:<6} {:>8} {:>8} {:>8} {:>8.2}  {}",
+                format!("{}x{}", width, height),
+                sub_name,
+                rust_jpeg.len(),
+                cpp_size,
+                max_diff,
+                avg_diff,
+                status
+            );
 
             if max_diff > 50 {
                 failures.push(format!("{}x{} {}", width, height, sub_name));

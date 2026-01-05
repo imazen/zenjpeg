@@ -2,7 +2,7 @@
 //!
 //! This example encodes a complex image and analyzes the progressive scan structure.
 
-use jpegli::{Encoder, PixelFormat, types::JpegMode, quant::Quality};
+use jpegli::{quant::Quality, types::JpegMode, Encoder, PixelFormat};
 
 fn main() {
     // Complex pattern (same as cpp_rust_matrix)
@@ -48,9 +48,11 @@ fn main() {
 
     println!("Progressive: {} bytes", jpeg_prog.len());
     println!("Baseline:    {} bytes", jpeg_base.len());
-    println!("Difference:  {} bytes ({:+.1}%)\n",
+    println!(
+        "Difference:  {} bytes ({:+.1}%)\n",
         jpeg_prog.len() as i64 - jpeg_base.len() as i64,
-        ((jpeg_prog.len() as f64 / jpeg_base.len() as f64) - 1.0) * 100.0);
+        ((jpeg_prog.len() as f64 / jpeg_base.len() as f64) - 1.0) * 100.0
+    );
 
     // Analyze progressive scan structure
     println!("=== Progressive Scan Analysis ===\n");
@@ -103,22 +105,41 @@ fn analyze_scans(data: &[u8]) {
             let scan_start = i + 2 + length;
             let mut scan_end = scan_start;
             while scan_end + 1 < data.len() {
-                if data[scan_end] == 0xFF && data[scan_end + 1] != 0x00 && data[scan_end + 1] != 0xFF {
+                if data[scan_end] == 0xFF
+                    && data[scan_end + 1] != 0x00
+                    && data[scan_end + 1] != 0xFF
+                {
                     break;
                 }
                 scan_end += 1;
             }
             let scan_size = scan_end - scan_start;
 
-            let scan_type = if ss == 0 { "DC" } else if ah == 0 { "AC First" } else { "AC Refine" };
-            let comp_str: String = comp_ids.iter().map(|c| format!("{}", c)).collect::<Vec<_>>().join(",");
+            let scan_type = if ss == 0 {
+                "DC"
+            } else if ah == 0 {
+                "AC First"
+            } else {
+                "AC Refine"
+            };
+            let comp_str: String = comp_ids
+                .iter()
+                .map(|c| format!("{}", c))
+                .collect::<Vec<_>>()
+                .join(",");
 
-            println!("Scan #{:2}: {:10} Ss={:2}-{:2}, Ah={}, Al={}, comps=[{}] → {:6} bytes",
-                scan_num, scan_type, ss, se, ah, al, comp_str, scan_size);
+            println!(
+                "Scan #{:2}: {:10} Ss={:2}-{:2}, Ah={}, Al={}, comps=[{}] → {:6} bytes",
+                scan_num, scan_type, ss, se, ah, al, comp_str, scan_size
+            );
 
-            if ss == 0 { total_dc += scan_size; }
-            else if ah == 0 { total_ac_first += scan_size; }
-            else { total_ac_refine += scan_size; }
+            if ss == 0 {
+                total_dc += scan_size;
+            } else if ah == 0 {
+                total_ac_first += scan_size;
+            } else {
+                total_ac_refine += scan_size;
+            }
 
             i = scan_end;
         } else {
@@ -130,7 +151,10 @@ fn analyze_scans(data: &[u8]) {
     println!("DC scans:        {:6} bytes", total_dc);
     println!("AC First scans:  {:6} bytes", total_ac_first);
     println!("AC Refine scans: {:6} bytes", total_ac_refine);
-    println!("Sum:             {:6} bytes", total_dc + total_ac_first + total_ac_refine);
+    println!(
+        "Sum:             {:6} bytes",
+        total_dc + total_ac_first + total_ac_refine
+    );
 }
 
 fn count_markers(data: &[u8], marker: u8) -> usize {

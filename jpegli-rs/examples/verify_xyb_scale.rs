@@ -1,6 +1,6 @@
 //! Verify XYB scaling now matches C++ (0-255 linear RGB range)
 
-use jpegli::xyb::{srgb_to_xyb, srgb_to_scaled_xyb};
+use jpegli::xyb::{srgb_to_scaled_xyb, srgb_to_xyb};
 
 fn main() {
     let test_colors: [(u8, u8, u8, &str); 6] = [

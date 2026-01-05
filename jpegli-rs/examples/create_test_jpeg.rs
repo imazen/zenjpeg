@@ -49,7 +49,9 @@ fn main() {
 
     // Decode with zune-jpeg
     println!("\n=== Decoding mozjpeg output with zune-jpeg ===");
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&moz_jpeg[..]));
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(
+        &moz_jpeg[..],
+    ));
     let moz_decoded = decoder.decode().expect("zune-jpeg failed");
     let (dec_w, dec_h) = decoder.dimensions().unwrap();
     println!(
@@ -97,16 +99,13 @@ fn main() {
 
     // Decode our output with zune-jpeg
     println!("\n=== Decoding jpegli-rs output with zune-jpeg ===");
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpegli_jpeg[..]));
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(
+        &jpegli_jpeg[..],
+    ));
     match decoder.decode() {
         Ok(decoded) => {
             let (zw, zh) = decoder.dimensions().unwrap();
-            println!(
-                "zune-jpeg: {}x{}, {} bytes",
-                zw,
-                zh,
-                decoded.len()
-            );
+            println!("zune-jpeg: {}x{}, {} bytes", zw, zh, decoded.len());
             println!("First few pixels: {:?}", &decoded[..12.min(decoded.len())]);
         }
         Err(e) => {

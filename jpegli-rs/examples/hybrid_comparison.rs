@@ -286,7 +286,8 @@ fn compute_dssim(
     width: usize,
     height: usize,
 ) -> f64 {
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
     let decoded = decoder.decode().expect("decode JPEG");
 
     let decoded_rgba: Vec<rgb::RGBA<u8>> = decoded

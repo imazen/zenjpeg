@@ -356,8 +356,14 @@ impl DecodedImageF32 {
             for chunk in 0..chunks {
                 let k = chunk * 8;
                 let v = f32x8::from([
-                    self.data[k], self.data[k + 1], self.data[k + 2], self.data[k + 3],
-                    self.data[k + 4], self.data[k + 5], self.data[k + 6], self.data[k + 7],
+                    self.data[k],
+                    self.data[k + 1],
+                    self.data[k + 2],
+                    self.data[k + 3],
+                    self.data[k + 4],
+                    self.data[k + 5],
+                    self.data[k + 6],
+                    self.data[k + 7],
                 ]);
                 let scaled = (v * scale).round().max(zero).min(max_val);
                 let arr: [f32; 8] = scaled.into();
@@ -408,8 +414,14 @@ impl DecodedImageF32 {
             for chunk in 0..chunks {
                 let k = chunk * 8;
                 let v = f32x8::from([
-                    self.data[k], self.data[k + 1], self.data[k + 2], self.data[k + 3],
-                    self.data[k + 4], self.data[k + 5], self.data[k + 6], self.data[k + 7],
+                    self.data[k],
+                    self.data[k + 1],
+                    self.data[k + 2],
+                    self.data[k + 3],
+                    self.data[k + 4],
+                    self.data[k + 5],
+                    self.data[k + 6],
+                    self.data[k + 7],
                 ]);
                 let scaled = (v * scale).round().max(zero).min(max_val);
                 let arr: [f32; 8] = scaled.into();

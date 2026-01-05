@@ -79,7 +79,8 @@ fn decode_rust(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Decode with reference decoder (jpeg-decoder crate)
 fn decode_reference(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg));
     match decoder.decode() {
         Ok(pixels) => {
             let (width, height) = decoder.dimensions().unwrap();

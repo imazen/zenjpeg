@@ -35,8 +35,9 @@ fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
             // More complex pattern to stress color conversion
             let r = ((fx * 200.0) + (fx * fy * 80.0).sin() * 55.0).clamp(0.0, 255.0);
             let g = ((fy * 200.0) + ((fx + fy) * 60.0).cos() * 55.0).clamp(0.0, 255.0);
-            let b = (100.0 + ((fx - fy).abs() * 100.0).sin() * 80.0 + (fx * fy * 200.0).cos() * 30.0)
-                .clamp(0.0, 255.0);
+            let b =
+                (100.0 + ((fx - fy).abs() * 100.0).sin() * 80.0 + (fx * fy * 200.0).cos() * 30.0)
+                    .clamp(0.0, 255.0);
 
             rgb[idx] = r as u8;
             rgb[idx + 1] = g as u8;

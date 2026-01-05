@@ -48,7 +48,8 @@ fn verify_decodable(jpeg_data: &[u8], expected_width: usize, expected_height: us
 
     // Test with jpeg-decoder
     let jpeg_decoder_ok = {
-        let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
+        let mut decoder =
+            zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
         decoder.decode().is_ok()
     };
 

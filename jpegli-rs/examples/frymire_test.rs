@@ -38,7 +38,10 @@ fn main() {
     let (original, width, height) = load_png(png_path);
 
     println!("=== frymire.png {}x{} ===\n", width, height);
-    println!("{:<20} {:>10} {:>10} {:>10}", "Config", "Size", "MaxDiff", "AvgDiff");
+    println!(
+        "{:<20} {:>10} {:>10} {:>10}",
+        "Config", "Size", "MaxDiff", "AvgDiff"
+    );
     println!("{:-<55}", "");
 
     let configs = [
@@ -72,7 +75,14 @@ fn main() {
         let avg_diff = sum_diff as f64 / original.len() as f64;
 
         let status = if avg_diff > 20.0 { " <-- BAD" } else { "" };
-        println!("{:<20} {:>10} {:>10} {:>10.2}{}", name, jpeg.len(), max_diff, avg_diff, status);
+        println!(
+            "{:<20} {:>10} {:>10} {:>10.2}{}",
+            name,
+            jpeg.len(),
+            max_diff,
+            avg_diff,
+            status
+        );
 
         // Save for inspection
         let safe_name = name.replace(' ', "_").to_lowercase();
@@ -87,9 +97,14 @@ fn main() {
         let name = format!("{} p{}", sub, prog);
         let out = format!("/tmp/frymire_cpp_{}_{}.jpg", sub, prog);
         let _ = std::process::Command::new(cjpegli)
-            .args([png_path.to_str().unwrap(), &out, "-q", "85",
-                   &format!("--chroma_subsampling={}", sub),
-                   &format!("--progressive_level={}", prog)])
+            .args([
+                png_path.to_str().unwrap(),
+                &out,
+                "-q",
+                "85",
+                &format!("--chroma_subsampling={}", sub),
+                &format!("--progressive_level={}", prog),
+            ])
             .output();
 
         if let Ok(jpeg) = fs::read(&out) {
@@ -102,7 +117,13 @@ fn main() {
                 sum_diff += diff as u64;
             }
             let avg_diff = sum_diff as f64 / original.len() as f64;
-            println!("C++ {:<16} {:>10} {:>10} {:>10.2}", name, jpeg.len(), max_diff, avg_diff);
+            println!(
+                "C++ {:<16} {:>10} {:>10} {:>10.2}",
+                name,
+                jpeg.len(),
+                max_diff,
+                avg_diff
+            );
         }
     }
 }

@@ -48,7 +48,9 @@
 
 use std::f32::consts::PI;
 
-use crate::adaptive_quant_simd::{compute_pre_erosion_simd, fuzzy_erosion_simd, per_block_modulations_simd};
+use crate::adaptive_quant_simd::{
+    compute_pre_erosion_simd, fuzzy_erosion_simd, per_block_modulations_simd,
+};
 
 // ============================================================================
 // Constants ported from C++ adaptive_quantization.cc
@@ -315,8 +317,14 @@ pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Vec<f32> {
     for chunk in 0..chunks {
         let k = chunk * 8;
         let qf = f32x8::from([
-            quant_field[k], quant_field[k + 1], quant_field[k + 2], quant_field[k + 3],
-            quant_field[k + 4], quant_field[k + 5], quant_field[k + 6], quant_field[k + 7],
+            quant_field[k],
+            quant_field[k + 1],
+            quant_field[k + 2],
+            quant_field[k + 3],
+            quant_field[k + 4],
+            quant_field[k + 5],
+            quant_field[k + 6],
+            quant_field[k + 7],
         ]);
 
         // aq_strength = max(0.0, 0.6 / quant_field - 1.0)

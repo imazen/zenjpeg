@@ -42,7 +42,9 @@ const K_M21: f32 = 0.204_767_45;
 const K_M22: f32 = 1.0 - K_M20 - K_M21;
 const K_B: f32 = 0.003_793_073_4;
 
-const OPSIN_ABSORBANCE_MATRIX: [f32; 9] = [K_M00, K_M01, K_M02, K_M10, K_M11, K_M12, K_M20, K_M21, K_M22];
+const OPSIN_ABSORBANCE_MATRIX: [f32; 9] = [
+    K_M00, K_M01, K_M02, K_M10, K_M11, K_M12, K_M20, K_M21, K_M22,
+];
 const OPSIN_ABSORBANCE_BIAS: [f32; 3] = [K_B, K_B, K_B];
 
 // ============================================================================
@@ -114,10 +116,14 @@ fn initial_approx(x: f32) -> f32 {
 fn cbrtf_x8(x: f32x8) -> f32x8 {
     let x_arr: [f32; 8] = x.into();
     let t_arr: [f32; 8] = [
-        initial_approx(x_arr[0]), initial_approx(x_arr[1]),
-        initial_approx(x_arr[2]), initial_approx(x_arr[3]),
-        initial_approx(x_arr[4]), initial_approx(x_arr[5]),
-        initial_approx(x_arr[6]), initial_approx(x_arr[7]),
+        initial_approx(x_arr[0]),
+        initial_approx(x_arr[1]),
+        initial_approx(x_arr[2]),
+        initial_approx(x_arr[3]),
+        initial_approx(x_arr[4]),
+        initial_approx(x_arr[5]),
+        initial_approx(x_arr[6]),
+        initial_approx(x_arr[7]),
     ];
 
     let x0 = f64x2::new([x_arr[0] as f64, x_arr[1] as f64]);
@@ -130,27 +136,44 @@ fn cbrtf_x8(x: f32x8) -> f32x8 {
     let mut t2 = f64x2::new([t_arr[4] as f64, t_arr[5] as f64]);
     let mut t3 = f64x2::new([t_arr[6] as f64, t_arr[7] as f64]);
 
-    let x2_0 = x0 + x0; let x2_1 = x1 + x1; let x2_2 = x2 + x2; let x2_3 = x3 + x3;
+    let x2_0 = x0 + x0;
+    let x2_1 = x1 + x1;
+    let x2_2 = x2 + x2;
+    let x2_3 = x3 + x3;
 
     // First Newton iteration
-    let r0 = t0 * t0 * t0; let r1 = t1 * t1 * t1; let r2 = t2 * t2 * t2; let r3 = t3 * t3 * t3;
+    let r0 = t0 * t0 * t0;
+    let r1 = t1 * t1 * t1;
+    let r2 = t2 * t2 * t2;
+    let r3 = t3 * t3 * t3;
     t0 = t0 * (x2_0 + r0) / (x0 + r0 + r0);
     t1 = t1 * (x2_1 + r1) / (x1 + r1 + r1);
     t2 = t2 * (x2_2 + r2) / (x2 + r2 + r2);
     t3 = t3 * (x2_3 + r3) / (x3 + r3 + r3);
 
     // Second Newton iteration
-    let r0 = t0 * t0 * t0; let r1 = t1 * t1 * t1; let r2 = t2 * t2 * t2; let r3 = t3 * t3 * t3;
+    let r0 = t0 * t0 * t0;
+    let r1 = t1 * t1 * t1;
+    let r2 = t2 * t2 * t2;
+    let r3 = t3 * t3 * t3;
     t0 = t0 * (x2_0 + r0) / (x0 + r0 + r0);
     t1 = t1 * (x2_1 + r1) / (x1 + r1 + r1);
     t2 = t2 * (x2_2 + r2) / (x2 + r2 + r2);
     t3 = t3 * (x2_3 + r3) / (x3 + r3 + r3);
 
-    let t0_arr: [f64; 2] = t0.into(); let t1_arr: [f64; 2] = t1.into();
-    let t2_arr: [f64; 2] = t2.into(); let t3_arr: [f64; 2] = t3.into();
+    let t0_arr: [f64; 2] = t0.into();
+    let t1_arr: [f64; 2] = t1.into();
+    let t2_arr: [f64; 2] = t2.into();
+    let t3_arr: [f64; 2] = t3.into();
     f32x8::new([
-        t0_arr[0] as f32, t0_arr[1] as f32, t1_arr[0] as f32, t1_arr[1] as f32,
-        t2_arr[0] as f32, t2_arr[1] as f32, t3_arr[0] as f32, t3_arr[1] as f32,
+        t0_arr[0] as f32,
+        t0_arr[1] as f32,
+        t1_arr[0] as f32,
+        t1_arr[1] as f32,
+        t2_arr[0] as f32,
+        t2_arr[1] as f32,
+        t3_arr[0] as f32,
+        t3_arr[1] as f32,
     ])
 }
 
@@ -190,7 +213,9 @@ fn ssim2_linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
 
         for i in 0..8 {
             let p = input[base + i];
-            r_arr[i] = p[0]; g_arr[i] = p[1]; b_arr[i] = p[2];
+            r_arr[i] = p[0];
+            g_arr[i] = p[1];
+            b_arr[i] = p[2];
         }
 
         let r = f32x8::new(r_arr);
@@ -225,11 +250,33 @@ fn ssim2_linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
     // Scalar remainder
     let scalar_start = chunks_8 * 8;
     for pix in &mut input[scalar_start..] {
-        let r = pix[0]; let g = pix[1]; let b = pix[2];
-        let mut m0 = OPSIN_ABSORBANCE_MATRIX[0].mul_add(r, OPSIN_ABSORBANCE_MATRIX[1].mul_add(g, OPSIN_ABSORBANCE_MATRIX[2].mul_add(b, OPSIN_ABSORBANCE_BIAS[0])));
-        let mut m1 = OPSIN_ABSORBANCE_MATRIX[3].mul_add(r, OPSIN_ABSORBANCE_MATRIX[4].mul_add(g, OPSIN_ABSORBANCE_MATRIX[5].mul_add(b, OPSIN_ABSORBANCE_BIAS[1])));
-        let mut m2 = OPSIN_ABSORBANCE_MATRIX[6].mul_add(r, OPSIN_ABSORBANCE_MATRIX[7].mul_add(g, OPSIN_ABSORBANCE_MATRIX[8].mul_add(b, OPSIN_ABSORBANCE_BIAS[2])));
-        m0 = m0.max(0.0); m1 = m1.max(0.0); m2 = m2.max(0.0);
+        let r = pix[0];
+        let g = pix[1];
+        let b = pix[2];
+        let mut m0 = OPSIN_ABSORBANCE_MATRIX[0].mul_add(
+            r,
+            OPSIN_ABSORBANCE_MATRIX[1].mul_add(
+                g,
+                OPSIN_ABSORBANCE_MATRIX[2].mul_add(b, OPSIN_ABSORBANCE_BIAS[0]),
+            ),
+        );
+        let mut m1 = OPSIN_ABSORBANCE_MATRIX[3].mul_add(
+            r,
+            OPSIN_ABSORBANCE_MATRIX[4].mul_add(
+                g,
+                OPSIN_ABSORBANCE_MATRIX[5].mul_add(b, OPSIN_ABSORBANCE_BIAS[1]),
+            ),
+        );
+        let mut m2 = OPSIN_ABSORBANCE_MATRIX[6].mul_add(
+            r,
+            OPSIN_ABSORBANCE_MATRIX[7].mul_add(
+                g,
+                OPSIN_ABSORBANCE_MATRIX[8].mul_add(b, OPSIN_ABSORBANCE_BIAS[2]),
+            ),
+        );
+        m0 = m0.max(0.0);
+        m1 = m1.max(0.0);
+        m2 = m2.max(0.0);
         m0 = cbrtf_fast(m0) + absorbance_bias[0];
         m1 = cbrtf_fast(m1) + absorbance_bias[1];
         m2 = cbrtf_fast(m2) + absorbance_bias[2];
@@ -247,7 +294,13 @@ fn cpp_batch_srgb_to_xyb(srgb_pixels: &[[u8; 3]]) -> Vec<[f32; 3]> {
 
     let linear: Vec<[f32; 3]> = srgb_pixels
         .iter()
-        .map(|p| [srgb_u8_to_linear(p[0]), srgb_u8_to_linear(p[1]), srgb_u8_to_linear(p[2])])
+        .map(|p| {
+            [
+                srgb_u8_to_linear(p[0]),
+                srgb_u8_to_linear(p[1]),
+                srgb_u8_to_linear(p[2]),
+            ]
+        })
         .collect();
 
     let n = linear.len();
@@ -275,11 +328,11 @@ struct ErrorStats {
     name: String,
     total: u64,
     exact: u64,
-    tiny: u64,    // <= 1e-7
-    small: u64,   // <= 1e-6
-    medium: u64,  // <= 1e-5
-    large: u64,   // <= 1e-4
-    huge: u64,    // > 1e-4
+    tiny: u64,   // <= 1e-7
+    small: u64,  // <= 1e-6
+    medium: u64, // <= 1e-5
+    large: u64,  // <= 1e-4
+    huge: u64,   // > 1e-4
     max_err: f32,
     max_err_rgb: [u8; 3],
     max_err_a: [f32; 3],
@@ -289,11 +342,17 @@ struct ErrorStats {
 
 impl ErrorStats {
     fn new(name: &str) -> Self {
-        Self { name: name.to_string(), ..Default::default() }
+        Self {
+            name: name.to_string(),
+            ..Default::default()
+        }
     }
 
     fn add(&mut self, rgb: [u8; 3], a: [f32; 3], b: [f32; 3]) {
-        let err = (a[0] - b[0]).abs().max((a[1] - b[1]).abs()).max((a[2] - b[2]).abs());
+        let err = (a[0] - b[0])
+            .abs()
+            .max((a[1] - b[1]).abs())
+            .max((a[2] - b[2]).abs());
         self.total += 1;
         self.sum_err += err as f64;
 
@@ -304,12 +363,19 @@ impl ErrorStats {
             self.max_err_b = b;
         }
 
-        if err == 0.0 { self.exact += 1; }
-        else if err <= 1e-7 { self.tiny += 1; }
-        else if err <= 1e-6 { self.small += 1; }
-        else if err <= 1e-5 { self.medium += 1; }
-        else if err <= 1e-4 { self.large += 1; }
-        else { self.huge += 1; }
+        if err == 0.0 {
+            self.exact += 1;
+        } else if err <= 1e-7 {
+            self.tiny += 1;
+        } else if err <= 1e-6 {
+            self.small += 1;
+        } else if err <= 1e-5 {
+            self.medium += 1;
+        } else if err <= 1e-4 {
+            self.large += 1;
+        } else {
+            self.huge += 1;
+        }
     }
 
     fn print(&self) {
@@ -317,21 +383,58 @@ impl ErrorStats {
         println!("\n=== {} ({} colors) ===\n", self.name, self.total);
         println!("Max error: {:.2e}", self.max_err);
         println!("Mean error: {:.2e}", self.sum_err / self.total as f64);
-        println!("Worst RGB: ({}, {}, {})", self.max_err_rgb[0], self.max_err_rgb[1], self.max_err_rgb[2]);
-        println!("  A: X={:.8}, Y={:.8}, B={:.8}", self.max_err_a[0], self.max_err_a[1], self.max_err_a[2]);
-        println!("  B: X={:.8}, Y={:.8}, B={:.8}", self.max_err_b[0], self.max_err_b[1], self.max_err_b[2]);
+        println!(
+            "Worst RGB: ({}, {}, {})",
+            self.max_err_rgb[0], self.max_err_rgb[1], self.max_err_rgb[2]
+        );
+        println!(
+            "  A: X={:.8}, Y={:.8}, B={:.8}",
+            self.max_err_a[0], self.max_err_a[1], self.max_err_a[2]
+        );
+        println!(
+            "  B: X={:.8}, Y={:.8}, B={:.8}",
+            self.max_err_b[0], self.max_err_b[1], self.max_err_b[2]
+        );
         println!("\nDistribution:");
-        println!("  Exact (0.0):     {:>12} ({:6.3}%)", self.exact, pct(self.exact));
-        println!("  Tiny (≤1e-7):    {:>12} ({:6.3}%)", self.tiny, pct(self.tiny));
-        println!("  Small (≤1e-6):   {:>12} ({:6.3}%)", self.small, pct(self.small));
-        println!("  Medium (≤1e-5):  {:>12} ({:6.3}%)", self.medium, pct(self.medium));
-        println!("  Large (≤1e-4):   {:>12} ({:6.3}%)", self.large, pct(self.large));
-        println!("  HUGE (>1e-4):    {:>12} ({:6.3}%) {}", self.huge, pct(self.huge),
-                 if self.huge > 0 { "⚠️" } else { "✅" });
+        println!(
+            "  Exact (0.0):     {:>12} ({:6.3}%)",
+            self.exact,
+            pct(self.exact)
+        );
+        println!(
+            "  Tiny (≤1e-7):    {:>12} ({:6.3}%)",
+            self.tiny,
+            pct(self.tiny)
+        );
+        println!(
+            "  Small (≤1e-6):   {:>12} ({:6.3}%)",
+            self.small,
+            pct(self.small)
+        );
+        println!(
+            "  Medium (≤1e-5):  {:>12} ({:6.3}%)",
+            self.medium,
+            pct(self.medium)
+        );
+        println!(
+            "  Large (≤1e-4):   {:>12} ({:6.3}%)",
+            self.large,
+            pct(self.large)
+        );
+        println!(
+            "  HUGE (>1e-4):    {:>12} ({:6.3}%) {}",
+            self.huge,
+            pct(self.huge),
+            if self.huge > 0 { "⚠️" } else { "✅" }
+        );
 
-        if self.huge > 0 { println!("\n❌ {} colors have error > 1e-4", self.huge); }
-        else if self.max_err <= 1e-6 { println!("\n✅ EXCELLENT: All within 1e-6"); }
-        else if self.max_err <= 1e-5 { println!("\n✓ GOOD: All within 1e-5"); }
+        if self.huge > 0 {
+            println!("\n❌ {} colors have error > 1e-4", self.huge);
+        } else if self.max_err <= 1e-6 {
+            println!("\n✅ EXCELLENT: All within 1e-6");
+        } else if self.max_err <= 1e-5 {
+            println!("\n✓ GOOD: All within 1e-5");
+        }
     }
 }
 
@@ -349,33 +452,68 @@ struct RoundtripStats {
 
 impl RoundtripStats {
     fn add(&mut self, input: [u8; 3], output: [u8; 3]) {
-        let diff = (input[0] as i16 - output[0] as i16).unsigned_abs().max(
-            (input[1] as i16 - output[1] as i16).unsigned_abs()).max(
-            (input[2] as i16 - output[2] as i16).unsigned_abs()) as u8;
+        let diff = (input[0] as i16 - output[0] as i16)
+            .unsigned_abs()
+            .max((input[1] as i16 - output[1] as i16).unsigned_abs())
+            .max((input[2] as i16 - output[2] as i16).unsigned_abs()) as u8;
         self.total += 1;
         if diff > self.max_diff {
             self.max_diff = diff;
             self.max_diff_input = input;
             self.max_diff_output = output;
         }
-        match diff { 0 => self.exact += 1, 1 => self.off_by_1 += 1, 2 => self.off_by_2 += 1, _ => self.off_by_more += 1 }
+        match diff {
+            0 => self.exact += 1,
+            1 => self.off_by_1 += 1,
+            2 => self.off_by_2 += 1,
+            _ => self.off_by_more += 1,
+        }
     }
 
     fn print(&self) {
         let pct = |n: u64| 100.0 * n as f64 / self.total as f64;
         println!("\n=== Roundtrip (sRGB → XYB → sRGB) ===\n");
         println!("Max u8 diff: {}", self.max_diff);
-        println!("Worst: ({},{},{}) → ({},{},{})",
-                 self.max_diff_input[0], self.max_diff_input[1], self.max_diff_input[2],
-                 self.max_diff_output[0], self.max_diff_output[1], self.max_diff_output[2]);
+        println!(
+            "Worst: ({},{},{}) → ({},{},{})",
+            self.max_diff_input[0],
+            self.max_diff_input[1],
+            self.max_diff_input[2],
+            self.max_diff_output[0],
+            self.max_diff_output[1],
+            self.max_diff_output[2]
+        );
         println!("\nDistribution:");
-        println!("  Exact (0):     {:>12} ({:6.3}%)", self.exact, pct(self.exact));
-        println!("  Off by 1:      {:>12} ({:6.3}%)", self.off_by_1, pct(self.off_by_1));
-        println!("  Off by 2:      {:>12} ({:6.3}%)", self.off_by_2, pct(self.off_by_2));
-        println!("  Off by >2:     {:>12} ({:6.3}%) {}", self.off_by_more, pct(self.off_by_more),
-                 if self.off_by_more > 0 { "⚠️" } else { "✅" });
-        if self.max_diff == 0 { println!("\n✅ PERFECT: 100% exact roundtrip"); }
-        else if self.max_diff <= 1 { println!("\n✅ EXCELLENT: All within ±1"); }
+        println!(
+            "  Exact (0):     {:>12} ({:6.3}%)",
+            self.exact,
+            pct(self.exact)
+        );
+        println!(
+            "  Off by 1:      {:>12} ({:6.3}%)",
+            self.off_by_1,
+            pct(self.off_by_1)
+        );
+        println!(
+            "  Off by 2:      {:>12} ({:6.3}%)",
+            self.off_by_2,
+            pct(self.off_by_2)
+        );
+        println!(
+            "  Off by >2:     {:>12} ({:6.3}%) {}",
+            self.off_by_more,
+            pct(self.off_by_more),
+            if self.off_by_more > 0 {
+                "⚠️"
+            } else {
+                "✅"
+            }
+        );
+        if self.max_diff == 0 {
+            println!("\n✅ PERFECT: 100% exact roundtrip");
+        } else if self.max_diff <= 1 {
+            println!("\n✅ EXCELLENT: All within ±1");
+        }
     }
 }
 
@@ -413,11 +551,20 @@ fn main() {
                 if batch_rgb.len() == BATCH_SIZE {
                     // Get C++ results
                     let cpp_results = cpp_batch_srgb_to_xyb(&batch_rgb);
-                    if cpp_results.is_empty() { have_cpp = false; }
+                    if cpp_results.is_empty() {
+                        have_cpp = false;
+                    }
 
                     // Prepare linear RGB for ssimulacra2 SIMD
-                    let mut ssim2_input: Vec<[f32; 3]> = batch_rgb.iter()
-                        .map(|p| [srgb_u8_to_linear(p[0]), srgb_u8_to_linear(p[1]), srgb_u8_to_linear(p[2])])
+                    let mut ssim2_input: Vec<[f32; 3]> = batch_rgb
+                        .iter()
+                        .map(|p| {
+                            [
+                                srgb_u8_to_linear(p[0]),
+                                srgb_u8_to_linear(p[1]),
+                                srgb_u8_to_linear(p[2]),
+                            ]
+                        })
                         .collect();
                     ssim2_linear_rgb_to_xyb_simd(&mut ssim2_input);
 
@@ -445,8 +592,15 @@ fn main() {
     // Process remaining
     if !batch_rgb.is_empty() {
         let cpp_results = cpp_batch_srgb_to_xyb(&batch_rgb);
-        let mut ssim2_input: Vec<[f32; 3]> = batch_rgb.iter()
-            .map(|p| [srgb_u8_to_linear(p[0]), srgb_u8_to_linear(p[1]), srgb_u8_to_linear(p[2])])
+        let mut ssim2_input: Vec<[f32; 3]> = batch_rgb
+            .iter()
+            .map(|p| {
+                [
+                    srgb_u8_to_linear(p[0]),
+                    srgb_u8_to_linear(p[1]),
+                    srgb_u8_to_linear(p[2]),
+                ]
+            })
             .collect();
         ssim2_linear_rgb_to_xyb_simd(&mut ssim2_input);
 
@@ -467,8 +621,11 @@ fn main() {
     }
 
     let elapsed = start.elapsed();
-    println!("\nCompleted in {:.2}s ({:.0} colors/sec)",
-             elapsed.as_secs_f64(), roundtrip_stats.total as f64 / elapsed.as_secs_f64());
+    println!(
+        "\nCompleted in {:.2}s ({:.0} colors/sec)",
+        elapsed.as_secs_f64(),
+        roundtrip_stats.total as f64 / elapsed.as_secs_f64()
+    );
 
     // Print results
     println!("\n{}", "=".repeat(60));

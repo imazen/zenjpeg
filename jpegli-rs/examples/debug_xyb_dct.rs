@@ -1,7 +1,7 @@
+use jpegli::consts::{BASE_QUANT_MATRIX_XYB, DCT_BLOCK_SIZE, GLOBAL_SCALE_XYB};
 use jpegli::dct::forward_dct_8x8;
-use jpegli::quant::{generate_quant_table, Quality, distance_to_scale};
+use jpegli::quant::{distance_to_scale, generate_quant_table, Quality};
 use jpegli::types::ColorSpace;
-use jpegli::consts::{DCT_BLOCK_SIZE, BASE_QUANT_MATRIX_XYB, GLOBAL_SCALE_XYB};
 
 fn main() {
     // Simulate XYB Y channel for white: scaled Y = 7.3

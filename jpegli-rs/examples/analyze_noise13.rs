@@ -6,7 +6,7 @@ fn main() {
     let width = 64u32;
     let height = 64u32;
     let noise_mul = 13u32;
-    
+
     let mut rgb = Vec::with_capacity((width * height * 3) as usize);
     for y in 0..height {
         for x in 0..width {

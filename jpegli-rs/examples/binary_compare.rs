@@ -36,10 +36,11 @@ fn main() {
 
     // Encode with C++
     let cpp_path = "/tmp/binary_compare_cpp.jpg";
-    let status = Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
-        .args([png_path, cpp_path, "-q", "50", "--progressive_level=2"])
-        .status()
-        .expect("Failed to run cjpegli");
+    let status =
+        Command::new("/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli")
+            .args([png_path, cpp_path, "-q", "50", "--progressive_level=2"])
+            .status()
+            .expect("Failed to run cjpegli");
 
     if !status.success() {
         eprintln!("C++ encoding failed");

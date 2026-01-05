@@ -12,9 +12,9 @@
 //!   MAX_IMAGES=N     - Limit images to test (default: 20)
 //!   CORPUS_DIR=/path - Override corpus directory
 
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 use jpegli::{Encoder, Quality};
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -192,18 +192,32 @@ fn gray_to_rgb(gray: &[u8]) -> Vec<u8> {
 fn compute_ssim2(orig_rgb: &[u8], decoded_rgb: &[u8], width: usize, height: usize) -> f64 {
     let expected_len = width * height * 3;
     if orig_rgb.len() != expected_len {
-        eprintln!("SSIM ERROR: orig_rgb.len()={} expected={}", orig_rgb.len(), expected_len);
+        eprintln!(
+            "SSIM ERROR: orig_rgb.len()={} expected={}",
+            orig_rgb.len(),
+            expected_len
+        );
         return -999.0;
     }
     if decoded_rgb.len() != expected_len {
-        eprintln!("SSIM ERROR: decoded_rgb.len()={} expected={}", decoded_rgb.len(), expected_len);
+        eprintln!(
+            "SSIM ERROR: decoded_rgb.len()={} expected={}",
+            decoded_rgb.len(),
+            expected_len
+        );
         return -999.0;
     }
 
     let orig = Rgb::new(
         orig_rgb
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -215,7 +229,13 @@ fn compute_ssim2(orig_rgb: &[u8], decoded_rgb: &[u8], width: usize, height: usiz
     let dec = Rgb::new(
         decoded_rgb
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,

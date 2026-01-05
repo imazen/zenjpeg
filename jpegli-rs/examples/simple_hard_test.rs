@@ -53,7 +53,10 @@ fn main() {
     let original = generate_blocks(width, height);
 
     println!("=== Simple Block Test {}x{} ===\n", width, height);
-    println!("{:<20} {:>8} {:>10} {:>10}", "Config", "Size", "MaxDiff", "AvgDiff");
+    println!(
+        "{:<20} {:>8} {:>10} {:>10}",
+        "Config", "Size", "MaxDiff", "AvgDiff"
+    );
     println!("{:-<55}", "");
 
     let configs = [
@@ -98,7 +101,14 @@ fn main() {
         let avg_diff = sum_diff as f64 / original.len() as f64;
 
         let status = if max_diff > 20 { " <-- BAD" } else { "" };
-        println!("{:<20} {:>8} {:>10} {:>10.2}{}", name, jpeg.len(), max_diff, avg_diff, status);
+        println!(
+            "{:<20} {:>8} {:>10} {:>10.2}{}",
+            name,
+            jpeg.len(),
+            max_diff,
+            avg_diff,
+            status
+        );
 
         // Save JPEGs for inspection
         let safe_name = name.replace(' ', "_").to_lowercase();
@@ -113,9 +123,14 @@ fn main() {
         let name = format!("{} p{}", sub, prog);
         let out = format!("/tmp/simple_cpp_{}_{}.jpg", sub, prog);
         let _ = std::process::Command::new(cjpegli)
-            .args([png_path, &out, "-q", "90",
-                   &format!("--chroma_subsampling={}", sub),
-                   &format!("--progressive_level={}", prog)])
+            .args([
+                png_path,
+                &out,
+                "-q",
+                "90",
+                &format!("--chroma_subsampling={}", sub),
+                &format!("--progressive_level={}", prog),
+            ])
             .output();
 
         if let Ok(jpeg) = fs::read(&out) {
@@ -128,7 +143,13 @@ fn main() {
                 sum_diff += diff as u64;
             }
             let avg_diff = sum_diff as f64 / original.len() as f64;
-            println!("C++ {:<16} {:>8} {:>10} {:>10.2}", name, jpeg.len(), max_diff, avg_diff);
+            println!(
+                "C++ {:<16} {:>8} {:>10} {:>10.2}",
+                name,
+                jpeg.len(),
+                max_diff,
+                avg_diff
+            );
         }
     }
 }
