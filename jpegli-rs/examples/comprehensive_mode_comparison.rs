@@ -228,6 +228,12 @@ fn compute_ssim2(orig_rgb: &[u8], decoded_rgb: &[u8], width: usize, height: usiz
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+    // Use jpegli's ICC-aware decoder which handles XYB profile transformation
+    let (pixels, _width, _height) = jpegli::icc::decode_jpeg_with_icc(data).ok()?;
+    Some(pixels)
+}
+
+fn decode_jpeg_simple(data: &[u8]) -> Option<Vec<u8>> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
