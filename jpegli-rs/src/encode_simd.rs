@@ -655,6 +655,126 @@ pub fn bgra_to_ycbcr_planes_simd(bgra_data: &[u8], num_pixels: usize) -> (Vec<f3
 }
 
 // ============================================================================
+// Block Extraction
+// ============================================================================
+
+/// SIMD-optimized block extraction from a plane with level shift.
+///
+/// Extracts an 8x8 block from the given position, subtracting 128.0 (level shift).
+/// Uses fast path for interior blocks (no bounds checking needed).
+///
+/// # Arguments
+/// * `plane` - Input plane data
+/// * `width` - Plane width
+/// * `height` - Plane height
+/// * `bx` - Block x coordinate (in blocks, not pixels)
+/// * `by` - Block y coordinate (in blocks, not pixels)
+#[inline]
+pub fn extract_block_simd(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    bx: usize,
+    by: usize,
+) -> [f32; 64] {
+    let px_start = bx * 8;
+    let py_start = by * 8;
+
+    // Check if block is entirely within bounds
+    let is_interior = px_start + 8 <= width && py_start + 8 <= height;
+
+    let level_shift = f32x8::splat(128.0);
+    let mut block = [0.0f32; 64];
+
+    if is_interior {
+        // Fast path: no bounds checking needed
+        for y in 0..8 {
+            let row_start = (py_start + y) * width + px_start;
+
+            // Load 8 consecutive f32 values
+            let row_slice = &plane[row_start..row_start + 8];
+            let row = f32x8::from([
+                row_slice[0], row_slice[1], row_slice[2], row_slice[3],
+                row_slice[4], row_slice[5], row_slice[6], row_slice[7],
+            ]);
+
+            // Subtract level shift
+            let shifted = row - level_shift;
+
+            // Store to block
+            let arr: [f32; 8] = shifted.into();
+            block[y * 8..y * 8 + 8].copy_from_slice(&arr);
+        }
+    } else {
+        // Edge case: need bounds checking
+        for y in 0..8 {
+            let py = (py_start + y).min(height - 1);
+            for x in 0..8 {
+                let px = (px_start + x).min(width - 1);
+                block[y * 8 + x] = plane[py * width + px] - 128.0;
+            }
+        }
+    }
+
+    block
+}
+
+/// SIMD-optimized block extraction for XYB planes with scaling.
+///
+/// XYB values are in range ~[-2.1, 7.3], need to scale by 255 and level shift by -128.
+///
+/// # Arguments
+/// * `plane` - Input XYB plane data
+/// * `width` - Plane width
+/// * `height` - Plane height
+/// * `bx` - Block x coordinate (in blocks)
+/// * `by` - Block y coordinate (in blocks)
+#[inline]
+pub fn extract_block_xyb_simd(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    bx: usize,
+    by: usize,
+) -> [f32; 64] {
+    let px_start = bx * 8;
+    let py_start = by * 8;
+
+    let is_interior = px_start + 8 <= width && py_start + 8 <= height;
+
+    let scale = f32x8::splat(255.0);
+    let level_shift = f32x8::splat(128.0);
+    let mut block = [0.0f32; 64];
+
+    if is_interior {
+        for y in 0..8 {
+            let row_start = (py_start + y) * width + px_start;
+            let row_slice = &plane[row_start..row_start + 8];
+            let row = f32x8::from([
+                row_slice[0], row_slice[1], row_slice[2], row_slice[3],
+                row_slice[4], row_slice[5], row_slice[6], row_slice[7],
+            ]);
+
+            // XYB: val * 255.0 - 128.0
+            let scaled = row * scale - level_shift;
+
+            let arr: [f32; 8] = scaled.into();
+            block[y * 8..y * 8 + 8].copy_from_slice(&arr);
+        }
+    } else {
+        for y in 0..8 {
+            let py = (py_start + y).min(height - 1);
+            for x in 0..8 {
+                let px = (px_start + x).min(width - 1);
+                block[y * 8 + x] = plane[py * width + px] * 255.0 - 128.0;
+            }
+        }
+    }
+
+    block
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -972,6 +1092,60 @@ mod tests {
                 "Cr mismatch at {}: SIMD={}, scalar={}",
                 i, cr_simd[i], cr_scalar
             );
+        }
+    }
+
+    #[test]
+    fn test_extract_block_simd_interior() {
+        // Create a 32x32 plane (4x4 blocks)
+        let width = 32usize;
+        let height = 32usize;
+        let plane: Vec<f32> = (0..(width * height))
+            .map(|i| (i % 256) as f32)
+            .collect();
+
+        // Test interior block at (1, 1) - no edge handling needed
+        let block = extract_block_simd(&plane, width, height, 1, 1);
+
+        // Verify values manually
+        for y in 0..8 {
+            for x in 0..8 {
+                let px = 1 * 8 + x;
+                let py = 1 * 8 + y;
+                let expected = plane[py * width + px] - 128.0;
+                assert!(
+                    (block[y * 8 + x] - expected).abs() < EPSILON,
+                    "Mismatch at ({}, {}): got={}, expected={}",
+                    x, y, block[y * 8 + x], expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_block_simd_edge() {
+        // Create a 20x20 plane (blocks at edge need clamping)
+        let width = 20usize;
+        let height = 20usize;
+        let plane: Vec<f32> = (0..(width * height))
+            .map(|i| (i % 256) as f32)
+            .collect();
+
+        // Test edge block at (2, 2) - partially outside bounds
+        let block = extract_block_simd(&plane, width, height, 2, 2);
+
+        // Verify values with clamping
+        for y in 0..8 {
+            for x in 0..8 {
+                let px = (2 * 8 + x).min(width - 1);
+                let py = (2 * 8 + y).min(height - 1);
+                let expected = plane[py * width + px] - 128.0;
+                assert!(
+                    (block[y * 8 + x] - expected).abs() < EPSILON,
+                    "Mismatch at ({}, {}): got={}, expected={}",
+                    x, y, block[y * 8 + x], expected
+                );
+            }
         }
     }
 }
