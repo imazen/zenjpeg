@@ -313,11 +313,34 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
 #[must_use]
 pub fn forward_dct_8x8_u8(input: &[u8; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Convert to f32 with level shift (-128)
-    let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
-    for (i, &v) in input.iter().enumerate() {
-        shifted[i] = v as f32 - 128.0;
+    #[cfg(feature = "simd")]
+    {
+        let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
+        let level_shift = f32x8::splat(128.0);
+
+        // Process 8 values at a time
+        for chunk in 0..8 {
+            let k = chunk * 8;
+            let v = f32x8::from([
+                input[k] as f32, input[k + 1] as f32, input[k + 2] as f32, input[k + 3] as f32,
+                input[k + 4] as f32, input[k + 5] as f32, input[k + 6] as f32, input[k + 7] as f32,
+            ]);
+            let result = v - level_shift;
+            let arr: [f32; 8] = result.into();
+            shifted[k..k + 8].copy_from_slice(&arr);
+        }
+
+        forward_dct_8x8(&shifted)
     }
-    forward_dct_8x8(&shifted)
+
+    #[cfg(not(feature = "simd"))]
+    {
+        let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
+        for (i, &v) in input.iter().enumerate() {
+            shifted[i] = v as f32 - 128.0;
+        }
+        forward_dct_8x8(&shifted)
+    }
 }
 
 /// Performs forward DCT on multiple blocks.
