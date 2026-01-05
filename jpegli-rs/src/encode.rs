@@ -2205,19 +2205,67 @@ impl Encoder {
     /// 5. Replays tokens with optimized tables
     fn encode_progressive_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut output = Vec::with_capacity(data.len() / 4);
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
 
         // Convert to YCbCr using f32 precision
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
-        // Generate quantization tables (3 separate tables like C++ cjpegli)
-        // Progressive mode uses 4:4:4, so is_420 = false
-        let y_quant = self.gen_quant_table(0, false, false);
-        let cb_quant = self.gen_quant_table(1, false, false);
-        let cr_quant = self.gen_quant_table(2, false, false);
+        // Handle chroma subsampling (matching baseline encoder behavior)
+        let (cb_plane_final, cr_plane_final, c_width, c_height) = match self.config.subsampling {
+            Subsampling::S420 => {
+                // 4:2:0: Apply smoothing then downsample both Cb and Cr by 2x2
+                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                let cb_down = self.downsample_2x2_f32(&cb_smooth, width, height)?;
+                let cr_down = self.downsample_2x2_f32(&cr_smooth, width, height)?;
+                let c_w = (width + 1) / 2;
+                let c_h = (height + 1) / 2;
+                (cb_down, cr_down, c_w, c_h)
+            }
+            Subsampling::S422 => {
+                // 4:2:2: Apply smoothing then downsample horizontally only
+                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                let cb_down = self.downsample_2x1_f32(&cb_smooth, width, height)?;
+                let cr_down = self.downsample_2x1_f32(&cr_smooth, width, height)?;
+                let c_w = (width + 1) / 2;
+                (cb_down, cr_down, c_w, height)
+            }
+            Subsampling::S440 => {
+                // 4:4:0: Apply smoothing then downsample vertically only
+                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                let cb_down = self.downsample_1x2_f32(&cb_smooth, width, height)?;
+                let cr_down = self.downsample_1x2_f32(&cr_smooth, width, height)?;
+                let c_h = (height + 1) / 2;
+                (cb_down, cr_down, width, c_h)
+            }
+            Subsampling::S444 => {
+                // 4:4:4: No subsampling, no smoothing needed
+                (cb_plane, cr_plane, width, height)
+            }
+        };
 
-        // Quantize all blocks to get full-precision coefficients
-        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
-            &y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant,
+        // Generate quantization tables (3 separate tables like C++ cjpegli)
+        // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
+        let is_420 = self.config.subsampling == Subsampling::S420;
+        let y_quant = self.gen_quant_table(0, false, is_420);
+        let cb_quant = self.gen_quant_table(1, false, is_420);
+        let cr_quant = self.gen_quant_table(2, false, is_420);
+
+        // Quantize all blocks with proper subsampling support
+        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
+            &y_plane,
+            width,
+            height,
+            &cb_plane_final,
+            &cr_plane_final,
+            c_width,
+            c_height,
+            &y_quant,
+            &cb_quant,
+            &cr_quant,
         )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
