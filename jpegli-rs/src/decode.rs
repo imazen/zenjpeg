@@ -1292,11 +1292,34 @@ impl<'a> JpegParser<'a> {
     ) -> Vec<f32> {
         // Dispatch to specialized implementation based on scale factors
         match (scale_x, scale_y) {
-            (1, 1) => input.to_vec(), // No upsampling needed
+            (1, 1) => {
+                // No upsampling needed, but still need to crop to output dimensions
+                // Input may be block-aligned (e.g., 320x304) while output is image-sized (300x300)
+                let mut output = vec![0.0f32; out_width * out_height];
+                for y in 0..out_height {
+                    let in_y = y.min(in_height.saturating_sub(1));
+                    for x in 0..out_width {
+                        let in_x = x.min(in_width.saturating_sub(1));
+                        output[y * out_width + x] = input[in_y * in_width + in_x];
+                    }
+                }
+                output
+            }
             (2, 1) => Self::upsample_h2v1(input, in_width, in_height, out_width, out_height),
             (1, 2) => Self::upsample_h1v2(input, in_width, in_height, out_width, out_height),
             (2, 2) => Self::upsample_h2v2(input, in_width, in_height, out_width, out_height),
-            _ => panic!("Unsupported upsampling scale: {}x{}", scale_x, scale_y),
+            _ => {
+                // Fall back to box filter for unusual scale factors (e.g., 4x2)
+                let mut output = vec![0.0f32; out_width * out_height];
+                for y in 0..out_height {
+                    let in_y = (y / scale_y).min(in_height.saturating_sub(1));
+                    for x in 0..out_width {
+                        let in_x = (x / scale_x).min(in_width.saturating_sub(1));
+                        output[y * out_width + x] = input[in_y * in_width + in_x];
+                    }
+                }
+                output
+            }
         }
     }
 
@@ -1307,21 +1330,23 @@ impl<'a> JpegParser<'a> {
         in_width: usize,
         in_height: usize,
         out_width: usize,
-        _out_height: usize,
+        out_height: usize,
     ) -> Vec<f32> {
-        let mut output = vec![0.0f32; out_width * in_height];
+        let mut output = vec![0.0f32; out_width * out_height];
 
-        for y in 0..in_height {
+        for y in 0..out_height {
+            // Clamp y to valid input range (handles non-block-aligned heights)
+            let in_y = y.min(in_height.saturating_sub(1));
             for out_x in 0..out_width {
                 // Map output x to input x (divide by 2 for 2x scaling)
                 let in_x = out_x / 2;
-                let curr = input[y * in_width + in_x];
+                let curr = input[in_y * in_width + in_x];
 
                 // Determine if this is left or right half of input pixel
                 if out_x % 2 == 0 {
                     // Left half: blend with left neighbor
                     let left = if in_x > 0 {
-                        input[y * in_width + in_x - 1]
+                        input[in_y * in_width + in_x - 1]
                     } else {
                         curr
                     };
@@ -1329,7 +1354,7 @@ impl<'a> JpegParser<'a> {
                 } else {
                     // Right half: blend with right neighbor
                     let right = if in_x + 1 < in_width {
-                        input[y * in_width + in_x + 1]
+                        input[in_y * in_width + in_x + 1]
                     } else {
                         curr
                     };
