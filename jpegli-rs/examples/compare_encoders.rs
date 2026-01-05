@@ -1,5 +1,8 @@
 //! Compare jpegli-rs encoder against mozjpeg.
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --encoder jpegli-ycbcr --encoder cmozjpeg image.png
+//!
 //! Usage: cargo run --example compare_encoders --release -- <input_dir> <output_dir> [quality]
 
 use std::env;
