@@ -1472,70 +1472,76 @@ impl ProgressiveTokenBuffer {
                 eob_run = 0;
             }
 
-            // Process coefficients
+            // Process coefficients - match C++ order exactly:
+            // 1. If completely zero, increment run
+            // 2. Emit ZRL if run > 15 (BEFORE adding current position's refbit)
+            // 3. If previously nonzero (absval > 1), add refbit
+            // 4. If newly nonzero (absval == 1), emit token
             let mut run = 0u8;
             let mut block_refbits: Vec<u8> = Vec::new();
 
             for k in ss as usize..=se as usize {
                 let coef = block[k];
                 let abs_coef = coef.unsigned_abs();
-                let was_nonzero = (abs_coef >> ah) != 0;
 
-                if was_nonzero {
-                    // Previously nonzero: emit refinement bit
-                    // Note: No ZRL check here - previously-nonzero coefficients don't
-                    // reset the run counter, they just add a refinement bit.
-                    let refbit = ((abs_coef >> al) & 1) as u8;
-                    block_refbits.push(refbit);
-                } else {
-                    // Check if newly nonzero
-                    let newly_nonzero = ((abs_coef >> al) & 1) != 0;
-                    if newly_nonzero {
-                        // Flush any pending EOB run BEFORE emitting newly-nonzero token.
-                        // This matches C++ which resets eob_run when a newly-nonzero is found.
-                        // The EOB run from previous blocks must come BEFORE this block's tokens.
-                        if eob_run > 0 || !pending_refbits.is_empty() {
-                            self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
-                            pending_refbits.clear();
-                            eob_run = 0;
-                        }
-
-                        // Emit ZRL tokens for runs > 15 ONLY when we're about to emit
-                        // a newly-nonzero token. This matches C++ which only checks
-                        // r > 15 when encountering a nonzero coefficient.
-                        // Pure zeros between newly-nonzero coefficients go into EOB run.
-                        while run >= 16 {
-                            let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
-                            self.push_ref(ref_token);
-                            for &bit in &block_refbits {
-                                self.push_refbit(bit);
-                            }
-                            block_refbits.clear();
-                            run -= 16;
-                        }
-
-                        // Emit newly nonzero coefficient
-                        // Match C++ exactly: store sign in bit 1 of symbol
-                        // C++: int symbol = (r << 4u) + 1 + ((mask + 1) << 1);
-                        // mask = -1 for negative → (mask+1)<<1 = 0, so symbol ends with 0x01
-                        // mask = 0 for positive → (mask+1)<<1 = 2, so symbol ends with 0x03
-                        let symbol = if coef < 0 {
-                            (run << 4) | 1 // 0x?1 for negative
-                        } else {
-                            (run << 4) | 3 // 0x?3 for positive
-                        };
-                        let ref_token = RefToken::new(symbol, block_refbits.len() as u8);
-                        self.push_ref(ref_token);
-                        // Push only refinement bits (sign is now in symbol, not refbits)
-                        for &bit in &block_refbits {
-                            self.push_refbit(bit);
-                        }
-                        block_refbits.clear();
-                        run = 0;
-                    } else {
-                        run += 1;
-                    }
+                // Step 1: Check if coefficient is completely zero
+                if abs_coef == 0 {
+                    run += 1;
+                    continue;
                 }
+
+                // Shift to current precision level (like C++: absval >>= Al)
+                let absval = abs_coef >> al;
+
+                // Step 2: Check if zero at current precision (not visible yet)
+                if absval == 0 {
+                    run += 1;
+                    continue;
+                }
+
+                // We have a nonzero coefficient at current precision.
+                // FIRST check for ZRL, THEN add refbit or emit newly-nonzero.
+
+                // Flush pending EOB run if any
+                if eob_run > 0 || !pending_refbits.is_empty() {
+                    self.emit_eob_run_with_refbits(context, eob_run, &pending_refbits);
+                    pending_refbits.clear();
+                    eob_run = 0;
+                }
+
+                // Step 3: Emit ZRL tokens BEFORE processing current coefficient
+                while run >= 16 {
+                    let ref_token = RefToken::new(0xF0, block_refbits.len() as u8);
+                    self.push_ref(ref_token);
+                    for &bit in &block_refbits {
+                        self.push_refbit(bit);
+                    }
+                    block_refbits.clear();
+                    run -= 16;
+                }
+
+                // Step 4: Check if previously nonzero (magnitude > 1)
+                if absval > 1 {
+                    // Previously nonzero: add refinement bit, continue
+                    let refbit = (abs_coef >> al) & 1;
+                    block_refbits.push(refbit as u8);
+                    continue;
+                }
+
+                // Step 5: absval == 1, newly nonzero
+                // Emit newly nonzero coefficient with accumulated refbits
+                let symbol = if coef < 0 {
+                    (run << 4) | 1 // 0x?1 for negative
+                } else {
+                    (run << 4) | 3 // 0x?3 for positive
+                };
+                let ref_token = RefToken::new(symbol, block_refbits.len() as u8);
+                self.push_ref(ref_token);
+                for &bit in &block_refbits {
+                    self.push_refbit(bit);
+                }
+                block_refbits.clear();
+                run = 0;
             }
 
             // If we have trailing refbits or trailing zeros, this block ends with EOB.
