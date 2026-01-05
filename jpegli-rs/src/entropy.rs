@@ -221,6 +221,7 @@ impl EntropyEncoder {
     // ===== Progressive encoding methods =====
 
     /// Writes raw bits to the output (for progressive refinement).
+    #[inline]
     pub fn write_bits(&mut self, bits: u32, count: u8) {
         self.writer.write_bits(bits, count);
     }
