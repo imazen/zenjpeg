@@ -496,17 +496,20 @@ extern "C" {
         out_blurred: *mut f32,
     ) -> c_int;
 
-    /// Compute frequency separation on XYB image.
+    /// Compute frequency separation from LINEAR RGB image.
     ///
-    /// Returns LF, MF, HF (X,Y), UHF (X,Y) planes.
+    /// Internally applies OpsinDynamicsImage and SeparateFrequencies to produce
+    /// the frequency-decomposed PsychoImage bands.
+    ///
+    /// Returns LF (XYB), MF (XYB), HF (XY), UHF (XY) planes.
     ///
     /// # Parameters
-    /// - `xyb`: Input XYB data (width * height * 3 floats, interleaved)
-    /// - `width`, `height`: Image dimensions
+    /// - `linear_rgb`: Input LINEAR RGB data (width * height * 3 floats, interleaved)
+    /// - `width`, `height`: Image dimensions (minimum 8x8)
     /// - `intensity_target`: Nits for 1.0
-    /// - `out_*`: Pre-allocated output planes (width * height floats each)
+    /// - `out_*`: Pre-allocated output planes (width * height floats each), or null if not needed
     pub fn butteraugli_separate_frequencies(
-        xyb: *const f32,
+        linear_rgb: *const f32,
         width: size_t,
         height: size_t,
         intensity_target: f32,
@@ -537,19 +540,21 @@ extern "C" {
         out_malta: *mut f32,
     ) -> c_int;
 
-    /// Compute mask from HF/UHF channels.
+    /// Compute mask from linear RGB image.
+    ///
+    /// Internally creates ButteraugliComparator and calls Mask() to produce
+    /// the perceptual masking values.
     ///
     /// # Parameters
-    /// - `hf_x`, `hf_y`, `uhf_x`, `uhf_y`: Input frequency planes
-    /// - `width`, `height`: Image dimensions
+    /// - `linear_rgb`: Input LINEAR RGB data (width * height * 3 floats, interleaved)
+    /// - `width`, `height`: Image dimensions (minimum 8x8)
+    /// - `intensity_target`: Nits for 1.0
     /// - `out_mask`: Pre-allocated output (width * height floats)
     pub fn butteraugli_compute_mask(
-        hf_x: *const f32,
-        hf_y: *const f32,
-        uhf_x: *const f32,
-        uhf_y: *const f32,
+        linear_rgb: *const f32,
         width: size_t,
         height: size_t,
+        intensity_target: f32,
         out_mask: *mut f32,
     ) -> c_int;
 }
