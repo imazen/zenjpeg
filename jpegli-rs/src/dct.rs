@@ -167,73 +167,201 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 mod simd {
     use super::*;
 
-    /// SIMD-optimized 8x8 transpose.
-    /// Uses proper 8x8 transpose algorithm with AVX-style shuffle patterns.
-    pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
-        // Load all 8 rows
-        let r0 = f32x8::from(&input[0..8]);
-        let r1 = f32x8::from(&input[8..16]);
-        let r2 = f32x8::from(&input[16..24]);
-        let r3 = f32x8::from(&input[24..32]);
-        let r4 = f32x8::from(&input[32..40]);
-        let r5 = f32x8::from(&input[40..48]);
-        let r6 = f32x8::from(&input[48..56]);
-        let r7 = f32x8::from(&input[56..64]);
+    // SIMD versions of WC constants for parallel DCT
+    // Note: The parallel DCT approach has poor cache locality and doesn't
+    // improve performance compared to row-by-row processing. Kept for reference.
+    #[allow(dead_code)]
+    const WC4_0: f32x8 = f32x8::new([0.541196100146197; 8]);
+    #[allow(dead_code)]
+    const WC4_1: f32x8 = f32x8::new([1.3065629648763764; 8]);
 
-        // Convert to arrays for transpose operations
-        let a0 = r0.to_array();
-        let a1 = r1.to_array();
-        let a2 = r2.to_array();
-        let a3 = r3.to_array();
-        let a4 = r4.to_array();
-        let a5 = r5.to_array();
-        let a6 = r6.to_array();
-        let a7 = r7.to_array();
+    #[allow(dead_code)]
+    const WC8_0: f32x8 = f32x8::new([0.5097955791041592; 8]);
+    #[allow(dead_code)]
+    const WC8_1: f32x8 = f32x8::new([0.6013448869350453; 8]);
+    #[allow(dead_code)]
+    const WC8_2: f32x8 = f32x8::new([0.8999762231364156; 8]);
+    #[allow(dead_code)]
+    const WC8_3: f32x8 = f32x8::new([2.5629154477415055; 8]);
+
+    #[allow(dead_code)]
+    const SQRT2_VEC: f32x8 = f32x8::new([1.41421356237; 8]);
+
+    /// DCT base case for N=2 on SIMD vectors
+    /// Processes 8 independent 2-point DCTs in parallel
+    #[allow(dead_code)]
+    #[inline]
+    fn dct1d_2_simd(m0: &mut f32x8, m1: &mut f32x8) {
+        let in0 = *m0;
+        let in1 = *m1;
+        *m0 = in0 + in1;
+        *m1 = in0 - in1;
+    }
+
+    /// DCT for N=4 on SIMD vectors
+    /// Processes 8 independent 4-point DCTs in parallel
+    #[allow(dead_code)]
+    #[inline]
+    fn dct1d_4_simd(m: &mut [f32x8; 4]) {
+        // AddReverse<2>: tmp[0:2] = m[0:2] + reverse(m[2:4])
+        let t0 = m[0] + m[3]; // m[0] + m[4-1-0]
+        let t1 = m[1] + m[2]; // m[1] + m[4-1-1]
+
+        // SubReverse<2>: tmp[2:4] = m[0:2] - reverse(m[2:4])
+        let t2 = m[0] - m[3];
+        let t3 = m[1] - m[2];
+
+        // DCT1D<2> on first half (t0, t1)
+        let r0 = t0 + t1;
+        let r1 = t0 - t1;
+
+        // Multiply by WC4
+        let t2_scaled = t2 * WC4_0;
+        let t3_scaled = t3 * WC4_1;
+
+        // DCT1D<2> on second half
+        let r2 = t2_scaled + t3_scaled;
+        let r3 = t2_scaled - t3_scaled;
+
+        // B<2>: r2 = r2 * sqrt2 + r3
+        let r2_final = r2 * SQRT2_VEC + r3;
+
+        // InverseEvenOdd<4>: interleave even/odd
+        m[0] = r0;      // even[0]
+        m[1] = r2_final; // odd[0]
+        m[2] = r1;      // even[1]
+        m[3] = r3;      // odd[1]
+    }
+
+    /// DCT for N=8 on SIMD vectors
+    /// Processes 8 independent 8-point DCTs in parallel
+    #[allow(dead_code)]
+    #[inline]
+    fn dct1d_8_simd(m: &mut [f32x8; 8]) {
+        // AddReverse<4>: tmp[0:4] = m[0:4] + reverse(m[4:8])
+        let t0 = m[0] + m[7];
+        let t1 = m[1] + m[6];
+        let t2 = m[2] + m[5];
+        let t3 = m[3] + m[4];
+
+        // SubReverse<4>: tmp[4:8] = m[0:4] - reverse(m[4:8])
+        let t4 = m[0] - m[7];
+        let t5 = m[1] - m[6];
+        let t6 = m[2] - m[5];
+        let t7 = m[3] - m[4];
+
+        // DCT1D<4> on first half (t0-t3)
+        let mut first = [t0, t1, t2, t3];
+        dct1d_4_simd(&mut first);
+
+        // Multiply by WC8
+        let t4_scaled = t4 * WC8_0;
+        let t5_scaled = t5 * WC8_1;
+        let t6_scaled = t6 * WC8_2;
+        let t7_scaled = t7 * WC8_3;
+
+        // DCT1D<4> on second half
+        let mut second = [t4_scaled, t5_scaled, t6_scaled, t7_scaled];
+        dct1d_4_simd(&mut second);
+
+        // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
+        second[0] = second[0] * SQRT2_VEC + second[1];
+        second[1] = second[1] + second[2];
+        second[2] = second[2] + second[3];
+        // second[3] stays the same
+
+        // InverseEvenOdd<8>: interleave
+        m[0] = first[0];
+        m[1] = second[0];
+        m[2] = first[1];
+        m[3] = second[1];
+        m[4] = first[2];
+        m[5] = second[2];
+        m[6] = first[3];
+        m[7] = second[3];
+    }
+
+    /// Process 8 rows simultaneously using SIMD
+    /// Each lane of f32x8 handles one row's element at the same column position
+    /// Note: This has poor cache locality due to column-wise gather/scatter.
+    /// Row-by-row scalar processing is faster despite less theoretical parallelism.
+    #[allow(dead_code)]
+    #[inline]
+    pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
+        // Load data column-wise: mem[col] holds position col from all 8 rows
+        let mut mem = [f32x8::ZERO; 8];
+        for col in 0..8 {
+            mem[col] = f32x8::from([
+                input[0 * 8 + col],
+                input[1 * 8 + col],
+                input[2 * 8 + col],
+                input[3 * 8 + col],
+                input[4 * 8 + col],
+                input[5 * 8 + col],
+                input[6 * 8 + col],
+                input[7 * 8 + col],
+            ]);
+        }
+
+        // Execute 8 DCT-1D operations in parallel (one per row)
+        dct1d_8_simd(&mut mem);
+
+        // Store back - now mem[col] holds DCT output col from all 8 rows
+        for col in 0..8 {
+            let arr = mem[col].to_array();
+            output[0 * 8 + col] = arr[0];
+            output[1 * 8 + col] = arr[1];
+            output[2 * 8 + col] = arr[2];
+            output[3 * 8 + col] = arr[3];
+            output[4 * 8 + col] = arr[4];
+            output[5 * 8 + col] = arr[5];
+            output[6 * 8 + col] = arr[6];
+            output[7 * 8 + col] = arr[7];
+        }
+    }
+
+    /// SIMD-optimized 8x8 transpose.
+    /// Uses proper 8x8 transpose algorithm.
+    pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
+        // Load all 8 rows as arrays for direct indexing
+        let a0 = &input[0..8];
+        let a1 = &input[8..16];
+        let a2 = &input[16..24];
+        let a3 = &input[24..32];
+        let a4 = &input[32..40];
+        let a5 = &input[40..48];
+        let a6 = &input[48..56];
+        let a7 = &input[56..64];
 
         // Transpose: output[col * 8 + row] = input[row * 8 + col]
         // Build each output row by gathering from columns
-        let t0 = f32x8::from([a0[0], a1[0], a2[0], a3[0], a4[0], a5[0], a6[0], a7[0]]);
-        let t1 = f32x8::from([a0[1], a1[1], a2[1], a3[1], a4[1], a5[1], a6[1], a7[1]]);
-        let t2 = f32x8::from([a0[2], a1[2], a2[2], a3[2], a4[2], a5[2], a6[2], a7[2]]);
-        let t3 = f32x8::from([a0[3], a1[3], a2[3], a3[3], a4[3], a5[3], a6[3], a7[3]]);
-        let t4 = f32x8::from([a0[4], a1[4], a2[4], a3[4], a4[4], a5[4], a6[4], a7[4]]);
-        let t5 = f32x8::from([a0[5], a1[5], a2[5], a3[5], a4[5], a5[5], a6[5], a7[5]]);
-        let t6 = f32x8::from([a0[6], a1[6], a2[6], a3[6], a4[6], a5[6], a6[6], a7[6]]);
-        let t7 = f32x8::from([a0[7], a1[7], a2[7], a3[7], a4[7], a5[7], a6[7], a7[7]]);
-
-        // Store results
-        output[0..8].copy_from_slice(&t0.to_array());
-        output[8..16].copy_from_slice(&t1.to_array());
-        output[16..24].copy_from_slice(&t2.to_array());
-        output[24..32].copy_from_slice(&t3.to_array());
-        output[32..40].copy_from_slice(&t4.to_array());
-        output[40..48].copy_from_slice(&t5.to_array());
-        output[48..56].copy_from_slice(&t6.to_array());
-        output[56..64].copy_from_slice(&t7.to_array());
-    }
-
-    /// SIMD-optimized 1D DCT on a row using f32x8
-    #[inline]
-    pub fn dct1d_8_simd(input: f32x8) -> f32x8 {
-        let arr = input.to_array();
-        let mut mem = arr;
-
-        // Use scalar algorithm (the structure doesn't vectorize well within a single row)
-        super::dct1d_8(&mut mem);
-
-        f32x8::from(mem)
+        for col in 0..8 {
+            output[col * 8 + 0] = a0[col];
+            output[col * 8 + 1] = a1[col];
+            output[col * 8 + 2] = a2[col];
+            output[col * 8 + 3] = a3[col];
+            output[col * 8 + 4] = a4[col];
+            output[col * 8 + 5] = a5[col];
+            output[col * 8 + 6] = a6[col];
+            output[col * 8 + 7] = a7[col];
+        }
     }
 }
 
 /// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
+/// Uses row-major processing for good cache locality
 #[cfg(feature = "simd")]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
+    // Process rows sequentially (good cache access pattern)
+    // The DCT algorithm doesn't parallelize well within a single row
     for row in 0..8 {
-        let row_vec = f32x8::from(&input[row * 8..row * 8 + 8]);
-        let result = simd::dct1d_8_simd(row_vec);
-        let arr = result.to_array();
+        let mut tmp = [0.0f32; 8];
         for i in 0..8 {
-            output[row * 8 + i] = arr[i];
+            tmp[i] = input[row * 8 + i];
+        }
+        dct1d_8(&mut tmp);
+        for i in 0..8 {
+            output[row * 8 + i] = tmp[i];
         }
     }
 }
@@ -443,6 +571,75 @@ mod tests {
                 i,
                 scalar_output[i],
                 simd_output[i]
+            );
+        }
+    }
+
+    #[cfg(feature = "simd")]
+    #[test]
+    fn test_simd_dct_rows_matches_scalar() {
+        // Test with various input patterns
+        let patterns: Vec<[f32; 64]> = vec![
+            // Constant block
+            [64.0; 64],
+            // Gradient
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = i as f32;
+                }
+                arr
+            },
+            // Sinusoidal pattern
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = (i as f32 * 0.3).sin() * 100.0;
+                }
+                arr
+            },
+            // Checkerboard
+            {
+                let mut arr = [0.0f32; 64];
+                for row in 0..8 {
+                    for col in 0..8 {
+                        arr[row * 8 + col] = if (row + col) % 2 == 0 { 100.0 } else { -100.0 };
+                    }
+                }
+                arr
+            },
+        ];
+
+        for (pattern_idx, input) in patterns.iter().enumerate() {
+            // Scalar implementation
+            let mut scalar_output = [0.0f32; 64];
+            for row in 0..8 {
+                let mut tmp = [0.0f32; 8];
+                for i in 0..8 {
+                    tmp[i] = input[row * 8 + i];
+                }
+                dct1d_8(&mut tmp);
+                for i in 0..8 {
+                    scalar_output[row * 8 + i] = tmp[i];
+                }
+            }
+
+            // SIMD implementation
+            let mut simd_output = [0.0f32; 64];
+            simd::dct_8rows_parallel(input, &mut simd_output);
+
+            // Compare
+            let mut max_error = 0.0f32;
+            for i in 0..64 {
+                let error = (scalar_output[i] - simd_output[i]).abs();
+                max_error = max_error.max(error);
+            }
+
+            assert!(
+                max_error < 1e-4,
+                "Pattern {}: SIMD DCT rows max error {} exceeds threshold",
+                pattern_idx,
+                max_error
             );
         }
     }
