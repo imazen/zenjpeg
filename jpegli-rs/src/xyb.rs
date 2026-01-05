@@ -1833,4 +1833,80 @@ mod tests {
             assert!(max_err < 1e-5, "Max SIMD vs C++ error {} too high", max_err);
         }
     }
+
+    #[test]
+    fn test_rgba_bgra_simd_parity() {
+        // Test that RGBA/BGRA native SIMD functions produce same output as RGB version
+        // with manual conversion
+
+        // Create test RGB data
+        let rgb_data: Vec<u8> = (0..64 * 3).map(|i| (i % 256) as u8).collect();
+        let num_pixels = 64;
+
+        // Create RGBA and BGRA data from the same RGB source
+        let mut rgba_data = Vec::with_capacity(num_pixels * 4);
+        let mut bgra_data = Vec::with_capacity(num_pixels * 4);
+        for i in 0..num_pixels {
+            let r = rgb_data[i * 3];
+            let g = rgb_data[i * 3 + 1];
+            let b = rgb_data[i * 3 + 2];
+            rgba_data.extend_from_slice(&[r, g, b, 255]); // RGBA
+            bgra_data.extend_from_slice(&[b, g, r, 255]); // BGRA
+        }
+
+        // Get reference output from RGB function
+        let (ref_x, ref_y, ref_b) = srgb_to_scaled_xyb_planes_simd(&rgb_data, num_pixels);
+
+        // Test RGBA function
+        let (rgba_x, rgba_y, rgba_b) = srgb_to_scaled_xyb_planes_simd_rgba(&rgba_data, num_pixels);
+        for i in 0..num_pixels {
+            assert!(
+                (ref_x[i] - rgba_x[i]).abs() < 1e-6,
+                "RGBA X mismatch at {}: ref={}, rgba={}",
+                i,
+                ref_x[i],
+                rgba_x[i]
+            );
+            assert!(
+                (ref_y[i] - rgba_y[i]).abs() < 1e-6,
+                "RGBA Y mismatch at {}: ref={}, rgba={}",
+                i,
+                ref_y[i],
+                rgba_y[i]
+            );
+            assert!(
+                (ref_b[i] - rgba_b[i]).abs() < 1e-6,
+                "RGBA B mismatch at {}: ref={}, rgba={}",
+                i,
+                ref_b[i],
+                rgba_b[i]
+            );
+        }
+
+        // Test BGRA function
+        let (bgra_x, bgra_y, bgra_b) = srgb_to_scaled_xyb_planes_simd_bgra(&bgra_data, num_pixels);
+        for i in 0..num_pixels {
+            assert!(
+                (ref_x[i] - bgra_x[i]).abs() < 1e-6,
+                "BGRA X mismatch at {}: ref={}, bgra={}",
+                i,
+                ref_x[i],
+                bgra_x[i]
+            );
+            assert!(
+                (ref_y[i] - bgra_y[i]).abs() < 1e-6,
+                "BGRA Y mismatch at {}: ref={}, bgra={}",
+                i,
+                ref_y[i],
+                bgra_y[i]
+            );
+            assert!(
+                (ref_b[i] - bgra_b[i]).abs() < 1e-6,
+                "BGRA B mismatch at {}: ref={}, bgra={}",
+                i,
+                ref_b[i],
+                bgra_b[i]
+            );
+        }
+    }
 }
