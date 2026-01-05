@@ -1,5 +1,8 @@
 //! Quick comparison of XYB vs YCbCr encoding modes.
 //! Shows file size (bpp) and both Butteraugli and SSIMULACRA2 quality metrics.
+//!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --quick image.png
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use jpegli::{Decoder, Encoder, PixelFormat};

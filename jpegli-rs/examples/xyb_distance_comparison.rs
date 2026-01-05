@@ -3,6 +3,9 @@
 //! This is the correct way to compare - targeting same perceptual quality.
 //! XYB should produce smaller files at the same quality.
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --pareto image.png
+//!
 //! Usage: cargo run --release --example xyb_distance_comparison
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};

@@ -93,8 +93,8 @@ fn main() {
     println!("=== Validating Optimized Huffman Tables ===\n");
 
     let jpeg = Encoder::new()
-        .width(info.0)
-        .height(info.1)
+        .width(info.width)
+        .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(true)
@@ -203,7 +203,7 @@ fn main() {
 
         let mut ppm = fs::File::create(ppm_path).unwrap();
         writeln!(ppm, "P6").unwrap();
-        writeln!(ppm, "{} {}", info.0, info.1).unwrap();
+        writeln!(ppm, "{} {}", info.width, info.height).unwrap();
         writeln!(ppm, "255").unwrap();
         ppm.write_all(rgb).unwrap();
         drop(ppm);

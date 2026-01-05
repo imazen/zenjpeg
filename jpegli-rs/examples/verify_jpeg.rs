@@ -28,16 +28,15 @@ fn main() {
     std::fs::write("/tmp/test_xyb.jpg", &jpeg).unwrap();
     println!("Wrote {} bytes to /tmp/test_xyb.jpg", jpeg.len());
 
-    // Decode with jpeg-decoder
+    // Decode with zune-jpeg
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
     match decoder.decode() {
         Ok(pixels) => {
-            println!("jpeg-decoder: decoded {} bytes of pixels", pixels.len());
-            let info = decoder.dimensions().unwrap();
-            println!("  Size: {}x{}", info.0, info.1);
-            println!("  Components: {:?}", info.pixel_format);
+            println!("zune-jpeg: decoded {} bytes of pixels", pixels.len());
+            let (w, h) = decoder.dimensions().unwrap();
+            println!("  Size: {}x{}", w, h);
         }
-        Err(e) => println!("jpeg-decoder failed: {:?}", e),
+        Err(e) => println!("zune-jpeg failed: {:?}", e),
     }
 
     // Also try cjpegli (djpegli) via command line if available

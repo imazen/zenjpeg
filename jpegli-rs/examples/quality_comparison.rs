@@ -1,4 +1,7 @@
 //! Quality comparison between Rust and C++ jpegli
+//!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- image.png
 
 use dssim::Dssim;
 use rgb::RGBA8;
@@ -94,7 +97,7 @@ fn main() {
     let width = info.width as usize;
     let height = info.height as usize;
 
-    println!("Image: {}x{}\n", info.0, info.1);
+    println!("Image: {}x{}\n", info.width, info.height);
 
     // Low quality YCbCr comparison with DSSIM
     println!("=== YCbCr Mode: Low Quality (Q20-Q60) ===");
@@ -103,8 +106,8 @@ fn main() {
 
     for q in [20u8, 30, 40, 50, 60] {
         let rust_jpeg = jpegli::encode::Encoder::new()
-            .width(info.0)
-            .height(info.1)
+            .width(info.width)
+            .height(info.height)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
@@ -151,8 +154,8 @@ fn main() {
 
     for q in [70u8, 80, 90, 95] {
         let rust_jpeg = jpegli::encode::Encoder::new()
-            .width(info.0)
-            .height(info.1)
+            .width(info.width)
+            .height(info.height)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
@@ -201,8 +204,8 @@ fn main() {
     for q in [30u8, 40, 50, 60, 70, 80, 90, 95] {
         // Rust XYB encode
         let rust_result = jpegli::encode::Encoder::new()
-            .width(info.0)
-            .height(info.1)
+            .width(info.width)
+            .height(info.height)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .use_xyb(true)
             .encode(&rgb);

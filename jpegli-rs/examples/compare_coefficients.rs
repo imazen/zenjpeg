@@ -222,7 +222,7 @@ fn load_png(path: &str) -> Option<(Vec<u8>, u32, u32)> {
         png::ColorType::Rgba => bytes.chunks(4).flat_map(|c| [c[0], c[1], c[2]]).collect(),
         _ => return None,
     };
-    Some((rgb, info.0, info.1))
+    Some((rgb, info.width, info.height))
 }
 
 fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Result<()> {

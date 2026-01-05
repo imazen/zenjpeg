@@ -1,3 +1,8 @@
+//! Dump the actual bytes around scan boundaries
+//!
+//! **DEPRECATED**: Use `jpeg_inspect` instead:
+//!   cargo run --release --example jpeg_inspect -- --scans image.jpg
+
 /// Dump the actual bytes around scan boundaries
 fn main() {
     let path = std::env::args().nth(1).unwrap_or("/tmp/noise64_q50.jpg".to_string());

@@ -176,16 +176,16 @@ fn main() {
     for q in [50u8, 60, 70, 80, 90, 95] {
         // Encode Rust XYB
         let rust_xyb = jpegli::encode::Encoder::new()
-            .width(info.0)
-            .height(info.1)
+            .width(info.width)
+            .height(info.height)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .use_xyb(true)
             .encode(&rgb);
 
         // Encode Rust YCbCr
         let rust_ycbcr = jpegli::encode::Encoder::new()
-            .width(info.0)
-            .height(info.1)
+            .width(info.width)
+            .height(info.height)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb);
 

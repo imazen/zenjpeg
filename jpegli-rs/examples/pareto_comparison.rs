@@ -1,5 +1,8 @@
 //! Pareto curve comparison: jpegli vs mozjpeg vs adaptive hybrid
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --pareto image.png
+//!
 //! Run with:
 //! ```
 //! cargo run --release --example pareto_comparison --features experimental-hybrid-trellis

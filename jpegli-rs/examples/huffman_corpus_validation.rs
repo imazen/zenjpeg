@@ -29,7 +29,7 @@ fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), Box<dyn std::
         _ => return Err("Unsupported color type".into()),
     };
 
-    Ok((info.0, info.1, pixels))
+    Ok((info.width, info.height, pixels))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

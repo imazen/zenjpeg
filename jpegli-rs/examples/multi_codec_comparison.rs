@@ -3,6 +3,9 @@
 //! Compares jpegli vs other codecs (mozjpeg, libjxl, avif, webp, heic, jp2)
 //! using pre-computed quality metrics from the CID22 validation set.
 //!
+//! **DEPRECATED**: Use `quality_compare` instead for JPEG comparisons:
+//!   cargo run --release --example quality_compare -- --pareto --output results.csv image.png
+//!
 //! Usage: cargo run --release --example multi_codec_comparison -- <cid22_dir> <output.html>
 
 use std::collections::HashMap;

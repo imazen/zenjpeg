@@ -23,8 +23,8 @@ fn main() {
     }
 
     let pixels = &buf[..info.buffer_size()];
-    let width = info.0 as u32;
-    let height = info.1 as u32;
+    let width = info.width as u32;
+    let height = info.height as u32;
 
     println!("Testing XYB + AQ on {} ({}x{})", image_path, width, height);
     println!();

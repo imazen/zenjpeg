@@ -84,15 +84,15 @@ fn main() {
 
     println!(
         "Test image: {}x{} RGB ({} bytes)\n",
-        info.0,
-        info.1,
+        info.width,
+        info.height,
         rgb.len()
     );
 
     // Encode with standard Huffman
     let jpeg_std = Encoder::new()
-        .width(info.0)
-        .height(info.1)
+        .width(info.width)
+        .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(false)
@@ -101,8 +101,8 @@ fn main() {
 
     // Encode with optimized Huffman
     let jpeg_opt = Encoder::new()
-        .width(info.0)
-        .height(info.1)
+        .width(info.width)
+        .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(true)

@@ -21,7 +21,7 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
         _ => panic!("unsupported color type"),
     };
 
-    (rgb, info.0, info.1)
+    (rgb, info.width, info.height)
 }
 
 fn decode_mozjpeg(data: &[u8]) -> Vec<u8> {

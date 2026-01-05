@@ -2,6 +2,9 @@
 //!
 //! This uses the same distance target and properly decodes XYB with ICC.
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --metric ssim2 image.png
+//!
 //! Usage: cargo run --release --example xyb_ssimulacra2_comparison --features cms-lcms2
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};

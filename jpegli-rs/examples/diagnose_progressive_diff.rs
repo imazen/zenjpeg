@@ -20,8 +20,8 @@ fn main() {
         let mut buf = vec![0; reader.output_buffer_size()];
         let info = reader.next_frame(&mut buf).unwrap();
         let rgb = &buf[..info.buffer_size()];
-        let width = info.0 as u32;
-        let height = info.1 as u32;
+        let width = info.width as u32;
+        let height = info.height as u32;
 
         // Write PPM
         let ppm_path = "/tmp/diagnose.ppm";
@@ -71,8 +71,8 @@ fn main() {
                 let info = zune_decoder.info().unwrap();
                 println!(
                     "✓ Decoded: {}x{}, {} bytes",
-                    info.0,
-                    info.1,
+                    info.width,
+                    info.height,
                     pixels.len()
                 );
             }

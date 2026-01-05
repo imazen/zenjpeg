@@ -1,4 +1,7 @@
 //! Analyze DHT (Huffman table) markers to find encoding differences.
+//!
+//! **DEPRECATED**: Use `jpeg_inspect` instead:
+//!   cargo run --release --example jpeg_inspect -- --huffman --compare other.jpg image.jpg
 
 use std::fs;
 
