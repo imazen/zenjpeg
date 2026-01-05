@@ -300,6 +300,40 @@ pub fn quant_field_to_aq_strength(quant_field: f32) -> f32 {
     (0.6 / quant_field - 1.0).max(0.0)
 }
 
+/// SIMD-optimized quant_field to aq_strength conversion.
+#[must_use]
+pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Vec<f32> {
+    use wide::f32x8;
+
+    let mut result = vec![0.0f32; quant_field.len()];
+    let chunks = quant_field.len() / 8;
+
+    let point_six = f32x8::splat(0.6);
+    let one = f32x8::splat(1.0);
+    let zero = f32x8::splat(0.0);
+
+    for chunk in 0..chunks {
+        let k = chunk * 8;
+        let qf = f32x8::from([
+            quant_field[k], quant_field[k + 1], quant_field[k + 2], quant_field[k + 3],
+            quant_field[k + 4], quant_field[k + 5], quant_field[k + 6], quant_field[k + 7],
+        ]);
+
+        // aq_strength = max(0.0, 0.6 / quant_field - 1.0)
+        let aq = (point_six / qf - one).max(zero);
+
+        let arr: [f32; 8] = aq.into();
+        result[k..k + 8].copy_from_slice(&arr);
+    }
+
+    // Handle remainder
+    for i in (chunks * 8)..quant_field.len() {
+        result[i] = quant_field_to_aq_strength(quant_field[i]);
+    }
+
+    result
+}
+
 // ============================================================================
 // Implementation (needs verification against C++ testdata)
 // ============================================================================
@@ -355,11 +389,8 @@ pub fn compute_aq_strength_map_impl(
         &mut quant_field,
     );
 
-    // 4. Final transform: quant_field -> aq_strength
-    let strengths: Vec<f32> = quant_field
-        .iter()
-        .map(|&qf| quant_field_to_aq_strength(qf))
-        .collect();
+    // 4. Final transform: quant_field -> aq_strength (SIMD optimized)
+    let strengths = quant_field_to_aq_strength_simd(&quant_field);
 
     AQStrengthMap {
         width_blocks,
