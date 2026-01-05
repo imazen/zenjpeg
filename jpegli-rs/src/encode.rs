@@ -2311,6 +2311,48 @@ impl Encoder {
             false,                       // force_baseline
         )?;
 
+        // Debug: print context map and scan-to-table assignment
+        if std::env::var("DUMP_CONTEXT_MAP").is_ok() {
+            eprintln!("=== Context Map Debug ===");
+            eprintln!("num_dc_tables: {}", num_dc_tables);
+            eprintln!("context_map: {:?}", context_map);
+            eprintln!("ac_slot_ids: {:?}", ac_slot_ids);
+            for (scan_idx, scan) in scans.iter().enumerate() {
+                let scan_type = if scan.ss == 0 && scan.se == 0 {
+                    "DC"
+                } else if scan.ah == 0 {
+                    "AC_first"
+                } else {
+                    "AC_refine"
+                };
+                let ac_context = context_config.ac_context(scan_idx, 0);
+                let table_idx = if scan.ss == 0 { 0 } else {
+                    context_map.get(ac_context).copied().unwrap_or(0)
+                };
+                let ac_table_idx = table_idx.saturating_sub(num_dc_tables);
+                let slot = ac_slot_ids.get(ac_table_idx).copied().unwrap_or(0);
+                eprintln!("Scan {}: {} ss={} se={} ah={} al={} comp={} -> ctx={} table={} slot={}",
+                    scan_idx, scan_type, scan.ss, scan.se, scan.ah, scan.al, scan.components[0],
+                    ac_context, table_idx, slot);
+            }
+            // Dump histogram symbol counts for AC contexts
+            for (i, scan) in scans.iter().enumerate() {
+                if scan.ss > 0 {
+                    let ac_context = context_config.ac_context(i, 0);
+                    if let Some(counter) = token_buffer.counter(ac_context) {
+                        let mut syms: Vec<u8> = Vec::new();
+                        for s in 0u8..=255 {
+                            if counter.get_count(s) > 0 {
+                                syms.push(s);
+                            }
+                        }
+                        eprintln!("  Scan {} context {} symbols: {:02x?}", i, ac_context, syms);
+                    }
+                }
+            }
+            eprintln!("=========================");
+        }
+
         // ========== WRITE JPEG STRUCTURE ==========
         self.write_header(&mut output)?;
         self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
@@ -2531,6 +2573,10 @@ impl Encoder {
             };
             // Convert table index to slot ID
             let slot_id = ac_slot_ids.get(table_idx).copied().unwrap_or(table_idx % 4);
+            // Debug dump if DUMP_RUST_AC_REFINEMENT env var is set
+            if std::env::var("DUMP_RUST_AC_REFINEMENT").is_ok() {
+                scan_info.debug_dump(scan_idx);
+            }
             encoder.write_ac_refinement_tokens(scan_info, slot_id)?;
         }
 
