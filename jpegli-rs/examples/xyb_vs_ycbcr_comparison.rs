@@ -162,7 +162,7 @@ fn encode_cpp_cjpegli(ppm_path: &str, quality: u32, use_xyb: bool) -> Option<Vec
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().expect("decode")
 }
 

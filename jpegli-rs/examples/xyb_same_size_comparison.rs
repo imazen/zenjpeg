@@ -75,19 +75,19 @@ fn encode_cpp_quality(input_path: &Path, quality: u32, use_xyb: bool) -> Option<
 }
 
 fn decode_jpeg_simple(data: &[u8]) -> Vec<u8> {
-    jpeg_decoder::Decoder::new(data).decode().expect("decode")
+    decode_zune(data).expect("decode")
 }
 
 fn decode_xyb_with_icc(jpeg_data: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
     let icc_profile = extract_icc_profile(jpeg_data);
 
-    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg_data));
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
     let pixels = decoder.decode().ok()?;
-    let info = decoder.info()?;
+    let info = decoder.dimensions()?;
 
     let rgb = match info.pixel_format {
-        jpeg_decoder::PixelFormat::RGB24 => pixels,
-        jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
+        3 /* RGB */ => pixels,
+        1 /* Grayscale */ => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
         _ => return None,
     };
 
@@ -379,4 +379,12 @@ fn main() {
             eprintln!("  Winner: YCbCr ({:+.2} points)\n", -ssim_diff);
         }
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

@@ -22,7 +22,7 @@ fn compute_dssim(original: &[u8], distorted: &[u8], width: usize, height: usize)
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().expect("decode")
 }
 
@@ -94,7 +94,7 @@ fn main() {
     let width = info.width as usize;
     let height = info.height as usize;
 
-    println!("Image: {}x{}\n", info.width, info.height);
+    println!("Image: {}x{}\n", info.0, info.1);
 
     // Low quality YCbCr comparison with DSSIM
     println!("=== YCbCr Mode: Low Quality (Q20-Q60) ===");
@@ -103,8 +103,8 @@ fn main() {
 
     for q in [20u8, 30, 40, 50, 60] {
         let rust_jpeg = jpegli::encode::Encoder::new()
-            .width(info.width)
-            .height(info.height)
+            .width(info.0)
+            .height(info.1)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
@@ -151,8 +151,8 @@ fn main() {
 
     for q in [70u8, 80, 90, 95] {
         let rust_jpeg = jpegli::encode::Encoder::new()
-            .width(info.width)
-            .height(info.height)
+            .width(info.0)
+            .height(info.1)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
@@ -201,8 +201,8 @@ fn main() {
     for q in [30u8, 40, 50, 60, 70, 80, 90, 95] {
         // Rust XYB encode
         let rust_result = jpegli::encode::Encoder::new()
-            .width(info.width)
-            .height(info.height)
+            .width(info.0)
+            .height(info.1)
             .jpegli_quality(jpegli::quant::Quality::Traditional(q as f32))
             .use_xyb(true)
             .encode(&rgb);

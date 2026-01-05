@@ -107,7 +107,7 @@ fn main() {
         let error = mse(&original, &decoded);
 
         // Also try jpeg_decoder
-        let jpeg_decoder_ok = jpeg_decoder::Decoder::new(&jpeg[..]).decode().is_ok();
+        let jpeg_decoder_ok = decode_zune(&jpeg[..]).is_ok();
 
         println!(
             "{}x{}: baseline_MSE={:.2}, prog_MSE={:.2}, jpeg_decoder={}",
@@ -135,4 +135,12 @@ fn main() {
             }
         }
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

@@ -13,10 +13,10 @@ fn find_cjpegli() -> Option<PathBuf> {
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let decoder = jpeg_decoder::Decoder::new(data);
+    let decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let mut decoder = decoder;
     let pixels = decoder.decode().ok()?;
-    let info = decoder.info()?;
+    let info = decoder.dimensions()?;
     Some((pixels, info.width as u32, info.height as u32))
 }
 

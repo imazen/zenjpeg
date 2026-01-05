@@ -33,7 +33,7 @@ fn main() {
     println!("\nXYB Baseline: {} bytes", xyb_baseline.len());
 
     // Decode and check quality
-    if let Ok(decoded) = jpeg_decoder::Decoder::new(&xyb_baseline[..]).decode() {
+    if let Ok(decoded) = decode_zune(&xyb_baseline[..]) {
         println!("  Decoded successfully: {} bytes", decoded.len());
         println!("  First 12 pixels (RGB):");
         for i in 0..4 {
@@ -68,7 +68,7 @@ fn main() {
     println!("\nXYB Progressive: {} bytes", xyb_progressive.len());
 
     // Decode and check quality
-    match jpeg_decoder::Decoder::new(&xyb_progressive[..]).decode() {
+    match decode_zune(&xyb_progressive[..]) {
         Ok(decoded) => {
             println!("  Decoded successfully: {} bytes", decoded.len());
             println!("  First 12 pixels (RGB):");
@@ -115,4 +115,12 @@ fn main() {
     println!("\nFiles saved to /tmp/ for manual inspection");
     println!("  XYB Baseline:    /tmp/xyb_baseline.jpg");
     println!("  XYB Progressive: /tmp/xyb_progressive.jpg");
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

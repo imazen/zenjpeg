@@ -683,7 +683,7 @@ dependencies = [
  "criterion",
  "dssim",
  "imgref",
- "jpeg-decoder",
+ "jpegli-internals-sys",
  "lcms2",
  "moxcms",
  "mozjpeg",

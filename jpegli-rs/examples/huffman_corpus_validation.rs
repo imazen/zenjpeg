@@ -29,7 +29,7 @@ fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), Box<dyn std::
         _ => return Err("Unsupported color type".into()),
     };
 
-    Ok((info.width, info.height, pixels))
+    Ok((info.0, info.1, pixels))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -120,8 +120,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .encode(&pixels)?;
 
         // Verify both are decodable
-        let dec_std = jpeg_decoder::Decoder::new(&jpeg_standard[..]).decode();
-        let dec_opt = jpeg_decoder::Decoder::new(&jpeg_optimized[..]).decode();
+        let dec_std = decode_zune(&jpeg_standard[..]);
+        let dec_opt = decode_zune(&jpeg_optimized[..]);
 
         if dec_std.is_err() || dec_opt.is_err() {
             decode_failures += 1;
@@ -187,4 +187,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n✓ Validation passed");
     Ok(())
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

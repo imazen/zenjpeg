@@ -36,7 +36,7 @@ fn main() {
     println!("Saved {} bytes to /tmp/debug_50x50.jpg", jpeg_data.len());
 
     // Try to decode it
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("Decode: OK"),
         Err(e) => {
             println!("Decode: FAILED - {:?}", e);
@@ -71,8 +71,16 @@ fn main() {
 
     std::fs::write("/tmp/debug_49x49.jpg", &jpeg_data).unwrap();
     println!("\n49x49: {} bytes", jpeg_data.len());
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("49x49 Decode: OK"),
         Err(e) => println!("49x49 Decode: FAILED - {:?}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

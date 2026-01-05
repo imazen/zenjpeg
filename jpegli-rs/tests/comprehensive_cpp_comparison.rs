@@ -60,7 +60,7 @@ fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f6
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    jpeg_decoder::Decoder::new(data).decode().unwrap()
+    decode_zune(data).unwrap()
 }
 
 struct ComparisonResult {
@@ -383,4 +383,12 @@ fn test_comprehensive_cpp_comparison() {
         bfly_match_count,
         all_bfly_diffs.len()
     );
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

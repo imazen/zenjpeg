@@ -23,8 +23,8 @@ fn main() {
     }
 
     let pixels = &buf[..info.buffer_size()];
-    let width = info.width as u32;
-    let height = info.height as u32;
+    let width = info.0 as u32;
+    let height = info.1 as u32;
 
     println!("Testing XYB + AQ on {} ({}x{})", image_path, width, height);
     println!();
@@ -96,7 +96,7 @@ fn main() {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().expect("decode")
 }
 

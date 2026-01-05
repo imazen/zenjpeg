@@ -76,9 +76,9 @@ fn encode_with_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u
 }
 
 fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
-    let mut decoder = jpeg_decoder::Decoder::new(jpeg);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg));
     let pixels = decoder.decode().expect("jpeg-decoder decode failed");
-    let info = decoder.info().unwrap();
+    let info = decoder.dimensions().unwrap();
     (pixels, info.width as usize, info.height as usize)
 }
 

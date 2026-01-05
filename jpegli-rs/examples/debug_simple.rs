@@ -19,7 +19,7 @@ fn test_size(width: u32, height: u32, label: &str) {
         .mode(JpegMode::Progressive);
 
     match encoder.encode(&data) {
-        Ok(jpeg_data) => match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+        Ok(jpeg_data) => match decode_zune(&jpeg_data[..]) {
             Ok(_) => println!("{}: OK ({} bytes)", label, jpeg_data.len()),
             Err(e) => println!("{}: ENCODE OK, DECODE FAILED: {:?}", label, e),
         },
@@ -62,7 +62,7 @@ fn main() {
             .mode(JpegMode::Progressive);
 
         match encoder.encode(data) {
-            Ok(jpeg_data) => match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+            Ok(jpeg_data) => match decode_zune(&jpeg_data[..]) {
                 Ok(_) => println!("{} (opt=false): OK ({} bytes)", name, jpeg_data.len()),
                 Err(e) => println!("{} (opt=false): DECODE FAILED: {:?}", name, e),
             },
@@ -79,7 +79,7 @@ fn main() {
             .mode(JpegMode::Progressive);
 
         match encoder.encode(data) {
-            Ok(jpeg_data) => match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+            Ok(jpeg_data) => match decode_zune(&jpeg_data[..]) {
                 Ok(_) => println!("{} (opt=true): OK ({} bytes)", name, jpeg_data.len()),
                 Err(e) => println!("{} (opt=true): DECODE FAILED: {:?}", name, e),
             },
@@ -173,7 +173,7 @@ fn main() {
                 i += 1;
             }
 
-            match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+            match decode_zune(&jpeg_data[..]) {
                 Ok(_) => println!("\n8x8 RGB gradient (opt=false): OK"),
                 Err(e) => println!("\n8x8 RGB gradient (opt=false): DECODE FAILED: {:?}", e),
             }
@@ -286,8 +286,16 @@ fn main() {
         i += 1;
     }
 
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("\nDecode: OK"),
         Err(e) => println!("\nDecode FAILED: {:?}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

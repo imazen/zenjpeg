@@ -21,7 +21,7 @@ fn encode_test(size: u32) {
         .encode(&data)
         .expect("encode failed");
 
-    let result = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+    let result = decode_zune(&jpeg[..]);
     eprintln!(
         "{}x{}: {} ({} bytes)",
         size,
@@ -40,4 +40,12 @@ fn main() {
     // Reset the block counter (it's a static, so we need to restart)
     eprintln!("\n\n=== Testing 50x50 (should fail) ===");
     encode_test(50);
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

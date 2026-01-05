@@ -105,7 +105,7 @@ fn main() {
             .encode(&data)
             .expect("encode failed");
 
-        let decode_result = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+        let decode_result = decode_zune(&jpeg[..]);
         println!(
             "\nDecode result: {}",
             if decode_result.is_ok() { "OK" } else { "FAIL" }
@@ -154,9 +154,17 @@ fn main() {
         .encode(&solid_data)
         .expect("encode failed");
 
-    let solid_result = jpeg_decoder::Decoder::new(&jpeg_solid[..]).decode();
+    let solid_result = decode_zune(&jpeg_solid[..]);
     println!(
         "Solid 50x50 decode: {}",
         if solid_result.is_ok() { "OK" } else { "FAIL" }
     );
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

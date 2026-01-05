@@ -25,7 +25,7 @@ fn main() {
             .encode(&data)
             .expect("encode failed");
 
-        let baseline_ok = jpeg_decoder::Decoder::new(&jpeg_baseline[..])
+        let baseline_ok = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_baseline[..]))
             .decode()
             .is_ok();
 
@@ -40,7 +40,7 @@ fn main() {
             .encode(&data)
             .expect("encode failed");
 
-        let prog_ok = jpeg_decoder::Decoder::new(&jpeg_prog[..]).decode().is_ok();
+        let prog_ok = decode_zune(&jpeg_prog[..]).is_ok();
 
         println!(
             "{}x{}: baseline={} ({} bytes), progressive={} ({} bytes)",
@@ -52,4 +52,12 @@ fn main() {
             jpeg_prog.len()
         );
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

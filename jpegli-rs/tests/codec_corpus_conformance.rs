@@ -533,7 +533,7 @@ fn test_fuzz_corpus_vs_reference() {
         };
 
         let jpegli_result = jpegli_decoder.decode(&data);
-        let ref_result = jpeg_decoder::Decoder::new(&data[..]).decode();
+        let ref_result = decode_zune(&data[..]);
 
         match (jpegli_result.is_ok(), ref_result.is_ok()) {
             (true, true) => both_succeed += 1,
@@ -889,7 +889,7 @@ fn test_jpeg_conformance_vs_reference() {
         let filename = file.file_name().unwrap().to_string_lossy();
 
         let jpegli_result = jpegli_decoder.decode(&data);
-        let ref_result = jpeg_decoder::Decoder::new(&data[..]).decode();
+        let ref_result = decode_zune(&data[..]);
 
         match (jpegli_result.is_ok(), ref_result.is_ok()) {
             (true, true) => {
@@ -979,4 +979,12 @@ fn test_full_fuzz_corpus() {
     println!("  Panics:  {}", panics);
 
     assert_eq!(panics, 0, "No panics should occur on fuzz corpus");
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

@@ -27,7 +27,7 @@ fn main() {
         .encode(&data)
         .expect("encode failed");
 
-    let result0 = jpeg_decoder::Decoder::new(&jpeg_level0[..]).decode();
+    let result0 = decode_zune(&jpeg_level0[..]);
     println!(
         "Level 0 (no refinement): {} ({} bytes)",
         if result0.is_ok() { "OK" } else { "FAIL" },
@@ -45,7 +45,7 @@ fn main() {
         .encode(&data)
         .expect("encode failed");
 
-    let result1 = jpeg_decoder::Decoder::new(&jpeg_level1[..]).decode();
+    let result1 = decode_zune(&jpeg_level1[..]);
     println!(
         "Level 1: {} ({} bytes)",
         if result1.is_ok() { "OK" } else { "FAIL" },
@@ -63,7 +63,7 @@ fn main() {
         .encode(&data)
         .expect("encode failed");
 
-    let result2 = jpeg_decoder::Decoder::new(&jpeg_level2[..]).decode();
+    let result2 = decode_zune(&jpeg_level2[..]);
     println!(
         "Level 2 (with refinement): {} ({} bytes)",
         if result2.is_ok() { "OK" } else { "FAIL" },
@@ -146,4 +146,12 @@ fn main() {
             if is_refinement { "<-- REFINEMENT" } else { "" }
         );
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

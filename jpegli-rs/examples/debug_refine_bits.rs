@@ -197,12 +197,12 @@ fn main() {
 
     // Attempt to decode
     println!("\n=== Decode Test ===");
-    match jpeg_decoder::Decoder::new(&jpeg_49[..]).decode() {
+    match decode_zune(&jpeg_49[..]) {
         Ok(_) => println!("49x49: decode OK"),
         Err(e) => println!("49x49: decode FAILED - {:?}", e),
     }
 
-    match jpeg_decoder::Decoder::new(&jpeg_50[..]).decode() {
+    match decode_zune(&jpeg_50[..]) {
         Ok(_) => println!("50x50: decode OK"),
         Err(e) => println!("50x50: decode FAILED - {:?}", e),
     }
@@ -212,4 +212,12 @@ fn main() {
     std::fs::write("/tmp/gray_50x50_prog.jpg", &jpeg_50).unwrap();
     println!("\nFiles saved to /tmp/gray_49x49_prog.jpg and /tmp/gray_50x50_prog.jpg");
     println!("Try: djpeg -verbose /tmp/gray_50x50_prog.jpg > /dev/null");
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

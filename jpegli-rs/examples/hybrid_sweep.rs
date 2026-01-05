@@ -300,7 +300,7 @@ fn encode_and_measure(
     let jpeg_data = encoder.encode(&img.pixels).expect("encode");
 
     // Decode
-    let mut decoder = jpeg_decoder::Decoder::new(&jpeg_data[..]);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]));
     let decoded = decoder.decode().expect("decode");
 
     // Compute all metrics

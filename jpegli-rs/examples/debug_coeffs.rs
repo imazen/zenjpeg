@@ -188,12 +188,20 @@ fn main() {
 
     // Decode test
     println!("\n=== Decode Tests ===");
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("RGB: OK"),
         Err(e) => println!("RGB: FAILED - {:?}", e),
     }
-    match jpeg_decoder::Decoder::new(&gray_jpeg[..]).decode() {
+    match decode_zune(&gray_jpeg[..]) {
         Ok(_) => println!("Gray: OK"),
         Err(e) => println!("Gray: FAILED - {:?}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

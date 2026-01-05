@@ -159,9 +159,9 @@ fn test_encoding_with_zero_bias_valid() {
     );
 
     // Decode and verify pixels are reasonable
-    let mut decoder = jpeg_decoder::Decoder::new(&jpeg_data[..]);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]));
     let decoded = decoder.decode().expect("decode failed");
-    let info = decoder.info().unwrap();
+    let info = decoder.dimensions().unwrap();
 
     assert_eq!(info.width, width as u16);
     assert_eq!(info.height, height as u16);

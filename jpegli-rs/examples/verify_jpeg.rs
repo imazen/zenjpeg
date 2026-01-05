@@ -29,12 +29,12 @@ fn main() {
     println!("Wrote {} bytes to /tmp/test_xyb.jpg", jpeg.len());
 
     // Decode with jpeg-decoder
-    let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
     match decoder.decode() {
         Ok(pixels) => {
             println!("jpeg-decoder: decoded {} bytes of pixels", pixels.len());
-            let info = decoder.info().unwrap();
-            println!("  Size: {}x{}", info.width, info.height);
+            let info = decoder.dimensions().unwrap();
+            println!("  Size: {}x{}", info.0, info.1);
             println!("  Components: {:?}", info.pixel_format);
         }
         Err(e) => println!("jpeg-decoder failed: {:?}", e),

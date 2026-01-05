@@ -22,7 +22,7 @@ fn main() {
     let direct_data = encoder_direct
         .encode(&data)
         .expect("Direct encoding should succeed");
-    match jpeg_decoder::Decoder::new(&direct_data[..]).decode() {
+    match decode_zune(&direct_data[..]) {
         Ok(_) => println!(
             "Direct (optimize_huffman=false): OK - {} bytes",
             direct_data.len()
@@ -99,7 +99,7 @@ fn main() {
         i += 1;
     }
 
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("Decode: OK"),
         Err(e) => println!("Decode FAILED: {:?}", e),
     }
@@ -136,4 +136,12 @@ fn main() {
             i += 1;
         }
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

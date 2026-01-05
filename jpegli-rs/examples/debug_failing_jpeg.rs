@@ -87,7 +87,7 @@ fn main() {
 
     // Try with jpeg-decoder crate
     println!("\n--- Testing with jpeg-decoder crate ---");
-    match jpeg_decoder::Decoder::new(&jpeg[..]).decode() {
+    match decode_zune(&jpeg[..]) {
         Ok(pixels) => {
             println!("jpeg-decoder SUCCESS: {} bytes output", pixels.len());
         }
@@ -110,4 +110,12 @@ fn main() {
     // Save the JPEG for external analysis
     std::fs::write("/tmp/failing_gradient.jpg", &jpeg).expect("write file");
     println!("\nSaved to /tmp/failing_gradient.jpg");
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

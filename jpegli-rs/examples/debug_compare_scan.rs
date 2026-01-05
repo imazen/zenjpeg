@@ -201,8 +201,8 @@ fn main() {
     std::fs::write("/tmp/ok_49x49.jpg", &jpeg_49).ok();
 
     // Use jpeg_decoder
-    let res_49 = jpeg_decoder::Decoder::new(&jpeg_49[..]).decode();
-    let res_50 = jpeg_decoder::Decoder::new(&jpeg_50[..]).decode();
+    let res_49 = decode_zune(&jpeg_49[..]);
+    let res_50 = decode_zune(&jpeg_50[..]);
 
     println!(
         "49x49 decode: {}",
@@ -232,8 +232,8 @@ fn main() {
         .encode(&data_50)
         .expect("encode failed");
 
-    let res_b49 = jpeg_decoder::Decoder::new(&baseline_49[..]).decode();
-    let res_b50 = jpeg_decoder::Decoder::new(&baseline_50[..]).decode();
+    let res_b49 = decode_zune(&baseline_49[..]);
+    let res_b50 = decode_zune(&baseline_50[..]);
 
     println!(
         "49x49 baseline: {}",
@@ -243,4 +243,12 @@ fn main() {
         "50x50 baseline: {}",
         if res_b50.is_ok() { "OK" } else { "FAIL" }
     );
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

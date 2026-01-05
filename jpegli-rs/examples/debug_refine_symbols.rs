@@ -38,13 +38,21 @@ fn main() {
 
     // Test decoding
     println!("\n=== Decode Test ===");
-    match jpeg_decoder::Decoder::new(&jpeg_49[..]).decode() {
+    match decode_zune(&jpeg_49[..]) {
         Ok(_) => println!("49x49: decode OK ({} bytes)", jpeg_49.len()),
         Err(e) => println!("49x49: decode FAILED - {:?}", e),
     }
 
-    match jpeg_decoder::Decoder::new(&jpeg_50[..]).decode() {
+    match decode_zune(&jpeg_50[..]) {
         Ok(_) => println!("50x50: decode OK ({} bytes)", jpeg_50.len()),
         Err(e) => println!("50x50: decode FAILED - {:?}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

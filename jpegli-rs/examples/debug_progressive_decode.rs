@@ -122,8 +122,16 @@ fn main() {
 
     // Try with jpeg-decoder for comparison
     println!("\n=== Attempting jpeg-decoder decode ===");
-    match jpeg_decoder::Decoder::new(&encoded[..]).decode() {
+    match decode_zune(&encoded[..]) {
         Ok(pixels) => println!("jpeg-decoder: OK ({} bytes)", pixels.len()),
         Err(e) => println!("jpeg-decoder: FAIL - {}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

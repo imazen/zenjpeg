@@ -76,7 +76,7 @@ fn test_cpp_quality_comparison() {
         let rust_size = rust_jpeg.len();
 
         // Decode Rust JPEG for DSSIM
-        let rust_decoded = jpeg_decoder::Decoder::new(&rust_jpeg[..]).decode().unwrap();
+        let rust_decoded = decode_zune(&rust_jpeg[..]).unwrap();
         let rust_pixels: Vec<rgb::RGB<u8>> = rust_decoded
             .chunks(3)
             .map(|c| rgb::RGB::new(c[0], c[1], c[2]))
@@ -112,7 +112,7 @@ fn test_cpp_quality_comparison() {
         let cpp_size = cpp_jpeg.len();
 
         // Decode C++ JPEG for DSSIM
-        let cpp_decoded = jpeg_decoder::Decoder::new(&cpp_jpeg[..]).decode().unwrap();
+        let cpp_decoded = decode_zune(&cpp_jpeg[..]).unwrap();
         let cpp_pixels: Vec<rgb::RGB<u8>> = cpp_decoded
             .chunks(3)
             .map(|c| rgb::RGB::new(c[0], c[1], c[2]))
@@ -129,4 +129,12 @@ fn test_cpp_quality_comparison() {
             q, rust_size, cpp_size, rust_dssim, cpp_dssim, size_diff
         );
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }
