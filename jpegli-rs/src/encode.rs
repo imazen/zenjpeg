@@ -1760,13 +1760,12 @@ impl Encoder {
             PixelFormat::Gray => {
                 // Grayscale: Y = pixel value, Cb/Cr = 128
                 let num_pixels = checked_size_2d(width, height)?;
-                let mut y_plane = try_alloc_zeroed_f32(num_pixels, "Y plane")?;
                 let c_size = checked_size_2d(c_width, c_height)?;
                 let cb_plane = try_alloc_filled(c_size, 128.0f32, "Cb plane")?;
                 let cr_plane = try_alloc_filled(c_size, 128.0f32, "Cr plane")?;
-                for i in 0..num_pixels {
-                    y_plane[i] = data[i] as f32;
-                }
+                // Convert u8 to f32 using SIMD
+                let y_plane =
+                    crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels]);
                 return Ok((y_plane, cb_plane, cr_plane, c_width, c_height));
             }
             PixelFormat::Cmyk => {
@@ -1807,28 +1806,13 @@ impl Encoder {
         let num_pixels = checked_size_2d(width, height)?;
         let c_size = checked_size_2d(c_width, c_height)?;
 
-        let mut y_plane_f32 = try_alloc_zeroed_f32(num_pixels, "Y plane f32")?;
-        let mut cb_plane_f32 = try_alloc_zeroed_f32(c_size, "Cb plane f32")?;
-        let mut cr_plane_f32 = try_alloc_zeroed_f32(c_size, "Cr plane f32")?;
-
-        // Copy Y plane (full resolution)
-        for (i, &y) in yuv_image
-            .y_plane
-            .borrow()
-            .iter()
-            .take(num_pixels)
-            .enumerate()
-        {
-            y_plane_f32[i] = y as f32;
-        }
-
-        // Copy U/V planes (already downsampled)
-        for (i, &u) in yuv_image.u_plane.borrow().iter().take(c_size).enumerate() {
-            cb_plane_f32[i] = u as f32;
-        }
-        for (i, &v) in yuv_image.v_plane.borrow().iter().take(c_size).enumerate() {
-            cr_plane_f32[i] = v as f32;
-        }
+        // Convert u8 planes to f32 using SIMD
+        let y_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels]);
+        let cb_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size]);
+        let cr_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size]);
 
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
@@ -1875,25 +1859,13 @@ impl Encoder {
         let num_pixels = checked_size_2d(width, height)?;
         let c_size = checked_size_2d(c_width, c_height)?;
 
-        let mut y_plane_f32 = try_alloc_zeroed_f32(num_pixels, "Y plane f32")?;
-        let mut cb_plane_f32 = try_alloc_zeroed_f32(c_size, "Cb plane f32")?;
-        let mut cr_plane_f32 = try_alloc_zeroed_f32(c_size, "Cr plane f32")?;
-
-        for (i, &y) in yuv_image
-            .y_plane
-            .borrow()
-            .iter()
-            .take(num_pixels)
-            .enumerate()
-        {
-            y_plane_f32[i] = y as f32;
-        }
-        for (i, &u) in yuv_image.u_plane.borrow().iter().take(c_size).enumerate() {
-            cb_plane_f32[i] = u as f32;
-        }
-        for (i, &v) in yuv_image.v_plane.borrow().iter().take(c_size).enumerate() {
-            cr_plane_f32[i] = v as f32;
-        }
+        // Convert u8 planes to f32 using SIMD
+        let y_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels]);
+        let cb_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size]);
+        let cr_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size]);
 
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
@@ -1936,13 +1908,12 @@ impl Encoder {
             PixelFormat::Gray => {
                 // Grayscale doesn't benefit from yuv crate conversion
                 let num_pixels = checked_size_2d(width, height)?;
-                let mut y_plane = try_alloc_zeroed_f32(num_pixels, "Y plane")?;
                 let c_size = checked_size_2d(c_width, height)?;
                 let cb_plane = try_alloc_filled(c_size, 128.0f32, "Cb plane")?;
                 let cr_plane = try_alloc_filled(c_size, 128.0f32, "Cr plane")?;
-                for i in 0..num_pixels {
-                    y_plane[i] = data[i] as f32;
-                }
+                // Convert u8 to f32 using SIMD
+                let y_plane =
+                    crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels]);
                 return Ok((y_plane, cb_plane, cr_plane, c_width, height));
             }
             PixelFormat::Cmyk => {
@@ -1984,25 +1955,13 @@ impl Encoder {
         let num_pixels = checked_size_2d(width, height)?;
         let c_size = checked_size_2d(c_width, height)?;
 
-        let mut y_plane_f32 = try_alloc_zeroed_f32(num_pixels, "Y plane f32")?;
-        let mut cb_plane_f32 = try_alloc_zeroed_f32(c_size, "Cb plane f32")?;
-        let mut cr_plane_f32 = try_alloc_zeroed_f32(c_size, "Cr plane f32")?;
-
-        for (i, &y) in yuv_image
-            .y_plane
-            .borrow()
-            .iter()
-            .take(num_pixels)
-            .enumerate()
-        {
-            y_plane_f32[i] = y as f32;
-        }
-        for (i, &u) in yuv_image.u_plane.borrow().iter().take(c_size).enumerate() {
-            cb_plane_f32[i] = u as f32;
-        }
-        for (i, &v) in yuv_image.v_plane.borrow().iter().take(c_size).enumerate() {
-            cr_plane_f32[i] = v as f32;
-        }
+        // Convert u8 planes to f32 using SIMD
+        let y_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels]);
+        let cb_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size]);
+        let cr_plane_f32 =
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size]);
 
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, height))
     }
