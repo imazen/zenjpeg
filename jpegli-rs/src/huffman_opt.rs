@@ -1307,16 +1307,19 @@ impl ProgressiveTokenBuffer {
         for block in blocks {
             // Find last nonzero coefficient in spectral range
             // Use absolute value for consistency with refinement scan classification
+            // We search from end to start and track both last_nonzero and is_eob in one pass
             let mut last_nonzero = ss as usize;
+            let mut found_nonzero = false;
             for k in (ss as usize..=se as usize).rev() {
                 if (block[k].unsigned_abs() >> al) != 0 {
                     last_nonzero = k;
+                    found_nonzero = true;
                     break;
                 }
             }
 
-            // Check if block is all zeros in this range (using absolute values)
-            let is_eob = (ss as usize..=se as usize).all(|k| (block[k].unsigned_abs() >> al) == 0);
+            // If no nonzero found, the block is all zeros in this range
+            let is_eob = !found_nonzero;
 
             if is_eob {
                 eob_run += 1;
