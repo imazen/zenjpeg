@@ -301,7 +301,6 @@ use crate::huffman_opt::{
 };
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaConversion, ColorSpace, JpegMode, PixelFormat, Subsampling};
-use crate::xyb::srgb_to_scaled_xyb;
 
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
@@ -1625,64 +1624,44 @@ impl Encoder {
         let height = self.config.height as usize;
         let num_pixels = checked_size_2d(width, height)?;
 
-        let mut x_plane = try_alloc_zeroed_f32(num_pixels, "allocating XYB X plane")?;
-        let mut y_plane = try_alloc_zeroed_f32(num_pixels, "allocating XYB Y plane")?;
-        let mut b_plane = try_alloc_zeroed_f32(num_pixels, "allocating XYB B plane")?;
-
         match self.config.pixel_format {
             PixelFormat::Rgb => {
-                for i in 0..num_pixels {
-                    let (x, y, b) =
-                        srgb_to_scaled_xyb(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]);
-                    x_plane[i] = x;
-                    y_plane[i] = y;
-                    b_plane[i] = b;
-                }
+                // Use SIMD-optimized version (allocates internally)
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(data, num_pixels))
             }
             PixelFormat::Rgba => {
-                for i in 0..num_pixels {
-                    let (x, y, b) =
-                        srgb_to_scaled_xyb(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
-                    x_plane[i] = x;
-                    y_plane[i] = y;
-                    b_plane[i] = b;
-                }
+                // Strip alpha to get contiguous RGB, then use SIMD
+                let rgb: Vec<u8> = data
+                    .chunks(4)
+                    .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
+                    .collect();
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
             PixelFormat::Gray => {
-                // Grayscale: R=G=B
-                for i in 0..num_pixels {
-                    let (x, y, b) = srgb_to_scaled_xyb(data[i], data[i], data[i]);
-                    x_plane[i] = x;
-                    y_plane[i] = y;
-                    b_plane[i] = b;
-                }
+                // Grayscale: expand to RGB then use SIMD
+                let rgb: Vec<u8> = data.iter().flat_map(|&v| [v, v, v]).collect();
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
             PixelFormat::Bgr => {
-                for i in 0..num_pixels {
-                    let (x, y, b) =
-                        srgb_to_scaled_xyb(data[i * 3 + 2], data[i * 3 + 1], data[i * 3]);
-                    x_plane[i] = x;
-                    y_plane[i] = y;
-                    b_plane[i] = b;
-                }
+                // Swap B and R, then use SIMD
+                let rgb: Vec<u8> = data
+                    .chunks(3)
+                    .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
+                    .collect();
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
             PixelFormat::Bgra => {
-                for i in 0..num_pixels {
-                    let (x, y, b) =
-                        srgb_to_scaled_xyb(data[i * 4 + 2], data[i * 4 + 1], data[i * 4]);
-                    x_plane[i] = x;
-                    y_plane[i] = y;
-                    b_plane[i] = b;
-                }
+                // Swap B and R, strip alpha, then use SIMD
+                let rgb: Vec<u8> = data
+                    .chunks(4)
+                    .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
+                    .collect();
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
-            PixelFormat::Cmyk => {
-                return Err(Error::UnsupportedFeature {
-                    feature: "CMYK with XYB mode",
-                });
-            }
+            PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
+                feature: "CMYK with XYB mode",
+            }),
         }
-
-        Ok((x_plane, y_plane, b_plane))
     }
 
     /// Downsamples a float plane by 2x2 (box filter averaging).
@@ -4033,7 +4012,7 @@ impl Encoder {
                 // Get per-block aq_strength
                 let aq_strength = aq_map.get(bx, by);
 
-                let y_block = self.extract_block_ycbcr_f32(y_plane, width, height, bx, by);
+                let y_block = crate::encode_simd::extract_block_simd(y_plane, width, height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
@@ -4058,7 +4037,7 @@ impl Encoder {
                 y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
 
                 if is_color {
-                    let cb_block = self.extract_block_ycbcr_f32(cb_plane, width, height, bx, by);
+                    let cb_block = crate::encode_simd::extract_block_simd(cb_plane, width, height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -4082,7 +4061,7 @@ impl Encoder {
 
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
-                    let cr_block = self.extract_block_ycbcr_f32(cr_plane, width, height, bx, by);
+                    let cr_block = crate::encode_simd::extract_block_simd(cr_plane, width, height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -4173,7 +4152,7 @@ impl Encoder {
         for by in 0..y_blocks_v {
             for bx in 0..y_blocks_h {
                 let aq_strength = aq_map.get(bx, by);
-                let y_block = self.extract_block_ycbcr_f32(y_plane, y_width, y_height, bx, by);
+                let y_block = crate::encode_simd::extract_block_simd(y_plane, y_width, y_height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
@@ -4211,7 +4190,7 @@ impl Encoder {
                         aq_map.get(y_bx.min(y_blocks_h - 1), y_by.min(y_blocks_v - 1));
 
                     let cb_block =
-                        self.extract_block_ycbcr_f32(cb_plane, c_width, c_height, bx, by);
+                        crate::encode_simd::extract_block_simd(cb_plane, c_width, c_height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -4236,7 +4215,7 @@ impl Encoder {
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
                     let cr_block =
-                        self.extract_block_ycbcr_f32(cr_plane, c_width, c_height, bx, by);
+                        crate::encode_simd::extract_block_simd(cr_plane, c_width, c_height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -4767,7 +4746,7 @@ impl Encoder {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
-                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_block = crate::encode_simd::extract_block_xyb_simd(x_plane, width, height, bx, by);
                         let x_dct = forward_dct_8x8(&x_block);
                         let x_quant_coeffs = quant::quantize_block(&x_dct, &x_quant.values);
                         x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
@@ -4779,7 +4758,7 @@ impl Encoder {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
-                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_block = crate::encode_simd::extract_block_xyb_simd(y_plane, width, height, bx, by);
                         let y_dct = forward_dct_8x8(&y_block);
                         let y_quant_coeffs = quant::quantize_block(&y_dct, &y_quant.values);
                         y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
@@ -4787,7 +4766,7 @@ impl Encoder {
                 }
 
                 // Process 1 B block (from downsampled plane)
-                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_block = crate::encode_simd::extract_block_xyb_simd(b_plane, b_width, b_height, mcu_x, mcu_y);
                 let b_dct = forward_dct_8x8(&b_block);
                 let b_quant_coeffs = quant::quantize_block(&b_dct, &b_quant.values);
                 b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
@@ -4846,7 +4825,7 @@ impl Encoder {
                         let by = mcu_y * 2 + block_y;
                         let aq_strength = aq_map.get(bx, by);
 
-                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_block = crate::encode_simd::extract_block_xyb_simd(x_plane, width, height, bx, by);
                         let x_dct = forward_dct_8x8(&x_block);
                         let x_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                             &x_dct,
@@ -4865,7 +4844,7 @@ impl Encoder {
                         let by = mcu_y * 2 + block_y;
                         let aq_strength = aq_map.get(bx, by);
 
-                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_block = crate::encode_simd::extract_block_xyb_simd(y_plane, width, height, bx, by);
                         let y_dct = forward_dct_8x8(&y_block);
                         let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                             &y_dct,
@@ -4891,7 +4870,7 @@ impl Encoder {
                     sum / 4.0
                 };
 
-                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_block = crate::encode_simd::extract_block_xyb_simd(b_plane, b_width, b_height, mcu_x, mcu_y);
                 let b_dct = forward_dct_8x8(&b_block);
                 let b_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                     &b_dct,
@@ -4954,7 +4933,7 @@ impl Encoder {
                         let by = mcu_y * 2 + block_y;
                         let aq_strength = aq_map.get(bx, by);
 
-                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_block = crate::encode_simd::extract_block_xyb_simd(x_plane, width, height, bx, by);
                         let x_dct = forward_dct_8x8(&x_block);
 
                         // X is luma-like in XYB, dampen=1.0
@@ -4974,7 +4953,7 @@ impl Encoder {
                         let by = mcu_y * 2 + block_y;
                         let aq_strength = aq_map.get(bx, by);
 
-                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_block = crate::encode_simd::extract_block_xyb_simd(y_plane, width, height, bx, by);
                         let y_dct = forward_dct_8x8(&y_block);
 
                         // Y is the primary luma channel in XYB, dampen=1.0
@@ -5001,7 +4980,7 @@ impl Encoder {
                     sum / 4.0
                 };
 
-                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_block = crate::encode_simd::extract_block_xyb_simd(b_plane, b_width, b_height, mcu_x, mcu_y);
                 let b_dct = forward_dct_8x8(&b_block);
 
                 // B is chroma-like (blue channel), is_luma=false
@@ -5196,7 +5175,7 @@ impl Encoder {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
-                        let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
+                        let x_block = crate::encode_simd::extract_block_xyb_simd(x_plane, width, height, bx, by);
                         let x_dct = forward_dct_8x8(&x_block);
                         let x_quant_coeffs = quant::quantize_block(&x_dct, &x_quant.values);
                         let x_zigzag = natural_to_zigzag(&x_quant_coeffs);
@@ -5209,7 +5188,7 @@ impl Encoder {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
-                        let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
+                        let y_block = crate::encode_simd::extract_block_xyb_simd(y_plane, width, height, bx, by);
                         let y_dct = forward_dct_8x8(&y_block);
                         let y_quant_coeffs = quant::quantize_block(&y_dct, &y_quant.values);
                         let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
@@ -5218,7 +5197,7 @@ impl Encoder {
                 }
 
                 // Process 1 B block (from downsampled plane)
-                let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
+                let b_block = crate::encode_simd::extract_block_xyb_simd(b_plane, b_width, b_height, mcu_x, mcu_y);
                 let b_dct = forward_dct_8x8(&b_block);
                 let b_quant_coeffs = quant::quantize_block(&b_dct, &b_quant.values);
                 let b_zigzag = natural_to_zigzag(&b_quant_coeffs);
@@ -5236,6 +5215,7 @@ impl Encoder {
     /// Scaled XYB values are in [0, 1] range. This method:
     /// 1. Multiplies by 255 to get to [0, 255] range
     /// 2. Subtracts 128 for level shifting (DCT input is [-128, 127])
+    #[allow(dead_code)]
     fn extract_block_f32(
         &self,
         plane: &[f32],
@@ -5296,6 +5276,7 @@ impl Encoder {
 
     /// Extracts an 8x8 block from a YCbCr f32 plane with level shift.
     /// Input values are in [0, 255] range, output is level-shifted by -128.
+    #[allow(dead_code)]
     fn extract_block_ycbcr_f32(
         &self,
         plane: &[f32],
