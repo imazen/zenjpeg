@@ -647,7 +647,9 @@ impl EntropyEncoder {
 
             // For missing EOB run symbols, fall back to individual EOBs
             if len == 0 && is_eob_run {
-                let run = 1u16 << (token.symbol >> 4);
+                // Compute actual run: base (1 << log2) + offset (extra_bits)
+                let base = 1u16 << (token.symbol >> 4);
+                let run = base + token.extra_bits as u16;
                 let (eob_code, eob_len) = ac_table.encode(0x00);
                 for _ in 0..run {
                     self.writer.write_bits(eob_code, eob_len);
@@ -691,13 +693,20 @@ impl EntropyEncoder {
         let mut eobrun_idx = 0;
 
         for ref_token in &scan_info.ref_tokens {
-            // Write the Huffman code for the symbol
-            let (code, len) = ac_table.encode(ref_token.symbol);
+            // For AC refinement, symbols may have sign bit in bit 1:
+            // - 0x01 = negative newly-nonzero (run=0)
+            // - 0x03 = positive newly-nonzero (run=0)
+            // Use & 253 to mask out sign bit for Huffman lookup, matching C++:
+            //   int symbol = t.symbol & 253;
+            let masked_symbol = ref_token.symbol & 253;
 
-            // Check if this is an EOB symbol
-            let is_eob = (ref_token.symbol & 0x0F) == 0 && ref_token.symbol != 0xF0;
+            // Write the Huffman code for the masked symbol
+            let (code, len) = ac_table.encode(masked_symbol);
 
-            if len == 0 && ref_token.symbol != 0x00 {
+            // Check if this is an EOB symbol (low nibble = 0, not ZRL)
+            let is_eob = (masked_symbol & 0x0F) == 0 && masked_symbol != 0xF0;
+
+            if len == 0 && masked_symbol != 0x00 {
                 // Symbol not in table - for EOB runs, fall back to individual EOBs
                 if is_eob {
                     let run_bits = ref_token.symbol >> 4;
@@ -744,14 +753,16 @@ impl EntropyEncoder {
                 }
 
                 // Write the sign bit for newly-nonzero coefficients (AFTER refinement bits)
-                let symbol_cat = ref_token.symbol & 0x0F;
-                if symbol_cat == 1 && ref_token.symbol != 0xF0 {
-                    // This is a newly-nonzero coefficient, write sign bit
-                    if refbit_idx < scan_info.refbits.len() {
-                        let sign = scan_info.refbits[refbit_idx] as u32;
-                        self.writer.write_bits(sign, 1);
-                        refbit_idx += 1;
-                    }
+                // Check if this is a newly-nonzero symbol (masked category = 1)
+                // Newly-nonzero symbols have category 1 (low nibble = 1 or 3 before masking)
+                let is_newly_nonzero = (masked_symbol & 0x0F) == 1 && masked_symbol != 0xF0;
+                if is_newly_nonzero {
+                    // Sign is encoded in bit 1 of the original symbol:
+                    // - 0x?1 = negative (bit 1 = 0)
+                    // - 0x?3 = positive (bit 1 = 1)
+                    // This matches C++: bits = (t.symbol >> 1) & 1;
+                    let sign = ((ref_token.symbol >> 1) & 1) as u32;
+                    self.writer.write_bits(sign, 1);
                 }
             }
         }
