@@ -771,7 +771,7 @@ mod tests {
     /// Validates that the instrumented C++ FFI is properly linked.
     ///
     /// If this test fails to link, the jpegli-cpp submodule is on the wrong branch.
-    /// Fix with: `cd internal/jpegli-cpp && git checkout stepbystep2`
+    /// Fix with: `cd internal/jpegli-cpp && git checkout instrumented`
     #[test]
     fn test_instrumented_ffi_available() {
         // Call fast math functions - these only exist in the instrumented build

@@ -115,7 +115,7 @@ fn build_jpegli_test_ffi(jpegli_root: &PathBuf, build_dir: &PathBuf, target: &st
             \n\
             Fix with:\n\
             \n\
-            cd internal/jpegli-cpp && git checkout stepbystep2\n\
+            cd internal/jpegli-cpp && git checkout instrumented\n\
             \n\
             Or reinitialize the submodule:\n\
             \n\

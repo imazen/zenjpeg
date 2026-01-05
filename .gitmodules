@@ -1,4 +1,4 @@
 [submodule "jpegli-cpp"]
 	path = internal/jpegli-cpp
 	url = https://github.com/imazen/jpegli
-	branch = stepbystep2
+	branch = instrumented
