@@ -554,15 +554,43 @@ pub fn dequantize(quantized: i16, quant: u16) -> f32 {
     quantized as f32 * quant as f32
 }
 
-/// Quantizes a block of DCT coefficients.
+/// Quantizes a block of DCT coefficients (SIMD-optimized).
 pub fn quantize_block(
     coeffs: &[f32; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
 ) -> [i16; DCT_BLOCK_SIZE] {
+    use wide::f32x8;
+
     let mut result = [0i16; DCT_BLOCK_SIZE];
-    for i in 0..DCT_BLOCK_SIZE {
-        result[i] = quantize(coeffs[i], quant[i]);
+
+    // Process 8 coefficients at a time
+    for chunk in 0..8 {
+        let k = chunk * 8;
+
+        let c = f32x8::from([
+            coeffs[k], coeffs[k + 1], coeffs[k + 2], coeffs[k + 3],
+            coeffs[k + 4], coeffs[k + 5], coeffs[k + 6], coeffs[k + 7],
+        ]);
+
+        let q = f32x8::from([
+            quant[k] as f32, quant[k + 1] as f32, quant[k + 2] as f32, quant[k + 3] as f32,
+            quant[k + 4] as f32, quant[k + 5] as f32, quant[k + 6] as f32, quant[k + 7] as f32,
+        ]);
+
+        let qval = c / q;
+        let rounded = qval.round();
+        let arr: [f32; 8] = rounded.into();
+
+        result[k] = arr[0] as i16;
+        result[k + 1] = arr[1] as i16;
+        result[k + 2] = arr[2] as i16;
+        result[k + 3] = arr[3] as i16;
+        result[k + 4] = arr[4] as i16;
+        result[k + 5] = arr[5] as i16;
+        result[k + 6] = arr[6] as i16;
+        result[k + 7] = arr[7] as i16;
     }
+
     result
 }
 
