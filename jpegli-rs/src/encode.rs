@@ -5345,8 +5345,18 @@ impl Encoder {
                 let px = (bx * DCT_SIZE + x).min(width - 1);
                 let py = (by * DCT_SIZE + y).min(height - 1);
                 let idx = py * width + px;
-                // Scale from [0, 1] to [0, 255], then level shift by -128
-                block[y * DCT_SIZE + x] = plane[idx] * 255.0 - 128.0;
+                let val = plane[idx];
+                // XYB scaled values are in range approximately [-2.1, 7.3] after our fix
+                // to use C++ jpegli's 0-255 linear RGB convention.
+                // After ×255: [-536, 1862]. After -128: [-664, 1734].
+                // This is correct for XYB mode - the larger range is expected.
+                debug_assert!(
+                    val >= -3.0 && val <= 10.0,
+                    "extract_block_f32: value {} at ({}, {}) outside expected XYB range [-3, 10]",
+                    val, px, py
+                );
+                // Scale from XYB range to DCT input range, then level shift by -128
+                block[y * DCT_SIZE + x] = val * 255.0 - 128.0;
             }
         }
 
@@ -5785,15 +5795,9 @@ mod tests {
         assert_eq!(jpeg_smooth_100[1], MARKER_SOI);
 
         // All should be decodable
-        assert!(jpeg_decoder::Decoder::new(&jpeg_no_smooth[..])
-            .decode()
-            .is_ok());
-        assert!(jpeg_decoder::Decoder::new(&jpeg_smooth_50[..])
-            .decode()
-            .is_ok());
-        assert!(jpeg_decoder::Decoder::new(&jpeg_smooth_100[..])
-            .decode()
-            .is_ok());
+        assert!(decode_zune(&jpeg_no_smooth[..]).is_ok());
+        assert!(decode_zune(&jpeg_smooth_50[..]).is_ok());
+        assert!(decode_zune(&jpeg_smooth_100[..]).is_ok());
 
         // Smoothing should reduce file size for high-frequency content
         // (blurring reduces chroma complexity)
@@ -6397,18 +6401,17 @@ mod tests {
         assert_eq!((pathway >> 16) & 0xFF, 75);
     }
 
+    fn decode_zune(data: &[u8]) -> std::result::Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+        use zune_jpeg::zune_core::bytestream::ZCursor;
+        use zune_jpeg::JpegDecoder;
+        let cursor = ZCursor::new(data);
+        let mut decoder = JpegDecoder::new(cursor);
+        decoder.decode()
+    }
+
     #[test]
     fn test_internal_pathway_pipeline_encode_decode() {
         use internal_pathway::*;
-
-fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
-    use zune_jpeg::zune_core::bytestream::ZCursor;
-    use zune_jpeg::JpegDecoder;
-    let cursor = ZCursor::new(data);
-    let mut decoder = JpegDecoder::new(cursor);
-    decoder.decode()
-}
-
 
         // Test that InternalPipeline roundtrips correctly
         let pipeline = InternalPipeline::from_u64(P_F32_BOX_SMOOTH50).unwrap();
