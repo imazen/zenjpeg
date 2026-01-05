@@ -5304,6 +5304,7 @@ impl Default for Encoder {
 }
 
 /// Converts coefficients from natural order to zigzag order for JPEG encoding.
+#[inline]
 fn natural_to_zigzag(natural: &[i16; DCT_BLOCK_SIZE]) -> [i16; DCT_BLOCK_SIZE] {
     let mut zigzag = [0i16; DCT_BLOCK_SIZE];
     for i in 0..DCT_BLOCK_SIZE {
