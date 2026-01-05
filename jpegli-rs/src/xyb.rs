@@ -314,6 +314,41 @@ pub fn linear_rgb_to_xyb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (x, y, cbrt_b)
 }
 
+/// Converts linear RGB to XYB color space using C++ jpegli range conventions.
+///
+/// This matches C++ jpegli's LinearRGBRowToXYB which expects linear RGB in 0-255 range.
+/// The resulting XYB values are in a larger range than `linear_rgb_to_xyb` (Y up to ~6.2 for white).
+///
+/// # Arguments
+/// * `r`, `g`, `b` - Linear RGB values (0.0-255.0 range, matching C++ jpegli)
+///
+/// # Returns
+/// (X, Y, B) values in XYB space (Y range approximately 0-6.2 for white)
+#[must_use]
+pub fn linear_rgb_to_xyb_255(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    // Same algorithm as linear_rgb_to_xyb, but input is in 0-255 range like C++
+    let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
+    let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
+
+    let opsin_r = m[0].mul_add(r, m[1].mul_add(g, m[2].mul_add(b, bias)));
+    let opsin_g = m[3].mul_add(r, m[4].mul_add(g, m[5].mul_add(b, bias)));
+    let opsin_b = m[6].mul_add(r, m[7].mul_add(g, m[8].mul_add(b, bias)));
+
+    let opsin_r = opsin_r.max(0.0);
+    let opsin_g = opsin_g.max(0.0);
+    let opsin_b = opsin_b.max(0.0);
+
+    let neg_bias_cbrt = -cbrtf_fast(XYB_OPSIN_ABSORBANCE_BIAS[0]);
+    let cbrt_r = cbrtf_fast(opsin_r) + neg_bias_cbrt;
+    let cbrt_g = cbrtf_fast(opsin_g) + neg_bias_cbrt;
+    let cbrt_b = cbrtf_fast(opsin_b) + neg_bias_cbrt;
+
+    let x = 0.5 * (cbrt_r - cbrt_g);
+    let y = 0.5 * (cbrt_r + cbrt_g);
+
+    (x, y, cbrt_b)
+}
+
 /// Converts XYB to linear RGB.
 #[must_use]
 pub fn xyb_to_linear_rgb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
@@ -354,23 +389,32 @@ pub fn xyb_to_linear_rgb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
     (r, g, b_out)
 }
 
-/// Converts sRGB u8 to XYB.
+/// Converts sRGB u8 to XYB using C++ jpegli conventions.
+///
+/// This matches C++ jpegli's pipeline which uses linear RGB in 0-255 range.
+/// The resulting XYB values are in the larger range (Y up to ~6.2 for white).
 #[must_use]
 pub fn srgb_to_xyb(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    // Convert sRGB to linear (0-1 range from LUT)
     let lr = srgb_u8_to_linear(r);
     let lg = srgb_u8_to_linear(g);
     let lb = srgb_u8_to_linear(b);
-    linear_rgb_to_xyb(lr, lg, lb)
+    // Scale to 0-255 range to match C++ jpegli conventions
+    linear_rgb_to_xyb_255(lr * 255.0, lg * 255.0, lb * 255.0)
 }
 
 /// Converts XYB to sRGB u8.
+///
+/// This handles XYB values in the C++ jpegli convention (larger range).
+/// The inverse linear RGB is in 0-255 range and must be scaled to 0-1 for sRGB conversion.
 #[must_use]
 pub fn xyb_to_srgb(x: f32, y: f32, b: f32) -> (u8, u8, u8) {
     let (lr, lg, lb) = xyb_to_linear_rgb(x, y, b);
+    // Scale from 0-255 back to 0-1 for sRGB conversion
     (
-        linear_to_srgb_u8(lr),
-        linear_to_srgb_u8(lg),
-        linear_to_srgb_u8(lb),
+        linear_to_srgb_u8(lr / 255.0),
+        linear_to_srgb_u8(lg / 255.0),
+        linear_to_srgb_u8(lb / 255.0),
     )
 }
 
@@ -556,6 +600,9 @@ fn cbrtf_x8(x: f32x8) -> f32x8 {
 /// # Arguments
 /// * `pixels` - Mutable slice of [R, G, B] linear RGB values (0.0-1.0).
 ///              After conversion, contains [X, Y, B] XYB values.
+///
+/// NOTE: This uses 0-1 linear RGB range. For C++ jpegli compatibility,
+/// use `linear_rgb_to_xyb_simd_255` which expects 0-255 range.
 pub fn linear_rgb_to_xyb_simd(pixels: &mut [[f32; 3]]) {
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
     let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
@@ -637,22 +684,104 @@ pub fn linear_rgb_to_xyb_simd(pixels: &mut [[f32; 3]]) {
     }
 }
 
+/// SIMD linear RGB (0-255 range) to XYB conversion for a batch of pixels (in-place).
+///
+/// This is the C++ jpegli compatible version that expects linear RGB in 0-255 range.
+/// Processes 8 pixels at a time using f32x8 SIMD.
+///
+/// # Arguments
+/// * `pixels` - Mutable slice of [R, G, B] linear RGB values (0.0-255.0).
+///              After conversion, contains [X, Y, B] XYB values (larger range than 0-1 input).
+pub fn linear_rgb_to_xyb_simd_255(pixels: &mut [[f32; 3]]) {
+    let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
+    let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
+
+    let neg_bias_cbrt = -cbrtf_fast(bias);
+
+    let m00 = f32x8::splat(m[0]);
+    let m01 = f32x8::splat(m[1]);
+    let m02 = f32x8::splat(m[2]);
+    let m10 = f32x8::splat(m[3]);
+    let m11 = f32x8::splat(m[4]);
+    let m12 = f32x8::splat(m[5]);
+    let m20 = f32x8::splat(m[6]);
+    let m21 = f32x8::splat(m[7]);
+    let m22 = f32x8::splat(m[8]);
+    let bias_simd = f32x8::splat(bias);
+    let zero = f32x8::splat(0.0);
+    let neg_bias_cbrt_simd = f32x8::splat(neg_bias_cbrt);
+    let half = f32x8::splat(0.5);
+
+    let chunks_8 = pixels.len() / 8;
+
+    for chunk_idx in 0..chunks_8 {
+        let base = chunk_idx * 8;
+
+        let mut r_arr = [0.0f32; 8];
+        let mut g_arr = [0.0f32; 8];
+        let mut b_arr = [0.0f32; 8];
+
+        for i in 0..8 {
+            let p = pixels[base + i];
+            r_arr[i] = p[0];
+            g_arr[i] = p[1];
+            b_arr[i] = p[2];
+        }
+
+        let r = f32x8::new(r_arr);
+        let g = f32x8::new(g_arr);
+        let b = f32x8::new(b_arr);
+
+        let mut opsin0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias_simd)));
+        let mut opsin1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias_simd)));
+        let mut opsin2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias_simd)));
+
+        opsin0 = opsin0.max(zero);
+        opsin1 = opsin1.max(zero);
+        opsin2 = opsin2.max(zero);
+
+        opsin0 = cbrtf_x8(opsin0) + neg_bias_cbrt_simd;
+        opsin1 = cbrtf_x8(opsin1) + neg_bias_cbrt_simd;
+        opsin2 = cbrtf_x8(opsin2) + neg_bias_cbrt_simd;
+
+        let x = half * (opsin0 - opsin1);
+        let y = half * (opsin0 + opsin1);
+        let b_out = opsin2;
+
+        let x_arr: [f32; 8] = x.into();
+        let y_arr: [f32; 8] = y.into();
+        let b_arr: [f32; 8] = b_out.into();
+
+        for i in 0..8 {
+            pixels[base + i] = [x_arr[i], y_arr[i], b_arr[i]];
+        }
+    }
+
+    // Scalar fallback for remainder - uses 0-255 version
+    let scalar_start = chunks_8 * 8;
+    for pix in &mut pixels[scalar_start..] {
+        let (x, y, b) = linear_rgb_to_xyb_255(pix[0], pix[1], pix[2]);
+        *pix = [x, y, b];
+    }
+}
+
 /// SIMD sRGB u8 to XYB conversion for a batch of pixels.
 ///
 /// Converts sRGB u8 input to XYB f32 output using SIMD acceleration.
-/// This is the full conversion chain: sRGB u8 → linear → XYB.
+/// This is the full conversion chain: sRGB u8 → linear (0-255) → XYB.
+/// Uses C++ jpegli conventions with 0-255 linear RGB range.
 pub fn srgb_to_xyb_batch(input: &[[u8; 3]], output: &mut [[f32; 3]]) {
     assert_eq!(input.len(), output.len());
 
-    // Convert to linear RGB first
+    // Convert to linear RGB in 0-255 range (matching C++ jpegli conventions)
     for (inp, out) in input.iter().zip(output.iter_mut()) {
-        out[0] = srgb_u8_to_linear(inp[0]);
-        out[1] = srgb_u8_to_linear(inp[1]);
-        out[2] = srgb_u8_to_linear(inp[2]);
+        out[0] = srgb_u8_to_linear(inp[0]) * 255.0;
+        out[1] = srgb_u8_to_linear(inp[1]) * 255.0;
+        out[2] = srgb_u8_to_linear(inp[2]) * 255.0;
     }
 
-    // Apply SIMD XYB conversion
-    linear_rgb_to_xyb_simd(output);
+    // Apply SIMD XYB conversion (expects 0-255 linear RGB)
+    linear_rgb_to_xyb_simd_255(output);
 }
 
 /// Converts XYB planes to RGB buffer.
@@ -906,12 +1035,15 @@ mod tests {
         for v in test_values {
             let cbrt = cbrtf_fast(v);
             let back = cbrt * cbrt * cbrt;
+            // Use relative tolerance for larger values, absolute for small
+            let tolerance = if v > 1.0 { v * 1e-6 } else { 1e-5 };
             assert!(
-                (v - back).abs() < 1e-5,
-                "Roundtrip failed for {}: cbrt={}, back={}",
+                (v - back).abs() < tolerance,
+                "Roundtrip failed for {}: cbrt={}, back={}, error={}",
                 v,
                 cbrt,
-                back
+                back,
+                (v - back).abs()
             );
         }
     }
