@@ -38,6 +38,19 @@ pub fn additional_bits(value: i16) -> u16 {
     }
 }
 
+/// Returns the additional bits for a value given its pre-computed category.
+/// Avoids recomputing category when it's already known.
+#[inline]
+#[must_use]
+pub fn additional_bits_with_cat(value: i16, cat: u8) -> u16 {
+    if value >= 0 {
+        value as u16
+    } else {
+        // For negative values, encode as (value - 1) in one's complement
+        (value - 1) as u16 & ((1u16 << cat) - 1)
+    }
+}
+
 /// Reconstructs a value from category and additional bits.
 #[inline]
 #[must_use]
@@ -156,7 +169,7 @@ impl EntropyEncoder {
         self.writer.write_bits(code, len);
 
         if dc_cat > 0 {
-            let additional = additional_bits(dc_diff);
+            let additional = additional_bits_with_cat(dc_diff, dc_cat);
             self.writer.write_bits(additional as u32, dc_cat);
         }
 
@@ -181,7 +194,7 @@ impl EntropyEncoder {
                 let (code, len) = ac_table.encode(symbol);
                 self.writer.write_bits(code, len);
 
-                let additional = additional_bits(ac);
+                let additional = additional_bits_with_cat(ac, ac_cat);
                 self.writer.write_bits(additional as u32, ac_cat);
 
                 run = 0;
@@ -264,7 +277,7 @@ impl EntropyEncoder {
             self.writer.write_bits(code, len);
 
             if dc_cat > 0 {
-                let additional = additional_bits(dc_diff);
+                let additional = additional_bits_with_cat(dc_diff, dc_cat);
                 self.writer.write_bits(additional as u32, dc_cat);
             }
         }
