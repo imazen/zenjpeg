@@ -149,6 +149,7 @@ fn dct1d_8(mem: &mut [f32]) {
 
 /// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
 #[cfg(not(feature = "simd"))]
+#[inline]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
         let mut tmp = [0.0f32; 8];
@@ -322,6 +323,7 @@ mod simd {
 
     /// SIMD-optimized 8x8 transpose.
     /// Uses proper 8x8 transpose algorithm.
+    #[inline]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load all 8 rows as arrays for direct indexing
         let a0 = &input[0..8];
@@ -351,6 +353,7 @@ mod simd {
 /// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
 /// Uses row-major processing for good cache locality
 #[cfg(feature = "simd")]
+#[inline]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
     // Process rows sequentially (good cache access pattern)
     // The DCT algorithm doesn't parallelize well within a single row
