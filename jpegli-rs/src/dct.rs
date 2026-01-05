@@ -274,13 +274,30 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     #[cfg(not(feature = "simd"))]
     transpose_8x8(&scratch, &mut coefficients);
 
-    // Apply 1/8 scaling for JPEG decoder compatibility
+    // Apply 1/8 scaling for JPEG decoder compatibility (SIMD-optimized)
     // Note: C++ jpegli applies 1/8 per dimension (1/64 total), but standard JPEG
     // decoders like libjpeg/jpeg-decoder expect 1/8 total scaling.
     // Using 1/64 here breaks compatibility (decoded values are 8× too small).
-    let scale = 1.0 / 8.0;
-    for v in &mut coefficients {
-        *v *= scale;
+    #[cfg(feature = "simd")]
+    {
+        let scale = f32x8::splat(1.0 / 8.0);
+        for chunk in 0..8 {
+            let k = chunk * 8;
+            let v = f32x8::from([
+                coefficients[k], coefficients[k + 1], coefficients[k + 2], coefficients[k + 3],
+                coefficients[k + 4], coefficients[k + 5], coefficients[k + 6], coefficients[k + 7],
+            ]);
+            let scaled = v * scale;
+            let arr: [f32; 8] = scaled.into();
+            coefficients[k..k + 8].copy_from_slice(&arr);
+        }
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        let scale = 1.0 / 8.0;
+        for v in &mut coefficients {
+            *v *= scale;
+        }
     }
 
     coefficients
