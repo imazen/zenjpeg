@@ -78,7 +78,7 @@ fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
     decode_zune(data).ok()
 }
 
-struct Result {
+struct EncodeResult {
     size: usize,
     ssim2: f64,
 }
@@ -91,7 +91,7 @@ fn test_rust(
     use_xyb: bool,
     optimize: bool,
     quality: u8,
-) -> Option<Result> {
+) -> Option<EncodeResult> {
     let jpeg = Encoder::new()
         .width(width as u32)
         .height(height as u32)
@@ -110,7 +110,7 @@ fn test_rust(
     let decoded = decode_jpeg(&jpeg)?;
     let ssim2 = compute_ssim2(rgb, &decoded, width, height);
 
-    Some(Result {
+    Some(EncodeResult {
         size: jpeg.len(),
         ssim2,
     })
@@ -125,7 +125,7 @@ fn test_cpp(
     orig_rgb: &[u8],
     width: usize,
     height: usize,
-) -> Option<Result> {
+) -> Option<EncodeResult> {
     let cjpegli = jpegli::test_utils::find_cjpegli()?;
     let output = "/tmp/cpp_matrix_test.jpg";
 
@@ -154,7 +154,7 @@ fn test_cpp(
     let decoded = decode_jpeg(&jpeg)?;
     let ssim2 = compute_ssim2(orig_rgb, &decoded, width, height);
 
-    Some(Result {
+    Some(EncodeResult {
         size: jpeg.len(),
         ssim2,
     })

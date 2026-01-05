@@ -6,6 +6,9 @@
 //! XYB decoding requires ICC profile application. This benchmark uses:
 //! - For YCbCr: standard jpeg-decoder (no color management needed)
 //! - For XYB: jpeg-decoder + ICC profile application via jpegli::icc
+//!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --pareto --output results.csv image.png
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,7 +55,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    Some((rgb, info.0, info.1))
+    Some((rgb, info.width, info.height))
 }
 
 fn encode_with_cjpegli(
@@ -100,7 +103,7 @@ fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    Some((rgb, info.0 as u32, info.1 as u32))
+    Some((rgb, info.width as u32, info.height as u32))
 }
 
 /// Decode XYB JPEG with ICC profile application.
@@ -122,8 +125,8 @@ fn decode_jpeg_with_icc(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    let width = info.0 as u32;
-    let height = info.1 as u32;
+    let width = info.width as u32;
+    let height = info.height as u32;
 
     // Apply ICC profile if present (required for XYB)
     let output = if let Some(ref profile) = icc_profile {

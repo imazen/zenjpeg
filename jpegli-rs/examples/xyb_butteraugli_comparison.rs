@@ -1,5 +1,8 @@
 //! Compare XYB vs YCbCr using Butteraugli (the metric XYB is designed for).
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --metric butteraugli image.png
+//!
 //! Usage: cargo run --release --example xyb_butteraugli_comparison
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};

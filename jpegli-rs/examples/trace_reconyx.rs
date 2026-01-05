@@ -235,16 +235,16 @@ fn main() {
         }
     }
 
-    // Compare with jpeg-decoder
-    println!("\n--- jpeg-decoder ---");
+    // Compare with zune-jpeg
+    println!("\n--- zune-jpeg ---");
     let mut ref_dec = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&data[..]));
     match ref_dec.decode() {
         Ok(pixels) => {
-            let info = ref_dec.dimensions().unwrap();
+            let (w, h) = ref_dec.dimensions().unwrap();
             println!(
                 "SUCCESS: {}x{}, {} bytes",
-                info.0,
-                info.1,
+                w,
+                h,
                 pixels.len()
             );
         }

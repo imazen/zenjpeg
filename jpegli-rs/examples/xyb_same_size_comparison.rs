@@ -3,6 +3,9 @@
 //! This is the correct way to measure XYB efficiency - same file size, compare quality.
 //! Uses all three metrics: DSSIM, SSIMULACRA2, and Butteraugli.
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --same-size image.png
+//!
 //! Usage: cargo run --release --example xyb_same_size_comparison
 
 use jpegli::icc::{apply_icc_transform, extract_icc_profile};

@@ -36,20 +36,19 @@ fn main() {
         }
     };
 
-    // Decode with jpeg-decoder
-    println!("\n=== jpeg-decoder ===");
+    // Decode with zune-jpeg
+    println!("\n=== zune-jpeg ===");
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]));
     let jpeg_decoder_result = decoder.decode();
     let jpeg_decoder_pixels = match &jpeg_decoder_result {
         Ok(pixels) => {
-            let info = decoder.dimensions().unwrap();
+            let (w, h) = decoder.dimensions().unwrap();
             println!(
                 "Decoded: {}x{}, {} bytes",
-                info.0,
-                info.1,
+                w,
+                h,
                 pixels.len()
             );
-            println!("Pixel format: {:?}", info.pixel_format);
             Some(pixels)
         }
         Err(e) => {

@@ -1,4 +1,7 @@
 //! Dump Huffman table details from JPEG
+//!
+//! **DEPRECATED**: Use `jpeg_inspect` instead:
+//!   cargo run --release --example jpeg_inspect -- --huffman image.jpg
 
 use jpegli::encode::Encoder;
 use jpegli::quant::Quality;

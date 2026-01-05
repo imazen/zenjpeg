@@ -1,4 +1,7 @@
 //! Dump actual Huffman codes from DHT markers to compare Rust vs C++.
+//!
+//! **DEPRECATED**: Use `jpeg_inspect` instead:
+//!   cargo run --release --example jpeg_inspect -- --huffman --compare other.jpg image.jpg
 
 use std::fs;
 

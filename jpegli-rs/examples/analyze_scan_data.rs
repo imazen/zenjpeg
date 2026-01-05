@@ -1,4 +1,7 @@
 //! Analyze scan data between SOS markers to find extraneous bytes.
+//!
+//! **DEPRECATED**: Use `jpeg_inspect` instead:
+//!   cargo run --release --example jpeg_inspect -- --scans --compare other.jpg image.jpg
 
 use std::fs;
 

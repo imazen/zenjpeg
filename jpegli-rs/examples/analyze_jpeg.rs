@@ -1,3 +1,8 @@
+//! Analyze JPEG marker structure
+//!
+//! **DEPRECATED**: Use `jpeg_inspect` instead:
+//!   cargo run --release --example jpeg_inspect -- image.jpg
+
 /// Analyze JPEG marker structure
 fn main() {
     let path = std::env::args().nth(1).unwrap_or("/tmp/test_noise64.jpg".to_string());

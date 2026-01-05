@@ -47,15 +47,15 @@ fn main() {
     println!("mozjpeg output: {} bytes", moz_jpeg.len());
     fs::write("/tmp/test_mozjpeg.jpg", &moz_jpeg).unwrap();
 
-    // Decode with jpeg-decoder
-    println!("\n=== Decoding mozjpeg output with jpeg-decoder ===");
+    // Decode with zune-jpeg
+    println!("\n=== Decoding mozjpeg output with zune-jpeg ===");
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&moz_jpeg[..]));
-    let moz_decoded = decoder.decode().expect("jpeg-decoder failed");
-    let info = decoder.dimensions().unwrap();
+    let moz_decoded = decoder.decode().expect("zune-jpeg failed");
+    let (dec_w, dec_h) = decoder.dimensions().unwrap();
     println!(
-        "jpeg-decoder: {}x{}, {} bytes",
-        info.0,
-        info.1,
+        "zune-jpeg: {}x{}, {} bytes",
+        dec_w,
+        dec_h,
         moz_decoded.len()
     );
     println!(
@@ -95,22 +95,22 @@ fn main() {
     println!("jpegli-rs output: {} bytes", jpegli_jpeg.len());
     fs::write("/tmp/test_jpegli.jpg", &jpegli_jpeg).unwrap();
 
-    // Decode our output with jpeg-decoder
-    println!("\n=== Decoding jpegli-rs output with jpeg-decoder ===");
+    // Decode our output with zune-jpeg
+    println!("\n=== Decoding jpegli-rs output with zune-jpeg ===");
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpegli_jpeg[..]));
     match decoder.decode() {
         Ok(decoded) => {
-            let info = decoder.dimensions().unwrap();
+            let (zw, zh) = decoder.dimensions().unwrap();
             println!(
-                "jpeg-decoder: {}x{}, {} bytes",
-                info.0,
-                info.1,
+                "zune-jpeg: {}x{}, {} bytes",
+                zw,
+                zh,
                 decoded.len()
             );
             println!("First few pixels: {:?}", &decoded[..12.min(decoded.len())]);
         }
         Err(e) => {
-            println!("jpeg-decoder FAILED: {:?}", e);
+            println!("zune-jpeg FAILED: {:?}", e);
         }
     }
 

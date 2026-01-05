@@ -5,6 +5,9 @@
 //! 2. Rust YCbCr vs C++ YCbCr (implementation gap)
 //! 3. XYB vs YCbCr (color space efficiency gap)
 //!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --pareto image.png
+//!
 //! Usage: cargo run --release --example xyb_vs_ycbcr_comparison
 
 use dssim::Dssim;

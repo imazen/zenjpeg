@@ -17,8 +17,8 @@ fn main() {
 
     println!("=== Test 1: Standard (IJG) Huffman Tables ===");
     let jpeg_standard = Encoder::new()
-        .width(info.0)
-        .height(info.1)
+        .width(info.width)
+        .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(false) // Use standard IJG tables
@@ -35,8 +35,8 @@ fn main() {
 
     println!("=== Test 2: Optimized Huffman Tables ===");
     let jpeg_optimized = Encoder::new()
-        .width(info.0)
-        .height(info.1)
+        .width(info.width)
+        .height(info.height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(true) // Build image-specific tables

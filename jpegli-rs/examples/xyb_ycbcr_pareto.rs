@@ -1,6 +1,10 @@
 //! Pareto curve analysis: XYB vs YCbCr, Rust vs C++
 //!
 //! Creates size vs quality curves to properly compare encoders.
+//!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --pareto --output results.csv image.png
+//!
 //! Usage: cargo run --release --example xyb_ycbcr_pareto
 
 use dssim::Dssim;

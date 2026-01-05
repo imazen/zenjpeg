@@ -1,6 +1,9 @@
 //! Compare jpegli and mozjpeg quality/size at various quality levels.
 //!
 //! Uses DSSIM to measure perceptual quality against the original image.
+//!
+//! **DEPRECATED**: Use `quality_compare` instead:
+//!   cargo run --release --example quality_compare -- --encoder jpegli-ycbcr --encoder cmozjpeg image.png
 
 use dssim::Dssim;
 use rgb::RGBA8;
@@ -104,7 +107,7 @@ fn decode_jpeg_to_rgb(data: &[u8]) -> (Vec<u8>, u32, u32) {
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().expect("JPEG decode failed");
     let info = decoder.dimensions().unwrap();
-    (pixels, info.0 as u32, info.1 as u32)
+    (pixels, info.width as u32, info.height as u32)
 }
 
 fn main() {

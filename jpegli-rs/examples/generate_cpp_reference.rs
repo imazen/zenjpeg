@@ -79,7 +79,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    Some((rgb, info.0, info.1))
+    Some((rgb, info.width, info.height))
 }
 
 fn encode_with_cjpegli(cjpegli_path: &str, input_path: &Path, quality: u8) -> Option<Vec<u8>> {
@@ -116,7 +116,7 @@ fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    Some((rgb, info.0 as u32, info.1 as u32))
+    Some((rgb, info.width as u32, info.height as u32))
 }
 
 fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
