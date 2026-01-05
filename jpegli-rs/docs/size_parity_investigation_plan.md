@@ -12,14 +12,66 @@ After fixing AC refinement encoding for djpeg compatibility, we have excellent p
 
 | Config | Size Diff | Priority |
 |--------|-----------|----------|
-| YCbCr Baseline + Opt Huffman | +1.9% to +2.9% | Medium |
-| XYB Baseline + Fixed Huffman | +14% to +15% (small images) | High |
-| XYB Baseline + Opt Huffman | +0.0% to +1.1% | Low |
+| XYB Baseline + Fixed Huffman | +14% to +15% (small images) | **HIGH** |
 | XYB Progressive + Opt Huffman | +0.2% to +5.7% | Medium |
+| XYB Baseline + Opt Huffman | +0.0% to +1.1% | Low |
+| YCbCr Baseline + Opt Huffman | +1.9% to +2.9% | Low |
 
 ---
 
-## Investigation 1: YCbCr Baseline Optimized Huffman (+1.9% to +2.9%)
+## Investigation 1: XYB Color Conversion (FMA Issues) - **HIGH PRIORITY**
+
+### Hypothesis
+XYB color conversion involves many floating-point operations where FMA (fused multiply-add)
+can produce slightly different results than separate multiply + add. This affects:
+- `srgb_to_linear()` - gamma curve with pow()
+- `linear_rgb_to_xyb()` - matrix multiplication with opsin bias
+- `scale_xyb()` - scaling for JPEG range
+
+Small per-pixel differences accumulate across the image, producing different DCT coefficients.
+
+### Investigation Steps
+
+1. **Check FMA usage in Rust vs C++**
+   - Rust: Check if `#[cfg(target_feature = "fma")]` affects results
+   - C++: Check Highway SIMD FMA usage in `enc_xyb.cc`
+   - Compare with `-C target-cpu=native` vs without
+
+2. **Compare XYB pipeline step-by-step**
+   ```rust
+   // For a few test pixels, compare:
+   // Step 1: srgb_to_linear(r, g, b) -> (lr, lg, lb)
+   // Step 2: linear_rgb_to_xyb(lr, lg, lb) -> (x, y, b)
+   // Step 3: scale_xyb(x, y, b) -> (sx, sy, sb)
+   // Report: max/mean diff at each stage
+   ```
+
+3. **Test specific FMA-sensitive operations**
+   - Matrix multiply: `a*x + b*y + c*z + bias`
+   - Cube root approximation
+   - Gamma curve pow(x, 2.4) and pow(x, 1/2.4)
+
+4. **Compare with forced scalar operations**
+   - Disable SIMD in both Rust and C++
+   - Compare scalar-only results
+
+### Files to Examine
+- `jpegli-rs/src/xyb.rs` - Rust XYB implementation
+- `jpegli-cpp/lib/jxl/enc_xyb.cc` - C++ reference
+- `jpegli-cpp/lib/jxl/enc_xyb-inl.h` - C++ SIMD implementation
+
+### Tool to Create: `examples/compare_xyb_pipeline.rs`
+```rust
+// Compare XYB conversion step-by-step for specific pixel values
+// Report differences at each stage to identify where divergence occurs
+```
+
+### Expected Outcome
+Identify whether FMA or other floating-point differences cause XYB coefficient divergence.
+
+---
+
+## Investigation 2: YCbCr Baseline Optimized Huffman (+1.9% to +2.9%)
 
 ### Hypothesis
 The Huffman optimization algorithm produces slightly different code assignments than C++ jpegli, resulting in marginally larger files.
@@ -194,9 +246,10 @@ Detailed Huffman table comparison:
 
 ## Priority Order
 
-1. **YCbCr Baseline Opt** - Most impactful, likely simple Huffman difference
-2. **XYB Baseline Fixed** - Large gap on small images, likely quant/color issue
-3. **XYB Progressive** - May be resolved by fixing #1 and #2
+1. **XYB Color Conversion (FMA)** - Root cause of XYB gaps, affects all XYB modes
+2. **XYB Baseline Fixed** - Large gap on small images, likely resolved by #1
+3. **XYB Progressive** - May be resolved by fixing #1
+4. **YCbCr Baseline Opt** - Low priority, small gap, likely Huffman tie-breaking
 
 ---
 
@@ -205,3 +258,86 @@ Detailed Huffman table comparison:
 - Progressive YCbCr with optimized Huffman already has 0.0% gap - this is our reference for "correct" behavior
 - Fixed Huffman YCbCr baseline also has 0.0% gap - quantization and DCT are correct
 - The gaps appear specifically when Huffman optimization is involved (YCbCr) or XYB mode is used
+
+---
+
+## Example Consolidation Plan
+
+### Current State: 170 examples
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| debug_*.rs / trace_*.rs | 52 | Investigation artifacts |
+| compare_*.rs | 27 | Many overlap in functionality |
+| test_*.rs | 24 | Should be actual tests, not examples |
+| xyb_*.rs | 14 | XYB-specific, some redundant |
+| analyze_*.rs / check_*.rs | 12 | Various analysis tools |
+| benchmark_*.rs | 6 | Performance measurement |
+| Other | ~35 | Mixed utility |
+
+### Essential Examples to Keep (~15)
+
+**Core Comparison Tools:**
+- `comprehensive_matrix.rs` - Full config matrix comparison (KEEP)
+- `corpus_comparison.rs` - Multi-image corpus analysis (KEEP)
+- `binary_compare.rs` - Byte-level diff for debugging (KEEP)
+
+**Benchmarks:**
+- `encode_benchmark.rs` - Encoding performance (KEEP)
+- `decode_benchmark.rs` - Decoding performance (KEEP)
+- `benchmark_decoders.rs` - Multi-decoder comparison (KEEP)
+
+**Quality Analysis:**
+- `pareto_comparison.rs` - Size vs quality tradeoff (KEEP)
+
+**XYB Tools:**
+- `xyb_cpp_comparison.rs` - XYB parity verification (KEEP)
+- `encode_xyb.rs` - Simple XYB encoding example (KEEP)
+
+**Huffman:**
+- `dump_huffman_codes.rs` - DHT inspection (KEEP)
+- `huffman_corpus_validation.rs` - Huffman correctness (KEEP)
+
+**Utilities:**
+- `roundtrip_corpus.rs` - Batch roundtrip testing (KEEP)
+
+### Candidates for Removal (~100+)
+
+**Debug artifacts (can be deleted):**
+- `debug_50x50.rs`, `debug_compare_49_50.rs` - Size-specific debugging
+- `debug_block_*.rs`, `debug_byte_trace.rs` - Low-level tracing
+- `debug_decode_*.rs` (10+ files) - Decoder debugging
+- `debug_refine_*.rs` - AC refinement debugging (fixed now)
+- `trace_*.rs` (6 files) - Various tracing
+
+**Redundant comparisons (consolidate):**
+- `compare_baseline_dssim.rs` → merge into `comprehensive_matrix.rs`
+- `compare_progressive_dssim.rs` → merge into `comprehensive_matrix.rs`
+- `compare_baseline_progressive.rs` → covered by `comprehensive_matrix.rs`
+- `compare_baseline_vs_progressive.rs` → duplicate
+- `compare_progressive_decoders.rs` → merge into `benchmark_decoders.rs`
+
+**Should be tests, not examples:**
+- `test_*.rs` files → move to tests/ directory
+- `validate_*.rs`, `verify_*.rs` → move to tests/
+
+**XYB consolidation:**
+- Keep: `xyb_cpp_comparison.rs`, `encode_xyb.rs`
+- Merge others into a single `xyb_analysis.rs` or tests
+
+### Action Items
+
+1. [ ] Delete obvious debug artifacts (debug_50x50.rs, etc.)
+2. [ ] Move test_*.rs files to tests/ directory
+3. [ ] Consolidate compare_*_dssim.rs into comprehensive_matrix.rs
+4. [ ] Consolidate XYB examples
+5. [ ] Review remaining and delete unused
+6. [ ] Update Cargo.toml to remove deleted examples
+
+### Untracked Files Status
+
+| File | Action | Reason |
+|------|--------|--------|
+| `compare_baseline_dssim.rs` | DELETE | Covered by comprehensive_matrix |
+| `compare_progressive_dssim.rs` | DELETE | Covered by comprehensive_matrix |
+| `trace_scan10.rs` (modified) | KEEP | Useful for scan debugging |
