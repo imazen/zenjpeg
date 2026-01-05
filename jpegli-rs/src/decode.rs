@@ -1676,11 +1676,12 @@ impl<'a> JpegParser<'a> {
                     // XYB mode: Output raw level-shifted values, NO YCbCr→RGB conversion.
                     // The XYB values are stored in YCbCr positions but are NOT YCbCr.
                     // The ICC profile transforms these directly to sRGB.
-                    for i in 0..output_size {
-                        rgb[i * 3] = (planes_f32[0][i] + 128.0).clamp(0.0, 255.0) as u8;
-                        rgb[i * 3 + 1] = (planes_f32[1][i] + 128.0).clamp(0.0, 255.0) as u8;
-                        rgb[i * 3 + 2] = (planes_f32[2][i] + 128.0).clamp(0.0, 255.0) as u8;
-                    }
+                    crate::encode_simd::xyb_planes_to_rgb_u8_simd(
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
+                    );
                 } else {
                     // YCbCr to RGB conversion using batch function
                     ycbcr_planes_f32_to_rgb_u8(
@@ -1928,11 +1929,12 @@ impl<'a> JpegParser<'a> {
 
                 if is_xyb {
                     // XYB mode: Output raw level-shifted values, normalized to 0.0-1.0
-                    for i in 0..output_size {
-                        rgb[i * 3] = ((planes_f32[0][i] + 128.0) / 255.0).clamp(0.0, 1.0);
-                        rgb[i * 3 + 1] = ((planes_f32[1][i] + 128.0) / 255.0).clamp(0.0, 1.0);
-                        rgb[i * 3 + 2] = ((planes_f32[2][i] + 128.0) / 255.0).clamp(0.0, 1.0);
-                    }
+                    crate::encode_simd::xyb_planes_to_rgb_f32_simd(
+                        &planes_f32[0],
+                        &planes_f32[1],
+                        &planes_f32[2],
+                        &mut rgb,
+                    );
                 } else {
                     // YCbCr to RGB conversion using batch function
                     ycbcr_planes_f32_to_rgb_f32(

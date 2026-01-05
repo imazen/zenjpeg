@@ -592,19 +592,83 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
     const CR_TO_G: f32 = -0.714136;
     const CB_TO_B: f32 = 1.772;
 
-    for i in 0..num_pixels {
-        let y = y_plane[i];
-        let cb = cb_plane[i];
-        let cr = cr_plane[i];
+    #[cfg(feature = "simd")]
+    {
+        let cr_to_r = f32x8::splat(CR_TO_R);
+        let cb_to_g = f32x8::splat(CB_TO_G);
+        let cr_to_g = f32x8::splat(CR_TO_G);
+        let cb_to_b = f32x8::splat(CB_TO_B);
+        let offset = f32x8::splat(128.0);
+        let scale = f32x8::splat(1.0 / 255.0);
+        let zero = f32x8::splat(0.0);
+        let one = f32x8::splat(1.0);
 
-        let r = y + CR_TO_R * cr;
-        let g = y + CB_TO_G * cb + CR_TO_G * cr;
-        let b = y + CB_TO_B * cb;
+        let chunks = num_pixels / 8;
+        for chunk in 0..chunks {
+            let base = chunk * 8;
+            let y = f32x8::from([
+                y_plane[base], y_plane[base + 1], y_plane[base + 2], y_plane[base + 3],
+                y_plane[base + 4], y_plane[base + 5], y_plane[base + 6], y_plane[base + 7],
+            ]);
+            let cb = f32x8::from([
+                cb_plane[base], cb_plane[base + 1], cb_plane[base + 2], cb_plane[base + 3],
+                cb_plane[base + 4], cb_plane[base + 5], cb_plane[base + 6], cb_plane[base + 7],
+            ]);
+            let cr = f32x8::from([
+                cr_plane[base], cr_plane[base + 1], cr_plane[base + 2], cr_plane[base + 3],
+                cr_plane[base + 4], cr_plane[base + 5], cr_plane[base + 6], cr_plane[base + 7],
+            ]);
 
-        let idx = i * 3;
-        rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
-        rgb[idx + 1] = ((g + 128.0) / 255.0).clamp(0.0, 1.0);
-        rgb[idx + 2] = ((b + 128.0) / 255.0).clamp(0.0, 1.0);
+            // YCbCr to RGB, level shift, normalize to 0-1
+            let r = ((y + cr_to_r * cr + offset) * scale).max(zero).min(one);
+            let g = ((y + cb_to_g * cb + cr_to_g * cr + offset) * scale).max(zero).min(one);
+            let b = ((y + cb_to_b * cb + offset) * scale).max(zero).min(one);
+
+            let r_arr: [f32; 8] = r.into();
+            let g_arr: [f32; 8] = g.into();
+            let b_arr: [f32; 8] = b.into();
+
+            for j in 0..8 {
+                let idx = (base + j) * 3;
+                rgb[idx] = r_arr[j];
+                rgb[idx + 1] = g_arr[j];
+                rgb[idx + 2] = b_arr[j];
+            }
+        }
+
+        // Scalar remainder
+        for i in (chunks * 8)..num_pixels {
+            let y = y_plane[i];
+            let cb = cb_plane[i];
+            let cr = cr_plane[i];
+
+            let r = y + CR_TO_R * cr;
+            let g = y + CB_TO_G * cb + CR_TO_G * cr;
+            let b = y + CB_TO_B * cb;
+
+            let idx = i * 3;
+            rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
+            rgb[idx + 1] = ((g + 128.0) / 255.0).clamp(0.0, 1.0);
+            rgb[idx + 2] = ((b + 128.0) / 255.0).clamp(0.0, 1.0);
+        }
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        for i in 0..num_pixels {
+            let y = y_plane[i];
+            let cb = cb_plane[i];
+            let cr = cr_plane[i];
+
+            let r = y + CR_TO_R * cr;
+            let g = y + CB_TO_G * cb + CR_TO_G * cr;
+            let b = y + CB_TO_B * cb;
+
+            let idx = i * 3;
+            rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
+            rgb[idx + 1] = ((g + 128.0) / 255.0).clamp(0.0, 1.0);
+            rgb[idx + 2] = ((b + 128.0) / 255.0).clamp(0.0, 1.0);
+        }
     }
 }
 
@@ -674,12 +738,53 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
 pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
-    for (i, &y) in y_plane.iter().enumerate() {
-        let val = ((y + 128.0) / 255.0).clamp(0.0, 1.0);
-        let idx = i * 3;
-        rgb[idx] = val;
-        rgb[idx + 1] = val;
-        rgb[idx + 2] = val;
+    let num_pixels = y_plane.len();
+
+    #[cfg(feature = "simd")]
+    {
+        let offset = f32x8::splat(128.0);
+        let scale = f32x8::splat(1.0 / 255.0);
+        let zero = f32x8::splat(0.0);
+        let one = f32x8::splat(1.0);
+
+        let chunks = num_pixels / 8;
+        for chunk in 0..chunks {
+            let base = chunk * 8;
+            let y = f32x8::from([
+                y_plane[base], y_plane[base + 1], y_plane[base + 2], y_plane[base + 3],
+                y_plane[base + 4], y_plane[base + 5], y_plane[base + 6], y_plane[base + 7],
+            ]);
+
+            let val = ((y + offset) * scale).max(zero).min(one);
+            let arr: [f32; 8] = val.into();
+
+            for j in 0..8 {
+                let idx = (base + j) * 3;
+                rgb[idx] = arr[j];
+                rgb[idx + 1] = arr[j];
+                rgb[idx + 2] = arr[j];
+            }
+        }
+
+        // Remainder
+        for i in (chunks * 8)..num_pixels {
+            let val = ((y_plane[i] + 128.0) / 255.0).clamp(0.0, 1.0);
+            let idx = i * 3;
+            rgb[idx] = val;
+            rgb[idx + 1] = val;
+            rgb[idx + 2] = val;
+        }
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        for (i, &y) in y_plane.iter().enumerate() {
+            let val = ((y + 128.0) / 255.0).clamp(0.0, 1.0);
+            let idx = i * 3;
+            rgb[idx] = val;
+            rgb[idx + 1] = val;
+            rgb[idx + 2] = val;
+        }
     }
 }
 
@@ -737,8 +842,39 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
 pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
     debug_assert_eq!(y_plane.len(), output.len());
 
-    for (y, out) in y_plane.iter().zip(output.iter_mut()) {
-        *out = ((*y + 128.0) / 255.0).clamp(0.0, 1.0);
+    let num_pixels = y_plane.len();
+
+    #[cfg(feature = "simd")]
+    {
+        let offset = f32x8::splat(128.0);
+        let scale = f32x8::splat(1.0 / 255.0);
+        let zero = f32x8::splat(0.0);
+        let one = f32x8::splat(1.0);
+
+        let chunks = num_pixels / 8;
+        for chunk in 0..chunks {
+            let base = chunk * 8;
+            let y = f32x8::from([
+                y_plane[base], y_plane[base + 1], y_plane[base + 2], y_plane[base + 3],
+                y_plane[base + 4], y_plane[base + 5], y_plane[base + 6], y_plane[base + 7],
+            ]);
+
+            let val = ((y + offset) * scale).max(zero).min(one);
+            let arr: [f32; 8] = val.into();
+            output[base..base + 8].copy_from_slice(&arr);
+        }
+
+        // Remainder
+        for i in (chunks * 8)..num_pixels {
+            output[i] = ((y_plane[i] + 128.0) / 255.0).clamp(0.0, 1.0);
+        }
+    }
+
+    #[cfg(not(feature = "simd"))]
+    {
+        for (y, out) in y_plane.iter().zip(output.iter_mut()) {
+            *out = ((*y + 128.0) / 255.0).clamp(0.0, 1.0);
+        }
     }
 }
 
