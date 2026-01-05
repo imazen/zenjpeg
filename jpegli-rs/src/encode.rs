@@ -1693,46 +1693,12 @@ impl Encoder {
         width: usize,
         height: usize,
     ) -> Result<Vec<f32>> {
-        let factor = self.config.smoothing_factor;
-        if factor == 0 {
-            // No smoothing - return a copy
-            return Ok(plane.to_vec());
-        }
-
-        let result_size = checked_size_2d(width, height)?;
-        let mut result = try_alloc_zeroed_f32(result_size, "allocating smoothed plane")?;
-
-        // Weights matching C++ jpegli: kW1 = factor/1024, kW0 = 1 - 8*kW1
-        let kw1 = factor as f32 / 1024.0;
-        let kw0 = 1.0 - 8.0 * kw1;
-
-        for y in 0..height {
-            for x in 0..width {
-                // Clamp coordinates to handle edges
-                let x_l = x.saturating_sub(1);
-                let x_r = (x + 1).min(width - 1);
-                let y_t = y.saturating_sub(1);
-                let y_b = (y + 1).min(height - 1);
-
-                // Get 3x3 neighborhood
-                let val_tl = plane[y_t * width + x_l];
-                let val_tm = plane[y_t * width + x];
-                let val_tr = plane[y_t * width + x_r];
-                let val_ml = plane[y * width + x_l];
-                let val_mm = plane[y * width + x]; // center
-                let val_mr = plane[y * width + x_r];
-                let val_bl = plane[y_b * width + x_l];
-                let val_bm = plane[y_b * width + x];
-                let val_br = plane[y_b * width + x_r];
-
-                // Weighted sum: center * kW0 + neighbors * kW1
-                let neighbors =
-                    val_tl + val_tm + val_tr + val_ml + val_mr + val_bl + val_bm + val_br;
-                result[y * width + x] = val_mm * kw0 + neighbors * kw1;
-            }
-        }
-
-        Ok(result)
+        Ok(crate::encode_simd::apply_smoothing_simd(
+            plane,
+            width,
+            height,
+            self.config.smoothing_factor,
+        ))
     }
 
     /// Converts RGB to YCbCr using yuv crate for 4:2:0 subsampling.
