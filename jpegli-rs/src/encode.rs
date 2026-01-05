@@ -1693,44 +1693,12 @@ impl Encoder {
 
     /// Downsamples a float plane by 2x1 (horizontal only, box filter averaging).
     fn downsample_2x1_f32(&self, plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
-        let new_width = (width + 1) / 2;
-        let result_size = checked_size_2d(new_width, height)?;
-        let mut result = try_alloc_zeroed_f32(result_size, "allocating downsampled plane")?;
-
-        for y in 0..height {
-            for x in 0..new_width {
-                let x0 = x * 2;
-                let x1 = (x0 + 1).min(width - 1);
-
-                let p0 = plane[y * width + x0];
-                let p1 = plane[y * width + x1];
-
-                result[y * new_width + x] = (p0 + p1) * 0.5;
-            }
-        }
-
-        Ok(result)
+        Ok(crate::encode_simd::downsample_2x1_simd(plane, width, height))
     }
 
     /// Downsamples a float plane by 1x2 (vertical only, box filter averaging).
     fn downsample_1x2_f32(&self, plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
-        let new_height = (height + 1) / 2;
-        let result_size = checked_size_2d(width, new_height)?;
-        let mut result = try_alloc_zeroed_f32(result_size, "allocating downsampled plane")?;
-
-        for y in 0..new_height {
-            for x in 0..width {
-                let y0 = y * 2;
-                let y1 = (y0 + 1).min(height - 1);
-
-                let p0 = plane[y0 * width + x];
-                let p1 = plane[y1 * width + x];
-
-                result[y * width + x] = (p0 + p1) * 0.5;
-            }
-        }
-
-        Ok(result)
+        Ok(crate::encode_simd::downsample_1x2_simd(plane, width, height))
     }
 
     /// Applies input smoothing to a plane before downsampling.
@@ -3231,60 +3199,31 @@ impl Encoder {
         let height = self.config.height as usize;
         let num_pixels = checked_size_2d(width, height)?;
 
-        let mut y_plane = try_alloc_zeroed_f32(num_pixels, "YCbCr Y plane f32")?;
-        let mut cb_plane = try_alloc_zeroed_f32(num_pixels, "YCbCr Cb plane f32")?;
-        let mut cr_plane = try_alloc_zeroed_f32(num_pixels, "YCbCr Cr plane f32")?;
-
         match self.config.pixel_format {
             PixelFormat::Gray => {
-                for i in 0..num_pixels {
-                    y_plane[i] = data[i] as f32;
-                    cb_plane[i] = 128.0;
-                    cr_plane[i] = 128.0;
-                }
+                // Use SIMD-optimized version (allocates internally)
+                Ok(crate::encode_simd::gray_to_ycbcr_planes_simd(data, num_pixels))
             }
             PixelFormat::Rgb => {
-                // Use SIMD-optimized version
-                let (y, cb, cr) = crate::encode_simd::rgb_to_ycbcr_planes_simd(data, num_pixels);
-                return Ok((y, cb, cr));
+                // Use SIMD-optimized version (allocates internally)
+                Ok(crate::encode_simd::rgb_to_ycbcr_planes_simd(data, num_pixels))
             }
             PixelFormat::Rgba => {
-                // Use SIMD-optimized version
-                let (y, cb, cr) = crate::encode_simd::rgba_to_ycbcr_planes_simd(data, num_pixels);
-                return Ok((y, cb, cr));
+                // Use SIMD-optimized version (allocates internally)
+                Ok(crate::encode_simd::rgba_to_ycbcr_planes_simd(data, num_pixels))
             }
             PixelFormat::Bgr => {
-                for i in 0..num_pixels {
-                    let (y, cb, cr) = color::rgb_to_ycbcr_f32(
-                        data[i * 3 + 2] as f32,
-                        data[i * 3 + 1] as f32,
-                        data[i * 3] as f32,
-                    );
-                    y_plane[i] = y;
-                    cb_plane[i] = cb;
-                    cr_plane[i] = cr;
-                }
+                // Use SIMD-optimized version (allocates internally)
+                Ok(crate::encode_simd::bgr_to_ycbcr_planes_simd(data, num_pixels))
             }
             PixelFormat::Bgra => {
-                for i in 0..num_pixels {
-                    let (y, cb, cr) = color::rgb_to_ycbcr_f32(
-                        data[i * 4 + 2] as f32,
-                        data[i * 4 + 1] as f32,
-                        data[i * 4] as f32,
-                    );
-                    y_plane[i] = y;
-                    cb_plane[i] = cb;
-                    cr_plane[i] = cr;
-                }
+                // Use SIMD-optimized version (allocates internally)
+                Ok(crate::encode_simd::bgra_to_ycbcr_planes_simd(data, num_pixels))
             }
-            PixelFormat::Cmyk => {
-                return Err(Error::UnsupportedFeature {
-                    feature: "CMYK encoding",
-                });
-            }
+            PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
+                feature: "CMYK encoding",
+            }),
         }
-
-        Ok((y_plane, cb_plane, cr_plane))
     }
 
     /// Writes the JPEG header (SOI only, no JFIF APP0).
