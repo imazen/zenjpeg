@@ -125,11 +125,6 @@ required-features = ["test-utils"]
 name = "low_q_report"
 required-features = ["test-utils"]
 
-# This example requires the `image` crate which is not in workspace dependencies
-[[example]]
-name = "test_multiple_decoders"
-required-features = ["test-utils"]
-
 # These examples use APIs that are not fully implemented yet
 [[example]]
 name = "debug_roundtrip"
