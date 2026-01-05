@@ -85,6 +85,10 @@ harness = false
 name = "cpp_comparison"
 harness = false
 
+[[bench]]
+name = "quick"
+harness = false
+
 [lints]
 workspace = true
 
