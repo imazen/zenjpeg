@@ -16,8 +16,8 @@ fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let mut decoder = decoder;
     let pixels = decoder.decode().ok()?;
-    let info = decoder.dimensions()?;
-    Some((pixels, info.width as u32, info.height as u32))
+    let (width, height) = decoder.dimensions()?;
+    Some((pixels, width as u32, height as u32))
 }
 
 fn compute_dssim(orig: &[u8], w1: u32, h1: u32, comp: &[u8], w2: u32, h2: u32) -> f64 {

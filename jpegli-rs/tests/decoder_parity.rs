@@ -82,8 +82,8 @@ fn decode_reference(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg));
     match decoder.decode() {
         Ok(pixels) => {
-            let info = decoder.dimensions().unwrap();
-            Some((pixels, info.width as u32, info.height as u32))
+            let (width, height) = decoder.dimensions().unwrap();
+            Some((pixels, width as u32, height as u32))
         }
         Err(_) => None,
     }

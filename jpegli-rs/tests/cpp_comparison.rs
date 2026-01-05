@@ -396,10 +396,10 @@ fn test_jpeg_decoder_compatibility() {
     // Decode with jpeg-decoder crate
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
     let decoded = decoder.decode().expect("jpeg-decoder failed");
-    let info = decoder.dimensions().unwrap();
+    let (width, height) = decoder.dimensions().unwrap();
 
-    assert_eq!(info.width, 128);
-    assert_eq!(info.height, 128);
+    assert_eq!(width, 128);
+    assert_eq!(height, 128);
     assert_eq!(decoded.len(), 128 * 128 * 3);
 }
 
@@ -417,10 +417,10 @@ fn test_zune_jpeg_compatibility() {
     let cursor = ZCursor::new(&jpeg);
     let mut decoder = zune_jpeg::JpegDecoder::new(cursor);
     let decoded = decoder.decode().expect("zune-jpeg failed");
-    let info = decoder.dimensions().unwrap();
+    let (width, height) = decoder.dimensions().unwrap();
 
-    assert_eq!(info.width as u32, 128);
-    assert_eq!(info.height as u32, 128);
+    assert_eq!(width as u32, 128);
+    assert_eq!(height as u32, 128);
     assert!(!decoded.is_empty());
 }
 

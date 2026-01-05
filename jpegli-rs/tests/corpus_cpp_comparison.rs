@@ -45,32 +45,24 @@ fn decode_jpeg(data: &[u8]) -> codec_eval::Result<ImageData> {
         message: format!("{}", e),
     })?;
 
-    let info = decoder.dimensions().ok_or_else(|| codec_eval::Error::Codec {
+    let (width, height) = decoder.dimensions().ok_or_else(|| codec_eval::Error::Codec {
         codec: "jpeg-decoder".to_string(),
         message: "No image info".to_string(),
     })?;
 
-    let width = info.width as usize;
-    let height = info.height as usize;
-
-    // Convert to RGB if needed
-    let rgb_data = match info.pixel_format {
-        3 /* RGB */ => pixels,
-        1 /* Grayscale */ => {
-            let mut rgb = Vec::with_capacity(width * height * 3);
-            for &g in &pixels {
-                rgb.push(g);
-                rgb.push(g);
-                rgb.push(g);
-            }
-            rgb
+    // zune_jpeg decodes to RGB by default; handle grayscale if needed
+    let rgb_data = if pixels.len() == width * height {
+        // Grayscale: expand to RGB
+        let mut rgb = Vec::with_capacity(width * height * 3);
+        for &g in &pixels {
+            rgb.push(g);
+            rgb.push(g);
+            rgb.push(g);
         }
-        _ => {
-            return Err(codec_eval::Error::Codec {
-                codec: "jpeg-decoder".to_string(),
-                message: format!("Unsupported pixel format: {:?}", info.pixel_format),
-            });
-        }
+        rgb
+    } else {
+        // RGB
+        pixels
     };
 
     Ok(ImageData::RgbSlice {
