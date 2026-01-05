@@ -3,7 +3,7 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use jpegli::{Decoder, Encoder, PixelFormat};
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::fs::{self, File};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;

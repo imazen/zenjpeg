@@ -1,0 +1,38 @@
+[package]
+name = "jpegli-bench-utils"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/imazen/jpegli-rs"
+description = "Benchmarking and comparison utilities for jpegli-rs"
+keywords = ["jpeg", "benchmark", "testing"]
+categories = ["development-tools::testing"]
+publish = false  # Internal development crate
+
+[dependencies]
+# Image buffer types
+rgb = { workspace = true }
+imgref = { workspace = true }
+
+# Image I/O
+png = { workspace = true }
+
+# JPEG decoding (de-facto standard decoder for comparisons)
+zune-jpeg = { workspace = true }
+
+# Color management
+moxcms = { workspace = true }
+
+# Quality metrics
+dssim = { workspace = true }
+fast-ssim2 = { workspace = true }
+butteraugli = { workspace = true }
+
+# JPEG encoding (for comparison)
+mozjpeg = { workspace = true }
+
+# For test image discovery
+jpegli-rs = { path = "../jpegli-rs", default-features = false }
+
+[lints]
+workspace = true

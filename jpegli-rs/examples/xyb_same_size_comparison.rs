@@ -6,7 +6,7 @@
 //! Usage: cargo run --release --example xyb_same_size_comparison
 
 use jpegli::icc::{apply_icc_transform, extract_icc_profile};
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::fs;
 use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};

@@ -342,7 +342,7 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
 
 #[cfg(feature = "experimental-hybrid-trellis")]
 fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
-    use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+    use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 
     let orig_rgb = Rgb::new(
         original
