@@ -1347,34 +1347,36 @@ impl<'a> JpegParser<'a> {
         input: &[f32],
         in_width: usize,
         in_height: usize,
-        _out_width: usize,
+        out_width: usize,
         out_height: usize,
     ) -> Vec<f32> {
-        let mut output = vec![0.0f32; in_width * out_height];
+        let mut output = vec![0.0f32; out_width * out_height];
 
         for out_y in 0..out_height {
-            for x in 0..in_width {
+            for x in 0..out_width {
+                // Clamp x to valid input range (handles non-block-aligned widths)
+                let in_x = x.min(in_width.saturating_sub(1));
                 // Map output y to input y (divide by 2 for 2x scaling)
                 let in_y = out_y / 2;
-                let curr = input[in_y * in_width + x];
+                let curr = input[in_y * in_width + in_x];
 
                 // Determine if this is top or bottom half of input pixel
                 if out_y % 2 == 0 {
                     // Top half: blend with above neighbor
                     let above = if in_y > 0 {
-                        input[(in_y - 1) * in_width + x]
+                        input[(in_y - 1) * in_width + in_x]
                     } else {
                         curr
                     };
-                    output[out_y * in_width + x] = (3.0 * curr + above) * 0.25;
+                    output[out_y * out_width + x] = (3.0 * curr + above) * 0.25;
                 } else {
                     // Bottom half: blend with below neighbor
                     let below = if in_y + 1 < in_height {
-                        input[(in_y + 1) * in_width + x]
+                        input[(in_y + 1) * in_width + in_x]
                     } else {
                         curr
                     };
-                    output[out_y * in_width + x] = (3.0 * curr + below) * 0.25;
+                    output[out_y * out_width + x] = (3.0 * curr + below) * 0.25;
                 }
             }
         }
