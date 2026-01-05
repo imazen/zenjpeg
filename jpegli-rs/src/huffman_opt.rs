@@ -274,7 +274,7 @@ impl Token {
     #[inline]
     pub fn dc(context: u8, diff: i16) -> Self {
         let category = crate::entropy::category(diff);
-        let extra = crate::entropy::additional_bits(diff);
+        let extra = crate::entropy::additional_bits_with_cat(diff, category);
         Self::new(context, category, extra, category)
     }
 
@@ -291,7 +291,7 @@ impl Token {
             }
         } else {
             let category = crate::entropy::category(value);
-            let extra = crate::entropy::additional_bits(value);
+            let extra = crate::entropy::additional_bits_with_cat(value, category);
             let symbol = (run << 4) | category;
             Self::new(context, symbol, extra, category)
         }
