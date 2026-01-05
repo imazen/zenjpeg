@@ -51,7 +51,7 @@ fn benchmark_decoder(name: &str, jpeg_data: &[u8], iterations: usize) -> Option<
             let start = Instant::now();
             let mut total_pixels = 0;
             for _ in 0..iterations {
-                let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
+                let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
                 let pixels = decoder.decode().ok()?;
                 total_pixels += pixels.len();
             }
@@ -84,15 +84,15 @@ fn main() {
 
     println!(
         "Test image: {}x{} RGB ({} bytes)\n",
-        info.width,
-        info.height,
+        info.0,
+        info.1,
         rgb.len()
     );
 
     // Encode with standard Huffman
     let jpeg_std = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(false)
@@ -101,8 +101,8 @@ fn main() {
 
     // Encode with optimized Huffman
     let jpeg_opt = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .optimize_huffman(true)

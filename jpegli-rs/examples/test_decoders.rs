@@ -56,7 +56,7 @@ fn main() {
     }
 
     // Test jpeg-decoder
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(pixels) => println!("jpeg-decoder: OK, {} pixels", pixels.len()),
         Err(e) => println!("jpeg-decoder: FAIL - {}", e),
     }
@@ -72,4 +72,12 @@ fn main() {
         Ok(o) => println!("djpeg: FAIL - {}", String::from_utf8_lossy(&o.stderr)),
         Err(e) => println!("djpeg: not available - {}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

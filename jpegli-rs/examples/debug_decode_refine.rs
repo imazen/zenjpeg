@@ -77,7 +77,7 @@ fn main() {
 
     // Decode with external decoder
     println!("\n=== Decode with jpeg_decoder ===");
-    match jpeg_decoder::Decoder::new(&jpeg_50[..]).decode() {
+    match decode_zune(&jpeg_50[..]) {
         Ok(_) => println!("decode OK"),
         Err(e) => println!("decode FAILED: {:?}", e),
     }
@@ -90,4 +90,12 @@ fn main() {
         }
         Err(e) => println!("decode FAILED: {:?}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

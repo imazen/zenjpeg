@@ -68,14 +68,14 @@ fn main() {
     }
 
     println!("\n=== jpeg-decoder ===");
-    let mut ref_dec = jpeg_decoder::Decoder::new(&data[..]);
+    let mut ref_dec = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&data[..]));
     match ref_dec.decode() {
         Ok(pixels) => {
-            let info = ref_dec.info().unwrap();
+            let info = ref_dec.dimensions().unwrap();
             println!(
                 "jpeg-decoder: SUCCESS {}x{}, {} bytes",
-                info.width,
-                info.height,
+                info.0,
+                info.1,
                 pixels.len()
             );
         }

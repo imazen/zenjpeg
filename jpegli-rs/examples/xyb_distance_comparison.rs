@@ -82,7 +82,7 @@ fn encode_cpp_distance(ppm_path: &str, distance: f32, use_xyb: bool) -> Option<V
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    jpeg_decoder::Decoder::new(data).decode().expect("decode")
+    decode_zune(data).expect("decode")
 }
 
 fn decode_xyb_with_icc(jpeg_data: &[u8]) -> Option<Vec<u8>> {
@@ -234,4 +234,12 @@ fn main() {
     println!();
     println!("The earlier tests compared at same Q value, which is WRONG.");
     println!("Q values map differently to butteraugli distance for XYB vs YCbCr.");
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

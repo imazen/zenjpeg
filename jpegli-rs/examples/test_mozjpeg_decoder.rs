@@ -77,7 +77,7 @@ fn main() {
     }
 
     println!("\n=== Test 4: jpeg-decoder (pure Rust) ===");
-    let mut jpeg_decoder = jpeg_decoder::Decoder::new(&jpeg_opt[..]);
+    let mut jpeg_decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_opt[..]));
     match jpeg_decoder.decode() {
         Ok(_pixels) => {
             println!("✓ Optimized/jpeg-decoder: SUCCESS");

@@ -39,7 +39,7 @@ fn test_pattern(name: &str, data: &[u8], w: u32, h: u32) -> bool {
         .mode(JpegMode::Progressive)
         .encode(data)
         .expect("encode failed");
-    jpeg_decoder::Decoder::new(&jpeg[..]).decode().is_ok()
+    decode_zune(&jpeg[..]).is_ok()
 }
 
 fn main() {
@@ -98,4 +98,12 @@ fn main() {
         );
         println!();
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

@@ -10,7 +10,7 @@ fn main() {
     }
     
     // Try jpeg-decoder
-    let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]));
     match decoder.decode() {
         Ok(pixels) => println!("jpeg-decoder OK: {} pixels", pixels.len()),
         Err(e) => println!("jpeg-decoder FAIL: {}", e),

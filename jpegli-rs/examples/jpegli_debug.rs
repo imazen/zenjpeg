@@ -379,7 +379,7 @@ fn dump_coefficient_stats(path: &str) {
         Err(_) => return,
     };
 
-    match jpeg_decoder::Decoder::new(&data[..]).decode() {
+    match decode_zune(&data[..]) {
         Ok(pixels) => {
             println!("Decoded successfully: {} bytes of pixel data", pixels.len());
         }
@@ -569,7 +569,7 @@ fn compare_quality(
 }
 
 fn decode_jpeg(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     decoder.decode().map_err(|e| e.to_string())
 }
 
@@ -849,4 +849,12 @@ fn load_png(path: &str) -> Result<(Vec<u8>, usize, usize), String> {
     };
 
     Ok((rgb, info.width as usize, info.height as usize))
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

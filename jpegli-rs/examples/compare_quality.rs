@@ -101,10 +101,10 @@ fn encode_mozjpeg(
 }
 
 fn decode_jpeg_to_rgb(data: &[u8]) -> (Vec<u8>, u32, u32) {
-    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().expect("JPEG decode failed");
-    let info = decoder.info().unwrap();
-    (pixels, info.width as u32, info.height as u32)
+    let info = decoder.dimensions().unwrap();
+    (pixels, info.0 as u32, info.1 as u32)
 }
 
 fn main() {

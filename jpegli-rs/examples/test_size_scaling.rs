@@ -27,7 +27,7 @@ fn test_size(width: u32, height: u32) {
         .encode(&data)
         .expect("encode failed");
 
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("{}x{}: OK ({} bytes)", width, height, jpeg_data.len()),
         Err(e) => println!("{}x{}: FAILED - {:?}", width, height, e),
     }
@@ -44,4 +44,12 @@ fn main() {
     test_size(54, 54);
     test_size(55, 55);
     test_size(56, 56);
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

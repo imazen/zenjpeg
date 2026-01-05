@@ -41,7 +41,7 @@ fn main() {
     println!("Saved to {}", filename);
 
     // Try to decode
-    match jpeg_decoder::Decoder::new(&jpeg[..]).decode() {
+    match decode_zune(&jpeg[..]) {
         Ok(_) => println!("Decode: OK"),
         Err(e) => println!("Decode: FAIL - {}", e),
     }
@@ -57,4 +57,12 @@ fn main() {
         println!("\ndjpeg stdout:\n{}", stdout);
         println!("\ndjpeg stderr:\n{}", stderr);
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

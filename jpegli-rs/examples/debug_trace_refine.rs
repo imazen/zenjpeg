@@ -26,7 +26,7 @@ fn main() {
             .expect("encode failed");
 
         // Try to decode with jpeg_decoder
-        let result = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+        let result = decode_zune(&jpeg[..]);
         let status = if result.is_ok() { "OK" } else { "FAIL" };
 
         // Count blocks
@@ -87,4 +87,12 @@ fn main() {
             size, size, blocks_x, last_block_cols, effective_last
         );
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

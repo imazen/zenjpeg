@@ -75,7 +75,7 @@ fn compute_ssim2(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f6
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
-    jpeg_decoder::Decoder::new(data).decode().ok()
+    decode_zune(data).ok()
 }
 
 struct Result {
@@ -292,4 +292,12 @@ fn main() {
     println!("3. Progressive overhead: Compare 'Base' vs 'Prog' at different sizes");
     println!("4. Quality parity: SSIM2 should be nearly identical between Rust and C++");
     println!("{}\n", "=".repeat(160));
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

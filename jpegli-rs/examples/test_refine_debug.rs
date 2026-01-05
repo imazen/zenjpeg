@@ -19,7 +19,7 @@ fn test_case(name: &str, width: u32, height: u32, format: PixelFormat, data: &[u
             std::fs::write(&filename, &jpeg_data).ok();
 
             // Try to decode
-            match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+            match decode_zune(&jpeg_data[..]) {
                 Ok(_) => println!("  PASS: {} bytes", jpeg_data.len()),
                 Err(e) => {
                     println!("  FAIL: {:?}", e);
@@ -118,4 +118,12 @@ fn main() {
     // Just test the failing RGB case
     let rgb_grad: Vec<u8> = (0..64).flat_map(|i| vec![i as u8 * 4, 128, 64]).collect();
     test_case("8x8_rgb_seq", 8, 8, PixelFormat::Rgb, &rgb_grad);
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

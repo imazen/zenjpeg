@@ -25,7 +25,7 @@ fn main() {
         .encode(&data)
         .expect("encode failed");
 
-    let result = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+    let result = decode_zune(&jpeg[..]);
     println!(
         "50x50 decode: {}",
         if result.is_ok() { "OK" } else { "FAIL" }
@@ -48,7 +48,7 @@ fn main() {
             .encode(&data)
             .expect("encode failed");
 
-        let result = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+        let result = decode_zune(&jpeg[..]);
         let blocks = ((size + 7) / 8) * ((size + 7) / 8);
         let last_col = size % 8;
         println!(
@@ -80,7 +80,7 @@ fn main() {
             .encode(&data)
             .expect("encode failed");
 
-        let result = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+        let result = decode_zune(&jpeg[..]);
         let blocks_x = (w + 7) / 8;
         let last_col = w % 8;
         println!(
@@ -92,4 +92,12 @@ fn main() {
             last_col
         );
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

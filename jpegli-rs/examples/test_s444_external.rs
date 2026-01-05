@@ -36,8 +36,16 @@ fn main() {
     }
 
     // Also test with jpeg-decoder crate
-    match jpeg_decoder::Decoder::new(&encoded[..]).decode() {
+    match decode_zune(&encoded[..]) {
         Ok(_) => println!("jpeg-decoder: OK"),
         Err(e) => println!("jpeg-decoder: FAIL - {}", e),
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

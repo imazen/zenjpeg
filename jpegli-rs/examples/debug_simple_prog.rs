@@ -27,7 +27,7 @@ fn test_pattern(name: &str, data: &[u8], width: u32, height: u32) {
         .encode(data)
         .expect("encode failed");
 
-    match jpeg_decoder::Decoder::new(&jpeg_data[..]).decode() {
+    match decode_zune(&jpeg_data[..]) {
         Ok(_) => println!("{}: OK ({} bytes)", name, jpeg_data.len()),
         Err(e) => println!("{}: FAILED - {:?}", name, e),
     }
@@ -57,4 +57,12 @@ fn main() {
     }
     test_pattern("photo_like 50x50", &photo_like(50, 50), 50, 50);
     test_pattern("photo_like 56x56", &photo_like(56, 56), 56, 56);
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

@@ -23,14 +23,14 @@ imgref = { workspace = true }
 yuv = { workspace = true }  # Sharp YUV chroma downsampling (better color on edges)
 lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
-jpeg-decoder = { workspace = true, optional = true }
+zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 # Hybrid trellis quantization from mozjpeg
 mozjpeg-rs = { workspace = true, optional = true }
 # For FFI comparison testing against C++ jpegli (internal development only)
 # This dependency is NOT published to crates.io - it requires building the C++ jpegli
 # from source via cmake. Only works in a local checkout with the C++ submodule:
 #   git submodule update --init --recursive internal/jpegli-cpp
-# jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
+jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
 # For corpus comparison testing
 codec-eval = { version = "0.2", optional = true }
 
@@ -49,7 +49,7 @@ serde_json = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg = { workspace = true }
-jpeg-decoder = { workspace = true }
+# jpeg-decoder BANNED - use zune-jpeg
 rayon = { workspace = true }
 # Note: turbojpeg conflicts with mozjpeg (duplicate libjpeg symbols)
 # turbojpeg = { workspace = true }
@@ -60,13 +60,11 @@ simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
-# To enable locally, uncomment jpegli-internals-sys above and change to:
-#   ffi-tests = ["dep:jpegli-internals-sys"]
-ffi-tests = []
+ffi-tests = ["dep:jpegli-internals-sys"]
 # Enable corpus comparison tests (requires codec-eval)
 corpus-tests = ["dep:codec-eval"]
-cms-lcms2 = ["dep:lcms2", "dep:jpeg-decoder"]
-cms-moxcms = ["dep:moxcms", "dep:jpeg-decoder"]
+cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
+cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 # Enable debug token serialization for C++ comparison
 debug-tokens = []
 # Enable test utilities (image generation, quality verification)

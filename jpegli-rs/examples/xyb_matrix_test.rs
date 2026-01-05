@@ -148,7 +148,7 @@ fn test_decode(encoder_name: &str, jpeg_data: &[u8]) {
 
     // Test with jpeg-decoder
     print!("  jpeg-decoder: ");
-    let mut jpeg_dec = jpeg_decoder::Decoder::new(&jpeg_data[..]);
+    let mut jpeg_dec = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]));
     match jpeg_dec.decode() {
         Ok(_) => println!("✓"),
         Err(e) => println!("✗ {:?}", e),

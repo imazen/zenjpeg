@@ -15,7 +15,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<Vec<u8>> {
-    match jpeg_decoder::Decoder::new(data).decode() {
+    match decode_zune(data) {
         Ok(pixels) => Some(pixels),
         Err(e) => {
             eprintln!("Decode error: {:?}", e);
@@ -247,4 +247,12 @@ fn main() {
             println!("❌ C++ baseline and progressive also differ - not a Rust bug");
         }
     }
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

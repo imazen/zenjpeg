@@ -33,7 +33,7 @@ fn test_decoder(name: &str, jpeg_data: &[u8]) -> (bool, Option<String>) {
             Err(e) => (false, Some(format!("{:?}", e))),
         },
         "jpeg-decoder" => {
-            let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
+            let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg_data));
             match decoder.decode() {
                 Ok(_) => (true, None),
                 Err(e) => (false, Some(format!("{:?}", e))),
@@ -111,7 +111,7 @@ fn main() {
     let info = reader.next_frame(&mut buf).unwrap();
     let rgb = &buf[..info.buffer_size()];
 
-    println!("Test image: {}x{} RGB\n", info.width, info.height);
+    println!("Test image: {}x{} RGB\n", info.0, info.1);
     println!("═══════════════════════════════════════════════════════════════\n");
 
     let decoders = ["jpegli-rs", "zune-jpeg", "mozjpeg", "jpeg-decoder"];
@@ -121,8 +121,8 @@ fn main() {
     println!("─────────────────────────────────────────────────────────────\n");
 
     let baseline = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .mode(jpegli::types::JpegMode::Baseline)
@@ -147,8 +147,8 @@ fn main() {
     println!("─────────────────────────────────────────────────────────────\n");
 
     let prog_std = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .mode(jpegli::types::JpegMode::Progressive)
@@ -176,8 +176,8 @@ fn main() {
     println!("─────────────────────────────────────────────────────────────\n");
 
     let prog_opt = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .mode(jpegli::types::JpegMode::Progressive)
@@ -205,8 +205,8 @@ fn main() {
     println!("─────────────────────────────────────────────────────────────\n");
 
     let xyb_prog = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .mode(jpegli::types::JpegMode::Progressive)
@@ -241,8 +241,8 @@ fn main() {
         .collect();
 
     let gray_prog = Encoder::new()
-        .width(info.width)
-        .height(info.height)
+        .width(info.0)
+        .height(info.1)
         .pixel_format(PixelFormat::Gray)
         .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
         .mode(jpegli::types::JpegMode::Progressive)

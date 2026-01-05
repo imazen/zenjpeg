@@ -168,7 +168,7 @@ pub fn apply_icc_transform(
 /// Decode JPEG with automatic ICC profile application.
 ///
 /// This is a convenience function that:
-/// 1. Decodes the JPEG using jpeg-decoder
+/// 1. Decodes the JPEG using our own decoder
 /// 2. Extracts any embedded ICC profile
 /// 3. Applies the ICC transform if present and CMS is available
 ///
@@ -178,18 +178,21 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
     // Extract ICC profile first
     let icc_profile = extract_icc_profile(jpeg_data);
 
-    // Decode JPEG
-    let mut decoder = jpeg_decoder::Decoder::new(jpeg_data);
+    // Decode JPEG using zune-jpeg
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+
+    let cursor = ZCursor::new(jpeg_data);
+    let mut decoder = JpegDecoder::new(cursor);
     let pixels = decoder
         .decode()
-        .map_err(|e| Error::DecodeError(format!("jpeg decode: {e}")))?;
+        .map_err(|e| Error::DecodeError(format!("jpeg decode: {e:?}")))?;
 
-    let info = decoder
-        .info()
-        .ok_or_else(|| Error::DecodeError("no image info".to_string()))?;
-
-    let width = info.width as usize;
-    let height = info.height as usize;
+    let (width, height) = decoder
+        .dimensions()
+        .ok_or_else(|| Error::DecodeError("no image dimensions".to_string()))?;
+    let width = width as usize;
+    let height = height as usize;
 
     // Apply ICC if present
     let output = if let Some(ref profile) = icc_profile {

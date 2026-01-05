@@ -22,7 +22,7 @@ fn main() {
         .encode(&data)
         .expect("encode failed");
 
-    match jpeg_decoder::Decoder::new(&jpeg_seq[..]).decode() {
+    match decode_zune(&jpeg_seq[..]) {
         Ok(_) => println!("Sequential: OK ({} bytes)", jpeg_seq.len()),
         Err(e) => println!("Sequential: FAILED - {:?}", e),
     }
@@ -42,7 +42,7 @@ fn main() {
         .expect("encode failed");
 
     println!("\nDecode result:");
-    match jpeg_decoder::Decoder::new(&jpeg_prog[..]).decode() {
+    match decode_zune(&jpeg_prog[..]) {
         Ok(_) => println!("Progressive: OK ({} bytes)", jpeg_prog.len()),
         Err(e) => println!("Progressive: FAILED - {:?}", e),
     }
@@ -53,4 +53,12 @@ fn main() {
     println!(
         "Try: python3 -c \"from PIL import Image; Image.open('/tmp/test_9x9_prog.jpg').show()\""
     );
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }

@@ -52,7 +52,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
         _ => return None,
     };
 
-    Some((rgb, info.width, info.height))
+    Some((rgb, info.0, info.1))
 }
 
 fn encode_with_cjpegli(
@@ -90,17 +90,17 @@ fn encode_with_cjpegli(
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().ok()?;
-    let info = decoder.info()?;
+    let info = decoder.dimensions()?;
 
     let rgb = match info.pixel_format {
-        jpeg_decoder::PixelFormat::RGB24 => pixels,
-        jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
+        3 /* RGB */ => pixels,
+        1 /* Grayscale */ => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
         _ => return None,
     };
 
-    Some((rgb, info.width as u32, info.height as u32))
+    Some((rgb, info.0 as u32, info.1 as u32))
 }
 
 /// Decode XYB JPEG with ICC profile application.
@@ -112,18 +112,18 @@ fn decode_jpeg_with_icc(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let icc_profile = extract_icc_profile(data);
 
     // Decode JPEG
-    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().ok()?;
-    let info = decoder.info()?;
+    let info = decoder.dimensions()?;
 
     let rgb = match info.pixel_format {
-        jpeg_decoder::PixelFormat::RGB24 => pixels,
-        jpeg_decoder::PixelFormat::L8 => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
+        3 /* RGB */ => pixels,
+        1 /* Grayscale */ => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
         _ => return None,
     };
 
-    let width = info.width as u32;
-    let height = info.height as u32;
+    let width = info.0 as u32;
+    let height = info.1 as u32;
 
     // Apply ICC profile if present (required for XYB)
     let output = if let Some(ref profile) = icc_profile {

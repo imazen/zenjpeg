@@ -39,13 +39,13 @@ fn find_corpus_path() -> Option<PathBuf> {
 
 /// Generic JPEG decoder using jpeg-decoder crate
 fn decode_jpeg(data: &[u8]) -> codec_eval::Result<ImageData> {
-    let mut decoder = jpeg_decoder::Decoder::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().map_err(|e| codec_eval::Error::Codec {
         codec: "jpeg-decoder".to_string(),
         message: format!("{}", e),
     })?;
 
-    let info = decoder.info().ok_or_else(|| codec_eval::Error::Codec {
+    let info = decoder.dimensions().ok_or_else(|| codec_eval::Error::Codec {
         codec: "jpeg-decoder".to_string(),
         message: "No image info".to_string(),
     })?;
@@ -55,8 +55,8 @@ fn decode_jpeg(data: &[u8]) -> codec_eval::Result<ImageData> {
 
     // Convert to RGB if needed
     let rgb_data = match info.pixel_format {
-        jpeg_decoder::PixelFormat::RGB24 => pixels,
-        jpeg_decoder::PixelFormat::L8 => {
+        3 /* RGB */ => pixels,
+        1 /* Grayscale */ => {
             let mut rgb = Vec::with_capacity(width * height * 3);
             for &g in &pixels {
                 rgb.push(g);

@@ -104,7 +104,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
         Err(e) => {
             eprintln!("  jpegli decode failed: {:?}, using jpeg-decoder", e);
             // Fallback to jpeg-decoder if jpegli decode fails
-            let mut decoder = jpeg_decoder::Decoder::new(data);
+            let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
             decoder.decode().expect("decode")
         }
     }

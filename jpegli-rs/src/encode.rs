@@ -5571,7 +5571,7 @@ mod tests {
         assert_eq!(jpeg[jpeg.len() - 1], MARKER_EOI);
 
         // Verify it's decodable
-        let decoded = jpeg_decoder::Decoder::new(&jpeg[..]).decode();
+        let decoded = decode_zune(&jpeg[..]);
         assert!(
             decoded.is_ok(),
             "Optimized JPEG not decodable: {:?}",
@@ -5656,8 +5656,8 @@ mod tests {
         );
 
         // Verify both are decodable
-        let decoded_std = jpeg_decoder::Decoder::new(&jpeg_standard[..]).decode();
-        let decoded_opt = jpeg_decoder::Decoder::new(&jpeg_optimized[..]).decode();
+        let decoded_std = decode_zune(&jpeg_standard[..]);
+        let decoded_opt = decode_zune(&jpeg_optimized[..]);
         assert!(decoded_std.is_ok(), "Standard JPEG not decodable");
         assert!(decoded_opt.is_ok(), "Optimized JPEG not decodable");
     }
@@ -6400,6 +6400,15 @@ mod tests {
     #[test]
     fn test_internal_pathway_pipeline_encode_decode() {
         use internal_pathway::*;
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
+}
+
 
         // Test that InternalPipeline roundtrips correctly
         let pipeline = InternalPipeline::from_u64(P_F32_BOX_SMOOTH50).unwrap();

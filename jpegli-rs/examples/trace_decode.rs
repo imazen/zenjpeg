@@ -86,7 +86,7 @@ fn main() {
     // Try to decode with jpeg-decoder to get reference output
     println!(
         "\njpeg-decoder: {}",
-        match jpeg_decoder::Decoder::new(&jpeg[..]).decode() {
+        match decode_zune(&jpeg[..]) {
             Ok(_) => "OK",
             Err(e) => {
                 println!("ERROR: {:?}", e);
@@ -115,7 +115,7 @@ fn main() {
     println!("Solid JPEG: {} bytes", jpeg_solid.len());
     println!(
         "jpeg-decoder: {}",
-        match jpeg_decoder::Decoder::new(&jpeg_solid[..]).decode() {
+        match decode_zune(&jpeg_solid[..]) {
             Ok(_) => "OK",
             Err(_) => "FAIL",
         }
@@ -130,4 +130,12 @@ fn main() {
     std::fs::write("/tmp/gradient_64.jpg", &jpeg).unwrap();
     std::fs::write("/tmp/solid_64.jpg", &jpeg_solid).unwrap();
     println!("\nSaved /tmp/gradient_64.jpg and /tmp/solid_64.jpg");
+}
+
+fn decode_zune(data: &[u8]) -> Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::JpegDecoder;
+    let cursor = ZCursor::new(data);
+    let mut decoder = JpegDecoder::new(cursor);
+    decoder.decode()
 }
