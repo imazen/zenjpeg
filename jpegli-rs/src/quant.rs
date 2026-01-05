@@ -555,6 +555,7 @@ pub fn dequantize(quantized: i16, quant: u16) -> f32 {
 }
 
 /// Quantizes a block of DCT coefficients (SIMD-optimized).
+#[inline]
 pub fn quantize_block(
     coeffs: &[f32; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
@@ -624,6 +625,7 @@ static ZERO_BIAS_DEBUG: std::sync::atomic::AtomicUsize = std::sync::atomic::Atom
 #[allow(dead_code)] // Used for manual debugging - print stats at end of encoding
 static ZERO_BIAS_ZEROS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+#[inline]
 pub fn quantize_block_with_zero_bias(
     coeffs: &[f32; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
