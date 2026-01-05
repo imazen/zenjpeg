@@ -741,19 +741,8 @@ impl EntropyEncoder {
                     }
                 }
 
-                // Write refinement bits FIRST (before sign bit!)
-                // The decoder reads refinement bits while skipping zeros,
-                // then reads the sign bit after finding the target position.
-                for _ in 0..ref_token.refbits {
-                    if refbit_idx < scan_info.refbits.len() {
-                        let bit = scan_info.refbits[refbit_idx] as u32;
-                        self.writer.write_bits(bit, 1);
-                        refbit_idx += 1;
-                    }
-                }
-
-                // Write the sign bit for newly-nonzero coefficients (AFTER refinement bits)
-                // Check if this is a newly-nonzero symbol (masked category = 1)
+                // Write sign bit FIRST for newly-nonzero coefficients
+                // Per JPEG spec and libjpeg-turbo: Huffman code, then sign, then refinement bits
                 // Newly-nonzero symbols have category 1 (low nibble = 1 or 3 before masking)
                 let is_newly_nonzero = (masked_symbol & 0x0F) == 1 && masked_symbol != 0xF0;
                 if is_newly_nonzero {
@@ -763,6 +752,16 @@ impl EntropyEncoder {
                     // This matches C++: bits = (t.symbol >> 1) & 1;
                     let sign = ((ref_token.symbol >> 1) & 1) as u32;
                     self.writer.write_bits(sign, 1);
+                }
+
+                // Write refinement bits AFTER sign bit
+                // These are correction bits for previously-nonzero coefficients
+                for _ in 0..ref_token.refbits {
+                    if refbit_idx < scan_info.refbits.len() {
+                        let bit = scan_info.refbits[refbit_idx] as u32;
+                        self.writer.write_bits(bit, 1);
+                        refbit_idx += 1;
+                    }
                 }
             }
         }
