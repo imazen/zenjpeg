@@ -445,9 +445,7 @@ impl TestImages {
             // Relative to cargo manifest
             std::env::var("CARGO_MANIFEST_DIR")
                 .ok()
-                .map(|m| {
-                    PathBuf::from(m).join("../codec-corpus/imageflow/test_inputs/frymire.png")
-                })
+                .map(|m| PathBuf::from(m).join("../codec-corpus/imageflow/test_inputs/frymire.png"))
                 .unwrap_or_default(),
         ];
 
@@ -955,7 +953,10 @@ pub fn load_corpus(dir: &std::path::Path, max_files: Option<usize>) -> Vec<Image
         files.truncate(max);
     }
 
-    files.iter().filter_map(|p| ImageData::from_png(p)).collect()
+    files
+        .iter()
+        .filter_map(|p| ImageData::from_png(p))
+        .collect()
 }
 
 // ============================================================================
@@ -1229,12 +1230,17 @@ impl EncoderConfig {
 
         // Set scan mode
         match self.scan {
-            ScanMode::Baseline => comp.set_scan_optimization_mode(MozScanMode::AllComponentsTogether),
+            ScanMode::Baseline => {
+                comp.set_scan_optimization_mode(MozScanMode::AllComponentsTogether)
+            }
             ScanMode::Progressive => comp.set_scan_optimization_mode(MozScanMode::Auto),
         }
 
-        let mut comp = comp.start_compress(Vec::new()).map_err(|e| format!("mozjpeg start: {e}"))?;
-        comp.write_scanlines(&img.pixels).map_err(|e| format!("mozjpeg write: {e}"))?;
+        let mut comp = comp
+            .start_compress(Vec::new())
+            .map_err(|e| format!("mozjpeg start: {e}"))?;
+        comp.write_scanlines(&img.pixels)
+            .map_err(|e| format!("mozjpeg write: {e}"))?;
         comp.finish().map_err(|e| format!("mozjpeg finish: {e}"))
     }
 }
@@ -2014,7 +2020,11 @@ pub struct HtmlReport {
 enum HtmlSection {
     Paragraph(String),
     Chart(String),
-    Table { headers: Vec<String>, rows: Vec<Vec<String>>, highlight_col: Option<usize> },
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+        highlight_col: Option<usize>,
+    },
     Note(String),
 }
 
@@ -2045,14 +2055,27 @@ impl HtmlReport {
     /// Add a data table.
     #[must_use]
     pub fn table(mut self, headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
-        self.sections.push(HtmlSection::Table { headers, rows, highlight_col: None });
+        self.sections.push(HtmlSection::Table {
+            headers,
+            rows,
+            highlight_col: None,
+        });
         self
     }
 
     /// Add a data table with a column highlighted for best values.
     #[must_use]
-    pub fn table_with_highlight(mut self, headers: Vec<String>, rows: Vec<Vec<String>>, highlight_col: usize) -> Self {
-        self.sections.push(HtmlSection::Table { headers, rows, highlight_col: Some(highlight_col) });
+    pub fn table_with_highlight(
+        mut self,
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+        highlight_col: usize,
+    ) -> Self {
+        self.sections.push(HtmlSection::Table {
+            headers,
+            rows,
+            highlight_col: Some(highlight_col),
+        });
         self
     }
 
@@ -2076,7 +2099,11 @@ impl HtmlReport {
                 HtmlSection::Chart(svg) => {
                     body.push_str(&format!("        <div class=\"chart\">{}</div>\n", svg));
                 }
-                HtmlSection::Table { headers, rows, highlight_col } => {
+                HtmlSection::Table {
+                    headers,
+                    rows,
+                    highlight_col,
+                } => {
                     body.push_str("        <table>\n            <tr>");
                     for h in headers {
                         body.push_str(&format!("<th>{}</th>", h));
@@ -2176,7 +2203,13 @@ impl FileCache {
     /// Load from cache or encode using the provided function.
     ///
     /// Returns (data, was_cached).
-    pub fn get_or_encode<F>(&self, filename: &str, encoder: &str, quality: u8, encode_fn: F) -> (Vec<u8>, bool)
+    pub fn get_or_encode<F>(
+        &self,
+        filename: &str,
+        encoder: &str,
+        quality: u8,
+        encode_fn: F,
+    ) -> (Vec<u8>, bool)
     where
         F: FnOnce() -> Vec<u8>,
     {
@@ -2212,14 +2245,14 @@ impl FileCache {
 
 /// Standard colors for different encoders (for consistent charts).
 pub mod colors {
-    pub const JPEGLI: &str = "#2196F3";      // Blue
-    pub const JPEGLI_XYB: &str = "#9C27B0";  // Purple
-    pub const MOZJPEG: &str = "#4CAF50";     // Green
-    pub const LIBJPEG: &str = "#FF5722";     // Deep Orange
-    pub const WEBP: &str = "#FFC107";        // Amber
-    pub const AVIF: &str = "#00BCD4";        // Cyan
-    pub const JXL: &str = "#E91E63";         // Pink
-    pub const HEIC: &str = "#607D8B";        // Blue Gray
+    pub const JPEGLI: &str = "#2196F3"; // Blue
+    pub const JPEGLI_XYB: &str = "#9C27B0"; // Purple
+    pub const MOZJPEG: &str = "#4CAF50"; // Green
+    pub const LIBJPEG: &str = "#FF5722"; // Deep Orange
+    pub const WEBP: &str = "#FFC107"; // Amber
+    pub const AVIF: &str = "#00BCD4"; // Cyan
+    pub const JXL: &str = "#E91E63"; // Pink
+    pub const HEIC: &str = "#607D8B"; // Blue Gray
 }
 
 // ============================================================================
@@ -2311,7 +2344,10 @@ mod tests {
     fn test_ssimulacra2_identical() {
         let img = SyntheticPattern::GradientRgb.generate(64, 64);
         let ssim2 = QualityMetrics::ssimulacra2(img.as_ref(), img.as_ref());
-        assert!(ssim2 > 99.0, "SSIMULACRA2 of identical images should be ~100");
+        assert!(
+            ssim2 > 99.0,
+            "SSIMULACRA2 of identical images should be ~100"
+        );
     }
 
     #[test]
