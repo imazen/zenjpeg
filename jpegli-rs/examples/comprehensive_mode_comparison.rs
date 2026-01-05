@@ -14,7 +14,7 @@
 
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 use jpegli::{Encoder, Quality};
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -144,7 +144,7 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
 }
 
 fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
-    use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+    use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 
     let orig_rgb: Vec<[f32; 3]> = orig
         .chunks(3)

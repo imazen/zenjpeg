@@ -4,7 +4,7 @@
 //!
 //! Usage: cargo run --release --example xyb_ssimulacra2_comparison --features cms-lcms2
 
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::fs;
 use std::io::Write as IoWrite;
 use std::path::Path;

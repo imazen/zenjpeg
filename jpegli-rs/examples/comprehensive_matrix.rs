@@ -3,7 +3,7 @@
 //! Tests all combinations and measures both efficiency and quality
 
 use jpegli::{Encoder, PixelFormat};
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use std::fs;
 use std::process::Command;
 

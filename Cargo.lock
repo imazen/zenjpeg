@@ -287,7 +287,7 @@ dependencies = [
  "rgb",
  "serde",
  "serde_json",
- "ssimulacra2 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ssimulacra2",
  "thiserror",
 ]
 
@@ -472,6 +472,22 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys",
+]
+
+[[package]]
+name = "fast-ssim2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12c2e99aae7c8ccfe3b0dace1db91f21e5cfb4affb0b500321f89a58c125af30"
+dependencies = [
+ "imgref",
+ "multiversion 0.7.4",
+ "num-traits",
+ "safe_unaligned_simd",
+ "thiserror",
+ "wide 1.1.1",
+ "yuvxyb",
+ "yuvxyb-math",
 ]
 
 [[package]]
@@ -662,6 +678,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpegli-bench-utils"
+version = "0.1.0"
+dependencies = [
+ "butteraugli",
+ "dssim",
+ "fast-ssim2",
+ "imgref",
+ "jpegli-rs",
+ "moxcms",
+ "mozjpeg",
+ "png",
+ "rgb",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "jpegli-internals-sys"
 version = "0.1.0"
 dependencies = [
@@ -682,6 +714,7 @@ dependencies = [
  "codec-eval",
  "criterion",
  "dssim",
+ "fast-ssim2",
  "imgref",
  "jpegli-internals-sys",
  "lcms2",
@@ -694,7 +727,6 @@ dependencies = [
  "rgb",
  "serde",
  "serde_json",
- "ssimulacra2 0.5.1 (git+https://github.com/imazen/ssimulacra2?branch=perf-simd-precompute)",
  "test-case",
  "wide 0.7.33",
  "yuv",
@@ -1241,6 +1273,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "safe_unaligned_simd"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f11527e0e2ceae04eb620ca18696f297fc9aa6d5b6b60bd15bd68179d0b39cc"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1313,20 +1351,6 @@ dependencies = [
  "num-traits",
  "rayon",
  "thiserror",
- "yuvxyb",
- "yuvxyb-math",
-]
-
-[[package]]
-name = "ssimulacra2"
-version = "0.5.1"
-source = "git+https://github.com/imazen/ssimulacra2?branch=perf-simd-precompute#64d957b529f9f987684c8c815272053eec60747b"
-dependencies = [
- "multiversion 0.7.4",
- "num-traits",
- "rayon",
- "thiserror",
- "wide 1.1.1",
  "yuvxyb",
  "yuvxyb-math",
 ]

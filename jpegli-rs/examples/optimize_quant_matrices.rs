@@ -21,7 +21,7 @@
 use jpegli::quant::{CustomQuantMatrices, Quality};
 use jpegli::{Encoder, PixelFormat};
 use rayon::prelude::*;
-use ssimulacra2::{ColorPrimaries, Rgb, Ssim2Reference, TransferCharacteristic};
+use fast_ssim2::{ColorPrimaries, Rgb, Ssim2Reference, TransferCharacteristic};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
