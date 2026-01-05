@@ -768,6 +768,67 @@ mod tests {
         assert_eq!(JCS_YCbCr, 3);
     }
 
-    // Note: Full FFI tests require linking with the C++ library
-    // These are integration tests that would be run with the full build
+    /// Validates that the instrumented C++ FFI is properly linked.
+    ///
+    /// If this test fails to link, the jpegli-cpp submodule is on the wrong branch.
+    /// Fix with: `cd internal/jpegli-cpp && git checkout stepbystep2`
+    #[test]
+    fn test_instrumented_ffi_available() {
+        // Call fast math functions - these only exist in the instrumented build
+        unsafe {
+            // Test fast_log2f: log2(1.0) = 0.0
+            let log2_1 = jpegli_fast_log2f(1.0);
+            assert!(
+                log2_1.abs() < 0.001,
+                "jpegli_fast_log2f(1.0) = {}, expected ~0.0",
+                log2_1
+            );
+
+            // Test fast_pow2f: 2^0 = 1.0
+            let pow2_0 = jpegli_fast_pow2f(0.0);
+            assert!(
+                (pow2_0 - 1.0).abs() < 0.001,
+                "jpegli_fast_pow2f(0.0) = {}, expected ~1.0",
+                pow2_0
+            );
+
+            // Test fast_log2f: log2(8.0) = 3.0
+            let log2_8 = jpegli_fast_log2f(8.0);
+            assert!(
+                (log2_8 - 3.0).abs() < 0.01,
+                "jpegli_fast_log2f(8.0) = {}, expected ~3.0",
+                log2_8
+            );
+
+            // Test roundtrip: 2^(log2(x)) ≈ x
+            let x = 42.5;
+            let roundtrip = jpegli_fast_pow2f(jpegli_fast_log2f(x));
+            assert!(
+                (roundtrip - x).abs() < 0.01,
+                "Roundtrip failed: 2^log2({}) = {}",
+                x,
+                roundtrip
+            );
+        }
+
+        println!("✓ Instrumented C++ FFI is properly linked and functional");
+    }
+
+    /// Test that compute_mask produces reasonable values.
+    #[test]
+    fn test_compute_mask_ffi() {
+        unsafe {
+            // ComputeMask should produce finite, reasonable values
+            for v in [0.0, 0.5, 1.0, 2.0, 5.0, 10.0] {
+                let mask = jpegli_compute_mask(v);
+                assert!(
+                    mask.is_finite(),
+                    "jpegli_compute_mask({}) returned non-finite: {}",
+                    v,
+                    mask
+                );
+            }
+        }
+        println!("✓ jpegli_compute_mask FFI works");
+    }
 }
