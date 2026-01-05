@@ -358,7 +358,7 @@ pub struct EncoderConfig {
     /// - `Intrinsic`: Our f32 conversion (best for 4:4:4)
     /// - `Fast`: yuv crate SIMD path (simple box filter)
     /// - `Sharp`: yuv crate Sharp YUV (gamma-aware, best edges)
-    /// - `Auto`: Sharp for 4:2:0/4:2:2/4:4:0, Intrinsic for 4:4:4
+    /// - `Auto`: Intrinsic (matches C++ jpegli default)
     pub chroma_conversion: ChromaConversion,
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
     /// Requires the `experimental-hybrid-trellis` feature
@@ -396,7 +396,7 @@ impl Default for EncoderConfig {
             optimize_huffman: true,
             // Match C++ jpegli default: smoothing_factor = 0 (disabled)
             smoothing_factor: 0,
-            // Auto selects Sharp for subsampled, Intrinsic for 4:4:4
+            // Auto selects Intrinsic to match C++ jpegli
             chroma_conversion: ChromaConversion::Auto,
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
@@ -634,7 +634,7 @@ impl Encoder {
     ///   Fast but may have color bleeding on edges.
     /// - [`ChromaConversion::Sharp`]: yuv crate Sharp YUV (gamma-aware bilinear).
     ///   Best quality for edges, graphics, and text.
-    /// - [`ChromaConversion::Auto`]: Sharp for 4:2:0/4:2:2, Intrinsic for 4:4:4/4:4:0
+    /// - [`ChromaConversion::Auto`]: Intrinsic (matches C++ jpegli default)
     ///
     /// Sharp YUV is often 10-50% FASTER than Intrinsic due to optimized SIMD.
     #[must_use]
@@ -2114,6 +2114,59 @@ impl Encoder {
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, height))
     }
 
+    /// Converts to YCbCr using f32 Intrinsic path and applies chroma subsampling.
+    ///
+    /// This is the default path that matches C++ jpegli behavior.
+    /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
+    fn convert_intrinsic_with_subsampling(
+        &self,
+        data: &[u8],
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        // Convert to YCbCr using f32 precision throughout (matches C++ jpegli)
+        let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
+
+        // Handle chroma subsampling (with optional input smoothing)
+        let (cb_final, cr_final, c_width, c_height) = match self.config.subsampling {
+            Subsampling::S420 => {
+                // 4:2:0: Apply smoothing then downsample both Cb and Cr by 2x2
+                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                let cb_down = self.downsample_2x2_f32(&cb_smooth, width, height)?;
+                let cr_down = self.downsample_2x2_f32(&cr_smooth, width, height)?;
+                let c_w = (width + 1) / 2;
+                let c_h = (height + 1) / 2;
+                (cb_down, cr_down, c_w, c_h)
+            }
+            Subsampling::S422 => {
+                // 4:2:2: Apply smoothing then downsample horizontally only
+                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                let cb_down = self.downsample_2x1_f32(&cb_smooth, width, height)?;
+                let cr_down = self.downsample_2x1_f32(&cr_smooth, width, height)?;
+                let c_w = (width + 1) / 2;
+                (cb_down, cr_down, c_w, height)
+            }
+            Subsampling::S440 => {
+                // 4:4:0: Apply smoothing then downsample vertically only
+                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                let cb_down = self.downsample_1x2_f32(&cb_smooth, width, height)?;
+                let cr_down = self.downsample_1x2_f32(&cr_smooth, width, height)?;
+                let c_h = (height + 1) / 2;
+                (cb_down, cr_down, width, c_h)
+            }
+            Subsampling::S444 => {
+                // 4:4:4: No subsampling, no smoothing needed
+                (cb_plane, cr_plane, width, height)
+            }
+        };
+
+        Ok((y_plane, cb_final, cr_final, c_width, c_height))
+    }
+
     /// Encodes as progressive JPEG (level 2, matching cjpegli default).
     ///
     /// Progressive level 2 uses the following scan script:
@@ -2208,44 +2261,27 @@ impl Encoder {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
-        // Convert to YCbCr using f32 precision
-        let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
+        // Resolve Auto to concrete method based on subsampling
+        let chroma_method = self
+            .config
+            .chroma_conversion
+            .resolve(self.config.subsampling);
 
-        // Handle chroma subsampling (matching baseline encoder behavior)
-        let (cb_plane_final, cr_plane_final, c_width, c_height) = match self.config.subsampling {
-            Subsampling::S420 => {
-                // 4:2:0: Apply smoothing then downsample both Cb and Cr by 2x2
-                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                let cb_down = self.downsample_2x2_f32(&cb_smooth, width, height)?;
-                let cr_down = self.downsample_2x2_f32(&cr_smooth, width, height)?;
-                let c_w = (width + 1) / 2;
-                let c_h = (height + 1) / 2;
-                (cb_down, cr_down, c_w, c_h)
-            }
-            Subsampling::S422 => {
-                // 4:2:2: Apply smoothing then downsample horizontally only
-                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                let cb_down = self.downsample_2x1_f32(&cb_smooth, width, height)?;
-                let cr_down = self.downsample_2x1_f32(&cr_smooth, width, height)?;
-                let c_w = (width + 1) / 2;
-                (cb_down, cr_down, c_w, height)
-            }
-            Subsampling::S440 => {
-                // 4:4:0: Apply smoothing then downsample vertically only
-                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                let cb_down = self.downsample_1x2_f32(&cb_smooth, width, height)?;
-                let cr_down = self.downsample_1x2_f32(&cr_smooth, width, height)?;
-                let c_h = (height + 1) / 2;
-                (cb_down, cr_down, width, c_h)
-            }
-            Subsampling::S444 => {
-                // 4:4:4: No subsampling, no smoothing needed
-                (cb_plane, cr_plane, width, height)
-            }
-        };
+        // Get YCbCr planes with appropriate chroma handling
+        // Sharp/Fast path: yuv crate performs color conversion + downsampling together
+        // Intrinsic path: f32 conversion then separate downsampling
+        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+            if matches!(chroma_method, ChromaConversion::Sharp | ChromaConversion::Fast) {
+                let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
+                match self.config.subsampling {
+                    Subsampling::S420 => self.convert_yuv_crate_420(data, use_sharp)?,
+                    Subsampling::S422 => self.convert_yuv_crate_422(data, use_sharp)?,
+                    // yuv crate doesn't support S440/S444, fall through to Intrinsic
+                    _ => self.convert_intrinsic_with_subsampling(data)?,
+                }
+            } else {
+                self.convert_intrinsic_with_subsampling(data)?
+            };
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
