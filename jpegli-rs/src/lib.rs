@@ -53,7 +53,11 @@ pub mod types;
 #[doc(hidden)]
 pub mod adaptive_quant;
 #[doc(hidden)]
+pub mod adaptive_quant_simd;
+#[doc(hidden)]
 pub mod alloc;
+#[doc(hidden)]
+pub mod encode_simd;
 #[doc(hidden)]
 pub mod bitstream;
 #[doc(hidden)]

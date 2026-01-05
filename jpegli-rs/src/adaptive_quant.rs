@@ -48,6 +48,8 @@
 
 use std::f32::consts::PI;
 
+use crate::adaptive_quant_simd::{compute_pre_erosion_simd, per_block_modulations_simd};
+
 // ============================================================================
 // Constants ported from C++ adaptive_quantization.cc
 // ============================================================================
@@ -322,10 +324,10 @@ pub fn compute_aq_strength_map_impl(
         return AQStrengthMap::uniform(0, 0, 0.08);
     }
 
-    // 1. ComputePreErosion (downsamples 4x)
+    // 1. ComputePreErosion (downsamples 4x) - SIMD accelerated
     // NOTE: y_plane is in 0-255 range - ratio_of_derivatives expects this range
     // (its constants have kInputScaling = 1/255 baked in)
-    let pre_erosion = compute_pre_erosion_scalar(y_plane, width, height);
+    let pre_erosion = compute_pre_erosion_simd(y_plane, width, height);
 
     // 2. FuzzyErosion
     let pre_erosion_w = (width + 3) / 4;
@@ -340,10 +342,10 @@ pub fn compute_aq_strength_map_impl(
         &mut quant_field,
     );
 
-    // 3. PerBlockModulations
+    // 3. PerBlockModulations - SIMD accelerated
     // C++ uses y_quant_01 = quant_table[1] (first AC coefficient)
     // This is passed in directly from the quant table, NOT computed from distance
-    per_block_modulations_scalar(
+    per_block_modulations_simd(
         y_quant_01,
         y_plane, // Use original unscaled input, not input_scaled
         width,

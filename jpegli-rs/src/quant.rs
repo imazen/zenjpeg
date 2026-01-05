@@ -610,6 +610,96 @@ pub fn quantize_block_with_zero_bias(
     result
 }
 
+/// SIMD-optimized quantization with zero-biasing.
+///
+/// Processes 8 coefficients at a time using f32x8.
+#[inline(always)]
+pub fn quantize_block_with_zero_bias_simd(
+    coeffs: &[f32; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+    zero_bias: &ZeroBiasParams,
+    aq_strength: f32,
+) -> [i16; DCT_BLOCK_SIZE] {
+    use wide::f32x8;
+
+    let mut result = [0i16; DCT_BLOCK_SIZE];
+    let aq = f32x8::splat(aq_strength);
+
+    // Process 8 coefficients at a time
+    for chunk in 0..8 {
+        let k = chunk * 8;
+
+        // Load coefficients
+        let c = f32x8::from([
+            coeffs[k],
+            coeffs[k + 1],
+            coeffs[k + 2],
+            coeffs[k + 3],
+            coeffs[k + 4],
+            coeffs[k + 5],
+            coeffs[k + 6],
+            coeffs[k + 7],
+        ]);
+
+        // Load quant values (convert u16 to f32)
+        let q = f32x8::from([
+            quant[k] as f32,
+            quant[k + 1] as f32,
+            quant[k + 2] as f32,
+            quant[k + 3] as f32,
+            quant[k + 4] as f32,
+            quant[k + 5] as f32,
+            quant[k + 6] as f32,
+            quant[k + 7] as f32,
+        ]);
+
+        // Compute qval = coeffs / quant
+        let qval = c / q;
+
+        // Load zero_bias offset and mul
+        let offset = f32x8::from([
+            zero_bias.offset[k],
+            zero_bias.offset[k + 1],
+            zero_bias.offset[k + 2],
+            zero_bias.offset[k + 3],
+            zero_bias.offset[k + 4],
+            zero_bias.offset[k + 5],
+            zero_bias.offset[k + 6],
+            zero_bias.offset[k + 7],
+        ]);
+
+        let mul = f32x8::from([
+            zero_bias.mul[k],
+            zero_bias.mul[k + 1],
+            zero_bias.mul[k + 2],
+            zero_bias.mul[k + 3],
+            zero_bias.mul[k + 4],
+            zero_bias.mul[k + 5],
+            zero_bias.mul[k + 6],
+            zero_bias.mul[k + 7],
+        ]);
+
+        // threshold = offset + mul * aq_strength
+        let threshold = offset + mul * aq;
+
+        // |qval| >= threshold
+        let abs_qval = qval.abs();
+
+        // Convert to arrays for conditional processing
+        let qval_arr: [f32; 8] = qval.into();
+        let abs_arr: [f32; 8] = abs_qval.into();
+        let thresh_arr: [f32; 8] = threshold.into();
+
+        for i in 0..8 {
+            if abs_arr[i] >= thresh_arr[i] {
+                result[k + i] = qval_arr[i].round() as i16;
+            }
+        }
+    }
+
+    result
+}
+
 /// Alternative: compare with simple quantization
 pub fn quantize_block_compare(
     coeffs: &[f32; DCT_BLOCK_SIZE],
@@ -1285,5 +1375,38 @@ mod tests {
             "Y offset[1]: expected 0.59082, got {}",
             params.offset[1]
         );
+    }
+
+    /// Test SIMD quantization matches scalar version.
+    #[test]
+    fn test_quantize_block_simd_matches_scalar() {
+        // Create test DCT coefficients
+        let mut coeffs = [0.0f32; DCT_BLOCK_SIZE];
+        for i in 0..DCT_BLOCK_SIZE {
+            coeffs[i] = ((i as f32) - 32.0) * 10.0;
+        }
+
+        // Standard quant values
+        let mut quant = [16u16; DCT_BLOCK_SIZE];
+        for i in 0..DCT_BLOCK_SIZE {
+            quant[i] = (8 + i) as u16;
+        }
+
+        // Zero bias parameters
+        let zero_bias = ZeroBiasParams::for_ycbcr(1.5, 0);
+        let aq_strength = 0.08f32;
+
+        // Run both versions
+        let scalar_result = quantize_block_with_zero_bias(&coeffs, &quant, &zero_bias, aq_strength);
+        let simd_result = quantize_block_with_zero_bias_simd(&coeffs, &quant, &zero_bias, aq_strength);
+
+        // Compare
+        for i in 0..DCT_BLOCK_SIZE {
+            assert_eq!(
+                scalar_result[i], simd_result[i],
+                "Mismatch at index {}: scalar={}, simd={}",
+                i, scalar_result[i], simd_result[i]
+            );
+        }
     }
 }
