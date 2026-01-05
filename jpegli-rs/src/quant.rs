@@ -755,15 +755,49 @@ pub fn quantize_block_compare(
     (result, zeros_from_bias)
 }
 
-/// Dequantizes a block of coefficients.
+/// Dequantizes a block of coefficients (SIMD-optimized).
 pub fn dequantize_block(
     quantized: &[i16; DCT_BLOCK_SIZE],
     quant: &[u16; DCT_BLOCK_SIZE],
 ) -> [f32; DCT_BLOCK_SIZE] {
+    use wide::f32x8;
+
     let mut result = [0.0f32; DCT_BLOCK_SIZE];
-    for i in 0..DCT_BLOCK_SIZE {
-        result[i] = dequantize(quantized[i], quant[i]);
+
+    // Process 8 coefficients at a time
+    for chunk in 0..8 {
+        let k = chunk * 8;
+
+        // Load quantized values and convert to f32
+        let q = f32x8::from([
+            quantized[k] as f32,
+            quantized[k + 1] as f32,
+            quantized[k + 2] as f32,
+            quantized[k + 3] as f32,
+            quantized[k + 4] as f32,
+            quantized[k + 5] as f32,
+            quantized[k + 6] as f32,
+            quantized[k + 7] as f32,
+        ]);
+
+        // Load quant table values and convert to f32
+        let qt = f32x8::from([
+            quant[k] as f32,
+            quant[k + 1] as f32,
+            quant[k + 2] as f32,
+            quant[k + 3] as f32,
+            quant[k + 4] as f32,
+            quant[k + 5] as f32,
+            quant[k + 6] as f32,
+            quant[k + 7] as f32,
+        ]);
+
+        // Multiply to get dequantized values
+        let dq = q * qt;
+        let arr: [f32; 8] = dq.into();
+        result[k..k + 8].copy_from_slice(&arr);
     }
+
     result
 }
 
@@ -781,16 +815,14 @@ pub fn dequantize_block_with_bias(
     quant: &[u16; DCT_BLOCK_SIZE],
     biases: &[f32; DCT_BLOCK_SIZE],
 ) -> [f32; DCT_BLOCK_SIZE] {
+    // Use scalar implementation for conditional logic
+    // (SIMD would require comparison masks that wide crate doesn't directly support)
     let mut result = [0.0f32; DCT_BLOCK_SIZE];
     for k in 0..DCT_BLOCK_SIZE {
         let q = quantized[k];
         if q == 0 {
-            // Zero coefficients stay zero
             result[k] = 0.0;
         } else {
-            // Apply bias: shift toward zero
-            // For positive: (q - bias) * quant
-            // For negative: (q + bias) * quant = (q - (-bias)) * quant
             let bias = biases[k];
             let biased_q = if q > 0 {
                 q as f32 - bias
