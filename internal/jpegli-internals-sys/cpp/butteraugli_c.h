@@ -74,22 +74,25 @@ butteraugli_error_t butteraugli_blur(
     float sigma,
     float* out_blurred);
 
-// Separate frequencies
+// Separate frequencies - takes LINEAR RGB input (not XYB)
+// The function internally applies OpsinDynamicsImage and SeparateFrequencies
+// to produce the frequency-decomposed PsychoImage bands.
+// Pass NULL for any output bands you don't need.
 butteraugli_error_t butteraugli_separate_frequencies(
-    const float* xyb,
+    const float* linear_rgb,  // Interleaved linear RGB, NOT XYB
     size_t width,
     size_t height,
     float intensity_target,
-    float* out_lf_x,
-    float* out_lf_y,
-    float* out_lf_b,
-    float* out_mf_x,
-    float* out_mf_y,
-    float* out_mf_b,
-    float* out_hf_x,
-    float* out_hf_y,
-    float* out_uhf_x,
-    float* out_uhf_y);
+    float* out_lf_x,   // LF X channel (may be NULL)
+    float* out_lf_y,   // LF Y channel (may be NULL)
+    float* out_lf_b,   // LF B channel (may be NULL)
+    float* out_mf_x,   // MF X channel (may be NULL)
+    float* out_mf_y,   // MF Y channel (may be NULL)
+    float* out_mf_b,   // MF B channel (may be NULL)
+    float* out_hf_x,   // HF X channel (may be NULL)
+    float* out_hf_y,   // HF Y channel (may be NULL)
+    float* out_uhf_x,  // UHF X channel (may be NULL)
+    float* out_uhf_y); // UHF Y channel (may be NULL)
 
 // Malta filter
 butteraugli_error_t butteraugli_malta(
@@ -99,14 +102,13 @@ butteraugli_error_t butteraugli_malta(
     int use_lf,
     float* out_malta);
 
-// Compute mask from HF/UHF channels
+// Compute mask from linear RGB image
+// Takes linear RGB, internally computes PsychoImage and applies MaskPsychoImage
 butteraugli_error_t butteraugli_compute_mask(
-    const float* hf_x,
-    const float* hf_y,
-    const float* uhf_x,
-    const float* uhf_y,
+    const float* linear_rgb,  // Interleaved linear RGB
     size_t width,
     size_t height,
+    float intensity_target,
     float* out_mask);
 
 #ifdef __cplusplus

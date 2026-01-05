@@ -4,17 +4,26 @@
 // found in the LICENSE file or at https://developers.google.com/open-source/licenses/bsd
 
 // C wrapper for butteraugli - enables FFI bindings for Rust testing
+// This file provides real C++ butteraugli function access for parity testing.
 
 #include "butteraugli_c.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "lib/base/status.h"
 #include "lib/extras/butteraugli.h"
 #include "lib/extras/image.h"
+
+// Forward declaration for internal jxl::Blur function (defined in butteraugli.cc)
+// This allows us to call the real Gaussian blur implementation.
+namespace jxl {
+Status Blur(const ImageF& in, float sigma, const ButteraugliParams& params,
+            BlurTemp* temp, ImageF* out);
+}
 
 namespace {
 
@@ -284,42 +293,43 @@ butteraugli_error_t butteraugli_blur(
     return BUTTERAUGLI_ERROR_INVALID_INPUT;
   }
 
-  // Simple box blur approximation
-  // For proper implementation, would need to call jxl::Blur
-  int radius = static_cast<int>(sigma * 3.0f + 0.5f);
-  if (radius < 1) radius = 1;
+  // Create ImageF for input
+  auto result_in = jxl::ImageF::Create(&g_default_memory_manager, width, height);
+  if (!result_in.ok()) {
+    return BUTTERAUGLI_ERROR_MEMORY;
+  }
+  jxl::ImageF img_in = std::move(result_in).value_();
 
-  std::vector<float> temp(width * height);
-
-  // Horizontal pass
+  // Copy input data to ImageF
   for (size_t y = 0; y < height; ++y) {
+    float* row = img_in.Row(y);
     for (size_t x = 0; x < width; ++x) {
-      float sum = 0.0f;
-      int count = 0;
-      for (int dx = -radius; dx <= radius; ++dx) {
-        int nx = static_cast<int>(x) + dx;
-        if (nx >= 0 && nx < static_cast<int>(width)) {
-          sum += input[y * width + nx];
-          ++count;
-        }
-      }
-      temp[y * width + x] = sum / count;
+      row[x] = input[y * width + x];
     }
   }
 
-  // Vertical pass
+  // Create output ImageF
+  auto result_out = jxl::ImageF::Create(&g_default_memory_manager, width, height);
+  if (!result_out.ok()) {
+    return BUTTERAUGLI_ERROR_MEMORY;
+  }
+  jxl::ImageF img_out = std::move(result_out).value_();
+
+  // Set up parameters and temp storage
+  jxl::ButteraugliParams params;
+  jxl::BlurTemp blur_temp;
+
+  // Call real C++ Blur function
+  jxl::Status status = jxl::Blur(img_in, sigma, params, &blur_temp, &img_out);
+  if (!status) {
+    return BUTTERAUGLI_ERROR_INTERNAL;
+  }
+
+  // Copy output data from ImageF
   for (size_t y = 0; y < height; ++y) {
+    const float* row = img_out.ConstRow(y);
     for (size_t x = 0; x < width; ++x) {
-      float sum = 0.0f;
-      int count = 0;
-      for (int dy = -radius; dy <= radius; ++dy) {
-        int ny = static_cast<int>(y) + dy;
-        if (ny >= 0 && ny < static_cast<int>(height)) {
-          sum += temp[ny * width + x];
-          ++count;
-        }
-      }
-      out_blurred[y * width + x] = sum / count;
+      out_blurred[y * width + x] = row[x];
     }
   }
 
@@ -327,7 +337,7 @@ butteraugli_error_t butteraugli_blur(
 }
 
 butteraugli_error_t butteraugli_separate_frequencies(
-    const float* xyb,
+    const float* linear_rgb,
     size_t width,
     size_t height,
     float intensity_target,
@@ -341,22 +351,104 @@ butteraugli_error_t butteraugli_separate_frequencies(
     float* out_hf_y,
     float* out_uhf_x,
     float* out_uhf_y) {
-  // Stub implementation - would need full butteraugli internals
-  (void)xyb;
-  (void)width;
-  (void)height;
-  (void)intensity_target;
-  (void)out_lf_x;
-  (void)out_lf_y;
-  (void)out_lf_b;
-  (void)out_mf_x;
-  (void)out_mf_y;
-  (void)out_mf_b;
-  (void)out_hf_x;
-  (void)out_hf_y;
-  (void)out_uhf_x;
-  (void)out_uhf_y;
-  return BUTTERAUGLI_ERROR_INTERNAL;  // Not implemented
+  if (!linear_rgb || width == 0 || height == 0) {
+    return BUTTERAUGLI_ERROR_INVALID_INPUT;
+  }
+
+  // Minimum size for butteraugli processing
+  if (width < 8 || height < 8) {
+    return BUTTERAUGLI_ERROR_INVALID_INPUT;
+  }
+
+  // Create Image3F for input linear RGB
+  auto result_rgb = jxl::Image3F::Create(&g_default_memory_manager, width, height);
+  if (!result_rgb.ok()) {
+    return BUTTERAUGLI_ERROR_MEMORY;
+  }
+  jxl::Image3F rgb = std::move(result_rgb).value_();
+
+  // Copy interleaved linear RGB to planar Image3F
+  for (size_t y = 0; y < height; ++y) {
+    float* row_r = rgb.PlaneRow(0, y);
+    float* row_g = rgb.PlaneRow(1, y);
+    float* row_b = rgb.PlaneRow(2, y);
+    for (size_t x = 0; x < width; ++x) {
+      size_t idx = (y * width + x) * 3;
+      row_r[x] = linear_rgb[idx + 0];
+      row_g[x] = linear_rgb[idx + 1];
+      row_b[x] = linear_rgb[idx + 2];
+    }
+  }
+
+  // Set up parameters
+  jxl::ButteraugliParams params;
+  params.intensity_target = intensity_target;
+
+  // Create ButteraugliComparator - this runs OpsinDynamicsImage and SeparateFrequencies
+  auto comparator_result = jxl::ButteraugliComparator::Make(rgb, params);
+  if (!comparator_result.ok()) {
+    return BUTTERAUGLI_ERROR_INTERNAL;
+  }
+
+  std::unique_ptr<jxl::ButteraugliComparator> comparator =
+      std::move(comparator_result).value_();
+
+  // Get the frequency-decomposed image
+  const jxl::PsychoImage& pi = comparator->GetPsychoImage();
+
+  // Copy LF (Image3F - XYB)
+  if (out_lf_x && out_lf_y && out_lf_b) {
+    for (size_t y = 0; y < height; ++y) {
+      const float* lf_x_row = pi.lf.ConstPlaneRow(0, y);
+      const float* lf_y_row = pi.lf.ConstPlaneRow(1, y);
+      const float* lf_b_row = pi.lf.ConstPlaneRow(2, y);
+      for (size_t x = 0; x < width; ++x) {
+        out_lf_x[y * width + x] = lf_x_row[x];
+        out_lf_y[y * width + x] = lf_y_row[x];
+        out_lf_b[y * width + x] = lf_b_row[x];
+      }
+    }
+  }
+
+  // Copy MF (Image3F - XYB)
+  if (out_mf_x && out_mf_y && out_mf_b) {
+    for (size_t y = 0; y < height; ++y) {
+      const float* mf_x_row = pi.mf.ConstPlaneRow(0, y);
+      const float* mf_y_row = pi.mf.ConstPlaneRow(1, y);
+      const float* mf_b_row = pi.mf.ConstPlaneRow(2, y);
+      for (size_t x = 0; x < width; ++x) {
+        out_mf_x[y * width + x] = mf_x_row[x];
+        out_mf_y[y * width + x] = mf_y_row[x];
+        out_mf_b[y * width + x] = mf_b_row[x];
+      }
+    }
+  }
+
+  // Copy HF (ImageF[2] - XY only, no B)
+  if (out_hf_x && out_hf_y) {
+    for (size_t y = 0; y < height; ++y) {
+      const float* hf_x_row = pi.hf[0].ConstRow(y);
+      const float* hf_y_row = pi.hf[1].ConstRow(y);
+      for (size_t x = 0; x < width; ++x) {
+        out_hf_x[y * width + x] = hf_x_row[x];
+        out_hf_y[y * width + x] = hf_y_row[x];
+      }
+    }
+  }
+
+  // Copy UHF (ImageF[2] - XY only, no B)
+  if (out_uhf_x && out_uhf_y) {
+    for (size_t y = 0; y < height; ++y) {
+      const float* uhf_x_row = pi.uhf[0].ConstRow(y);
+      const float* uhf_y_row = pi.uhf[1].ConstRow(y);
+      for (size_t x = 0; x < width; ++x) {
+        out_uhf_x[y * width + x] = uhf_x_row[x];
+        out_uhf_y[y * width + x] = uhf_y_row[x];
+      }
+    }
+  }
+
+  return BUTTERAUGLI_OK;
 }
 
 butteraugli_error_t butteraugli_malta(
@@ -375,22 +467,75 @@ butteraugli_error_t butteraugli_malta(
 }
 
 butteraugli_error_t butteraugli_compute_mask(
-    const float* hf_x,
-    const float* hf_y,
-    const float* uhf_x,
-    const float* uhf_y,
+    const float* linear_rgb,
     size_t width,
     size_t height,
+    float intensity_target,
     float* out_mask) {
-  // Stub implementation
-  (void)hf_x;
-  (void)hf_y;
-  (void)uhf_x;
-  (void)uhf_y;
-  (void)width;
-  (void)height;
-  (void)out_mask;
-  return BUTTERAUGLI_ERROR_INTERNAL;  // Not implemented
+  if (!linear_rgb || !out_mask || width == 0 || height == 0) {
+    return BUTTERAUGLI_ERROR_INVALID_INPUT;
+  }
+
+  // Minimum size for butteraugli processing
+  if (width < 8 || height < 8) {
+    return BUTTERAUGLI_ERROR_INVALID_INPUT;
+  }
+
+  // Create Image3F for input linear RGB
+  auto result_rgb = jxl::Image3F::Create(&g_default_memory_manager, width, height);
+  if (!result_rgb.ok()) {
+    return BUTTERAUGLI_ERROR_MEMORY;
+  }
+  jxl::Image3F rgb = std::move(result_rgb).value_();
+
+  // Copy interleaved linear RGB to planar Image3F
+  for (size_t y = 0; y < height; ++y) {
+    float* row_r = rgb.PlaneRow(0, y);
+    float* row_g = rgb.PlaneRow(1, y);
+    float* row_b = rgb.PlaneRow(2, y);
+    for (size_t x = 0; x < width; ++x) {
+      size_t idx = (y * width + x) * 3;
+      row_r[x] = linear_rgb[idx + 0];
+      row_g[x] = linear_rgb[idx + 1];
+      row_b[x] = linear_rgb[idx + 2];
+    }
+  }
+
+  // Set up parameters
+  jxl::ButteraugliParams params;
+  params.intensity_target = intensity_target;
+
+  // Create ButteraugliComparator
+  auto comparator_result = jxl::ButteraugliComparator::Make(rgb, params);
+  if (!comparator_result.ok()) {
+    return BUTTERAUGLI_ERROR_INTERNAL;
+  }
+
+  std::unique_ptr<jxl::ButteraugliComparator> comparator =
+      std::move(comparator_result).value_();
+
+  // Create output mask
+  auto result_mask = jxl::ImageF::Create(&g_default_memory_manager, width, height);
+  if (!result_mask.ok()) {
+    return BUTTERAUGLI_ERROR_MEMORY;
+  }
+  jxl::ImageF mask = std::move(result_mask).value_();
+
+  // Compute mask using real C++ implementation
+  jxl::Status status = comparator->Mask(&mask);
+  if (!status) {
+    return BUTTERAUGLI_ERROR_INTERNAL;
+  }
+
+  // Copy mask output
+  for (size_t y = 0; y < height; ++y) {
+    const float* row = mask.ConstRow(y);
+    for (size_t x = 0; x < width; ++x) {
+      out_mask[y * width + x] = row[x];
+    }
+  }
+
+  return BUTTERAUGLI_OK;
 }
 
 }  // extern "C"
