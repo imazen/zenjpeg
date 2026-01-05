@@ -89,6 +89,10 @@ harness = false
 name = "quick"
 harness = false
 
+[[bench]]
+name = "profile_ycbcr"
+harness = false
+
 [lints]
 workspace = true
 

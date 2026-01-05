@@ -1687,28 +1687,8 @@ impl Encoder {
 
     /// Downsamples a float plane by 2x2 (box filter averaging).
     fn downsample_2x2_f32(&self, plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
-        let new_width = (width + 1) / 2;
-        let new_height = (height + 1) / 2;
-        let result_size = checked_size_2d(new_width, new_height)?;
-        let mut result = try_alloc_zeroed_f32(result_size, "allocating downsampled plane")?;
-
-        for y in 0..new_height {
-            for x in 0..new_width {
-                let x0 = x * 2;
-                let y0 = y * 2;
-                let x1 = (x0 + 1).min(width - 1);
-                let y1 = (y0 + 1).min(height - 1);
-
-                let p00 = plane[y0 * width + x0];
-                let p10 = plane[y0 * width + x1];
-                let p01 = plane[y1 * width + x0];
-                let p11 = plane[y1 * width + x1];
-
-                result[y * new_width + x] = (p00 + p10 + p01 + p11) * 0.25;
-            }
-        }
-
-        Ok(result)
+        // Use SIMD-optimized version
+        Ok(crate::encode_simd::downsample_2x2_simd(plane, width, height))
     }
 
     /// Downsamples a float plane by 2x1 (horizontal only, box filter averaging).
@@ -3264,28 +3244,14 @@ impl Encoder {
                 }
             }
             PixelFormat::Rgb => {
-                for i in 0..num_pixels {
-                    let (y, cb, cr) = color::rgb_to_ycbcr_f32(
-                        data[i * 3] as f32,
-                        data[i * 3 + 1] as f32,
-                        data[i * 3 + 2] as f32,
-                    );
-                    y_plane[i] = y;
-                    cb_plane[i] = cb;
-                    cr_plane[i] = cr;
-                }
+                // Use SIMD-optimized version
+                let (y, cb, cr) = crate::encode_simd::rgb_to_ycbcr_planes_simd(data, num_pixels);
+                return Ok((y, cb, cr));
             }
             PixelFormat::Rgba => {
-                for i in 0..num_pixels {
-                    let (y, cb, cr) = color::rgb_to_ycbcr_f32(
-                        data[i * 4] as f32,
-                        data[i * 4 + 1] as f32,
-                        data[i * 4 + 2] as f32,
-                    );
-                    y_plane[i] = y;
-                    cb_plane[i] = cb;
-                    cr_plane[i] = cr;
-                }
+                // Use SIMD-optimized version
+                let (y, cb, cr) = crate::encode_simd::rgba_to_ycbcr_planes_simd(data, num_pixels);
+                return Ok((y, cb, cr));
             }
             PixelFormat::Bgr => {
                 for i in 0..num_pixels {
@@ -3985,7 +3951,7 @@ impl Encoder {
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                     ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
-                    quant::quantize_block_with_zero_bias(
+                    quant::quantize_block_with_zero_bias_simd(
                         &y_dct,
                         &y_quant.values,
                         &y_zero_bias,
@@ -3993,7 +3959,7 @@ impl Encoder {
                     )
                 };
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                     &y_dct,
                     &y_quant.values,
                     &y_zero_bias,
@@ -4012,7 +3978,7 @@ impl Encoder {
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cb_dct, &c_quant.values, aq_strength, 1.0, false)
                     } else {
-                        quant::quantize_block_with_zero_bias(
+                        quant::quantize_block_with_zero_bias_simd(
                             &cb_dct,
                             &c_quant.values,
                             &cb_zero_bias,
@@ -4020,7 +3986,7 @@ impl Encoder {
                         )
                     };
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                         &cb_dct,
                         &c_quant.values,
                         &cb_zero_bias,
@@ -4038,7 +4004,7 @@ impl Encoder {
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cr_dct, &c_quant.values, aq_strength, 1.0, false)
                     } else {
-                        quant::quantize_block_with_zero_bias(
+                        quant::quantize_block_with_zero_bias_simd(
                             &cr_dct,
                             &c_quant.values,
                             &cr_zero_bias,
@@ -4046,7 +4012,7 @@ impl Encoder {
                         )
                     };
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                         &cr_dct,
                         &c_quant.values,
                         &cr_zero_bias,
@@ -4134,7 +4100,7 @@ impl Encoder {
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                     ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
-                    quant::quantize_block_with_zero_bias(
+                    quant::quantize_block_with_zero_bias_simd(
                         &y_dct,
                         &y_quant.values,
                         &y_zero_bias,
@@ -4142,7 +4108,7 @@ impl Encoder {
                     )
                 };
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                     &y_dct,
                     &y_quant.values,
                     &y_zero_bias,
@@ -4159,7 +4125,7 @@ impl Encoder {
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
                     } else {
-                        quant::quantize_block_with_zero_bias(
+                        quant::quantize_block_with_zero_bias_simd(
                             &cb_dct,
                             &cb_quant.values,
                             &cb_zero_bias,
@@ -4167,7 +4133,7 @@ impl Encoder {
                         )
                     };
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                         &cb_dct,
                         &cb_quant.values,
                         &cb_zero_bias,
@@ -4183,7 +4149,7 @@ impl Encoder {
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
                     } else {
-                        quant::quantize_block_with_zero_bias(
+                        quant::quantize_block_with_zero_bias_simd(
                             &cr_dct,
                             &cr_quant.values,
                             &cr_zero_bias,
@@ -4191,7 +4157,7 @@ impl Encoder {
                         )
                     };
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                         &cr_dct,
                         &cr_quant.values,
                         &cr_zero_bias,
@@ -4274,7 +4240,7 @@ impl Encoder {
                 let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                     ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
                 } else {
-                    quant::quantize_block_with_zero_bias(
+                    quant::quantize_block_with_zero_bias_simd(
                         &y_dct,
                         &y_quant.values,
                         &y_zero_bias,
@@ -4282,7 +4248,7 @@ impl Encoder {
                     )
                 };
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                     &y_dct,
                     &y_quant.values,
                     &y_zero_bias,
@@ -4312,7 +4278,7 @@ impl Encoder {
                     let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
                     } else {
-                        quant::quantize_block_with_zero_bias(
+                        quant::quantize_block_with_zero_bias_simd(
                             &cb_dct,
                             &cb_quant.values,
                             &cb_zero_bias,
@@ -4320,7 +4286,7 @@ impl Encoder {
                         )
                     };
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                         &cb_dct,
                         &cb_quant.values,
                         &cb_zero_bias,
@@ -4337,7 +4303,7 @@ impl Encoder {
                     let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
                         ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
                     } else {
-                        quant::quantize_block_with_zero_bias(
+                        quant::quantize_block_with_zero_bias_simd(
                             &cr_dct,
                             &cr_quant.values,
                             &cr_zero_bias,
@@ -4345,7 +4311,7 @@ impl Encoder {
                         )
                     };
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias(
+                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                         &cr_dct,
                         &cr_quant.values,
                         &cr_zero_bias,
@@ -4942,7 +4908,7 @@ impl Encoder {
 
                         let x_block = self.extract_block_f32(x_plane, width, height, bx, by);
                         let x_dct = forward_dct_8x8(&x_block);
-                        let x_quant_coeffs = quant::quantize_block_with_zero_bias(
+                        let x_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                             &x_dct,
                             &x_quant.values,
                             x_zero_bias,
@@ -4961,7 +4927,7 @@ impl Encoder {
 
                         let y_block = self.extract_block_f32(y_plane, width, height, bx, by);
                         let y_dct = forward_dct_8x8(&y_block);
-                        let y_quant_coeffs = quant::quantize_block_with_zero_bias(
+                        let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                             &y_dct,
                             &y_quant.values,
                             y_zero_bias,
@@ -4987,7 +4953,7 @@ impl Encoder {
 
                 let b_block = self.extract_block_f32(b_plane, b_width, b_height, mcu_x, mcu_y);
                 let b_dct = forward_dct_8x8(&b_block);
-                let b_quant_coeffs = quant::quantize_block_with_zero_bias(
+                let b_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
                     &b_dct,
                     &b_quant.values,
                     b_zero_bias,
