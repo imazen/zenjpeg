@@ -702,19 +702,9 @@ pub fn fuzzy_erosion_simd(
     // Temporary buffer for weighted min values
     let mut tmp = vec![0.0f32; pre_erosion_w * pre_erosion_h];
 
-    // Helper to get value with clamped bounds
-    #[inline(always)]
-    fn get(pre_erosion: &[f32], pre_erosion_w: usize, pre_erosion_h: usize, x: isize, y: isize) -> f32 {
-        let x = x.clamp(0, pre_erosion_w as isize - 1) as usize;
-        let y = y.clamp(0, pre_erosion_h as isize - 1) as usize;
-        pre_erosion[y * pre_erosion_w + x]
-    }
-
     // Process each pixel - find 4 smallest in 3x3 window, compute weighted sum
     // Process row by row to take advantage of cache locality
     for y in 0..pre_erosion_h {
-        let iy = y as isize;
-
         // Pre-fetch row data for better cache utilization
         let row_above_y = (y as isize - 1).clamp(0, pre_erosion_h as isize - 1) as usize;
         let row_below_y = (y as isize + 1).clamp(0, pre_erosion_h as isize - 1) as usize;
