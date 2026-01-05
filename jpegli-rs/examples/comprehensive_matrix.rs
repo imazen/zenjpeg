@@ -199,11 +199,12 @@ fn main() {
         let ppm_path = format!("/tmp/test_{}x{}.ppm", width, height);
         write_ppm(&ppm_path, &rgb, *width, *height).ok();
 
-        println!("\n--- {} ---", size_label);
+        // Group by color space (YCbCr first, then XYB)
+        for &(use_xyb, color_label) in &colors {
+            println!("\n--- {} {} ---", size_label, color_label);
 
-        for &quality in &qualities {
-            for &(progressive, mode_label) in &modes {
-                for &(use_xyb, color_label) in &colors {
+            for &quality in &qualities {
+                for &(progressive, mode_label) in &modes {
                     for &(optimize, huff_label) in &huffmans {
                         let rust_result = test_rust(
                             &rgb,
