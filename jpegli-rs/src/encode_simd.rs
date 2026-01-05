@@ -119,6 +119,52 @@ pub fn u8_iter_to_f32_simd(input: impl Iterator<Item = u8>, len: usize) -> Vec<f
     result
 }
 
+/// SIMD-optimized scaling of f32 slice by a constant factor.
+///
+/// Multiplies all elements by the given scale factor.
+/// Used for scaling Y plane from [0,1] to [0,255] for AQ computation.
+///
+/// # Arguments
+/// * `input` - Input slice of f32 values
+/// * `scale` - Scale factor to multiply by
+///
+/// # Returns
+/// Vec of scaled f32 values
+#[inline]
+pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Vec<f32> {
+    let len = input.len();
+    let mut result = alloc_uninit_f32(len);
+
+    let chunks = len / 8;
+    let scale_vec = f32x8::splat(scale);
+
+    // Process 8 elements at a time
+    for i in 0..chunks {
+        let k = i * 8;
+        let vals = f32x8::from([
+            input[k],
+            input[k + 1],
+            input[k + 2],
+            input[k + 3],
+            input[k + 4],
+            input[k + 5],
+            input[k + 6],
+            input[k + 7],
+        ]);
+        let scaled = vals * scale_vec;
+        let arr: [f32; 8] = scaled.into();
+        result[k..k + 8].copy_from_slice(&arr);
+    }
+
+    // Handle remaining elements (scalar)
+    let remainder_start = chunks * 8;
+    for i in remainder_start..len {
+        result[i] = input[i] * scale;
+    }
+
+    result
+}
+
 // ============================================================================
 // Chroma Downsampling (2x2 box filter)
 // ============================================================================

@@ -280,10 +280,7 @@ pub mod internal_pathway {
 // ============================================================================
 
 use crate::adaptive_quant::compute_aq_strength_map;
-use crate::alloc::{
-    checked_size_2d, try_alloc_filled, try_alloc_zeroed_f32, validate_dimensions,
-    DEFAULT_MAX_PIXELS,
-};
+use crate::alloc::{checked_size_2d, try_alloc_filled, validate_dimensions, DEFAULT_MAX_PIXELS};
 use crate::chroma;
 use crate::color;
 use crate::consts::{
@@ -1199,8 +1196,8 @@ impl Encoder {
         let b_quant = self.gen_quant_table(2, true, false); // B component
 
         // Compute AQ map from Y plane (XYB's Y is the luma-like channel)
-        // Scale Y plane from [0,1] to [0,255] range for AQ computation
-        let y_plane_scaled: Vec<f32> = y_plane.iter().map(|&v| v * 255.0).collect();
+        // Scale Y plane from [0,1] to [0,255] range for AQ computation (SIMD)
+        let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0);
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
@@ -1430,8 +1427,8 @@ impl Encoder {
         let y_quant = self.gen_quant_table(1, true, false);
         let b_quant = self.gen_quant_table(2, true, false);
 
-        // Compute AQ map from Y plane (same as baseline XYB)
-        let y_plane_scaled: Vec<f32> = y_plane.iter().map(|&v| v * 255.0).collect();
+        // Compute AQ map from Y plane (same as baseline XYB, using SIMD scaling)
+        let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0);
         let y_quant_01 = y_quant.values[1];
         let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
 
@@ -3759,8 +3756,8 @@ impl Encoder {
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
-        // Convert Y plane to f32 for AQ computation
-        let y_plane_f32: Vec<f32> = y_plane.iter().map(|&v| v as f32).collect();
+        // Convert Y plane to f32 for AQ computation (SIMD)
+        let y_plane_f32 = crate::encode_simd::u8_slice_to_f32_simd(y_plane);
 
         // Compute per-block adaptive quantization strength from Y plane
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
