@@ -141,6 +141,47 @@ pub fn linear_to_srgb_fast(v: f32) -> f32 {
     }
 }
 
+/// sRGB to linear using C++ jpegli's rational polynomial approximation.
+///
+/// This matches the `TF_SRGB::DisplayFromEncoded` function in libjxl's
+/// transfer_functions-inl.h. The XYB perceptual model was tuned with this
+/// approximation, so using it gives better quality match with C++.
+#[inline]
+#[must_use]
+fn srgb_to_linear_poly(x: f32) -> f32 {
+    const THRESH: f32 = 0.04045;
+    const LOW_DIV_INV: f32 = 1.0 / 12.92;
+
+    // Rational polynomial coefficients from C++ (Chebyshev approximation)
+    const P: [f32; 5] = [
+        2.200248328e-04,
+        1.043637593e-02,
+        1.624820318e-01,
+        7.961564959e-01,
+        8.210152774e-01,
+    ];
+    const Q: [f32; 5] = [
+        2.631846970e-01,
+        1.076976492e+00,
+        4.987528350e-01,
+        -5.512498495e-02,
+        6.521209011e-03,
+    ];
+
+    let x = x.abs();
+
+    if x <= THRESH {
+        x * LOW_DIV_INV
+    } else {
+        // Evaluate rational polynomial p(x)/q(x) using Horner's method
+        // Coefficients are ordered: [degree-0, degree-1, degree-2, degree-3, degree-4]
+        // Horner evaluation starts from highest degree: p4*x^4 + p3*x^3 + p2*x^2 + p1*x + p0
+        let p_val = P[4].mul_add(x, P[3]).mul_add(x, P[2]).mul_add(x, P[1]).mul_add(x, P[0]);
+        let q_val = Q[4].mul_add(x, Q[3]).mul_add(x, Q[2]).mul_add(x, Q[1]).mul_add(x, Q[0]);
+        p_val / q_val
+    }
+}
+
 /// Converts sRGB u8 to linear float (0.0-1.0 range).
 /// Uses LUT for exact values and maximum speed.
 #[inline]
@@ -170,34 +211,56 @@ pub fn linear_to_srgb_u8_fast(v: f32) -> u8 {
     (linear_to_srgb_fast(v.clamp(0.0, 1.0)) * 255.0).round() as u8
 }
 
-/// Fast cube root approximation matching C++/ssimulacra2 algorithm.
+/// Fast cube root matching C++ jpegli's CubeRootAndAdd algorithm exactly.
 ///
-/// Uses IEEE 754 bit manipulation for initial approximation followed by
-/// 2 Newton-Raphson iterations in f64 for precision. This matches the
-/// algorithm used in libjxl and ssimulacra2 for XYB conversion.
+/// Uses IEEE 754 bit manipulation for initial approximation, then
+/// 3 Newton-Raphson iterations in f32 (NOT f64) to match C++ precision.
 ///
 /// Maximum error: ~6 ULP (Units in Last Place)
 #[inline]
 #[must_use]
 fn cbrtf_fast(x: f32) -> f32 {
+    // Match C++ exactly: CubeRootAndAdd from lib/base/fast_math-inl.h
+    // The algorithm computes 1/cbrt(x), then derives cbrt(x) = x * (1/cbrt(x))^2
+
     if x == 0.0 {
         return 0.0;
     }
-    // B1 = (127 - 127.0/3 - 0.03306235651) * 2^23
-    const B1: u32 = 709_958_130;
-    let mut ui: u32 = x.to_bits();
-    let mut hx: u32 = ui & 0x7FFF_FFFF;
-    hx = hx / 3 + B1;
-    ui &= 0x8000_0000; // preserve sign
-    ui |= hx;
-    let mut t: f64 = f64::from(f32::from_bits(ui));
-    let xf64 = f64::from(x);
-    // 2 Newton-Raphson iterations
-    let mut r = t * t * t;
-    t = t * (xf64 + xf64 + r) / (xf64 + r + r);
-    r = t * t * t;
-    t = t * (xf64 + xf64 + r) / (xf64 + r + r);
-    t as f32
+
+    // Constants matching C++ exactly
+    const K_EXP_BIAS: u32 = 0x5480_0000; // cast(1.) + cast(1.) / 3
+    const K_EXP_MUL: u32 = 0x002A_AAAA; // shifted 1/3
+    const K1_3: f32 = 1.0 / 3.0;
+    const K4_3: f32 = 4.0 / 3.0;
+
+    let xa = x;
+    let xa_3 = K1_3 * xa;
+
+    // Initial approximation via IEEE 754 bit manipulation
+    // Computes approximate 1/cbrt(x)
+    let m1 = xa.to_bits() as i32;
+    let m2 = if m1 == 0 {
+        0
+    } else {
+        (K_EXP_BIAS as i32) - ((m1 >> 23) * (K_EXP_MUL as i32))
+    };
+    let mut r = f32::from_bits(m2 as u32);
+
+    // 3 Newton-Raphson iterations (matching C++ exactly)
+    // Formula: r = (4/3)*r - (x/3)*r^4
+    for _ in 0..3 {
+        let r2 = r * r;
+        r = K4_3 * r - xa_3 * r2 * r2;
+    }
+
+    // Final iteration for extra precision
+    // r = r + (1/3) * (r - x * r^4)
+    let r2 = r * r;
+    r = r + K1_3 * (r - xa * r2 * r2);
+
+    // Convert from 1/cbrt(x) to cbrt(x): cbrt(x) = x * (1/cbrt(x))^2
+    let r2 = r * r;
+    r2 * x
 }
 
 /// Inverse of mixed cube root.
