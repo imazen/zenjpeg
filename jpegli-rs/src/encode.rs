@@ -1632,12 +1632,10 @@ impl Encoder {
                 Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(data, num_pixels))
             }
             PixelFormat::Rgba => {
-                // Strip alpha to get contiguous RGB, then use SIMD
-                let rgb: Vec<u8> = data
-                    .chunks(4)
-                    .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
-                    .collect();
-                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
+                // Use RGBA-native SIMD (avoids intermediate allocation)
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd_rgba(
+                    data, num_pixels,
+                ))
             }
             PixelFormat::Gray => {
                 // Grayscale: expand to RGB then use SIMD
@@ -1653,12 +1651,10 @@ impl Encoder {
                 Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
             PixelFormat::Bgra => {
-                // Swap B and R, strip alpha, then use SIMD
-                let rgb: Vec<u8> = data
-                    .chunks(4)
-                    .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
-                    .collect();
-                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
+                // Use BGRA-native SIMD (avoids intermediate allocation)
+                Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd_bgra(
+                    data, num_pixels,
+                ))
             }
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
                 feature: "CMYK with XYB mode",
