@@ -241,13 +241,13 @@ impl ChromaConversion {
     }
 
     /// Resolve Auto to a concrete method based on subsampling.
+    ///
+    /// Auto resolves to Intrinsic for all modes to match C++ jpegli behavior.
+    /// Use `ChromaConversion::Sharp` explicitly for gamma-aware downsampling.
     #[must_use]
-    pub const fn resolve(self, subsampling: Subsampling) -> Self {
+    pub const fn resolve(self, _subsampling: Subsampling) -> Self {
         match self {
-            Self::Auto => match subsampling {
-                Subsampling::S444 => Self::Intrinsic,
-                Subsampling::S420 | Subsampling::S422 | Subsampling::S440 => Self::Sharp,
-            },
+            Self::Auto => Self::Intrinsic, // Match C++ jpegli default
             other => other,
         }
     }
