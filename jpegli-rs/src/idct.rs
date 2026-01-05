@@ -536,13 +536,44 @@ pub fn inverse_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
 /// 8x8 block of pixel values (0-255)
 #[must_use]
 pub fn inverse_dct_8x8_u8(input: &[f32; DCT_BLOCK_SIZE]) -> [u8; DCT_BLOCK_SIZE] {
+    use wide::f32x8;
+
     let output = inverse_dct_8x8(input);
     let mut result = [0u8; DCT_BLOCK_SIZE];
 
-    for (i, &v) in output.iter().enumerate() {
-        // Add level shift (+128) and clamp
-        let pixel = (v + 128.0).round();
-        result[i] = pixel.clamp(0.0, 255.0) as u8;
+    let level_shift = f32x8::splat(128.0);
+    let zero = f32x8::splat(0.0);
+    let max_val = f32x8::splat(255.0);
+
+    // Process 8 values at a time
+    for chunk in 0..8 {
+        let k = chunk * 8;
+
+        let vals = f32x8::from([
+            output[k],
+            output[k + 1],
+            output[k + 2],
+            output[k + 3],
+            output[k + 4],
+            output[k + 5],
+            output[k + 6],
+            output[k + 7],
+        ]);
+
+        // Add level shift, round, and clamp
+        let shifted = vals + level_shift;
+        let rounded = shifted.round();
+        let clamped = rounded.max(zero).min(max_val);
+
+        let arr: [f32; 8] = clamped.into();
+        result[k] = arr[0] as u8;
+        result[k + 1] = arr[1] as u8;
+        result[k + 2] = arr[2] as u8;
+        result[k + 3] = arr[3] as u8;
+        result[k + 4] = arr[4] as u8;
+        result[k + 5] = arr[5] as u8;
+        result[k + 6] = arr[6] as u8;
+        result[k + 7] = arr[7] as u8;
     }
 
     result
