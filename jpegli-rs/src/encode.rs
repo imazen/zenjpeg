@@ -3616,6 +3616,7 @@ impl Encoder {
     /// Each table is written with:
     /// - DC tables: class 0, id = table index within DC range (0-3)
     /// - AC tables: class 1, id = table index within AC range (0-3)
+    #[allow(dead_code)]
     fn write_huffman_tables_from_vec(
         &self,
         output: &mut Vec<u8>,

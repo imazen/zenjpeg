@@ -146,6 +146,7 @@ pub fn linear_to_srgb_fast(v: f32) -> f32 {
 /// This matches the `TF_SRGB::DisplayFromEncoded` function in libjxl's
 /// transfer_functions-inl.h. The XYB perceptual model was tuned with this
 /// approximation, so using it gives better quality match with C++.
+#[allow(dead_code)]
 #[inline]
 #[must_use]
 fn srgb_to_linear_poly(x: f32) -> f32 {
