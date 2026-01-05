@@ -226,28 +226,22 @@ butteraugli_error_t butteraugli_opsin_dynamics(
     }
   }
 
-  // Create output XYB
-  auto result_xyb = jxl::Image3F::Create(&g_default_memory_manager, width, height);
-  if (!result_xyb.ok()) {
-    return BUTTERAUGLI_ERROR_MEMORY;
-  }
-  jxl::Image3F xyb = std::move(result_xyb).value_();
-
   // Set up parameters
   jxl::ButteraugliParams params;
   params.intensity_target = intensity_target;
 
-  // Use ButteraugliComparator to compute opsin dynamics
-  auto comparator_result = jxl::ButteraugliComparator::Make(rgb, params);
-  if (!comparator_result.ok()) {
-    return BUTTERAUGLI_ERROR_INTERNAL;
-  }
+  // We cannot directly call OpsinDynamicsImage as it uses Highway's dispatch.
+  // Instead, we use the same approach as SeparateFrequencies by creating
+  // a ButteraugliComparator and extracting the XYB from the PsychoImage.
+  // The LF band contains the XYB after xyb_low_freq_to_vals transform,
+  // so this gives us a comparable output even if not the raw XYB.
+  //
+  // For now, return a stub that indicates this function needs the real
+  // OpsinDynamicsImage which is not directly callable from C linkage.
+  // The frequency separation test should use butteraugli_separate_frequencies
+  // instead, which uses the real internal implementation.
 
-  // Note: The comparator computes OpsinDynamicsImage internally.
-  // For now, we return a simplified version.
-  // TODO: Extract actual XYB values from comparator if needed.
-
-  // Simplified opsin dynamics (for basic testing)
+  // Compute using simplified opsin (for fallback - real XYB comes from freq separation)
   const double mix0_r = 0.29956550340058319;
   const double mix0_g = 0.63373087833825936;
   const double mix0_b = 0.077705617820981968;
