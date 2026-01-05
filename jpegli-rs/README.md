@@ -158,6 +158,45 @@ jpegli-rs produces **byte-for-byte nearly identical** output to C++ jpegli with 
 
 Lower DSSIM is better. Higher SSIMULACRA2 is better.
 
+### Comprehensive Matrix: YCbCr vs XYB (commit a80225e)
+
+Tested across image sizes (64×64, 512×512, 2048×2048) and encoding modes:
+
+#### YCbCr Mode - Excellent Parity ✅
+
+| Size | Mode | Huffman | Q70 Δ% | Q90 Δ% |
+|------|------|---------|--------|--------|
+| 64×64 | Baseline | Fixed | **0.0%** | **0.0%** |
+| 64×64 | Baseline | Optimized | +2.9% | +2.8% |
+| 64×64 | Progressive | Optimized | **0.0%** | **0.0%** |
+| 512×512 | Baseline | Fixed | **0.0%** | **0.0%** |
+| 512×512 | Baseline | Optimized | +1.9% | +2.0% |
+| 512×512 | Progressive | Optimized | **0.0%** | **0.0%** |
+| 2048×2048 | Baseline | Fixed | **0.0%** | **0.0%** |
+| 2048×2048 | Baseline | Optimized | +0.1% | +2.5% |
+| 2048×2048 | Progressive | Optimized | **0.0%** | **0.0%** |
+
+#### XYB Mode - Good Parity
+
+| Size | Mode | Huffman | Q70 Δ% | Q90 Δ% |
+|------|------|---------|--------|--------|
+| 64×64 | Baseline | Fixed | +15.0% | +14.0% |
+| 64×64 | Baseline | Optimized | +1.0% | +0.8% |
+| 64×64 | Progressive | Optimized | +4.7% | +5.7% |
+| 512×512 | Baseline | Fixed | +2.6% | +1.8% |
+| 512×512 | Baseline | Optimized | -0.8% | +1.1% |
+| 512×512 | Progressive | Optimized | -0.4% | +4.8% |
+| 2048×2048 | Baseline | Fixed | +0.2% | +1.2% |
+| 2048×2048 | Baseline | Optimized | **0.0%** | +0.9% |
+| 2048×2048 | Progressive | Optimized | +0.2% | +2.5% |
+
+**Key findings:**
+- YCbCr progressive with Huffman optimization matches C++ exactly (0% diff)
+- XYB has larger gaps on small images but converges for large images
+- Quality (SSIMULACRA2) is identical between Rust and C++ in all configurations
+
+Run `cargo run --release --example comprehensive_matrix` to reproduce.
+
 ## Development
 
 ### Running FFI Comparison Tests
