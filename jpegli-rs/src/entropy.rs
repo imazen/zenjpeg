@@ -141,6 +141,7 @@ impl EntropyEncoder {
     /// * `component` - Component index (for DC prediction)
     /// * `dc_table_idx` - DC Huffman table index
     /// * `ac_table_idx` - AC Huffman table index
+    #[inline]
     pub fn encode_block(
         &mut self,
         coeffs: &[i16; DCT_BLOCK_SIZE],
