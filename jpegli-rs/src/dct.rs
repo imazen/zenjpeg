@@ -227,10 +227,10 @@ mod simd {
         let r2_final = r2 * SQRT2_VEC + r3;
 
         // InverseEvenOdd<4>: interleave even/odd
-        m[0] = r0;      // even[0]
+        m[0] = r0; // even[0]
         m[1] = r2_final; // odd[0]
-        m[2] = r1;      // even[1]
-        m[3] = r3;      // odd[1]
+        m[2] = r1; // even[1]
+        m[3] = r3; // odd[1]
     }
 
     /// DCT for N=8 on SIMD vectors
@@ -379,6 +379,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// # Returns
 /// 8x8 block of DCT coefficients
+#[inline]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     let mut scratch = [0.0f32; 64];
