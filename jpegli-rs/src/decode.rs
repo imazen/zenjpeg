@@ -1403,16 +1403,12 @@ impl<'a> JpegParser<'a> {
         let mut output = vec![0.0f32; out_width * out_height];
 
         for y in 0..out_height {
-            // Clamp y to valid input range (handles non-block-aligned heights)
             let in_y = y.min(in_height.saturating_sub(1));
             for out_x in 0..out_width {
-                // Map output x to input x (divide by 2 for 2x scaling)
                 let in_x = out_x / 2;
                 let curr = input[in_y * in_width + in_x];
 
-                // Determine if this is left or right half of input pixel
                 if out_x % 2 == 0 {
-                    // Left half: blend with left neighbor
                     let left = if in_x > 0 {
                         input[in_y * in_width + in_x - 1]
                     } else {
@@ -1420,7 +1416,6 @@ impl<'a> JpegParser<'a> {
                     };
                     output[y * out_width + out_x] = (3.0 * curr + left) * 0.25;
                 } else {
-                    // Right half: blend with right neighbor
                     let right = if in_x + 1 < in_width {
                         input[in_y * in_width + in_x + 1]
                     } else {

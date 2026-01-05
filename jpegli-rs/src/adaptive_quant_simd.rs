@@ -315,7 +315,8 @@ fn downsample_4x_sum(input: &[f32], output: &mut [f32]) {
     let out_w = output.len();
 
     // SIMD path: process 8 output pixels at once (32 input pixels)
-    let chunks = out_w / 8;
+    // Must have at least 32 input pixels for each SIMD chunk
+    let chunks = (width / 32).min(out_w / 8);
 
     for chunk in 0..chunks {
         let out_x = chunk * 8;
