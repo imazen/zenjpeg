@@ -96,6 +96,7 @@ fn dct1d_2(mem: &mut [f32]) {
 }
 
 /// DCT for N=4 (recursive)
+#[inline]
 fn dct1d_4(mem: &mut [f32]) {
     let mut tmp = [0.0f32; 4];
 
@@ -122,6 +123,7 @@ fn dct1d_4(mem: &mut [f32]) {
 }
 
 /// DCT for N=8 (recursive)
+#[inline]
 fn dct1d_8(mem: &mut [f32]) {
     let mut tmp = [0.0f32; 8];
 
