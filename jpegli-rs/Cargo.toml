@@ -35,7 +35,7 @@ jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = [
 codec-eval = { version = "0.2", optional = true }
 
 [dev-dependencies]
-jpegli-bench-utils = { path = "../jpegli-bench-utils" }
+jpegli-bench-utils = { path = "../jpegli-bench-utils", features = ["cjpegli-ffi"] }
 butteraugli = { workspace = true }
 chrono = "0.4"
 approx = { workspace = true }
