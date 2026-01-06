@@ -751,3 +751,222 @@ fn generate_reference_values() {
         println!("];\n");
     }
 }
+
+// ============================================================================
+// BENCHMARK: RUST VS C++ PERFORMANCE
+// ============================================================================
+
+/// Benchmark comparing Rust vs C++ jpegli encoding performance.
+///
+/// Uses jpegli-bench-utils for shared utilities (ImageData, QualityMetrics).
+///
+/// Run with:
+/// ```
+/// cargo test --release --test quality_matrix --features ffi-tests benchmark_rust_vs_cpp -- --nocapture --ignored
+/// ```
+#[test]
+#[ignore = "Requires ffi-tests feature and C++ jpegli build"]
+#[cfg(feature = "ffi-tests")]
+fn benchmark_rust_vs_cpp() {
+    use jpegli_bench_utils::{
+        ChromaSubsampling as BenchSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
+        QualityMetrics, ScanMode,
+    };
+    use std::time::Instant;
+
+    let img = ImageData::from_png(&get_frymire_path()).expect("Failed to load frymire.png");
+
+    const WARMUP_ITERS: usize = 2;
+    const BENCH_ITERS: usize = 5;
+    const BENCH_QUALITIES: [u8; 4] = [30, 50, 75, 90];
+
+    println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
+    println!("║                    RUST vs C++ JPEGLI BENCHMARK                              ║");
+    println!("╠══════════════════════════════════════════════════════════════════════════════╣");
+    println!(
+        "║ Image: frymire.png ({}x{}, {:.2} MP)                                    ║",
+        img.width,
+        img.height,
+        img.pixel_count() as f64 / 1_000_000.0
+    );
+    println!(
+        "║ Iterations: {} warmup + {} timed                                            ║",
+        WARMUP_ITERS, BENCH_ITERS
+    );
+    println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
+
+    let configs: [(&str, BenchSubsampling, ScanMode); 4] = [
+        ("YCbCr 4:4:4 Baseline", BenchSubsampling::S444, ScanMode::Baseline),
+        ("YCbCr 4:2:0 Baseline", BenchSubsampling::S420, ScanMode::Baseline),
+        ("YCbCr 4:4:4 Progressive", BenchSubsampling::S444, ScanMode::Progressive),
+        ("YCbCr 4:2:0 Progressive", BenchSubsampling::S420, ScanMode::Progressive),
+    ];
+
+    let mut all_valid = true;
+    let orig_rgb = img.as_rgb_image();
+
+    for (config_name, subsampling, scan_mode) in configs {
+        println!(
+            "┌─ {} ─────────────────────────────────────────────────┐",
+            config_name
+        );
+        println!(
+            "│ {:>4} │ {:>8} {:>8} │ {:>8} {:>8} │ {:>7} │ {:>6} │ {:>6} │",
+            "Q", "Rust ms", "C++ ms", "Rust KB", "C++ KB", "Speedup", "Δ Size", "Δ SSIM"
+        );
+        println!("├──────┼───────────────────┼───────────────────┼─────────┼────────┼────────┤");
+
+        // Convert to jpegli types for encode_cpp
+        let jpegli_subsampling = match subsampling {
+            BenchSubsampling::S444 => Subsampling::S444,
+            BenchSubsampling::S422 => Subsampling::S422,
+            BenchSubsampling::S420 => Subsampling::S420,
+            BenchSubsampling::S440 => Subsampling::S440,
+        };
+        let progressive = scan_mode == ScanMode::Progressive;
+
+        for &quality in &BENCH_QUALITIES {
+            // Warmup using EncoderConfig
+            let rust_config = EncoderConfig::new(EncoderImpl::JpegliRs)
+                .quality(quality)
+                .color(ColorMode::YCbCr)
+                .subsampling(subsampling)
+                .scan(scan_mode);
+
+            for _ in 0..WARMUP_ITERS {
+                let _ = rust_config.encode(&img);
+                let _ = encode_cpp(
+                    &img.pixels,
+                    img.width as u32,
+                    img.height as u32,
+                    quality,
+                    jpegli_subsampling,
+                    progressive,
+                    false,
+                );
+            }
+
+            // Benchmark Rust
+            let rust_start = Instant::now();
+            let mut rust_jpeg = Vec::new();
+            for _ in 0..BENCH_ITERS {
+                rust_jpeg = rust_config.encode(&img).expect("Rust encode failed");
+            }
+            let rust_time = rust_start.elapsed().as_secs_f64() * 1000.0 / BENCH_ITERS as f64;
+
+            // Benchmark C++
+            let cpp_start = Instant::now();
+            let mut cpp_jpeg = Vec::new();
+            let mut cpp_encode_success = false;
+            for _ in 0..BENCH_ITERS {
+                if let Some(data) = encode_cpp(
+                    &img.pixels,
+                    img.width as u32,
+                    img.height as u32,
+                    quality,
+                    jpegli_subsampling,
+                    progressive,
+                    false,
+                ) {
+                    cpp_jpeg = data;
+                    cpp_encode_success = !cpp_jpeg.is_empty();
+                }
+            }
+            let cpp_time = cpp_start.elapsed().as_secs_f64() * 1000.0 / BENCH_ITERS as f64;
+
+            // Compute quality metrics using shared utils
+            let rust_decoded =
+                jpegli_bench_utils::decode_jpeg_to_rgb(&rust_jpeg).expect("Rust decode failed");
+            let rust_ssim2 = QualityMetrics::ssimulacra2(orig_rgb.as_ref(), rust_decoded.as_ref());
+
+            // Compute differences (handle encode/decode failure gracefully)
+            let (cpp_time_str, cpp_size_str, speedup_str, size_diff_str, ssim_diff_str, status) =
+                if cpp_encode_success {
+                    // Try to decode C++ output
+                    if let Ok(cpp_dec) = jpegli_bench_utils::decode_jpeg_to_rgb(&cpp_jpeg) {
+                        let cpp_ssim2 =
+                            QualityMetrics::ssimulacra2(orig_rgb.as_ref(), cpp_dec.as_ref());
+                        let speedup = cpp_time / rust_time;
+                        let size_diff = 100.0
+                            * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
+                            / cpp_jpeg.len() as f64;
+                        let ssim_diff = rust_ssim2 - cpp_ssim2;
+
+                        // Validity checks
+                        let size_ok = size_diff.abs() < 5.0;
+                        let ssim_ok = ssim_diff.abs() < 1.0;
+                        if !size_ok || !ssim_ok {
+                            all_valid = false;
+                        }
+                        let status = if size_ok && ssim_ok { " " } else { "!" };
+
+                        (
+                            format!("{:>7.1}", cpp_time),
+                            format!("{:>7.1}", cpp_jpeg.len() as f64 / 1024.0),
+                            format!("{:>6.2}x", speedup),
+                            format!("{:>+5.1}%", size_diff),
+                            format!("{:>+5.2}", ssim_diff),
+                            status,
+                        )
+                    } else {
+                        // Decode failed
+                        (
+                            format!("{:>7.1}", cpp_time),
+                            format!("{:>7.1}", cpp_jpeg.len() as f64 / 1024.0),
+                            "   n/a".to_string(),
+                            "   n/a".to_string(),
+                            "  n/a".to_string(),
+                            "?",
+                        )
+                    }
+                } else {
+                    // C++ encode failed completely
+                    (
+                        "   n/a".to_string(),
+                        "   n/a".to_string(),
+                        "   n/a".to_string(),
+                        "   n/a".to_string(),
+                        "  n/a".to_string(),
+                        "-",
+                    )
+                };
+
+            println!(
+                "│{}{:>4} │ {:>7.1} {} │ {:>7.1} {} │ {} │ {} │ {} │",
+                status,
+                quality,
+                rust_time,
+                cpp_time_str,
+                rust_jpeg.len() as f64 / 1024.0,
+                cpp_size_str,
+                speedup_str,
+                size_diff_str,
+                ssim_diff_str
+            );
+        }
+        println!("└──────┴───────────────────┴───────────────────┴─────────┴────────┴────────┘\n");
+    }
+
+    // Summary
+    println!("Legend:");
+    println!("  Speedup: >1.0 = Rust faster, <1.0 = C++ faster");
+    println!("  Δ Size:  <0 = Rust smaller, >0 = Rust larger");
+    println!("  Δ SSIM:  >0 = Rust better quality, <0 = C++ better quality");
+    println!("  !       = Outside validity tolerance (5% size, 1.0 SSIM2)");
+    println!("  ?       = C++ decode failed (quality comparison unavailable)");
+    println!("  -       = C++ encode failed (comparison unavailable)");
+
+    assert!(
+        all_valid,
+        "Some configurations exceeded validity tolerances"
+    );
+}
+
+/// Quick benchmark stub when ffi-tests is not enabled
+#[test]
+#[ignore = "Requires ffi-tests feature"]
+#[cfg(not(feature = "ffi-tests"))]
+fn benchmark_rust_vs_cpp() {
+    println!("Benchmark requires --features ffi-tests");
+    println!("Run: cargo test --release --test quality_matrix --features ffi-tests benchmark_rust_vs_cpp -- --nocapture --ignored");
+}
