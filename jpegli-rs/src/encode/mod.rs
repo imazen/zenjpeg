@@ -780,11 +780,8 @@ impl Encoder {
         let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0);
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
-            custom.clone()
-        } else {
-            compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01)
-        };
+        let aq_map = hybrid::get_aq_map_or_compute(
+            &self.config, &y_plane_scaled, width, height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
 
@@ -797,11 +794,7 @@ impl Encoder {
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let hybrid_ctx = if self.config.hybrid_config.enabled {
-            Some(HybridQuantContext::new(self.config.hybrid_config))
-        } else {
-            None
-        };
+        let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
 
         // Write JPEG structure for XYB mode (no JFIF, just ICC profile)
         self.write_header_xyb(output)?;
@@ -1608,21 +1601,14 @@ impl Encoder {
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
-            custom.clone()
-        } else {
-            compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01)
-        };
+        let aq_map = hybrid::get_aq_map_or_compute(
+            &self.config, &y_plane_f32, width, height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let hybrid_ctx = if self.config.hybrid_config.enabled {
-            Some(HybridQuantContext::new(self.config.hybrid_config))
-        } else {
-            None
-        };
+        let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
@@ -1718,21 +1704,14 @@ impl Encoder {
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
-            custom.clone()
-        } else {
-            compute_aq_strength_map(y_plane, width, height, y_quant_01)
-        };
+        let aq_map = hybrid::get_aq_map_or_compute(
+            &self.config, y_plane, width, height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let hybrid_ctx = if self.config.hybrid_config.enabled {
-            Some(HybridQuantContext::new(self.config.hybrid_config))
-        } else {
-            None
-        };
+        let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
 
         let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
@@ -1826,21 +1805,14 @@ impl Encoder {
         // Compute per-block adaptive quantization strength from Y plane
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = if let Some(ref custom) = self.config.custom_aq_map {
-            custom.clone()
-        } else {
-            compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01)
-        };
+        let aq_map = hybrid::get_aq_map_or_compute(
+            &self.config, y_plane, y_width, y_height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let hybrid_ctx = if self.config.hybrid_config.enabled {
-            Some(HybridQuantContext::new(self.config.hybrid_config))
-        } else {
-            None
-        };
+        let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
 
         let mut y_blocks = Vec::with_capacity(y_blocks_h * y_blocks_v);
         let mut cb_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
