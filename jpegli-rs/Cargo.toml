@@ -97,6 +97,10 @@ harness = false
 name = "simd_blocks"
 harness = false
 
+[[bench]]
+name = "dct"
+harness = false
+
 [lints]
 workspace = true
 
