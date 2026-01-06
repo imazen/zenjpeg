@@ -1204,7 +1204,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn short_name(&self) -> String {
         let hybrid_suffix = if self.hybrid { "-hybrid" } else { "" };
-        format!("{}-{}{}", self.encoder.short_name(), self.color.suffix(), hybrid_suffix)
+        format!(
+            "{}-{}{}",
+            self.encoder.short_name(),
+            self.color.suffix(),
+            hybrid_suffix
+        )
     }
 
     /// Encode an image with this configuration.
@@ -1214,7 +1219,11 @@ impl EncoderConfig {
         match self.encoder {
             EncoderImpl::JpegliRs => self.encode_with_jpegli_rs(img),
             EncoderImpl::CMozjpeg => self.encode_with_cmozjpeg(img),
-            EncoderImpl::CJpegli | EncoderImpl::MozjpegRs | EncoderImpl::Libjpeg => {
+            #[cfg(feature = "cjpegli-ffi")]
+            EncoderImpl::CJpegli => self.encode_with_cjpegli_ffi(img),
+            #[cfg(not(feature = "cjpegli-ffi"))]
+            EncoderImpl::CJpegli => Err("cjpegli requires cjpegli-ffi feature".to_string()),
+            EncoderImpl::MozjpegRs | EncoderImpl::Libjpeg => {
                 Err(format!("{} encoder not yet implemented", self.encoder))
             }
         }
@@ -1240,7 +1249,8 @@ impl EncoderConfig {
             return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
         }
 
-        encoder.encode(&img.pixels)
+        encoder
+            .encode(&img.pixels)
             .map_err(|e| format!("jpegli-rs encode failed: {e}"))
     }
 
@@ -1270,6 +1280,143 @@ impl EncoderConfig {
         comp.write_scanlines(&img.pixels)
             .map_err(|e| format!("mozjpeg write: {e}"))?;
         comp.finish().map_err(|e| format!("mozjpeg finish: {e}"))
+    }
+
+    /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
+    ///
+    /// Uses the standard libjpeg-62 API exposed by jpegli for accurate
+    /// benchmarking against the original C++ implementation.
+    ///
+    /// Note: XYB mode is NOT supported via the standard libjpeg API.
+    /// Use CLI fallback for XYB comparisons.
+    #[cfg(feature = "cjpegli-ffi")]
+    fn encode_with_cjpegli_ffi(&self, img: &ImageData) -> Result<Vec<u8>, String> {
+        use jpegli_internals_sys::*;
+        use std::mem::MaybeUninit;
+        use std::ptr;
+
+        if self.color == ColorMode::Xyb {
+            return Err("cjpegli FFI does not support XYB (use CLI fallback)".to_string());
+        }
+
+        unsafe {
+            // Use proper structs - sizes match C library (520 bytes for compress, 168 for error)
+            let mut cinfo: MaybeUninit<jpeg_compress_struct> = MaybeUninit::zeroed();
+            let mut jerr: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
+
+            let cinfo_ptr = cinfo.as_mut_ptr();
+            let jerr_ptr = jerr.as_mut_ptr();
+
+            // Initialize error handler FIRST (before CreateCompress)
+            (*cinfo_ptr).err = jpeg_std_error(jerr_ptr);
+
+            // Create compression object - size is validated by library
+            jpeg_CreateCompress(
+                cinfo_ptr,
+                JPEG_LIB_VERSION as i32,
+                std::mem::size_of::<jpeg_compress_struct>(),
+            );
+
+            // Setup memory destination
+            let mut outbuffer: *mut u8 = ptr::null_mut();
+            let mut outsize: std::os::raw::c_ulong = 0;
+            jpeg_mem_dest(cinfo_ptr, &mut outbuffer, &mut outsize);
+
+            // Set image parameters
+            (*cinfo_ptr).image_width = img.width as u32;
+            (*cinfo_ptr).image_height = img.height as u32;
+            (*cinfo_ptr).input_components = 3;
+            (*cinfo_ptr).in_color_space = JCS_RGB as u32;
+
+            // Set defaults (this sets up YCbCr conversion, quant tables, etc.)
+            jpeg_set_defaults(cinfo_ptr);
+
+            // Set quality
+            jpeg_set_quality(cinfo_ptr, self.quality as i32, 1);
+
+            // Set subsampling via comp_info
+            if !(*cinfo_ptr).comp_info.is_null() {
+                let comp_info = (*cinfo_ptr).comp_info;
+                match self.subsampling {
+                    ChromaSubsampling::S444 => {
+                        (*comp_info.add(0)).h_samp_factor = 1;
+                        (*comp_info.add(0)).v_samp_factor = 1;
+                        (*comp_info.add(1)).h_samp_factor = 1;
+                        (*comp_info.add(1)).v_samp_factor = 1;
+                        (*comp_info.add(2)).h_samp_factor = 1;
+                        (*comp_info.add(2)).v_samp_factor = 1;
+                    }
+                    ChromaSubsampling::S422 => {
+                        (*comp_info.add(0)).h_samp_factor = 2;
+                        (*comp_info.add(0)).v_samp_factor = 1;
+                        (*comp_info.add(1)).h_samp_factor = 1;
+                        (*comp_info.add(1)).v_samp_factor = 1;
+                        (*comp_info.add(2)).h_samp_factor = 1;
+                        (*comp_info.add(2)).v_samp_factor = 1;
+                    }
+                    ChromaSubsampling::S420 => {
+                        (*comp_info.add(0)).h_samp_factor = 2;
+                        (*comp_info.add(0)).v_samp_factor = 2;
+                        (*comp_info.add(1)).h_samp_factor = 1;
+                        (*comp_info.add(1)).v_samp_factor = 1;
+                        (*comp_info.add(2)).h_samp_factor = 1;
+                        (*comp_info.add(2)).v_samp_factor = 1;
+                    }
+                    ChromaSubsampling::S440 => {
+                        (*comp_info.add(0)).h_samp_factor = 1;
+                        (*comp_info.add(0)).v_samp_factor = 2;
+                        (*comp_info.add(1)).h_samp_factor = 1;
+                        (*comp_info.add(1)).v_samp_factor = 1;
+                        (*comp_info.add(2)).h_samp_factor = 1;
+                        (*comp_info.add(2)).v_samp_factor = 1;
+                    }
+                    // Non-exhaustive fallback
+                    _ => {}
+                }
+            }
+
+            // Set progressive mode
+            if self.scan == ScanMode::Progressive {
+                jpeg_simple_progression(cinfo_ptr);
+            }
+
+            // Enable Huffman optimization (matches jpegli-rs default)
+            (*cinfo_ptr).optimize_coding = 1;
+
+            // Start compression
+            jpeg_start_compress(cinfo_ptr, 1);
+
+            // Write scanlines
+            let row_stride = img.width * 3;
+            let mut row_pointer: [JSAMPROW; 1] = [ptr::null_mut()];
+
+            while (*cinfo_ptr).next_scanline < (*cinfo_ptr).image_height {
+                let row_idx = (*cinfo_ptr).next_scanline as usize;
+                let row_start = row_idx * row_stride;
+                row_pointer[0] = img.pixels.as_ptr().add(row_start) as *mut u8;
+                jpeg_write_scanlines(cinfo_ptr, row_pointer.as_mut_ptr(), 1);
+            }
+
+            // Finish compression
+            jpeg_finish_compress(cinfo_ptr);
+
+            // Copy output to Vec
+            let result = if !outbuffer.is_null() && outsize > 0 {
+                Ok(std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec())
+            } else {
+                Err("cjpegli FFI produced empty output".to_string())
+            };
+
+            // Cleanup
+            jpeg_destroy_compress(cinfo_ptr);
+
+            // Free the output buffer allocated by jpeg_mem_dest
+            if !outbuffer.is_null() {
+                libc::free(outbuffer as *mut std::ffi::c_void);
+            }
+
+            result
+        }
     }
 }
 
@@ -1345,6 +1492,42 @@ pub fn encode_cmozjpeg_ycbcr_progressive(img: &ImageData, quality: u8) -> Vec<u8
         .quality(quality)
         .encode(img)
         .expect("cmozjpeg ycbcr progressive encode")
+}
+
+/// Encode with C++ jpegli via FFI (requires cjpegli-ffi feature).
+#[cfg(feature = "cjpegli-ffi")]
+pub fn encode_cjpegli_ffi(img: &ImageData, quality: u8) -> Vec<u8> {
+    EncoderConfig::new(EncoderImpl::CJpegli)
+        .color(ColorMode::YCbCr)
+        .quality(quality)
+        .encode(img)
+        .expect("cjpegli-ffi ycbcr encode")
+}
+
+/// Encode with C++ jpegli via FFI, progressive mode.
+#[cfg(feature = "cjpegli-ffi")]
+pub fn encode_cjpegli_ffi_progressive(img: &ImageData, quality: u8) -> Vec<u8> {
+    EncoderConfig::new(EncoderImpl::CJpegli)
+        .color(ColorMode::YCbCr)
+        .scan(ScanMode::Progressive)
+        .quality(quality)
+        .encode(img)
+        .expect("cjpegli-ffi ycbcr progressive encode")
+}
+
+/// Encode with C++ jpegli via FFI with specific subsampling.
+#[cfg(feature = "cjpegli-ffi")]
+pub fn encode_cjpegli_ffi_with_subsampling(
+    img: &ImageData,
+    quality: u8,
+    subsampling: ChromaSubsampling,
+) -> Vec<u8> {
+    EncoderConfig::new(EncoderImpl::CJpegli)
+        .color(ColorMode::YCbCr)
+        .subsampling(subsampling)
+        .quality(quality)
+        .encode(img)
+        .expect("cjpegli-ffi encode")
 }
 
 // Legacy aliases for backwards compatibility

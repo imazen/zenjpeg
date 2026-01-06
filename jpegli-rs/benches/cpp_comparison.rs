@@ -1,11 +1,11 @@
 //! Criterion benchmarks comparing Rust jpegli-rs vs C++ cjpegli.
 //!
-//! Provides statistically valid timing comparisons with noise detection.
+//! Uses FFI encoding (not CLI subprocess) for accurate timing comparisons.
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Run all comparison benchmarks
+//! # Run all comparison benchmarks (requires cjpegli-ffi feature in jpegli-bench-utils)
 //! cargo bench --bench cpp_comparison
 //!
 //! # Run specific benchmark
@@ -17,100 +17,60 @@
 //! # Compare against baseline
 //! cargo bench --bench cpp_comparison -- --baseline main
 //! ```
+//!
+//! # Requirements
+//!
+//! This benchmark requires building jpegli-bench-utils with the `cjpegli-ffi` feature,
+//! which in turn requires building internal/jpegli-cpp:
+//!
+//! ```bash
+//! git submodule update --init --recursive
+//! cd internal/jpegli-cpp
+//! mkdir -p build && cd build
+//! cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+//! ninja jpegli
+//! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jpegli::test_utils::find_cjpegli;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 use jpegli::{Encoder, Quality};
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use jpegli_bench_utils::{ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern};
 use std::time::Duration;
 
 // ============================================================================
 // Test Data
 // ============================================================================
 
-struct TestImage {
-    rgb: Vec<u8>,
-    width: u32,
-    height: u32,
-    ppm_path: PathBuf,
-}
-
-impl TestImage {
-    fn new(width: u32, height: u32) -> Self {
-        let rgb = generate_complex_image(width as usize, height as usize);
-        let ppm_path = PathBuf::from(format!("/tmp/bench_cpp_{}x{}.ppm", width, height));
-        write_ppm(&ppm_path, &rgb, width, height).expect("write ppm");
-        Self {
-            rgb,
-            width,
-            height,
-            ppm_path,
-        }
+fn create_test_image(width: u32, height: u32) -> ImageData {
+    let pattern = SyntheticPattern::Complex;
+    let img = pattern.generate(width, height);
+    ImageData {
+        name: format!("complex_{}x{}", width, height),
+        pixels: img.buf().iter().flat_map(|p| [p.r, p.g, p.b]).collect(),
+        width: width as usize,
+        height: height as usize,
     }
-
-    fn pixels(&self) -> u64 {
-        self.width as u64 * self.height as u64
-    }
-}
-
-impl Drop for TestImage {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.ppm_path);
-    }
-}
-
-fn generate_complex_image(width: usize, height: usize) -> Vec<u8> {
-    let mut rgb = vec![0u8; width * height * 3];
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * 3;
-            let fx = x as f64 / width as f64;
-            let fy = y as f64 / height as f64;
-
-            // Complex pattern with multiple frequencies
-            rgb[idx] = ((fx * 255.0) + (fx * fy * 50.0).sin() * 30.0).clamp(0.0, 255.0) as u8;
-            rgb[idx + 1] = ((fy * 255.0) + (fx * fy * 100.0).cos() * 40.0).clamp(0.0, 255.0) as u8;
-            rgb[idx + 2] = (128.0 + ((fx + fy) * 50.0).sin() * 50.0).clamp(0.0, 255.0) as u8;
-        }
-    }
-    rgb
-}
-
-fn write_ppm(path: &PathBuf, rgb: &[u8], width: u32, height: u32) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut file = fs::File::create(path)?;
-    writeln!(file, "P6")?;
-    writeln!(file, "{} {}", width, height)?;
-    writeln!(file, "255")?;
-    file.write_all(rgb)?;
-    Ok(())
 }
 
 // ============================================================================
-// Encoder Wrappers
+// Encoder Configurations
 // ============================================================================
 
 #[derive(Debug, Clone, Copy)]
-struct EncodeConfig {
+struct BenchConfig {
     mode: JpegMode,
-    optimize_huffman: bool,
     subsampling: Subsampling,
     use_xyb: bool,
     quality: u8,
 }
 
-impl EncodeConfig {
+impl BenchConfig {
     fn name(&self) -> String {
         let mode = match self.mode {
             JpegMode::Baseline => "base",
             JpegMode::Progressive => "prog",
-            JpegMode::Lossless => "lossless",
             _ => "other",
         };
-        let huff = if self.optimize_huffman { "opt" } else { "fix" };
         let sub = match self.subsampling {
             Subsampling::S444 => "444",
             Subsampling::S422 => "422",
@@ -119,80 +79,66 @@ impl EncodeConfig {
             _ => "other",
         };
         let color = if self.use_xyb { "xyb" } else { "ycbcr" };
-        format!("{}-{}-{}-{}", mode, huff, sub, color)
+        format!("{}-{}-{}-q{}", mode, sub, color, self.quality)
     }
 
-    fn cpp_args(&self) -> Vec<String> {
-        let mut args = vec!["-q".to_string(), self.quality.to_string()];
-
-        // Progressive level
-        match self.mode {
-            JpegMode::Baseline => args.extend(["-p".to_string(), "0".to_string()]),
-            JpegMode::Progressive => args.extend(["-p".to_string(), "2".to_string()]),
-            JpegMode::Lossless => {}
-            _ => {}
-        }
-
-        // Huffman
-        if !self.optimize_huffman {
-            args.push("--fixed_code".to_string());
-        }
-
-        // Subsampling
-        let sub = match self.subsampling {
-            Subsampling::S444 => "444",
-            Subsampling::S422 => "422",
-            Subsampling::S420 => "420",
-            Subsampling::S440 => "440",
-            _ => "420",
-        };
-        args.push(format!("--chroma_subsampling={}", sub));
-
-        // XYB
-        if self.use_xyb {
-            args.push("--xyb".to_string());
-        }
-
-        args
+    fn to_encoder_config(&self) -> EncoderConfig {
+        EncoderConfig::new(EncoderImpl::CJpegli)
+            .color(if self.use_xyb { ColorMode::Xyb } else { ColorMode::YCbCr })
+            .scan(match self.mode {
+                JpegMode::Baseline => ScanMode::Baseline,
+                JpegMode::Progressive => ScanMode::Progressive,
+                _ => ScanMode::Progressive,
+            })
+            .subsampling(match self.subsampling {
+                Subsampling::S444 => ChromaSubsampling::S444,
+                Subsampling::S422 => ChromaSubsampling::S422,
+                Subsampling::S420 => ChromaSubsampling::S420,
+                Subsampling::S440 => ChromaSubsampling::S440,
+                _ => ChromaSubsampling::S420,
+            })
+            .quality(self.quality)
     }
 }
 
-fn encode_rust(image: &TestImage, config: &EncodeConfig) -> Vec<u8> {
+fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
     Encoder::new()
-        .width(image.width)
-        .height(image.height)
+        .width(image.width as u32)
+        .height(image.height as u32)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(Quality::from_quality(config.quality as f32))
         .mode(config.mode)
-        .optimize_huffman(config.optimize_huffman)
+        .optimize_huffman(true)
         .subsampling(config.subsampling)
         .use_xyb(config.use_xyb)
-        .encode(&image.rgb)
+        .encode(&image.pixels)
         .expect("Rust encode failed")
 }
 
-fn encode_cpp(cjpegli: &PathBuf, image: &TestImage, config: &EncodeConfig) -> Vec<u8> {
-    let output_path = format!("/tmp/bench_cpp_out_{}.jpg", std::process::id());
+fn encode_cpp_ffi(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
+    config.to_encoder_config()
+        .encode(image)
+        .expect("C++ FFI encode failed")
+}
 
-    let mut args = config.cpp_args();
-    args.insert(0, image.ppm_path.to_str().unwrap().to_string());
-    args.insert(1, output_path.clone());
+// ============================================================================
+// Check if FFI is available
+// ============================================================================
 
-    let result = Command::new(cjpegli)
-        .args(&args)
-        .output()
-        .expect("run cjpegli");
+fn ffi_available() -> bool {
+    // Try encoding a small test image with C++ FFI
+    let test_img = ImageData {
+        name: "test".to_string(),
+        pixels: vec![128u8; 8 * 8 * 3],
+        width: 8,
+        height: 8,
+    };
 
-    if !result.status.success() {
-        panic!(
-            "cjpegli failed: {}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-    }
+    let config = EncoderConfig::new(EncoderImpl::CJpegli)
+        .color(ColorMode::YCbCr)
+        .quality(90);
 
-    let data = fs::read(&output_path).expect("read cpp output");
-    let _ = fs::remove_file(&output_path);
-    data
+    config.encode(&test_img).is_ok()
 }
 
 // ============================================================================
@@ -200,75 +146,48 @@ fn encode_cpp(cjpegli: &PathBuf, image: &TestImage, config: &EncodeConfig) -> Ve
 // ============================================================================
 
 fn bench_rust_vs_cpp(c: &mut Criterion) {
-    let cjpegli = match find_cjpegli() {
-        Some(p) => p,
-        None => {
-            eprintln!("SKIP: cjpegli not found. Build internal/jpegli-cpp first.");
-            return;
-        }
-    };
+    if !ffi_available() {
+        eprintln!("SKIP: C++ jpegli FFI not available.");
+        eprintln!("Build jpegli-bench-utils with --features cjpegli-ffi");
+        eprintln!("And ensure internal/jpegli-cpp is built.");
+        return;
+    }
 
     // Create test image (512x512 is a good balance of speed and realism)
-    let image = TestImage::new(512, 512);
+    let image = create_test_image(512, 512);
 
-    // Test configurations
+    // Test configurations (YCbCr only - XYB not supported via FFI)
     let configs = vec![
         // Baseline YCbCr
-        EncodeConfig {
+        BenchConfig {
             mode: JpegMode::Baseline,
-            optimize_huffman: false,
             subsampling: Subsampling::S420,
             use_xyb: false,
             quality: 90,
         },
-        EncodeConfig {
+        BenchConfig {
             mode: JpegMode::Baseline,
-            optimize_huffman: true,
-            subsampling: Subsampling::S420,
-            use_xyb: false,
-            quality: 90,
-        },
-        EncodeConfig {
-            mode: JpegMode::Baseline,
-            optimize_huffman: true,
             subsampling: Subsampling::S444,
             use_xyb: false,
             quality: 90,
         },
         // Progressive YCbCr
-        EncodeConfig {
+        BenchConfig {
             mode: JpegMode::Progressive,
-            optimize_huffman: true,
             subsampling: Subsampling::S420,
             use_xyb: false,
             quality: 90,
         },
-        EncodeConfig {
+        BenchConfig {
             mode: JpegMode::Progressive,
-            optimize_huffman: true,
             subsampling: Subsampling::S444,
             use_xyb: false,
             quality: 90,
         },
-        // XYB mode (always 444)
-        EncodeConfig {
-            mode: JpegMode::Baseline,
-            optimize_huffman: true,
-            subsampling: Subsampling::S444,
-            use_xyb: true,
-            quality: 90,
-        },
-        EncodeConfig {
-            mode: JpegMode::Progressive,
-            optimize_huffman: true,
-            subsampling: Subsampling::S444,
-            use_xyb: true,
-            quality: 90,
-        },
     ];
 
-    let mut group = c.benchmark_group("rust_vs_cpp");
-    group.throughput(Throughput::Elements(image.pixels()));
+    let mut group = c.benchmark_group("rust_vs_cpp_ffi");
+    group.throughput(Throughput::Elements((image.width * image.height) as u64));
     group.warm_up_time(Duration::from_millis(500));
     group.measurement_time(Duration::from_secs(3));
 
@@ -282,12 +201,12 @@ fn bench_rust_vs_cpp(c: &mut Criterion) {
             },
         );
 
-        // Benchmark C++
+        // Benchmark C++ FFI
         group.bench_with_input(
-            BenchmarkId::new("cpp", config.name()),
-            &(&image, config, &cjpegli),
-            |b, (img, cfg, cjpegli)| {
-                b.iter(|| encode_cpp(black_box(cjpegli), black_box(img), black_box(cfg)));
+            BenchmarkId::new("cpp_ffi", config.name()),
+            &(&image, config),
+            |b, (img, cfg)| {
+                b.iter(|| encode_cpp_ffi(black_box(img), black_box(cfg)));
             },
         );
     }
@@ -296,29 +215,25 @@ fn bench_rust_vs_cpp(c: &mut Criterion) {
 }
 
 fn bench_sizes(c: &mut Criterion) {
-    let cjpegli = match find_cjpegli() {
-        Some(p) => p,
-        None => {
-            eprintln!("SKIP: cjpegli not found.");
-            return;
-        }
-    };
+    if !ffi_available() {
+        eprintln!("SKIP: C++ jpegli FFI not available.");
+        return;
+    }
 
-    let config = EncodeConfig {
+    let config = BenchConfig {
         mode: JpegMode::Progressive,
-        optimize_huffman: true,
         subsampling: Subsampling::S420,
         use_xyb: false,
         quality: 90,
     };
 
-    let mut group = c.benchmark_group("size_scaling");
+    let mut group = c.benchmark_group("size_scaling_ffi");
     group.warm_up_time(Duration::from_millis(300));
     group.measurement_time(Duration::from_secs(2));
 
     for size in [256, 512, 1024] {
-        let image = TestImage::new(size, size);
-        group.throughput(Throughput::Elements(image.pixels()));
+        let image = create_test_image(size, size);
+        group.throughput(Throughput::Elements((image.width * image.height) as u64));
 
         group.bench_with_input(
             BenchmarkId::new("rust", format!("{}x{}", size, size)),
@@ -329,10 +244,10 @@ fn bench_sizes(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("cpp", format!("{}x{}", size, size)),
-            &(&image, &config, &cjpegli),
-            |b, (img, cfg, cjpegli)| {
-                b.iter(|| encode_cpp(black_box(cjpegli), black_box(img), black_box(cfg)));
+            BenchmarkId::new("cpp_ffi", format!("{}x{}", size, size)),
+            &(&image, &config),
+            |b, (img, cfg)| {
+                b.iter(|| encode_cpp_ffi(black_box(img), black_box(cfg)));
             },
         );
     }
@@ -341,25 +256,21 @@ fn bench_sizes(c: &mut Criterion) {
 }
 
 fn bench_quality_levels(c: &mut Criterion) {
-    let cjpegli = match find_cjpegli() {
-        Some(p) => p,
-        None => {
-            eprintln!("SKIP: cjpegli not found.");
-            return;
-        }
-    };
+    if !ffi_available() {
+        eprintln!("SKIP: C++ jpegli FFI not available.");
+        return;
+    }
 
-    let image = TestImage::new(512, 512);
+    let image = create_test_image(512, 512);
 
-    let mut group = c.benchmark_group("quality_levels");
-    group.throughput(Throughput::Elements(image.pixels()));
+    let mut group = c.benchmark_group("quality_levels_ffi");
+    group.throughput(Throughput::Elements((image.width * image.height) as u64));
     group.warm_up_time(Duration::from_millis(300));
     group.measurement_time(Duration::from_secs(2));
 
     for quality in [50, 75, 90, 95] {
-        let config = EncodeConfig {
+        let config = BenchConfig {
             mode: JpegMode::Progressive,
-            optimize_huffman: true,
             subsampling: Subsampling::S420,
             use_xyb: false,
             quality,
@@ -374,10 +285,10 @@ fn bench_quality_levels(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("cpp", format!("q{}", quality)),
-            &(&image, &config, &cjpegli),
-            |b, (img, cfg, cjpegli)| {
-                b.iter(|| encode_cpp(black_box(cjpegli), black_box(img), black_box(cfg)));
+            BenchmarkId::new("cpp_ffi", format!("q{}", quality)),
+            &(&image, &config),
+            |b, (img, cfg)| {
+                b.iter(|| encode_cpp_ffi(black_box(img), black_box(cfg)));
             },
         );
     }
@@ -390,18 +301,18 @@ fn bench_quality_levels(c: &mut Criterion) {
 // ============================================================================
 
 fn verify_outputs_match(c: &mut Criterion) {
-    let cjpegli = match find_cjpegli() {
-        Some(p) => p,
-        None => {
-            eprintln!("SKIP: cjpegli not found.");
-            return;
-        }
-    };
+    if !ffi_available() {
+        eprintln!("SKIP: C++ jpegli FFI not available.");
+        // Still create a dummy benchmark
+        let mut group = c.benchmark_group("verification");
+        group.bench_function("skip", |b| b.iter(|| black_box(1 + 1)));
+        group.finish();
+        return;
+    }
 
-    let image = TestImage::new(512, 512);
-    let config = EncodeConfig {
+    let image = create_test_image(512, 512);
+    let config = BenchConfig {
         mode: JpegMode::Progressive,
-        optimize_huffman: true,
         subsampling: Subsampling::S420,
         use_xyb: false,
         quality: 90,
@@ -409,7 +320,7 @@ fn verify_outputs_match(c: &mut Criterion) {
 
     // Encode both
     let rust_jpeg = encode_rust(&image, &config);
-    let cpp_jpeg = encode_cpp(&cjpegli, &image, &config);
+    let cpp_jpeg = encode_cpp_ffi(&image, &config);
 
     // Decode both
     let rust_decoded = decode_jpeg(&rust_jpeg);
@@ -420,7 +331,7 @@ fn verify_outputs_match(c: &mut Criterion) {
     let size_diff_pct =
         (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
 
-    println!("\n=== OUTPUT VERIFICATION ===");
+    println!("\n=== FFI OUTPUT VERIFICATION ===");
     println!("Rust size:  {} bytes", rust_jpeg.len());
     println!("C++ size:   {} bytes", cpp_jpeg.len());
     println!("Size diff:  {:+.2}%", size_diff_pct);
