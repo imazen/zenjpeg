@@ -488,10 +488,15 @@ src/encode/mod.rs         - Encoder struct and core logic (3097 lines)
 
 ### Session 2026-01-06: Hybrid module extraction
 
+**Commits:** `1b6cb3e`, `8c866ad`, `beb061e` on branch `simd`
+
 **Completed:**
-- Created `encode/hybrid.rs` module for hybrid-trellis specific code (~190 lines)
+- Created `encode/hybrid.rs` module for hybrid-trellis specific code
 - Moved `HybridQuantContext` from config.rs to hybrid.rs
 - Moved `quantize_all_blocks_xyb_with_aq` function to hybrid.rs
+- Added `quantize_block_dispatch` helper to consolidate cfg blocks (~18 lines → ~6 lines each)
+- Added `get_aq_map_or_compute` helper for AQ map setup
+- Added `create_hybrid_ctx` helper for hybrid context initialization
 - All 324 lib tests pass (both with and without experimental-hybrid-trellis feature)
 - Quality compare example verified: hybrid encoder produces same results
 
@@ -501,15 +506,18 @@ src/encode/config.rs      - Configuration types (385 lines, reduced from 440)
 src/encode/output.rs      - JPEG writing methods (808 lines)
 src/encode/color.rs       - Color conversion methods (534 lines)
 src/encode/progressive.rs - Progressive scan encoding (539 lines)
-src/encode/hybrid.rs      - Hybrid trellis quantization (190 lines) [NEW, cfg-gated]
+src/encode/hybrid.rs      - Hybrid trellis quantization (246 lines) [NEW, cfg-gated]
 src/encode/tests.rs       - Unit tests (998 lines)
-src/encode/mod.rs         - Encoder struct and core logic (~2980 lines)
+src/encode/mod.rs         - Encoder struct and core logic (2843 lines)
 ```
 
 **Hybrid separation status:**
 - HybridQuantContext: ✅ moved to encode/hybrid.rs
 - quantize_all_blocks_xyb_with_aq: ✅ moved to encode/hybrid.rs
-- Remaining cfg blocks in mod.rs: ~100 lines (builder methods, pipeline dispatch)
+- quantize_block_dispatch helper: ✅ consolidates hybrid vs non-hybrid dispatch
+- get_aq_map_or_compute helper: ✅ consolidates AQ map computation
+- create_hybrid_ctx helper: ✅ consolidates hybrid context creation
+- Remaining cfg blocks in mod.rs: ~60 lines (module imports, builder methods, simplified dispatch)
 - encode_scan legacy function: still has hybrid code (~160 lines)
 
 ---
