@@ -1,113 +1,203 @@
-# jpegli Examples
+# jpegli-rs Examples
 
-Debugging and comparison tools for jpegli development.
+Tools for debugging, benchmarking, and validating the jpegli-rs encoder/decoder.
 
-## C++ Parity Comparison
+## Quick Reference
 
-These tools compare Rust output against C++ jpegli for parity validation:
+| Example | Purpose | Usage |
+|---------|---------|-------|
+| `jpeg_inspect` | JPEG structure analysis & validation | `cargo run --release --example jpeg_inspect -- image.jpg` |
+| `quality_compare` | Compare encoder quality/size | `cargo run --release --example quality_compare -- image.png` |
+| `test_libjpeg_compat` | Verify libjpeg compatibility | `cargo run --release --example test_libjpeg_compat` |
+| `benchmark_sharp_yuv` | Encoder throughput benchmarks | `cargo run --release --example benchmark_sharp_yuv` |
+| `low_q_report` | HTML quality report (Rust vs C++) | `cargo run --release --example low_q_report --features test-utils` |
 
-| Example | Description |
-|---------|-------------|
-| `compare_cpp_quant` | Compare quantization tables against C++ |
-| `compare_dct` | Compare DCT implementations |
-| `compare_coefficients` | Compare DCT coefficients between encoded JPEGs |
-| `compare_decoded` | Compare decoded pixels |
-| `quality_comparison` | Quality comparison between Rust and C++ |
+## JPEG Inspection & Validation
 
-```bash
-cargo run --release --example compare_cpp_quant
-cargo run --release --example compare_coefficients
-```
+### jpeg_inspect
 
-## Encoder Comparison
-
-Compare jpegli against other encoders (mozjpeg, etc.):
-
-| Example | Description |
-|---------|-------------|
-| `compare_encoders` | Compare against mozjpeg |
-| `compare_quality` | Quality/size comparison at various Q levels |
-| `corpus_comparison` | Corpus-wide comparison with DSSIM/SSIMULACRA2 |
-| `multi_codec_comparison` | Compare against CID22 dataset encoders |
+Comprehensive JPEG analysis tool. Analyzes markers, quantization tables, Huffman tables,
+progressive scans, and validates decoding with multiple decoders.
 
 ```bash
-cargo run --release --example corpus_comparison -- /path/to/images output.html
-MAX_FILES=50 cargo run --release --example corpus_comparison -- /path/to/images output.html
+# Quick overview
+cargo run --release --example jpeg_inspect -- image.jpg
+
+# Detailed analysis
+cargo run --release --example jpeg_inspect -- --all image.jpg
+
+# Validate with multiple decoders (zune-jpeg, jpegli-rs, mozjpeg)
+cargo run --release --example jpeg_inspect -- --validate image.jpg
+
+# Batch validate all JPEGs in a directory
+cargo run --release --example jpeg_inspect -- --validate /path/to/jpgs/
+
+# Analyze quantization tables
+cargo run --release --example jpeg_inspect -- --quant image.jpg
+
+# Analyze Huffman tables
+cargo run --release --example jpeg_inspect -- --huffman image.jpg
+
+# Analyze progressive scan structure
+cargo run --release --example jpeg_inspect -- --scans progressive.jpg
+
+# Compare two JPEGs
+cargo run --release --example jpeg_inspect -- --compare other.jpg image.jpg
 ```
 
-## Decoder Validation
+## Quality & Performance Testing
 
-| Example | Description |
-|---------|-------------|
-| `decoder_compare` | Compare jpegli decoder vs jpeg-decoder |
-| `validate_jpeg` | Validate JPEGs with third-party decoders |
-| `compare_to_original` | Compare decoded output to original |
+### quality_compare
 
-## XYB Mode
-
-| Example | Description |
-|---------|-------------|
-| `xyb_comparison` | Compare XYB vs YCbCr with ICC handling |
-| `compare_cms` | Compare lcms2 vs moxcms ICC transforms |
-
-## Corpus Testing
-
-| Example | Description |
-|---------|-------------|
-| `roundtrip_corpus` | Roundtrip test for corpus images |
-| `huffman_corpus_validation` | Validate Huffman optimization on corpus |
+Compare encoder quality metrics (DSSIM, SSIMULACRA2, Butteraugli) and file sizes.
 
 ```bash
-cargo run --release --example roundtrip_corpus -- /path/to/images
+# Single quality level
+cargo run --release --example quality_compare -- --quality 80 --encoder jpegli-rs-ycbcr image.png
+
+# Compare multiple encoders
+cargo run --release --example quality_compare -- --encoder jpegli-rs-xyb --metric all image.png
+
+# Sweep quality levels for Pareto curve
+cargo run --release --example quality_compare -- --pareto image.png
+
+# Available encoders: jpegli-rs-ycbcr, jpegli-rs-xyb, cmozjpeg
+# Available metrics: dssim, ssim2, butteraugli, all
 ```
 
-## Reports
+### benchmark_sharp_yuv
 
-| Example | Description |
-|---------|-------------|
-| `low_q_report` | Generate low-quality comparison report |
-
-## Debug Tools
-
-| Example | Description |
-|---------|-------------|
-| `jpegli_debug` | **Unified debug CLI** - replaces 27 individual scripts |
-| `debug_aq_values` | Debug adaptive quantization strength values |
-| `debug_quant_field` | Debug quant_field computation |
-
-### jpegli_debug Commands
+Encoder throughput benchmarks at various resolutions.
 
 ```bash
-# Show help
-cargo run --example jpegli_debug -- help
-
-# Trace encoding pipeline for an image
-cargo run --release --example jpegli_debug -- trace image.png
-
-# Compare Rust vs C++ encoding at Q100
-cargo run --release --example jpegli_debug -- compare image.png 100
-
-# Dump JPEG structure (markers, tables)
-cargo run --release --example jpegli_debug -- dump image.jpg
-
-# Analyze quality metrics
-cargo run --release --example jpegli_debug -- analyze original.png encoded.jpg
-
-# Show quant tables at quality level
-cargo run --release --example jpegli_debug -- quant 90
-
-# Analyze single block patterns
-cargo run --release --example jpegli_debug -- block gradient
+cargo run --release --example benchmark_sharp_yuv
+# Output: MP/s throughput for 512x512, 1080p, 4K resolutions
 ```
 
-## Utilities
+### low_q_report
 
-| Example | Description |
-|---------|-------------|
-| `create_test_jpeg` | Create test JPEG with mozjpeg |
+Generate HTML report comparing Rust vs C++ jpegli at low quality levels.
 
-## Archived
+```bash
+cargo run --release --example low_q_report --features test-utils
+# Output: reports/low_q_report.html
+```
 
-Old/obsolete debugging tools (27 files) were removed in commit that added this
-README. They can be recovered from git history if needed. These were one-off
-debugging sessions for investigating specific issues.
+## XYB Debugging Tools
+
+XYB color space is the primary focus for quality improvement. These tools help debug
+the ~5 SSIMULACRA2 quality gap between Rust and C++ XYB encoding.
+
+### xyb_parity_test
+
+Compare Rust vs C++ jpegli XYB output (file size and DSSIM).
+
+```bash
+cargo run --release --example xyb_parity_test
+# Compares multiple Kodak images at Q70/80/90
+# Shows size difference and DSSIM delta
+```
+
+### xyb_cpp_comparison
+
+Detailed comparison of Rust vs C++ XYB encoding with Butteraugli metrics.
+
+```bash
+cargo run --release --example xyb_cpp_comparison
+# Shows: quality level, file sizes, butteraugli scores
+```
+
+### xyb_vs_ycbcr_butteraugli
+
+Compare XYB vs YCbCr encoding quality using Butteraugli metric.
+
+```bash
+cargo run --release --example xyb_vs_ycbcr_butteraugli
+# Shows butteraugli scores for XYB vs YCbCr at each quality level
+# Lower butteraugli = better quality
+```
+
+### xyb_ulp_parity
+
+Test XYB color conversion precision (ULP = units in last place).
+
+```bash
+cargo run --release --example xyb_ulp_parity
+# Shows max/mean error per XYB channel
+# Verifies Rust XYB matches C++ at floating-point precision level
+```
+
+### compare_xyb_constants
+
+Compare XYB conversion constants and full-image conversion accuracy vs C++.
+
+```bash
+cargo run --release --example compare_xyb_constants --features "test-utils,ffi-tests"
+# Tests specific RGB values and full image conversion
+# Shows per-channel max difference
+```
+
+### xyb_quality_check ⚠️
+
+Compare XYB quality metrics between Rust and C++.
+
+```bash
+cargo run --release --example xyb_quality_check
+# NOTE: Currently has a decoder bug with progressive XYB JPEGs
+# See tests/progressive_xyb_decode.rs for details
+```
+
+## Compatibility Testing
+
+### test_libjpeg_compat
+
+Verify jpegli-rs output is compatible with libjpeg/djpeg decoder.
+
+```bash
+cargo run --release --example test_libjpeg_compat
+# Tests various image patterns at multiple quality levels
+# Verifies djpeg can decode all outputs
+```
+
+### generate_cpp_reference
+
+Generate C++ jpegli reference outputs for comparison testing.
+
+```bash
+cargo run --release --example generate_cpp_reference
+# Requires cjpegli binary in PATH
+```
+
+## Dependencies
+
+Some examples require additional features or external tools:
+
+```bash
+# For low_q_report and some XYB tools
+cargo run --release --example low_q_report --features test-utils
+
+# For C++ comparison tools
+cargo run --release --example compare_xyb_constants --features "test-utils,ffi-tests"
+```
+
+External tools used by some examples:
+- `cjpegli` / `djpegli` - C++ jpegli encoder/decoder (from libjxl)
+- Test images in `internal/jpegli-cpp/testdata/`
+- Codec corpus at `~/work/codec-eval/codec-corpus/`
+
+## Known Issues
+
+1. **Progressive XYB decode bug**: jpegli-rs decoder fails on progressive XYB JPEGs
+   generated by C++ cjpegli. See `tests/progressive_xyb_decode.rs` for test case.
+   - Baseline XYB works fine
+   - Issue is with non-standard component IDs (R=82, G=71, B=66) in progressive scans
+
+2. **XYB quality gap**: ~5 SSIMULACRA2 gap vs C++ jpegli XYB mode (root cause TBD)
+
+## Adding New Examples
+
+When adding debugging tools:
+1. Use `jpegli-bench-utils` crate for synthetic images and metrics
+2. Follow naming convention: `<category>_<specific>.rs`
+3. Add to this README with usage examples
+4. Prefer consolidating into existing tools over creating new files
