@@ -6,6 +6,9 @@
 //! - Quality parameter handling (traditional and butteraugli distance)
 //! - Adaptive quantization support
 
+// Adaptive quantization submodule
+pub mod aq;
+
 use crate::consts::{
     quality_to_distance, BASE_QUANT_MATRIX_STD, BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR,
     DCT_BLOCK_SIZE, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
