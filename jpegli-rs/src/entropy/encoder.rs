@@ -7,6 +7,7 @@ use crate::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
 use crate::huffman::optimize::{ScanTokenInfo, Token};
 use crate::huffman::HuffmanEncodeTable;
+use wide::{i16x8, CmpEq};
 
 use super::{additional_bits_with_cat, category};
 
@@ -87,6 +88,8 @@ impl EntropyEncoder {
 
     /// Encodes a block of DCT coefficients.
     ///
+    /// Uses SIMD to quickly find non-zero coefficients and skip runs of zeros.
+    ///
     /// # Arguments
     /// * `coeffs` - Quantized DCT coefficients in zigzag order
     /// * `component` - Component index (for DC prediction)
@@ -94,6 +97,18 @@ impl EntropyEncoder {
     /// * `ac_table_idx` - AC Huffman table index
     #[inline]
     pub fn encode_block(
+        &mut self,
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> Result<()> {
+        self.encode_block_simd(coeffs, component, dc_table_idx, ac_table_idx)
+    }
+
+    /// Scalar implementation of block encoding (kept for reference/testing).
+    #[inline]
+    fn encode_block_scalar(
         &mut self,
         coeffs: &[i16; DCT_BLOCK_SIZE],
         component: usize,
@@ -155,6 +170,122 @@ impl EntropyEncoder {
 
         // If we have trailing zeros, encode EOB
         if run > 0 {
+            let (code, len) = ac_table.encode(0x00); // EOB
+            self.writer.write_bits(code, len);
+        }
+
+        Ok(())
+    }
+
+    /// Encodes a block using SIMD to quickly find non-zero coefficients.
+    ///
+    /// Uses SIMD comparison to build a bitmask of non-zero positions,
+    /// then iterates only through non-zero coefficients using bit manipulation.
+    /// This reduces branching overhead when blocks have many zeros.
+    #[inline]
+    pub fn encode_block_simd(
+        &mut self,
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> Result<()> {
+        let dc_table = self.dc_tables[dc_table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "DC table not set",
+            })?;
+        let ac_table = self.ac_tables[ac_table_idx]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "AC table not set",
+            })?;
+
+        // Encode DC coefficient (same as scalar version)
+        let dc = coeffs[0];
+        let dc_diff = dc - self.prev_dc[component];
+        self.prev_dc[component] = dc;
+
+        let dc_cat = category(dc_diff);
+        let (code, len) = dc_table.encode(dc_cat);
+        self.writer.write_bits(code, len);
+
+        if dc_cat > 0 {
+            let additional = additional_bits_with_cat(dc_diff, dc_cat);
+            self.writer.write_bits(additional as u32, dc_cat);
+        }
+
+        // Build 64-bit mask of non-zero coefficients using SIMD
+        // Each bit i is set if coeffs[i] != 0
+        let zero = i16x8::ZERO;
+        let mut nonzero_mask: u64 = 0;
+
+        // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
+        for chunk in 0..8 {
+            let start = chunk * 8;
+            let v = i16x8::new([
+                coeffs[start],
+                coeffs[start + 1],
+                coeffs[start + 2],
+                coeffs[start + 3],
+                coeffs[start + 4],
+                coeffs[start + 5],
+                coeffs[start + 6],
+                coeffs[start + 7],
+            ]);
+            // simd_eq returns all 1s (-1) for equal, 0 for not equal
+            let is_zero = v.cmp_eq(zero);
+            // move_mask extracts the high bit of each lane
+            let zero_bits = is_zero.move_mask() as u8;
+            let nonzero_bits = !zero_bits;
+            nonzero_mask |= (nonzero_bits as u64) << start;
+        }
+
+        // Clear DC bit (bit 0), keep only AC bits (1-63)
+        let ac_mask = nonzero_mask & !1u64;
+
+        // Fast path: all AC coefficients are zero
+        if ac_mask == 0 {
+            let (code, len) = ac_table.encode(0x00); // EOB
+            self.writer.write_bits(code, len);
+            return Ok(());
+        }
+
+        // Find position of last non-zero AC coefficient (1-63)
+        let last_nonzero_idx = 63 - ac_mask.leading_zeros() as usize;
+
+        // Process each non-zero AC coefficient
+        let mut remaining = ac_mask;
+        let mut prev_idx = 0usize; // Index of last processed position
+
+        while remaining != 0 {
+            let idx = remaining.trailing_zeros() as usize; // Index of next non-zero (1-63)
+            let run = (idx - prev_idx - 1) as u8; // Zeros between prev and this
+
+            // Handle runs of 16+ zeros (emit ZRL symbols)
+            let mut r = run;
+            while r >= 16 {
+                let (code, len) = ac_table.encode(0xF0); // ZRL
+                self.writer.write_bits(code, len);
+                r -= 16;
+            }
+
+            // Encode the coefficient
+            let ac = coeffs[idx];
+            let ac_cat = category(ac);
+            let symbol = (r << 4) | ac_cat;
+            let (code, len) = ac_table.encode(symbol);
+            self.writer.write_bits(code, len);
+
+            let additional = additional_bits_with_cat(ac, ac_cat);
+            self.writer.write_bits(additional as u32, ac_cat);
+
+            prev_idx = idx;
+            remaining &= remaining - 1; // Clear lowest set bit
+        }
+
+        // EOB if there are trailing zeros
+        if last_nonzero_idx < 63 {
             let (code, len) = ac_table.encode(0x00); // EOB
             self.writer.write_bits(code, len);
         }
@@ -856,5 +987,100 @@ mod tests {
         let encoder = EntropyEncoder::new();
         let bytes = encoder.as_bytes();
         assert!(bytes.is_empty());
+    }
+
+    /// Helper to create encoder with standard tables
+    fn encoder_with_tables() -> EntropyEncoder {
+        let mut encoder = EntropyEncoder::new();
+
+        // Standard luminance DC table
+        let dc_bits: [u8; 16] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+        let dc_values: [u8; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        let dc_table = HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_values).unwrap();
+        encoder.set_dc_table(0, dc_table);
+
+        // Standard luminance AC table
+        let ac_bits: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
+        let ac_values: Vec<u8> = (0..162).collect();
+        let ac_table = HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_values).unwrap();
+        encoder.set_ac_table(0, ac_table);
+
+        encoder
+    }
+
+    #[test]
+    fn test_encode_block_simd_matches_scalar() {
+        // Test with various block patterns
+        let test_blocks: Vec<[i16; 64]> = vec![
+            // All zeros except DC
+            {
+                let mut b = [0i16; 64];
+                b[0] = 100;
+                b
+            },
+            // Sparse block (typical high-quality JPEG)
+            {
+                let mut b = [0i16; 64];
+                b[0] = 512;
+                b[1] = -50;
+                b[2] = 30;
+                b[8] = -20;
+                b[9] = 10;
+                b
+            },
+            // Dense block (low quality or high detail)
+            {
+                let mut b = [0i16; 64];
+                for i in 0..32 {
+                    b[i] = ((i as i16) * 10) - 150;
+                }
+                b
+            },
+            // Block with long zero runs
+            {
+                let mut b = [0i16; 64];
+                b[0] = 200;
+                b[1] = 50;
+                b[32] = -25; // 30 zeros in between
+                b[63] = 5;
+                b
+            },
+            // Block with run > 16 (needs ZRL)
+            {
+                let mut b = [0i16; 64];
+                b[0] = 100;
+                b[1] = 10;
+                b[20] = -5; // 18 zeros
+                b
+            },
+            // All non-zero (worst case for SIMD)
+            {
+                let mut b = [0i16; 64];
+                for i in 0..64 {
+                    b[i] = (i as i16) + 1;
+                }
+                b
+            },
+        ];
+
+        for (idx, block) in test_blocks.iter().enumerate() {
+            // Encode with scalar
+            let mut scalar_encoder = encoder_with_tables();
+            scalar_encoder.encode_block_scalar(block, 0, 0, 0).unwrap();
+            let scalar_output = scalar_encoder.finish();
+
+            // Encode with SIMD (via encode_block which now calls encode_block_simd)
+            let mut simd_encoder = encoder_with_tables();
+            simd_encoder.encode_block(block, 0, 0, 0).unwrap();
+            let simd_output = simd_encoder.finish();
+
+            assert_eq!(
+                scalar_output, simd_output,
+                "Block {} mismatch: scalar {} bytes, simd {} bytes",
+                idx,
+                scalar_output.len(),
+                simd_output.len()
+            );
+        }
     }
 }
