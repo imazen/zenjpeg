@@ -220,6 +220,30 @@ counters: vec![FrequencyCounter::new(); num_contexts],
 9. **Tile-based processing for huge images**
 10. **Streaming token encoding for progressive**
 
+## Performance Optimizations (CPU cycles, not memory)
+
+### Completed
+
+- ✅ **Skip smoothing copy when disabled** (commit ddfa18a) - 34% speedup, 7.4B→4.9B cycles
+- ✅ **SIMD accumulation in pre_erosion_row** (commit 0a6e9c2) - 4% speedup, 4.9B→4.7B cycles
+  - Replaced scalar loop with SIMD load/add/store
+  - compute_pre_erosion_simd: 9.16%→7.87% (14% reduction)
+- ✅ **Direct SIMD loads/stores in downsample functions** (commit 89d6aef)
+  - Fast path bypassing bounds checks for interior pixels
+  - Direct SIMD stores instead of array conversion
+
+### Remaining hotspots (2048x2048 image profile)
+
+| Function | % of cycles | Notes |
+|----------|-------------|-------|
+| quantize_all_blocks_subsampled | 13-15% | DCT + quantization per block |
+| rgb_to_ycbcr_planes_simd | 10% | Color conversion |
+| encode_block | 10% | Entropy encoding |
+| per_block_modulations_simd | 9% | AQ block modulations |
+| fuzzy_erosion_simd | 8% | AQ weighted min4 of 9 |
+| compute_pre_erosion_simd | 8% | AQ pre-erosion |
+| downsample_2x2_simd | 7-8% | Chroma downsampling |
+
 ## Memory Timeline (1080p baseline 4:2:0)
 
 ```
