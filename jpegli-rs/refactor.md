@@ -459,6 +459,33 @@ After refactoring, these patterns will be cleaner:
 
 ## Progress Log
 
+### Session 2026-01-06: Progressive scan extraction
+
+**Commit:** `e66d6a7` on branch `simd`
+
+**Completed:**
+- Extracted progressive scan functions to `encode/progressive.rs` (~525 lines)
+- encode/mod.rs reduced from 3622 to 3097 lines
+
+**Files in encode/:**
+```
+src/encode/config.rs      - Configuration types (440 lines)
+src/encode/output.rs      - JPEG writing methods (808 lines)
+src/encode/color.rs       - Color conversion methods (534 lines)
+src/encode/progressive.rs - Progressive scan encoding (539 lines) [NEW]
+src/encode/tests.rs       - Unit tests (998 lines)
+src/encode/mod.rs         - Encoder struct and core logic (3097 lines)
+```
+
+**Remaining in mod.rs (3097 lines):**
+- Encoder builder methods (~330 lines)
+- Baseline encoding pipelines (~800 lines)
+- Block/quantization operations (~1500 lines)
+- Hybrid-trellis code (interspersed, ~200 lines of cfg blocks)
+- encode_scan legacy function with hybrid code (~160 lines)
+
+---
+
 ### Session 2026-01-06: Test extraction
 
 **Commit:** `f5ec10a` on branch `simd`
