@@ -296,8 +296,7 @@ use crate::entropy::{self, EntropyEncoder};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanEncodeTable;
 use crate::huffman_opt::{
-    ContextConfig, FrequencyCounter, OptimizedHuffmanTables, OptimizedTable,
-    ProgressiveTokenBuffer,
+    ContextConfig, FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer,
 };
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaConversion, ColorSpace, JpegMode, PixelFormat, Subsampling};
@@ -1559,7 +1558,13 @@ impl Encoder {
 
         // For XYB, all contexts map to table 0 (DC contexts 0..4 -> 0, AC contexts 4.. -> 1)
         let xyb_context_map: Vec<usize> = (0..xyb_context_config.num_contexts)
-            .map(|c| if c < xyb_context_config.ac_offset { 0 } else { 1 })
+            .map(|c| {
+                if c < xyb_context_config.ac_offset {
+                    0
+                } else {
+                    1
+                }
+            })
             .collect();
 
         // Convert OptimizedHuffmanTables to vec format: [DC table 0, AC table 0]
@@ -2270,18 +2275,20 @@ impl Encoder {
         // Get YCbCr planes with appropriate chroma handling
         // Sharp/Fast path: yuv crate performs color conversion + downsampling together
         // Intrinsic path: f32 conversion then separate downsampling
-        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-            if matches!(chroma_method, ChromaConversion::Sharp | ChromaConversion::Fast) {
-                let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
-                match self.config.subsampling {
-                    Subsampling::S420 => self.convert_yuv_crate_420(data, use_sharp)?,
-                    Subsampling::S422 => self.convert_yuv_crate_422(data, use_sharp)?,
-                    // yuv crate doesn't support S440/S444, fall through to Intrinsic
-                    _ => self.convert_intrinsic_with_subsampling(data)?,
-                }
-            } else {
-                self.convert_intrinsic_with_subsampling(data)?
-            };
+        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) = if matches!(
+            chroma_method,
+            ChromaConversion::Sharp | ChromaConversion::Fast
+        ) {
+            let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
+            match self.config.subsampling {
+                Subsampling::S420 => self.convert_yuv_crate_420(data, use_sharp)?,
+                Subsampling::S422 => self.convert_yuv_crate_422(data, use_sharp)?,
+                // yuv crate doesn't support S440/S444, fall through to Intrinsic
+                _ => self.convert_intrinsic_with_subsampling(data)?,
+            }
+        } else {
+            self.convert_intrinsic_with_subsampling(data)?
+        };
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
@@ -2314,9 +2321,7 @@ impl Encoder {
         // AC contexts start at 4 with one per component per AC scan.
         let context_config = ContextConfig::for_progressive(
             num_components,
-            scans
-                .iter()
-                .map(|s| (s.ss, s.se, s.components.len())),
+            scans.iter().map(|s| (s.ss, s.se, s.components.len())),
         );
 
         // ========== PASS 1: TOKENIZATION ==========
@@ -2388,12 +2393,13 @@ impl Encoder {
         // Per C++ design: progressive mode can have more than 4 AC tables,
         // with slot IDs cycling through 0-3 and redefinition via DHT markers.
         // We allow up to 12 AC clusters (one per AC scan) to enable this.
-        let (context_map, num_dc_tables, tables, ac_slot_ids) = token_buffer.generate_optimized_tables(
-            4,                           // max DC clusters
-            12,                          // max AC clusters (allows per-scan specialization)
-            context_config.ac_offset,    // num_dc_contexts (always 4 per C++ design, but clamped to actual)
-            false,                       // force_baseline
-        )?;
+        let (context_map, num_dc_tables, tables, ac_slot_ids) = token_buffer
+            .generate_optimized_tables(
+                4,                        // max DC clusters
+                12,                       // max AC clusters (allows per-scan specialization)
+                context_config.ac_offset, // num_dc_contexts (always 4 per C++ design, but clamped to actual)
+                false,                    // force_baseline
+            )?;
 
         // Debug: print context map and scan-to-table assignment
         if std::env::var("DUMP_CONTEXT_MAP").is_ok() {
@@ -2410,14 +2416,26 @@ impl Encoder {
                     "AC_refine"
                 };
                 let ac_context = context_config.ac_context(scan_idx, 0);
-                let table_idx = if scan.ss == 0 { 0 } else {
+                let table_idx = if scan.ss == 0 {
+                    0
+                } else {
                     context_map.get(ac_context).copied().unwrap_or(0)
                 };
                 let ac_table_idx = table_idx.saturating_sub(num_dc_tables);
                 let slot = ac_slot_ids.get(ac_table_idx).copied().unwrap_or(0);
-                eprintln!("Scan {}: {} ss={} se={} ah={} al={} comp={} -> ctx={} table={} slot={}",
-                    scan_idx, scan_type, scan.ss, scan.se, scan.ah, scan.al, scan.components[0],
-                    ac_context, table_idx, slot);
+                eprintln!(
+                    "Scan {}: {} ss={} se={} ah={} al={} comp={} -> ctx={} table={} slot={}",
+                    scan_idx,
+                    scan_type,
+                    scan.ss,
+                    scan.se,
+                    scan.ah,
+                    scan.al,
+                    scan.components[0],
+                    ac_context,
+                    table_idx,
+                    slot
+                );
             }
             // Dump histogram symbol counts for AC contexts
             for (i, scan) in scans.iter().enumerate() {
@@ -2469,7 +2487,10 @@ impl Encoder {
                     if table_idx == next_dht_index && table_idx < tables.len() {
                         // Get the AC table slot ID from ac_slot_ids
                         let cluster_idx = table_idx.saturating_sub(num_dc_tables);
-                        let ac_slot = ac_slot_ids.get(cluster_idx).copied().unwrap_or(cluster_idx % 4);
+                        let ac_slot = ac_slot_ids
+                            .get(cluster_idx)
+                            .copied()
+                            .unwrap_or(cluster_idx % 4);
                         self.write_single_ac_table(&mut output, &tables[table_idx], ac_slot)?;
                         next_dht_index += 1;
                     }
@@ -2601,7 +2622,12 @@ impl Encoder {
         // Set up AC Huffman tables using slot IDs
         // Only load tables that have been emitted via DHT markers
         let num_ac_emitted = tables_emitted.saturating_sub(num_dc_tables);
-        for (i, table) in tables.iter().skip(num_dc_tables).take(num_ac_emitted).enumerate() {
+        for (i, table) in tables
+            .iter()
+            .skip(num_dc_tables)
+            .take(num_ac_emitted)
+            .enumerate()
+        {
             // Use the slot ID from ac_slot_ids (cycles 0-3)
             let slot = ac_slot_ids.get(i).copied().unwrap_or(i % 4);
             encoder.set_ac_table(slot, table.table.clone());
@@ -2927,7 +2953,10 @@ impl Encoder {
                 .map(|&t| t.saturating_sub(num_dc_tables))
                 .unwrap_or(0);
             // Get the actual JPEG slot ID from ac_slot_ids
-            let ac_table = ac_slot_ids.get(cluster_idx).copied().unwrap_or(cluster_idx % 4);
+            let ac_table = ac_slot_ids
+                .get(cluster_idx)
+                .copied()
+                .unwrap_or(cluster_idx % 4);
 
             let table_selector = ((dc_table as u8) << 4) | (ac_table as u8);
             output.push(table_selector);
@@ -3791,7 +3820,12 @@ impl Encoder {
         }
 
         // Write initial AC tables (class 1)
-        for (i, table) in tables.iter().skip(num_dc_tables).take(num_initial_ac).enumerate() {
+        for (i, table) in tables
+            .iter()
+            .skip(num_dc_tables)
+            .take(num_initial_ac)
+            .enumerate()
+        {
             let class_id = 0x10 | (i as u8); // class 1, id = i
             output.push(class_id);
             output.extend_from_slice(&table.bits);
@@ -5353,7 +5387,9 @@ impl Encoder {
                 debug_assert!(
                     val >= -3.0 && val <= 10.0,
                     "extract_block_f32: value {} at ({}, {}) outside expected XYB range [-3, 10]",
-                    val, px, py
+                    val,
+                    px,
+                    py
                 );
                 // Scale from XYB range to DCT input range, then level shift by -128
                 block[y * DCT_SIZE + x] = val * 255.0 - 128.0;

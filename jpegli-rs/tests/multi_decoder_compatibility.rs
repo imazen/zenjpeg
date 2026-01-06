@@ -119,7 +119,8 @@ fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
 
 fn decode_jpeg_decoder(data: &[u8]) -> Option<DecoderResult> {
     let start = std::time::Instant::now();
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     match decoder.decode() {
         Ok(pixels) => {
             let (width, height) = decoder.dimensions().unwrap();
