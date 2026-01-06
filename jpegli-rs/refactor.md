@@ -459,6 +459,95 @@ After refactoring, these patterns will be cleaner:
 
 ## Progress Log
 
+### Session 2026-01-06: Color module extraction
+
+**Commit:** `b1705f8` on branch `simd`
+
+**Completed:**
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 6 | ✅ Done | Encode module deeply split |
+| Phase 7 | ✅ Done | Decode module converted to directory |
+| Phase 8 | ✅ Done | Color conversion module extracted |
+
+**Files in encode/:**
+```
+src/encode/config.rs    - Configuration types (440 lines)
+src/encode/output.rs    - JPEG writing methods (808 lines)
+src/encode/color.rs     - Color conversion methods (534 lines) [NEW]
+src/encode/mod.rs       - Encoder struct and core logic (4620 lines)
+```
+
+**Color methods extracted to color.rs:**
+- convert_to_scaled_xyb (XYB color space conversion)
+- downsample_2x2_f32, downsample_2x1_f32, downsample_1x2_f32 (chroma downsampling)
+- apply_input_smoothing (3x3 weighted blur)
+- convert_yuv_crate_420, convert_yuv_crate_420_rgb (YUV crate 4:2:0)
+- convert_yuv_crate_422 (YUV crate 4:2:2)
+- convert_intrinsic_with_subsampling (default f32 path)
+- convert_to_ycbcr, convert_to_ycbcr_f32 (legacy and f32 YCbCr)
+
+**Structure:**
+- encode/mod.rs reduced from 5119 to 4620 lines
+- All color conversion isolated in color.rs
+- All 324 library tests pass
+
+**Remaining in mod.rs (4620 lines):**
+- Encoder builder methods (~330 lines)
+- Baseline/progressive encoding pipelines (~1700 lines)
+- Block/quantization operations (~1500 lines)
+- Tests (~1000 lines)
+
+---
+
+### Session 2026-01-06: Encode module deep split
+
+**Commits:** `4190009`, `10157e4` on branch `simd`
+
+**Completed:**
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 0 | ✅ Done | SIMD audit complete - code is well-factored |
+| Phase 1 | ✅ Done | Directory structure created |
+| Phase 2 | ✅ Done | Foundation module extracted |
+| Phase 3 | ✅ Done | Huffman module fully extracted |
+| Phase 4 | ✅ Done | Quantization module refactored |
+| Phase 5 | ✅ Done | Entropy module split |
+| Phase 6 | ✅ Done | Encode module deeply split |
+| Phase 7 | ✅ Done | Decode module converted to directory |
+
+**Files in encode/:**
+```
+src/encode/config.rs    - Configuration types (440 lines)
+src/encode/output.rs    - JPEG writing methods (808 lines)
+src/encode/mod.rs       - Encoder struct and core logic (5119 lines)
+```
+
+**Output methods extracted:**
+- write_header, write_header_xyb, write_app14_adobe, write_icc_profile
+- write_quant_tables, write_quant_tables_xyb
+- write_frame_header, write_frame_header_xyb, write_frame_header_xyb_progressive
+- write_huffman_tables (standard, optimized, from_vec, progressive, single)
+- write_restart_interval, write_scan_header, write_scan_header_xyb
+- write_huffman_tables_xyb_optimized
+- write_progressive_scan_header (legacy, with_context, with_slot_ids)
+
+**Structure:**
+- encode/mod.rs reduced from 5903 to 5119 lines
+- All JPEG structure writing isolated in output.rs
+- All 324 library tests pass
+
+**Remaining in mod.rs (5119 lines):**
+- Encoder builder methods (~330 lines)
+- Color conversion methods (~550 lines)
+- Baseline/progressive encoding (~1700 lines)
+- Block/quantization operations (~1200 lines)
+- Tests (~1000 lines)
+
+---
+
 ### Session 2026-01-06: Phase 7 complete
 
 **Commit:** `84430b4` on branch `simd`
