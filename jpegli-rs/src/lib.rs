@@ -55,29 +55,39 @@ pub mod adaptive_quant;
 #[doc(hidden)]
 pub mod adaptive_quant_simd;
 #[doc(hidden)]
-pub mod alloc;
-#[doc(hidden)]
-pub mod bitstream;
-#[doc(hidden)]
 pub mod chroma;
 #[doc(hidden)]
 pub mod color;
 #[doc(hidden)]
-pub mod consts;
-#[doc(hidden)]
 pub mod dct;
+
+// Foundation module (low-level utilities)
+#[doc(hidden)]
+pub mod foundation;
+
+// Backward-compatible re-exports from foundation
+#[doc(hidden)]
+pub use foundation::alloc;
+#[doc(hidden)]
+pub use foundation::bitstream;
+#[doc(hidden)]
+pub use foundation::consts;
 #[doc(hidden)]
 pub mod encode_simd;
 #[doc(hidden)]
 pub mod entropy;
+
+// Huffman module (encoding, tables, optimization)
 #[doc(hidden)]
 pub mod huffman;
 #[doc(hidden)]
-pub mod huffman_classic;
-#[doc(hidden)]
 pub mod huffman_opt;
+
+// Backward-compatible re-exports from huffman module
 #[doc(hidden)]
-pub mod huffman_types;
+pub use huffman::classic as huffman_classic;
+#[doc(hidden)]
+pub use huffman::types as huffman_types;
 #[doc(hidden)]
 pub mod icc;
 #[doc(hidden)]
