@@ -88,7 +88,10 @@ impl Encoder {
         ac_slot_ids: &[usize],
         tables_emitted: usize,
     ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
+        // Estimate output size from token count (~2 bytes per token average)
+        let scan_info = token_buffer.scan_info.get(scan_idx);
+        let estimated_tokens = scan_info.map(|s| s.num_tokens + s.ref_tokens.len()).unwrap_or(1024);
+        let mut encoder = EntropyEncoder::with_capacity(estimated_tokens * 2);
         let num_components = if is_color { 3 } else { 1 };
 
         // Set up DC Huffman tables (up to 4)
@@ -284,7 +287,10 @@ impl Encoder {
         is_color: bool,
         tables: &Option<OptimizedHuffmanTables>,
     ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
+        // Estimate output size: DC scans ~10 bytes/block, AC scans ~50 bytes/block
+        let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
+        let bytes_per_block = if scan.ss == 0 { 10 } else { 50 };
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * bytes_per_block);
 
         // Set up Huffman tables
         if let Some(ref opt_tables) = tables {

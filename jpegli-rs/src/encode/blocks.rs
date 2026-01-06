@@ -625,7 +625,9 @@ impl Encoder {
         is_color: bool,
         tables: &OptimizedHuffmanTables,
     ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
+        // Estimate output size: ~100 bytes per block for typical quality
+        let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
 
         encoder.set_dc_table(0, tables.dc_luma.table.clone());
         encoder.set_ac_table(0, tables.ac_luma.table.clone());
@@ -721,7 +723,9 @@ impl Encoder {
         cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
         is_color: bool,
     ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
+        // Estimate output size: ~100 bytes per block for typical quality
+        let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
 
         encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
         encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
@@ -1182,7 +1186,9 @@ impl Encoder {
         dc_table: &crate::huffman::optimize::OptimizedTable,
         ac_table: &crate::huffman::optimize::OptimizedTable,
     ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
+        // Estimate output size: ~100 bytes per block for typical quality
+        let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
 
         // Use the same optimized table for all components
         encoder.set_dc_table(0, dc_table.table.clone());
@@ -1233,7 +1239,11 @@ impl Encoder {
         y_quant: &QuantTable,
         b_quant: &QuantTable,
     ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
+        // Estimate output size: 9 blocks per MCU (4+4+1), ~100 bytes per block
+        let mcu_cols = (width + 15) / 16;
+        let mcu_rows = (height + 15) / 16;
+        let total_blocks = mcu_cols * mcu_rows * 9;
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
 
         // Set up Huffman tables - use luminance tables for all components in XYB mode
         encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
