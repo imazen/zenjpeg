@@ -214,12 +214,14 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
         let top = f32x8::from(unsafe { *(row_above.as_ptr().add(x) as *const [f32; 8]) });
         let bottom = f32x8::from(unsafe { *(row_below.as_ptr().add(x) as *const [f32; 8]) });
 
-        // Compute and accumulate
+        // Compute and accumulate using SIMD add
         let result = pre_erosion_pixel_x8(pixels, left, right, top, bottom);
-        let result_arr: [f32; 8] = result.into();
 
-        for i in 0..8 {
-            output[x + i] += result_arr[i];
+        // SAFETY: x is always aligned to 8 and x + 8 <= width (guaranteed by chunks calculation)
+        unsafe {
+            let existing = f32x8::from(*(output.as_ptr().add(x) as *const [f32; 8]));
+            let new_result = existing + result;
+            *(output.as_mut_ptr().add(x) as *mut [f32; 8]) = new_result.into();
         }
     }
 
