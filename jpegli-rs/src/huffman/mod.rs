@@ -4,9 +4,11 @@
 //! - `encode`: Huffman encoding functions and tables
 //! - `classic`: Optimal Huffman table generation (mozjpeg-style algorithms)
 //! - `types`: Additional Huffman types and comparisons
+//! - `optimize`: Two-pass Huffman optimization with frequency counting and clustering
 
 pub mod classic;
 pub mod encode;
+pub mod optimize;
 pub mod types;
 
 // Re-export commonly used items from encode (the main huffman.rs functionality)
@@ -20,8 +22,13 @@ pub use encode::{
 // Re-export from classic
 pub use classic::{depths_to_bits_values, generate_code_lengths, generate_optimal_table};
 
-// Re-export from types
+// Re-export from types (legacy types)
 pub use types::{
-    compare_algorithms, CodeLengths, HuffmanAlgorithm, HuffmanTableSet, OptimizedTable,
-    SymbolFrequencies,
+    compare_algorithms, CodeLengths, HuffmanAlgorithm, HuffmanTableSet, SymbolFrequencies,
+};
+
+// Re-export from optimize (new types from huffman_opt.rs refactor)
+pub use optimize::{
+    cluster_histograms, ClusterResult, ContextConfig, FrequencyCounter, OptimizedHuffmanTables,
+    OptimizedTable, ProgressiveTokenBuffer, RefToken, ScanTokenInfo, Token, TokenBuffer,
 };
