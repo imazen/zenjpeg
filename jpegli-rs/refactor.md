@@ -459,9 +459,44 @@ After refactoring, these patterns will be cleaner:
 
 ## Progress Log
 
-### Session 2026-01-06: Phase 3 complete
+### Session 2026-01-06: Phase 4 complete
 
 **Commit:** (pending) on branch `simd`
+
+**Completed:**
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 0 | ✅ Done | SIMD audit complete - code is well-factored |
+| Phase 1 | ✅ Done | Directory structure created |
+| Phase 2 | ✅ Done | Foundation module extracted |
+| Phase 3 | ✅ Done | Huffman module fully extracted |
+| Phase 4 | ✅ Done | Quantization module refactored |
+
+**Files created in quant/aq/:**
+```
+src/quant/aq/mod.rs   - AQ implementation (from adaptive_quant.rs)
+src/quant/aq/simd.rs  - SIMD AQ functions (from adaptive_quant_simd.rs)
+```
+
+**Updated files:**
+```
+src/quant.rs          - moved to src/quant/mod.rs (directory module)
+src/quant/mod.rs      - added `pub mod aq;` to include aq submodule
+src/adaptive_quant.rs - converted to thin re-export wrapper
+src/adaptive_quant_simd.rs - converted to thin re-export wrapper
+```
+
+**Backward compatibility:**
+- `adaptive_quant.rs` re-exports all types from `quant::aq`
+- `adaptive_quant_simd.rs` re-exports all types from `quant::aq::simd`
+- All 324 library tests pass
+
+---
+
+### Session 2026-01-06: Phase 3 complete
+
+**Commit:** `055cfcc` on branch `simd`
 
 **Completed:**
 
@@ -493,7 +528,7 @@ src/huffman_opt.rs     - converted to thin re-export wrapper for backward compat
 - All huffman-related tests pass
 
 **Next steps:**
-1. Phase 4: Extract Quantization module (`quant.rs`, `adaptive_quant*.rs`)
+1. ✅ Phase 4: Extract Quantization module (`quant.rs`, `adaptive_quant*.rs`) - DONE
 2. Phase 5: Extract Entropy module (`entropy.rs`)
 3. Phase 6: Split encode.rs (6317 lines - the big one)
 4. Phase 7: Split decode.rs (2301 lines)
