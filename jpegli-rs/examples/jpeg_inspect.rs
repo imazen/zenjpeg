@@ -1,7 +1,8 @@
-//! JPEG bitstream inspection tool.
+//! JPEG bitstream inspection and validation tool.
 //!
 //! Analyzes JPEG file structure: markers, segments, Huffman tables,
-//! quantization tables, scan data, and more.
+//! quantization tables, scan data, and more. Can also validate JPEGs
+//! with multiple decoders.
 //!
 //! Usage:
 //!   cargo run --release --example jpeg_inspect -- [OPTIONS] <file.jpg>
@@ -11,14 +12,16 @@
 //!   --huffman       Dump Huffman table details
 //!   --quant         Dump quantization tables
 //!   --scans         Analyze scan structure (progressive)
-//!   --headers       Show header segments only
-//!   --hex <offset>  Hex dump starting at offset
+//!   --validate      Test decoding with multiple decoders
 //!   --compare <f2>  Compare with another JPEG
-//!   --all           Show everything
+//!   --all           Show everything (includes validation)
 //!
 //! Examples:
 //!   # Quick overview of JPEG structure
 //!   cargo run --release --example jpeg_inspect -- image.jpg
+//!
+//!   # Validate JPEG with multiple decoders
+//!   cargo run --release --example jpeg_inspect -- --validate image.jpg
 //!
 //!   # Compare two JPEGs
 //!   cargo run --release --example jpeg_inspect -- --compare other.jpg image.jpg
@@ -424,6 +427,72 @@ fn print_summary(analysis: &JpegAnalysis, path: &str) {
     println!("  Scans: {}", analysis.scans.len());
 }
 
+fn validate_jpeg(data: &[u8], path: &str) {
+    println!("\n=== Decoder Validation ===");
+    println!("File: {} ({} bytes)", path, data.len());
+
+    // Test with zune-jpeg
+    print!("  zune-jpeg:  ");
+    match zune_jpeg::JpegDecoder::new(std::io::Cursor::new(data)).decode() {
+        Ok(pixels) => println!("OK ({} bytes decoded)", pixels.len()),
+        Err(e) => println!("ERROR: {:?}", e),
+    }
+
+    // Test with jpegli-rs decoder
+    print!("  jpegli-rs:  ");
+    match jpegli::Decoder::new().decode(data) {
+        Ok(img) => println!(
+            "OK ({}x{}, {} bytes)",
+            img.width,
+            img.height,
+            img.data.len()
+        ),
+        Err(e) => println!("ERROR: {}", e),
+    }
+
+    // Test with mozjpeg if available
+    print!("  mozjpeg:    ");
+    match mozjpeg::Decompress::new_mem(data) {
+        Ok(decompress) => match decompress.rgb() {
+            Ok(img) => println!("OK ({}x{})", img.width(), img.height()),
+            Err(e) => println!("ERROR: {:?}", e),
+        },
+        Err(e) => println!("ERROR: {:?}", e),
+    }
+}
+
+fn validate_directory(dir: &Path) {
+    let mut files: Vec<_> = fs::read_dir(dir)
+        .expect("Failed to read directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| {
+                    let ext = ext.to_ascii_lowercase();
+                    ext == "jpg" || ext == "jpeg"
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort_by_key(|e| e.path());
+
+    println!("=== Validating {} JPEG files ===\n", files.len());
+
+    for entry in &files {
+        let path = entry.path();
+        let data = match fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("{}: Read error: {}\n", path.display(), e);
+                continue;
+            }
+        };
+        validate_jpeg(&data, &path.display().to_string());
+        println!();
+    }
+}
+
 fn compare_jpegs(path1: &str, path2: &str) -> Result<(), String> {
     let data1 = fs::read(path1).map_err(|e| format!("Failed to read {}: {}", path1, e))?;
     let data2 = fs::read(path2).map_err(|e| format!("Failed to read {}: {}", path2, e))?;
@@ -509,6 +578,7 @@ fn main() {
     let mut show_huffman = false;
     let mut show_quant = false;
     let mut show_scans = false;
+    let mut show_validate = false;
     let mut show_all = false;
     let mut compare_file: Option<String> = None;
     let mut jpeg_path: Option<String> = None;
@@ -520,6 +590,7 @@ fn main() {
             "--huffman" => show_huffman = true,
             "--quant" => show_quant = true,
             "--scans" => show_scans = true,
+            "--validate" => show_validate = true,
             "--all" => show_all = true,
             "--compare" => {
                 i += 1;
@@ -538,13 +609,14 @@ fn main() {
     let jpeg_path = match jpeg_path {
         Some(p) => p,
         None => {
-            eprintln!("Usage: jpeg_inspect [OPTIONS] <file.jpg>");
+            eprintln!("Usage: jpeg_inspect [OPTIONS] <file.jpg|dir>");
             eprintln!("  --markers   Show all markers");
             eprintln!("  --huffman   Dump Huffman tables");
             eprintln!("  --quant     Dump quantization tables");
             eprintln!("  --scans     Analyze progressive scans");
+            eprintln!("  --validate  Test with multiple decoders");
             eprintln!("  --compare   Compare with another JPEG");
-            eprintln!("  --all       Show everything");
+            eprintln!("  --all       Show everything (includes validation)");
             std::process::exit(1);
         }
     };
@@ -555,6 +627,17 @@ fn main() {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
+        return;
+    }
+
+    // Handle directory for validation mode
+    let path = Path::new(&jpeg_path);
+    if path.is_dir() {
+        if !show_validate && !show_all {
+            eprintln!("Directory mode only supported with --validate or --all");
+            std::process::exit(1);
+        }
+        validate_directory(path);
         return;
     }
 
@@ -576,9 +659,9 @@ fn main() {
     };
 
     // Default: show summary
-    if !show_markers && !show_huffman && !show_quant && !show_scans && !show_all {
+    if !show_markers && !show_huffman && !show_quant && !show_scans && !show_validate && !show_all {
         print_summary(&analysis, &jpeg_path);
-        println!("\nUse --markers, --huffman, --quant, --scans, or --all for details");
+        println!("\nUse --markers, --huffman, --quant, --scans, --validate, or --all for details");
         return;
     }
 
@@ -598,5 +681,9 @@ fn main() {
 
     if show_all || show_scans {
         print_scans(&analysis);
+    }
+
+    if show_all || show_validate {
+        validate_jpeg(&data, &jpeg_path);
     }
 }
