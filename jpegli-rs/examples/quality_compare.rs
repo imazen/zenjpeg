@@ -7,8 +7,9 @@
 //!   cargo run --release --example quality_compare -- [OPTIONS] <image.png>
 //!
 //! Options:
-//!   --encoder <name>    Encoder to test (jpegli-rs-ycbcr, jpegli-rs-xyb, cmozjpeg)
-//!                       Can specify multiple times. Default: all
+//!   --encoder <name>    Encoder to test. Can specify multiple times. Default: all
+//!                       Available: jpegli-rs-ycbcr, jpegli-rs-ycbcr-hybrid, jpegli-rs-xyb,
+//!                                  cmozjpeg, jpegli-rs-ycbcr-444, jpegli-rs-ycbcr-hybrid-444
 //!   --quality <n>       Single quality level (0-100). Default: sweep 10-95
 //!   --metric <name>     Metric to use (dssim, ssim2, butteraugli, all). Default: all
 //!   --output <file>     Output CSV file
@@ -17,8 +18,9 @@
 //!   --quick             Quick mode: fewer quality levels (10, 30, 50, 70, 90)
 //!
 //! Examples:
-//!   # Quick XYB vs YCbCr comparison
-//!   cargo run --release --example quality_compare -- --quick image.png
+//!   # Quick YCbCr vs hybrid comparison
+//!   cargo run --release --example quality_compare --features experimental-hybrid-trellis -- \
+//!     --encoder jpegli-rs-ycbcr --encoder hybrid --quick image.png
 //!
 //!   # Full Pareto curve to CSV
 //!   cargo run --release --example quality_compare -- --pareto --output results.csv image.png
@@ -182,6 +184,11 @@ fn parse_encoder(name: &str) -> EncoderConfig {
         "jpegli-rs-ycbcr" | "jpegli-ycbcr" | "jpegli" => {
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::YCbCr)
         }
+        "jpegli-rs-ycbcr-hybrid" | "jpegli-ycbcr-hybrid" | "jpegli-hybrid" | "hybrid" => {
+            EncoderConfig::new(EncoderImpl::JpegliRs)
+                .color(ColorMode::YCbCr)
+                .hybrid(true)
+        }
         "jpegli-rs-xyb" | "jpegli-xyb" | "xyb" => {
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::Xyb)
         }
@@ -189,6 +196,10 @@ fn parse_encoder(name: &str) -> EncoderConfig {
         "jpegli-rs-ycbcr-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::YCbCr)
             .subsampling(ChromaSubsampling::S444),
+        "jpegli-rs-ycbcr-hybrid-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
+            .color(ColorMode::YCbCr)
+            .subsampling(ChromaSubsampling::S444)
+            .hybrid(true),
         "jpegli-rs-xyb-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::Xyb)
             .subsampling(ChromaSubsampling::S444),

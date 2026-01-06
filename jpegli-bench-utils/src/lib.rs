@@ -1126,6 +1126,8 @@ pub struct EncoderConfig {
     pub subsampling: ChromaSubsampling,
     /// Quality (0-100 for libjpeg-style, or distance for jpegli)
     pub quality: u8,
+    /// Enable hybrid trellis quantization (jpegli-rs only, requires feature)
+    pub hybrid: bool,
 }
 
 impl EncoderConfig {
@@ -1138,6 +1140,7 @@ impl EncoderConfig {
             scan: ScanMode::default(),
             subsampling: ChromaSubsampling::default(),
             quality: 75,
+            hybrid: false,
         }
     }
 
@@ -1169,26 +1172,39 @@ impl EncoderConfig {
         self
     }
 
+    /// Enable hybrid trellis quantization.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature to be enabled.
+    /// Only applies to jpegli-rs encoder.
+    #[must_use]
+    pub fn hybrid(mut self, enabled: bool) -> Self {
+        self.hybrid = enabled;
+        self
+    }
+
     /// Generate a descriptive name for this configuration.
     ///
-    /// Format: `encoder-color-scan-subsampling` (e.g., "jpegli-rs-xyb-progressive-420")
+    /// Format: `encoder-color[-hybrid]-scan-subsampling` (e.g., "jpegli-rs-ycbcr-hybrid-progressive-420")
     #[must_use]
     pub fn name(&self) -> String {
+        let hybrid_suffix = if self.hybrid { "-hybrid" } else { "" };
         format!(
-            "{}-{}-{}-{}",
+            "{}-{}{}-{}-{}",
             self.encoder.short_name(),
             self.color.suffix(),
+            hybrid_suffix,
             self.scan.suffix(),
             self.subsampling.suffix()
         )
     }
 
-    /// Generate a short name (encoder + color only).
+    /// Generate a short name (encoder + color + hybrid).
     ///
-    /// Format: `encoder-color` (e.g., "jpegli-rs-xyb")
+    /// Format: `encoder-color[-hybrid]` (e.g., "jpegli-rs-ycbcr-hybrid")
     #[must_use]
     pub fn short_name(&self) -> String {
-        format!("{}-{}", self.encoder.short_name(), self.color.suffix())
+        let hybrid_suffix = if self.hybrid { "-hybrid" } else { "" };
+        format!("{}-{}{}", self.encoder.short_name(), self.color.suffix(), hybrid_suffix)
     }
 
     /// Encode an image with this configuration.
@@ -1205,14 +1221,26 @@ impl EncoderConfig {
     }
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        jpegli::Encoder::new()
+        #[cfg_attr(not(feature = "experimental-hybrid-trellis"), allow(unused_mut))]
+        let mut encoder = jpegli::Encoder::new()
             .width(img.width as u32)
             .height(img.height as u32)
             .jpegli_quality(jpegli::quant::Quality::from_quality(self.quality as f32))
             .use_xyb(self.color == ColorMode::Xyb)
             .mode(self.scan.to_jpegli())
-            .subsampling(self.subsampling.to_jpegli())
-            .encode(&img.pixels)
+            .subsampling(self.subsampling.to_jpegli());
+
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        if self.hybrid {
+            encoder = encoder.hybrid_config(jpegli::hybrid_config::HybridConfig::default());
+        }
+
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
+        if self.hybrid {
+            return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
+        }
+
+        encoder.encode(&img.pixels)
             .map_err(|e| format!("jpegli-rs encode failed: {e}"))
     }
 
@@ -2413,5 +2441,15 @@ mod tests {
             .subsampling(ChromaSubsampling::S420);
 
         assert_eq!(config2.name(), "cmozjpeg-ycbcr-baseline-420");
+
+        // Test hybrid naming
+        let config3 = EncoderConfig::new(EncoderImpl::JpegliRs)
+            .color(ColorMode::YCbCr)
+            .hybrid(true)
+            .scan(ScanMode::Progressive)
+            .subsampling(ChromaSubsampling::S420);
+
+        assert_eq!(config3.name(), "jpegli-rs-ycbcr-hybrid-progressive-420");
+        assert_eq!(config3.short_name(), "jpegli-rs-ycbcr-hybrid");
     }
 }

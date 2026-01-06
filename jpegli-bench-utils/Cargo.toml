@@ -34,5 +34,9 @@ mozjpeg = { workspace = true }
 # For test image discovery
 jpegli-rs = { path = "../jpegli-rs", default-features = false }
 
+[features]
+default = []
+experimental-hybrid-trellis = ["jpegli-rs/experimental-hybrid-trellis"]
+
 [lints]
 workspace = true
