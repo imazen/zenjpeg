@@ -486,6 +486,34 @@ src/encode/mod.rs         - Encoder struct and core logic (3097 lines)
 
 ---
 
+### Session 2026-01-06: Hybrid module extraction
+
+**Completed:**
+- Created `encode/hybrid.rs` module for hybrid-trellis specific code (~190 lines)
+- Moved `HybridQuantContext` from config.rs to hybrid.rs
+- Moved `quantize_all_blocks_xyb_with_aq` function to hybrid.rs
+- All 324 lib tests pass (both with and without experimental-hybrid-trellis feature)
+- Quality compare example verified: hybrid encoder produces same results
+
+**Files in encode/:**
+```
+src/encode/config.rs      - Configuration types (385 lines, reduced from 440)
+src/encode/output.rs      - JPEG writing methods (808 lines)
+src/encode/color.rs       - Color conversion methods (534 lines)
+src/encode/progressive.rs - Progressive scan encoding (539 lines)
+src/encode/hybrid.rs      - Hybrid trellis quantization (190 lines) [NEW, cfg-gated]
+src/encode/tests.rs       - Unit tests (998 lines)
+src/encode/mod.rs         - Encoder struct and core logic (~2980 lines)
+```
+
+**Hybrid separation status:**
+- HybridQuantContext: ✅ moved to encode/hybrid.rs
+- quantize_all_blocks_xyb_with_aq: ✅ moved to encode/hybrid.rs
+- Remaining cfg blocks in mod.rs: ~100 lines (builder methods, pipeline dispatch)
+- encode_scan legacy function: still has hybrid code (~160 lines)
+
+---
+
 ### Session 2026-01-06: Test extraction
 
 **Commit:** `f5ec10a` on branch `simd`
