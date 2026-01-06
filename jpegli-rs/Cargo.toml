@@ -100,3 +100,8 @@ required-features = ["test-utils"]
 [[example]]
 name = "low_q_report"
 required-features = ["test-utils"]
+
+# XYB debugging tools (for investigating quality gap vs C++ jpegli)
+[[example]]
+name = "compare_xyb_constants"
+required-features = ["test-utils", "ffi-tests"]
