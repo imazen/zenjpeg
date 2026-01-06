@@ -45,6 +45,7 @@ pub mod error;
 pub mod pixel;
 pub mod quality_conversion;
 pub mod quant;
+pub mod simd_types;
 pub mod types;
 
 // Internal modules - NOT part of the stable public API.

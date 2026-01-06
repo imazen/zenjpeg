@@ -93,6 +93,10 @@ harness = false
 name = "profile_ycbcr"
 harness = false
 
+[[bench]]
+name = "simd_blocks"
+harness = false
+
 [lints]
 workspace = true
 
