@@ -18,6 +18,38 @@ use crate::quant::{self, QuantTable, ZeroBiasParams};
 
 use super::natural_to_zigzag;
 
+use super::EncoderConfig;
+
+// ============================================================================
+// Setup Helpers
+// ============================================================================
+
+/// Get the AQ map, using custom if provided or computing from Y plane.
+#[inline]
+pub(super) fn get_aq_map_or_compute(
+    config: &EncoderConfig,
+    y_plane: &[f32],
+    width: usize,
+    height: usize,
+    y_quant_01: u16,
+) -> AQStrengthMap {
+    if let Some(ref custom) = config.custom_aq_map {
+        custom.clone()
+    } else {
+        crate::adaptive_quant::compute_aq_strength_map(y_plane, width, height, y_quant_01)
+    }
+}
+
+/// Create hybrid quantization context if enabled in config.
+#[inline]
+pub(super) fn create_hybrid_ctx(config: &EncoderConfig) -> Option<HybridQuantContext> {
+    if config.hybrid_config.enabled {
+        Some(HybridQuantContext::new(config.hybrid_config))
+    } else {
+        None
+    }
+}
+
 // ============================================================================
 // Quantization Dispatch Helper
 // ============================================================================
