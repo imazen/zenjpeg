@@ -110,7 +110,10 @@ fn test_optimized_huffman_determinism() {
         .encode(&rgb)
         .expect("encode 2 failed");
 
-    assert_eq!(jpeg1, jpeg2, "Optimized Huffman encoder is non-deterministic");
+    assert_eq!(
+        jpeg1, jpeg2,
+        "Optimized Huffman encoder is non-deterministic"
+    );
 }
 
 #[test]
@@ -144,9 +147,7 @@ fn test_xyb_encoder_determinism() {
 fn test_grayscale_encoder_determinism() {
     let width = 64;
     let height = 64;
-    let gray: Vec<u8> = (0..width * height)
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let gray: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
 
     let jpeg1 = Encoder::new()
         .width(width as u32)
