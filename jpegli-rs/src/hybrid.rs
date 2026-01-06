@@ -337,13 +337,16 @@ mod tests {
 
     #[test]
     fn test_dct_f32_to_i32() {
+        // Function multiplies by 8 for trellis compatibility (see docstring)
+        // 127.4 * 8 = 1019.2, rounds to 1019
         let f32_coeffs = [127.4f32; 64];
         let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
-        assert_eq!(i32_coeffs[0], 127);
+        assert_eq!(i32_coeffs[0], 1019);
 
+        // -127.6 * 8 = -1020.8, rounds to -1021
         let f32_coeffs = [-127.6f32; 64];
         let i32_coeffs = dct_f32_to_i32(&f32_coeffs);
-        assert_eq!(i32_coeffs[0], -128);
+        assert_eq!(i32_coeffs[0], -1021);
     }
 
     #[test]
