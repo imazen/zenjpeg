@@ -12,11 +12,11 @@ use crate::consts::{
     MAX_ICC_BYTES_PER_MARKER,
 };
 use crate::error::Result;
-use crate::huffman_opt::{OptimizedHuffmanTables, OptimizedTable};
+use crate::huffman_opt::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, PixelFormat, Subsampling};
 
-use super::Encoder;
+use super::{Encoder, ProgressiveScan};
 
 impl Encoder {
     /// Writes the JPEG header (SOI only, no JFIF APP0).
@@ -632,5 +632,177 @@ impl Encoder {
         write_table(output, 0, 0, &dc_table.bits, &dc_table.values);
         // AC table (class=1, id=0)
         write_table(output, 1, 0, &ac_table.bits, &ac_table.values);
+    }
+
+    /// Writes SOS header for a progressive scan (legacy, hardcoded table selection).
+    pub(super) fn write_progressive_scan_header(
+        &self,
+        output: &mut Vec<u8>,
+        scan: &ProgressiveScan,
+        is_color: bool,
+    ) -> Result<()> {
+        // Use hardcoded luma/chroma mapping: luma=0, chroma=1
+        let num_components = if is_color { 3 } else { 1 };
+        // For legacy mode, use sequential context config (AC contexts = 4 + component)
+        let context_config = ContextConfig::for_sequential(num_components);
+        let context_map: Vec<usize> = (0..context_config.num_contexts)
+            .map(|c| {
+                if c < context_config.ac_offset {
+                    // DC: component 0 → 0, components 1,2 → 1
+                    if is_color && c > 0 {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    // AC: component 0 → 2, components 1,2 → 3
+                    let comp = c - context_config.ac_offset;
+                    if is_color && comp > 0 {
+                        3
+                    } else {
+                        2
+                    }
+                }
+            })
+            .collect();
+        // scan_idx=0 is fine since legacy mode has uniform AC table assignment
+        self.write_progressive_scan_header_with_context(
+            output,
+            0, // scan_idx not used when AC tables are uniform
+            scan,
+            is_color,
+            &context_config,
+            &context_map,
+            2,
+        )
+    }
+
+    /// Writes SOS header for a progressive scan with context-based table selection.
+    ///
+    /// # Arguments
+    /// * `scan_idx` - Index of this scan in the scan script (for AC context lookup)
+    /// * `context_config` - Context configuration for proper context lookup
+    /// * `context_map` - Maps context indices to table indices from clustering
+    /// * `num_dc_tables` - Number of DC tables (AC tables start at this offset)
+    pub(super) fn write_progressive_scan_header_with_context(
+        &self,
+        output: &mut Vec<u8>,
+        scan_idx: usize,
+        scan: &ProgressiveScan,
+        _is_color: bool, // Kept for API compatibility, context_config determines context count
+        context_config: &ContextConfig,
+        context_map: &[usize],
+        num_dc_tables: usize,
+    ) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_SOS);
+
+        let num_components = scan.components.len() as u8;
+        let length = 6u16 + num_components as u16 * 2;
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        output.push(num_components);
+
+        for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
+            // Component ID: 1-based for YCbCr, or 'R','G','B' for XYB
+            let comp_id = if self.config.use_xyb {
+                match comp_idx {
+                    0 => b'R', // 82
+                    1 => b'G', // 71
+                    2 => b'B', // 66
+                    _ => comp_idx + 1,
+                }
+            } else {
+                comp_idx + 1
+            };
+            output.push(comp_id);
+
+            // DC table selector: use DC context (component index)
+            let dc_context = context_config.dc_context(comp_idx as usize);
+            let dc_table = context_map.get(dc_context).copied().unwrap_or(0);
+
+            // AC table selector: use per-scan AC context
+            let ac_context = context_config.ac_context(scan_idx, comp_in_scan);
+            let ac_table = context_map
+                .get(ac_context)
+                .map(|&t| t.saturating_sub(num_dc_tables))
+                .unwrap_or(0);
+
+            let table_selector = ((dc_table as u8) << 4) | (ac_table as u8);
+            output.push(table_selector);
+        }
+
+        output.push(scan.ss); // Spectral selection start
+        output.push(scan.se); // Spectral selection end
+        output.push((scan.ah << 4) | scan.al); // Successive approximation
+
+        Ok(())
+    }
+
+    /// Writes SOS header for a progressive scan with slot ID support.
+    ///
+    /// This version uses `ac_slot_ids` to get the correct JPEG DHT slot for each AC table,
+    /// which is needed when more than 4 AC tables are used (slot IDs cycle through 0-3).
+    pub(super) fn write_progressive_scan_header_with_slot_ids(
+        &self,
+        output: &mut Vec<u8>,
+        scan_idx: usize,
+        scan: &ProgressiveScan,
+        _is_color: bool,
+        context_config: &ContextConfig,
+        context_map: &[usize],
+        num_dc_tables: usize,
+        ac_slot_ids: &[usize],
+    ) -> Result<()> {
+        output.push(0xFF);
+        output.push(MARKER_SOS);
+
+        let num_components = scan.components.len() as u8;
+        let length = 6u16 + num_components as u16 * 2;
+        output.push((length >> 8) as u8);
+        output.push(length as u8);
+
+        output.push(num_components);
+
+        for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
+            // Component ID: 1-based for YCbCr, or 'R','G','B' for XYB
+            let comp_id = if self.config.use_xyb {
+                match comp_idx {
+                    0 => b'R', // 82
+                    1 => b'G', // 71
+                    2 => b'B', // 66
+                    _ => comp_idx + 1,
+                }
+            } else {
+                comp_idx + 1
+            };
+            output.push(comp_id);
+
+            // DC table selector: use DC context (component index)
+            let dc_context = context_config.dc_context(comp_idx as usize);
+            let dc_table = context_map.get(dc_context).copied().unwrap_or(0);
+
+            // AC table selector: use per-scan AC context and slot IDs
+            let ac_context = context_config.ac_context(scan_idx, comp_in_scan);
+            let cluster_idx = context_map
+                .get(ac_context)
+                .map(|&t| t.saturating_sub(num_dc_tables))
+                .unwrap_or(0);
+            // Get the actual JPEG slot ID from ac_slot_ids
+            let ac_table = ac_slot_ids
+                .get(cluster_idx)
+                .copied()
+                .unwrap_or(cluster_idx % 4);
+
+            let table_selector = ((dc_table as u8) << 4) | (ac_table as u8);
+            output.push(table_selector);
+        }
+
+        output.push(scan.ss); // Spectral selection start
+        output.push(scan.se); // Spectral selection end
+        output.push((scan.ah << 4) | scan.al); // Successive approximation
+
+        Ok(())
     }
 }
