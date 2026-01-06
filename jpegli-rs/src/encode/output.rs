@@ -12,7 +12,7 @@ use crate::consts::{
     MAX_ICC_BYTES_PER_MARKER,
 };
 use crate::error::Result;
-use crate::huffman_opt::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
+use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, PixelFormat, Subsampling};
 
@@ -61,8 +61,8 @@ impl Encoder {
             b'A', b'd', b'o', b'b', b'e', // Signature
             0x00, 0x64, // DCTEncodeVersion (100)
             0x00, 0x00, // APP14Flags0
-            0x00, 0x00, // APP14Flags1
-            transform,  // Color transform
+            0x00, 0x00,      // APP14Flags1
+            transform, // Color transform
         ]);
         Ok(())
     }

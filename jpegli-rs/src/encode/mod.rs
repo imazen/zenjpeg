@@ -2,36 +2,36 @@
 //!
 //! This module provides the main encoder interface for creating JPEG images.
 
-pub mod config;
 mod baseline;
 mod blocks;
 mod color;
+pub mod config;
 #[cfg(feature = "experimental-hybrid-trellis")]
 mod hybrid;
 mod output;
 mod progressive;
 
 // Re-export config types
-pub use config::{internal_pathway, EncoderConfig};
-pub(crate) use config::{DownsamplingMethod, InternalPipeline, ProgressiveScan};
 #[cfg(test)]
 pub(crate) use config::ColorConversionMethod;
+pub use config::{internal_pathway, EncoderConfig};
+pub(crate) use config::{DownsamplingMethod, InternalPipeline, ProgressiveScan};
 #[cfg(feature = "experimental-hybrid-trellis")]
 pub(crate) use hybrid::HybridQuantContext;
 
-use crate::adaptive_quant::compute_aq_strength_map;
 use crate::alloc::{checked_size_2d, validate_dimensions, DEFAULT_MAX_PIXELS};
 use crate::chroma;
-use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
 #[cfg(test)]
 use crate::consts::MARKER_SOI;
+use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
 use crate::dct::forward_dct_8x8;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::{Error, Result};
-use crate::huffman::HuffmanEncodeTable;
-use crate::huffman_opt::{
+use crate::huffman::optimize::{
     ContextConfig, FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer,
 };
+use crate::huffman::HuffmanEncodeTable;
+use crate::quant::aq::compute_aq_strength_map;
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaConversion, ColorSpace, JpegMode, PixelFormat, Subsampling};
 
@@ -307,9 +307,9 @@ impl Encoder {
     #[must_use]
     pub fn hybrid_trellis(mut self, enable: bool) -> Self {
         if enable {
-            self.config.hybrid_config = crate::hybrid_config::HybridConfig::default();
+            self.config.hybrid_config = crate::hybrid::config::HybridConfig::default();
         } else {
-            self.config.hybrid_config = crate::hybrid_config::HybridConfig::disabled();
+            self.config.hybrid_config = crate::hybrid::config::HybridConfig::disabled();
         }
         self
     }
@@ -317,12 +317,12 @@ impl Encoder {
     /// Set custom hybrid quantization configuration.
     ///
     /// Allows fine-tuning all hybrid AQ+trellis parameters.
-    /// See [`HybridConfig`](crate::hybrid_config::HybridConfig) for available options.
+    /// See [`HybridConfig`](crate::hybrid::config::HybridConfig) for available options.
     ///
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn hybrid_config(mut self, config: crate::hybrid_config::HybridConfig) -> Self {
+    pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.config.hybrid_config = config;
         self
     }
@@ -432,6 +432,15 @@ fn natural_to_zigzag(natural: &[i16; DCT_BLOCK_SIZE]) -> [i16; DCT_BLOCK_SIZE] {
         zigzag[JPEG_ZIGZAG_ORDER[i] as usize] = natural[i];
     }
     zigzag
+}
+
+/// Converts coefficients from natural order to zigzag order, writing directly to destination.
+/// Avoids allocation when writing to pre-allocated block arrays.
+#[inline]
+fn natural_to_zigzag_into(natural: &[i16; DCT_BLOCK_SIZE], dest: &mut [i16; DCT_BLOCK_SIZE]) {
+    for i in 0..DCT_BLOCK_SIZE {
+        dest[JPEG_ZIGZAG_ORDER[i] as usize] = natural[i];
+    }
 }
 
 #[cfg(test)]

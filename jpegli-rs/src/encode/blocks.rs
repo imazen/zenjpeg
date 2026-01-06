@@ -57,8 +57,8 @@ impl Encoder {
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = hybrid::get_aq_map_or_compute(
-            &self.config, &y_plane_f32, width, height, y_quant_01);
+        let aq_map =
+            hybrid::get_aq_map_or_compute(&self.config, &y_plane_f32, width, height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
 
@@ -77,10 +77,20 @@ impl Encoder {
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
                 let y_quant_coeffs = hybrid::quantize_block_dispatch(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength, true, hybrid_ctx.as_ref());
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                    true,
+                    hybrid_ctx.as_ref(),
+                );
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
 
                 let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
                 encoder.encode_block(&y_zigzag, 0, 0, 0)?;
@@ -92,10 +102,20 @@ impl Encoder {
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
                     let cb_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cb_dct, &c_quant.values, &cb_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
+                        &cb_dct,
+                        &c_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                        false,
+                        hybrid_ctx.as_ref(),
+                    );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct, &c_quant.values, &cb_zero_bias, aq_strength);
+                        &cb_dct,
+                        &c_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
 
                     let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
                     encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
@@ -106,10 +126,20 @@ impl Encoder {
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
                     let cr_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cr_dct, &c_quant.values, &cr_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
+                        &cr_dct,
+                        &c_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                        false,
+                        hybrid_ctx.as_ref(),
+                    );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct, &c_quant.values, &cr_zero_bias, aq_strength);
+                        &cr_dct,
+                        &c_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
 
                     let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
                     encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
@@ -160,8 +190,8 @@ impl Encoder {
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = hybrid::get_aq_map_or_compute(
-            &self.config, y_plane, width, height, y_quant_01);
+        let aq_map =
+            hybrid::get_aq_map_or_compute(&self.config, y_plane, width, height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
 
@@ -169,12 +199,17 @@ impl Encoder {
         #[cfg(feature = "experimental-hybrid-trellis")]
         let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
 
-        let mut y_blocks = Vec::with_capacity(blocks_h * blocks_v);
-        let mut cb_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
-        let mut cr_blocks = Vec::with_capacity(if is_color { blocks_h * blocks_v } else { 0 });
+        // Pre-allocate block arrays to avoid push() overhead
+        let num_blocks = blocks_h * blocks_v;
+        let num_chroma_blocks = if is_color { num_blocks } else { 0 };
+        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_blocks];
+        let mut cb_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_chroma_blocks];
+        let mut cr_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_chroma_blocks];
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
+                let block_idx = by * blocks_h + bx;
+
                 // Get per-block aq_strength
                 let aq_strength = aq_map.get(bx, by);
 
@@ -184,12 +219,22 @@ impl Encoder {
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
                 let y_quant_coeffs = hybrid::quantize_block_dispatch(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength, true, hybrid_ctx.as_ref());
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                    true,
+                    hybrid_ctx.as_ref(),
+                );
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
 
-                y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[block_idx]);
 
                 if is_color {
                     let cb_block =
@@ -198,12 +243,22 @@ impl Encoder {
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
                     let cb_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
+                        &cb_dct,
+                        &cb_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                        false,
+                        hybrid_ctx.as_ref(),
+                    );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength);
+                        &cb_dct,
+                        &cb_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
 
-                    cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
+                    natural_to_zigzag_into(&cb_quant_coeffs, &mut cb_blocks[block_idx]);
 
                     let cr_block =
                         crate::encode_simd::extract_block_simd(cr_plane, width, height, bx, by);
@@ -211,12 +266,22 @@ impl Encoder {
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
                     let cr_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
+                        &cr_dct,
+                        &cr_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                        false,
+                        hybrid_ctx.as_ref(),
+                    );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength);
+                        &cr_dct,
+                        &cr_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
 
-                    cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
+                    natural_to_zigzag_into(&cr_quant_coeffs, &mut cr_blocks[block_idx]);
                 }
             }
         }
@@ -261,8 +326,8 @@ impl Encoder {
         // Compute per-block adaptive quantization strength from Y plane
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map = hybrid::get_aq_map_or_compute(
-            &self.config, y_plane, y_width, y_height, y_quant_01);
+        let aq_map =
+            hybrid::get_aq_map_or_compute(&self.config, y_plane, y_width, y_height, y_quant_01);
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
 
@@ -270,13 +335,17 @@ impl Encoder {
         #[cfg(feature = "experimental-hybrid-trellis")]
         let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
 
-        let mut y_blocks = Vec::with_capacity(y_blocks_h * y_blocks_v);
-        let mut cb_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
-        let mut cr_blocks = Vec::with_capacity(if is_color { c_blocks_h * c_blocks_v } else { 0 });
+        // Pre-allocate block arrays to avoid push() overhead
+        let num_y_blocks = y_blocks_h * y_blocks_v;
+        let num_c_blocks = if is_color { c_blocks_h * c_blocks_v } else { 0 };
+        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_y_blocks];
+        let mut cb_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_c_blocks];
+        let mut cr_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_c_blocks];
 
         // Quantize Y blocks
         for by in 0..y_blocks_v {
             for bx in 0..y_blocks_h {
+                let block_idx = by * y_blocks_h + bx;
                 let aq_strength = aq_map.get(bx, by);
                 let y_block =
                     crate::encode_simd::extract_block_simd(y_plane, y_width, y_height, bx, by);
@@ -284,12 +353,22 @@ impl Encoder {
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
                 let y_quant_coeffs = hybrid::quantize_block_dispatch(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength, true, hybrid_ctx.as_ref());
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                    true,
+                    hybrid_ctx.as_ref(),
+                );
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
+                    &y_dct,
+                    &y_quant.values,
+                    &y_zero_bias,
+                    aq_strength,
+                );
 
-                y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[block_idx]);
             }
         }
 
@@ -297,6 +376,7 @@ impl Encoder {
         if is_color {
             for by in 0..c_blocks_v {
                 for bx in 0..c_blocks_h {
+                    let block_idx = by * c_blocks_h + bx;
                     // For chroma, use average AQ strength from corresponding Y region
                     // For 4:2:0, each chroma block corresponds to 2x2 Y blocks
                     let y_bx = (bx * y_blocks_h) / c_blocks_h;
@@ -310,12 +390,22 @@ impl Encoder {
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
                     let cb_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
+                        &cb_dct,
+                        &cb_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                        false,
+                        hybrid_ctx.as_ref(),
+                    );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength);
+                        &cb_dct,
+                        &cb_quant.values,
+                        &cb_zero_bias,
+                        aq_strength,
+                    );
 
-                    cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
+                    natural_to_zigzag_into(&cb_quant_coeffs, &mut cb_blocks[block_idx]);
 
                     let cr_block =
                         crate::encode_simd::extract_block_simd(cr_plane, c_width, c_height, bx, by);
@@ -323,12 +413,22 @@ impl Encoder {
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
                     let cr_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
+                        &cr_dct,
+                        &cr_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                        false,
+                        hybrid_ctx.as_ref(),
+                    );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength);
+                        &cr_dct,
+                        &cr_quant.values,
+                        &cr_zero_bias,
+                        aq_strength,
+                    );
 
-                    cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
+                    natural_to_zigzag_into(&cr_quant_coeffs, &mut cr_blocks[block_idx]);
                 }
             }
         }
@@ -486,11 +586,11 @@ impl Encoder {
             )
         } else {
             // Use standard tables for grayscale (won't be used but needed for structure)
+            use crate::huffman::optimize::OptimizedTable;
             use crate::huffman::{
                 STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
                 STD_DC_CHROMINANCE_VALUES,
             };
-            use crate::huffman_opt::OptimizedTable;
 
             (
                 OptimizedTable {
@@ -826,23 +926,28 @@ impl Encoder {
         let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
         let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
-        let mut x_blocks = Vec::with_capacity(num_xy_blocks);
-        let mut y_blocks = Vec::with_capacity(num_xy_blocks);
-        let mut b_blocks = Vec::with_capacity(num_b_blocks);
+        // Pre-allocate block arrays to avoid push() overhead
+        let mut x_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
+        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
+        let mut b_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_b_blocks];
 
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
+                let mcu_idx = mcu_y * mcu_cols + mcu_x;
+                let xy_base = mcu_idx * 4; // 4 blocks per MCU for X and Y
+
                 // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
                 for block_y in 0..2 {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
+                        let block_offset = block_y * 2 + block_x;
                         let x_block = crate::encode_simd::extract_block_xyb_simd(
                             x_plane, width, height, bx, by,
                         );
                         let x_dct = forward_dct_8x8(&x_block);
                         let x_quant_coeffs = quant::quantize_block(&x_dct, &x_quant.values);
-                        x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
+                        natural_to_zigzag_into(&x_quant_coeffs, &mut x_blocks[xy_base + block_offset]);
                     }
                 }
 
@@ -851,12 +956,13 @@ impl Encoder {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
+                        let block_offset = block_y * 2 + block_x;
                         let y_block = crate::encode_simd::extract_block_xyb_simd(
                             y_plane, width, height, bx, by,
                         );
                         let y_dct = forward_dct_8x8(&y_block);
                         let y_quant_coeffs = quant::quantize_block(&y_dct, &y_quant.values);
-                        y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                        natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[xy_base + block_offset]);
                     }
                 }
 
@@ -866,7 +972,7 @@ impl Encoder {
                 );
                 let b_dct = forward_dct_8x8(&b_block);
                 let b_quant_coeffs = quant::quantize_block(&b_dct, &b_quant.values);
-                b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
+                natural_to_zigzag_into(&b_quant_coeffs, &mut b_blocks[mcu_idx]);
             }
         }
 
@@ -909,17 +1015,22 @@ impl Encoder {
         let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
         let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
-        let mut x_blocks = Vec::with_capacity(num_xy_blocks);
-        let mut y_blocks = Vec::with_capacity(num_xy_blocks);
-        let mut b_blocks = Vec::with_capacity(num_b_blocks);
+        // Pre-allocate block arrays to avoid push() overhead
+        let mut x_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
+        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
+        let mut b_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_b_blocks];
 
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
+                let mcu_idx = mcu_y * mcu_cols + mcu_x;
+                let xy_base = mcu_idx * 4; // 4 blocks per MCU for X and Y
+
                 // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
                 for block_y in 0..2 {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
+                        let block_offset = block_y * 2 + block_x;
                         let aq_strength = aq_map.get(bx, by);
 
                         let x_block = crate::encode_simd::extract_block_xyb_simd(
@@ -932,7 +1043,7 @@ impl Encoder {
                             x_zero_bias,
                             aq_strength,
                         );
-                        x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
+                        natural_to_zigzag_into(&x_quant_coeffs, &mut x_blocks[xy_base + block_offset]);
                     }
                 }
 
@@ -941,6 +1052,7 @@ impl Encoder {
                     for block_x in 0..2 {
                         let bx = mcu_x * 2 + block_x;
                         let by = mcu_y * 2 + block_y;
+                        let block_offset = block_y * 2 + block_x;
                         let aq_strength = aq_map.get(bx, by);
 
                         let y_block = crate::encode_simd::extract_block_xyb_simd(
@@ -953,7 +1065,7 @@ impl Encoder {
                             y_zero_bias,
                             aq_strength,
                         );
-                        y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                        natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[xy_base + block_offset]);
                     }
                 }
 
@@ -981,7 +1093,7 @@ impl Encoder {
                     b_zero_bias,
                     b_aq_strength,
                 );
-                b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
+                natural_to_zigzag_into(&b_quant_coeffs, &mut b_blocks[mcu_idx]);
             }
         }
 
@@ -998,8 +1110,8 @@ impl Encoder {
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         b_blocks: &[[i16; DCT_BLOCK_SIZE]],
     ) -> Result<(
-        crate::huffman_opt::OptimizedTable,
-        crate::huffman_opt::OptimizedTable,
+        crate::huffman::optimize::OptimizedTable,
+        crate::huffman::optimize::OptimizedTable,
     )> {
         let mut dc_freq = FrequencyCounter::new();
         let mut ac_freq = FrequencyCounter::new();
@@ -1067,8 +1179,8 @@ impl Encoder {
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         b_blocks: &[[i16; DCT_BLOCK_SIZE]],
-        dc_table: &crate::huffman_opt::OptimizedTable,
-        ac_table: &crate::huffman_opt::OptimizedTable,
+        dc_table: &crate::huffman::optimize::OptimizedTable,
+        ac_table: &crate::huffman::optimize::OptimizedTable,
     ) -> Result<Vec<u8>> {
         let mut encoder = EntropyEncoder::new();
 
@@ -1102,7 +1214,6 @@ impl Encoder {
 
         Ok(encoder.finish())
     }
-
 
     /// Encodes scan data for XYB mode with float planes.
     ///
