@@ -340,6 +340,7 @@ extern "C" {
         outbuffer: *mut *mut c_uchar,
         outsize: *mut c_ulong,
     );
+    pub fn jpeg_simple_progression(cinfo: *mut jpeg_compress_struct);
 
     // Decompression
     pub fn jpeg_CreateDecompress(
