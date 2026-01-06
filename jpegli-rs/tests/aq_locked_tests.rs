@@ -163,10 +163,10 @@ fn test_encoding_with_zero_bias_valid() {
         &jpeg_data[..],
     ));
     let decoded = decoder.decode().expect("decode failed");
-    let (w, h) = decoder.dimensions().unwrap();
+    let (dec_width, dec_height) = decoder.dimensions().unwrap();
 
-    assert_eq!(w, width as usize);
-    assert_eq!(h, height as usize);
+    assert_eq!(dec_width, width as usize);
+    assert_eq!(dec_height, height as usize);
 
     // Check decoded pixels are not all zeros or all 255
     let sum: u64 = decoded.iter().map(|&v| v as u64).sum();
