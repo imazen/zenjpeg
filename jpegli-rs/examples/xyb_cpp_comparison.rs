@@ -152,7 +152,9 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
 
     // Load compressed (JPEG)
     let jpeg_data = std::fs::read(compressed_path).expect("read jpeg");
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg_data[..]));
+    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(
+        &jpeg_data[..],
+    ));
     let comp_pixels = decoder.decode().expect("decode jpeg");
 
     let params = ButteraugliParams::default();

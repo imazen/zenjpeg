@@ -195,12 +195,17 @@ fn describe_token(symbol: u8) -> String {
 
 #[test]
 fn test_parse_cpp_dump() {
-    let testdata_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata/ac_refinement/noise32_tokens.txt");
+    let testdata_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../internal/jpegli-cpp/testdata/ac_refinement/noise32_tokens.txt");
 
     if !testdata_path.exists() {
-        eprintln!("Skipping test: C++ testdata not found at {:?}", testdata_path);
-        eprintln!("Generate it with: DUMP_AC_REFINEMENT=1 ./build/tools/cjpegli test.png out.jpg -p 2");
+        eprintln!(
+            "Skipping test: C++ testdata not found at {:?}",
+            testdata_path
+        );
+        eprintln!(
+            "Generate it with: DUMP_AC_REFINEMENT=1 ./build/tools/cjpegli test.png out.jpg -p 2"
+        );
         return;
     }
 
@@ -210,13 +215,20 @@ fn test_parse_cpp_dump() {
     println!("\n=== C++ AC Refinement Scan Analysis ===\n");
 
     for scan in &scans {
-        println!("Scan {}: Ss={} Se={} Ah={} Al={}", scan.scan_index, scan.ss, scan.se, scan.ah, scan.al);
+        println!(
+            "Scan {}: Ss={} Se={} Ah={} Al={}",
+            scan.scan_index, scan.ss, scan.se, scan.ah, scan.al
+        );
         println!(
             "  {} blocks, {} tokens, {} refbits, {} eobruns",
             scan.num_blocks, scan.num_tokens, scan.num_refbits, scan.num_eobruns
         );
-        println!("  Parsed {} tokens, {} refbits, {} eobruns",
-            scan.tokens.len(), scan.refbits.len(), scan.eobruns.len());
+        println!(
+            "  Parsed {} tokens, {} refbits, {} eobruns",
+            scan.tokens.len(),
+            scan.refbits.len(),
+            scan.eobruns.len()
+        );
 
         // Count token types
         let mut eob_count = 0;
@@ -245,8 +257,14 @@ fn test_parse_cpp_dump() {
         }
 
         println!("  Token breakdown:");
-        println!("    EOB: {}, EOB runs: {}, ZRL: {}", eob_count, eob_run_count, zrl_count);
-        println!("    NEW_NZ positive: {}, NEW_NZ negative: {}", new_nz_pos, new_nz_neg);
+        println!(
+            "    EOB: {}, EOB runs: {}, ZRL: {}",
+            eob_count, eob_run_count, zrl_count
+        );
+        println!(
+            "    NEW_NZ positive: {}, NEW_NZ negative: {}",
+            new_nz_pos, new_nz_neg
+        );
 
         // Show first few tokens
         println!("  First 10 tokens:");
@@ -262,7 +280,12 @@ fn test_parse_cpp_dump() {
 
         // Show first few refbits
         if !scan.refbits.is_empty() {
-            let first_bits: String = scan.refbits.iter().take(32).map(|b| if *b == 0 { '0' } else { '1' }).collect();
+            let first_bits: String = scan
+                .refbits
+                .iter()
+                .take(32)
+                .map(|b| if *b == 0 { '0' } else { '1' })
+                .collect();
             println!("  First 32 refbits: {}", first_bits);
         }
 
@@ -273,8 +296,12 @@ fn test_parse_cpp_dump() {
     let total_tokens: usize = scans.iter().map(|s| s.tokens.len()).sum();
     let total_refbits: usize = scans.iter().map(|s| s.refbits.len()).sum();
 
-    println!("Total: {} scans, {} tokens, {} refbits",
-        scans.len(), total_tokens, total_refbits);
+    println!(
+        "Total: {} scans, {} tokens, {} refbits",
+        scans.len(),
+        total_tokens,
+        total_refbits
+    );
 
     assert!(!scans.is_empty(), "Should have parsed at least one scan");
 }
@@ -282,8 +309,8 @@ fn test_parse_cpp_dump() {
 /// Analyzes token patterns to identify potential issues
 #[test]
 fn test_analyze_token_patterns() {
-    let testdata_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata/ac_refinement/noise32_tokens.txt");
+    let testdata_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../internal/jpegli-cpp/testdata/ac_refinement/noise32_tokens.txt");
 
     if !testdata_path.exists() {
         return;
@@ -371,8 +398,8 @@ fn test_progressive_filesize_comparison() {
     use std::process::Command;
 
     // Use the noise test image
-    let png_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata/ac_refinement/test32_noise.png");
+    let png_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../internal/jpegli-cpp/testdata/ac_refinement/test32_noise.png");
 
     if !png_path.exists() {
         eprintln!("Test image not found: {:?}", png_path);
@@ -411,19 +438,23 @@ fn test_progressive_filesize_comparison() {
 
     // Test configurations
     let configs = [
-        ("Sequential, no AQ", vec!["--noadaptive_quantization", "-p", "0"]),
-        ("Progressive p2, no AQ", vec!["--noadaptive_quantization", "-p", "2"]),
+        (
+            "Sequential, no AQ",
+            vec!["--noadaptive_quantization", "-p", "0"],
+        ),
+        (
+            "Progressive p2, no AQ",
+            vec!["--noadaptive_quantization", "-p", "2"],
+        ),
         ("Progressive p2, with AQ", vec!["-p", "2"]),
     ];
 
     // Also test with flower image if available
-    let flower_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
+    let flower_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png");
 
-    let images: Vec<(&str, std::path::PathBuf)> = vec![
-        ("noise32", png_path.clone()),
-        ("flower_small", flower_path),
-    ];
+    let images: Vec<(&str, std::path::PathBuf)> =
+        vec![("noise32", png_path.clone()), ("flower_small", flower_path)];
 
     for (img_name, img_path) in &images {
         if !img_path.exists() {
@@ -449,68 +480,74 @@ fn test_progressive_filesize_comparison() {
 
         println!("\n=== {} ({}x{}) ===", img_name, info.width, info.height);
 
-    for quality in [90, 80] {
-        println!("\nQuality {}:", quality);
+        for quality in [90, 80] {
+            println!("\nQuality {}:", quality);
 
-        for (name, args) in &configs {
-            // Encode with C++
-            let cpp_output = format!("/tmp/cpp_prog_q{}.jpg", quality);
-            let quality_str = quality.to_string();
-            let mut cmd_args = args.clone();
-            cmd_args.extend([ppm_path.as_str(), &cpp_output, "-q", &quality_str]);
+            for (name, args) in &configs {
+                // Encode with C++
+                let cpp_output = format!("/tmp/cpp_prog_q{}.jpg", quality);
+                let quality_str = quality.to_string();
+                let mut cmd_args = args.clone();
+                cmd_args.extend([ppm_path.as_str(), &cpp_output, "-q", &quality_str]);
 
-            let output = Command::new(&cjpegli_path)
-                .args(&cmd_args)
-                .output()
-                .expect("Failed to run cjpegli");
+                let output = Command::new(&cjpegli_path)
+                    .args(&cmd_args)
+                    .output()
+                    .expect("Failed to run cjpegli");
 
-            if !output.status.success() {
-                eprintln!("  {}: C++ encoding failed", name);
-                continue;
+                if !output.status.success() {
+                    eprintln!("  {}: C++ encoding failed", name);
+                    continue;
+                }
+
+                let cpp_size = fs::metadata(&cpp_output).map(|m| m.len()).unwrap_or(0);
+
+                // Encode with Rust
+                // Check if progressive by looking for "-p" followed by "2"
+                let is_progressive = args.windows(2).any(|w| w[0] == "-p" && w[1] == "2");
+                let mode = if is_progressive {
+                    jpegli::types::JpegMode::Progressive
+                } else {
+                    jpegli::types::JpegMode::Baseline
+                };
+
+                // Note: Rust encoder always uses AQ, so we can only test with-AQ case for comparison
+                let rust_jpeg = jpegli::encode::Encoder::new()
+                    .width(info.width)
+                    .height(info.height)
+                    .jpegli_quality(jpegli::quant::Quality::Traditional(quality as f32))
+                    .mode(mode)
+                    .encode(&rgb)
+                    .expect("Rust encoding failed");
+
+                // Verify the JPEG is actually progressive by checking for SOF2 marker
+                let is_progressive_jpeg = rust_jpeg.windows(2).any(|w| w == [0xFF, 0xC2]);
+                let is_baseline_jpeg = rust_jpeg.windows(2).any(|w| w == [0xFF, 0xC0]);
+                let sof_type = if is_progressive_jpeg {
+                    "progressive"
+                } else if is_baseline_jpeg {
+                    "baseline"
+                } else {
+                    "unknown"
+                };
+
+                let rust_size = rust_jpeg.len();
+                let diff_pct = if cpp_size > 0 {
+                    100.0 * (rust_size as f64 - cpp_size as f64) / cpp_size as f64
+                } else {
+                    0.0
+                };
+
+                println!(
+                    "  {}: C++={} Rust={} ({:+.1}%) [Rust: {}]",
+                    name, cpp_size, rust_size, diff_pct, sof_type
+                );
+
+                // Also save Rust output for manual inspection
+                let rust_output = format!("/tmp/rust_prog_q{}.jpg", quality);
+                fs::write(&rust_output, &rust_jpeg).ok();
             }
-
-            let cpp_size = fs::metadata(&cpp_output).map(|m| m.len()).unwrap_or(0);
-
-            // Encode with Rust
-            // Check if progressive by looking for "-p" followed by "2"
-            let is_progressive = args.windows(2).any(|w| w[0] == "-p" && w[1] == "2");
-            let mode = if is_progressive {
-                jpegli::types::JpegMode::Progressive
-            } else {
-                jpegli::types::JpegMode::Baseline
-            };
-
-            // Note: Rust encoder always uses AQ, so we can only test with-AQ case for comparison
-            let rust_jpeg = jpegli::encode::Encoder::new()
-                .width(info.width)
-                .height(info.height)
-                .jpegli_quality(jpegli::quant::Quality::Traditional(quality as f32))
-                .mode(mode)
-                .encode(&rgb)
-                .expect("Rust encoding failed");
-
-            // Verify the JPEG is actually progressive by checking for SOF2 marker
-            let is_progressive_jpeg = rust_jpeg.windows(2).any(|w| w == [0xFF, 0xC2]);
-            let is_baseline_jpeg = rust_jpeg.windows(2).any(|w| w == [0xFF, 0xC0]);
-            let sof_type = if is_progressive_jpeg { "progressive" } else if is_baseline_jpeg { "baseline" } else { "unknown" };
-
-            let rust_size = rust_jpeg.len();
-            let diff_pct = if cpp_size > 0 {
-                100.0 * (rust_size as f64 - cpp_size as f64) / cpp_size as f64
-            } else {
-                0.0
-            };
-
-            println!(
-                "  {}: C++={} Rust={} ({:+.1}%) [Rust: {}]",
-                name, cpp_size, rust_size, diff_pct, sof_type
-            );
-
-            // Also save Rust output for manual inspection
-            let rust_output = format!("/tmp/rust_prog_q{}.jpg", quality);
-            fs::write(&rust_output, &rust_jpeg).ok();
         }
-    }
     } // end image loop
 }
 

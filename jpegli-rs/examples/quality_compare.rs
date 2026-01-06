@@ -27,8 +27,8 @@
 //!   cargo run --release --example quality_compare -- --quality 75 image.png
 
 use jpegli_bench_utils::{
-    ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
-    QualityMetrics, decode_jpeg_to_rgb,
+    decode_jpeg_to_rgb, ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
+    QualityMetrics,
 };
 use std::env;
 use std::fs::File;
@@ -110,7 +110,9 @@ fn parse_args() -> Config {
                         "dssim" => metrics.push(Metric::Dssim),
                         "ssim2" => metrics.push(Metric::Ssim2),
                         "butteraugli" => metrics.push(Metric::Butteraugli),
-                        "all" => metrics.extend([Metric::Dssim, Metric::Ssim2, Metric::Butteraugli]),
+                        "all" => {
+                            metrics.extend([Metric::Dssim, Metric::Ssim2, Metric::Butteraugli])
+                        }
                         _ => eprintln!("Unknown metric: {}", args[i]),
                     }
                 }
@@ -183,19 +185,13 @@ fn parse_encoder(name: &str) -> EncoderConfig {
         "jpegli-rs-xyb" | "jpegli-xyb" | "xyb" => {
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::Xyb)
         }
-        "cmozjpeg" | "mozjpeg" => {
-            EncoderConfig::new(EncoderImpl::CMozjpeg).color(ColorMode::YCbCr)
-        }
-        "jpegli-rs-ycbcr-444" => {
-            EncoderConfig::new(EncoderImpl::JpegliRs)
-                .color(ColorMode::YCbCr)
-                .subsampling(ChromaSubsampling::S444)
-        }
-        "jpegli-rs-xyb-444" => {
-            EncoderConfig::new(EncoderImpl::JpegliRs)
-                .color(ColorMode::Xyb)
-                .subsampling(ChromaSubsampling::S444)
-        }
+        "cmozjpeg" | "mozjpeg" => EncoderConfig::new(EncoderImpl::CMozjpeg).color(ColorMode::YCbCr),
+        "jpegli-rs-ycbcr-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
+            .color(ColorMode::YCbCr)
+            .subsampling(ChromaSubsampling::S444),
+        "jpegli-rs-xyb-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
+            .color(ColorMode::Xyb)
+            .subsampling(ChromaSubsampling::S444),
         _ => {
             eprintln!("Unknown encoder: {}. Using jpegli-rs-ycbcr", name);
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::YCbCr)
@@ -204,15 +200,18 @@ fn parse_encoder(name: &str) -> EncoderConfig {
 }
 
 fn run_comparison(config: &Config) -> Vec<Result> {
-    let img = ImageData::from_png(Path::new(&config.image_path))
-        .expect("Failed to load PNG");
+    let img = ImageData::from_png(Path::new(&config.image_path)).expect("Failed to load PNG");
 
     let orig_rgb = img.as_rgb_image();
     let pixels = img.pixel_count();
 
-    println!("Image: {} ({}x{}, {:.2} MP)",
-             config.image_path, img.width, img.height,
-             pixels as f64 / 1_000_000.0);
+    println!(
+        "Image: {} ({}x{}, {:.2} MP)",
+        config.image_path,
+        img.width,
+        img.height,
+        pixels as f64 / 1_000_000.0
+    );
     println!();
 
     // Print header
@@ -243,8 +242,7 @@ fn run_comparison(config: &Config) -> Vec<Result> {
             let bpp = jpeg_data.len() as f64 * 8.0 / pixels as f64;
 
             // Decode and compute metrics
-            let decoded = decode_jpeg_to_rgb(&jpeg_data)
-                .expect("Failed to decode JPEG");
+            let decoded = decode_jpeg_to_rgb(&jpeg_data).expect("Failed to decode JPEG");
 
             let mut dssim = None;
             let mut ssim2 = None;
@@ -256,18 +254,28 @@ fn run_comparison(config: &Config) -> Vec<Result> {
                         dssim = Some(QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref()));
                     }
                     Metric::Ssim2 => {
-                        ssim2 = Some(QualityMetrics::ssimulacra2(orig_rgb.as_ref(), decoded.as_ref()));
+                        ssim2 = Some(QualityMetrics::ssimulacra2(
+                            orig_rgb.as_ref(),
+                            decoded.as_ref(),
+                        ));
                     }
                     Metric::Butteraugli => {
-                        butteraugli = Some(QualityMetrics::butteraugli(orig_rgb.as_ref(), decoded.as_ref()));
+                        butteraugli = Some(QualityMetrics::butteraugli(
+                            orig_rgb.as_ref(),
+                            decoded.as_ref(),
+                        ));
                     }
                 }
             }
 
             // Print row
-            print!("{:<25} {:>5} {:>10} {:>8.3}",
-                   enc.short_name(), quality,
-                   format_size(jpeg_data.len()), bpp);
+            print!(
+                "{:<25} {:>5} {:>10} {:>8.3}",
+                enc.short_name(),
+                quality,
+                format_size(jpeg_data.len()),
+                bpp
+            );
 
             for metric in &config.metrics {
                 let value = match metric {
@@ -353,28 +361,31 @@ fn main() {
         println!("\n--- Summary ---");
 
         // Group by encoder and find best quality at each size
-        let encoders: Vec<String> = config.encoders.iter()
+        let encoders: Vec<String> = config
+            .encoders
+            .iter()
             .map(|e: &EncoderConfig| e.short_name())
             .collect();
 
         for encoder in &encoders {
-            let encoder_results: Vec<_> = results.iter()
-                .filter(|r| &r.encoder == encoder)
-                .collect();
+            let encoder_results: Vec<_> =
+                results.iter().filter(|r| &r.encoder == encoder).collect();
 
             if encoder_results.is_empty() {
                 continue;
             }
 
-            let avg_bpp: f64 = encoder_results.iter().map(|r| r.bpp).sum::<f64>()
-                / encoder_results.len() as f64;
+            let avg_bpp: f64 =
+                encoder_results.iter().map(|r| r.bpp).sum::<f64>() / encoder_results.len() as f64;
 
             let avg_ssim2 = if config.metrics.iter().any(|m| matches!(m, Metric::Ssim2)) {
-                let sum: f64 = encoder_results.iter()
-                    .filter_map(|r| r.ssim2)
-                    .sum();
+                let sum: f64 = encoder_results.iter().filter_map(|r| r.ssim2).sum();
                 let count = encoder_results.iter().filter(|r| r.ssim2.is_some()).count();
-                if count > 0 { Some(sum / count as f64) } else { None }
+                if count > 0 {
+                    Some(sum / count as f64)
+                } else {
+                    None
+                }
             } else {
                 None
             };

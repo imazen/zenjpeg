@@ -290,7 +290,14 @@ fn encode_cpp_progressive(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
     let output_path = format!("/tmp/cpp_test_{}.jpg", std::process::id());
 
     let output = Command::new(cjpegli_path)
-        .args(["-p", "2", ppm_path, &output_path, "-q", &quality.to_string()])
+        .args([
+            "-p",
+            "2",
+            ppm_path,
+            &output_path,
+            "-q",
+            &quality.to_string(),
+        ])
         .output()
         .ok()?;
 
@@ -364,7 +371,10 @@ fn test_ac_refinement_across_image_types() {
     results.sort_by(|a, b| b.diff_pct.partial_cmp(&a.diff_pct).unwrap());
 
     // Print results table
-    println!("{:<20} {:>10} {:>10} {:>10} {:>8}", "Image", "C++ Size", "Rust Size", "Diff %", "Prog?");
+    println!(
+        "{:<20} {:>10} {:>10} {:>10} {:>8}",
+        "Image", "C++ Size", "Rust Size", "Diff %", "Prog?"
+    );
     println!("{:-<60}", "");
 
     for r in &results {
@@ -380,8 +390,14 @@ fn test_ac_refinement_across_image_types() {
     let total_cpp: usize = results.iter().map(|r| r.cpp_size).sum();
     let total_rust: usize = results.iter().map(|r| r.rust_size).sum();
     let avg_diff: f64 = results.iter().map(|r| r.diff_pct).sum::<f64>() / results.len() as f64;
-    let max_diff = results.iter().map(|r| r.diff_pct).fold(f64::NEG_INFINITY, f64::max);
-    let min_diff = results.iter().map(|r| r.diff_pct).fold(f64::INFINITY, f64::min);
+    let max_diff = results
+        .iter()
+        .map(|r| r.diff_pct)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_diff = results
+        .iter()
+        .map(|r| r.diff_pct)
+        .fold(f64::INFINITY, f64::min);
 
     println!("{:-<60}", "");
     println!(
@@ -389,7 +405,10 @@ fn test_ac_refinement_across_image_types() {
         "TOTAL",
         total_cpp,
         total_rust,
-        format!("{:+.1}%", 100.0 * (total_rust as f64 - total_cpp as f64) / total_cpp as f64)
+        format!(
+            "{:+.1}%",
+            100.0 * (total_rust as f64 - total_cpp as f64) / total_cpp as f64
+        )
     );
     println!("\nStatistics:");
     println!("  Average diff: {:+.2}%", avg_diff);
@@ -401,7 +420,10 @@ fn test_ac_refinement_across_image_types() {
 
     // Group by diff severity
     let severe: Vec<_> = results.iter().filter(|r| r.diff_pct > 10.0).collect();
-    let moderate: Vec<_> = results.iter().filter(|r| r.diff_pct > 5.0 && r.diff_pct <= 10.0).collect();
+    let moderate: Vec<_> = results
+        .iter()
+        .filter(|r| r.diff_pct > 5.0 && r.diff_pct <= 10.0)
+        .collect();
     let good: Vec<_> = results.iter().filter(|r| r.diff_pct <= 5.0).collect();
 
     if !severe.is_empty() {
@@ -430,12 +452,12 @@ fn test_ac_refinement_across_image_types() {
 #[test]
 #[ignore = "requires C++ cjpegli build and test images"]
 fn test_ac_refinement_real_images() {
-    let testdata = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../internal/jpegli-cpp/testdata");
+    let testdata = Path::new(env!("CARGO_MANIFEST_DIR")).join("../internal/jpegli-cpp/testdata");
 
-    let real_images = [
-        ("flower_small", testdata.join("jxl/flower/flower_small.rgb.png")),
-    ];
+    let real_images = [(
+        "flower_small",
+        testdata.join("jxl/flower/flower_small.rgb.png"),
+    )];
 
     println!("\n=== AC Refinement Comparison - Real Images ===\n");
 
@@ -474,7 +496,8 @@ fn test_ac_refinement_real_images() {
 
             let rust_jpeg = encode_rust_progressive(&rgb, info.width, info.height, quality as f32);
 
-            let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
+            let diff_pct =
+                100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
 
             println!(
                 "  Q{}: C++={:>6} Rust={:>6} ({:+.1}%)",
@@ -506,7 +529,10 @@ fn test_ac_refinement_quality_levels() {
         write_ppm(&ppm_path, data, size, size).unwrap();
 
         println!("{}:", name);
-        println!("{:<8} {:>10} {:>10} {:>10}", "Quality", "C++ Size", "Rust Size", "Diff %");
+        println!(
+            "{:<8} {:>10} {:>10} {:>10}",
+            "Quality", "C++ Size", "Rust Size", "Diff %"
+        );
         println!("{:-<42}", "");
 
         for quality in [95, 90, 85, 80, 75, 70, 60, 50] {
@@ -517,7 +543,8 @@ fn test_ac_refinement_quality_levels() {
 
             let rust_jpeg = encode_rust_progressive(data, size as u32, size as u32, quality as f32);
 
-            let diff_pct = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
+            let diff_pct =
+                100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
 
             println!(
                 "{:<8} {:>10} {:>10} {:>10}",

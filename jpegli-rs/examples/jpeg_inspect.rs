@@ -63,7 +63,7 @@ struct QuantTable {
 
 #[derive(Debug)]
 struct HuffmanTable {
-    class: u8,  // 0 = DC, 1 = AC
+    class: u8, // 0 = DC, 1 = AC
     id: u8,
     bits: [u8; 16],
     values: Vec<u8>,
@@ -74,10 +74,10 @@ struct HuffmanTable {
 struct ScanInfo {
     offset: usize,
     components: Vec<ScanComponent>,
-    ss: u8,  // Spectral selection start
-    se: u8,  // Spectral selection end
-    ah: u8,  // Successive approximation high
-    al: u8,  // Successive approximation low
+    ss: u8, // Spectral selection start
+    se: u8, // Spectral selection end
+    ah: u8, // Successive approximation high
+    al: u8, // Successive approximation low
     data_length: usize,
 }
 
@@ -210,8 +210,8 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
 fn parse_dqt(data: &[u8], tables: &mut Vec<QuantTable>) {
     let mut pos = 0;
     while pos < data.len() {
-        let pq = (data[pos] >> 4) & 0x0F;  // Precision
-        let tq = data[pos] & 0x0F;         // Table ID
+        let pq = (data[pos] >> 4) & 0x0F; // Precision
+        let tq = data[pos] & 0x0F; // Table ID
         pos += 1;
 
         let mut values = [0u16; 64];
@@ -236,8 +236,8 @@ fn parse_dqt(data: &[u8], tables: &mut Vec<QuantTable>) {
 fn parse_dht(data: &[u8], tables: &mut Vec<HuffmanTable>) {
     let mut pos = 0;
     while pos < data.len() {
-        let tc = (data[pos] >> 4) & 0x0F;  // Table class (0=DC, 1=AC)
-        let th = data[pos] & 0x0F;         // Table ID
+        let tc = (data[pos] >> 4) & 0x0F; // Table class (0=DC, 1=AC)
+        let th = data[pos] & 0x0F; // Table ID
         pos += 1;
 
         let mut bits = [0u8; 16];
@@ -263,7 +263,7 @@ fn parse_dht(data: &[u8], tables: &mut Vec<HuffmanTable>) {
 
 fn parse_sos(data: &[u8], header_len: usize) -> ScanInfo {
     let offset = 0;
-    let ns = data[4] as usize;  // Number of components
+    let ns = data[4] as usize; // Number of components
 
     let mut components = Vec::new();
     for i in 0..ns {
@@ -304,12 +304,18 @@ fn parse_sos(data: &[u8], header_len: usize) -> ScanInfo {
 
 fn print_markers(analysis: &JpegAnalysis) {
     println!("\n=== JPEG Markers ===");
-    println!("{:>8}  {:>4}  {:>6}  {}", "Offset", "0xFF", "Length", "Description");
+    println!(
+        "{:>8}  {:>4}  {:>6}  {}",
+        "Offset", "0xFF", "Length", "Description"
+    );
     println!("{}", "-".repeat(60));
 
     for m in &analysis.markers {
         let len_str = m.length.map(|l| format!("{}", l)).unwrap_or_default();
-        println!("{:>8}  0x{:02X}  {:>6}  {}", m.offset, m.marker, len_str, m.name);
+        println!(
+            "{:>8}  0x{:02X}  {:>6}  {}",
+            m.offset, m.marker, len_str, m.name
+        );
     }
 }
 
@@ -317,7 +323,11 @@ fn print_quant_tables(analysis: &JpegAnalysis) {
     println!("\n=== Quantization Tables ===");
 
     for qt in &analysis.quant_tables {
-        println!("\nTable {} ({}bit):", qt.id, if qt.precision == 0 { 8 } else { 16 });
+        println!(
+            "\nTable {} ({}bit):",
+            qt.id,
+            if qt.precision == 0 { 8 } else { 16 }
+        );
 
         // Print as 8x8 matrix
         for row in 0..8 {
@@ -381,9 +391,13 @@ fn print_scans(analysis: &JpegAnalysis) {
 
     for (i, scan) in analysis.scans.iter().enumerate() {
         println!("\nScan {}:", i + 1);
-        println!("  Components: {:?}", scan.components.iter()
-            .map(|c| format!("{}(DC:{},AC:{})", c.id, c.dc_table, c.ac_table))
-            .collect::<Vec<_>>());
+        println!(
+            "  Components: {:?}",
+            scan.components
+                .iter()
+                .map(|c| format!("{}(DC:{},AC:{})", c.id, c.dc_table, c.ac_table))
+                .collect::<Vec<_>>()
+        );
         println!("  Spectral: {} - {}", scan.ss, scan.se);
         println!("  Successive approx: high={}, low={}", scan.ah, scan.al);
         println!("  Data length: {} bytes", scan.data_length);
@@ -489,28 +503,68 @@ fn compare_jpegs(path1: &str, path2: &str) -> Result<(), String> {
     println!("=== Comparing JPEGs ===\n");
     println!("{:30} {:>15} {:>15}", "", path1, path2);
     println!("{}", "-".repeat(60));
-    println!("{:30} {:>15} {:>15}", "Size (bytes)", data1.len(), data2.len());
-    println!("{:30} {:>15} {:>15}", "Dimensions",
-             format!("{}x{}", analysis1.width, analysis1.height),
-             format!("{}x{}", analysis2.width, analysis2.height));
-    println!("{:30} {:>15} {:>15}", "Progressive", analysis1.is_progressive, analysis2.is_progressive);
-    println!("{:30} {:>15} {:>15}", "Markers", analysis1.markers.len(), analysis2.markers.len());
-    println!("{:30} {:>15} {:>15}", "Quant tables", analysis1.quant_tables.len(), analysis2.quant_tables.len());
-    println!("{:30} {:>15} {:>15}", "Huffman tables", analysis1.huffman_tables.len(), analysis2.huffman_tables.len());
-    println!("{:30} {:>15} {:>15}", "Scans", analysis1.scans.len(), analysis2.scans.len());
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Size (bytes)",
+        data1.len(),
+        data2.len()
+    );
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Dimensions",
+        format!("{}x{}", analysis1.width, analysis1.height),
+        format!("{}x{}", analysis2.width, analysis2.height)
+    );
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Progressive", analysis1.is_progressive, analysis2.is_progressive
+    );
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Markers",
+        analysis1.markers.len(),
+        analysis2.markers.len()
+    );
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Quant tables",
+        analysis1.quant_tables.len(),
+        analysis2.quant_tables.len()
+    );
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Huffman tables",
+        analysis1.huffman_tables.len(),
+        analysis2.huffman_tables.len()
+    );
+    println!(
+        "{:30} {:>15} {:>15}",
+        "Scans",
+        analysis1.scans.len(),
+        analysis2.scans.len()
+    );
 
     // Compare quant tables
     if analysis1.quant_tables.len() == analysis2.quant_tables.len() {
         println!("\n--- Quantization Table Comparison ---");
         for (qt1, qt2) in analysis1.quant_tables.iter().zip(&analysis2.quant_tables) {
-            let diff: i32 = qt1.values.iter().zip(&qt2.values)
+            let diff: i32 = qt1
+                .values
+                .iter()
+                .zip(&qt2.values)
                 .map(|(&a, &b)| (a as i32 - b as i32).abs())
                 .sum();
-            let max_diff = qt1.values.iter().zip(&qt2.values)
+            let max_diff = qt1
+                .values
+                .iter()
+                .zip(&qt2.values)
                 .map(|(&a, &b)| (a as i32 - b as i32).abs())
                 .max()
                 .unwrap_or(0);
-            println!("Table {}: total diff={}, max diff={}", qt1.id, diff, max_diff);
+            println!(
+                "Table {}: total diff={}, max diff={}",
+                qt1.id, diff, max_diff
+            );
         }
     }
 

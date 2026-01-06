@@ -1578,9 +1578,17 @@ impl ProgressiveTokenBuffer {
         // Debug: dump tokens and refbits for comparison with C++
         if std::env::var("DUMP_AC_REFINEMENT").is_ok() {
             if let Some(info) = self.scan_info.last() {
-                eprintln!("=== Rust AC Refinement Scan (Ss={} Se={} Ah={} Al={}) ===", ss, se, ah, al);
-                eprintln!("num_blocks={} num_tokens={} num_refbits={} num_eobruns={}",
-                          blocks.len(), info.ref_tokens.len(), info.refbits.len(), info.eobruns.len());
+                eprintln!(
+                    "=== Rust AC Refinement Scan (Ss={} Se={} Ah={} Al={}) ===",
+                    ss, se, ah, al
+                );
+                eprintln!(
+                    "num_blocks={} num_tokens={} num_refbits={} num_eobruns={}",
+                    blocks.len(),
+                    info.ref_tokens.len(),
+                    info.refbits.len(),
+                    info.eobruns.len()
+                );
                 eprintln!("TOKENS:");
                 for (i, t) in info.ref_tokens.iter().enumerate().take(100) {
                     eprintln!("  [{}] symbol=0x{:02x} refbits={}", i, t.symbol, t.refbits);
@@ -1592,7 +1600,10 @@ impl ProgressiveTokenBuffer {
                 eprint!("  ");
                 for (i, &b) in info.refbits.iter().enumerate().take(200) {
                     eprint!("{}", b);
-                    if (i + 1) % 64 == 0 { eprintln!(); eprint!("  "); }
+                    if (i + 1) % 64 == 0 {
+                        eprintln!();
+                        eprint!("  ");
+                    }
                 }
                 eprintln!();
                 if info.refbits.len() > 200 {

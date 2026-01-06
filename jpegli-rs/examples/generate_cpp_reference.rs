@@ -106,7 +106,8 @@ fn encode_with_cjpegli(cjpegli_path: &str, input_path: &Path, quality: u8) -> Op
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    let mut decoder =
+        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().ok()?;
     let info = decoder.dimensions()?;
 

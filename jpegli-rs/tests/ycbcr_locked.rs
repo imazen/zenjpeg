@@ -235,49 +235,125 @@ fn test_exact_hash(
 #[test]
 fn test_frymire_s444_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Baseline, Subsampling::S444, FRYMIRE_S444_SEQ, "Seq", "4:4:4");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Baseline,
+        Subsampling::S444,
+        FRYMIRE_S444_SEQ,
+        "Seq",
+        "4:4:4",
+    );
 }
 
 #[test]
 fn test_frymire_s422_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Baseline, Subsampling::S422, FRYMIRE_S422_SEQ, "Seq", "4:2:2");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Baseline,
+        Subsampling::S422,
+        FRYMIRE_S422_SEQ,
+        "Seq",
+        "4:2:2",
+    );
 }
 
 #[test]
 fn test_frymire_s420_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Baseline, Subsampling::S420, FRYMIRE_S420_SEQ, "Seq", "4:2:0");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Baseline,
+        Subsampling::S420,
+        FRYMIRE_S420_SEQ,
+        "Seq",
+        "4:2:0",
+    );
 }
 
 #[test]
 fn test_frymire_s440_sequential_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Baseline, Subsampling::S440, FRYMIRE_S440_SEQ, "Seq", "4:4:0");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Baseline,
+        Subsampling::S440,
+        FRYMIRE_S440_SEQ,
+        "Seq",
+        "4:4:0",
+    );
 }
 
 #[test]
 fn test_frymire_s444_sequential_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Baseline, Subsampling::S444, FRYMIRE_S444_SEQ_Q85_HASH, "Seq", "4:4:4");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Baseline,
+        Subsampling::S444,
+        FRYMIRE_S444_SEQ_Q85_HASH,
+        "Seq",
+        "4:4:4",
+    );
 }
 
 #[test]
 fn test_frymire_s422_sequential_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Baseline, Subsampling::S422, FRYMIRE_S422_SEQ_Q85_HASH, "Seq", "4:2:2");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Baseline,
+        Subsampling::S422,
+        FRYMIRE_S422_SEQ_Q85_HASH,
+        "Seq",
+        "4:2:2",
+    );
 }
 
 #[test]
 fn test_frymire_s420_sequential_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Baseline, Subsampling::S420, FRYMIRE_S420_SEQ_Q85_HASH, "Seq", "4:2:0");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Baseline,
+        Subsampling::S420,
+        FRYMIRE_S420_SEQ_Q85_HASH,
+        "Seq",
+        "4:2:0",
+    );
 }
 
 #[test]
 fn test_frymire_s440_sequential_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Baseline, Subsampling::S440, FRYMIRE_S440_SEQ_Q85_HASH, "Seq", "4:4:0");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Baseline,
+        Subsampling::S440,
+        FRYMIRE_S440_SEQ_Q85_HASH,
+        "Seq",
+        "4:4:0",
+    );
 }
 
 // =============================================================================
@@ -287,49 +363,125 @@ fn test_frymire_s440_sequential_hash() {
 #[test]
 fn test_frymire_s444_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Progressive, Subsampling::S444, FRYMIRE_S444_PROG, "Prog", "4:4:4");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Progressive,
+        Subsampling::S444,
+        FRYMIRE_S444_PROG,
+        "Prog",
+        "4:4:4",
+    );
 }
 
 #[test]
 fn test_frymire_s422_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Progressive, Subsampling::S422, FRYMIRE_S422_PROG, "Prog", "4:2:2");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Progressive,
+        Subsampling::S422,
+        FRYMIRE_S422_PROG,
+        "Prog",
+        "4:2:2",
+    );
 }
 
 #[test]
 fn test_frymire_s420_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Progressive, Subsampling::S420, FRYMIRE_S420_PROG, "Prog", "4:2:0");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Progressive,
+        Subsampling::S420,
+        FRYMIRE_S420_PROG,
+        "Prog",
+        "4:2:0",
+    );
 }
 
 #[test]
 fn test_frymire_s440_progressive_sizes() {
     let (rgb, w, h) = load_frymire();
-    test_exact_sizes(&rgb, w, h, JpegMode::Progressive, Subsampling::S440, FRYMIRE_S440_PROG, "Prog", "4:4:0");
+    test_exact_sizes(
+        &rgb,
+        w,
+        h,
+        JpegMode::Progressive,
+        Subsampling::S440,
+        FRYMIRE_S440_PROG,
+        "Prog",
+        "4:4:0",
+    );
 }
 
 #[test]
 fn test_frymire_s444_progressive_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Progressive, Subsampling::S444, FRYMIRE_S444_PROG_Q85_HASH, "Prog", "4:4:4");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Progressive,
+        Subsampling::S444,
+        FRYMIRE_S444_PROG_Q85_HASH,
+        "Prog",
+        "4:4:4",
+    );
 }
 
 #[test]
 fn test_frymire_s422_progressive_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Progressive, Subsampling::S422, FRYMIRE_S422_PROG_Q85_HASH, "Prog", "4:2:2");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Progressive,
+        Subsampling::S422,
+        FRYMIRE_S422_PROG_Q85_HASH,
+        "Prog",
+        "4:2:2",
+    );
 }
 
 #[test]
 fn test_frymire_s420_progressive_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Progressive, Subsampling::S420, FRYMIRE_S420_PROG_Q85_HASH, "Prog", "4:2:0");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Progressive,
+        Subsampling::S420,
+        FRYMIRE_S420_PROG_Q85_HASH,
+        "Prog",
+        "4:2:0",
+    );
 }
 
 #[test]
 fn test_frymire_s440_progressive_hash() {
     let (rgb, w, h) = load_frymire();
-    test_exact_hash(&rgb, w, h, 85, JpegMode::Progressive, Subsampling::S440, FRYMIRE_S440_PROG_Q85_HASH, "Prog", "4:4:0");
+    test_exact_hash(
+        &rgb,
+        w,
+        h,
+        85,
+        JpegMode::Progressive,
+        Subsampling::S440,
+        FRYMIRE_S440_PROG_Q85_HASH,
+        "Prog",
+        "4:4:0",
+    );
 }
 
 // =============================================================================
@@ -376,7 +528,15 @@ fn print_current_values() {
     for (sub, name) in &subsampling_modes {
         let seq = encode_jpeg(&rgb, width, height, 85, JpegMode::Baseline, *sub);
         let prog = encode_jpeg(&rgb, width, height, 85, JpegMode::Progressive, *sub);
-        println!("const FRYMIRE_{}_SEQ_Q85_HASH: u64 = {:#018x};", name, hash_bytes(&seq));
-        println!("const FRYMIRE_{}_PROG_Q85_HASH: u64 = {:#018x};", name, hash_bytes(&prog));
+        println!(
+            "const FRYMIRE_{}_SEQ_Q85_HASH: u64 = {:#018x};",
+            name,
+            hash_bytes(&seq)
+        );
+        println!(
+            "const FRYMIRE_{}_PROG_Q85_HASH: u64 = {:#018x};",
+            name,
+            hash_bytes(&prog)
+        );
     }
 }

@@ -15,12 +15,12 @@ struct AbsErrorStats {
     max_err_values: (f32, f32, [f32; 3]), // (cpp, rust, input_rgb)
     total_abs_err: f64,
     // Histogram by error magnitude
-    exact: usize,        // == 0.0
-    tiny: usize,         // <= 1e-7 (epsilon)
-    small: usize,        // <= 1e-6
-    medium: usize,       // <= 1e-5
-    large: usize,        // <= 1e-4
-    huge: usize,         // > 1e-4
+    exact: usize,  // == 0.0
+    tiny: usize,   // <= 1e-7 (epsilon)
+    small: usize,  // <= 1e-6
+    medium: usize, // <= 1e-5
+    large: usize,  // <= 1e-4
+    huge: usize,   // > 1e-4
 }
 
 impl AbsErrorStats {
@@ -50,7 +50,11 @@ impl AbsErrorStats {
     }
 
     fn mean_err(&self) -> f64 {
-        if self.count == 0 { 0.0 } else { self.total_abs_err / self.count as f64 }
+        if self.count == 0 {
+            0.0
+        } else {
+            self.total_abs_err / self.count as f64
+        }
     }
 
     fn print(&self, channel: &str) {
@@ -58,17 +62,45 @@ impl AbsErrorStats {
         println!("\n  {channel} channel:");
         println!("    Max abs error: {:.2e}", self.max_abs_err);
         println!("    Mean abs error: {:.2e}", self.mean_err());
-        println!("    Worst case: C++={:.8} vs Rust={:.8}",
-                 self.max_err_values.0, self.max_err_values.1);
-        println!("    Input RGB: [{:.4}, {:.4}, {:.4}]",
-                 self.max_err_values.2[0], self.max_err_values.2[1], self.max_err_values.2[2]);
+        println!(
+            "    Worst case: C++={:.8} vs Rust={:.8}",
+            self.max_err_values.0, self.max_err_values.1
+        );
+        println!(
+            "    Input RGB: [{:.4}, {:.4}, {:.4}]",
+            self.max_err_values.2[0], self.max_err_values.2[1], self.max_err_values.2[2]
+        );
         println!("    Distribution:");
-        println!("      Exact (0.0):     {:6} ({:5.2}%)", self.exact, pct(self.exact));
-        println!("      Tiny (≤1e-7):    {:6} ({:5.2}%)", self.tiny, pct(self.tiny));
-        println!("      Small (≤1e-6):   {:6} ({:5.2}%)", self.small, pct(self.small));
-        println!("      Medium (≤1e-5):  {:6} ({:5.2}%)", self.medium, pct(self.medium));
-        println!("      Large (≤1e-4):   {:6} ({:5.2}%)", self.large, pct(self.large));
-        println!("      HUGE (>1e-4):    {:6} ({:5.2}%) ⚠️", self.huge, pct(self.huge));
+        println!(
+            "      Exact (0.0):     {:6} ({:5.2}%)",
+            self.exact,
+            pct(self.exact)
+        );
+        println!(
+            "      Tiny (≤1e-7):    {:6} ({:5.2}%)",
+            self.tiny,
+            pct(self.tiny)
+        );
+        println!(
+            "      Small (≤1e-6):   {:6} ({:5.2}%)",
+            self.small,
+            pct(self.small)
+        );
+        println!(
+            "      Medium (≤1e-5):  {:6} ({:5.2}%)",
+            self.medium,
+            pct(self.medium)
+        );
+        println!(
+            "      Large (≤1e-4):   {:6} ({:5.2}%)",
+            self.large,
+            pct(self.large)
+        );
+        println!(
+            "      HUGE (>1e-4):    {:6} ({:5.2}%) ⚠️",
+            self.huge,
+            pct(self.huge)
+        );
     }
 }
 
@@ -323,7 +355,10 @@ fn main() {
         b_stats.print("B");
 
         // Summary verdict
-        let max_err = x_stats.max_abs_err.max(y_stats.max_abs_err).max(b_stats.max_abs_err);
+        let max_err = x_stats
+            .max_abs_err
+            .max(y_stats.max_abs_err)
+            .max(b_stats.max_abs_err);
         let huge_count = x_stats.huge + y_stats.huge + b_stats.huge;
 
         println!("\n  Summary:");
@@ -342,8 +377,10 @@ fn main() {
 
     // Show sample values for verification
     println!("=== Sample Values (first 5) ===");
-    println!("{:>12} {:>12} {:>12} | {:>12} {:>12} {:>12} | {:>12} {:>12} {:>12}",
-             "cpp_X", "cpp_Y", "cpp_B", "rust_X", "rust_Y", "rust_B", "err_X", "err_Y", "err_B");
+    println!(
+        "{:>12} {:>12} {:>12} | {:>12} {:>12} {:>12} | {:>12} {:>12} {:>12}",
+        "cpp_X", "cpp_Y", "cpp_B", "rust_X", "rust_Y", "rust_B", "err_X", "err_Y", "err_B"
+    );
 
     for i in 0..5 {
         let rgb = &test_pixels[i];

@@ -465,9 +465,11 @@ fn generate_all_values() {
                 .unwrap_or(rust_size);
 
             // Decode and compute DSSIM
-            let decoded = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]))
-                .decode()
-                .unwrap_or_else(|_| vec![128; (width * height * 3) as usize]);
+            let decoded = zune_jpeg::JpegDecoder::new(
+                zune_jpeg::zune_core::bytestream::ZCursor::new(&jpeg[..]),
+            )
+            .decode()
+            .unwrap_or_else(|_| vec![128; (width * height * 3) as usize]);
 
             let dssim = if decoded.len() == rgb.len() {
                 // Simple DSSIM approximation

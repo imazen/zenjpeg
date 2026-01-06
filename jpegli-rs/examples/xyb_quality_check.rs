@@ -1,8 +1,8 @@
 //! Check XYB quality metrics: Rust vs C++
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
-use jpegli::{Decoder, Encoder, PixelFormat};
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use jpegli::{Decoder, Encoder, PixelFormat};
 use std::fs;
 use std::io::Write;
 use std::process::Command;

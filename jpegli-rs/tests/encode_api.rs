@@ -583,7 +583,9 @@ fn test_ycbcr_optimized_huffman_decodable() {
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg).expect("decode YCbCr optimized failed");
+    let decoded = decoder
+        .decode(&jpeg)
+        .expect("decode YCbCr optimized failed");
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
 }
@@ -624,7 +626,9 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
             .jpegli_quality(Quality::from_quality(90.0))
             .use_xyb(*use_xyb)
             .optimize_huffman(*optimize);
-        let jpeg = encoder.encode(&img.pixels).expect(&format!("encode {} failed", label));
+        let jpeg = encoder
+            .encode(&img.pixels)
+            .expect(&format!("encode {} failed", label));
 
         // Test with zune-jpeg
         use zune_jpeg::zune_core::bytestream::ZCursor;

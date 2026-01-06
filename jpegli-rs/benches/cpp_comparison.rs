@@ -18,9 +18,7 @@
 //! cargo bench --bench cpp_comparison -- --baseline main
 //! ```
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jpegli::test_utils::find_cjpegli;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 use jpegli::{Encoder, Quality};
@@ -180,7 +178,10 @@ fn encode_cpp(cjpegli: &PathBuf, image: &TestImage, config: &EncodeConfig) -> Ve
     args.insert(0, image.ppm_path.to_str().unwrap().to_string());
     args.insert(1, output_path.clone());
 
-    let result = Command::new(cjpegli).args(&args).output().expect("run cjpegli");
+    let result = Command::new(cjpegli)
+        .args(&args)
+        .output()
+        .expect("run cjpegli");
 
     if !result.status.success() {
         panic!(

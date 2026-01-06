@@ -56,9 +56,7 @@ fn main() {
 
         // Gradient
         let gradient: Vec<u8> = (0..64)
-            .flat_map(|y| {
-                (0..64).flat_map(move |x| [(x * 4) as u8, (y * 4) as u8, 128])
-            })
+            .flat_map(|y| (0..64).flat_map(move |x| [(x * 4) as u8, (y * 4) as u8, 128]))
             .collect();
         test_pattern("gradient", &gradient, 64, 64, q);
 
@@ -133,6 +131,10 @@ fn main() {
     println!(
         "grayscale 64x64 Q50: {} bytes - djpeg: {}",
         gray_jpeg.len(),
-        if output.status.success() { "OK" } else { "FAIL" }
+        if output.status.success() {
+            "OK"
+        } else {
+            "FAIL"
+        }
     );
 }
