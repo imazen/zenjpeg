@@ -499,6 +499,72 @@ src/encode/mod.rs       - Encoder struct and core logic (4620 lines)
 - Block/quantization operations (~1500 lines)
 - Tests (~1000 lines)
 
+**Future extraction opportunities:**
+
+1. **Block Operations → `encode/blocks.rs`** (~1500 lines)
+   - `encode_scan` - legacy u8 scan encoding
+   - `quantize_all_blocks` - 4:4:4 quantization
+   - `quantize_all_blocks_subsampled` - subsampled quantization
+   - `quantize_all_blocks_xyb*` - XYB-specific quantization
+   - `build_optimized_tables*` - Huffman table optimization
+   - `encode_with_tables*` - encoding with custom tables
+   - `encode_blocks_standard` - standard block encoding
+   - `reorder_mcu_to_raster` - MCU reordering
+   - `collect_block_frequencies` - frequency counting
+   - `extract_block*` - block extraction helpers
+   - `natural_to_zigzag` - zigzag reordering
+
+   **Complexity:** High - tightly coupled with `#[cfg(feature = "experimental-hybrid-trellis")]`
+   feature flags and HybridQuantContext. Would need careful import management.
+
+2. **Encoding Pipelines → `encode/pipeline/`** (~1700 lines)
+   - `encode/pipeline/baseline.rs`:
+     - `encode_baseline` - dispatch
+     - `encode_baseline_ycbcr` - YCbCr baseline
+     - `encode_baseline_ycbcr_with_planes` - planes-based baseline
+     - `encode_baseline_xyb` - XYB baseline
+   - `encode/pipeline/progressive.rs`:
+     - `encode_progressive` - dispatch
+     - `encode_progressive_optimized` - tokenized progressive
+     - `encode_progressive_xyb*` - XYB progressive
+     - `build_progressive_huffman_tables` - progressive table building
+     - `replay_progressive_scan` - token replay
+     - `get_progressive_scan_script` - scan script generation
+   - `encode/pipeline/scan.rs`:
+     - `encode_progressive_scan` - single scan encoding
+     - `encode_dc_scan` - DC-only scan
+     - `encode_ac_first_scan` - first AC scan
+     - `encode_ac_refine_scan` - AC refinement scan
+
+   **Complexity:** Medium - methods have clear boundaries but share state through `self.config`.
+
+3. **Tests → `encode/tests.rs`** (~1000 lines)
+   - Move `#[cfg(test)] mod tests { ... }` to separate file
+   - Use `#[path = "tests.rs"] mod tests;`
+
+   **Complexity:** Low - tests are self-contained.
+
+**Recommended extraction order:**
+1. Tests (low risk, immediate ~1000 line reduction)
+2. Block operations (high value, consolidates quantization logic)
+3. Pipeline split (architectural improvement, matches refactor plan)
+
+**Target state:**
+```
+src/encode/
+├── mod.rs          (~800 lines) - Encoder struct, builder, dispatch
+├── config.rs       (440 lines) - Configuration types
+├── output.rs       (808 lines) - JPEG writing
+├── color.rs        (534 lines) - Color conversion
+├── blocks.rs       (~1500 lines) - Block operations
+├── pipeline/
+│   ├── mod.rs      (~100 lines) - Pipeline dispatch
+│   ├── baseline.rs (~600 lines) - Baseline encoding
+│   ├── progressive.rs (~800 lines) - Progressive encoding
+│   └── scan.rs     (~300 lines) - Scan encoding
+└── tests.rs        (~1000 lines) - Unit tests
+```
+
 ---
 
 ### Session 2026-01-06: Encode module deep split
