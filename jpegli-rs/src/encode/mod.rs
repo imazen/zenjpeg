@@ -1634,23 +1634,11 @@ impl Encoder {
                 let y_dct = forward_dct_8x8(&y_block);
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
-                let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
-                } else {
-                    quant::quantize_block_with_zero_bias_simd(
-                        &y_dct,
-                        &y_quant.values,
-                        &y_zero_bias,
-                        aq_strength,
-                    )
-                };
+                let y_quant_coeffs = hybrid::quantize_block_dispatch(
+                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength, true, hybrid_ctx.as_ref());
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
-                    aq_strength,
-                );
+                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
 
                 let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
                 encoder.encode_block(&y_zigzag, 0, 0, 0)?;
@@ -1661,23 +1649,11 @@ impl Encoder {
                     let cb_dct = forward_dct_8x8(&cb_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cb_dct, &c_quant.values, aq_strength, 1.0, false)
-                    } else {
-                        quant::quantize_block_with_zero_bias_simd(
-                            &cb_dct,
-                            &c_quant.values,
-                            &cb_zero_bias,
-                            aq_strength,
-                        )
-                    };
+                    let cb_quant_coeffs = hybrid::quantize_block_dispatch(
+                        &cb_dct, &c_quant.values, &cb_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct,
-                        &c_quant.values,
-                        &cb_zero_bias,
-                        aq_strength,
-                    );
+                        &cb_dct, &c_quant.values, &cb_zero_bias, aq_strength);
 
                     let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
                     encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
@@ -1687,23 +1663,11 @@ impl Encoder {
                     let cr_dct = forward_dct_8x8(&cr_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cr_dct, &c_quant.values, aq_strength, 1.0, false)
-                    } else {
-                        quant::quantize_block_with_zero_bias_simd(
-                            &cr_dct,
-                            &c_quant.values,
-                            &cr_zero_bias,
-                            aq_strength,
-                        )
-                    };
+                    let cr_quant_coeffs = hybrid::quantize_block_dispatch(
+                        &cr_dct, &c_quant.values, &cr_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct,
-                        &c_quant.values,
-                        &cr_zero_bias,
-                        aq_strength,
-                    );
+                        &cr_dct, &c_quant.values, &cr_zero_bias, aq_strength);
 
                     let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
                     encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
@@ -1784,23 +1748,11 @@ impl Encoder {
                 let y_dct = forward_dct_8x8(&y_block);
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
-                let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
-                } else {
-                    quant::quantize_block_with_zero_bias_simd(
-                        &y_dct,
-                        &y_quant.values,
-                        &y_zero_bias,
-                        aq_strength,
-                    )
-                };
+                let y_quant_coeffs = hybrid::quantize_block_dispatch(
+                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength, true, hybrid_ctx.as_ref());
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
-                    aq_strength,
-                );
+                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
 
                 y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
 
@@ -1810,23 +1762,11 @@ impl Encoder {
                     let cb_dct = forward_dct_8x8(&cb_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
-                    } else {
-                        quant::quantize_block_with_zero_bias_simd(
-                            &cb_dct,
-                            &cb_quant.values,
-                            &cb_zero_bias,
-                            aq_strength,
-                        )
-                    };
+                    let cb_quant_coeffs = hybrid::quantize_block_dispatch(
+                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct,
-                        &cb_quant.values,
-                        &cb_zero_bias,
-                        aq_strength,
-                    );
+                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength);
 
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
@@ -1835,23 +1775,11 @@ impl Encoder {
                     let cr_dct = forward_dct_8x8(&cr_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
-                    } else {
-                        quant::quantize_block_with_zero_bias_simd(
-                            &cr_dct,
-                            &cr_quant.values,
-                            &cr_zero_bias,
-                            aq_strength,
-                        )
-                    };
+                    let cr_quant_coeffs = hybrid::quantize_block_dispatch(
+                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct,
-                        &cr_quant.values,
-                        &cr_zero_bias,
-                        aq_strength,
-                    );
+                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength);
 
                     cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
                 }
@@ -1927,23 +1855,11 @@ impl Encoder {
                 let y_dct = forward_dct_8x8(&y_block);
 
                 #[cfg(feature = "experimental-hybrid-trellis")]
-                let y_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                    ctx.quantize_block(&y_dct, &y_quant.values, aq_strength, 1.0, true)
-                } else {
-                    quant::quantize_block_with_zero_bias_simd(
-                        &y_dct,
-                        &y_quant.values,
-                        &y_zero_bias,
-                        aq_strength,
-                    )
-                };
+                let y_quant_coeffs = hybrid::quantize_block_dispatch(
+                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength, true, hybrid_ctx.as_ref());
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
                 let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
-                    aq_strength,
-                );
+                    &y_dct, &y_quant.values, &y_zero_bias, aq_strength);
 
                 y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
             }
@@ -1965,23 +1881,11 @@ impl Encoder {
                     let cb_dct = forward_dct_8x8(&cb_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cb_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cb_dct, &cb_quant.values, aq_strength, 1.0, false)
-                    } else {
-                        quant::quantize_block_with_zero_bias_simd(
-                            &cb_dct,
-                            &cb_quant.values,
-                            &cb_zero_bias,
-                            aq_strength,
-                        )
-                    };
+                    let cb_quant_coeffs = hybrid::quantize_block_dispatch(
+                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct,
-                        &cb_quant.values,
-                        &cb_zero_bias,
-                        aq_strength,
-                    );
+                        &cb_dct, &cb_quant.values, &cb_zero_bias, aq_strength);
 
                     cb_blocks.push(natural_to_zigzag(&cb_quant_coeffs));
 
@@ -1990,23 +1894,11 @@ impl Encoder {
                     let cr_dct = forward_dct_8x8(&cr_block);
 
                     #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cr_quant_coeffs = if let Some(ref ctx) = hybrid_ctx {
-                        ctx.quantize_block(&cr_dct, &cr_quant.values, aq_strength, 1.0, false)
-                    } else {
-                        quant::quantize_block_with_zero_bias_simd(
-                            &cr_dct,
-                            &cr_quant.values,
-                            &cr_zero_bias,
-                            aq_strength,
-                        )
-                    };
+                    let cr_quant_coeffs = hybrid::quantize_block_dispatch(
+                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength, false, hybrid_ctx.as_ref());
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
                     let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct,
-                        &cr_quant.values,
-                        &cr_zero_bias,
-                        aq_strength,
-                    );
+                        &cr_dct, &cr_quant.values, &cr_zero_bias, aq_strength);
 
                     cr_blocks.push(natural_to_zigzag(&cr_quant_coeffs));
                 }

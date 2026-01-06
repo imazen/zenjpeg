@@ -14,9 +14,34 @@ use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
 use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
 use crate::hybrid_config::HybridConfig;
-use crate::quant::{self, QuantTable};
+use crate::quant::{self, QuantTable, ZeroBiasParams};
 
 use super::natural_to_zigzag;
+
+// ============================================================================
+// Quantization Dispatch Helper
+// ============================================================================
+
+/// Quantize a block, dispatching to hybrid trellis or standard quantization.
+///
+/// This inline helper centralizes the hybrid vs non-hybrid dispatch logic.
+/// When `hybrid_ctx` is Some, uses trellis quantization; otherwise uses
+/// standard zero-bias quantization.
+#[inline]
+pub(super) fn quantize_block_dispatch(
+    dct: &[f32; DCT_BLOCK_SIZE],
+    quant_values: &[u16; DCT_BLOCK_SIZE],
+    zero_bias: &ZeroBiasParams,
+    aq_strength: f32,
+    is_luma: bool,
+    hybrid_ctx: Option<&HybridQuantContext>,
+) -> [i16; DCT_BLOCK_SIZE] {
+    if let Some(ctx) = hybrid_ctx {
+        ctx.quantize_block(dct, quant_values, aq_strength, 1.0, is_luma)
+    } else {
+        quant::quantize_block_with_zero_bias_simd(dct, quant_values, zero_bias, aq_strength)
+    }
+}
 
 // ============================================================================
 // Hybrid Quantization Context
