@@ -2,8 +2,6 @@
 //!
 //! This module contains all configuration-related types for the JPEG encoder.
 
-#[cfg(feature = "experimental-hybrid-trellis")]
-use crate::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
 use crate::quant::Quality;
 use crate::types::{ChromaConversion, JpegMode, PixelFormat, Subsampling};
@@ -386,55 +384,3 @@ impl Default for EncoderConfig {
     }
 }
 
-// ============================================================================
-// Hybrid Quantization Context
-// ============================================================================
-
-/// Quantization context for hybrid trellis mode.
-///
-/// This struct holds pre-built Huffman tables and hybrid config for use
-/// during hybrid quantization (jpegli AQ + mozjpeg trellis).
-#[cfg(feature = "experimental-hybrid-trellis")]
-pub(crate) struct HybridQuantContext {
-    huff_tables: crate::hybrid::StandardHuffmanTables,
-    config: crate::hybrid_config::HybridConfig,
-}
-
-#[cfg(feature = "experimental-hybrid-trellis")]
-impl HybridQuantContext {
-    /// Creates a new hybrid quantization context with the given config.
-    pub(crate) fn new(config: crate::hybrid_config::HybridConfig) -> Self {
-        Self {
-            huff_tables: crate::hybrid::StandardHuffmanTables::new(),
-            config,
-        }
-    }
-
-    /// Quantize a block using hybrid AQ + trellis.
-    ///
-    /// # Arguments
-    /// * `dct_coeffs` - DCT coefficients
-    /// * `quant` - Quantization table
-    /// * `aq_strength` - Per-block AQ strength
-    /// * `dampen` - Quality-based AQ dampen factor (0-1)
-    /// * `is_luma` - True for Y component, false for Cb/Cr
-    pub(crate) fn quantize_block(
-        &self,
-        dct_coeffs: &[f32; DCT_BLOCK_SIZE],
-        quant: &[u16; DCT_BLOCK_SIZE],
-        aq_strength: f32,
-        dampen: f32,
-        is_luma: bool,
-    ) -> [i16; DCT_BLOCK_SIZE] {
-        let ac_table = if is_luma {
-            &self.huff_tables.luma_ac
-        } else {
-            &self.huff_tables.chroma_ac
-        };
-
-        // Generate per-block trellis config based on AQ and hybrid settings
-        let trellis_config = self.config.to_trellis_config(aq_strength, dampen, !is_luma);
-
-        crate::hybrid::hybrid_quantize_block(dct_coeffs, quant, aq_strength, ac_table, &trellis_config)
-    }
-}
