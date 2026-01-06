@@ -43,6 +43,23 @@ impl EntropyEncoder {
         }
     }
 
+    /// Creates a new entropy encoder with pre-allocated output buffer.
+    ///
+    /// Use this when you can estimate the output size to avoid reallocations.
+    /// A reasonable estimate is ~100 bytes per 8x8 block for quality 80.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            writer: BitWriter::with_capacity(capacity),
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            prev_dc: [0; 4],
+            restart_counter: 0,
+            restart_interval: 0,
+            restart_num: 0,
+        }
+    }
+
     /// Sets a DC Huffman table.
     pub fn set_dc_table(&mut self, idx: usize, table: HuffmanEncodeTable) {
         if idx < 4 {
