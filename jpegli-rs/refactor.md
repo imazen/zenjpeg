@@ -459,9 +459,44 @@ After refactoring, these patterns will be cleaner:
 
 ## Progress Log
 
-### Session 2026-01-06: Phase 4 complete
+### Session 2026-01-06: Phase 5 complete
 
 **Commit:** (pending) on branch `simd`
+
+**Completed:**
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 0 | ✅ Done | SIMD audit complete - code is well-factored |
+| Phase 1 | ✅ Done | Directory structure created |
+| Phase 2 | ✅ Done | Foundation module extracted |
+| Phase 3 | ✅ Done | Huffman module fully extracted |
+| Phase 4 | ✅ Done | Quantization module refactored |
+| Phase 5 | ✅ Done | Entropy module split |
+
+**Files created in entropy/:**
+```
+src/entropy/mod.rs      - shared utilities (category, decode_value, etc.) + re-exports
+src/entropy/encoder.rs  - EntropyEncoder struct (~730 lines)
+src/entropy/decoder.rs  - EntropyDecoder struct (~500 lines)
+```
+
+**Structure:**
+- entropy.rs (1516 lines) split into 3 smaller files
+- Shared utilities (category, additional_bits, decode_value) in mod.rs
+- EntropyEncoder with baseline and progressive encoding in encoder.rs
+- EntropyDecoder with baseline and progressive decoding in decoder.rs
+
+**Backward compatibility:**
+- entropy/ directory module replaces entropy.rs (Rust module resolution)
+- No wrapper needed - lib.rs `pub mod entropy;` resolves to entropy/mod.rs
+- All 324 library tests pass
+
+---
+
+### Session 2026-01-06: Phase 4 complete
+
+**Commit:** `62e7446` on branch `simd`
 
 **Completed:**
 
@@ -529,7 +564,7 @@ src/huffman_opt.rs     - converted to thin re-export wrapper for backward compat
 
 **Next steps:**
 1. ✅ Phase 4: Extract Quantization module (`quant.rs`, `adaptive_quant*.rs`) - DONE
-2. Phase 5: Extract Entropy module (`entropy.rs`)
+2. ✅ Phase 5: Extract Entropy module (`entropy.rs`) - DONE
 3. Phase 6: Split encode.rs (6317 lines - the big one)
 4. Phase 7: Split decode.rs (2301 lines)
 5. Phase 8: Final cleanup and test
