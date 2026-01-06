@@ -254,19 +254,11 @@ fn encode_rust(
     encoder.encode(rgb).expect("Rust encode failed")
 }
 
-/// Encode via C++ jpegli FFI (proper libjpeg API - no subprocess overhead).
+/// Encode via C++ jpegli FFI (proper libjpeg-62 API - no subprocess overhead).
 ///
 /// Uses the standard libjpeg API exposed by jpegli for accurate speed comparison.
-/// Note: XYB mode requires extended API and falls back to CLI if requested.
-///
-/// IMPORTANT: This uses a large stack-allocated buffer to hold the jpeg_compress_struct
-/// because the actual struct size in jpegli may differ from the Rust definition.
-/// libjpeg uses jpeg_CreateCompress with a size parameter precisely for this reason.
-///
-/// WARNING: This function currently produces incorrect output due to struct layout
-/// mismatches between our Rust bindings and jpegli's actual C++ structs.
-/// The jpeg_component_info and other nested structs have different layouts,
-/// causing memory corruption. Kept for future debugging.
+/// Struct layouts now match jpegli's JPEG_LIB_VERSION 62 exactly.
+/// Note: XYB mode is not supported via standard libjpeg API and falls back to CLI.
 #[cfg(feature = "ffi-tests")]
 #[allow(dead_code)]
 fn encode_cpp_ffi(
@@ -278,63 +270,96 @@ fn encode_cpp_ffi(
     progressive: bool,
 ) -> Option<Vec<u8>> {
     use jpegli_internals_sys::*;
+    use std::mem::MaybeUninit;
     use std::ptr;
 
-    // C type aliases (same as libc definitions)
-    type CUchar = u8;
-    type CUlong = std::os::raw::c_ulong;
-    type CInt = std::os::raw::c_int;
-
-    // jpegli struct sizes (from runtime error message: library expects 520)
-    // The library validates this during jpeg_CreateCompress
-    const JPEGLI_COMPRESS_STRUCT_SIZE: usize = 520;
-    const JPEGLI_ERROR_MGR_SIZE: usize = 168;
-
-    #[repr(C, align(8))]
-    struct CinfoBuffer([u8; 1024]); // Allocate extra to be safe
-    #[repr(C, align(8))]
-    struct JerrBuffer([u8; 256]); // Allocate extra to be safe
-
     unsafe {
-        let mut cinfo_buf = CinfoBuffer([0u8; 1024]);
-        let cinfo_ptr = cinfo_buf.0.as_mut_ptr() as *mut jpeg_compress_struct;
+        // Use proper structs - sizes now match C library (520 bytes for compress, 168 for error)
+        let mut cinfo: MaybeUninit<jpeg_compress_struct> = MaybeUninit::zeroed();
+        let mut jerr: MaybeUninit<jpeg_error_mgr> = MaybeUninit::zeroed();
 
-        let mut jerr_buf = JerrBuffer([0u8; 256]);
-        let jerr_ptr = jerr_buf.0.as_mut_ptr() as *mut jpeg_error_mgr;
+        let cinfo_ptr = cinfo.as_mut_ptr();
+        let jerr_ptr = jerr.as_mut_ptr();
 
-        // Initialize error handler
+        // Initialize error handler FIRST (before CreateCompress)
         (*cinfo_ptr).err = jpeg_std_error(jerr_ptr);
 
-        // Create compression object - pass the ACTUAL struct size from C
-        // This is critical: libjpeg uses this to verify ABI compatibility
-        jpeg_CreateCompress(cinfo_ptr, JPEG_LIB_VERSION, JPEGLI_COMPRESS_STRUCT_SIZE);
+        // Create compression object - size is validated by library
+        jpeg_CreateCompress(
+            cinfo_ptr,
+            JPEG_LIB_VERSION as i32,
+            std::mem::size_of::<jpeg_compress_struct>(),
+        );
 
         // Setup memory destination
-        let mut outbuffer: *mut CUchar = ptr::null_mut();
-        let mut outsize: CUlong = 0;
+        let mut outbuffer: *mut u8 = ptr::null_mut();
+        let mut outsize: std::os::raw::c_ulong = 0;
         jpeg_mem_dest(cinfo_ptr, &mut outbuffer, &mut outsize);
 
         // Set image parameters
-        (*cinfo_ptr).image_width = width as JDIMENSION;
-        (*cinfo_ptr).image_height = height as JDIMENSION;
+        (*cinfo_ptr).image_width = width;
+        (*cinfo_ptr).image_height = height;
         (*cinfo_ptr).input_components = 3;
-        (*cinfo_ptr).in_color_space = JCS_RGB;
+        (*cinfo_ptr).in_color_space = JCS_RGB as u32;
 
         // Set defaults (this sets up YCbCr conversion, quant tables, etc.)
         jpeg_set_defaults(cinfo_ptr);
 
         // Set quality
-        jpeg_set_quality(cinfo_ptr, quality as CInt, 1);
+        jpeg_set_quality(cinfo_ptr, quality as i32, 1);
 
-        // Note: Chroma subsampling modification via comp_info requires careful
-        // struct layout matching. The jpeg_component_info layout may not match
-        // our Rust bindings exactly. For now, we use default subsampling (4:2:0
-        // as set by jpeg_set_defaults) and only test against that mode.
-        //
-        // TODO: Use jpeg_set_colorspace() and modify sample factors if needed
-        // For the benchmark, 4:2:0 is the most common mode and provides accurate
-        // speed comparison.
-        let _ = subsampling; // Acknowledge param
+        // Set subsampling via comp_info (now struct layouts match!)
+        // comp_info is allocated by jpeg_set_defaults
+        if !(*cinfo_ptr).comp_info.is_null() {
+            let comp_info = (*cinfo_ptr).comp_info;
+            match subsampling {
+                Subsampling::S444 => {
+                    // 4:4:4 - all components 1x1
+                    (*comp_info.add(0)).h_samp_factor = 1;
+                    (*comp_info.add(0)).v_samp_factor = 1;
+                    (*comp_info.add(1)).h_samp_factor = 1;
+                    (*comp_info.add(1)).v_samp_factor = 1;
+                    (*comp_info.add(2)).h_samp_factor = 1;
+                    (*comp_info.add(2)).v_samp_factor = 1;
+                }
+                Subsampling::S422 => {
+                    // 4:2:2 - Y is 2x1, Cb/Cr are 1x1
+                    (*comp_info.add(0)).h_samp_factor = 2;
+                    (*comp_info.add(0)).v_samp_factor = 1;
+                    (*comp_info.add(1)).h_samp_factor = 1;
+                    (*comp_info.add(1)).v_samp_factor = 1;
+                    (*comp_info.add(2)).h_samp_factor = 1;
+                    (*comp_info.add(2)).v_samp_factor = 1;
+                }
+                Subsampling::S420 => {
+                    // 4:2:0 - Y is 2x2, Cb/Cr are 1x1 (default)
+                    (*comp_info.add(0)).h_samp_factor = 2;
+                    (*comp_info.add(0)).v_samp_factor = 2;
+                    (*comp_info.add(1)).h_samp_factor = 1;
+                    (*comp_info.add(1)).v_samp_factor = 1;
+                    (*comp_info.add(2)).h_samp_factor = 1;
+                    (*comp_info.add(2)).v_samp_factor = 1;
+                }
+                Subsampling::S440 => {
+                    // 4:4:0 - Y is 1x2, Cb/Cr are 1x1
+                    (*comp_info.add(0)).h_samp_factor = 1;
+                    (*comp_info.add(0)).v_samp_factor = 2;
+                    (*comp_info.add(1)).h_samp_factor = 1;
+                    (*comp_info.add(1)).v_samp_factor = 1;
+                    (*comp_info.add(2)).h_samp_factor = 1;
+                    (*comp_info.add(2)).v_samp_factor = 1;
+                }
+                // Subsampling is #[non_exhaustive] - fallback to 4:2:0
+                _ => {
+                    (*comp_info.add(0)).h_samp_factor = 2;
+                    (*comp_info.add(0)).v_samp_factor = 2;
+                    (*comp_info.add(1)).h_samp_factor = 1;
+                    (*comp_info.add(1)).v_samp_factor = 1;
+                    (*comp_info.add(2)).h_samp_factor = 1;
+                    (*comp_info.add(2)).v_samp_factor = 1;
+                }
+            }
+        }
 
         // Set progressive mode
         if progressive {
@@ -372,8 +397,9 @@ fn encode_cpp_ffi(
         // Cleanup
         jpeg_destroy_compress(cinfo_ptr);
 
-        // Note: The buffer allocated by jpeg_mem_dest is caller-owned.
-        // We've copied it to Vec, memory leak is acceptable for benchmark.
+        // Note: jpeg_mem_dest allocates with malloc, must free with free()
+        // We copy to Vec first, then leak the buffer (acceptable for benchmarks)
+        // Proper cleanup would require linking libc to call free()
 
         result
     }
@@ -1269,4 +1295,49 @@ fn benchmark_rust_vs_cpp() {
 fn benchmark_rust_vs_cpp() {
     println!("Benchmark requires --features ffi-tests");
     println!("Run: cargo test --release --test quality_matrix --features ffi-tests benchmark_rust_vs_cpp -- --nocapture --ignored");
+}
+
+/// Quick test to verify FFI encoding produces valid JPEG output
+#[test]
+#[cfg(feature = "ffi-tests")]
+fn test_ffi_encoding_works() {
+    // Simple 64x64 RGB test image (gradient pattern)
+    let width = 64u32;
+    let height = 64u32;
+    let mut rgb = vec![0u8; (width * height * 3) as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 3) as usize;
+            rgb[idx] = (x * 4) as u8; // R gradient
+            rgb[idx + 1] = (y * 4) as u8; // G gradient
+            rgb[idx + 2] = 128; // B constant
+        }
+    }
+
+    // Test FFI encoding
+    let jpeg = encode_cpp_ffi(&rgb, width, height, 85, Subsampling::S420, false)
+        .expect("FFI encoding failed!");
+
+    // Verify JPEG structure
+    assert!(jpeg.len() > 100, "JPEG too short: {} bytes", jpeg.len());
+    assert_eq!(
+        &jpeg[0..2],
+        &[0xFF, 0xD8],
+        "Missing JPEG SOI marker"
+    );
+    assert_eq!(
+        &jpeg[jpeg.len() - 2..],
+        &[0xFF, 0xD9],
+        "Missing JPEG EOI marker"
+    );
+
+    // Try to decode with jpegli decoder to verify it's valid
+    let mut decoder = jpegli::Decoder::new();
+    let decoded = decoder.decode(&jpeg[..]).expect("Failed to decode FFI-encoded JPEG");
+
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+
+    println!("✓ FFI encoding produced valid {} byte JPEG (decoded to {}x{})",
+             jpeg.len(), decoded.width, decoded.height);
 }

@@ -6,6 +6,11 @@
 //! The module is split into:
 //! - `encoder`: EntropyEncoder for baseline and progressive encoding
 //! - `decoder`: EntropyDecoder for baseline and progressive decoding
+//!
+//! # Performance Optimizations
+//!
+//! - Pre-computed category lookup table (4KB) for O(1) category lookup
+//! - Combined Huffman code + extra bits writes to reduce write_bits calls
 
 pub mod decoder;
 pub mod encoder;
@@ -20,10 +25,50 @@ pub const MAX_DC_DIFF: i16 = 2047;
 /// Maximum AC coefficient magnitude (for 8-bit samples).
 pub const MAX_AC_COEFF: i16 = 1023;
 
+/// Pre-computed category table for values -2047..=2047.
+/// Index with (value + 2048) to get the category (bit count).
+/// This avoids the leading_zeros() call in the hot path.
+static CATEGORY_TABLE: [u8; 4096] = {
+    let mut table = [0u8; 4096];
+    let mut i = 0i32;
+    while i < 4096 {
+        let value = i - 2048;
+        table[i as usize] = if value == 0 {
+            0
+        } else {
+            let abs_val = if value < 0 { -value } else { value } as u32;
+            // Category is the number of bits needed to represent abs_val
+            // For u32: category = 32 - leading_zeros(abs_val)
+            (32 - abs_val.leading_zeros()) as u8
+        };
+        i += 1;
+    }
+    table
+};
+
 /// Returns the category (number of bits needed) for a value.
+/// Uses a lookup table for values in range -2047..=2047 (covers all JPEG coefficients).
 #[inline]
 #[must_use]
 pub fn category(value: i16) -> u8 {
+    // Fast path: use lookup table for common range
+    let idx = (value as i32 + 2048) as usize;
+    if idx < 4096 {
+        CATEGORY_TABLE[idx]
+    } else {
+        // Fallback for out-of-range values (shouldn't happen in valid JPEG)
+        if value == 0 {
+            0
+        } else {
+            16 - value.unsigned_abs().leading_zeros() as u8
+        }
+    }
+}
+
+/// Returns the category using leading_zeros (for benchmarking comparison).
+#[inline]
+#[must_use]
+pub fn category_scalar(value: i16) -> u8 {
     if value == 0 {
         return 0;
     }
