@@ -454,3 +454,60 @@ After refactoring, these patterns will be cleaner:
    - Pass `&mut Vec<f32>` instead of returning `Vec<f32>`
    - Reuse block buffers across MCUs
    - Pre-allocate based on image dimensions
+
+---
+
+## Progress Log
+
+### Session 2025-01-06: Phase 0-3 (partial)
+
+**Commit:** `395571e` on branch `simd`
+
+**Completed:**
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 0 | ✅ Done | SIMD audit complete - code is well-factored |
+| Phase 1 | ✅ Done | Directory structure created |
+| Phase 2 | ✅ Done | Foundation module extracted |
+| Phase 3 | 🔄 Partial | Huffman module partially extracted |
+
+**Files moved:**
+```
+src/consts.rs      → src/foundation/consts.rs
+src/alloc.rs       → src/foundation/alloc.rs
+src/bitstream.rs   → src/foundation/bitstream.rs
+src/huffman.rs     → src/huffman/encode.rs
+src/huffman_types.rs → src/huffman/types.rs
+src/huffman_classic.rs → src/huffman/classic.rs
+```
+
+**New files created:**
+```
+src/foundation/mod.rs  - re-exports from foundation submodules
+src/huffman/mod.rs     - re-exports from huffman submodules
+```
+
+**Backward compatibility:**
+- `lib.rs` updated with `pub use foundation::{alloc, bitstream, consts}`
+- `lib.rs` updated with `pub use huffman::{classic as huffman_classic, types as huffman_types}`
+- All 324 tests pass
+
+**Remaining for Phase 3:**
+- `huffman_opt.rs` (2417 lines) NOT YET SPLIT
+- Contains intertwined types: `FrequencyCounter`, `ClusterResult`, `Token`, `TokenBuffer`, `ProgressiveTokenBuffer`, `HuffmanOptimizer`
+- Plan: Split into `huffman/optimize/{mod,frequency,cluster,tree,canonical}.rs`
+
+**Next steps:**
+1. Continue Phase 3: Split `huffman_opt.rs` into optimize/ submodule
+2. Phase 4: Extract Quantization module (`quant.rs`, `adaptive_quant*.rs`)
+3. Phase 5: Extract Entropy module (`entropy.rs`)
+4. Phase 6: Split encode.rs (6317 lines - the big one)
+5. Phase 7: Split decode.rs (2301 lines)
+6. Phase 8: Final cleanup and test
+
+**Notes:**
+- The SIMD code is well-factored and can move cleanly during later phases
+- `encode_simd.rs` → `encode/simd.rs`
+- `adaptive_quant_simd.rs` → `quant/aq/simd.rs`
+- Backward-compatible re-exports prevent breaking changes during migration
