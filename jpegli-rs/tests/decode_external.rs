@@ -32,8 +32,8 @@ fn decode_with_jpegli(data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
 fn decode_with_jpeg_decoder(data: &[u8]) -> (Vec<u8>, usize, usize) {
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     let pixels = decoder.decode().expect("jpeg-decoder failed");
-    let info = decoder.dimensions().unwrap();
-    (pixels, info.width as usize, info.height as usize)
+    let (width, height) = decoder.dimensions().unwrap();
+    (pixels, width, height)
 }
 
 /// Test decoding 4:4:4 JPEG from ImageMagick
