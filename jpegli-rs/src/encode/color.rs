@@ -403,32 +403,61 @@ impl Encoder {
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Handle chroma subsampling (with optional input smoothing)
+        // Only apply smoothing if smoothing_factor > 0 to avoid unnecessary copies
+        let use_smoothing = self.config.smoothing_factor > 0;
         let (cb_final, cr_final, c_width, c_height) = match self.config.subsampling {
             Subsampling::S420 => {
-                // 4:2:0: Apply smoothing then downsample both Cb and Cr by 2x2
-                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                let cb_down = self.downsample_2x2_f32(&cb_smooth, width, height)?;
-                let cr_down = self.downsample_2x2_f32(&cr_smooth, width, height)?;
+                // 4:2:0: Apply smoothing (if enabled) then downsample both Cb and Cr by 2x2
+                let (cb_down, cr_down) = if use_smoothing {
+                    let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                    let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                    (
+                        self.downsample_2x2_f32(&cb_smooth, width, height)?,
+                        self.downsample_2x2_f32(&cr_smooth, width, height)?,
+                    )
+                } else {
+                    (
+                        self.downsample_2x2_f32(&cb_plane, width, height)?,
+                        self.downsample_2x2_f32(&cr_plane, width, height)?,
+                    )
+                };
                 let c_w = (width + 1) / 2;
                 let c_h = (height + 1) / 2;
                 (cb_down, cr_down, c_w, c_h)
             }
             Subsampling::S422 => {
-                // 4:2:2: Apply smoothing then downsample horizontally only
-                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                let cb_down = self.downsample_2x1_f32(&cb_smooth, width, height)?;
-                let cr_down = self.downsample_2x1_f32(&cr_smooth, width, height)?;
+                // 4:2:2: Apply smoothing (if enabled) then downsample horizontally only
+                let (cb_down, cr_down) = if use_smoothing {
+                    let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                    let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                    (
+                        self.downsample_2x1_f32(&cb_smooth, width, height)?,
+                        self.downsample_2x1_f32(&cr_smooth, width, height)?,
+                    )
+                } else {
+                    (
+                        self.downsample_2x1_f32(&cb_plane, width, height)?,
+                        self.downsample_2x1_f32(&cr_plane, width, height)?,
+                    )
+                };
                 let c_w = (width + 1) / 2;
                 (cb_down, cr_down, c_w, height)
             }
             Subsampling::S440 => {
-                // 4:4:0: Apply smoothing then downsample vertically only
-                let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                let cb_down = self.downsample_1x2_f32(&cb_smooth, width, height)?;
-                let cr_down = self.downsample_1x2_f32(&cr_smooth, width, height)?;
+                // 4:4:0: Apply smoothing (if enabled) then downsample vertically only
+                let (cb_down, cr_down) = if use_smoothing {
+                    let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
+                    let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
+                    (
+                        self.downsample_1x2_f32(&cb_smooth, width, height)?,
+                        self.downsample_1x2_f32(&cr_smooth, width, height)?,
+                    )
+                } else {
+                    (
+                        self.downsample_1x2_f32(&cb_plane, width, height)?,
+                        self.downsample_1x2_f32(&cr_plane, width, height)?,
+                    )
+                };
                 let c_h = (height + 1) / 2;
                 (cb_down, cr_down, width, c_h)
             }
