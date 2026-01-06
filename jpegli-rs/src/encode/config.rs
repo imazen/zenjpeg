@@ -339,7 +339,7 @@ pub struct EncoderConfig {
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
     /// Requires the `experimental-hybrid-trellis` feature
     #[cfg(feature = "experimental-hybrid-trellis")]
-    pub hybrid_config: crate::hybrid_config::HybridConfig,
+    pub hybrid_config: crate::hybrid::config::HybridConfig,
     /// Custom AQ map (optional). If None, computed automatically.
     /// Allows pre-scaling the AQ map for size control.
     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -375,7 +375,7 @@ impl Default for EncoderConfig {
             // Auto selects Intrinsic to match C++ jpegli
             chroma_conversion: ChromaConversion::Auto,
             #[cfg(feature = "experimental-hybrid-trellis")]
-            hybrid_config: crate::hybrid_config::HybridConfig::disabled(),
+            hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
             internal_pipeline: None,
@@ -383,4 +383,3 @@ impl Default for EncoderConfig {
         }
     }
 }
-

@@ -53,8 +53,6 @@ pub mod types;
 #[doc(hidden)]
 pub mod adaptive_quant;
 #[doc(hidden)]
-pub mod adaptive_quant_simd;
-#[doc(hidden)]
 pub mod chroma;
 #[doc(hidden)]
 pub mod color;
@@ -106,8 +104,6 @@ pub mod xyb;
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
 #[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid;
-#[cfg(feature = "experimental-hybrid-trellis")]
-pub mod hybrid_config;
 
 // Test utilities (available for tests and examples)
 // Hidden from docs but always available for integration tests

@@ -5,8 +5,8 @@
 use crate::bitstream::BitWriter;
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
+use crate::huffman::optimize::{ScanTokenInfo, Token};
 use crate::huffman::HuffmanEncodeTable;
-use crate::huffman_opt::{ScanTokenInfo, Token};
 
 use super::{additional_bits_with_cat, category};
 

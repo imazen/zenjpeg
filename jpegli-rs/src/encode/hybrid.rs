@@ -9,14 +9,14 @@
 
 #![cfg(feature = "experimental-hybrid-trellis")]
 
-use crate::adaptive_quant::AQStrengthMap;
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
-use crate::hybrid::{hybrid_quantize_block, StandardHuffmanTables};
-use crate::hybrid_config::HybridConfig;
+use crate::hybrid::config::HybridConfig;
+use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
+use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 
-use super::natural_to_zigzag;
+use super::{natural_to_zigzag, natural_to_zigzag_into};
 
 use super::EncoderConfig;
 
@@ -163,22 +163,26 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
     let num_xy_blocks = mcu_cols * mcu_rows * 4; // 4 blocks per MCU for X and Y
     let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
-    let mut x_blocks = Vec::with_capacity(num_xy_blocks);
-    let mut y_blocks = Vec::with_capacity(num_xy_blocks);
-    let mut b_blocks = Vec::with_capacity(num_b_blocks);
+    // Pre-allocate block arrays to avoid push() overhead
+    let mut x_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
+    let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
+    let mut b_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_b_blocks];
 
     for mcu_y in 0..mcu_rows {
         for mcu_x in 0..mcu_cols {
+            let mcu_idx = mcu_y * mcu_cols + mcu_x;
+            let xy_base = mcu_idx * 4; // 4 blocks per MCU for X and Y
+
             // Process 4 X blocks (2×2 arrangement within 16×16 MCU)
             for block_y in 0..2 {
                 for block_x in 0..2 {
                     let bx = mcu_x * 2 + block_x;
                     let by = mcu_y * 2 + block_y;
+                    let block_offset = block_y * 2 + block_x;
                     let aq_strength = aq_map.get(bx, by);
 
-                    let x_block = crate::encode_simd::extract_block_xyb_simd(
-                        x_plane, width, height, bx, by,
-                    );
+                    let x_block =
+                        crate::encode_simd::extract_block_xyb_simd(x_plane, width, height, bx, by);
                     let x_dct = forward_dct_8x8(&x_block);
 
                     // X is luma-like in XYB, dampen=1.0
@@ -187,7 +191,7 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
                     } else {
                         quant::quantize_block(&x_dct, &x_quant.values)
                     };
-                    x_blocks.push(natural_to_zigzag(&x_quant_coeffs));
+                    natural_to_zigzag_into(&x_quant_coeffs, &mut x_blocks[xy_base + block_offset]);
                 }
             }
 
@@ -196,11 +200,11 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
                 for block_x in 0..2 {
                     let bx = mcu_x * 2 + block_x;
                     let by = mcu_y * 2 + block_y;
+                    let block_offset = block_y * 2 + block_x;
                     let aq_strength = aq_map.get(bx, by);
 
-                    let y_block = crate::encode_simd::extract_block_xyb_simd(
-                        y_plane, width, height, bx, by,
-                    );
+                    let y_block =
+                        crate::encode_simd::extract_block_xyb_simd(y_plane, width, height, bx, by);
                     let y_dct = forward_dct_8x8(&y_block);
 
                     // Y is the primary luma channel in XYB, dampen=1.0
@@ -209,7 +213,7 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
                     } else {
                         quant::quantize_block(&y_dct, &y_quant.values)
                     };
-                    y_blocks.push(natural_to_zigzag(&y_quant_coeffs));
+                    natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[xy_base + block_offset]);
                 }
             }
 
@@ -238,7 +242,7 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
             } else {
                 quant::quantize_block(&b_dct, &b_quant.values)
             };
-            b_blocks.push(natural_to_zigzag(&b_quant_coeffs));
+            natural_to_zigzag_into(&b_quant_coeffs, &mut b_blocks[mcu_idx]);
         }
     }
 
