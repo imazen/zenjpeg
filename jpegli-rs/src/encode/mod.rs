@@ -33,6 +33,7 @@ use crate::huffman::optimize::{
 use crate::huffman::HuffmanEncodeTable;
 use crate::quant::aq::compute_aq_strength_map;
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
+use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::types::{ChromaConversion, ColorSpace, JpegMode, PixelFormat, Subsampling};
 
 /// JPEG encoder.

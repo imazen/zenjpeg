@@ -293,6 +293,9 @@ impl Encoder {
     ///
     /// Unlike `quantize_all_blocks`, this version handles different dimensions
     /// for Y and chroma planes (needed for 4:2:0, 4:2:2, 4:4:0 subsampling).
+    ///
+    /// Uses SIMD-native types (Block8x8f, QuantTableSimd, ZeroBiasSimd) for
+    /// optimized DCT and quantization with minimal load/store overhead.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn quantize_all_blocks_subsampled(
         &self,
@@ -323,6 +326,14 @@ impl Encoder {
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
+        // Pre-compute SIMD-native quantization tables and zero-bias params
+        let y_quant_simd = QuantTableSimd::from_values(&y_quant.values);
+        let y_zero_bias_simd = ZeroBiasSimd::from_params(&y_zero_bias);
+        let cb_quant_simd = QuantTableSimd::from_values(&cb_quant.values);
+        let cb_zero_bias_simd = ZeroBiasSimd::from_params(&cb_zero_bias);
+        let cr_quant_simd = QuantTableSimd::from_values(&cr_quant.values);
+        let cr_zero_bias_simd = ZeroBiasSimd::from_params(&cr_zero_bias);
+
         // Compute per-block adaptive quantization strength from Y plane
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
@@ -342,11 +353,13 @@ impl Encoder {
         let mut cb_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_c_blocks];
         let mut cr_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_c_blocks];
 
-        // Quantize Y blocks
+        // Quantize Y blocks using SIMD-optimized pipeline (pre-computed 1/quant, fast_round_int)
         for by in 0..y_blocks_v {
             for bx in 0..y_blocks_h {
                 let block_idx = by * y_blocks_h + bx;
                 let aq_strength = aq_map.get(bx, by);
+
+                // Extract block and perform DCT (returns [f32; 64])
                 let y_block =
                     crate::encode_simd::extract_block_simd(y_plane, y_width, y_height, bx, by);
                 let y_dct = forward_dct_8x8(&y_block);
@@ -361,10 +374,9 @@ impl Encoder {
                     hybrid_ctx.as_ref(),
                 );
                 #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
+                let y_quant_coeffs = y_quant_simd.quantize_array_with_zero_bias(
                     &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
+                    &y_zero_bias_simd,
                     aq_strength,
                 );
 
@@ -372,7 +384,7 @@ impl Encoder {
             }
         }
 
-        // Quantize chroma blocks (from possibly downsampled planes)
+        // Quantize chroma blocks using SIMD-optimized pipeline
         if is_color {
             for by in 0..c_blocks_v {
                 for bx in 0..c_blocks_h {
@@ -384,6 +396,7 @@ impl Encoder {
                     let aq_strength =
                         aq_map.get(y_bx.min(y_blocks_h - 1), y_by.min(y_blocks_v - 1));
 
+                    // Extract block and perform DCT for Cb
                     let cb_block =
                         crate::encode_simd::extract_block_simd(cb_plane, c_width, c_height, bx, by);
                     let cb_dct = forward_dct_8x8(&cb_block);
@@ -398,15 +411,15 @@ impl Encoder {
                         hybrid_ctx.as_ref(),
                     );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
+                    let cb_quant_coeffs = cb_quant_simd.quantize_array_with_zero_bias(
                         &cb_dct,
-                        &cb_quant.values,
-                        &cb_zero_bias,
+                        &cb_zero_bias_simd,
                         aq_strength,
                     );
 
                     natural_to_zigzag_into(&cb_quant_coeffs, &mut cb_blocks[block_idx]);
 
+                    // Extract block and perform DCT for Cr
                     let cr_block =
                         crate::encode_simd::extract_block_simd(cr_plane, c_width, c_height, bx, by);
                     let cr_dct = forward_dct_8x8(&cr_block);
@@ -421,10 +434,9 @@ impl Encoder {
                         hybrid_ctx.as_ref(),
                     );
                     #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
+                    let cr_quant_coeffs = cr_quant_simd.quantize_array_with_zero_bias(
                         &cr_dct,
-                        &cr_quant.values,
-                        &cr_zero_bias,
+                        &cr_zero_bias_simd,
                         aq_strength,
                     );
 

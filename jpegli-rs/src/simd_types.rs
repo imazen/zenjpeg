@@ -177,6 +177,53 @@ pub struct QuantTableSimd {
     pub values: [u16; 64],
 }
 
+/// Zero-bias parameters stored in SIMD-friendly layout.
+///
+/// Pre-computed thresholds for each coefficient position.
+#[derive(Clone, Debug)]
+#[repr(C, align(32))]
+pub struct ZeroBiasSimd {
+    /// offset[k] for each coefficient (8 rows of f32x8)
+    pub offset_rows: [f32x8; 8],
+    /// mul[k] for each coefficient (8 rows of f32x8)
+    pub mul_rows: [f32x8; 8],
+}
+
+impl ZeroBiasSimd {
+    /// Create from ZeroBiasParams
+    pub fn from_params(params: &crate::quant::ZeroBiasParams) -> Self {
+        let mut offset_rows = [f32x8::ZERO; 8];
+        let mut mul_rows = [f32x8::ZERO; 8];
+        for row in 0..8 {
+            let start = row * 8;
+            offset_rows[row] = f32x8::from([
+                params.offset[start],
+                params.offset[start + 1],
+                params.offset[start + 2],
+                params.offset[start + 3],
+                params.offset[start + 4],
+                params.offset[start + 5],
+                params.offset[start + 6],
+                params.offset[start + 7],
+            ]);
+            mul_rows[row] = f32x8::from([
+                params.mul[start],
+                params.mul[start + 1],
+                params.mul[start + 2],
+                params.mul[start + 3],
+                params.mul[start + 4],
+                params.mul[start + 5],
+                params.mul[start + 6],
+                params.mul[start + 7],
+            ]);
+        }
+        Self {
+            offset_rows,
+            mul_rows,
+        }
+    }
+}
+
 impl QuantTableSimd {
     /// Create from u16 quantization values
     pub fn from_values(values: &[u16; 64]) -> Self {
@@ -237,6 +284,108 @@ impl QuantTableSimd {
             let quantized = block.rows[i] * self.mul_rows[i];
             result.rows[i] = quantized.round_int();
         }
+        result
+    }
+
+    /// Quantize a block with zero-bias using SIMD.
+    ///
+    /// This is the optimized hot path for encoding. Processes 8 coefficients at a time
+    /// with zero additional load/store overhead when data is already in SIMD format.
+    ///
+    /// # Arguments
+    /// * `block` - DCT coefficients in SIMD-native format
+    /// * `zero_bias` - Pre-computed zero-bias parameters in SIMD format
+    /// * `aq_strength` - Per-block adaptive quantization strength
+    ///
+    /// # Returns
+    /// Quantized coefficients ready for entropy coding
+    #[inline]
+    pub fn quantize_with_zero_bias(
+        &self,
+        block: &Block8x8f,
+        zero_bias: &ZeroBiasSimd,
+        aq_strength: f32,
+    ) -> [i16; 64] {
+        let mut result = [0i16; 64];
+        let aq = f32x8::splat(aq_strength);
+
+        for row in 0..8 {
+            // qval = coeffs / quant (using pre-computed 1/quant)
+            let qval = block.rows[row] * self.mul_rows[row];
+
+            // threshold = offset + mul * aq_strength
+            let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
+
+            // |qval| >= threshold ? round(qval) : 0
+            let abs_qval = qval.abs();
+
+            // Zero-copy access with fast rounding
+            let abs_arr = abs_qval.as_array_ref();
+            let thresh_arr = threshold.as_array_ref();
+            let rounded = qval.fast_round_int();
+            let rounded_arr = rounded.as_array_ref();
+
+            let k = row * 8;
+            for i in 0..8 {
+                if abs_arr[i] >= thresh_arr[i] {
+                    result[k + i] = rounded_arr[i] as i16;
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Quantize a block from a flat array with zero-bias using pre-computed SIMD tables.
+    ///
+    /// This avoids the Block8x8f conversion overhead by loading directly from the array.
+    /// Uses unsafe pointer casting for aligned loads - the input must be 64 f32s.
+    #[inline]
+    pub fn quantize_array_with_zero_bias(
+        &self,
+        coeffs: &[f32; 64],
+        zero_bias: &ZeroBiasSimd,
+        aq_strength: f32,
+    ) -> [i16; 64] {
+        let mut result = [0i16; 64];
+        let aq = f32x8::splat(aq_strength);
+
+        for row in 0..8 {
+            let k = row * 8;
+            // Load 8 coefficients - compiler will optimize this
+            let coeffs_simd = f32x8::new([
+                coeffs[k],
+                coeffs[k + 1],
+                coeffs[k + 2],
+                coeffs[k + 3],
+                coeffs[k + 4],
+                coeffs[k + 5],
+                coeffs[k + 6],
+                coeffs[k + 7],
+            ]);
+
+            // qval = coeffs / quant (using pre-computed 1/quant)
+            let qval = coeffs_simd * self.mul_rows[row];
+
+            // threshold = offset + mul * aq_strength
+            let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
+
+            // |qval| >= threshold ? round(qval) : 0
+            let abs_qval = qval.abs();
+
+            // Zero-copy access with fast rounding
+            let abs_arr = abs_qval.as_array_ref();
+            let thresh_arr = threshold.as_array_ref();
+            let rounded = qval.fast_round_int();
+            let rounded_arr = rounded.as_array_ref();
+
+            for i in 0..8 {
+                if abs_arr[i] >= thresh_arr[i] {
+                    result[k + i] = rounded_arr[i] as i16;
+                }
+            }
+        }
+
         result
     }
 }
