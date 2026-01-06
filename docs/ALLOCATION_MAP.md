@@ -205,19 +205,20 @@ counters: vec![FrequencyCounter::new(); num_contexts],
 
 1. **Fused chroma conversion+downsampling**: Don't allocate full-res Cb/Cr when downsampling
 2. **Streaming block encoding**: Eliminate block storage for baseline mode
-3. **In-place smoothing**: Modify planes directly instead of copying
+3. ~~**In-place smoothing**: Modify planes directly instead of copying~~ (smoothing disabled by default)
 
 ### Medium Impact (save 1-5 MB)
 
-4. **Pre-allocated block arrays**: Avoid `.push()` overhead
-5. **Reference-based Huffman tables**: Avoid clones
-6. **u16 fixed-point planes**: Half the memory of f32
+4. ~~**Pre-allocated block arrays**: Avoid `.push()` overhead~~ ✅ DONE (commit 085364f)
+5. ~~**Pre-allocated BitWriter**: Avoid reallocs during encoding~~ ✅ DONE (commit ace9f7d)
+6. **Reference-based Huffman tables**: Avoid clones
+7. **u16 fixed-point planes**: Half the memory of f32
 
 ### Low Impact (cleaner code)
 
-7. **Buffer pool for reuse between images**
-8. **Tile-based processing for huge images**
-9. **Streaming token encoding for progressive**
+8. **Buffer pool for reuse between images**
+9. **Tile-based processing for huge images**
+10. **Streaming token encoding for progressive**
 
 ## Memory Timeline (1080p baseline 4:2:0)
 
