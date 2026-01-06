@@ -321,6 +321,49 @@ src/
 
 ## Migration Strategy
 
+### Phase 0: Audit SIMD Branch Changes
+
+**Net diff: +5,271 / -560 lines in src/*.rs**
+
+| File | Change | Pattern |
+|------|--------|---------|
+| `encode_simd.rs` | +1761 NEW | Dedicated SIMD module |
+| `adaptive_quant_simd.rs` | +1450 NEW | Dedicated SIMD module |
+| `xyb.rs` | +482 | Added `*_simd` functions |
+| `color.rs` | +418 | `#[cfg(feature = "simd")]` blocks |
+| `dct.rs` | +377 | `mod simd` + `#[inline]` hints |
+| `decode.rs` | +219 | SIMD conversion functions |
+| `quant.rs` | +218 | SIMD quantization |
+| `chroma.rs` | +169 | SIMD downsampling |
+| `hybrid.rs` | +119 | SIMD hybrid quant |
+| `encode.rs` | -124 net | Calls SIMD functions (not inline) |
+| `idct.rs` | +39 | SIMD IDCT |
+| Other | +small | Minor changes |
+
+**SIMD Factoring Assessment:**
+
+✅ **Cleanly factored (new files):**
+- `encode_simd.rs` - Self-contained SIMD functions
+- `adaptive_quant_simd.rs` - Self-contained SIMD AQ
+
+✅ **Cleanly factored (cfg-gated in existing files):**
+- `color.rs` - SIMD blocks wrapped in `#[cfg(feature = "simd")]`
+- `dct.rs` - Separate `mod simd` submodule
+
+✅ **Caller-side changes only:**
+- `encode.rs` - Just calls `crate::encode_simd::*` and `crate::xyb::*_simd`
+- No inline SIMD code in encode.rs
+
+⚠️ **Needs review during refactor:**
+- `xyb.rs` - Mixed scalar + SIMD functions (should move SIMD to `encode/color/xyb.rs`)
+- `chroma.rs` - SIMD interspersed (should extract to `encode/color/downsample.rs`)
+
+**Decision: Refactor with SIMD in place**
+- SIMD code is already well-factored
+- Move `encode_simd.rs` → `encode/simd.rs`
+- Move `adaptive_quant_simd.rs` → `quant/aq/simd.rs`
+- Extract `#[cfg(feature = "simd")]` blocks during module splits
+
 ### Phase 1: Create Directory Structure (no code changes)
 ```bash
 mkdir -p src/{encode/{pipeline,color,blocks,output},decode,quant/aq,huffman/optimize,entropy,color,foundation,hybrid}
