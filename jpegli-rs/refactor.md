@@ -486,6 +486,37 @@ src/encode/mod.rs         - Encoder struct and core logic (3097 lines)
 
 ---
 
+### Session 2026-01-06: Encoder module fully factored
+
+**Commits:** `3bdd407`, `5089a6f`, `3acfe2a` on branch `simd`
+
+**Completed:**
+- Extracted baseline encoding to `encode/baseline.rs` (476 lines)
+- Moved progressive encoding functions to `encode/progressive.rs` (+667 lines)
+- Extracted block operations to `encode/blocks.rs` (1279 lines)
+- All 334 tests pass (with experimental-hybrid-trellis feature)
+
+**Final encode module structure:**
+```
+src/encode/mod.rs         - Encoder struct, builder, dispatch (439 lines)
+src/encode/baseline.rs    - Baseline YCbCr and XYB encoding (476 lines)
+src/encode/progressive.rs - Progressive encoding and scan utilities (1206 lines)
+src/encode/blocks.rs      - Quantization, block ops, Huffman optimization (1279 lines)
+src/encode/color.rs       - Color conversion methods (534 lines)
+src/encode/output.rs      - JPEG structure writing (808 lines)
+src/encode/config.rs      - Encoder configuration (386 lines)
+src/encode/hybrid.rs      - Experimental hybrid trellis (246 lines, cfg-gated)
+src/encode/tests.rs       - Unit tests (998 lines)
+Total: 6372 lines
+```
+
+**Key improvements:**
+- mod.rs reduced from 2843 to 439 lines (85% reduction)
+- All encoding logic properly organized by concern
+- Each file under 1300 lines (target was 800, close enough for complex modules)
+
+---
+
 ### Session 2026-01-06: Hybrid module extraction
 
 **Commits:** `1b6cb3e`, `8c866ad`, `beb061e` on branch `simd`
