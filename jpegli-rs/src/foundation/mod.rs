@@ -23,12 +23,10 @@ pub use consts::{
     DC_ALPHABET_SIZE,
     HUFFMAN_ALPHABET_SIZE,
     HUFFMAN_MAX_BIT_LENGTH,
+    // Tables
+    JPEG_NATURAL_ORDER,
     JPEG_PRECISION,
-    MAX_COMPONENTS,
-    MAX_DIM_PIXELS,
-    MAX_HUFFMAN_CODES,
-    MAX_HUFFMAN_TABLES,
-    MAX_QUANT_TABLES,
+    JPEG_ZIGZAG_ORDER,
     // JPEG markers
     MARKER_APP0,
     MARKER_APP14,
@@ -43,9 +41,11 @@ pub use consts::{
     MARKER_SOF2,
     MARKER_SOI,
     MARKER_SOS,
-    // Tables
-    JPEG_NATURAL_ORDER,
-    JPEG_ZIGZAG_ORDER,
+    MAX_COMPONENTS,
+    MAX_DIM_PIXELS,
+    MAX_HUFFMAN_CODES,
+    MAX_HUFFMAN_TABLES,
+    MAX_QUANT_TABLES,
 };
 
 pub use bitstream::{BitReader, BitWriter};

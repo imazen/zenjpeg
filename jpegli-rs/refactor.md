@@ -459,6 +459,54 @@ After refactoring, these patterns will be cleaner:
 
 ## Progress Log
 
+### Session 2026-01-06: Phase 3 complete
+
+**Commit:** (pending) on branch `simd`
+
+**Completed:**
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 0 | ✅ Done | SIMD audit complete - code is well-factored |
+| Phase 1 | ✅ Done | Directory structure created |
+| Phase 2 | ✅ Done | Foundation module extracted |
+| Phase 3 | ✅ Done | Huffman module fully extracted |
+
+**Files created in huffman/optimize/:**
+```
+src/huffman/optimize/mod.rs        - module re-exports
+src/huffman/optimize/frequency.rs  - FrequencyCounter, OptimizedTable, OptimizedHuffmanTables
+src/huffman/optimize/tokens.rs     - Token, RefToken, ScanTokenInfo, TokenBuffer
+src/huffman/optimize/cluster.rs    - ClusterResult, ContextConfig, cluster_histograms()
+src/huffman/optimize/progressive.rs - ProgressiveTokenBuffer with tokenization methods
+```
+
+**Updated files:**
+```
+src/huffman/mod.rs     - added optimize submodule and re-exports
+src/huffman_opt.rs     - converted to thin re-export wrapper for backward compatibility
+```
+
+**Backward compatibility:**
+- `huffman_opt.rs` re-exports all types from `huffman::optimize`
+- `huffman/mod.rs` re-exports optimize types at the huffman level
+- All huffman-related tests pass
+
+**Next steps:**
+1. Phase 4: Extract Quantization module (`quant.rs`, `adaptive_quant*.rs`)
+2. Phase 5: Extract Entropy module (`entropy.rs`)
+3. Phase 6: Split encode.rs (6317 lines - the big one)
+4. Phase 7: Split decode.rs (2301 lines)
+5. Phase 8: Final cleanup and test
+
+**Notes:**
+- The SIMD code is well-factored and can move cleanly during later phases
+- `encode_simd.rs` → `encode/simd.rs`
+- `adaptive_quant_simd.rs` → `quant/aq/simd.rs`
+- Backward-compatible re-exports prevent breaking changes during migration
+
+---
+
 ### Session 2025-01-06: Phase 0-3 (partial)
 
 **Commit:** `395571e` on branch `simd`
@@ -497,17 +545,3 @@ src/huffman/mod.rs     - re-exports from huffman submodules
 - `huffman_opt.rs` (2417 lines) NOT YET SPLIT
 - Contains intertwined types: `FrequencyCounter`, `ClusterResult`, `Token`, `TokenBuffer`, `ProgressiveTokenBuffer`, `HuffmanOptimizer`
 - Plan: Split into `huffman/optimize/{mod,frequency,cluster,tree,canonical}.rs`
-
-**Next steps:**
-1. Continue Phase 3: Split `huffman_opt.rs` into optimize/ submodule
-2. Phase 4: Extract Quantization module (`quant.rs`, `adaptive_quant*.rs`)
-3. Phase 5: Extract Entropy module (`entropy.rs`)
-4. Phase 6: Split encode.rs (6317 lines - the big one)
-5. Phase 7: Split decode.rs (2301 lines)
-6. Phase 8: Final cleanup and test
-
-**Notes:**
-- The SIMD code is well-factored and can move cleanly during later phases
-- `encode_simd.rs` → `encode/simd.rs`
-- `adaptive_quant_simd.rs` → `quant/aq/simd.rs`
-- Backward-compatible re-exports prevent breaking changes during migration
