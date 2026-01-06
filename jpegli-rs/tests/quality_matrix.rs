@@ -189,7 +189,13 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let orig_rgb = Rgb::new(
         original
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -201,7 +207,13 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     let dec_rgb = Rgb::new(
         decoded
             .chunks(3)
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect(),
         width,
         height,
@@ -242,8 +254,134 @@ fn encode_rust(
     encoder.encode(rgb).expect("Rust encode failed")
 }
 
+/// Encode via C++ jpegli FFI (proper libjpeg API - no subprocess overhead).
+///
+/// Uses the standard libjpeg API exposed by jpegli for accurate speed comparison.
+/// Note: XYB mode requires extended API and falls back to CLI if requested.
+///
+/// IMPORTANT: This uses a large stack-allocated buffer to hold the jpeg_compress_struct
+/// because the actual struct size in jpegli may differ from the Rust definition.
+/// libjpeg uses jpeg_CreateCompress with a size parameter precisely for this reason.
+///
+/// WARNING: This function currently produces incorrect output due to struct layout
+/// mismatches between our Rust bindings and jpegli's actual C++ structs.
+/// The jpeg_component_info and other nested structs have different layouts,
+/// causing memory corruption. Kept for future debugging.
 #[cfg(feature = "ffi-tests")]
-fn encode_cpp(
+#[allow(dead_code)]
+fn encode_cpp_ffi(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    subsampling: Subsampling,
+    progressive: bool,
+) -> Option<Vec<u8>> {
+    use jpegli_internals_sys::*;
+    use std::ptr;
+
+    // C type aliases (same as libc definitions)
+    type CUchar = u8;
+    type CUlong = std::os::raw::c_ulong;
+    type CInt = std::os::raw::c_int;
+
+    // jpegli struct sizes (from runtime error message: library expects 520)
+    // The library validates this during jpeg_CreateCompress
+    const JPEGLI_COMPRESS_STRUCT_SIZE: usize = 520;
+    const JPEGLI_ERROR_MGR_SIZE: usize = 168;
+
+    #[repr(C, align(8))]
+    struct CinfoBuffer([u8; 1024]); // Allocate extra to be safe
+    #[repr(C, align(8))]
+    struct JerrBuffer([u8; 256]); // Allocate extra to be safe
+
+    unsafe {
+        let mut cinfo_buf = CinfoBuffer([0u8; 1024]);
+        let cinfo_ptr = cinfo_buf.0.as_mut_ptr() as *mut jpeg_compress_struct;
+
+        let mut jerr_buf = JerrBuffer([0u8; 256]);
+        let jerr_ptr = jerr_buf.0.as_mut_ptr() as *mut jpeg_error_mgr;
+
+        // Initialize error handler
+        (*cinfo_ptr).err = jpeg_std_error(jerr_ptr);
+
+        // Create compression object - pass the ACTUAL struct size from C
+        // This is critical: libjpeg uses this to verify ABI compatibility
+        jpeg_CreateCompress(cinfo_ptr, JPEG_LIB_VERSION, JPEGLI_COMPRESS_STRUCT_SIZE);
+
+        // Setup memory destination
+        let mut outbuffer: *mut CUchar = ptr::null_mut();
+        let mut outsize: CUlong = 0;
+        jpeg_mem_dest(cinfo_ptr, &mut outbuffer, &mut outsize);
+
+        // Set image parameters
+        (*cinfo_ptr).image_width = width as JDIMENSION;
+        (*cinfo_ptr).image_height = height as JDIMENSION;
+        (*cinfo_ptr).input_components = 3;
+        (*cinfo_ptr).in_color_space = JCS_RGB;
+
+        // Set defaults (this sets up YCbCr conversion, quant tables, etc.)
+        jpeg_set_defaults(cinfo_ptr);
+
+        // Set quality
+        jpeg_set_quality(cinfo_ptr, quality as CInt, 1);
+
+        // Note: Chroma subsampling modification via comp_info requires careful
+        // struct layout matching. The jpeg_component_info layout may not match
+        // our Rust bindings exactly. For now, we use default subsampling (4:2:0
+        // as set by jpeg_set_defaults) and only test against that mode.
+        //
+        // TODO: Use jpeg_set_colorspace() and modify sample factors if needed
+        // For the benchmark, 4:2:0 is the most common mode and provides accurate
+        // speed comparison.
+        let _ = subsampling; // Acknowledge param
+
+        // Set progressive mode
+        if progressive {
+            jpeg_simple_progression(cinfo_ptr);
+        }
+
+        // Enable Huffman optimization (matches Rust encoder default)
+        (*cinfo_ptr).optimize_coding = 1;
+
+        // Start compression
+        jpeg_start_compress(cinfo_ptr, 1);
+
+        // Write scanlines
+        let row_stride = (width as usize) * 3;
+        let mut row_pointer: [JSAMPROW; 1] = [ptr::null_mut()];
+
+        while (*cinfo_ptr).next_scanline < (*cinfo_ptr).image_height {
+            let row_idx = (*cinfo_ptr).next_scanline as usize;
+            let row_start = row_idx * row_stride;
+            // Cast away const - libjpeg API takes mutable but doesn't modify
+            row_pointer[0] = rgb.as_ptr().add(row_start) as *mut u8;
+            jpeg_write_scanlines(cinfo_ptr, row_pointer.as_mut_ptr(), 1);
+        }
+
+        // Finish compression
+        jpeg_finish_compress(cinfo_ptr);
+
+        // Copy output to Vec
+        let result = if !outbuffer.is_null() && outsize > 0 {
+            Some(std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec())
+        } else {
+            None
+        };
+
+        // Cleanup
+        jpeg_destroy_compress(cinfo_ptr);
+
+        // Note: The buffer allocated by jpeg_mem_dest is caller-owned.
+        // We've copied it to Vec, memory leak is acceptable for benchmark.
+
+        result
+    }
+}
+
+/// Fallback to CLI for XYB mode (not supported via standard libjpeg API)
+#[cfg(feature = "ffi-tests")]
+fn encode_cpp_cli(
     rgb: &[u8],
     width: u32,
     height: u32,
@@ -314,6 +452,38 @@ fn encode_cpp(
     std::fs::read(jpg_path).ok()
 }
 
+/// Encode via C++ jpegli - currently uses CLI for all modes.
+///
+/// NOTE: FFI-based encoding exists in `encode_cpp_ffi` but has struct layout
+/// issues (negative SSIM scores, incorrect file sizes) that need debugging.
+/// The struct layouts in jpegli-internals-sys don't perfectly match jpegli's
+/// actual C++ struct layouts, causing memory corruption.
+///
+/// For accurate benchmarking, we use CLI which is slower due to process spawn
+/// overhead but produces correct output. The speed comparison still shows
+/// relative performance since both use the same CLI overhead for C++.
+#[cfg(feature = "ffi-tests")]
+fn encode_cpp(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    subsampling: Subsampling,
+    progressive: bool,
+    use_xyb: bool,
+) -> Option<Vec<u8>> {
+    // Use CLI for all modes until FFI struct layout issues are resolved
+    encode_cpp_cli(
+        rgb,
+        width,
+        height,
+        quality,
+        subsampling,
+        progressive,
+        use_xyb,
+    )
+}
+
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
@@ -363,16 +533,30 @@ fn test_configuration(
 
     for (i, &quality) in QUALITY_LEVELS.iter().enumerate() {
         // Encode with Rust
-        let rust_jpeg = encode_rust(rgb, width_u32, height_u32, quality, subsampling, mode, use_xyb);
+        let rust_jpeg = encode_rust(
+            rgb,
+            width_u32,
+            height_u32,
+            quality,
+            subsampling,
+            mode,
+            use_xyb,
+        );
         let rust_decoded = decode_jpeg(&rust_jpeg);
         let rust_ssim2 = compute_ssim2(rgb, &rust_decoded, width, height);
 
         // Get C++ result (live or reference)
         #[cfg(feature = "ffi-tests")]
         let (cpp_ssim2, cpp_size) = {
-            if let Some(cpp_jpeg) =
-                encode_cpp(rgb, width_u32, height_u32, quality, subsampling, progressive, use_xyb)
-            {
+            if let Some(cpp_jpeg) = encode_cpp(
+                rgb,
+                width_u32,
+                height_u32,
+                quality,
+                subsampling,
+                progressive,
+                use_xyb,
+            ) {
                 let cpp_decoded = decode_jpeg(&cpp_jpeg);
                 let ssim2 = compute_ssim2(rgb, &cpp_decoded, width, height);
                 (ssim2, cpp_jpeg.len())
@@ -386,7 +570,11 @@ fn test_configuration(
         let (cpp_ssim2, cpp_size) = (reference[i].2, reference[i].4);
 
         // Compare against reference size (use Rust reference if cpp_size is 0)
-        let ref_size = if cpp_size > 0 { cpp_size } else { reference[i].3 };
+        let ref_size = if cpp_size > 0 {
+            cpp_size
+        } else {
+            reference[i].3
+        };
 
         let ssim_diff = rust_ssim2 - cpp_ssim2;
         let size_diff_percent = if ref_size > 0 {
@@ -399,7 +587,11 @@ fn test_configuration(
         let ssim_ok = ssim_diff.abs() <= SSIM2_TOLERANCE;
         let min_ok = rust_ssim2 >= reference[i].1 - SSIM2_MIN_TOLERANCE;
         let size_ok = size_diff_percent.abs() <= SIZE_TOLERANCE_PERCENT;
-        let status = if ssim_ok && min_ok && size_ok { "✓" } else { "✗" };
+        let status = if ssim_ok && min_ok && size_ok {
+            "✓"
+        } else {
+            "✗"
+        };
 
         println!(
             "{:>4} | {:>10.2} {:>10.2} | {:>7.1}K {:>7.1}K | {:>+6.2} {:>+5.1}% | {}",
@@ -480,7 +672,11 @@ fn test_ycbcr_444_baseline() {
         &reference::YCBCR_444_BASELINE,
     );
 
-    assert_results(&results, &reference::YCBCR_444_BASELINE, "YCbCr 4:4:4 Baseline");
+    assert_results(
+        &results,
+        &reference::YCBCR_444_BASELINE,
+        "YCbCr 4:4:4 Baseline",
+    );
 }
 
 #[test]
@@ -499,7 +695,11 @@ fn test_ycbcr_444_progressive() {
         &reference::YCBCR_444_PROGRESSIVE,
     );
 
-    assert_results(&results, &reference::YCBCR_444_PROGRESSIVE, "YCbCr 4:4:4 Progressive");
+    assert_results(
+        &results,
+        &reference::YCBCR_444_PROGRESSIVE,
+        "YCbCr 4:4:4 Progressive",
+    );
 }
 
 #[test]
@@ -518,7 +718,11 @@ fn test_ycbcr_422_baseline() {
         &reference::YCBCR_422_BASELINE,
     );
 
-    assert_results(&results, &reference::YCBCR_422_BASELINE, "YCbCr 4:2:2 Baseline");
+    assert_results(
+        &results,
+        &reference::YCBCR_422_BASELINE,
+        "YCbCr 4:2:2 Baseline",
+    );
 }
 
 #[test]
@@ -537,7 +741,11 @@ fn test_ycbcr_422_progressive() {
         &reference::YCBCR_422_PROGRESSIVE,
     );
 
-    assert_results(&results, &reference::YCBCR_422_PROGRESSIVE, "YCbCr 4:2:2 Progressive");
+    assert_results(
+        &results,
+        &reference::YCBCR_422_PROGRESSIVE,
+        "YCbCr 4:2:2 Progressive",
+    );
 }
 
 #[test]
@@ -556,7 +764,11 @@ fn test_ycbcr_420_baseline() {
         &reference::YCBCR_420_BASELINE,
     );
 
-    assert_results(&results, &reference::YCBCR_420_BASELINE, "YCbCr 4:2:0 Baseline");
+    assert_results(
+        &results,
+        &reference::YCBCR_420_BASELINE,
+        "YCbCr 4:2:0 Baseline",
+    );
 }
 
 #[test]
@@ -575,7 +787,11 @@ fn test_ycbcr_420_progressive() {
         &reference::YCBCR_420_PROGRESSIVE,
     );
 
-    assert_results(&results, &reference::YCBCR_420_PROGRESSIVE, "YCbCr 4:2:0 Progressive");
+    assert_results(
+        &results,
+        &reference::YCBCR_420_PROGRESSIVE,
+        "YCbCr 4:2:0 Progressive",
+    );
 }
 
 #[test]
@@ -594,7 +810,11 @@ fn test_ycbcr_440_baseline() {
         &reference::YCBCR_440_BASELINE,
     );
 
-    assert_results(&results, &reference::YCBCR_440_BASELINE, "YCbCr 4:4:0 Baseline");
+    assert_results(
+        &results,
+        &reference::YCBCR_440_BASELINE,
+        "YCbCr 4:4:0 Baseline",
+    );
 }
 
 #[test]
@@ -613,7 +833,11 @@ fn test_ycbcr_440_progressive() {
         &reference::YCBCR_440_PROGRESSIVE,
     );
 
-    assert_results(&results, &reference::YCBCR_440_PROGRESSIVE, "YCbCr 4:4:0 Progressive");
+    assert_results(
+        &results,
+        &reference::YCBCR_440_PROGRESSIVE,
+        "YCbCr 4:4:0 Progressive",
+    );
 }
 
 /// XYB tests are ignored because zune-jpeg doesn't handle ICC profiles.
@@ -690,16 +914,66 @@ fn generate_reference_values() {
     println!("// Copy these into the reference module\n");
 
     let configs = [
-        ("YCBCR_444_BASELINE", Subsampling::S444, JpegMode::Baseline, false),
-        ("YCBCR_444_PROGRESSIVE", Subsampling::S444, JpegMode::Progressive, false),
-        ("YCBCR_422_BASELINE", Subsampling::S422, JpegMode::Baseline, false),
-        ("YCBCR_422_PROGRESSIVE", Subsampling::S422, JpegMode::Progressive, false),
-        ("YCBCR_420_BASELINE", Subsampling::S420, JpegMode::Baseline, false),
-        ("YCBCR_420_PROGRESSIVE", Subsampling::S420, JpegMode::Progressive, false),
-        ("YCBCR_440_BASELINE", Subsampling::S440, JpegMode::Baseline, false),
-        ("YCBCR_440_PROGRESSIVE", Subsampling::S440, JpegMode::Progressive, false),
-        ("XYB_444_BASELINE", Subsampling::S444, JpegMode::Baseline, true),
-        ("XYB_444_PROGRESSIVE", Subsampling::S444, JpegMode::Progressive, true),
+        (
+            "YCBCR_444_BASELINE",
+            Subsampling::S444,
+            JpegMode::Baseline,
+            false,
+        ),
+        (
+            "YCBCR_444_PROGRESSIVE",
+            Subsampling::S444,
+            JpegMode::Progressive,
+            false,
+        ),
+        (
+            "YCBCR_422_BASELINE",
+            Subsampling::S422,
+            JpegMode::Baseline,
+            false,
+        ),
+        (
+            "YCBCR_422_PROGRESSIVE",
+            Subsampling::S422,
+            JpegMode::Progressive,
+            false,
+        ),
+        (
+            "YCBCR_420_BASELINE",
+            Subsampling::S420,
+            JpegMode::Baseline,
+            false,
+        ),
+        (
+            "YCBCR_420_PROGRESSIVE",
+            Subsampling::S420,
+            JpegMode::Progressive,
+            false,
+        ),
+        (
+            "YCBCR_440_BASELINE",
+            Subsampling::S440,
+            JpegMode::Baseline,
+            false,
+        ),
+        (
+            "YCBCR_440_PROGRESSIVE",
+            Subsampling::S440,
+            JpegMode::Progressive,
+            false,
+        ),
+        (
+            "XYB_444_BASELINE",
+            Subsampling::S444,
+            JpegMode::Baseline,
+            true,
+        ),
+        (
+            "XYB_444_PROGRESSIVE",
+            Subsampling::S444,
+            JpegMode::Progressive,
+            true,
+        ),
     ];
 
     for (name, subsampling, mode, use_xyb) in configs {
@@ -756,7 +1030,18 @@ fn generate_reference_values() {
 // BENCHMARK: RUST VS C++ PERFORMANCE
 // ============================================================================
 
-/// Benchmark comparing Rust vs C++ jpegli encoding performance.
+/// Benchmark comparing Rust jpegli-rs vs C++ cjpegli CLI.
+///
+/// **Note on CLI overhead**: This benchmark uses the cjpegli CLI tool which
+/// includes process spawn and file I/O overhead. While this doesn't measure
+/// pure encoding speed, it does provide:
+///
+/// - Accurate file size and quality comparison (the primary concern)
+/// - Consistent overhead for both C++ calls, allowing relative speed comparison
+/// - Validated output (FFI bindings have struct layout issues causing corruption)
+///
+/// For pure encoding speed comparison, FFI bindings would need struct layout
+/// fixes in jpegli-internals-sys.
 ///
 /// Uses jpegli-bench-utils for shared utilities (ImageData, QualityMetrics).
 ///
@@ -796,10 +1081,26 @@ fn benchmark_rust_vs_cpp() {
     println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
 
     let configs: [(&str, BenchSubsampling, ScanMode); 4] = [
-        ("YCbCr 4:4:4 Baseline", BenchSubsampling::S444, ScanMode::Baseline),
-        ("YCbCr 4:2:0 Baseline", BenchSubsampling::S420, ScanMode::Baseline),
-        ("YCbCr 4:4:4 Progressive", BenchSubsampling::S444, ScanMode::Progressive),
-        ("YCbCr 4:2:0 Progressive", BenchSubsampling::S420, ScanMode::Progressive),
+        (
+            "YCbCr 4:4:4 Baseline",
+            BenchSubsampling::S444,
+            ScanMode::Baseline,
+        ),
+        (
+            "YCbCr 4:2:0 Baseline",
+            BenchSubsampling::S420,
+            ScanMode::Baseline,
+        ),
+        (
+            "YCbCr 4:4:4 Progressive",
+            BenchSubsampling::S444,
+            ScanMode::Progressive,
+        ),
+        (
+            "YCbCr 4:2:0 Progressive",
+            BenchSubsampling::S420,
+            ScanMode::Progressive,
+        ),
     ];
 
     let mut all_valid = true;
@@ -887,8 +1188,7 @@ fn benchmark_rust_vs_cpp() {
                         let cpp_ssim2 =
                             QualityMetrics::ssimulacra2(orig_rgb.as_ref(), cpp_dec.as_ref());
                         let speedup = cpp_time / rust_time;
-                        let size_diff = 100.0
-                            * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
+                        let size_diff = 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64)
                             / cpp_jpeg.len() as f64;
                         let ssim_diff = rust_ssim2 - cpp_ssim2;
 
