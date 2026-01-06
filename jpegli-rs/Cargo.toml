@@ -98,34 +98,6 @@ workspace = true
 
 # Examples that require test-utils feature
 [[example]]
-name = "compare_coefficients"
-required-features = ["test-utils"]
-
-[[example]]
-name = "compare_decoded"
-required-features = ["test-utils"]
-
-[[example]]
-name = "compare_quant_tables"
-required-features = ["test-utils"]
-
-[[example]]
-name = "compare_to_original"
-required-features = ["test-utils"]
-
-[[example]]
-name = "compare_xyb_constants"
-required-features = ["test-utils", "ffi-tests"]
-
-[[example]]
-name = "debug_aq_values"
-required-features = ["test-utils"]
-
-[[example]]
-name = "debug_quant_field"
-required-features = ["test-utils"]
-
-[[example]]
 name = "generate_cpp_reference"
 required-features = ["test-utils"]
 
@@ -133,11 +105,7 @@ required-features = ["test-utils"]
 name = "low_q_report"
 required-features = ["test-utils"]
 
-# These examples use APIs that are not fully implemented yet
+# XYB debugging tools (for investigating quality gap vs C++ jpegli)
 [[example]]
-name = "debug_roundtrip"
-required-features = ["test-utils"]
-
-[[example]]
-name = "debug_scans_separate"
-required-features = ["test-utils"]
+name = "compare_xyb_constants"
+required-features = ["test-utils", "ffi-tests"]

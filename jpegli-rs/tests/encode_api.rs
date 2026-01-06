@@ -529,3 +529,114 @@ fn test_ycbcr_no_app14_marker() {
         "YCbCr mode should not include APP14 marker"
     );
 }
+
+// ============================================================================
+// Huffman Variant Tests with XYB/YCbCr
+// ============================================================================
+
+#[test]
+fn test_xyb_optimized_huffman_decodable() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = Encoder::new()
+        .width(64)
+        .height(64)
+        .jpegli_quality(Quality::from_quality(90.0))
+        .use_xyb(true)
+        .optimize_huffman(true);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    // Should be decodable by our decoder
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode XYB optimized failed");
+    assert_eq!(decoded.width, 64);
+    assert_eq!(decoded.height, 64);
+}
+
+#[test]
+fn test_xyb_standard_huffman_decodable() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = Encoder::new()
+        .width(64)
+        .height(64)
+        .jpegli_quality(Quality::from_quality(90.0))
+        .use_xyb(true)
+        .optimize_huffman(false);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    // Should be decodable by our decoder
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode XYB standard failed");
+    assert_eq!(decoded.width, 64);
+    assert_eq!(decoded.height, 64);
+}
+
+#[test]
+fn test_ycbcr_optimized_huffman_decodable() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = Encoder::new()
+        .width(64)
+        .height(64)
+        .jpegli_quality(Quality::from_quality(90.0))
+        .use_xyb(false)
+        .optimize_huffman(true);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    // Should be decodable by our decoder
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode YCbCr optimized failed");
+    assert_eq!(decoded.width, 64);
+    assert_eq!(decoded.height, 64);
+}
+
+#[test]
+fn test_ycbcr_standard_huffman_decodable() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = Encoder::new()
+        .width(64)
+        .height(64)
+        .jpegli_quality(Quality::from_quality(90.0))
+        .use_xyb(false)
+        .optimize_huffman(false);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    // Should be decodable by our decoder
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode YCbCr standard failed");
+    assert_eq!(decoded.width, 64);
+    assert_eq!(decoded.height, 64);
+}
+
+#[test]
+fn test_all_huffman_colorspace_combinations_with_zune() {
+    let img = generate_gradient_d(64, 64, 3);
+
+    let configs = [
+        (true, true, "XYB + optimized"),
+        (true, false, "XYB + standard"),
+        (false, true, "YCbCr + optimized"),
+        (false, false, "YCbCr + standard"),
+    ];
+
+    for (use_xyb, optimize, label) in &configs {
+        let encoder = Encoder::new()
+            .width(64)
+            .height(64)
+            .jpegli_quality(Quality::from_quality(90.0))
+            .use_xyb(*use_xyb)
+            .optimize_huffman(*optimize);
+        let jpeg = encoder.encode(&img.pixels).expect(&format!("encode {} failed", label));
+
+        // Test with zune-jpeg
+        use zune_jpeg::zune_core::bytestream::ZCursor;
+        use zune_jpeg::JpegDecoder;
+        let cursor = ZCursor::new(&jpeg[..]);
+        let mut decoder = JpegDecoder::new(cursor);
+        let result = decoder.decode();
+        assert!(
+            result.is_ok(),
+            "zune-jpeg failed to decode {}: {:?}",
+            label,
+            result.err()
+        );
+    }
+}
