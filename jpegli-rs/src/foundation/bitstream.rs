@@ -8,13 +8,14 @@ use crate::error::{Error, Result};
 /// Bit writer for JPEG encoding.
 ///
 /// Accumulates bits and writes bytes with JPEG byte stuffing.
+/// Uses a 64-bit buffer to reduce flush frequency in the hot path.
 #[derive(Debug)]
 pub struct BitWriter {
     /// Output buffer
     buffer: Vec<u8>,
-    /// Current bit accumulator
-    bit_buffer: u32,
-    /// Number of bits in accumulator (0-32)
+    /// Current bit accumulator (64-bit for reduced flush frequency)
+    bit_buffer: u64,
+    /// Number of bits in accumulator (0-56, we flush at 32+)
     bits_in_buffer: u8,
 }
 
@@ -49,10 +50,23 @@ impl BitWriter {
         debug_assert!(count <= 24);
         debug_assert!(bits < (1 << count) || count == 0);
 
-        self.bit_buffer = (self.bit_buffer << count) | bits;
+        // Accumulate bits into 64-bit buffer
+        self.bit_buffer = (self.bit_buffer << count) | (bits as u64);
         self.bits_in_buffer += count;
 
-        // Flush complete bytes
+        // Only flush when we have 32+ bits (reduces loop iterations significantly)
+        // This keeps the hot path fast - most write_bits calls won't flush
+        if self.bits_in_buffer >= 32 {
+            self.flush_bytes();
+        }
+    }
+
+    /// Flushes complete bytes from the bit buffer.
+    /// Marked cold to keep write_bits hot path small.
+    #[inline(never)]
+    #[cold]
+    fn flush_bytes(&mut self) {
+        // Flush all complete bytes (typically 4+ bytes at once)
         while self.bits_in_buffer >= 8 {
             self.bits_in_buffer -= 8;
             let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
@@ -85,10 +99,21 @@ impl BitWriter {
 
     /// Flushes any remaining bits, padding with 1s.
     pub fn flush(&mut self) {
+        // First flush any complete bytes
+        while self.bits_in_buffer >= 8 {
+            self.bits_in_buffer -= 8;
+            let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
+            self.buffer.push(byte);
+
+            if byte == 0xFF {
+                self.buffer.push(0x00);
+            }
+        }
+
+        // Then pad remaining bits with 1s (JPEG convention)
         if self.bits_in_buffer > 0 {
-            // Pad with 1s (JPEG convention)
             let padding = 8 - self.bits_in_buffer;
-            let padded = (self.bit_buffer << padding) | ((1 << padding) - 1);
+            let padded = (self.bit_buffer << padding) | ((1u64 << padding) - 1);
             let byte = padded as u8;
             self.buffer.push(byte);
 
