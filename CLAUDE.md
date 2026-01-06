@@ -7,6 +7,35 @@ Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 ```bash
 cargo build --release
 cargo test --release
+```
+
+## C++ Parity Verification (IMPORTANT)
+
+Run the comprehensive Rust vs C++ jpegli comparison matrix:
+
+```bash
+# Requires: git submodule update --init --recursive && build C++ jpegli first
+cargo test --release -p jpegli-rs --features ffi-tests --test comprehensive_cpp_comparison -- --nocapture --ignored
+```
+
+This produces a table comparing 10 images × 50 quality levels showing:
+- **Size**: Rust vs C++ file sizes (expect ~0.1% difference)
+- **DSSIM**: Quality metric (expect 0.00% difference)
+- **Butteraugli**: Perceptual quality (expect 0.00% difference)
+- **Speed**: Encoding time comparison
+
+Other parity tests:
+```bash
+# Quick locked parity tests (no C++ rebuild needed)
+cargo test --release -p jpegli-rs --test cpp_parity_locked
+
+# Encoder configuration matrix (all modes × all decoders)
+cargo test --release -p jpegli-rs --features ffi-tests --test encoder_matrix -- --nocapture
+```
+
+## Tools
+
+```bash
 cargo run --release --example jpeg_inspect -- --validate image.jpg
 ```
 

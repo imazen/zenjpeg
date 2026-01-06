@@ -64,6 +64,31 @@ let jpeg_data = Encoder::new()
     .encode(&rgb_pixels)?;
 ```
 
+## C++ Parity Verification
+
+For development, verify Rust matches C++ jpegli output:
+
+```bash
+# Build C++ jpegli first (one-time setup)
+git submodule update --init --recursive
+cd internal/jpegli-cpp && mkdir -p build && cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_TOOLS=ON ..
+ninja cjpegli djpegli
+
+# Run comprehensive comparison matrix (10 images × 50 quality levels)
+cargo test --release -p jpegli-rs --features ffi-tests --test comprehensive_cpp_comparison -- --nocapture --ignored
+```
+
+Expected results:
+- **Size**: ~0.1% difference (Rust slightly larger)
+- **DSSIM**: 0.00% difference (exact quality match)
+- **Butteraugli**: 0.00% difference (exact perceptual match)
+
+Quick parity tests (no C++ rebuild needed):
+```bash
+cargo test --release -p jpegli-rs --test cpp_parity_locked
+```
+
 ## Feature Flags
 
 | Feature | Description |
