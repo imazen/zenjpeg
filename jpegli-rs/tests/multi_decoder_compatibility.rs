@@ -122,12 +122,12 @@ fn decode_jpeg_decoder(data: &[u8]) -> Option<DecoderResult> {
     let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
     match decoder.decode() {
         Ok(pixels) => {
-            let info = decoder.dimensions().unwrap();
+            let (width, height) = decoder.dimensions().unwrap();
             Some(DecoderResult {
                 decoder_name: "jpeg-decoder".to_string(),
                 pixels,
-                width: info.width as usize,
-                height: info.height as usize,
+                width,
+                height,
                 decode_time_us: start.elapsed().as_micros() as u64,
             })
         }
