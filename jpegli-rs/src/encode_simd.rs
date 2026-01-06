@@ -214,9 +214,12 @@ pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
             let sum = p00 + p10 + p01 + p11;
             let avg = sum * scale;
 
-            // Store result
-            let avg_arr: [f32; 8] = avg.into();
-            result[out_row_start + out_x..out_row_start + out_x + 8].copy_from_slice(&avg_arr);
+            // Store result using direct SIMD store
+            // SAFETY: out_row_start + out_x + 8 <= result.len() (chunks calculation guarantees this)
+            unsafe {
+                let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
+                *(out_ptr as *mut [f32; 8]) = avg.into();
+            }
         }
 
         // Scalar remainder
@@ -259,8 +262,11 @@ pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
             // Box filter: (p0 + p1) * 0.5
             let avg = (p0 + p1) * scale;
 
-            let avg_arr: [f32; 8] = avg.into();
-            result[out_row_start + out_x..out_row_start + out_x + 8].copy_from_slice(&avg_arr);
+            // Store result using direct SIMD store
+            unsafe {
+                let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
+                *(out_ptr as *mut [f32; 8]) = avg.into();
+            }
         }
 
         // Scalar remainder
@@ -295,33 +301,27 @@ pub fn downsample_1x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
         for chunk in 0..chunks {
             let x = chunk * 8;
 
-            // Load 8 pixels from row y0 and y1
-            let p0 = f32x8::from([
-                plane[y0 * width + x],
-                plane[y0 * width + x + 1],
-                plane[y0 * width + x + 2],
-                plane[y0 * width + x + 3],
-                plane[y0 * width + x + 4],
-                plane[y0 * width + x + 5],
-                plane[y0 * width + x + 6],
-                plane[y0 * width + x + 7],
-            ]);
+            // Load 8 consecutive pixels from row y0 and y1 using direct SIMD loads
+            let row0_idx = y0 * width + x;
+            let row1_idx = y1 * width + x;
 
-            let p1 = f32x8::from([
-                plane[y1 * width + x],
-                plane[y1 * width + x + 1],
-                plane[y1 * width + x + 2],
-                plane[y1 * width + x + 3],
-                plane[y1 * width + x + 4],
-                plane[y1 * width + x + 5],
-                plane[y1 * width + x + 6],
-                plane[y1 * width + x + 7],
-            ]);
+            // SAFETY: chunks calculation ensures x + 8 <= width
+            let (p0, p1) = unsafe {
+                let ptr0 = plane.as_ptr().add(row0_idx);
+                let ptr1 = plane.as_ptr().add(row1_idx);
+                (
+                    f32x8::from(*(ptr0 as *const [f32; 8])),
+                    f32x8::from(*(ptr1 as *const [f32; 8])),
+                )
+            };
 
             let avg = (p0 + p1) * scale;
 
-            let avg_arr: [f32; 8] = avg.into();
-            result[out_row_start + x..out_row_start + x + 8].copy_from_slice(&avg_arr);
+            // Store result using direct SIMD store
+            unsafe {
+                let out_ptr = result.as_mut_ptr().add(out_row_start + x);
+                *(out_ptr as *mut [f32; 8]) = avg.into();
+            }
         }
 
         // Scalar remainder
@@ -342,7 +342,24 @@ pub fn downsample_1x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
 /// - odds = [b, d, f, h, j, l, n, p]
 #[inline(always)]
 fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, f32x8) {
-    // Boundary-safe gather
+    // Fast path: when we have at least 16 elements available, use direct loads
+    if start_idx + 16 <= plane.len() {
+        // SAFETY: We just checked that start_idx + 16 <= plane.len()
+        unsafe {
+            let ptr = plane.as_ptr().add(start_idx);
+            // Load first 8 floats [0-7]
+            let a: [f32; 8] = *(ptr as *const [f32; 8]);
+            // Load second 8 floats [8-15]
+            let b: [f32; 8] = *(ptr.add(8) as *const [f32; 8]);
+
+            let evens = f32x8::from([a[0], a[2], a[4], a[6], b[0], b[2], b[4], b[6]]);
+            let odds = f32x8::from([a[1], a[3], a[5], a[7], b[1], b[3], b[5], b[7]]);
+
+            return (evens, odds);
+        }
+    }
+
+    // Slow path: boundary-safe gather with clamping
     let get = |offset: usize| -> f32 {
         let idx = start_idx + offset;
         if idx < plane.len() {
