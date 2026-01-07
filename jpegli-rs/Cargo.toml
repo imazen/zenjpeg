@@ -101,6 +101,10 @@ harness = false
 name = "dct"
 harness = false
 
+[[bench]]
+name = "encode_matrix"
+harness = false
+
 [lints]
 workspace = true
 
