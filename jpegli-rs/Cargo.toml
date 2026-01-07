@@ -21,6 +21,7 @@ bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
 yuv = { workspace = true }  # Sharp YUV chroma downsampling (better color on edges)
+multiversion = { workspace = true }
 lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
