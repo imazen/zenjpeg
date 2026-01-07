@@ -562,10 +562,8 @@ impl Encoder {
             return self.encode_progressive_xyb_optimized(data);
         }
 
-        let mut output = crate::foundation::alloc::try_with_capacity(
-            data.len() / 4,
-            "progressive xyb output",
-        )?;
+        let mut output =
+            crate::foundation::alloc::try_with_capacity(data.len() / 4, "progressive xyb output")?;
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 

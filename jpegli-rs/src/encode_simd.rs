@@ -473,7 +473,10 @@ unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (f32x8, f32x8) {
     let evens_ymm = _mm256_permute2f128_ps(permuted0, permuted1, 0x20);
     let odds_ymm = _mm256_permute2f128_ps(permuted0, permuted1, 0x31);
 
-    (core::mem::transmute(evens_ymm), core::mem::transmute(odds_ymm))
+    (
+        core::mem::transmute(evens_ymm),
+        core::mem::transmute(odds_ymm),
+    )
 }
 
 /// Gather even and odd indexed elements from a row into two f32x8 vectors.

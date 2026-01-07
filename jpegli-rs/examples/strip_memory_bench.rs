@@ -11,7 +11,7 @@ use std::time::Instant;
 use jpegli::encode::strip::{StripProcessor, StripProcessorOutput};
 use jpegli::quant::{generate_quant_table, Quality, ZeroBiasParams};
 use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
-use jpegli::{Encoder};
+use jpegli::Encoder;
 
 /// Tracking allocator that wraps System allocator
 struct TrackingAllocator;
@@ -104,8 +104,41 @@ fn encode_standard(rgb_data: &[u8], width: usize, height: usize) -> (usize, std:
     (peak, elapsed)
 }
 
-/// Encode using the strip-based approach (blocks only, no JPEG output yet)
-fn encode_strip_blocks(rgb_data: &[u8], width: usize, height: usize) -> (usize, std::time::Duration, StripProcessorOutput) {
+/// Encode using the strip-based approach (full JPEG output)
+fn encode_strip_jpeg(
+    rgb_data: &[u8],
+    width: usize,
+    height: usize,
+) -> (usize, std::time::Duration, usize) {
+    reset_stats();
+    let start = Instant::now();
+
+    let encoder = Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .jpegli_quality(Quality::Traditional(85.0))
+        .pixel_format(PixelFormat::Rgb)
+        .subsampling(Subsampling::S420)
+        .optimize_huffman(true);
+
+    let output = encoder
+        .encode_strip_based(rgb_data)
+        .expect("strip encoding failed");
+    let elapsed = start.elapsed();
+
+    let output_size = output.len();
+    drop(output);
+
+    let (_, peak, _) = get_stats();
+    (peak, elapsed, output_size)
+}
+
+/// Encode using the strip-based approach (blocks only, for comparison)
+fn encode_strip_blocks(
+    rgb_data: &[u8],
+    width: usize,
+    height: usize,
+) -> (usize, std::time::Duration, StripProcessorOutput) {
     reset_stats();
     let start = Instant::now();
 
@@ -125,7 +158,14 @@ fn encode_strip_blocks(rgb_data: &[u8], width: usize, height: usize) -> (usize, 
     let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
     let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
-    processor.set_quant_tables(y_quant, cb_quant, cr_quant, y_zero_bias, cb_zero_bias, cr_zero_bias);
+    processor.set_quant_tables(
+        y_quant,
+        cb_quant,
+        cr_quant,
+        y_zero_bias,
+        cb_zero_bias,
+        cr_zero_bias,
+    );
 
     // Process in strips
     let strip_height = processor.strip_height();
@@ -155,8 +195,58 @@ fn main() {
         (4000, 3000, "12MP (4000×3000)"),
     ];
 
-    println!("{:<25} {:<15} {:<15} {:<12} {:<12}",
-        "Image", "Standard Peak", "Strip Peak", "Reduction", "Speed");
+    println!("=== Full JPEG Output (encode_strip_based) ===\n");
+    println!(
+        "{:<25} {:<15} {:<15} {:<12} {:<12} {:<12}",
+        "Image", "Standard Peak", "Strip Peak", "Reduction", "Speed", "Output"
+    );
+    println!("{}", "-".repeat(95));
+
+    for (width, height, name) in &test_cases {
+        // Create test image (gradient)
+        let input_size = width * height * 3;
+        let mut rgb_data = vec![0u8; input_size];
+        for y in 0..*height {
+            for x in 0..*width {
+                let idx = (y * width + x) * 3;
+                rgb_data[idx] = (x * 255 / width) as u8;
+                rgb_data[idx + 1] = (y * 255 / height) as u8;
+                rgb_data[idx + 2] = 128;
+            }
+        }
+
+        // Benchmark standard encoder
+        let (standard_peak, standard_time) = encode_standard(&rgb_data, *width, *height);
+
+        // Benchmark strip encoder (full JPEG)
+        let (strip_peak, strip_time, jpeg_size) = encode_strip_jpeg(&rgb_data, *width, *height);
+
+        // Calculate reduction
+        let reduction = if standard_peak > 0 {
+            ((standard_peak as f64 - strip_peak as f64) / standard_peak as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // Speed comparison
+        let speed_ratio = standard_time.as_secs_f64() / strip_time.as_secs_f64();
+
+        println!(
+            "{:<25} {:<15} {:<15} {:<12} {:<12} {:<12}",
+            name,
+            format_bytes(standard_peak),
+            format_bytes(strip_peak),
+            format!("{:.1}%", reduction),
+            format!("{:.2}x", speed_ratio),
+            format_bytes(jpeg_size)
+        );
+    }
+
+    println!("\n=== Block Processing Only (StripProcessor) ===\n");
+    println!(
+        "{:<25} {:<15} {:<15} {:<12} {:<12}",
+        "Image", "Standard Peak", "Strip Peak", "Reduction", "Speed"
+    );
     println!("{}", "-".repeat(80));
 
     for (width, height, name) in &test_cases {
@@ -175,7 +265,7 @@ fn main() {
         // Benchmark standard encoder
         let (standard_peak, standard_time) = encode_standard(&rgb_data, *width, *height);
 
-        // Benchmark strip encoder
+        // Benchmark strip encoder (blocks only)
         let (strip_peak, strip_time, output) = encode_strip_blocks(&rgb_data, *width, *height);
 
         // Calculate reduction
@@ -188,7 +278,8 @@ fn main() {
         // Speed comparison
         let speed_ratio = standard_time.as_secs_f64() / strip_time.as_secs_f64();
 
-        println!("{:<25} {:<15} {:<15} {:<12} {:.2}x",
+        println!(
+            "{:<25} {:<15} {:<15} {:<12} {:.2}x",
             name,
             format_bytes(standard_peak),
             format_bytes(strip_peak),
@@ -199,12 +290,16 @@ fn main() {
         // Print block counts for verification
         if *width == 4000 && *height == 3000 {
             println!("\n  Block counts for 12MP:");
-            println!("    Y blocks:  {} (expected: {})",
+            println!(
+                "    Y blocks:  {} (expected: {})",
                 output.y_blocks.len(),
-                ((width + 7) / 8) * ((height + 7) / 8));
-            println!("    Cb blocks: {} (expected: {})",
+                ((width + 7) / 8) * ((height + 7) / 8)
+            );
+            println!(
+                "    Cb blocks: {} (expected: {})",
                 output.cb_blocks.len(),
-                ((width + 15) / 16) * ((height + 15) / 16));
+                ((width + 15) / 16) * ((height + 15) / 16)
+            );
             println!("    Cr blocks: {}", output.cr_blocks.len());
             println!();
         }
@@ -236,11 +331,23 @@ fn main() {
     println!("  Cb downsampled (f32):    {}", format_bytes(cb_down_size));
     println!("  Cr downsampled (f32):    {}", format_bytes(cr_down_size));
     println!("  Y blocks (i16):          {}", format_bytes(y_blocks_size));
-    println!("  Cb blocks (i16):         {}", format_bytes(cb_blocks_size));
-    println!("  Cr blocks (i16):         {}", format_bytes(cr_blocks_size));
+    println!(
+        "  Cb blocks (i16):         {}",
+        format_bytes(cb_blocks_size)
+    );
+    println!(
+        "  Cr blocks (i16):         {}",
+        format_bytes(cr_blocks_size)
+    );
     println!("  ---");
-    let total_full = y_plane_size + cb_full_size + cr_full_size + cb_down_size + cr_down_size
-        + y_blocks_size + cb_blocks_size + cr_blocks_size;
+    let total_full = y_plane_size
+        + cb_full_size
+        + cr_full_size
+        + cb_down_size
+        + cr_down_size
+        + y_blocks_size
+        + cb_blocks_size
+        + cr_blocks_size;
     println!("  Total (theoretical):     {}", format_bytes(total_full));
 
     println!("\nTheoretical memory for strip-based approach:");
@@ -256,7 +363,9 @@ fn main() {
     let total_strip = strip_size + blocks_size + aq_size;
     println!("  Total (theoretical):     {}", format_bytes(total_strip));
 
-    println!("\nTheoretical reduction: {:.1}x ({:.1}%)",
+    println!(
+        "\nTheoretical reduction: {:.1}x ({:.1}%)",
         total_full as f64 / total_strip as f64,
-        (1.0 - total_strip as f64 / total_full as f64) * 100.0);
+        (1.0 - total_strip as f64 / total_full as f64) * 100.0
+    );
 }
