@@ -52,6 +52,9 @@ test-case = "3.3"
 libc = "0.2"
 libloading = "0.8"
 
+# Runtime CPU feature detection and dispatch
+multiversion = "0.7"
+
 # Published crates
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }
 mozjpeg-rs = "0.2.5"

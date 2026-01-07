@@ -13,6 +13,8 @@ use crate::consts::DCT_BLOCK_SIZE;
 #[cfg(feature = "simd")]
 use wide::f32x8;
 
+use multiversion::multiversion;
+
 // ============================================================================
 // Recursive DCT (jpegli-compatible)
 // ============================================================================
@@ -434,7 +436,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// # Returns
 /// 8x8 block of DCT coefficients
-#[inline]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     let mut scratch = [0.0f32; 64];
