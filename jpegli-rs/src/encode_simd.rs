@@ -6,7 +6,13 @@
 //!
 //! All functions have tests to verify parity with scalar implementations.
 
+use multiversion::multiversion;
 use wide::f32x8;
+
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::{
+    _mm256_loadu_ps, _mm256_permute2f128_ps, _mm256_permutevar8x32_ps, _mm256_setr_epi32,
+};
 
 use crate::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
@@ -179,7 +185,7 @@ pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Result<Vec<f32>> {
 /// * `width` - Input width
 /// * `height` - Input height
 /// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
-#[inline]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
 pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
@@ -444,26 +450,55 @@ pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
     }
 }
 
+/// AVX2 intrinsics-based deinterleave: extract evens and odds from 16 consecutive floats.
+///
+/// # Safety
+/// - Requires AVX2 CPU feature (ensured by caller via multiversion)
+/// - `ptr` must point to at least 16 readable f32 values
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (f32x8, f32x8) {
+    // Load 16 consecutive floats
+    let v0 = _mm256_loadu_ps(ptr);
+    let v1 = _mm256_loadu_ps(ptr.add(8));
+
+    // Permute indices: [0,2,4,6,1,3,5,7] puts evens in low 128, odds in high 128
+    let perm_idx = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
+
+    let permuted0 = _mm256_permutevar8x32_ps(v0, perm_idx);
+    let permuted1 = _mm256_permutevar8x32_ps(v1, perm_idx);
+
+    // Combine: low128s together, high128s together
+    let evens_ymm = _mm256_permute2f128_ps(permuted0, permuted1, 0x20);
+    let odds_ymm = _mm256_permute2f128_ps(permuted0, permuted1, 0x31);
+
+    (core::mem::transmute(evens_ymm), core::mem::transmute(odds_ymm))
+}
+
 /// Gather even and odd indexed elements from a row into two f32x8 vectors.
 ///
 /// Given input [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, ...]:
 /// - evens = [a, c, e, g, i, k, m, o]
 /// - odds = [b, d, f, h, j, l, n, p]
+///
+/// Uses scalar element selection. When called from a multiversion function with
+/// AVX2 enabled, the compiler will inline and optimize.
 #[inline(always)]
 fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, f32x8) {
-    // Fast path: when we have at least 16 elements available, use direct loads
+    // Fast path: when we have at least 16 elements available
     if start_idx + 16 <= plane.len() {
         // SAFETY: We just checked that start_idx + 16 <= plane.len()
         unsafe {
             let ptr = plane.as_ptr().add(start_idx);
-            // Load first 8 floats [0-7]
+
+            // Load 16 consecutive floats
             let a: [f32; 8] = *(ptr as *const [f32; 8]);
-            // Load second 8 floats [8-15]
             let b: [f32; 8] = *(ptr.add(8) as *const [f32; 8]);
 
+            // Element selection - compiler will optimize based on target features
             let evens = f32x8::from([a[0], a[2], a[4], a[6], b[0], b[2], b[4], b[6]]);
             let odds = f32x8::from([a[1], a[3], a[5], a[7], b[1], b[3], b[5], b[7]]);
-
             return (evens, odds);
         }
     }
