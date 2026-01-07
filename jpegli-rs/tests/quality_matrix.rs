@@ -1320,11 +1320,7 @@ fn test_ffi_encoding_works() {
 
     // Verify JPEG structure
     assert!(jpeg.len() > 100, "JPEG too short: {} bytes", jpeg.len());
-    assert_eq!(
-        &jpeg[0..2],
-        &[0xFF, 0xD8],
-        "Missing JPEG SOI marker"
-    );
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Missing JPEG SOI marker");
     assert_eq!(
         &jpeg[jpeg.len() - 2..],
         &[0xFF, 0xD9],
@@ -1333,11 +1329,17 @@ fn test_ffi_encoding_works() {
 
     // Try to decode with jpegli decoder to verify it's valid
     let mut decoder = jpegli::Decoder::new();
-    let decoded = decoder.decode(&jpeg[..]).expect("Failed to decode FFI-encoded JPEG");
+    let decoded = decoder
+        .decode(&jpeg[..])
+        .expect("Failed to decode FFI-encoded JPEG");
 
     assert_eq!(decoded.width, width);
     assert_eq!(decoded.height, height);
 
-    println!("✓ FFI encoding produced valid {} byte JPEG (decoded to {}x{})",
-             jpeg.len(), decoded.width, decoded.height);
+    println!(
+        "✓ FFI encoding produced valid {} byte JPEG (decoded to {}x{})",
+        jpeg.len(),
+        decoded.width,
+        decoded.height
+    );
 }

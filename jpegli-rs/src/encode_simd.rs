@@ -12,21 +12,22 @@ use crate::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
 };
+use crate::error::Result;
+use crate::foundation::alloc::try_alloc_zeroed_f32;
 
 // ============================================================================
 // Memory Allocation Helpers
 // ============================================================================
 
-/// Allocate a Vec<f32> without zeroing (all elements will be written before use).
-/// # Safety
-/// The caller MUST write to all elements before reading any.
+/// Allocate a Vec<f32> for writing with fallible allocation.
+///
+/// Uses zeroed allocation which may be faster than uninitialized because:
+/// - OS can provide pre-zeroed pages from zero-page pool
+/// - Avoids lazy page fault overhead on first write
+/// - Pages are mapped immediately rather than on first touch
 #[inline(always)]
-fn alloc_uninit_f32(len: usize) -> Vec<f32> {
-    let mut vec = Vec::with_capacity(len);
-    // SAFETY: We will write to all elements before reading.
-    // This is safe because f32 has no drop logic and no invalid bit patterns.
-    unsafe { vec.set_len(len) };
-    vec
+fn try_alloc_f32(len: usize, context: &'static str) -> Result<Vec<f32>> {
+    try_alloc_zeroed_f32(len, context)
 }
 
 // ============================================================================
@@ -42,11 +43,11 @@ fn alloc_uninit_f32(len: usize) -> Vec<f32> {
 /// * `input` - Input slice of u8 values
 ///
 /// # Returns
-/// Vec of f32 values
+/// Vec of f32 values, or error on allocation failure
 #[inline]
-pub fn u8_slice_to_f32_simd(input: &[u8]) -> Vec<f32> {
+pub fn u8_slice_to_f32_simd(input: &[u8]) -> Result<Vec<f32>> {
     let len = input.len();
-    let mut result = alloc_uninit_f32(len);
+    let mut result = try_alloc_f32(len, "u8_slice_to_f32_simd")?;
 
     let chunks = len / 8;
 
@@ -74,15 +75,15 @@ pub fn u8_slice_to_f32_simd(input: &[u8]) -> Vec<f32> {
         result[i] = input[i] as f32;
     }
 
-    result
+    Ok(result)
 }
 
 /// SIMD-optimized conversion from u8 iterator to f32 Vec.
 ///
 /// Same as u8_slice_to_f32_simd but works with an iterator that has a known length.
 #[inline]
-pub fn u8_iter_to_f32_simd(input: impl Iterator<Item = u8>, len: usize) -> Vec<f32> {
-    let mut result = alloc_uninit_f32(len);
+pub fn u8_iter_to_f32_simd(input: impl Iterator<Item = u8>, len: usize) -> Result<Vec<f32>> {
+    let mut result = try_alloc_f32(len, "u8_iter_to_f32_simd")?;
     let mut i = 0;
 
     // Collect into buffer for SIMD processing
@@ -116,7 +117,7 @@ pub fn u8_iter_to_f32_simd(input: impl Iterator<Item = u8>, len: usize) -> Vec<f
         result[i + j] = buf[j] as f32;
     }
 
-    result
+    Ok(result)
 }
 
 /// SIMD-optimized scaling of f32 slice by a constant factor.
@@ -129,11 +130,11 @@ pub fn u8_iter_to_f32_simd(input: impl Iterator<Item = u8>, len: usize) -> Vec<f
 /// * `scale` - Scale factor to multiply by
 ///
 /// # Returns
-/// Vec of scaled f32 values
+/// Vec of scaled f32 values, or error on allocation failure
 #[inline]
-pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Vec<f32> {
+pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Result<Vec<f32>> {
     let len = input.len();
-    let mut result = alloc_uninit_f32(len);
+    let mut result = try_alloc_f32(len, "scale_f32_slice_simd")?;
 
     let chunks = len / 8;
     let scale_vec = f32x8::splat(scale);
@@ -162,29 +163,27 @@ pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Vec<f32> {
         result[i] = input[i] * scale;
     }
 
-    result
+    Ok(result)
 }
 
 // ============================================================================
 // Chroma Downsampling (2x2 box filter)
 // ============================================================================
 
-/// SIMD-optimized 2x2 box filter downsampling.
+/// SIMD-optimized 2x2 box filter downsampling, writing to pre-allocated buffer.
 ///
-/// Processes 8 output pixels at a time (requires 16 input pixels per row).
+/// This is the **zero-allocation** version for hot paths.
 ///
 /// # Arguments
 /// * `plane` - Input plane (f32, full resolution)
 /// * `width` - Input width
 /// * `height` - Input height
-///
-/// # Returns
-/// Downsampled plane at half resolution
-pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+/// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
+#[inline]
+pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
-    // Use uninit allocation since we write to every element
-    let mut result = alloc_uninit_f32(new_width * new_height);
+    debug_assert!(result.len() >= new_width * new_height);
 
     let scale = f32x8::splat(0.25);
     let chunks = new_width / 8;
@@ -199,15 +198,11 @@ pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
             let out_x = chunk * 8;
             let in_x = out_x * 2;
 
-            // Load 16 consecutive pixels from row y0 (evens and odds)
-            // p00 = [in_x+0, in_x+2, in_x+4, ...] (even columns)
-            // p10 = [in_x+1, in_x+3, in_x+5, ...] (odd columns)
             let row0_idx = y0 * width + in_x;
             let row1_idx = y1 * width + in_x;
 
-            // Gather even/odd from row 0
+            // Gather even/odd from row 0 and row 1
             let (p00, p10) = gather_even_odd_x8(plane, row0_idx, width);
-            // Gather even/odd from row 1
             let (p01, p11) = gather_even_odd_x8(plane, row1_idx, width);
 
             // Box filter: (p00 + p10 + p01 + p11) * 0.25
@@ -215,7 +210,6 @@ pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
             let avg = sum * scale;
 
             // Store result using direct SIMD store
-            // SAFETY: out_row_start + out_x + 8 <= result.len() (chunks calculation guarantees this)
             unsafe {
                 let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
                 *(out_ptr as *mut [f32; 8]) = avg.into();
@@ -235,14 +229,33 @@ pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
             result[out_row_start + out_x] = (p00 + p10 + p01 + p11) * 0.25;
         }
     }
+}
 
-    result
+/// SIMD-optimized 2x2 box filter downsampling.
+///
+/// Processes 8 output pixels at a time (requires 16 input pixels per row).
+///
+/// # Arguments
+/// * `plane` - Input plane (f32, full resolution)
+/// * `width` - Input width
+/// * `height` - Input height
+///
+/// # Returns
+/// Downsampled plane at half resolution, or error on allocation failure
+pub fn downsample_2x2_simd(plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
+    let new_width = (width + 1) / 2;
+    let new_height = (height + 1) / 2;
+    let mut result = try_alloc_f32(new_width * new_height, "downsample_2x2_simd")?;
+
+    downsample_2x2_simd_inplace(plane, width, height, &mut result);
+
+    Ok(result)
 }
 
 /// SIMD-optimized 2x1 (horizontal) box filter downsampling.
-pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
     let new_width = (width + 1) / 2;
-    let mut result = alloc_uninit_f32(new_width * height);
+    let mut result = try_alloc_f32(new_width * height, "downsample_2x1_simd")?;
 
     let scale = f32x8::splat(0.5);
     let chunks = new_width / 8;
@@ -281,13 +294,58 @@ pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
         }
     }
 
-    result
+    Ok(result)
+}
+
+/// SIMD-optimized 2x1 (horizontal) box filter downsampling (in-place).
+///
+/// Writes to pre-allocated result buffer.
+pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
+    let new_width = (width + 1) / 2;
+    debug_assert!(result.len() >= new_width * height);
+
+    let scale = f32x8::splat(0.5);
+    let chunks = new_width / 8;
+
+    for y in 0..height {
+        let out_row_start = y * new_width;
+        let in_row_start = y * width;
+
+        // SIMD path: process 8 output pixels at a time
+        for chunk in 0..chunks {
+            let out_x = chunk * 8;
+            let in_x = out_x * 2;
+
+            // Gather even/odd pixels from the row
+            let (p0, p1) = gather_even_odd_x8(plane, in_row_start + in_x, width);
+
+            // Box filter: (p0 + p1) * 0.5
+            let avg = (p0 + p1) * scale;
+
+            // Store result using direct SIMD store
+            unsafe {
+                let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
+                *(out_ptr as *mut [f32; 8]) = avg.into();
+            }
+        }
+
+        // Scalar remainder
+        for out_x in (chunks * 8)..new_width {
+            let x0 = out_x * 2;
+            let x1 = (x0 + 1).min(width - 1);
+
+            let p0 = plane[in_row_start + x0];
+            let p1 = plane[in_row_start + x1];
+
+            result[out_row_start + out_x] = (p0 + p1) * 0.5;
+        }
+    }
 }
 
 /// SIMD-optimized 1x2 (vertical) box filter downsampling.
-pub fn downsample_1x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub fn downsample_1x2_simd(plane: &[f32], width: usize, height: usize) -> Result<Vec<f32>> {
     let new_height = (height + 1) / 2;
-    let mut result = alloc_uninit_f32(width * new_height);
+    let mut result = try_alloc_f32(width * new_height, "downsample_1x2_simd")?;
 
     let scale = f32x8::splat(0.5);
     let chunks = width / 8;
@@ -332,7 +390,58 @@ pub fn downsample_1x2_simd(plane: &[f32], width: usize, height: usize) -> Vec<f3
         }
     }
 
-    result
+    Ok(result)
+}
+
+/// SIMD-optimized 1x2 (vertical) box filter downsampling (in-place).
+///
+/// Writes to pre-allocated result buffer.
+pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
+    let new_height = (height + 1) / 2;
+    debug_assert!(result.len() >= width * new_height);
+
+    let scale = f32x8::splat(0.5);
+    let chunks = width / 8;
+
+    for y in 0..new_height {
+        let y0 = y * 2;
+        let y1 = (y0 + 1).min(height - 1);
+        let out_row_start = y * width;
+
+        // SIMD path: process 8 pixels at a time
+        for chunk in 0..chunks {
+            let x = chunk * 8;
+
+            // Load 8 consecutive pixels from row y0 and y1 using direct SIMD loads
+            let row0_idx = y0 * width + x;
+            let row1_idx = y1 * width + x;
+
+            // SAFETY: chunks calculation ensures x + 8 <= width
+            let (p0, p1) = unsafe {
+                let ptr0 = plane.as_ptr().add(row0_idx);
+                let ptr1 = plane.as_ptr().add(row1_idx);
+                (
+                    f32x8::from(*(ptr0 as *const [f32; 8])),
+                    f32x8::from(*(ptr1 as *const [f32; 8])),
+                )
+            };
+
+            let avg = (p0 + p1) * scale;
+
+            // Store result using direct SIMD store
+            unsafe {
+                let out_ptr = result.as_mut_ptr().add(out_row_start + x);
+                *(out_ptr as *mut [f32; 8]) = avg.into();
+            }
+        }
+
+        // Scalar remainder
+        for x in (chunks * 8)..width {
+            let p0 = plane[y0 * width + x];
+            let p1 = plane[y1 * width + x];
+            result[out_row_start + x] = (p0 + p1) * 0.5;
+        }
+    }
 }
 
 /// Gather even and odd indexed elements from a row into two f32x8 vectors.
@@ -398,24 +507,29 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, 
 // RGB to YCbCr Color Conversion
 // ============================================================================
 
-/// SIMD-optimized RGB to YCbCr conversion for entire image.
+/// SIMD-optimized RGB to YCbCr conversion, writing to pre-allocated buffers.
 ///
-/// Processes 8 pixels at a time, converting from interleaved RGB to planar YCbCr.
+/// This is the **zero-allocation** version for hot paths. Use this when encoding
+/// multiple images or when performance is critical.
 ///
 /// # Arguments
 /// * `rgb_data` - Input RGB data (3 bytes per pixel, interleaved)
-/// * `num_pixels` - Number of pixels
-///
-/// # Returns
-/// Tuple of (Y plane, Cb plane, Cr plane) as f32 vectors
-pub fn rgb_to_ycbcr_planes_simd(
+/// * `y_plane` - Output Y plane (must be at least `num_pixels` elements)
+/// * `cb_plane` - Output Cb plane (must be at least `num_pixels` elements)
+/// * `cr_plane` - Output Cr plane (must be at least `num_pixels` elements)
+/// * `num_pixels` - Number of pixels to process
+#[inline]
+pub fn rgb_to_ycbcr_planes_simd_inplace(
     rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
     num_pixels: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    // Use uninit allocation since we write to every element
-    let mut y_plane = alloc_uninit_f32(num_pixels);
-    let mut cb_plane = alloc_uninit_f32(num_pixels);
-    let mut cr_plane = alloc_uninit_f32(num_pixels);
+) {
+    debug_assert!(rgb_data.len() >= num_pixels * 3);
+    debug_assert!(y_plane.len() >= num_pixels);
+    debug_assert!(cb_plane.len() >= num_pixels);
+    debug_assert!(cr_plane.len() >= num_pixels);
 
     // Coefficients as SIMD vectors
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
@@ -477,14 +591,16 @@ pub fn rgb_to_ycbcr_planes_simd(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        // Store results
-        let y_arr: [f32; 8] = y.into();
-        let cb_arr: [f32; 8] = cb.into();
-        let cr_arr: [f32; 8] = cr.into();
-
-        y_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&y_arr);
-        cb_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&cb_arr);
-        cr_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&cr_arr);
+        // Store results using direct SIMD stores for better performance
+        // SAFETY: We verified buffer lengths in debug_assert above
+        unsafe {
+            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
+            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
+            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
+            *(y_ptr as *mut [f32; 8]) = y.into();
+            *(cb_ptr as *mut [f32; 8]) = cb.into();
+            *(cr_ptr as *mut [f32; 8]) = cr.into();
+        }
     }
 
     // Scalar remainder
@@ -498,19 +614,139 @@ pub fn rgb_to_ycbcr_planes_simd(
         cb_plane[i] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
         cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
     }
+}
 
-    (y_plane, cb_plane, cr_plane)
+/// SIMD-optimized RGB to YCbCr conversion for entire image.
+///
+/// Processes 8 pixels at a time, converting from interleaved RGB to planar YCbCr.
+///
+/// # Arguments
+/// * `rgb_data` - Input RGB data (3 bytes per pixel, interleaved)
+/// * `num_pixels` - Number of pixels
+///
+/// # Returns
+/// Tuple of (Y plane, Cb plane, Cr plane) as f32 vectors, or error on allocation failure
+pub fn rgb_to_ycbcr_planes_simd(
+    rgb_data: &[u8],
+    num_pixels: usize,
+) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    // Use uninit allocation since we write to every element
+    let mut y_plane = try_alloc_f32(num_pixels, "rgb_to_ycbcr Y plane")?;
+    let mut cb_plane = try_alloc_f32(num_pixels, "rgb_to_ycbcr Cb plane")?;
+    let mut cr_plane = try_alloc_f32(num_pixels, "rgb_to_ycbcr Cr plane")?;
+
+    rgb_to_ycbcr_planes_simd_inplace(
+        rgb_data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        num_pixels,
+    );
+
+    Ok((y_plane, cb_plane, cr_plane))
+}
+
+/// SIMD-optimized RGBA to YCbCr conversion, writing to pre-allocated buffers.
+#[inline]
+pub fn rgba_to_ycbcr_planes_simd_inplace(
+    rgba_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    debug_assert!(rgba_data.len() >= num_pixels * 4);
+    debug_assert!(y_plane.len() >= num_pixels);
+    debug_assert!(cb_plane.len() >= num_pixels);
+    debug_assert!(cr_plane.len() >= num_pixels);
+
+    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+
+    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+
+    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+
+    let offset_128 = f32x8::splat(128.0);
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let pixel_idx = chunk * 8;
+        let rgba_idx = pixel_idx * 4;
+
+        let r = f32x8::from([
+            rgba_data[rgba_idx] as f32,
+            rgba_data[rgba_idx + 4] as f32,
+            rgba_data[rgba_idx + 8] as f32,
+            rgba_data[rgba_idx + 12] as f32,
+            rgba_data[rgba_idx + 16] as f32,
+            rgba_data[rgba_idx + 20] as f32,
+            rgba_data[rgba_idx + 24] as f32,
+            rgba_data[rgba_idx + 28] as f32,
+        ]);
+
+        let g = f32x8::from([
+            rgba_data[rgba_idx + 1] as f32,
+            rgba_data[rgba_idx + 5] as f32,
+            rgba_data[rgba_idx + 9] as f32,
+            rgba_data[rgba_idx + 13] as f32,
+            rgba_data[rgba_idx + 17] as f32,
+            rgba_data[rgba_idx + 21] as f32,
+            rgba_data[rgba_idx + 25] as f32,
+            rgba_data[rgba_idx + 29] as f32,
+        ]);
+
+        let b = f32x8::from([
+            rgba_data[rgba_idx + 2] as f32,
+            rgba_data[rgba_idx + 6] as f32,
+            rgba_data[rgba_idx + 10] as f32,
+            rgba_data[rgba_idx + 14] as f32,
+            rgba_data[rgba_idx + 18] as f32,
+            rgba_data[rgba_idx + 22] as f32,
+            rgba_data[rgba_idx + 26] as f32,
+            rgba_data[rgba_idx + 30] as f32,
+        ]);
+
+        let y = r * r_to_y + g * g_to_y + b * b_to_y;
+        let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
+        let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
+
+        unsafe {
+            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
+            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
+            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
+            *(y_ptr as *mut [f32; 8]) = y.into();
+            *(cb_ptr as *mut [f32; 8]) = cb.into();
+            *(cr_ptr as *mut [f32; 8]) = cr.into();
+        }
+    }
+
+    for i in (chunks * 8)..num_pixels {
+        let rgba_idx = i * 4;
+        let r = rgba_data[rgba_idx] as f32;
+        let g = rgba_data[rgba_idx + 1] as f32;
+        let b = rgba_data[rgba_idx + 2] as f32;
+
+        y_plane[i] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+        cb_plane[i] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+        cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+    }
 }
 
 /// SIMD-optimized RGBA to YCbCr conversion for entire image (ignores alpha).
 pub fn rgba_to_ycbcr_planes_simd(
     rgba_data: &[u8],
     num_pixels: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     // Use uninit allocation since we write to every element
-    let mut y_plane = alloc_uninit_f32(num_pixels);
-    let mut cb_plane = alloc_uninit_f32(num_pixels);
-    let mut cr_plane = alloc_uninit_f32(num_pixels);
+    let mut y_plane = try_alloc_f32(num_pixels, "rgba_to_ycbcr Y plane")?;
+    let mut cb_plane = try_alloc_f32(num_pixels, "rgba_to_ycbcr Cb plane")?;
+    let mut cr_plane = try_alloc_f32(num_pixels, "rgba_to_ycbcr Cr plane")?;
 
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
     let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
@@ -591,18 +827,22 @@ pub fn rgba_to_ycbcr_planes_simd(
         cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
     }
 
-    (y_plane, cb_plane, cr_plane)
+    Ok((y_plane, cb_plane, cr_plane))
 }
 
-/// SIMD-optimized grayscale to YCbCr conversion.
-/// Y = gray value, Cb = Cr = 128.0
-pub fn gray_to_ycbcr_planes_simd(
+/// SIMD-optimized grayscale to YCbCr conversion, writing to pre-allocated buffers.
+#[inline]
+pub fn gray_to_ycbcr_planes_simd_inplace(
     gray_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
     num_pixels: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut y_plane = alloc_uninit_f32(num_pixels);
-    let mut cb_plane = alloc_uninit_f32(num_pixels);
-    let mut cr_plane = alloc_uninit_f32(num_pixels);
+) {
+    debug_assert!(gray_data.len() >= num_pixels);
+    debug_assert!(y_plane.len() >= num_pixels);
+    debug_assert!(cb_plane.len() >= num_pixels);
+    debug_assert!(cr_plane.len() >= num_pixels);
 
     let offset_128 = f32x8::splat(128.0);
     let chunks = num_pixels / 8;
@@ -610,7 +850,6 @@ pub fn gray_to_ycbcr_planes_simd(
     for chunk in 0..chunks {
         let idx = chunk * 8;
 
-        // Load 8 gray values and convert to f32
         let y = f32x8::from([
             gray_data[idx] as f32,
             gray_data[idx + 1] as f32,
@@ -622,32 +861,57 @@ pub fn gray_to_ycbcr_planes_simd(
             gray_data[idx + 7] as f32,
         ]);
 
-        let y_arr: [f32; 8] = y.into();
-        let cb_arr: [f32; 8] = offset_128.into();
-
-        y_plane[idx..idx + 8].copy_from_slice(&y_arr);
-        cb_plane[idx..idx + 8].copy_from_slice(&cb_arr);
-        cr_plane[idx..idx + 8].copy_from_slice(&cb_arr);
+        unsafe {
+            let y_ptr = y_plane.as_mut_ptr().add(idx);
+            let cb_ptr = cb_plane.as_mut_ptr().add(idx);
+            let cr_ptr = cr_plane.as_mut_ptr().add(idx);
+            *(y_ptr as *mut [f32; 8]) = y.into();
+            *(cb_ptr as *mut [f32; 8]) = offset_128.into();
+            *(cr_ptr as *mut [f32; 8]) = offset_128.into();
+        }
     }
 
-    // Scalar remainder
     for i in (chunks * 8)..num_pixels {
         y_plane[i] = gray_data[i] as f32;
         cb_plane[i] = 128.0;
         cr_plane[i] = 128.0;
     }
-
-    (y_plane, cb_plane, cr_plane)
 }
 
-/// SIMD-optimized BGR to YCbCr conversion for entire image.
-pub fn bgr_to_ycbcr_planes_simd(
-    bgr_data: &[u8],
+/// SIMD-optimized grayscale to YCbCr conversion.
+/// Y = gray value, Cb = Cr = 128.0
+pub fn gray_to_ycbcr_planes_simd(
+    gray_data: &[u8],
     num_pixels: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut y_plane = alloc_uninit_f32(num_pixels);
-    let mut cb_plane = alloc_uninit_f32(num_pixels);
-    let mut cr_plane = alloc_uninit_f32(num_pixels);
+) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    let mut y_plane = try_alloc_f32(num_pixels, "gray_to_ycbcr Y plane")?;
+    let mut cb_plane = try_alloc_f32(num_pixels, "gray_to_ycbcr Cb plane")?;
+    let mut cr_plane = try_alloc_f32(num_pixels, "gray_to_ycbcr Cr plane")?;
+
+    gray_to_ycbcr_planes_simd_inplace(
+        gray_data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        num_pixels,
+    );
+
+    Ok((y_plane, cb_plane, cr_plane))
+}
+
+/// SIMD-optimized BGR to YCbCr conversion, writing to pre-allocated buffers.
+#[inline]
+pub fn bgr_to_ycbcr_planes_simd_inplace(
+    bgr_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    debug_assert!(bgr_data.len() >= num_pixels * 3);
+    debug_assert!(y_plane.len() >= num_pixels);
+    debug_assert!(cb_plane.len() >= num_pixels);
+    debug_assert!(cr_plane.len() >= num_pixels);
 
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
     let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
@@ -662,14 +926,12 @@ pub fn bgr_to_ycbcr_planes_simd(
     let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
 
     let offset_128 = f32x8::splat(128.0);
-
     let chunks = num_pixels / 8;
 
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let bgr_idx = pixel_idx * 3;
 
-        // BGR: B at offset 0, G at offset 1, R at offset 2
         let b = f32x8::from([
             bgr_data[bgr_idx] as f32,
             bgr_data[bgr_idx + 3] as f32,
@@ -707,16 +969,16 @@ pub fn bgr_to_ycbcr_planes_simd(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        let y_arr: [f32; 8] = y.into();
-        let cb_arr: [f32; 8] = cb.into();
-        let cr_arr: [f32; 8] = cr.into();
-
-        y_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&y_arr);
-        cb_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&cb_arr);
-        cr_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&cr_arr);
+        unsafe {
+            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
+            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
+            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
+            *(y_ptr as *mut [f32; 8]) = y.into();
+            *(cb_ptr as *mut [f32; 8]) = cb.into();
+            *(cr_ptr as *mut [f32; 8]) = cr.into();
+        }
     }
 
-    // Scalar remainder
     for i in (chunks * 8)..num_pixels {
         let bgr_idx = i * 3;
         let b = bgr_data[bgr_idx] as f32;
@@ -727,18 +989,41 @@ pub fn bgr_to_ycbcr_planes_simd(
         cb_plane[i] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
         cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
     }
-
-    (y_plane, cb_plane, cr_plane)
 }
 
-/// SIMD-optimized BGRA to YCbCr conversion for entire image (ignores alpha).
-pub fn bgra_to_ycbcr_planes_simd(
-    bgra_data: &[u8],
+/// SIMD-optimized BGR to YCbCr conversion for entire image.
+pub fn bgr_to_ycbcr_planes_simd(
+    bgr_data: &[u8],
     num_pixels: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut y_plane = alloc_uninit_f32(num_pixels);
-    let mut cb_plane = alloc_uninit_f32(num_pixels);
-    let mut cr_plane = alloc_uninit_f32(num_pixels);
+) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    let mut y_plane = try_alloc_f32(num_pixels, "bgr_to_ycbcr Y plane")?;
+    let mut cb_plane = try_alloc_f32(num_pixels, "bgr_to_ycbcr Cb plane")?;
+    let mut cr_plane = try_alloc_f32(num_pixels, "bgr_to_ycbcr Cr plane")?;
+
+    bgr_to_ycbcr_planes_simd_inplace(
+        bgr_data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        num_pixels,
+    );
+
+    Ok((y_plane, cb_plane, cr_plane))
+}
+
+/// SIMD-optimized BGRA to YCbCr conversion, writing to pre-allocated buffers.
+#[inline]
+pub fn bgra_to_ycbcr_planes_simd_inplace(
+    bgra_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    debug_assert!(bgra_data.len() >= num_pixels * 4);
+    debug_assert!(y_plane.len() >= num_pixels);
+    debug_assert!(cb_plane.len() >= num_pixels);
+    debug_assert!(cr_plane.len() >= num_pixels);
 
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
     let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
@@ -753,14 +1038,12 @@ pub fn bgra_to_ycbcr_planes_simd(
     let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
 
     let offset_128 = f32x8::splat(128.0);
-
     let chunks = num_pixels / 8;
 
     for chunk in 0..chunks {
         let pixel_idx = chunk * 8;
         let bgra_idx = pixel_idx * 4;
 
-        // BGRA: B at offset 0, G at offset 1, R at offset 2, A at offset 3
         let b = f32x8::from([
             bgra_data[bgra_idx] as f32,
             bgra_data[bgra_idx + 4] as f32,
@@ -798,16 +1081,16 @@ pub fn bgra_to_ycbcr_planes_simd(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        let y_arr: [f32; 8] = y.into();
-        let cb_arr: [f32; 8] = cb.into();
-        let cr_arr: [f32; 8] = cr.into();
-
-        y_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&y_arr);
-        cb_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&cb_arr);
-        cr_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&cr_arr);
+        unsafe {
+            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
+            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
+            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
+            *(y_ptr as *mut [f32; 8]) = y.into();
+            *(cb_ptr as *mut [f32; 8]) = cb.into();
+            *(cr_ptr as *mut [f32; 8]) = cr.into();
+        }
     }
 
-    // Scalar remainder
     for i in (chunks * 8)..num_pixels {
         let bgra_idx = i * 4;
         let b = bgra_data[bgra_idx] as f32;
@@ -818,8 +1101,26 @@ pub fn bgra_to_ycbcr_planes_simd(
         cb_plane[i] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
         cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
     }
+}
 
-    (y_plane, cb_plane, cr_plane)
+/// SIMD-optimized BGRA to YCbCr conversion for entire image (ignores alpha).
+pub fn bgra_to_ycbcr_planes_simd(
+    bgra_data: &[u8],
+    num_pixels: usize,
+) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    let mut y_plane = try_alloc_f32(num_pixels, "bgra_to_ycbcr Y plane")?;
+    let mut cb_plane = try_alloc_f32(num_pixels, "bgra_to_ycbcr Cb plane")?;
+    let mut cr_plane = try_alloc_f32(num_pixels, "bgra_to_ycbcr Cr plane")?;
+
+    bgra_to_ycbcr_planes_simd_inplace(
+        bgra_data,
+        &mut y_plane,
+        &mut cb_plane,
+        &mut cr_plane,
+        num_pixels,
+    );
+
+    Ok((y_plane, cb_plane, cr_plane))
 }
 
 // ============================================================================
@@ -969,12 +1270,17 @@ pub fn extract_block_xyb_simd(
 /// * `height` - Plane height
 /// * `factor` - Smoothing factor (0-127, 0 = no smoothing)
 #[inline]
-pub fn apply_smoothing_simd(plane: &[f32], width: usize, height: usize, factor: u8) -> Vec<f32> {
+pub fn apply_smoothing_simd(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    factor: u8,
+) -> Result<Vec<f32>> {
     if factor == 0 {
-        return plane.to_vec();
+        return Ok(plane.to_vec());
     }
 
-    let mut result = alloc_uninit_f32(width * height);
+    let mut result = try_alloc_f32(width * height, "apply_smoothing_simd")?;
 
     let kw1 = factor as f32 / 1024.0;
     let kw0 = 1.0 - 8.0 * kw1;
@@ -1145,7 +1451,194 @@ pub fn apply_smoothing_simd(plane: &[f32], width: usize, height: usize, factor: 
         }
     }
 
-    result
+    Ok(result)
+}
+
+/// SIMD-optimized input smoothing (in-place to separate buffer).
+///
+/// Writes to pre-allocated result buffer. Input and output must NOT overlap.
+pub fn apply_smoothing_simd_inplace(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    factor: u8,
+    result: &mut [f32],
+) {
+    if factor == 0 {
+        result[..plane.len()].copy_from_slice(plane);
+        return;
+    }
+
+    debug_assert!(result.len() >= width * height);
+
+    let kw1 = factor as f32 / 1024.0;
+    let kw0 = 1.0 - 8.0 * kw1;
+
+    let kw0_simd = f32x8::splat(kw0);
+    let kw1_simd = f32x8::splat(kw1);
+
+    // Process interior rows (can use SIMD for horizontal)
+    for y in 0..height {
+        let y_t = y.saturating_sub(1);
+        let y_b = (y + 1).min(height - 1);
+
+        // Process 8 pixels at a time for interior
+        let chunks = if width >= 10 { (width - 2) / 8 } else { 0 };
+
+        // Handle left edge (x=0)
+        {
+            let x = 0;
+            let x_r = 1;
+
+            let val_tl = plane[y_t * width + x];
+            let val_tm = plane[y_t * width + x];
+            let val_tr = plane[y_t * width + x_r];
+            let val_ml = plane[y * width + x];
+            let val_mm = plane[y * width + x];
+            let val_mr = plane[y * width + x_r];
+            let val_bl = plane[y_b * width + x];
+            let val_bm = plane[y_b * width + x];
+            let val_br = plane[y_b * width + x_r];
+
+            let neighbors = val_tl + val_tm + val_tr + val_ml + val_mr + val_bl + val_bm + val_br;
+            result[y * width + x] = val_mm * kw0 + neighbors * kw1;
+        }
+
+        // SIMD interior
+        for chunk in 0..chunks {
+            let x_start = 1 + chunk * 8;
+
+            // Load center row
+            let mm = f32x8::from([
+                plane[y * width + x_start],
+                plane[y * width + x_start + 1],
+                plane[y * width + x_start + 2],
+                plane[y * width + x_start + 3],
+                plane[y * width + x_start + 4],
+                plane[y * width + x_start + 5],
+                plane[y * width + x_start + 6],
+                plane[y * width + x_start + 7],
+            ]);
+
+            // Load left neighbors (offset -1)
+            let ml = f32x8::from([
+                plane[y * width + x_start - 1],
+                plane[y * width + x_start],
+                plane[y * width + x_start + 1],
+                plane[y * width + x_start + 2],
+                plane[y * width + x_start + 3],
+                plane[y * width + x_start + 4],
+                plane[y * width + x_start + 5],
+                plane[y * width + x_start + 6],
+            ]);
+
+            // Load right neighbors (offset +1)
+            let mr = f32x8::from([
+                plane[y * width + x_start + 1],
+                plane[y * width + x_start + 2],
+                plane[y * width + x_start + 3],
+                plane[y * width + x_start + 4],
+                plane[y * width + x_start + 5],
+                plane[y * width + x_start + 6],
+                plane[y * width + x_start + 7],
+                plane[y * width + x_start + 8],
+            ]);
+
+            // Load top row
+            let tm = f32x8::from([
+                plane[y_t * width + x_start],
+                plane[y_t * width + x_start + 1],
+                plane[y_t * width + x_start + 2],
+                plane[y_t * width + x_start + 3],
+                plane[y_t * width + x_start + 4],
+                plane[y_t * width + x_start + 5],
+                plane[y_t * width + x_start + 6],
+                plane[y_t * width + x_start + 7],
+            ]);
+            let tl = f32x8::from([
+                plane[y_t * width + x_start - 1],
+                plane[y_t * width + x_start],
+                plane[y_t * width + x_start + 1],
+                plane[y_t * width + x_start + 2],
+                plane[y_t * width + x_start + 3],
+                plane[y_t * width + x_start + 4],
+                plane[y_t * width + x_start + 5],
+                plane[y_t * width + x_start + 6],
+            ]);
+            let tr = f32x8::from([
+                plane[y_t * width + x_start + 1],
+                plane[y_t * width + x_start + 2],
+                plane[y_t * width + x_start + 3],
+                plane[y_t * width + x_start + 4],
+                plane[y_t * width + x_start + 5],
+                plane[y_t * width + x_start + 6],
+                plane[y_t * width + x_start + 7],
+                plane[y_t * width + x_start + 8],
+            ]);
+
+            // Load bottom row
+            let bm = f32x8::from([
+                plane[y_b * width + x_start],
+                plane[y_b * width + x_start + 1],
+                plane[y_b * width + x_start + 2],
+                plane[y_b * width + x_start + 3],
+                plane[y_b * width + x_start + 4],
+                plane[y_b * width + x_start + 5],
+                plane[y_b * width + x_start + 6],
+                plane[y_b * width + x_start + 7],
+            ]);
+            let bl = f32x8::from([
+                plane[y_b * width + x_start - 1],
+                plane[y_b * width + x_start],
+                plane[y_b * width + x_start + 1],
+                plane[y_b * width + x_start + 2],
+                plane[y_b * width + x_start + 3],
+                plane[y_b * width + x_start + 4],
+                plane[y_b * width + x_start + 5],
+                plane[y_b * width + x_start + 6],
+            ]);
+            let br = f32x8::from([
+                plane[y_b * width + x_start + 1],
+                plane[y_b * width + x_start + 2],
+                plane[y_b * width + x_start + 3],
+                plane[y_b * width + x_start + 4],
+                plane[y_b * width + x_start + 5],
+                plane[y_b * width + x_start + 6],
+                plane[y_b * width + x_start + 7],
+                plane[y_b * width + x_start + 8],
+            ]);
+
+            // Sum neighbors
+            let neighbors = tl + tm + tr + ml + mr + bl + bm + br;
+
+            // Apply weights
+            let out = mm * kw0_simd + neighbors * kw1_simd;
+
+            // Store
+            let arr: [f32; 8] = out.into();
+            result[y * width + x_start..y * width + x_start + 8].copy_from_slice(&arr);
+        }
+
+        // Handle remainder (right edge and any pixels after last full chunk)
+        let start = if chunks > 0 { 1 + chunks * 8 } else { 1 };
+        for x in start..width {
+            let x_l = x.saturating_sub(1);
+            let x_r = (x + 1).min(width - 1);
+
+            let val_tl = plane[y_t * width + x_l];
+            let val_tm = plane[y_t * width + x];
+            let val_tr = plane[y_t * width + x_r];
+            let val_ml = plane[y * width + x_l];
+            let val_mm = plane[y * width + x];
+            let val_mr = plane[y * width + x_r];
+            let val_bl = plane[y_b * width + x_l];
+            let val_bm = plane[y_b * width + x];
+            let val_br = plane[y_b * width + x_r];
+
+            let neighbors = val_tl + val_tm + val_tr + val_ml + val_mr + val_bl + val_bm + val_br;
+            result[y * width + x] = val_mm * kw0 + neighbors * kw1;
+        }
+    }
 }
 
 // ============================================================================
@@ -1332,7 +1825,7 @@ mod tests {
             .collect();
 
         // SIMD version
-        let simd_result = downsample_2x2_simd(&plane, width, height);
+        let simd_result = downsample_2x2_simd(&plane, width, height).unwrap();
 
         // Scalar reference
         let new_width = (width + 1) / 2;
@@ -1382,7 +1875,7 @@ mod tests {
             })
             .collect();
 
-        let simd_result = downsample_2x1_simd(&plane, width, height);
+        let simd_result = downsample_2x1_simd(&plane, width, height).unwrap();
 
         let new_width = (width + 1) / 2;
         let mut scalar_result = vec![0.0f32; new_width * height];
@@ -1422,7 +1915,7 @@ mod tests {
             })
             .collect();
 
-        let simd_result = downsample_1x2_simd(&plane, width, height);
+        let simd_result = downsample_1x2_simd(&plane, width, height).unwrap();
 
         let new_height = (height + 1) / 2;
         let mut scalar_result = vec![0.0f32; width * new_height];
@@ -1459,7 +1952,7 @@ mod tests {
             .collect();
 
         // SIMD version
-        let (y_simd, cb_simd, cr_simd) = rgb_to_ycbcr_planes_simd(&rgb_data, num_pixels);
+        let (y_simd, cb_simd, cr_simd) = rgb_to_ycbcr_planes_simd(&rgb_data, num_pixels).unwrap();
 
         // Scalar reference
         let mut y_scalar = vec![0.0f32; num_pixels];
@@ -1509,7 +2002,7 @@ mod tests {
             .map(|i| ((i * 13 + 3) % 256) as u8)
             .collect();
 
-        let (y_simd, cb_simd, cr_simd) = rgba_to_ycbcr_planes_simd(&rgba_data, num_pixels);
+        let (y_simd, cb_simd, cr_simd) = rgba_to_ycbcr_planes_simd(&rgba_data, num_pixels).unwrap();
 
         for i in 0..num_pixels {
             let r = rgba_data[i * 4] as f32;
@@ -1551,7 +2044,7 @@ mod tests {
             .map(|i| ((i * 17 + 5) % 256) as u8)
             .collect();
 
-        let (y_simd, cb_simd, cr_simd) = bgr_to_ycbcr_planes_simd(&bgr_data, num_pixels);
+        let (y_simd, cb_simd, cr_simd) = bgr_to_ycbcr_planes_simd(&bgr_data, num_pixels).unwrap();
 
         for i in 0..num_pixels {
             // BGR: B at offset 0, G at offset 1, R at offset 2
@@ -1594,7 +2087,7 @@ mod tests {
             .map(|i| ((i * 19 + 7) % 256) as u8)
             .collect();
 
-        let (y_simd, cb_simd, cr_simd) = bgra_to_ycbcr_planes_simd(&bgra_data, num_pixels);
+        let (y_simd, cb_simd, cr_simd) = bgra_to_ycbcr_planes_simd(&bgra_data, num_pixels).unwrap();
 
         for i in 0..num_pixels {
             // BGRA: B at offset 0, G at offset 1, R at offset 2, A at offset 3
@@ -1637,7 +2130,7 @@ mod tests {
             .map(|i| ((i * 11 + 3) % 256) as u8)
             .collect();
 
-        let (y_simd, cb_simd, cr_simd) = gray_to_ycbcr_planes_simd(&gray_data, num_pixels);
+        let (y_simd, cb_simd, cr_simd) = gray_to_ycbcr_planes_simd(&gray_data, num_pixels).unwrap();
 
         for i in 0..num_pixels {
             let y_scalar = gray_data[i] as f32;
@@ -1731,7 +2224,7 @@ mod tests {
         let plane: Vec<f32> = (0..(width * height)).map(|i| (i % 256) as f32).collect();
 
         let factor = 64u8; // Moderate smoothing
-        let result = apply_smoothing_simd(&plane, width, height, factor);
+        let result = apply_smoothing_simd(&plane, width, height, factor).unwrap();
 
         let kw1 = factor as f32 / 1024.0;
         let kw0 = 1.0 - 8.0 * kw1;
@@ -1772,7 +2265,7 @@ mod tests {
         let plane: Vec<f32> = (0..(width * height)).map(|i| (i % 256) as f32).collect();
 
         // Factor 0 should return a copy
-        let result = apply_smoothing_simd(&plane, width, height, 0);
+        let result = apply_smoothing_simd(&plane, width, height, 0).unwrap();
         assert_eq!(plane, result);
     }
 }

@@ -122,7 +122,7 @@ pub use types::{
 };
 
 // Encoder API
-pub use encode::{Encoder, EncoderConfig};
+pub use encode::{Encoder, EncoderConfig, EncoderWorkspace};
 
 // Decoder API
 pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};

@@ -111,9 +111,7 @@ fn bench_block_operations(c: &mut Criterion) {
     });
 
     // Benchmark to_array
-    group.bench_function("to_array", |b| {
-        b.iter(|| black_box(&block1).to_array())
-    });
+    group.bench_function("to_array", |b| b.iter(|| black_box(&block1).to_array()));
 
     // Benchmark mul
     group.bench_function("mul", |b| {

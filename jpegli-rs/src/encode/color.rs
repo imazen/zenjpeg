@@ -75,9 +75,7 @@ impl Encoder {
         height: usize,
     ) -> Result<Vec<f32>> {
         // Use SIMD-optimized version
-        Ok(crate::encode_simd::downsample_2x2_simd(
-            plane, width, height,
-        ))
+        crate::encode_simd::downsample_2x2_simd(plane, width, height)
     }
 
     /// Downsamples a float plane by 2x1 (horizontal only, box filter averaging).
@@ -87,9 +85,7 @@ impl Encoder {
         width: usize,
         height: usize,
     ) -> Result<Vec<f32>> {
-        Ok(crate::encode_simd::downsample_2x1_simd(
-            plane, width, height,
-        ))
+        crate::encode_simd::downsample_2x1_simd(plane, width, height)
     }
 
     /// Downsamples a float plane by 1x2 (vertical only, box filter averaging).
@@ -99,9 +95,7 @@ impl Encoder {
         width: usize,
         height: usize,
     ) -> Result<Vec<f32>> {
-        Ok(crate::encode_simd::downsample_1x2_simd(
-            plane, width, height,
-        ))
+        crate::encode_simd::downsample_1x2_simd(plane, width, height)
     }
 
     /// Applies input smoothing to a plane before downsampling.
@@ -117,12 +111,7 @@ impl Encoder {
         width: usize,
         height: usize,
     ) -> Result<Vec<f32>> {
-        Ok(crate::encode_simd::apply_smoothing_simd(
-            plane,
-            width,
-            height,
-            self.config.smoothing_factor,
-        ))
+        crate::encode_simd::apply_smoothing_simd(plane, width, height, self.config.smoothing_factor)
     }
 
     /// Converts RGB to YCbCr using yuv crate for 4:2:0 subsampling.
@@ -188,7 +177,7 @@ impl Encoder {
                 let cb_plane = try_alloc_filled(c_size, 128.0f32, "Cb plane")?;
                 let cr_plane = try_alloc_filled(c_size, 128.0f32, "Cr plane")?;
                 // Convert u8 to f32 using SIMD
-                let y_plane = crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels]);
+                let y_plane = crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels])?;
                 return Ok((y_plane, cb_plane, cr_plane, c_width, c_height));
             }
             PixelFormat::Cmyk => {
@@ -231,11 +220,11 @@ impl Encoder {
 
         // Convert u8 planes to f32 using SIMD
         let y_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels])?;
         let cb_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size])?;
         let cr_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size])?;
 
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
@@ -284,11 +273,11 @@ impl Encoder {
 
         // Convert u8 planes to f32 using SIMD
         let y_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels])?;
         let cb_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size])?;
         let cr_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size])?;
 
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
@@ -335,7 +324,7 @@ impl Encoder {
                 let cb_plane = try_alloc_filled(c_size, 128.0f32, "Cb plane")?;
                 let cr_plane = try_alloc_filled(c_size, 128.0f32, "Cr plane")?;
                 // Convert u8 to f32 using SIMD
-                let y_plane = crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels]);
+                let y_plane = crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels])?;
                 return Ok((y_plane, cb_plane, cr_plane, c_width, height));
             }
             PixelFormat::Cmyk => {
@@ -379,11 +368,11 @@ impl Encoder {
 
         // Convert u8 planes to f32 using SIMD
         let y_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels])?;
         let cb_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size])?;
         let cr_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size]);
+            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size])?;
 
         Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, height))
     }
@@ -527,33 +516,191 @@ impl Encoder {
         match self.config.pixel_format {
             PixelFormat::Gray => {
                 // Use SIMD-optimized version (allocates internally)
-                Ok(crate::encode_simd::gray_to_ycbcr_planes_simd(
-                    data, num_pixels,
-                ))
+                crate::encode_simd::gray_to_ycbcr_planes_simd(data, num_pixels)
             }
             PixelFormat::Rgb => {
                 // Use SIMD-optimized version (allocates internally)
-                Ok(crate::encode_simd::rgb_to_ycbcr_planes_simd(
-                    data, num_pixels,
-                ))
+                crate::encode_simd::rgb_to_ycbcr_planes_simd(data, num_pixels)
             }
             PixelFormat::Rgba => {
                 // Use SIMD-optimized version (allocates internally)
-                Ok(crate::encode_simd::rgba_to_ycbcr_planes_simd(
-                    data, num_pixels,
-                ))
+                crate::encode_simd::rgba_to_ycbcr_planes_simd(data, num_pixels)
             }
             PixelFormat::Bgr => {
                 // Use SIMD-optimized version (allocates internally)
-                Ok(crate::encode_simd::bgr_to_ycbcr_planes_simd(
-                    data, num_pixels,
-                ))
+                crate::encode_simd::bgr_to_ycbcr_planes_simd(data, num_pixels)
             }
             PixelFormat::Bgra => {
                 // Use SIMD-optimized version (allocates internally)
-                Ok(crate::encode_simd::bgra_to_ycbcr_planes_simd(
-                    data, num_pixels,
+                crate::encode_simd::bgra_to_ycbcr_planes_simd(data, num_pixels)
+            }
+            PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
+                feature: "CMYK encoding",
+            }),
+        }
+    }
+
+    /// Converts to YCbCr using workspace buffers and applies chroma subsampling.
+    ///
+    /// This is the zero-allocation hot path for batch encoding. Uses workspace
+    /// buffers for all intermediate data.
+    ///
+    /// Returns: (y_vec, cb_vec, cr_vec, chroma_width, chroma_height)
+    /// Copies data out of workspace to avoid lifetime issues with downstream code.
+    pub(super) fn convert_intrinsic_with_subsampling_workspace(
+        &self,
+        data: &[u8],
+        workspace: &mut super::EncoderWorkspace,
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let num_pixels = crate::alloc::checked_size_2d(width, height)?;
+
+        // Convert to YCbCr in-place to workspace buffers
+        {
+            let (y_plane, cb_plane, cr_plane) = workspace.planes_mut(num_pixels);
+            self.convert_to_ycbcr_f32_inplace(data, y_plane, cb_plane, cr_plane)?;
+        }
+
+        // Handle chroma subsampling
+        // For smoothing, fall back to allocating path (rare case)
+        if self.config.smoothing_factor > 0 {
+            // Slow path: smoothing - use the original allocating implementation
+            return self.convert_intrinsic_with_subsampling(data);
+        }
+
+        // Fast path: no smoothing, downsample directly using workspace
+        match self.config.subsampling {
+            Subsampling::S420 => {
+                let c_w = (width + 1) / 2;
+                let c_h = (height + 1) / 2;
+                let c_size = c_w * c_h;
+                // Downsample cb/cr planes to temp buffers
+                crate::encode_simd::downsample_2x2_simd_inplace(
+                    &workspace.cb_plane[..num_pixels],
+                    width,
+                    height,
+                    &mut workspace.temp_cb[..c_size],
+                );
+                crate::encode_simd::downsample_2x2_simd_inplace(
+                    &workspace.cr_plane[..num_pixels],
+                    width,
+                    height,
+                    &mut workspace.temp_cr[..c_size],
+                );
+                // Return owned copies from workspace
+                Ok((
+                    workspace.y_plane[..num_pixels].to_vec(),
+                    workspace.temp_cb[..c_size].to_vec(),
+                    workspace.temp_cr[..c_size].to_vec(),
+                    c_w,
+                    c_h,
                 ))
+            }
+            Subsampling::S422 => {
+                let c_w = (width + 1) / 2;
+                let c_size = c_w * height;
+                crate::encode_simd::downsample_2x1_simd_inplace(
+                    &workspace.cb_plane[..num_pixels],
+                    width,
+                    height,
+                    &mut workspace.temp_cb[..c_size],
+                );
+                crate::encode_simd::downsample_2x1_simd_inplace(
+                    &workspace.cr_plane[..num_pixels],
+                    width,
+                    height,
+                    &mut workspace.temp_cr[..c_size],
+                );
+                Ok((
+                    workspace.y_plane[..num_pixels].to_vec(),
+                    workspace.temp_cb[..c_size].to_vec(),
+                    workspace.temp_cr[..c_size].to_vec(),
+                    c_w,
+                    height,
+                ))
+            }
+            Subsampling::S440 => {
+                let c_h = (height + 1) / 2;
+                let c_size = width * c_h;
+                crate::encode_simd::downsample_1x2_simd_inplace(
+                    &workspace.cb_plane[..num_pixels],
+                    width,
+                    height,
+                    &mut workspace.temp_cb[..c_size],
+                );
+                crate::encode_simd::downsample_1x2_simd_inplace(
+                    &workspace.cr_plane[..num_pixels],
+                    width,
+                    height,
+                    &mut workspace.temp_cr[..c_size],
+                );
+                Ok((
+                    workspace.y_plane[..num_pixels].to_vec(),
+                    workspace.temp_cb[..c_size].to_vec(),
+                    workspace.temp_cr[..c_size].to_vec(),
+                    width,
+                    c_h,
+                ))
+            }
+            Subsampling::S444 => {
+                // No downsampling, return planes directly
+                Ok((
+                    workspace.y_plane[..num_pixels].to_vec(),
+                    workspace.cb_plane[..num_pixels].to_vec(),
+                    workspace.cr_plane[..num_pixels].to_vec(),
+                    width,
+                    height,
+                ))
+            }
+        }
+    }
+
+    /// Converts input data to YCbCr planes using workspace buffers (zero-allocation).
+    ///
+    /// This is the hot-path version for batch encoding. Writes directly to
+    /// pre-allocated workspace buffers to avoid allocation overhead.
+    pub(super) fn convert_to_ycbcr_f32_inplace(
+        &self,
+        data: &[u8],
+        y_plane: &mut [f32],
+        cb_plane: &mut [f32],
+        cr_plane: &mut [f32],
+    ) -> Result<()> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let num_pixels = checked_size_2d(width, height)?;
+
+        match self.config.pixel_format {
+            PixelFormat::Gray => {
+                crate::encode_simd::gray_to_ycbcr_planes_simd_inplace(
+                    data, y_plane, cb_plane, cr_plane, num_pixels,
+                );
+                Ok(())
+            }
+            PixelFormat::Rgb => {
+                crate::encode_simd::rgb_to_ycbcr_planes_simd_inplace(
+                    data, y_plane, cb_plane, cr_plane, num_pixels,
+                );
+                Ok(())
+            }
+            PixelFormat::Rgba => {
+                crate::encode_simd::rgba_to_ycbcr_planes_simd_inplace(
+                    data, y_plane, cb_plane, cr_plane, num_pixels,
+                );
+                Ok(())
+            }
+            PixelFormat::Bgr => {
+                crate::encode_simd::bgr_to_ycbcr_planes_simd_inplace(
+                    data, y_plane, cb_plane, cr_plane, num_pixels,
+                );
+                Ok(())
+            }
+            PixelFormat::Bgra => {
+                crate::encode_simd::bgra_to_ycbcr_planes_simd_inplace(
+                    data, y_plane, cb_plane, cr_plane, num_pixels,
+                );
+                Ok(())
             }
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
                 feature: "CMYK encoding",

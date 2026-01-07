@@ -34,7 +34,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 use jpegli::{Encoder, Quality};
-use jpegli_bench_utils::{ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern};
+use jpegli_bench_utils::{
+    ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
+};
 use std::time::Duration;
 
 // ============================================================================
@@ -84,7 +86,11 @@ impl BenchConfig {
 
     fn to_encoder_config(&self) -> EncoderConfig {
         EncoderConfig::new(EncoderImpl::CJpegli)
-            .color(if self.use_xyb { ColorMode::Xyb } else { ColorMode::YCbCr })
+            .color(if self.use_xyb {
+                ColorMode::Xyb
+            } else {
+                ColorMode::YCbCr
+            })
             .scan(match self.mode {
                 JpegMode::Baseline => ScanMode::Baseline,
                 JpegMode::Progressive => ScanMode::Progressive,
@@ -116,7 +122,8 @@ fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
 }
 
 fn encode_cpp_ffi(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
-    config.to_encoder_config()
+    config
+        .to_encoder_config()
         .encode(image)
         .expect("C++ FFI encode failed")
 }

@@ -571,7 +571,7 @@ fn aan_dct_1d(d: &mut [f32; 8]) {
     let tmp11 = tmp1 + tmp2;
     let tmp12 = tmp1 - tmp2;
 
-    d[0] = tmp10 + tmp11;  // DC coefficient
+    d[0] = tmp10 + tmp11; // DC coefficient
     d[4] = tmp10 - tmp11;
 
     // MULTIPLY #1: z1 = (tmp12 + tmp13) * cos(π/4)
