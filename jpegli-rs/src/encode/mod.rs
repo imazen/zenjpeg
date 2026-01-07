@@ -10,6 +10,7 @@ pub mod config;
 mod hybrid;
 mod output;
 mod progressive;
+pub mod strip;
 mod workspace;
 
 // Re-export config types
