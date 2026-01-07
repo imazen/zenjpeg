@@ -17,6 +17,21 @@ impl Encoder {
         }
     }
 
+    /// Encodes as baseline JPEG using workspace buffers.
+    ///
+    /// Note: Currently falls back to regular path. The workspace approach requires
+    /// modifying the entire encode pipeline to use slices instead of owned Vecs
+    /// to avoid the extra copy overhead that negates the workspace benefits.
+    pub(super) fn encode_baseline_with_workspace(
+        &self,
+        data: &[u8],
+        _workspace: &mut super::EncoderWorkspace,
+    ) -> Result<Vec<u8>> {
+        // Fall back to regular path - workspace integration needs deeper refactoring
+        // to pass slices through the pipeline instead of copying to Vecs
+        self.encode_baseline(data)
+    }
+
     /// Encodes using standard YCbCr color space.
     fn encode_baseline_ycbcr(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
@@ -397,7 +412,7 @@ impl Encoder {
 
         // Compute AQ map from Y plane (XYB's Y is the luma-like channel)
         // Scale Y plane from [0,1] to [0,255] range for AQ computation (SIMD)
-        let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0);
+        let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0)?;
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map =

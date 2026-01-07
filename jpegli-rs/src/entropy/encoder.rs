@@ -1075,7 +1075,8 @@ mod tests {
             let simd_output = simd_encoder.finish();
 
             assert_eq!(
-                scalar_output, simd_output,
+                scalar_output,
+                simd_output,
                 "Block {} mismatch: scalar {} bytes, simd {} bytes",
                 idx,
                 scalar_output.len(),

@@ -90,7 +90,9 @@ impl Encoder {
     ) -> Result<Vec<u8>> {
         // Estimate output size from token count (~2 bytes per token average)
         let scan_info = token_buffer.scan_info.get(scan_idx);
-        let estimated_tokens = scan_info.map(|s| s.num_tokens + s.ref_tokens.len()).unwrap_or(1024);
+        let estimated_tokens = scan_info
+            .map(|s| s.num_tokens + s.ref_tokens.len())
+            .unwrap_or(1024);
         let mut encoder = EntropyEncoder::with_capacity(estimated_tokens * 2);
         let num_components = if is_color { 3 } else { 1 };
 
@@ -660,7 +662,7 @@ impl Encoder {
         let b_quant = self.gen_quant_table(2, true, false);
 
         // Compute AQ map from Y plane (same as baseline XYB, using SIMD scaling)
-        let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0);
+        let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0)?;
         let y_quant_01 = y_quant.values[1];
         let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
 
@@ -929,6 +931,22 @@ impl Encoder {
         output.push(MARKER_EOI);
 
         Ok(output)
+    }
+
+    /// Encodes as progressive JPEG using workspace buffers.
+    ///
+    /// Note: Currently falls back to regular path. Workspace is primarily
+    /// beneficial for baseline encoding where it avoids intermediate allocations.
+    /// Progressive encoding has more complex dependencies that make workspace
+    /// integration more involved.
+    pub(super) fn encode_progressive_with_workspace(
+        &self,
+        data: &[u8],
+        _workspace: &mut super::EncoderWorkspace,
+    ) -> Result<Vec<u8>> {
+        // For now, fall back to regular progressive encoding.
+        // The workspace benefits baseline encoding more significantly.
+        self.encode_progressive(data)
     }
 
     /// Encodes progressive JPEG with optimized Huffman tables using two-pass tokenization.

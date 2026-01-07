@@ -58,6 +58,9 @@ mozjpeg-rs = "0.2.5"
 yuv = { version = "0.8", features = ["professional_mode"] }
 
 
+[profile.release]
+debug = true
+
 [workspace.lints.rust]
 unsafe_code = "warn"
 

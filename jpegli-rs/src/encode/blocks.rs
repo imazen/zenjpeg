@@ -51,7 +51,7 @@ impl Encoder {
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
         // Convert Y plane to f32 for AQ computation (SIMD)
-        let y_plane_f32 = crate::encode_simd::u8_slice_to_f32_simd(y_plane);
+        let y_plane_f32 = crate::encode_simd::u8_slice_to_f32_simd(y_plane)?;
 
         // Compute per-block adaptive quantization strength from Y plane
         // C++ uses y_quant_01 = quant_table[1] for dampen calculation
@@ -963,7 +963,10 @@ impl Encoder {
                         );
                         let x_dct = forward_dct_8x8(&x_block);
                         let x_quant_coeffs = quant::quantize_block(&x_dct, &x_quant.values);
-                        natural_to_zigzag_into(&x_quant_coeffs, &mut x_blocks[xy_base + block_offset]);
+                        natural_to_zigzag_into(
+                            &x_quant_coeffs,
+                            &mut x_blocks[xy_base + block_offset],
+                        );
                     }
                 }
 
@@ -978,7 +981,10 @@ impl Encoder {
                         );
                         let y_dct = forward_dct_8x8(&y_block);
                         let y_quant_coeffs = quant::quantize_block(&y_dct, &y_quant.values);
-                        natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[xy_base + block_offset]);
+                        natural_to_zigzag_into(
+                            &y_quant_coeffs,
+                            &mut y_blocks[xy_base + block_offset],
+                        );
                     }
                 }
 
@@ -1059,7 +1065,10 @@ impl Encoder {
                             x_zero_bias,
                             aq_strength,
                         );
-                        natural_to_zigzag_into(&x_quant_coeffs, &mut x_blocks[xy_base + block_offset]);
+                        natural_to_zigzag_into(
+                            &x_quant_coeffs,
+                            &mut x_blocks[xy_base + block_offset],
+                        );
                     }
                 }
 
@@ -1081,7 +1090,10 @@ impl Encoder {
                             y_zero_bias,
                             aq_strength,
                         );
-                        natural_to_zigzag_into(&y_quant_coeffs, &mut y_blocks[xy_base + block_offset]);
+                        natural_to_zigzag_into(
+                            &y_quant_coeffs,
+                            &mut y_blocks[xy_base + block_offset],
+                        );
                     }
                 }
 
