@@ -159,19 +159,19 @@ impl Config {
     fn short_name(&self) -> String {
         format!(
             "{}/{}/{}/{}",
+            match self.color {
+                ColorMode::YCbCr => "YUV",
+                ColorMode::Xyb => "XYB",
+            },
             match self.scan {
-                ScanMode::Baseline => "B",
-                ScanMode::Progressive => "P",
+                ScanMode::Baseline => "SEQ",
+                ScanMode::Progressive => "PRO",
             },
             match self.huffman {
-                HuffmanMode::Fixed => "F",
-                HuffmanMode::Optimized => "O",
+                HuffmanMode::Fixed => "FIX",
+                HuffmanMode::Optimized => "OPT",
             },
             self.chroma.name(),
-            match self.color {
-                ColorMode::YCbCr => "Y",
-                ColorMode::Xyb => "X",
-            }
         )
     }
 
@@ -220,17 +220,27 @@ impl TimingResult {
 // Verification Functions
 // ============================================================================
 
-fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    // Try ICC-aware decoder first for XYB support
-    jpegli::icc::decode_jpeg_with_icc(data)
-        .map(|(pixels, _, _)| pixels)
-        .unwrap_or_else(|_| {
+fn decode_jpeg(data: &[u8], color: ColorMode) -> Vec<u8> {
+    match color {
+        ColorMode::Xyb  => {
+            jpegli::icc::decode_jpeg_with_icc(data)
+                .map(|(pixels, _, _)| pixels)
+                .unwrap_or_else(|_| {
+                    use zune_jpeg::zune_core::bytestream::ZCursor;
+                    use zune_jpeg::JpegDecoder;
+                    let cursor = ZCursor::new(data);
+                    let mut decoder = JpegDecoder::new(cursor);
+                    decoder.decode().expect("JPEG decode failed")
+                })
+        }
+        ColorMode::YCbCr => {
             use zune_jpeg::zune_core::bytestream::ZCursor;
             use zune_jpeg::JpegDecoder;
             let cursor = ZCursor::new(data);
             let mut decoder = JpegDecoder::new(cursor);
             decoder.decode().expect("JPEG decode failed")
-        })
+        }
+    }
 }
 
 fn compute_max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {
@@ -378,8 +388,8 @@ fn benchmark_config(
     }
 
     // Decode and compute quality metrics
-    let rust_decoded = decode_jpeg(&rust_jpeg);
-    let cpp_decoded = decode_jpeg(&cpp_jpeg);
+    let rust_decoded = decode_jpeg(&rust_jpeg, config.color);
+    let cpp_decoded = decode_jpeg(&cpp_jpeg, config.color);
 
     // SSIM2 vs original
     let rust_ssim2 = compute_ssim2(rgb, &rust_decoded, width as usize, height as usize);
@@ -613,8 +623,8 @@ fn main() {
         // YCbCr baseline
         Config {
             scan: ScanMode::Baseline,
-            huffman: HuffmanMode::Optimized,
-            chroma: ChromaSampling::S420,
+            huffman: HuffmanMode::Fixed,
+            chroma: ChromaSampling::S444,
             color: ColorMode::YCbCr,
         },
         Config {
@@ -623,9 +633,14 @@ fn main() {
             chroma: ChromaSampling::S444,
             color: ColorMode::YCbCr,
         },
-        // YCbCr progressive
         Config {
             scan: ScanMode::Progressive,
+            huffman: HuffmanMode::Optimized,
+            chroma: ChromaSampling::S444,
+            color: ColorMode::YCbCr,
+        },
+        Config {
+            scan: ScanMode::Baseline,
             huffman: HuffmanMode::Optimized,
             chroma: ChromaSampling::S420,
             color: ColorMode::YCbCr,
@@ -633,9 +648,10 @@ fn main() {
         Config {
             scan: ScanMode::Progressive,
             huffman: HuffmanMode::Optimized,
-            chroma: ChromaSampling::S444,
+            chroma: ChromaSampling::S420,
             color: ColorMode::YCbCr,
         },
+
         // XYB
         Config {
             scan: ScanMode::Baseline,
