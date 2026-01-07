@@ -8,7 +8,8 @@ use super::*;
 impl Encoder {
     /// Encodes as baseline JPEG.
     pub(super) fn encode_baseline(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let mut output = Vec::with_capacity(data.len() / 4);
+        let mut output =
+            crate::foundation::alloc::try_with_capacity(data.len() / 4, "baseline output")?;
 
         if self.config.use_xyb {
             self.encode_baseline_xyb(data, &mut output)
