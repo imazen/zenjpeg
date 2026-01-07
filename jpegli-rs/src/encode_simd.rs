@@ -11,7 +11,10 @@ use wide::f32x8;
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    _mm256_loadu_ps, _mm256_permute2f128_ps, _mm256_permutevar8x32_ps, _mm256_setr_epi32,
+    __m128i, __m256, __m256i, _mm256_add_ps, _mm256_castsi256_ps, _mm256_cvtepi32_ps,
+    _mm256_insertf128_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_permute2f128_ps,
+    _mm256_permutevar8x32_ps, _mm256_set1_ps, _mm256_setr_epi32, _mm256_storeu_ps,
+    _mm_cvtepu8_epi32, _mm_loadu_si128, _mm_setr_epi8, _mm_shuffle_epi8, _mm_cvtsi128_si32,
 };
 
 use crate::consts::{
@@ -450,15 +453,23 @@ pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
     }
 }
 
+// ============================================================================
+// AVX2 Intrinsics Implementations
+// ============================================================================
+
 /// AVX2 intrinsics-based deinterleave: extract evens and odds from 16 consecutive floats.
 ///
+/// Given input [a,b,c,d,e,f,g,h, i,j,k,l,m,n,o,p]:
+/// - evens = [a,c,e,g,i,k,m,o]
+/// - odds  = [b,d,f,h,j,l,n,p]
+///
 /// # Safety
-/// - Requires AVX2 CPU feature (ensured by caller via multiversion)
+/// - Requires AVX2 CPU feature
 /// - `ptr` must point to at least 16 readable f32 values
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (f32x8, f32x8) {
+unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (__m256, __m256) {
     // Load 16 consecutive floats
     let v0 = _mm256_loadu_ps(ptr);
     let v1 = _mm256_loadu_ps(ptr.add(8));
@@ -470,10 +481,132 @@ unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (f32x8, f32x8) {
     let permuted1 = _mm256_permutevar8x32_ps(v1, perm_idx);
 
     // Combine: low128s together, high128s together
-    let evens_ymm = _mm256_permute2f128_ps(permuted0, permuted1, 0x20);
-    let odds_ymm = _mm256_permute2f128_ps(permuted0, permuted1, 0x31);
+    // 0x20 = select low128 from both, 0x31 = select high128 from both
+    let evens = _mm256_permute2f128_ps(permuted0, permuted1, 0x20);
+    let odds = _mm256_permute2f128_ps(permuted0, permuted1, 0x31);
 
-    (core::mem::transmute(evens_ymm), core::mem::transmute(odds_ymm))
+    (evens, odds)
+}
+
+/// AVX2 intrinsics-based 2x2 box filter downsample.
+///
+/// Processes 8 output pixels at a time using AVX2 permute instructions
+/// for efficient deinterleaving.
+///
+/// # Safety
+/// - Requires AVX2 CPU feature
+/// - All buffer bounds must be pre-validated
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+pub unsafe fn downsample_2x2_avx2(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    result: &mut [f32],
+) {
+    let new_width = (width + 1) / 2;
+    let new_height = (height + 1) / 2;
+
+    let scale = _mm256_set1_ps(0.25);
+
+    // Calculate how many SIMD chunks we can process per row.
+    // We need 16 consecutive input pixels (in_x to in_x+15) per chunk.
+    // So max in_x for SIMD is width - 16, meaning max out_x is (width - 16) / 2.
+    let simd_chunks_per_row = if width >= 16 { (width - 16) / 2 / 8 + 1 } else { 0 };
+    // But also cap based on output width
+    let simd_chunks_per_row = simd_chunks_per_row.min(new_width / 8);
+
+    for y in 0..new_height {
+        let y0 = y * 2;
+        let y1 = (y0 + 1).min(height - 1);
+        let out_row_start = y * new_width;
+
+        // AVX2 SIMD path: process 8 output pixels at a time
+        for chunk in 0..simd_chunks_per_row {
+            let out_x = chunk * 8;
+            let in_x = out_x * 2;
+
+            // Extra safety check: ensure we have 16 pixels within the row
+            if in_x + 16 > width {
+                break;
+            }
+
+            let row0_ptr = plane.as_ptr().add(y0 * width + in_x);
+            let row1_ptr = plane.as_ptr().add(y1 * width + in_x);
+
+            // Gather even/odd from row 0 and row 1 using AVX2 permutes
+            let (p00, p10) = gather_even_odd_avx2_raw(row0_ptr);
+            let (p01, p11) = gather_even_odd_avx2_raw(row1_ptr);
+
+            // Box filter: (p00 + p10 + p01 + p11) * 0.25
+            let sum01 = _mm256_add_ps(p00, p10);
+            let sum23 = _mm256_add_ps(p01, p11);
+            let sum = _mm256_add_ps(sum01, sum23);
+            let avg = _mm256_mul_ps(sum, scale);
+
+            // Store result
+            let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
+            _mm256_storeu_ps(out_ptr, avg);
+        }
+
+        // Scalar remainder - process all pixels not handled by SIMD
+        let simd_processed = simd_chunks_per_row * 8;
+        for out_x in simd_processed..new_width {
+            let x0 = out_x * 2;
+            let x1 = (x0 + 1).min(width - 1);
+
+            let p00 = plane[y0 * width + x0];
+            let p10 = plane[y0 * width + x1];
+            let p01 = plane[y1 * width + x0];
+            let p11 = plane[y1 * width + x1];
+
+            result[out_row_start + out_x] = (p00 + p10 + p01 + p11) * 0.25;
+        }
+    }
+}
+
+/// Scalar reference implementation of gather_even_odd for testing.
+///
+/// This is the ground truth implementation that AVX2 versions are tested against.
+#[inline]
+fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
+    debug_assert!(data.len() >= 16);
+    let evens = [
+        data[0], data[2], data[4], data[6], data[8], data[10], data[12], data[14],
+    ];
+    let odds = [
+        data[1], data[3], data[5], data[7], data[9], data[11], data[13], data[15],
+    ];
+    (evens, odds)
+}
+
+/// Scalar reference implementation of 2x2 downsample for testing.
+///
+/// This is the ground truth implementation that SIMD versions are tested against.
+pub fn downsample_2x2_scalar(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let new_width = (width + 1) / 2;
+    let new_height = (height + 1) / 2;
+    let mut result = vec![0.0f32; new_width * new_height];
+
+    for y in 0..new_height {
+        let y0 = y * 2;
+        let y1 = (y0 + 1).min(height - 1);
+
+        for x in 0..new_width {
+            let x0 = x * 2;
+            let x1 = (x0 + 1).min(width - 1);
+
+            let p00 = plane[y0 * width + x0];
+            let p10 = plane[y0 * width + x1];
+            let p01 = plane[y1 * width + x0];
+            let p11 = plane[y1 * width + x1];
+
+            result[y * new_width + x] = (p00 + p10 + p01 + p11) * 0.25;
+        }
+    }
+
+    result
 }
 
 /// Gather even and odd indexed elements from a row into two f32x8 vectors.
@@ -536,6 +669,177 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, 
     ]);
 
     (evens, odds)
+}
+
+// ============================================================================
+// AVX2 RGB to YCbCr Intrinsics
+// ============================================================================
+
+/// Extract 4 R values from 16 bytes of RGB data using SSE shuffle.
+/// Input: [R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5]
+/// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn extract_r_sse(rgb: __m128i) -> __m128i {
+    // Shuffle mask: extract bytes 0, 3, 6, 9 (R values)
+    let mask = _mm_setr_epi8(0, 3, 6, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    _mm_shuffle_epi8(rgb, mask)
+}
+
+/// Extract 4 G values from 16 bytes of RGB data using SSE shuffle.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn extract_g_sse(rgb: __m128i) -> __m128i {
+    // Shuffle mask: extract bytes 1, 4, 7, 10 (G values)
+    let mask = _mm_setr_epi8(1, 4, 7, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    _mm_shuffle_epi8(rgb, mask)
+}
+
+/// Extract 4 B values from 16 bytes of RGB data using SSE shuffle.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn extract_b_sse(rgb: __m128i) -> __m128i {
+    // Shuffle mask: extract bytes 2, 5, 8, 11 (B values)
+    let mask = _mm_setr_epi8(2, 5, 8, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+    _mm_shuffle_epi8(rgb, mask)
+}
+
+/// Convert 4 u8 values (in low bytes of __m128i) to __m128 f32.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn u8x4_to_f32x4(v: __m128i) -> core::arch::x86_64::__m128 {
+    use core::arch::x86_64::_mm_cvtepi32_ps;
+    // Zero-extend u8 to i32, then convert to f32
+    let i32_vec = _mm_cvtepu8_epi32(v);
+    _mm_cvtepi32_ps(i32_vec)
+}
+
+/// AVX2 intrinsics implementation for RGB to YCbCr conversion.
+///
+/// Processes 8 pixels at a time using explicit SSE/AVX2 intrinsics for
+/// deinterleaving RGB data, which LLVM cannot auto-vectorize effectively.
+///
+/// # Safety
+/// Requires AVX2 support. Caller must verify with `is_x86_feature_detected!("avx2")`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+pub unsafe fn rgb_to_ycbcr_8px_avx2(
+    rgb_ptr: *const u8,
+    y_ptr: *mut f32,
+    cb_ptr: *mut f32,
+    cr_ptr: *mut f32,
+) {
+    use core::arch::x86_64::{__m128, _mm_add_ps, _mm_mul_ps, _mm_set1_ps, _mm_storeu_ps};
+
+    // Load 24 bytes as two overlapping 16-byte loads
+    // Load 0: bytes [0..15] for pixels 0-3 (plus partial pixel 4-5)
+    // Load 1: bytes [12..27] for pixels 4-7 (overlaps by 4 bytes, but we only read 24)
+    let rgb0 = _mm_loadu_si128(rgb_ptr as *const __m128i);
+    let rgb1 = _mm_loadu_si128(rgb_ptr.add(12) as *const __m128i);
+
+    // Extract R, G, B for first 4 pixels
+    let r0_bytes = extract_r_sse(rgb0);
+    let g0_bytes = extract_g_sse(rgb0);
+    let b0_bytes = extract_b_sse(rgb0);
+
+    // Extract R, G, B for second 4 pixels
+    let r1_bytes = extract_r_sse(rgb1);
+    let g1_bytes = extract_g_sse(rgb1);
+    let b1_bytes = extract_b_sse(rgb1);
+
+    // Convert to f32
+    let r0: __m128 = u8x4_to_f32x4(r0_bytes);
+    let g0: __m128 = u8x4_to_f32x4(g0_bytes);
+    let b0: __m128 = u8x4_to_f32x4(b0_bytes);
+    let r1: __m128 = u8x4_to_f32x4(r1_bytes);
+    let g1: __m128 = u8x4_to_f32x4(g1_bytes);
+    let b1: __m128 = u8x4_to_f32x4(b1_bytes);
+
+    // Coefficients
+    let r_to_y = _mm_set1_ps(YCBCR_R_TO_Y);
+    let g_to_y = _mm_set1_ps(YCBCR_G_TO_Y);
+    let b_to_y = _mm_set1_ps(YCBCR_B_TO_Y);
+    let r_to_cb = _mm_set1_ps(YCBCR_R_TO_CB);
+    let g_to_cb = _mm_set1_ps(YCBCR_G_TO_CB);
+    let b_to_cb = _mm_set1_ps(YCBCR_B_TO_CB);
+    let r_to_cr = _mm_set1_ps(YCBCR_R_TO_CR);
+    let g_to_cr = _mm_set1_ps(YCBCR_G_TO_CR);
+    let b_to_cr = _mm_set1_ps(YCBCR_B_TO_CR);
+    let offset_128 = _mm_set1_ps(128.0);
+
+    // Compute Y, Cb, Cr for first 4 pixels
+    let y0 = _mm_add_ps(
+        _mm_add_ps(_mm_mul_ps(r0, r_to_y), _mm_mul_ps(g0, g_to_y)),
+        _mm_mul_ps(b0, b_to_y),
+    );
+    let cb0 = _mm_add_ps(
+        offset_128,
+        _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(r0, r_to_cb), _mm_mul_ps(g0, g_to_cb)),
+            _mm_mul_ps(b0, b_to_cb),
+        ),
+    );
+    let cr0 = _mm_add_ps(
+        offset_128,
+        _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(r0, r_to_cr), _mm_mul_ps(g0, g_to_cr)),
+            _mm_mul_ps(b0, b_to_cr),
+        ),
+    );
+
+    // Compute Y, Cb, Cr for second 4 pixels
+    let y1 = _mm_add_ps(
+        _mm_add_ps(_mm_mul_ps(r1, r_to_y), _mm_mul_ps(g1, g_to_y)),
+        _mm_mul_ps(b1, b_to_y),
+    );
+    let cb1 = _mm_add_ps(
+        offset_128,
+        _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(r1, r_to_cb), _mm_mul_ps(g1, g_to_cb)),
+            _mm_mul_ps(b1, b_to_cb),
+        ),
+    );
+    let cr1 = _mm_add_ps(
+        offset_128,
+        _mm_add_ps(
+            _mm_add_ps(_mm_mul_ps(r1, r_to_cr), _mm_mul_ps(g1, g_to_cr)),
+            _mm_mul_ps(b1, b_to_cr),
+        ),
+    );
+
+    // Store results (two 4-element stores per plane)
+    _mm_storeu_ps(y_ptr, y0);
+    _mm_storeu_ps(y_ptr.add(4), y1);
+    _mm_storeu_ps(cb_ptr, cb0);
+    _mm_storeu_ps(cb_ptr.add(4), cb1);
+    _mm_storeu_ps(cr_ptr, cr0);
+    _mm_storeu_ps(cr_ptr.add(4), cr1);
+}
+
+/// Scalar reference implementation for RGB to YCbCr (for testing).
+#[cfg(test)]
+fn rgb_to_ycbcr_scalar(
+    rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    for i in 0..num_pixels {
+        let rgb_idx = i * 3;
+        let r = rgb_data[rgb_idx] as f32;
+        let g = rgb_data[rgb_idx + 1] as f32;
+        let b = rgb_data[rgb_idx + 2] as f32;
+
+        y_plane[i] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+        cb_plane[i] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+        cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+    }
 }
 
 // ============================================================================
@@ -1845,6 +2149,8 @@ mod tests {
     use super::*;
 
     const EPSILON: f32 = 1e-5;
+    /// Slightly higher tolerance for accumulated operations (downsampling averages 4 values)
+    const EPSILON_ACCUMULATED: f32 = 1e-4;
 
     #[test]
     fn test_downsample_2x2_simd_matches_scalar() {
@@ -2026,6 +2332,190 @@ mod tests {
                 i,
                 cr_simd[i],
                 cr_scalar[i]
+            );
+        }
+    }
+
+    /// Test AVX2 intrinsics RGB to YCbCr against scalar reference.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_rgb_to_ycbcr_avx2_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // Test with 8 pixels (one AVX2 batch)
+        let rgb_data: Vec<u8> = (0..24)
+            .map(|i| ((i * 17 + 5) % 256) as u8)
+            .collect();
+
+        let mut y_avx2 = vec![0.0f32; 8];
+        let mut cb_avx2 = vec![0.0f32; 8];
+        let mut cr_avx2 = vec![0.0f32; 8];
+
+        unsafe {
+            rgb_to_ycbcr_8px_avx2(
+                rgb_data.as_ptr(),
+                y_avx2.as_mut_ptr(),
+                cb_avx2.as_mut_ptr(),
+                cr_avx2.as_mut_ptr(),
+            );
+        }
+
+        let mut y_scalar = vec![0.0f32; 8];
+        let mut cb_scalar = vec![0.0f32; 8];
+        let mut cr_scalar = vec![0.0f32; 8];
+        rgb_to_ycbcr_scalar(&rgb_data, &mut y_scalar, &mut cb_scalar, &mut cr_scalar, 8);
+
+        for i in 0..8 {
+            let y_diff = (y_avx2[i] - y_scalar[i]).abs();
+            let cb_diff = (cb_avx2[i] - cb_scalar[i]).abs();
+            let cr_diff = (cr_avx2[i] - cr_scalar[i]).abs();
+            assert!(
+                y_diff < EPSILON_ACCUMULATED,
+                "Y mismatch at {}: AVX2={}, scalar={}, diff={}",
+                i, y_avx2[i], y_scalar[i], y_diff
+            );
+            assert!(
+                cb_diff < EPSILON_ACCUMULATED,
+                "Cb mismatch at {}: AVX2={}, scalar={}, diff={}",
+                i, cb_avx2[i], cb_scalar[i], cb_diff
+            );
+            assert!(
+                cr_diff < EPSILON_ACCUMULATED,
+                "Cr mismatch at {}: AVX2={}, scalar={}, diff={}",
+                i, cr_avx2[i], cr_scalar[i], cr_diff
+            );
+        }
+    }
+
+    /// Brute force test AVX2 RGB to YCbCr with all possible u8 values.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_rgb_to_ycbcr_avx2_brute_force() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // Test systematic patterns covering all u8 values
+        let mut max_y_diff = 0.0f32;
+        let mut max_cb_diff = 0.0f32;
+        let mut max_cr_diff = 0.0f32;
+
+        // Test every 16th R, G, B combination (256/16 = 16^3 = 4096 combinations)
+        for r_base in (0u8..=255).step_by(16) {
+            for g_base in (0u8..=255).step_by(64) {
+                for b_base in (0u8..=255).step_by(64) {
+                    // Create 8 pixels with slight variations
+                    let mut rgb_data = vec![0u8; 24];
+                    for p in 0..8 {
+                        let r = r_base.wrapping_add((p * 2) as u8);
+                        let g = g_base.wrapping_add((p * 3) as u8);
+                        let b = b_base.wrapping_add((p * 5) as u8);
+                        rgb_data[p * 3] = r;
+                        rgb_data[p * 3 + 1] = g;
+                        rgb_data[p * 3 + 2] = b;
+                    }
+
+                    let mut y_avx2 = vec![0.0f32; 8];
+                    let mut cb_avx2 = vec![0.0f32; 8];
+                    let mut cr_avx2 = vec![0.0f32; 8];
+
+                    unsafe {
+                        rgb_to_ycbcr_8px_avx2(
+                            rgb_data.as_ptr(),
+                            y_avx2.as_mut_ptr(),
+                            cb_avx2.as_mut_ptr(),
+                            cr_avx2.as_mut_ptr(),
+                        );
+                    }
+
+                    let mut y_scalar = vec![0.0f32; 8];
+                    let mut cb_scalar = vec![0.0f32; 8];
+                    let mut cr_scalar = vec![0.0f32; 8];
+                    rgb_to_ycbcr_scalar(&rgb_data, &mut y_scalar, &mut cb_scalar, &mut cr_scalar, 8);
+
+                    for i in 0..8 {
+                        max_y_diff = max_y_diff.max((y_avx2[i] - y_scalar[i]).abs());
+                        max_cb_diff = max_cb_diff.max((cb_avx2[i] - cb_scalar[i]).abs());
+                        max_cr_diff = max_cr_diff.max((cr_avx2[i] - cr_scalar[i]).abs());
+                    }
+                }
+            }
+        }
+
+        // Allow tiny floating-point differences from different operation ordering
+        assert!(
+            max_y_diff < EPSILON_ACCUMULATED,
+            "Max Y diff too large: {}",
+            max_y_diff
+        );
+        assert!(
+            max_cb_diff < EPSILON_ACCUMULATED,
+            "Max Cb diff too large: {}",
+            max_cb_diff
+        );
+        assert!(
+            max_cr_diff < EPSILON_ACCUMULATED,
+            "Max Cr diff too large: {}",
+            max_cr_diff
+        );
+    }
+
+    /// Test AVX2 RGB to YCbCr matches existing SIMD implementation.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_rgb_to_ycbcr_avx2_matches_existing_simd() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // Test multiple batches
+        let num_pixels = 64;
+        let rgb_data: Vec<u8> = (0..num_pixels * 3)
+            .map(|i| ((i * 23 + 11) % 256) as u8)
+            .collect();
+
+        // Existing SIMD implementation
+        let (y_simd, cb_simd, cr_simd) = rgb_to_ycbcr_planes_simd(&rgb_data, num_pixels).unwrap();
+
+        // AVX2 intrinsics
+        let mut y_avx2 = vec![0.0f32; num_pixels];
+        let mut cb_avx2 = vec![0.0f32; num_pixels];
+        let mut cr_avx2 = vec![0.0f32; num_pixels];
+
+        for chunk in 0..(num_pixels / 8) {
+            let rgb_offset = chunk * 24;
+            let out_offset = chunk * 8;
+            unsafe {
+                rgb_to_ycbcr_8px_avx2(
+                    rgb_data.as_ptr().add(rgb_offset),
+                    y_avx2.as_mut_ptr().add(out_offset),
+                    cb_avx2.as_mut_ptr().add(out_offset),
+                    cr_avx2.as_mut_ptr().add(out_offset),
+                );
+            }
+        }
+
+        // Compare
+        for i in 0..num_pixels {
+            let y_diff = (y_avx2[i] - y_simd[i]).abs();
+            let cb_diff = (cb_avx2[i] - cb_simd[i]).abs();
+            let cr_diff = (cr_avx2[i] - cr_simd[i]).abs();
+            assert!(
+                y_diff < EPSILON_ACCUMULATED,
+                "Y mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
+                i, y_avx2[i], y_simd[i], y_diff
+            );
+            assert!(
+                cb_diff < EPSILON_ACCUMULATED,
+                "Cb mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
+                i, cb_avx2[i], cb_simd[i], cb_diff
+            );
+            assert!(
+                cr_diff < EPSILON_ACCUMULATED,
+                "Cr mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
+                i, cr_avx2[i], cr_simd[i], cr_diff
             );
         }
     }
@@ -2302,5 +2792,292 @@ mod tests {
         // Factor 0 should return a copy
         let result = apply_smoothing_simd(&plane, width, height, 0).unwrap();
         assert_eq!(plane, result);
+    }
+
+    // ========================================================================
+    // AVX2 Intrinsics Brute Force Tests
+    // ========================================================================
+
+    /// Test gather_even_odd_avx2_raw against scalar reference with all possible byte patterns.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_gather_even_odd_avx2_brute_force() {
+        if !is_x86_feature_detected!("avx2") {
+            eprintln!("Skipping AVX2 test - CPU doesn't support AVX2");
+            return;
+        }
+
+        // Test with various patterns
+        let test_patterns: Vec<Vec<f32>> = vec![
+            // Sequential
+            (0..16).map(|i| i as f32).collect(),
+            // Reverse
+            (0..16).rev().map(|i| i as f32).collect(),
+            // All same
+            vec![42.0; 16],
+            // Alternating
+            (0..16).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect(),
+            // Large values
+            (0..16).map(|i| (i as f32) * 1000.0).collect(),
+            // Small values
+            (0..16).map(|i| (i as f32) * 0.001).collect(),
+            // Random-ish pattern
+            vec![
+                3.14, 2.71, 1.41, 1.73, 2.23, 0.57, 1.61, 4.67, 9.81, 6.28, 0.69, 1.38, 2.30,
+                3.45, 4.56, 5.67,
+            ],
+        ];
+
+        for (pattern_idx, data) in test_patterns.iter().enumerate() {
+            // Scalar reference
+            let (scalar_evens, scalar_odds) = gather_even_odd_scalar(data);
+
+            // AVX2 intrinsics
+            unsafe {
+                let (avx2_evens, avx2_odds) = gather_even_odd_avx2_raw(data.as_ptr());
+                let avx2_evens_arr: [f32; 8] = core::mem::transmute(avx2_evens);
+                let avx2_odds_arr: [f32; 8] = core::mem::transmute(avx2_odds);
+
+                for i in 0..8 {
+                    assert!(
+                        (avx2_evens_arr[i] - scalar_evens[i]).abs() < EPSILON,
+                        "Pattern {}: evens mismatch at {}: AVX2={}, scalar={}",
+                        pattern_idx,
+                        i,
+                        avx2_evens_arr[i],
+                        scalar_evens[i]
+                    );
+                    assert!(
+                        (avx2_odds_arr[i] - scalar_odds[i]).abs() < EPSILON,
+                        "Pattern {}: odds mismatch at {}: AVX2={}, scalar={}",
+                        pattern_idx,
+                        i,
+                        avx2_odds_arr[i],
+                        scalar_odds[i]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Exhaustive test of gather_even_odd with sequential integers.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_gather_even_odd_avx2_exhaustive() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // Test all starting offsets from 0-255
+        for offset in 0..256 {
+            let data: Vec<f32> = (0..16).map(|i| (offset + i) as f32).collect();
+            let (scalar_evens, scalar_odds) = gather_even_odd_scalar(&data);
+
+            unsafe {
+                let (avx2_evens, avx2_odds) = gather_even_odd_avx2_raw(data.as_ptr());
+                let avx2_evens_arr: [f32; 8] = core::mem::transmute(avx2_evens);
+                let avx2_odds_arr: [f32; 8] = core::mem::transmute(avx2_odds);
+
+                for i in 0..8 {
+                    assert_eq!(
+                        avx2_evens_arr[i], scalar_evens[i],
+                        "Offset {}: evens[{}] mismatch",
+                        offset, i
+                    );
+                    assert_eq!(
+                        avx2_odds_arr[i], scalar_odds[i],
+                        "Offset {}: odds[{}] mismatch",
+                        offset, i
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test downsample_2x2_avx2 against scalar reference with various sizes.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_downsample_2x2_avx2_brute_force() {
+        if !is_x86_feature_detected!("avx2") {
+            eprintln!("Skipping AVX2 test - CPU doesn't support AVX2");
+            return;
+        }
+
+        // Test various image sizes
+        let test_sizes = [
+            (16, 16),
+            (32, 32),
+            (64, 64),
+            (128, 128),
+            (17, 17), // Odd sizes
+            (31, 33),
+            (100, 100),
+            (256, 256),
+        ];
+
+        for (width, height) in test_sizes {
+            // Create test data with gradient pattern
+            let plane: Vec<f32> = (0..width * height)
+                .map(|i| {
+                    let x = i % width;
+                    let y = i / width;
+                    (x as f32 * 0.5 + y as f32 * 0.3) % 256.0
+                })
+                .collect();
+
+            // Scalar reference
+            let scalar_result = downsample_2x2_scalar(&plane, width, height);
+
+            // AVX2 intrinsics
+            let new_width = (width + 1) / 2;
+            let new_height = (height + 1) / 2;
+            let mut avx2_result = vec![0.0f32; new_width * new_height];
+
+            unsafe {
+                downsample_2x2_avx2(&plane, width, height, &mut avx2_result);
+            }
+
+            // Compare
+            assert_eq!(
+                avx2_result.len(),
+                scalar_result.len(),
+                "Size {}x{}: length mismatch",
+                width,
+                height
+            );
+
+            for i in 0..scalar_result.len() {
+                let diff = (avx2_result[i] - scalar_result[i]).abs();
+                assert!(
+                    diff < EPSILON_ACCUMULATED,
+                    "Size {}x{}: mismatch at {}: AVX2={}, scalar={}, diff={}",
+                    width,
+                    height,
+                    i,
+                    avx2_result[i],
+                    scalar_result[i],
+                    diff
+                );
+            }
+        }
+    }
+
+    /// Test downsample_2x2_avx2 with random data.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_downsample_2x2_avx2_random_patterns() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        let width = 128;
+        let height = 128;
+
+        // Pseudo-random LCG for deterministic "random" data
+        let mut seed: u32 = 12345;
+        let mut next_rand = || {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed >> 16) as f32 / 65535.0 * 255.0
+        };
+
+        let plane: Vec<f32> = (0..width * height).map(|_| next_rand()).collect();
+
+        let scalar_result = downsample_2x2_scalar(&plane, width, height);
+
+        let new_width = (width + 1) / 2;
+        let new_height = (height + 1) / 2;
+        let mut avx2_result = vec![0.0f32; new_width * new_height];
+
+        unsafe {
+            downsample_2x2_avx2(&plane, width, height, &mut avx2_result);
+        }
+
+        for i in 0..scalar_result.len() {
+            let diff = (avx2_result[i] - scalar_result[i]).abs();
+            assert!(
+                diff < EPSILON_ACCUMULATED,
+                "Random test: mismatch at {}: AVX2={}, scalar={}, diff={}",
+                i,
+                avx2_result[i],
+                scalar_result[i],
+                diff
+            );
+        }
+    }
+
+    /// Test downsample_2x2_avx2 matches the existing SIMD implementation.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_downsample_2x2_avx2_matches_existing_simd() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        let width = 256;
+        let height = 256;
+        let plane: Vec<f32> = (0..width * height)
+            .map(|i| ((i * 17 + 23) % 256) as f32)
+            .collect();
+
+        // Existing SIMD implementation
+        let existing_result = downsample_2x2_simd(&plane, width, height).unwrap();
+
+        // New AVX2 intrinsics implementation
+        let new_width = (width + 1) / 2;
+        let new_height = (height + 1) / 2;
+        let mut avx2_result = vec![0.0f32; new_width * new_height];
+
+        unsafe {
+            downsample_2x2_avx2(&plane, width, height, &mut avx2_result);
+        }
+
+        for i in 0..existing_result.len() {
+            let diff = (avx2_result[i] - existing_result[i]).abs();
+            assert!(
+                diff < EPSILON,
+                "Mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
+                i,
+                avx2_result[i],
+                existing_result[i],
+                diff
+            );
+        }
+    }
+
+    /// Test edge cases: minimum sizes
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_downsample_2x2_avx2_edge_cases() {
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+
+        // Test 2x2 (minimum)
+        let plane_2x2 = vec![1.0, 2.0, 3.0, 4.0];
+        let scalar = downsample_2x2_scalar(&plane_2x2, 2, 2);
+        let mut avx2 = vec![0.0f32; 1];
+        unsafe {
+            downsample_2x2_avx2(&plane_2x2, 2, 2, &mut avx2);
+        }
+        assert!(
+            (avx2[0] - scalar[0]).abs() < EPSILON,
+            "2x2: AVX2={}, scalar={}",
+            avx2[0],
+            scalar[0]
+        );
+
+        // Test 1x1 (degenerate)
+        let plane_1x1 = vec![42.0];
+        let scalar = downsample_2x2_scalar(&plane_1x1, 1, 1);
+        let mut avx2 = vec![0.0f32; 1];
+        unsafe {
+            downsample_2x2_avx2(&plane_1x1, 1, 1, &mut avx2);
+        }
+        assert!(
+            (avx2[0] - scalar[0]).abs() < EPSILON,
+            "1x1: AVX2={}, scalar={}",
+            avx2[0],
+            scalar[0]
+        );
     }
 }
