@@ -8,7 +8,7 @@
 //! - YUV crate integration for Sharp YUV
 
 use super::Encoder;
-use crate::alloc::{checked_size_2d, try_alloc_filled};
+use crate::alloc::{checked_size_2d, try_alloc_filled, try_with_capacity};
 use crate::color;
 use crate::error::{Error, Result};
 use crate::types::{PixelFormat, Subsampling};
@@ -139,7 +139,7 @@ impl Encoder {
             PixelFormat::Rgb => (data, width as u32 * 3),
             PixelFormat::Rgba => {
                 // Convert RGBA to RGB
-                let mut rgb = Vec::with_capacity(width * height * 3);
+                let mut rgb = try_with_capacity(width * height * 3, "RGBA to RGB")?;
                 for i in 0..(width * height) {
                     rgb.push(data[i * 4]);
                     rgb.push(data[i * 4 + 1]);
@@ -150,7 +150,7 @@ impl Encoder {
             }
             PixelFormat::Bgr => {
                 // Convert BGR to RGB
-                let mut rgb = Vec::with_capacity(width * height * 3);
+                let mut rgb = try_with_capacity(width * height * 3, "BGR to RGB")?;
                 for i in 0..(width * height) {
                     rgb.push(data[i * 3 + 2]); // R
                     rgb.push(data[i * 3 + 1]); // G
@@ -161,7 +161,7 @@ impl Encoder {
             }
             PixelFormat::Bgra => {
                 // Convert BGRA to RGB
-                let mut rgb = Vec::with_capacity(width * height * 3);
+                let mut rgb = try_with_capacity(width * height * 3, "BGRA to RGB")?;
                 for i in 0..(width * height) {
                     rgb.push(data[i * 4 + 2]); // R
                     rgb.push(data[i * 4 + 1]); // G
