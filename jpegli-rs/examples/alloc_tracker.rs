@@ -92,13 +92,12 @@ fn main() {
     ];
 
     let quality_levels = [75, 85, 95];
-    let subsamplings = [
-        (Subsampling::S420, "4:2:0"),
-        (Subsampling::S444, "4:4:4"),
-    ];
+    let subsamplings = [(Subsampling::S420, "4:2:0"), (Subsampling::S444, "4:4:4")];
 
-    println!("{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
-        "Image", "Quality", "Subsamp", "Input Size", "Peak Alloc", "Allocs", "Output");
+    println!(
+        "{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
+        "Image", "Quality", "Subsamp", "Input Size", "Peak Alloc", "Allocs", "Output"
+    );
     println!("{}", "-".repeat(95));
 
     for (width, height, name) in &test_cases {
@@ -133,14 +132,16 @@ fn main() {
 
                 let (current, peak, alloc_count, _dealloc_count) = get_stats();
 
-                println!("{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
+                println!(
+                    "{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
                     name,
                     quality,
                     sub_name,
                     format_bytes(input_size),
                     format_bytes(peak),
                     alloc_count,
-                    format_bytes(output.len()));
+                    format_bytes(output.len())
+                );
 
                 // Give some time for deallocations
                 drop(output);
@@ -201,27 +202,65 @@ fn main() {
     println!("  Output size:   {}", format_bytes(output.len()));
 
     println!("\nExpected components (theoretical):");
-    println!("  RGB input (owned by caller):      {} (not counted)", format_bytes(input_size));
-    println!("  Y plane (f32):                    {}", format_bytes(width * height * 4));
-    println!("  Cb plane (f32):                   {}", format_bytes(width * height * 4));
-    println!("  Cr plane (f32):                   {}", format_bytes(width * height * 4));
-    println!("  Cb downsampled (f32):             {}", format_bytes((width/2) * (height/2) * 4));
-    println!("  Cr downsampled (f32):             {}", format_bytes((width/2) * (height/2) * 4));
+    println!(
+        "  RGB input (owned by caller):      {} (not counted)",
+        format_bytes(input_size)
+    );
+    println!(
+        "  Y plane (f32):                    {}",
+        format_bytes(width * height * 4)
+    );
+    println!(
+        "  Cb plane (f32):                   {}",
+        format_bytes(width * height * 4)
+    );
+    println!(
+        "  Cr plane (f32):                   {}",
+        format_bytes(width * height * 4)
+    );
+    println!(
+        "  Cb downsampled (f32):             {}",
+        format_bytes((width / 2) * (height / 2) * 4)
+    );
+    println!(
+        "  Cr downsampled (f32):             {}",
+        format_bytes((width / 2) * (height / 2) * 4)
+    );
 
     let blocks_y = ((width + 7) / 8) * ((height + 7) / 8);
-    let blocks_c = ((width/2 + 7) / 8) * (((height/2) + 7) / 8);
-    println!("  Y blocks (i16×64):                {}", format_bytes(blocks_y * 64 * 2));
-    println!("  Cb blocks (i16×64):               {}", format_bytes(blocks_c * 64 * 2));
-    println!("  Cr blocks (i16×64):               {}", format_bytes(blocks_c * 64 * 2));
-    println!("  AQ map:                           {}", format_bytes(blocks_y * 4));
+    let blocks_c = ((width / 2 + 7) / 8) * (((height / 2) + 7) / 8);
+    println!(
+        "  Y blocks (i16×64):                {}",
+        format_bytes(blocks_y * 64 * 2)
+    );
+    println!(
+        "  Cb blocks (i16×64):               {}",
+        format_bytes(blocks_c * 64 * 2)
+    );
+    println!(
+        "  Cr blocks (i16×64):               {}",
+        format_bytes(blocks_c * 64 * 2)
+    );
+    println!(
+        "  AQ map:                           {}",
+        format_bytes(blocks_y * 4)
+    );
 
-    let theoretical_total =
-        width * height * 4 * 3 +  // YCbCr f32 planes
+    let theoretical_total = width * height * 4 * 3 +  // YCbCr f32 planes
         (width/2) * (height/2) * 4 * 2 +  // downsampled chroma
         blocks_y * 64 * 2 + blocks_c * 64 * 2 * 2 +  // blocks
-        blocks_y * 4;  // AQ map
+        blocks_y * 4; // AQ map
 
-    println!("\n  Theoretical total:                {}", format_bytes(theoretical_total));
-    println!("  Actual peak:                      {}", format_bytes(post_peak));
-    println!("  Ratio:                            {:.2}x theoretical", post_peak as f64 / theoretical_total as f64);
+    println!(
+        "\n  Theoretical total:                {}",
+        format_bytes(theoretical_total)
+    );
+    println!(
+        "  Actual peak:                      {}",
+        format_bytes(post_peak)
+    );
+    println!(
+        "  Ratio:                            {:.2}x theoretical",
+        post_peak as f64 / theoretical_total as f64
+    );
 }

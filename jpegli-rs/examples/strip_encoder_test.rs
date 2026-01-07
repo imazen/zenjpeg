@@ -48,7 +48,14 @@ fn main() {
     let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
     let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
-    processor.set_quant_tables(y_quant, cb_quant, cr_quant, y_zero_bias, cb_zero_bias, cr_zero_bias);
+    processor.set_quant_tables(
+        y_quant,
+        cb_quant,
+        cr_quant,
+        y_zero_bias,
+        cb_zero_bias,
+        cr_zero_bias,
+    );
 
     // Process in strips
     let strip_height = processor.strip_height();
@@ -124,15 +131,11 @@ fn main() {
     println!();
     println!("=== Memory Estimates ===");
     let strip_buffer_size = width * strip_height * 4 * 3; // 3 planes, f32
-    let block_storage = (output.y_blocks.len() + output.cb_blocks.len() + output.cr_blocks.len())
-        * 64
-        * 2; // i16
+    let block_storage =
+        (output.y_blocks.len() + output.cb_blocks.len() + output.cr_blocks.len()) * 64 * 2; // i16
     let aq_storage = output.aq_strengths.len() * 4;
 
-    println!(
-        "Strip buffers (reused): {} KB",
-        strip_buffer_size / 1024
-    );
+    println!("Strip buffers (reused): {} KB", strip_buffer_size / 1024);
     println!("Block storage: {} KB", block_storage / 1024);
     println!("AQ storage: {} KB", aq_storage / 1024);
     println!(

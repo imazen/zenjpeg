@@ -604,12 +604,12 @@ impl StripProcessor {
                         let x0 = cx * 2;
                         let x1 = (x0 + 1).min(self.width - 1);
 
-                        let cb_avg =
-                            (self.cb_strip[y * self.width + x0] + self.cb_strip[y * self.width + x1])
-                                * 0.5;
-                        let cr_avg =
-                            (self.cr_strip[y * self.width + x0] + self.cr_strip[y * self.width + x1])
-                                * 0.5;
+                        let cb_avg = (self.cb_strip[y * self.width + x0]
+                            + self.cb_strip[y * self.width + x1])
+                            * 0.5;
+                        let cr_avg = (self.cr_strip[y * self.width + x0]
+                            + self.cr_strip[y * self.width + x1])
+                            * 0.5;
 
                         self.cb_down[y * c_width + cx] = cb_avg;
                         self.cr_down[y * c_width + cx] = cr_avg;
@@ -804,9 +804,7 @@ impl StripProcessor {
     /// Finalizes encoding after all strips have been processed.
     ///
     /// Returns the quantized blocks and Huffman frequency counters.
-    pub fn finalize(
-        self,
-    ) -> StripProcessorOutput {
+    pub fn finalize(self) -> StripProcessorOutput {
         // Finalize AQ map (global normalization)
         let aq_strengths = self.aq_state.finalize();
 

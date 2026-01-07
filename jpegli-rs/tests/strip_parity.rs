@@ -125,14 +125,8 @@ fn test_strip_dc_coefficients_reasonable() {
         non_zero_y_dc,
         output.y_blocks.len()
     );
-    assert!(
-        non_zero_cb_dc > 0,
-        "No non-zero Cb DC coefficients"
-    );
-    assert!(
-        non_zero_cr_dc > 0,
-        "No non-zero Cr DC coefficients"
-    );
+    assert!(non_zero_cb_dc > 0, "No non-zero Cb DC coefficients");
+    assert!(non_zero_cr_dc > 0, "No non-zero Cr DC coefficients");
 }
 
 #[test]
@@ -208,11 +202,7 @@ fn test_strip_various_qualities() {
             .map(|b| b[1..].iter().filter(|&&c| c != 0).count())
             .sum();
 
-        assert!(
-            total_ac > 0,
-            "No AC coefficients at quality {}",
-            quality
-        );
+        assert!(total_ac > 0, "No AC coefficients at quality {}", quality);
     }
 }
 
