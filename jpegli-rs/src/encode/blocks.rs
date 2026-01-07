@@ -202,9 +202,16 @@ impl Encoder {
         // Pre-allocate block arrays to avoid push() overhead
         let num_blocks = blocks_h * blocks_v;
         let num_chroma_blocks = if is_color { num_blocks } else { 0 };
-        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_blocks];
-        let mut cb_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_chroma_blocks];
-        let mut cr_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_chroma_blocks];
+        let mut y_blocks =
+            crate::foundation::alloc::try_alloc_dct_blocks(num_blocks, "y_blocks encode_scan")?;
+        let mut cb_blocks = crate::foundation::alloc::try_alloc_dct_blocks(
+            num_chroma_blocks,
+            "cb_blocks encode_scan",
+        )?;
+        let mut cr_blocks = crate::foundation::alloc::try_alloc_dct_blocks(
+            num_chroma_blocks,
+            "cr_blocks encode_scan",
+        )?;
 
         for by in 0..blocks_v {
             for bx in 0..blocks_h {
@@ -349,9 +356,18 @@ impl Encoder {
         // Pre-allocate block arrays to avoid push() overhead
         let num_y_blocks = y_blocks_h * y_blocks_v;
         let num_c_blocks = if is_color { c_blocks_h * c_blocks_v } else { 0 };
-        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_y_blocks];
-        let mut cb_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_c_blocks];
-        let mut cr_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_c_blocks];
+        let mut y_blocks = crate::foundation::alloc::try_alloc_dct_blocks(
+            num_y_blocks,
+            "y_blocks encode_scan_subsampled",
+        )?;
+        let mut cb_blocks = crate::foundation::alloc::try_alloc_dct_blocks(
+            num_c_blocks,
+            "cb_blocks encode_scan_subsampled",
+        )?;
+        let mut cr_blocks = crate::foundation::alloc::try_alloc_dct_blocks(
+            num_c_blocks,
+            "cr_blocks encode_scan_subsampled",
+        )?;
 
         // Quantize Y blocks using SIMD-optimized pipeline (pre-computed 1/quant, fast_round_int)
         for by in 0..y_blocks_v {

@@ -562,7 +562,10 @@ impl Encoder {
             return self.encode_progressive_xyb_optimized(data);
         }
 
-        let mut output = Vec::with_capacity(data.len() / 4);
+        let mut output = crate::foundation::alloc::try_with_capacity(
+            data.len() / 4,
+            "progressive xyb output",
+        )?;
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
@@ -643,7 +646,10 @@ impl Encoder {
     /// It performs 2-pass encoding: first tokenizes all scans to collect statistics,
     /// then builds optimized Huffman tables and replays tokens.
     fn encode_progressive_xyb_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let mut output = Vec::with_capacity(data.len() / 4);
+        let mut output = crate::foundation::alloc::try_with_capacity(
+            data.len() / 4,
+            "progressive xyb optimized output",
+        )?;
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
@@ -880,7 +886,10 @@ impl Encoder {
             return self.encode_progressive_optimized(data);
         }
 
-        let mut output = Vec::with_capacity(data.len() / 4);
+        let mut output = crate::foundation::alloc::try_with_capacity(
+            data.len() / 4,
+            "progressive ycbcr output",
+        )?;
 
         // Convert to YCbCr using f32 precision
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
@@ -958,7 +967,10 @@ impl Encoder {
     /// 4. Generates optimal Huffman tables from clustered histograms
     /// 5. Replays tokens with optimized tables
     fn encode_progressive_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let mut output = Vec::with_capacity(data.len() / 4);
+        let mut output = crate::foundation::alloc::try_with_capacity(
+            data.len() / 4,
+            "progressive optimized output",
+        )?;
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
