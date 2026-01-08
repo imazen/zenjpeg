@@ -662,16 +662,8 @@ pub fn inverse_dct_8x8_u8(input: &[f32; DCT_BLOCK_SIZE]) -> [u8; DCT_BLOCK_SIZE]
     for chunk in 0..8 {
         let k = chunk * 8;
 
-        let vals = f32x8::from([
-            output[k],
-            output[k + 1],
-            output[k + 2],
-            output[k + 3],
-            output[k + 4],
-            output[k + 5],
-            output[k + 6],
-            output[k + 7],
-        ]);
+        // Load contiguous values directly from slice
+        let vals = f32x8::from(&output[k..k + 8]);
 
         // Add level shift, round, and clamp
         let shifted = vals + level_shift;
