@@ -344,9 +344,7 @@ impl DecodedImageF32 {
         let data = {
             use wide::f32x8;
             let len = self.data.len();
-            let mut result = Vec::with_capacity(len);
-            // Safety: we write every element below
-            unsafe { result.set_len(len) };
+            let mut result = vec![0u8; len];
 
             let scale = f32x8::splat(255.0);
             let zero = f32x8::splat(0.0);
@@ -402,9 +400,7 @@ impl DecodedImageF32 {
         {
             use wide::f32x8;
             let len = self.data.len();
-            let mut result = Vec::with_capacity(len);
-            // Safety: we write every element below
-            unsafe { result.set_len(len) };
+            let mut result = vec![0u16; len];
 
             let scale = f32x8::splat(65535.0);
             let zero = f32x8::splat(0.0);

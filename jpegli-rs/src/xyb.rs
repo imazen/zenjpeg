@@ -528,15 +528,10 @@ pub fn srgb_to_scaled_xyb_planes_simd(
 
     assert!(rgb_data.len() >= num_pixels * 3);
 
-    // Allocate without zeroing since we write to every element
-    let mut x_plane = Vec::with_capacity(num_pixels);
-    let mut y_plane = Vec::with_capacity(num_pixels);
-    let mut b_plane = Vec::with_capacity(num_pixels);
-    unsafe {
-        x_plane.set_len(num_pixels);
-        y_plane.set_len(num_pixels);
-        b_plane.set_len(num_pixels);
-    }
+    // Allocate zeroed - OS zero-page optimization makes this fast
+    let mut x_plane = vec![0.0f32; num_pixels];
+    let mut y_plane = vec![0.0f32; num_pixels];
+    let mut b_plane = vec![0.0f32; num_pixels];
 
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
     let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
@@ -665,15 +660,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba(
 
     assert!(rgba_data.len() >= num_pixels * 4);
 
-    // Allocate without zeroing since we write to every element
-    let mut x_plane = Vec::with_capacity(num_pixels);
-    let mut y_plane = Vec::with_capacity(num_pixels);
-    let mut b_plane = Vec::with_capacity(num_pixels);
-    unsafe {
-        x_plane.set_len(num_pixels);
-        y_plane.set_len(num_pixels);
-        b_plane.set_len(num_pixels);
-    }
+    // Allocate zeroed - OS zero-page optimization makes this fast
+    let mut x_plane = vec![0.0f32; num_pixels];
+    let mut y_plane = vec![0.0f32; num_pixels];
+    let mut b_plane = vec![0.0f32; num_pixels];
 
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
     let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
@@ -801,15 +791,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra(
 
     assert!(bgra_data.len() >= num_pixels * 4);
 
-    // Allocate without zeroing since we write to every element
-    let mut x_plane = Vec::with_capacity(num_pixels);
-    let mut y_plane = Vec::with_capacity(num_pixels);
-    let mut b_plane = Vec::with_capacity(num_pixels);
-    unsafe {
-        x_plane.set_len(num_pixels);
-        y_plane.set_len(num_pixels);
-        b_plane.set_len(num_pixels);
-    }
+    // Allocate zeroed - OS zero-page optimization makes this fast
+    let mut x_plane = vec![0.0f32; num_pixels];
+    let mut y_plane = vec![0.0f32; num_pixels];
+    let mut b_plane = vec![0.0f32; num_pixels];
 
     let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
     let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
