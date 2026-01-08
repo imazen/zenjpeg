@@ -114,6 +114,10 @@ harness = false
 name = "simd_load"
 harness = false
 
+[[bench]]
+name = "vs_mozjpeg"
+harness = false
+
 [lints]
 workspace = true
 
