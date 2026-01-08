@@ -3,9 +3,11 @@ comparison_outputs/
 reports/
 *.testdata
 coverage-html/
+worktrees/
 
 # Profiling artifacts
 perf.data
 perf.data.old
-*_flamegraph.svg
+*.svg
+*.json.gz
 *_profile.json
