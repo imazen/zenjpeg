@@ -562,36 +562,10 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from([
-                y_plane[base],
-                y_plane[base + 1],
-                y_plane[base + 2],
-                y_plane[base + 3],
-                y_plane[base + 4],
-                y_plane[base + 5],
-                y_plane[base + 6],
-                y_plane[base + 7],
-            ]);
-            let cb = f32x8::from([
-                cb_plane[base],
-                cb_plane[base + 1],
-                cb_plane[base + 2],
-                cb_plane[base + 3],
-                cb_plane[base + 4],
-                cb_plane[base + 5],
-                cb_plane[base + 6],
-                cb_plane[base + 7],
-            ]);
-            let cr = f32x8::from([
-                cr_plane[base],
-                cr_plane[base + 1],
-                cr_plane[base + 2],
-                cr_plane[base + 3],
-                cr_plane[base + 4],
-                cr_plane[base + 5],
-                cr_plane[base + 6],
-                cr_plane[base + 7],
-            ]);
+            // Use slice loads instead of manual gather
+            let y = f32x8::from(&y_plane[base..base + 8]);
+            let cb = f32x8::from(&cb_plane[base..base + 8]);
+            let cr = f32x8::from(&cr_plane[base..base + 8]);
 
             // YCbCr to RGB, level shift, normalize to 0-1
             let r = ((y + cr_to_r * cr + offset) * scale).max(zero).min(one);
@@ -664,16 +638,7 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from([
-                y_plane[base],
-                y_plane[base + 1],
-                y_plane[base + 2],
-                y_plane[base + 3],
-                y_plane[base + 4],
-                y_plane[base + 5],
-                y_plane[base + 6],
-                y_plane[base + 7],
-            ]);
+            let y = f32x8::from(&y_plane[base..base + 8]);
 
             let val = (y + offset).max(zero).min(max_val);
             let arr: [f32; 8] = val.into();
@@ -726,16 +691,7 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from([
-                y_plane[base],
-                y_plane[base + 1],
-                y_plane[base + 2],
-                y_plane[base + 3],
-                y_plane[base + 4],
-                y_plane[base + 5],
-                y_plane[base + 6],
-                y_plane[base + 7],
-            ]);
+            let y = f32x8::from(&y_plane[base..base + 8]);
 
             let val = ((y + offset) * scale).max(zero).min(one);
             let arr: [f32; 8] = val.into();
@@ -786,16 +742,7 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from([
-                y_plane[base],
-                y_plane[base + 1],
-                y_plane[base + 2],
-                y_plane[base + 3],
-                y_plane[base + 4],
-                y_plane[base + 5],
-                y_plane[base + 6],
-                y_plane[base + 7],
-            ]);
+            let y = f32x8::from(&y_plane[base..base + 8]);
 
             let val = (y + offset).max(zero).min(max_val);
             let arr: [f32; 8] = val.into();
@@ -836,16 +783,7 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from([
-                y_plane[base],
-                y_plane[base + 1],
-                y_plane[base + 2],
-                y_plane[base + 3],
-                y_plane[base + 4],
-                y_plane[base + 5],
-                y_plane[base + 6],
-                y_plane[base + 7],
-            ]);
+            let y = f32x8::from(&y_plane[base..base + 8]);
 
             let val = ((y + offset) * scale).max(zero).min(one);
             let arr: [f32; 8] = val.into();

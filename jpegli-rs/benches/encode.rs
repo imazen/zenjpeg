@@ -19,7 +19,7 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
 
-    for size in [64, 256, 512, 1024] {
+    for size in [64, 256, 512, 1024, 2048] {
         let data = create_test_image(size, size);
 
         group.bench_with_input(

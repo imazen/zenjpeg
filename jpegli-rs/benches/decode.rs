@@ -26,7 +26,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
 fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
 
-    for size in [64, 256, 512] {
+    for size in [64, 256, 512, 1024, 2048] {
         let jpeg_data = create_test_jpeg(size, size, 90.0);
 
         group.bench_with_input(
