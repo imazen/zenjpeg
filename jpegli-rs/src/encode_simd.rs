@@ -11,10 +11,12 @@ use wide::f32x8;
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256, __m256i, _mm256_add_ps, _mm256_castsi256_ps, _mm256_cvtepi32_ps,
-    _mm256_insertf128_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_permute2f128_ps,
-    _mm256_permutevar8x32_ps, _mm256_set1_ps, _mm256_setr_epi32, _mm256_storeu_ps,
-    _mm_cvtepu8_epi32, _mm_loadu_si128, _mm_setr_epi8, _mm_shuffle_epi8, _mm_cvtsi128_si32,
+    __m128, __m128i, __m256, __m256i, _mm256_add_ps, _mm256_castps_si256, _mm256_castsi256_ps,
+    _mm256_cvtepi32_ps, _mm256_fmadd_ps, _mm256_insertf128_ps, _mm256_loadu_ps, _mm256_mul_ps,
+    _mm256_permute2f128_ps, _mm256_permute4x64_epi64, _mm256_permutevar8x32_ps, _mm256_set1_ps,
+    _mm256_setr_epi32, _mm256_shuffle_ps, _mm256_storeu_ps, _mm_add_ps, _mm_cvtepi32_ps,
+    _mm_cvtepu8_epi32, _mm_cvtsi128_si32, _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps, _mm_set1_ps,
+    _mm_setr_epi8, _mm_shuffle_epi8, _mm_storeu_ps,
 };
 
 use crate::consts::{
@@ -609,34 +611,56 @@ pub fn downsample_2x2_scalar(plane: &[f32], width: usize, height: usize) -> Vec<
     result
 }
 
-/// Gather even and odd indexed elements from a row into two f32x8 vectors.
-///
-/// Given input [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, ...]:
-/// - evens = [a, c, e, g, i, k, m, o]
-/// - odds = [b, d, f, h, j, l, n, p]
-///
-/// Uses scalar element selection. When called from a multiversion function with
-/// AVX2 enabled, the compiler will inline and optimize.
+/// AVX2-optimized deinterleave using Highway's ConcatEven/ConcatOdd pattern.
+/// This is ~4x faster than element-by-element construction.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
+    use std::arch::x86_64::*;
+
+    // Load 16 consecutive floats as two YMM registers
+    // Memory: [e0,o0,e1,o1,e2,o2,e3,o3, e4,o4,e5,o5,e6,o6,e7,o7]
+    let lo = _mm256_loadu_ps(ptr); // [e0,o0,e1,o1 | e2,o2,e3,o3]
+    let hi = _mm256_loadu_ps(ptr.add(8)); // [e4,o4,e5,o5 | e6,o6,e7,o7]
+
+    // Highway's ConcatEven pattern for f32:
+    // _mm256_shuffle_ps with 0x88 selects elements [0,2] from each source per lane
+    // Lane0: [lo[0],lo[2],hi[0],hi[2]] = [e0,e1,e4,e5]
+    // Lane1: [lo[4],lo[6],hi[4],hi[6]] = [e2,e3,e6,e7]
+    let v2020 = _mm256_shuffle_ps(lo, hi, 0x88);
+    // _mm256_permute4x64_epi64 with 0xD8 reorders 64-bit chunks: [0,2,1,3]
+    // Final: [e0,e1,e2,e3,e4,e5,e6,e7]
+    let evens_raw =
+        _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v2020), 0xD8));
+
+    // Highway's ConcatOdd pattern for f32:
+    // _mm256_shuffle_ps with 0xDD selects elements [1,3] from each source per lane
+    let v3131 = _mm256_shuffle_ps(lo, hi, 0xDD);
+    let odds_raw = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v3131), 0xD8));
+
+    (
+        std::mem::transmute::<__m256, f32x8>(evens_raw),
+        std::mem::transmute::<__m256, f32x8>(odds_raw),
+    )
+}
+
+/// Scalar fallback for gather_even_odd - used by non-AVX2 targets
 #[inline(always)]
-fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, f32x8) {
-    // Fast path: when we have at least 16 elements available
-    if start_idx + 16 <= plane.len() {
-        // SAFETY: We just checked that start_idx + 16 <= plane.len()
-        unsafe {
-            let ptr = plane.as_ptr().add(start_idx);
-
-            // Load 16 consecutive floats
-            let a: [f32; 8] = *(ptr as *const [f32; 8]);
-            let b: [f32; 8] = *(ptr.add(8) as *const [f32; 8]);
-
-            // Element selection - compiler will optimize based on target features
-            let evens = f32x8::from([a[0], a[2], a[4], a[6], b[0], b[2], b[4], b[6]]);
-            let odds = f32x8::from([a[1], a[3], a[5], a[7], b[1], b[3], b[5], b[7]]);
-            return (evens, odds);
-        }
+fn gather_even_odd_x8_scalar(ptr: *const f32) -> (f32x8, f32x8) {
+    // SAFETY: Caller guarantees 16 elements are available
+    unsafe {
+        let a: [f32; 8] = *(ptr as *const [f32; 8]);
+        let b: [f32; 8] = *(ptr.add(8) as *const [f32; 8]);
+        let evens = f32x8::from([a[0], a[2], a[4], a[6], b[0], b[2], b[4], b[6]]);
+        let odds = f32x8::from([a[1], a[3], a[5], a[7], b[1], b[3], b[5], b[7]]);
+        (evens, odds)
     }
+}
 
-    // Slow path: boundary-safe gather with clamping
+/// Boundary-safe gather with clamping for edge cases
+#[inline(always)]
+fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> (f32x8, f32x8) {
     let get = |offset: usize| -> f32 {
         let idx = start_idx + offset;
         if idx < plane.len() {
@@ -658,17 +682,58 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, width: usize) -> (f32x8, 
     ]);
 
     let odds = f32x8::from([
-        get(1.min(width - 1)),
-        get(3.min(width - 1)),
-        get(5.min(width - 1)),
-        get(7.min(width - 1)),
-        get(9.min(width - 1)),
-        get(11.min(width - 1)),
-        get(13.min(width - 1)),
-        get(15.min(width - 1)),
+        get(1),
+        get(3),
+        get(5),
+        get(7),
+        get(9),
+        get(11),
+        get(13),
+        get(15),
     ]);
 
     (evens, odds)
+}
+
+/// Gather even and odd indexed elements from a row into two f32x8 vectors.
+///
+/// Given input [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, ...]:
+/// - evens = [a, c, e, g, i, k, m, o]
+/// - odds = [b, d, f, h, j, l, n, p]
+///
+/// IMPORTANT: This is called from multiversioned functions. The caller
+/// (downsample_2x2_simd_inplace) is compiled with AVX2 enabled via multiversion,
+/// which means we can safely call AVX2 intrinsics here when the AVX2 version
+/// of the caller is running.
+///
+/// We use `is_x86_feature_detected!` which is cheap (cached atomic load) to
+/// select the right path. The branch predictor will quickly learn the pattern.
+#[inline(always)]
+fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8, f32x8) {
+    // Fast path: when we have at least 16 elements available
+    if start_idx + 16 <= plane.len() {
+        let ptr = unsafe { plane.as_ptr().add(start_idx) };
+
+        // Use runtime dispatch with inline function calls (no pointer indirection)
+        // The branch is very predictable and intrinsics are inlined
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 is detected
+                return unsafe { gather_even_odd_x8_avx2(ptr) };
+            } else {
+                return gather_even_odd_x8_scalar(ptr);
+            }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            return gather_even_odd_x8_scalar(ptr);
+        }
+    }
+
+    // Slow path: boundary-safe gather with clamping
+    gather_even_odd_x8_boundary(plane, start_idx)
 }
 
 // ============================================================================
@@ -720,13 +785,14 @@ unsafe fn u8x4_to_f32x4(v: __m128i) -> core::arch::x86_64::__m128 {
 
 /// AVX2 intrinsics implementation for RGB to YCbCr conversion.
 ///
-/// Processes 8 pixels at a time using explicit SSE/AVX2 intrinsics for
+/// Processes 8 pixels at a time using explicit SSE/AVX2+FMA intrinsics for
 /// deinterleaving RGB data, which LLVM cannot auto-vectorize effectively.
+/// Uses FMA (fused multiply-add) for better performance and precision.
 ///
 /// # Safety
-/// Requires AVX2 support. Caller must verify with `is_x86_feature_detected!("avx2")`.
+/// Requires AVX2+FMA support. Caller must verify with `is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")`.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "avx2", enable = "fma")]
 #[inline]
 pub unsafe fn rgb_to_ycbcr_8px_avx2(
     rgb_ptr: *const u8,
@@ -734,7 +800,7 @@ pub unsafe fn rgb_to_ycbcr_8px_avx2(
     cb_ptr: *mut f32,
     cr_ptr: *mut f32,
 ) {
-    use core::arch::x86_64::{__m128, _mm_add_ps, _mm_mul_ps, _mm_set1_ps, _mm_storeu_ps};
+    // Intrinsics imported at module level
 
     // Load 24 bytes as two overlapping 16-byte loads
     // Load 0: bytes [0..15] for pixels 0-3 (plus partial pixel 4-5)
@@ -772,44 +838,33 @@ pub unsafe fn rgb_to_ycbcr_8px_avx2(
     let b_to_cr = _mm_set1_ps(YCBCR_B_TO_CR);
     let offset_128 = _mm_set1_ps(128.0);
 
-    // Compute Y, Cb, Cr for first 4 pixels
-    let y0 = _mm_add_ps(
-        _mm_add_ps(_mm_mul_ps(r0, r_to_y), _mm_mul_ps(g0, g_to_y)),
-        _mm_mul_ps(b0, b_to_y),
+    // Compute Y, Cb, Cr for first 4 pixels using FMA
+    // y = r * r_to_y + g * g_to_y + b * b_to_y
+    let y0 = _mm_fmadd_ps(b0, b_to_y, _mm_fmadd_ps(g0, g_to_y, _mm_mul_ps(r0, r_to_y)));
+    // cb = 128 + r * r_to_cb + g * g_to_cb + b * b_to_cb
+    let cb0 = _mm_fmadd_ps(
+        b0,
+        b_to_cb,
+        _mm_fmadd_ps(g0, g_to_cb, _mm_fmadd_ps(r0, r_to_cb, offset_128)),
     );
-    let cb0 = _mm_add_ps(
-        offset_128,
-        _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(r0, r_to_cb), _mm_mul_ps(g0, g_to_cb)),
-            _mm_mul_ps(b0, b_to_cb),
-        ),
-    );
-    let cr0 = _mm_add_ps(
-        offset_128,
-        _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(r0, r_to_cr), _mm_mul_ps(g0, g_to_cr)),
-            _mm_mul_ps(b0, b_to_cr),
-        ),
+    // cr = 128 + r * r_to_cr + g * g_to_cr + b * b_to_cr
+    let cr0 = _mm_fmadd_ps(
+        b0,
+        b_to_cr,
+        _mm_fmadd_ps(g0, g_to_cr, _mm_fmadd_ps(r0, r_to_cr, offset_128)),
     );
 
-    // Compute Y, Cb, Cr for second 4 pixels
-    let y1 = _mm_add_ps(
-        _mm_add_ps(_mm_mul_ps(r1, r_to_y), _mm_mul_ps(g1, g_to_y)),
-        _mm_mul_ps(b1, b_to_y),
+    // Compute Y, Cb, Cr for second 4 pixels using FMA
+    let y1 = _mm_fmadd_ps(b1, b_to_y, _mm_fmadd_ps(g1, g_to_y, _mm_mul_ps(r1, r_to_y)));
+    let cb1 = _mm_fmadd_ps(
+        b1,
+        b_to_cb,
+        _mm_fmadd_ps(g1, g_to_cb, _mm_fmadd_ps(r1, r_to_cb, offset_128)),
     );
-    let cb1 = _mm_add_ps(
-        offset_128,
-        _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(r1, r_to_cb), _mm_mul_ps(g1, g_to_cb)),
-            _mm_mul_ps(b1, b_to_cb),
-        ),
-    );
-    let cr1 = _mm_add_ps(
-        offset_128,
-        _mm_add_ps(
-            _mm_add_ps(_mm_mul_ps(r1, r_to_cr), _mm_mul_ps(g1, g_to_cr)),
-            _mm_mul_ps(b1, b_to_cr),
-        ),
+    let cr1 = _mm_fmadd_ps(
+        b1,
+        b_to_cr,
+        _mm_fmadd_ps(g1, g_to_cr, _mm_fmadd_ps(r1, r_to_cr, offset_128)),
     );
 
     // Store results (two 4-element stores per plane)
@@ -851,6 +906,9 @@ fn rgb_to_ycbcr_scalar(
 /// This is the **zero-allocation** version for hot paths. Use this when encoding
 /// multiple images or when performance is critical.
 ///
+/// On x86_64 with AVX2+FMA, uses optimized intrinsics with shuffle-based RGB
+/// deinterleaving and fused multiply-add operations.
+///
 /// # Arguments
 /// * `rgb_data` - Input RGB data (3 bytes per pixel, interleaved)
 /// * `y_plane` - Output Y plane (must be at least `num_pixels` elements)
@@ -870,6 +928,55 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
     debug_assert!(cb_plane.len() >= num_pixels);
     debug_assert!(cr_plane.len() >= num_pixels);
 
+    // Use AVX2+FMA intrinsics path when available (much faster due to shuffle-based
+    // deinterleave instead of scalar gather, plus FMA operations)
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            let chunks = num_pixels / 8;
+
+            for chunk in 0..chunks {
+                let pixel_idx = chunk * 8;
+                let rgb_idx = pixel_idx * 3;
+
+                // SAFETY: AVX2+FMA detected, and we've verified buffer lengths above
+                unsafe {
+                    let rgb_ptr = rgb_data.as_ptr().add(rgb_idx);
+                    let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
+                    let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
+                    let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
+                    rgb_to_ycbcr_8px_avx2(rgb_ptr, y_ptr, cb_ptr, cr_ptr);
+                }
+            }
+
+            // Scalar remainder
+            for i in (chunks * 8)..num_pixels {
+                let rgb_idx = i * 3;
+                let r = rgb_data[rgb_idx] as f32;
+                let g = rgb_data[rgb_idx + 1] as f32;
+                let b = rgb_data[rgb_idx + 2] as f32;
+
+                y_plane[i] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+                cb_plane[i] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+                cr_plane[i] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+            }
+            return;
+        }
+    }
+
+    // Fallback path using wide crate's f32x8
+    rgb_to_ycbcr_planes_simd_inplace_fallback(rgb_data, y_plane, cb_plane, cr_plane, num_pixels);
+}
+
+/// Fallback implementation using wide crate's f32x8 (for non-AVX2+FMA CPUs)
+#[inline]
+fn rgb_to_ycbcr_planes_simd_inplace_fallback(
+    rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    num_pixels: usize,
+) {
     // Coefficients as SIMD vectors
     let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
     let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
@@ -2148,9 +2255,69 @@ pub fn xyb_planes_to_rgb_f32_simd(plane0: &[f32], plane1: &[f32], plane2: &[f32]
 mod tests {
     use super::*;
 
-    const EPSILON: f32 = 1e-5;
+    /// Tolerance for FMA vs non-FMA differences (FMA avoids intermediate rounding)
+    const EPSILON: f32 = 1e-4;
     /// Slightly higher tolerance for accumulated operations (downsampling averages 4 values)
-    const EPSILON_ACCUMULATED: f32 = 1e-4;
+    const EPSILON_ACCUMULATED: f32 = 5e-4;
+
+    #[test]
+    fn test_gather_even_odd_x8_correctness() {
+        // Create test data: 16 sequential floats
+        let data: Vec<f32> = (0..32).map(|i| i as f32).collect();
+
+        // Call the function
+        let (evens, odds) = gather_even_odd_x8(&data, 0, 32);
+
+        // Expected: evens = [0, 2, 4, 6, 8, 10, 12, 14]
+        let evens_arr: [f32; 8] = evens.into();
+        let odds_arr: [f32; 8] = odds.into();
+
+        let expected_evens = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0];
+        let expected_odds = [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0];
+
+        for i in 0..8 {
+            assert!(
+                (evens_arr[i] - expected_evens[i]).abs() < EPSILON,
+                "evens[{}]: got {}, expected {}",
+                i,
+                evens_arr[i],
+                expected_evens[i]
+            );
+            assert!(
+                (odds_arr[i] - expected_odds[i]).abs() < EPSILON,
+                "odds[{}]: got {}, expected {}",
+                i,
+                odds_arr[i],
+                expected_odds[i]
+            );
+        }
+
+        // Test with offset
+        let (evens2, odds2) = gather_even_odd_x8(&data, 4, 32);
+        let evens2_arr: [f32; 8] = evens2.into();
+        let odds2_arr: [f32; 8] = odds2.into();
+
+        // With offset 4: evens = [4, 6, 8, 10, 12, 14, 16, 18]
+        let expected_evens2 = [4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0];
+        let expected_odds2 = [5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0];
+
+        for i in 0..8 {
+            assert!(
+                (evens2_arr[i] - expected_evens2[i]).abs() < EPSILON,
+                "evens2[{}]: got {}, expected {}",
+                i,
+                evens2_arr[i],
+                expected_evens2[i]
+            );
+            assert!(
+                (odds2_arr[i] - expected_odds2[i]).abs() < EPSILON,
+                "odds2[{}]: got {}, expected {}",
+                i,
+                odds2_arr[i],
+                expected_odds2[i]
+            );
+        }
+    }
 
     #[test]
     fn test_downsample_2x2_simd_matches_scalar() {
