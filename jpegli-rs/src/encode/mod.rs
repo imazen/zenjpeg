@@ -18,8 +18,6 @@ mod workspace;
 pub(crate) use config::ColorConversionMethod;
 pub use config::{internal_pathway, EncoderConfig};
 pub(crate) use config::{DownsamplingMethod, InternalPipeline, ProgressiveScan};
-#[cfg(feature = "experimental-hybrid-trellis")]
-pub(crate) use hybrid::HybridQuantContext;
 pub use workspace::EncoderWorkspace;
 
 use crate::alloc::{checked_size_2d, validate_dimensions, DEFAULT_MAX_PIXELS};
