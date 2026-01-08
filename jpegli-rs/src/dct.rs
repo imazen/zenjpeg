@@ -444,19 +444,12 @@ pub(crate) mod simd {
         }
     }
 
-    /// Transpose an array of 8 f32x8 vectors (scalar fallback)
+    /// Transpose an 8x8 matrix of f32x8 vectors using wide's built-in transpose.
+    /// AVX-accelerated when available.
     #[allow(dead_code)]
     #[inline]
     fn transpose_f32x8_array(input: &[f32x8; 8]) -> [f32x8; 8] {
-        let mut output = [f32x8::ZERO; 8];
-        for col in 0..8 {
-            let mut arr = [0.0f32; 8];
-            for row in 0..8 {
-                arr[row] = input[row].to_array()[col];
-            }
-            output[col] = f32x8::from(arr);
-        }
-        output
+        f32x8::transpose(*input)
     }
 
     /// AVX2-optimized 8x8 transpose using Highway's algorithm.
@@ -598,18 +591,32 @@ pub(crate) mod simd {
             }
         }
 
-        // Scalar fallback (always available, portable)
-        transpose_8x8_scalar(input, output);
+        // Use wide's built-in transpose (AVX-accelerated when available)
+        transpose_8x8_wide(input, output);
     }
 
-    /// Scalar 8x8 transpose fallback
+    /// Transpose using wide's built-in f32x8::transpose (AVX-accelerated).
     #[inline]
-    fn transpose_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
-        for row in 0..8 {
-            for col in 0..8 {
-                output[col * 8 + row] = input[row * 8 + col];
-            }
-        }
+    fn transpose_8x8_wide(input: &[f32; 64], output: &mut [f32; 64]) {
+        let rows = [
+            f32x8::from(&input[0..8]),
+            f32x8::from(&input[8..16]),
+            f32x8::from(&input[16..24]),
+            f32x8::from(&input[24..32]),
+            f32x8::from(&input[32..40]),
+            f32x8::from(&input[40..48]),
+            f32x8::from(&input[48..56]),
+            f32x8::from(&input[56..64]),
+        ];
+        let transposed = f32x8::transpose(rows);
+        output[0..8].copy_from_slice(&transposed[0].to_array());
+        output[8..16].copy_from_slice(&transposed[1].to_array());
+        output[16..24].copy_from_slice(&transposed[2].to_array());
+        output[24..32].copy_from_slice(&transposed[3].to_array());
+        output[32..40].copy_from_slice(&transposed[4].to_array());
+        output[40..48].copy_from_slice(&transposed[5].to_array());
+        output[48..56].copy_from_slice(&transposed[6].to_array());
+        output[56..64].copy_from_slice(&transposed[7].to_array());
     }
 
     // ========================================================================

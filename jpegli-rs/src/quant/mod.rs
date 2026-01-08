@@ -571,17 +571,10 @@ pub fn quantize_block(
     for chunk in 0..8 {
         let k = chunk * 8;
 
-        let c = f32x8::from([
-            coeffs[k],
-            coeffs[k + 1],
-            coeffs[k + 2],
-            coeffs[k + 3],
-            coeffs[k + 4],
-            coeffs[k + 5],
-            coeffs[k + 6],
-            coeffs[k + 7],
-        ]);
+        // Load coefficients directly from slice
+        let c = f32x8::from(&coeffs[k..k + 8]);
 
+        // Load quant values (must convert u16 to f32)
         let q = f32x8::from([
             quant[k] as f32,
             quant[k + 1] as f32,
@@ -597,14 +590,10 @@ pub fn quantize_block(
         let rounded = qval.round();
         let arr: [f32; 8] = rounded.into();
 
-        result[k] = arr[0] as i16;
-        result[k + 1] = arr[1] as i16;
-        result[k + 2] = arr[2] as i16;
-        result[k + 3] = arr[3] as i16;
-        result[k + 4] = arr[4] as i16;
-        result[k + 5] = arr[5] as i16;
-        result[k + 6] = arr[6] as i16;
-        result[k + 7] = arr[7] as i16;
+        // Store results (must convert f32 to i16)
+        for i in 0..8 {
+            result[k + i] = arr[i] as i16;
+        }
     }
 
     result
@@ -674,19 +663,10 @@ pub fn quantize_block_with_zero_bias_simd(
     for chunk in 0..8 {
         let k = chunk * 8;
 
-        // Load coefficients
-        let c = f32x8::from([
-            coeffs[k],
-            coeffs[k + 1],
-            coeffs[k + 2],
-            coeffs[k + 3],
-            coeffs[k + 4],
-            coeffs[k + 5],
-            coeffs[k + 6],
-            coeffs[k + 7],
-        ]);
+        // Load coefficients directly from slice
+        let c = f32x8::from(&coeffs[k..k + 8]);
 
-        // Load quant values (convert u16 to f32)
+        // Load quant values (must convert u16 to f32)
         let q = f32x8::from([
             quant[k] as f32,
             quant[k + 1] as f32,
@@ -701,28 +681,9 @@ pub fn quantize_block_with_zero_bias_simd(
         // Compute qval = coeffs / quant
         let qval = c / q;
 
-        // Load zero_bias offset and mul
-        let offset = f32x8::from([
-            zero_bias.offset[k],
-            zero_bias.offset[k + 1],
-            zero_bias.offset[k + 2],
-            zero_bias.offset[k + 3],
-            zero_bias.offset[k + 4],
-            zero_bias.offset[k + 5],
-            zero_bias.offset[k + 6],
-            zero_bias.offset[k + 7],
-        ]);
-
-        let mul = f32x8::from([
-            zero_bias.mul[k],
-            zero_bias.mul[k + 1],
-            zero_bias.mul[k + 2],
-            zero_bias.mul[k + 3],
-            zero_bias.mul[k + 4],
-            zero_bias.mul[k + 5],
-            zero_bias.mul[k + 6],
-            zero_bias.mul[k + 7],
-        ]);
+        // Load zero_bias offset and mul directly from slices
+        let offset = f32x8::from(&zero_bias.offset[k..k + 8]);
+        let mul = f32x8::from(&zero_bias.mul[k..k + 8]);
 
         // threshold = offset + mul * aq_strength
         let threshold = offset + mul * aq;
