@@ -190,23 +190,17 @@ fn bench_varying_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_load_sizes");
 
     for size in [1024, 4096, 16384, 65536, 262144] {
-        let data: Vec<f32> = (0..size)
-            .map(|i| 100.0 + (i as f32) * 0.01)
-            .collect();
+        let data: Vec<f32> = (0..size).map(|i| 100.0 + (i as f32) * 0.01).collect();
 
         group.throughput(Throughput::Bytes((size * 4) as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("unsafe_ptr", size),
-            &data,
-            |b, data| b.iter(|| process_buffer(black_box(data), load_unsafe)),
-        );
+        group.bench_with_input(BenchmarkId::new("unsafe_ptr", size), &data, |b, data| {
+            b.iter(|| process_buffer(black_box(data), load_unsafe))
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("safe_try_into", size),
-            &data,
-            |b, data| b.iter(|| process_buffer(black_box(data), load_safe_try_into)),
-        );
+        group.bench_with_input(BenchmarkId::new("safe_try_into", size), &data, |b, data| {
+            b.iter(|| process_buffer(black_box(data), load_safe_try_into))
+        });
     }
 
     group.finish();

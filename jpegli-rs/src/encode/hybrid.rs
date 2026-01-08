@@ -36,7 +36,9 @@ pub(super) fn get_aq_map_or_compute(
     if let Some(ref custom) = config.custom_aq_map {
         Ok(custom.clone())
     } else {
-        Ok(crate::adaptive_quant::compute_aq_strength_map(y_plane, width, height, y_quant_01)?)
+        Ok(crate::adaptive_quant::compute_aq_strength_map(
+            y_plane, width, height, y_quant_01,
+        )?)
     }
 }
 

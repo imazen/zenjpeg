@@ -313,9 +313,7 @@ pub fn quant_field_to_aq_strength(quant_field: f32) -> f32 {
 /// # Errors
 ///
 /// Returns `AllocError` if result buffer allocation fails.
-pub fn quant_field_to_aq_strength_simd(
-    quant_field: &[f32],
-) -> Result<AlignedVec<f32>, AllocError> {
+pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Result<AlignedVec<f32>, AllocError> {
     use wide::f32x8;
 
     let mut result = try_alloc_zeroed(quant_field.len())?;

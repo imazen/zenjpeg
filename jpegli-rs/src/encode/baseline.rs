@@ -416,8 +416,13 @@ impl Encoder {
         let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0)?;
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map =
-            hybrid::get_aq_map_or_compute(&self.config, &y_plane_scaled, width, height, y_quant_01)?;
+        let aq_map = hybrid::get_aq_map_or_compute(
+            &self.config,
+            &y_plane_scaled,
+            width,
+            height,
+            y_quant_01,
+        )?;
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01)?;
 
