@@ -619,6 +619,137 @@ pub(crate) mod simd {
         output[56..64].copy_from_slice(&transposed[7].to_array());
     }
 
+    /// Transpose 8 f32x8 vectors in-place using wide's built-in transpose.
+    #[inline(always)]
+    fn transpose_vec(rows: [f32x8; 8]) -> [f32x8; 8] {
+        f32x8::transpose(rows)
+    }
+
+    /// Vectorized 1D DCT on 8 rows in parallel.
+    /// Input: 8 f32x8 vectors where each represents corresponding values from 8 rows.
+    /// (i.e., m[0] contains element 0 from each of 8 rows)
+    /// Returns: transformed values in the same layout.
+    #[inline(always)]
+    fn dct_1d_vec(m: [f32x8; 8]) -> [f32x8; 8] {
+        // AddReverse<4>: tmp[0:4] = m[0:4] + reverse(m[4:8])
+        let t0 = m[0] + m[7];
+        let t1 = m[1] + m[6];
+        let t2 = m[2] + m[5];
+        let t3 = m[3] + m[4];
+
+        // SubReverse<4>: tmp[4:8] = m[0:4] - reverse(m[4:8])
+        let t4 = m[0] - m[7];
+        let t5 = m[1] - m[6];
+        let t6 = m[2] - m[5];
+        let t7 = m[3] - m[4];
+
+        // DCT1D<4> on first half (t0-t3)
+        let first = dct_1d_4_vec([t0, t1, t2, t3]);
+
+        // Multiply by WC8
+        let t4_scaled = t4 * WC8_0;
+        let t5_scaled = t5 * WC8_1;
+        let t6_scaled = t6 * WC8_2;
+        let t7_scaled = t7 * WC8_3;
+
+        // DCT1D<4> on second half
+        let mut second = dct_1d_4_vec([t4_scaled, t5_scaled, t6_scaled, t7_scaled]);
+
+        // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
+        second[0] = second[0] * SQRT2_VEC + second[1];
+        second[1] = second[1] + second[2];
+        second[2] = second[2] + second[3];
+        // second[3] stays the same
+
+        // InverseEvenOdd<8>: interleave
+        [
+            first[0],
+            second[0],
+            first[1],
+            second[1],
+            first[2],
+            second[2],
+            first[3],
+            second[3],
+        ]
+    }
+
+    /// DCT for N=4 on SIMD vectors (helper for dct_1d_vec)
+    #[inline(always)]
+    fn dct_1d_4_vec(m: [f32x8; 4]) -> [f32x8; 4] {
+        // AddReverse<2>: tmp[0:2] = m[0:2] + reverse(m[2:4])
+        let t0 = m[0] + m[3];
+        let t1 = m[1] + m[2];
+
+        // SubReverse<2>: tmp[2:4] = m[0:2] - reverse(m[2:4])
+        let t2 = m[0] - m[3];
+        let t3 = m[1] - m[2];
+
+        // DCT1D<2> on first half (t0, t1)
+        let r0 = t0 + t1;
+        let r1 = t0 - t1;
+
+        // Multiply by WC4
+        let t2_scaled = t2 * WC4_0;
+        let t3_scaled = t3 * WC4_1;
+
+        // DCT1D<2> on second half
+        let r2 = t2_scaled + t3_scaled;
+        let r3 = t2_scaled - t3_scaled;
+
+        // B<2>: r2 = r2 * sqrt2 + r3
+        let r2_final = r2 * SQRT2_VEC + r3;
+
+        // InverseEvenOdd<4>: interleave even/odd
+        [r0, r2_final, r1, r3]
+    }
+
+    /// Full SIMD-optimized 2D forward DCT with f32x8 chaining.
+    /// Keeps data in SIMD registers throughout the pipeline.
+    /// Uses only 2 transposes instead of multiple gather/scatter cycles.
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+    pub fn forward_dct_8x8_simd_chained(input: &[f32; 64]) -> [f32; 64] {
+        // Load input as rows (each f32x8 is one row of the 8x8 block)
+        let rows = [
+            f32x8::from(&input[0..8]),
+            f32x8::from(&input[8..16]),
+            f32x8::from(&input[16..24]),
+            f32x8::from(&input[24..32]),
+            f32x8::from(&input[32..40]),
+            f32x8::from(&input[40..48]),
+            f32x8::from(&input[48..56]),
+            f32x8::from(&input[56..64]),
+        ];
+
+        // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
+        // This layout allows dct_1d_vec to process 8 rows in parallel
+        let cols = transpose_vec(rows);
+
+        // Row DCT: processes all 8 rows in parallel
+        let cols_after_row = dct_1d_vec(cols);
+
+        // Transpose back to row layout (also correct layout for column DCT)
+        let rows_for_col = transpose_vec(cols_after_row);
+
+        // Column DCT: processes all 8 columns in parallel using row layout
+        let final_rows = dct_1d_vec(rows_for_col);
+
+        // Apply 1/8 scaling and store (already in row layout)
+        let scale = f32x8::splat(1.0 / 8.0);
+        let mut output = [0.0f32; 64];
+
+        output[0..8].copy_from_slice(&(final_rows[0] * scale).to_array());
+        output[8..16].copy_from_slice(&(final_rows[1] * scale).to_array());
+        output[16..24].copy_from_slice(&(final_rows[2] * scale).to_array());
+        output[24..32].copy_from_slice(&(final_rows[3] * scale).to_array());
+        output[32..40].copy_from_slice(&(final_rows[4] * scale).to_array());
+        output[40..48].copy_from_slice(&(final_rows[5] * scale).to_array());
+        output[48..56].copy_from_slice(&(final_rows[6] * scale).to_array());
+        output[56..64].copy_from_slice(&(final_rows[7] * scale).to_array());
+
+        output
+    }
+
     // ========================================================================
     // Raw AVX2+FMA DCT Implementation
     // No wide crate, pure intrinsics for maximum performance
@@ -914,34 +1045,37 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
 /// Public so multiversion blocks can call it directly via cfg(target_feature).
 #[inline]
 pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    let mut scratch = [0.0f32; 64];
-    let mut coefficients = [0.0f32; 64];
-
-    // Row transform
-    dct_rows(input, &mut scratch);
-
-    // Transpose
+    // Use SIMD chained version when available (portable, no raw intrinsics)
     #[cfg(feature = "simd")]
-    simd::transpose_8x8_simd(&scratch, &mut coefficients);
-    #[cfg(not(feature = "simd"))]
-    transpose_8x8(&scratch, &mut coefficients);
-
-    // Column transform (on transposed data)
-    dct_rows(&coefficients, &mut scratch);
-
-    // Transpose back
-    #[cfg(feature = "simd")]
-    simd::transpose_8x8_simd(&scratch, &mut coefficients);
-    #[cfg(not(feature = "simd"))]
-    transpose_8x8(&scratch, &mut coefficients);
-
-    // Apply 1/8 scaling
-    let scale = 1.0 / 8.0;
-    for v in &mut coefficients {
-        *v *= scale;
+    {
+        simd::forward_dct_8x8_simd_chained(input)
     }
 
-    coefficients
+    #[cfg(not(feature = "simd"))]
+    {
+        let mut scratch = [0.0f32; 64];
+        let mut coefficients = [0.0f32; 64];
+
+        // Row transform
+        dct_rows(input, &mut scratch);
+
+        // Transpose
+        transpose_8x8(&scratch, &mut coefficients);
+
+        // Column transform (on transposed data)
+        dct_rows(&coefficients, &mut scratch);
+
+        // Transpose back
+        transpose_8x8(&scratch, &mut coefficients);
+
+        // Apply 1/8 scaling
+        let scale = 1.0 / 8.0;
+        for v in &mut coefficients {
+            *v *= scale;
+        }
+
+        coefficients
+    }
 }
 
 /// Performs forward DCT on a block with level shift.
