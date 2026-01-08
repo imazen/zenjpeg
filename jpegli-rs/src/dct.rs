@@ -219,7 +219,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 
 // SIMD-optimized implementations
 #[cfg(feature = "simd")]
-mod simd {
+pub(crate) mod simd {
     use super::*;
 
     #[cfg(target_arch = "x86_64")]
@@ -882,8 +882,9 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
 }
 
 /// Scalar fallback for forward DCT (also used on non-AVX2 x86_64 and other platforms)
+/// Public so multiversion blocks can call it directly via cfg(target_feature).
 #[inline]
-fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
+pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     let mut scratch = [0.0f32; 64];
     let mut coefficients = [0.0f32; 64];
 
