@@ -1,18 +1,65 @@
 # SIMD Optimization Strategy for jpegli-rs
 
-## Current Performance Gap
+## Current Performance (After Optimizations)
 
-Benchmarks with `-march=native` on both Rust and C++ show:
+Benchmarks with `-C target-cpu=native` on Rust and `-march=native` on C++ (2K flower.png):
 
-| Image Size | Rust vs C++ |
-|------------|-------------|
-| 512px | Rust 20-42% faster |
-| 2K | Rust 20-100% slower |
-| 4K | Rust 46-132% slower |
+| Mode | Δ Time | Notes |
+|------|--------|-------|
+| YUV/SEQ/OPT/420 | -5.3% | **Rust is faster!** |
+| YUV/PRO/OPT/444 | +10% | Near parity |
+| YUV/SEQ/FIX/444 | +72% | Still work to do |
+| Overall | +40% | Improved from ~47% |
 
-**Key insight:** Rust wins at small sizes (better setup), C++ wins at large sizes (better SIMD throughput).
+**Key achievements:**
+- YUV 4:2:0 mode is now 5% faster than C++
+- Progressive 4:4:4 is within 10% of C++
+- AVX2 8x8 transpose is efficient (only 1% of profile time)
 
-## Root Causes Identified
+## Completed Optimizations
+
+### 1. ✅ AVX2 8x8 Transpose (Implemented)
+
+Used Highway's algorithm with `vunpcklps/vunpckhps` + `vperm2f128`:
+- Transpose now takes only 1% of profile time
+- Used multiversion macro for efficient dispatch
+
+### 2. ✅ gather_even_odd_x8 (Implemented)
+
+Replaced element-by-element construction with shuffle-based deinterleave.
+
+### 3. ✅ AVX2+FMA Color Conversion (Implemented)
+
+Added FMA to rgb_to_ycbcr_8px_avx2 for faster color space conversion.
+
+## Findings: What Didn't Work
+
+### Parallel SIMD DCT
+Attempted to process 8 rows simultaneously but found it **slower** than scalar:
+- `f32x8::from([...])` generates 8x `vinsertps` instructions (slow!)
+- Extra transpose overhead negated any SIMD benefit
+- Scalar row-by-row with AVX2 transpose is actually faster
+
+**Lesson:** The `wide` crate's vector construction is a bottleneck. True AVX2 optimization requires raw intrinsics throughout.
+
+## Remaining Bottlenecks (Profile Data)
+
+For baseline 4:4:4 encoding (2K image):
+
+| Component | % of Time |
+|-----------|-----------|
+| DCT | 14% |
+| Adaptive Quantization | 17% |
+| Huffman table optimization | 6% |
+| Memory operations | 7% |
+| Color conversion | 4% |
+
+### Next Steps
+1. **DCT with raw AVX2 intrinsics** - Eliminate wide crate overhead
+2. **AQ optimization** - Largest remaining target at 17%
+3. **Reduce memory allocations** - memset/memmove at 7%
+
+## Historical: Original Root Causes
 
 ### 1. Element-by-Element Vector Construction (Critical)
 

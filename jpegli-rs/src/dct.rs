@@ -222,6 +222,12 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 mod simd {
     use super::*;
 
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::{
+        __m256, _mm256_loadu_ps, _mm256_permute2f128_ps, _mm256_storeu_ps, _mm256_unpackhi_ps,
+        _mm256_unpacklo_ps,
+    };
+
     // SIMD versions of WC constants for parallel DCT
     // Note: The parallel DCT approach has poor cache locality and doesn't
     // improve performance compared to row-by-row processing. Kept for reference.
@@ -336,81 +342,272 @@ mod simd {
         m[7] = second[3];
     }
 
-    /// Process 8 rows simultaneously using SIMD
-    /// Each lane of f32x8 handles one row's element at the same column position
-    /// Note: This has poor cache locality due to column-wise gather/scatter.
-    /// Row-by-row scalar processing is faster despite less theoretical parallelism.
+    /// Process 8 rows simultaneously using SIMD with AVX2 transpose.
+    /// Uses cache-friendly row loads + fast transpose instead of element-by-element gather.
+    /// Note: Currently slower than scalar row-by-row processing due to f32x8::from([...])
+    /// vector construction overhead. Kept for reference and future AVX2 intrinsics optimization.
     #[allow(dead_code)]
-    #[inline]
+    #[multiversion(targets("x86_64+avx2", "x86_64+sse2"))]
     pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
-        // Load data column-wise: mem[col] holds position col from all 8 rows
-        let mut mem = [f32x8::ZERO; 8];
-        for col in 0..8 {
-            mem[col] = f32x8::from([
-                input[0 * 8 + col],
-                input[1 * 8 + col],
-                input[2 * 8 + col],
-                input[3 * 8 + col],
-                input[4 * 8 + col],
-                input[5 * 8 + col],
-                input[6 * 8 + col],
-                input[7 * 8 + col],
+        // Step 1: Load all 8 rows (cache-friendly sequential access)
+        let mut rows: [f32x8; 8] = [f32x8::ZERO; 8];
+        for row in 0..8 {
+            let k = row * 8;
+            rows[row] = f32x8::from([
+                input[k],
+                input[k + 1],
+                input[k + 2],
+                input[k + 3],
+                input[k + 4],
+                input[k + 5],
+                input[k + 6],
+                input[k + 7],
             ]);
         }
 
-        // Execute 8 DCT-1D operations in parallel (one per row)
+        // Step 2: Transpose to column-major using AVX2 if available
+        // After transpose: mem[col] = [row0[col], row1[col], ..., row7[col]]
+        let mut mem: [f32x8; 8];
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                // Use AVX2 transpose on the raw arrays
+                let mut input_flat = [0.0f32; 64];
+                let mut output_flat = [0.0f32; 64];
+                for (i, r) in rows.iter().enumerate() {
+                    let arr = r.to_array();
+                    input_flat[i * 8..i * 8 + 8].copy_from_slice(&arr);
+                }
+                unsafe {
+                    transpose_8x8_avx2(&input_flat, &mut output_flat);
+                }
+                mem = [f32x8::ZERO; 8];
+                for col in 0..8 {
+                    let k = col * 8;
+                    mem[col] = f32x8::from([
+                        output_flat[k],
+                        output_flat[k + 1],
+                        output_flat[k + 2],
+                        output_flat[k + 3],
+                        output_flat[k + 4],
+                        output_flat[k + 5],
+                        output_flat[k + 6],
+                        output_flat[k + 7],
+                    ]);
+                }
+            } else {
+                // Scalar transpose fallback
+                mem = transpose_f32x8_array(&rows);
+            }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            mem = transpose_f32x8_array(&rows);
+        }
+
+        // Step 3: Execute 8 DCT-1D operations in parallel
         dct1d_8_simd(&mut mem);
 
-        // Store back - now mem[col] holds DCT output col from all 8 rows
-        for col in 0..8 {
-            let arr = mem[col].to_array();
-            output[0 * 8 + col] = arr[0];
-            output[1 * 8 + col] = arr[1];
-            output[2 * 8 + col] = arr[2];
-            output[3 * 8 + col] = arr[3];
-            output[4 * 8 + col] = arr[4];
-            output[5 * 8 + col] = arr[5];
-            output[6 * 8 + col] = arr[6];
-            output[7 * 8 + col] = arr[7];
+        // Step 4: Transpose back to row-major
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                let mut input_flat = [0.0f32; 64];
+                for (i, m) in mem.iter().enumerate() {
+                    let arr = m.to_array();
+                    input_flat[i * 8..i * 8 + 8].copy_from_slice(&arr);
+                }
+                unsafe {
+                    transpose_8x8_avx2(&input_flat, output);
+                }
+                return;
+            }
+        }
+
+        // Scalar store fallback
+        let result = transpose_f32x8_array(&mem);
+        for (i, r) in result.iter().enumerate() {
+            let arr = r.to_array();
+            output[i * 8..i * 8 + 8].copy_from_slice(&arr);
         }
     }
 
-    /// SIMD-optimized 8x8 transpose.
-    /// Uses proper 8x8 transpose algorithm.
+    /// Transpose an array of 8 f32x8 vectors (scalar fallback)
+    #[allow(dead_code)]
     #[inline]
-    pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
-        // Load all 8 rows as arrays for direct indexing
-        let a0 = &input[0..8];
-        let a1 = &input[8..16];
-        let a2 = &input[16..24];
-        let a3 = &input[24..32];
-        let a4 = &input[32..40];
-        let a5 = &input[40..48];
-        let a6 = &input[48..56];
-        let a7 = &input[56..64];
-
-        // Transpose: output[col * 8 + row] = input[row * 8 + col]
-        // Build each output row by gathering from columns
+    fn transpose_f32x8_array(input: &[f32x8; 8]) -> [f32x8; 8] {
+        let mut output = [f32x8::ZERO; 8];
         for col in 0..8 {
-            output[col * 8 + 0] = a0[col];
-            output[col * 8 + 1] = a1[col];
-            output[col * 8 + 2] = a2[col];
-            output[col * 8 + 3] = a3[col];
-            output[col * 8 + 4] = a4[col];
-            output[col * 8 + 5] = a5[col];
-            output[col * 8 + 6] = a6[col];
-            output[col * 8 + 7] = a7[col];
+            let mut arr = [0.0f32; 8];
+            for row in 0..8 {
+                arr[row] = input[row].to_array()[col];
+            }
+            output[col] = f32x8::from(arr);
+        }
+        output
+    }
+
+    /// AVX2-optimized 8x8 transpose using Highway's algorithm.
+    ///
+    /// Uses InterleaveLower/Upper (vunpcklps/vunpckhps) and ConcatLowerLower/UpperUpper
+    /// (vperm2f128) to perform the transpose entirely in registers.
+    /// Used by dct_8rows_parallel; transpose_8x8_simd has its own inline implementation.
+    ///
+    /// # Safety
+    /// Requires AVX2 support.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    #[allow(dead_code)]
+    #[inline]
+    pub unsafe fn transpose_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
+        // Load 8 rows into YMM registers
+        let i0 = _mm256_loadu_ps(input.as_ptr());
+        let i1 = _mm256_loadu_ps(input.as_ptr().add(8));
+        let i2 = _mm256_loadu_ps(input.as_ptr().add(16));
+        let i3 = _mm256_loadu_ps(input.as_ptr().add(24));
+        let i4 = _mm256_loadu_ps(input.as_ptr().add(32));
+        let i5 = _mm256_loadu_ps(input.as_ptr().add(40));
+        let i6 = _mm256_loadu_ps(input.as_ptr().add(48));
+        let i7 = _mm256_loadu_ps(input.as_ptr().add(56));
+
+        // Phase 1: InterleaveLower/Upper pairs
+        // For f32: unpacklo interleaves elements [0,1] from each lane
+        //          unpackhi interleaves elements [2,3] from each lane
+        let q0 = _mm256_unpacklo_ps(i0, i2); // [i0[0],i2[0],i0[1],i2[1] | i0[4],i2[4],i0[5],i2[5]]
+        let q1 = _mm256_unpacklo_ps(i1, i3);
+        let q2 = _mm256_unpackhi_ps(i0, i2);
+        let q3 = _mm256_unpackhi_ps(i1, i3);
+        let q4 = _mm256_unpacklo_ps(i4, i6);
+        let q5 = _mm256_unpacklo_ps(i5, i7);
+        let q6 = _mm256_unpackhi_ps(i4, i6);
+        let q7 = _mm256_unpackhi_ps(i5, i7);
+
+        // Phase 2: Another round of InterleaveLower/Upper
+        let r0 = _mm256_unpacklo_ps(q0, q1);
+        let r1 = _mm256_unpackhi_ps(q0, q1);
+        let r2 = _mm256_unpacklo_ps(q2, q3);
+        let r3 = _mm256_unpackhi_ps(q2, q3);
+        let r4 = _mm256_unpacklo_ps(q4, q5);
+        let r5 = _mm256_unpackhi_ps(q4, q5);
+        let r6 = _mm256_unpacklo_ps(q6, q7);
+        let r7 = _mm256_unpackhi_ps(q6, q7);
+
+        // Phase 3: ConcatLowerLower/UpperUpper to swap 128-bit lanes
+        // vperm2f128 with imm8=0x20: concat low lanes (b_lo, a_lo)
+        // vperm2f128 with imm8=0x31: concat high lanes (b_hi, a_hi)
+        let o0 = _mm256_permute2f128_ps(r0, r4, 0x20);
+        let o1 = _mm256_permute2f128_ps(r1, r5, 0x20);
+        let o2 = _mm256_permute2f128_ps(r2, r6, 0x20);
+        let o3 = _mm256_permute2f128_ps(r3, r7, 0x20);
+        let o4 = _mm256_permute2f128_ps(r0, r4, 0x31);
+        let o5 = _mm256_permute2f128_ps(r1, r5, 0x31);
+        let o6 = _mm256_permute2f128_ps(r2, r6, 0x31);
+        let o7 = _mm256_permute2f128_ps(r3, r7, 0x31);
+
+        // Store transposed rows
+        _mm256_storeu_ps(output.as_mut_ptr(), o0);
+        _mm256_storeu_ps(output.as_mut_ptr().add(8), o1);
+        _mm256_storeu_ps(output.as_mut_ptr().add(16), o2);
+        _mm256_storeu_ps(output.as_mut_ptr().add(24), o3);
+        _mm256_storeu_ps(output.as_mut_ptr().add(32), o4);
+        _mm256_storeu_ps(output.as_mut_ptr().add(40), o5);
+        _mm256_storeu_ps(output.as_mut_ptr().add(48), o6);
+        _mm256_storeu_ps(output.as_mut_ptr().add(56), o7);
+    }
+
+    /// SIMD-optimized 8x8 transpose with compile-time dispatch via multiversion.
+    /// Uses AVX2 intrinsics when available, falls back to scalar.
+    ///
+    /// The AVX2 version uses vunpcklps/vunpckhps and vperm2f128 for efficient
+    /// register-to-register transpose (Highway algorithm).
+    #[multiversion(targets("x86_64+avx2", "x86_64+sse2"))]
+    pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
+        // When compiling for AVX2 target, multiversion adds #[target_feature(enable = "avx2")]
+        // so we can use AVX2 intrinsics directly. The is_x86_feature_detected check is
+        // optimized away at compile time when the target features are known.
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 is available (checked above). The multiversion macro
+                // ensures this branch compiles with target_feature(enable = "avx2").
+                unsafe {
+                    // Load 8 rows into YMM registers
+                    let i0 = _mm256_loadu_ps(input.as_ptr());
+                    let i1 = _mm256_loadu_ps(input.as_ptr().add(8));
+                    let i2 = _mm256_loadu_ps(input.as_ptr().add(16));
+                    let i3 = _mm256_loadu_ps(input.as_ptr().add(24));
+                    let i4 = _mm256_loadu_ps(input.as_ptr().add(32));
+                    let i5 = _mm256_loadu_ps(input.as_ptr().add(40));
+                    let i6 = _mm256_loadu_ps(input.as_ptr().add(48));
+                    let i7 = _mm256_loadu_ps(input.as_ptr().add(56));
+
+                    // Phase 1: InterleaveLower/Upper pairs
+                    let q0 = _mm256_unpacklo_ps(i0, i2);
+                    let q1 = _mm256_unpacklo_ps(i1, i3);
+                    let q2 = _mm256_unpackhi_ps(i0, i2);
+                    let q3 = _mm256_unpackhi_ps(i1, i3);
+                    let q4 = _mm256_unpacklo_ps(i4, i6);
+                    let q5 = _mm256_unpacklo_ps(i5, i7);
+                    let q6 = _mm256_unpackhi_ps(i4, i6);
+                    let q7 = _mm256_unpackhi_ps(i5, i7);
+
+                    // Phase 2: Another round of InterleaveLower/Upper
+                    let r0 = _mm256_unpacklo_ps(q0, q1);
+                    let r1 = _mm256_unpackhi_ps(q0, q1);
+                    let r2 = _mm256_unpacklo_ps(q2, q3);
+                    let r3 = _mm256_unpackhi_ps(q2, q3);
+                    let r4 = _mm256_unpacklo_ps(q4, q5);
+                    let r5 = _mm256_unpackhi_ps(q4, q5);
+                    let r6 = _mm256_unpacklo_ps(q6, q7);
+                    let r7 = _mm256_unpackhi_ps(q6, q7);
+
+                    // Phase 3: ConcatLowerLower/UpperUpper to swap 128-bit lanes
+                    let o0 = _mm256_permute2f128_ps(r0, r4, 0x20);
+                    let o1 = _mm256_permute2f128_ps(r1, r5, 0x20);
+                    let o2 = _mm256_permute2f128_ps(r2, r6, 0x20);
+                    let o3 = _mm256_permute2f128_ps(r3, r7, 0x20);
+                    let o4 = _mm256_permute2f128_ps(r0, r4, 0x31);
+                    let o5 = _mm256_permute2f128_ps(r1, r5, 0x31);
+                    let o6 = _mm256_permute2f128_ps(r2, r6, 0x31);
+                    let o7 = _mm256_permute2f128_ps(r3, r7, 0x31);
+
+                    // Store transposed rows
+                    _mm256_storeu_ps(output.as_mut_ptr(), o0);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(8), o1);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(16), o2);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(24), o3);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(32), o4);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(40), o5);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(48), o6);
+                    _mm256_storeu_ps(output.as_mut_ptr().add(56), o7);
+                }
+                return;
+            }
+        }
+
+        // Scalar fallback for non-AVX2 CPUs
+        transpose_8x8_scalar(input, output);
+    }
+
+    /// Scalar 8x8 transpose fallback
+    #[inline]
+    fn transpose_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
+        for row in 0..8 {
+            for col in 0..8 {
+                output[col * 8 + row] = input[row * 8 + col];
+            }
         }
     }
 }
 
-/// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
-/// Uses row-major processing for good cache locality
+/// 1D DCT on all 8 rows (scalar, but faster than SIMD due to cache locality)
 #[cfg(feature = "simd")]
 #[inline]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
-    // Process rows sequentially (good cache access pattern)
-    // The DCT algorithm doesn't parallelize well within a single row
+    // Process rows sequentially - good cache access pattern
+    // The parallel SIMD approach has overhead from vector construction
     for row in 0..8 {
         let mut tmp = [0.0f32; 8];
         for i in 0..8 {
@@ -445,7 +642,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Row transform
     dct_rows(input, &mut scratch);
 
-    // Transpose (use SIMD version when available)
+    // Transpose (multiversion handles dispatch efficiently)
     #[cfg(feature = "simd")]
     simd::transpose_8x8_simd(&scratch, &mut coefficients);
     #[cfg(not(feature = "simd"))]
