@@ -48,6 +48,8 @@
 
 use std::f32::consts::PI;
 
+use crate::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
+
 // SIMD implementations for hot paths
 pub mod simd;
 
@@ -280,13 +282,16 @@ impl AQStrengthMap {
 /// * `height` - Image height in pixels
 /// * `y_quant_01` - Y quantization table value at position 1 (first AC coefficient)
 ///                  This is what C++ uses for the dampen calculation.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns `AllocError` if internal buffer allocation fails.
 pub fn compute_aq_strength_map(
     y_plane: &[f32],
     width: usize,
     height: usize,
     y_quant_01: u16,
-) -> AQStrengthMap {
+) -> Result<AQStrengthMap, AllocError> {
     // Use per-block implementation
     // y_quant_01 is the actual quant table value, matching C++ behavior
     compute_aq_strength_map_impl(y_plane, width, height, y_quant_01 as f32)
@@ -304,11 +309,16 @@ pub fn quant_field_to_aq_strength(quant_field: f32) -> f32 {
 }
 
 /// SIMD-optimized quant_field to aq_strength conversion.
-#[must_use]
-pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Vec<f32> {
+///
+/// # Errors
+///
+/// Returns `AllocError` if result buffer allocation fails.
+pub fn quant_field_to_aq_strength_simd(
+    quant_field: &[f32],
+) -> Result<AlignedVec<f32>, AllocError> {
     use wide::f32x8;
 
-    let mut result = vec![0.0f32; quant_field.len()];
+    let mut result = try_alloc_zeroed(quant_field.len())?;
     let chunks = quant_field.len() / 8;
 
     let point_six = f32x8::splat(0.6);
@@ -340,7 +350,7 @@ pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Vec<f32> {
         result[i] = quant_field_to_aq_strength(quant_field[i]);
     }
 
-    result
+    Ok(result)
 }
 
 // ============================================================================
@@ -353,29 +363,33 @@ pub fn quant_field_to_aq_strength_simd(quant_field: &[f32]) -> Vec<f32> {
 ///
 /// This implementation needs to be verified against C++ testdata before use.
 /// Exposed as pub for testing against C++ testdata.
+///
+/// # Errors
+///
+/// Returns `AllocError` if any internal buffer allocation fails.
 pub fn compute_aq_strength_map_impl(
     y_plane: &[f32],
     width: usize,
     height: usize,
     y_quant_01: f32,
-) -> AQStrengthMap {
+) -> Result<AQStrengthMap, AllocError> {
     let width_blocks = (width + 7) / 8;
     let height_blocks = (height + 7) / 8;
     let num_blocks = width_blocks * height_blocks;
 
     if width == 0 || height == 0 {
-        return AQStrengthMap::uniform(0, 0, 0.08);
+        return Ok(AQStrengthMap::uniform(0, 0, 0.08));
     }
 
     // 1. ComputePreErosion (downsamples 4x) - SIMD accelerated
     // NOTE: y_plane is in 0-255 range - ratio_of_derivatives expects this range
     // (its constants have kInputScaling = 1/255 baked in)
-    let pre_erosion = compute_pre_erosion_simd(y_plane, width, height);
+    let pre_erosion = compute_pre_erosion_simd(y_plane, width, height)?;
 
     // 2. FuzzyErosion - SIMD accelerated
     let pre_erosion_w = (width + 3) / 4;
     let pre_erosion_h = (height + 3) / 4;
-    let mut quant_field = vec![0.0f32; num_blocks];
+    let mut quant_field = try_alloc_zeroed(num_blocks)?;
     fuzzy_erosion_simd(
         &pre_erosion,
         pre_erosion_w,
@@ -383,7 +397,7 @@ pub fn compute_aq_strength_map_impl(
         width_blocks,
         height_blocks,
         &mut quant_field,
-    );
+    )?;
 
     // 3. PerBlockModulations - SIMD accelerated
     // C++ uses y_quant_01 = quant_table[1] (first AC coefficient)
@@ -399,13 +413,13 @@ pub fn compute_aq_strength_map_impl(
     );
 
     // 4. Final transform: quant_field -> aq_strength (SIMD optimized)
-    let strengths = quant_field_to_aq_strength_simd(&quant_field);
+    let strengths = quant_field_to_aq_strength_simd(&quant_field)?;
 
-    AQStrengthMap {
+    Ok(AQStrengthMap {
         width_blocks,
         height_blocks,
-        strengths,
-    }
+        strengths: strengths.to_vec(),
+    })
 }
 
 // ============================================================================
@@ -914,7 +928,7 @@ mod tests {
     #[test]
     fn test_compute_returns_uniform() {
         let plane = vec![128.0f32; 64 * 64];
-        let map = compute_aq_strength_map(&plane, 64, 64, 1);
+        let map = compute_aq_strength_map(&plane, 64, 64, 1).unwrap();
         assert_eq!(map.width_blocks, 8);
         assert_eq!(map.height_blocks, 8);
 
@@ -976,7 +990,7 @@ mod tests {
     fn test_impl_runs_without_panic() {
         // Test that the full implementation runs without panicking
         let plane = vec![128.0f32; 64 * 64];
-        let map = compute_aq_strength_map_impl(&plane, 64, 64, 1.0);
+        let map = compute_aq_strength_map_impl(&plane, 64, 64, 1.0).unwrap();
         assert_eq!(map.width_blocks, 8);
         assert_eq!(map.height_blocks, 8);
         assert_eq!(map.strengths.len(), 64);
@@ -999,7 +1013,7 @@ mod tests {
             .collect();
 
         let distance = 1.0 / 3.0; // y_quant_01 = 3.0
-        let map = compute_aq_strength_map_impl(&plane, 64, 64, distance);
+        let map = compute_aq_strength_map_impl(&plane, 64, 64, distance).unwrap();
 
         for &s in &map.strengths {
             assert!(s >= 0.0, "aq_strength {} should be non-negative", s);

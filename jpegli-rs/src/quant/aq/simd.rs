@@ -16,8 +16,27 @@
 //! Locked test values are derived from frymire.png (1118x1105) Y plane.
 //! To regenerate: `cargo test --lib adaptive_quant_simd -- --nocapture`
 
+use crate::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
 use multiversion::multiversion;
 use wide::f32x8;
+
+// ============================================================================
+// Safe SIMD load/store helpers
+// ============================================================================
+
+/// Safely load 8 f32s into f32x8. Panics if slice is too short.
+/// LLVM optimizes this to identical code as unsafe pointer cast.
+#[inline(always)]
+fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
+    f32x8::from(<[f32; 8]>::try_from(&slice[offset..offset + 8]).unwrap())
+}
+
+/// Safely store f32x8 to slice. Panics if slice is too short.
+#[inline(always)]
+fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
+    let arr: [f32; 8] = value.into();
+    slice[offset..offset + 8].copy_from_slice(&arr);
+}
 
 // ============================================================================
 // Constants (copied from adaptive_quant.rs for locality)
@@ -176,7 +195,7 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
         let x = chunk * 8;
 
         // Load center pixels
-        let pixels = f32x8::from(unsafe { *(row.as_ptr().add(x) as *const [f32; 8]) });
+        let pixels = load_f32x8(row, x);
 
         // Load neighbors with boundary handling
         let left = if x == 0 {
@@ -192,7 +211,7 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
                 row[x + 6],
             ])
         } else {
-            f32x8::from(unsafe { *(row.as_ptr().add(x - 1) as *const [f32; 8]) })
+            load_f32x8(row, x - 1)
         };
 
         let right = if x + 8 >= width {
@@ -209,21 +228,18 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
                 row[(x + 8).min(last)],
             ])
         } else {
-            f32x8::from(unsafe { *(row.as_ptr().add(x + 1) as *const [f32; 8]) })
+            load_f32x8(row, x + 1)
         };
 
-        let top = f32x8::from(unsafe { *(row_above.as_ptr().add(x) as *const [f32; 8]) });
-        let bottom = f32x8::from(unsafe { *(row_below.as_ptr().add(x) as *const [f32; 8]) });
+        let top = load_f32x8(row_above, x);
+        let bottom = load_f32x8(row_below, x);
 
         // Compute and accumulate using SIMD add
         let result = pre_erosion_pixel_x8(pixels, left, right, top, bottom);
 
-        // SAFETY: x is always aligned to 8 and x + 8 <= width (guaranteed by chunks calculation)
-        unsafe {
-            let existing = f32x8::from(*(output.as_ptr().add(x) as *const [f32; 8]));
-            let new_result = existing + result;
-            *(output.as_mut_ptr().add(x) as *mut [f32; 8]) = new_result.into();
-        }
+        // Load existing, add result, store back
+        let existing = load_f32x8(output, x);
+        store_f32x8(output, x, existing + result);
     }
 
     // Handle remainder (scalar fallback)
@@ -264,17 +280,21 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
 /// # Returns
 /// Pre-erosion buffer at 1/4 resolution
 #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
-pub fn compute_pre_erosion_simd(input: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub fn compute_pre_erosion_simd(
+    input: &[f32],
+    width: usize,
+    height: usize,
+) -> Result<AlignedVec<f32>, AllocError> {
     let pre_erosion_w = (width + 3) / 4;
     let pre_erosion_h = (height + 3) / 4;
-    let mut pre_erosion = vec![0.0f32; pre_erosion_w * pre_erosion_h];
+    let mut pre_erosion = try_alloc_zeroed(pre_erosion_w * pre_erosion_h)?;
 
     if width == 0 || height == 0 {
-        return pre_erosion;
+        return Ok(pre_erosion);
     }
 
     // Temporary buffer for accumulating masked diff values
-    let mut diff_buffer = vec![0.0f32; width];
+    let mut diff_buffer = try_alloc_zeroed(width)?;
 
     for y_block in 0..pre_erosion_h {
         // Clear accumulator for this 4-row block
@@ -309,7 +329,7 @@ pub fn compute_pre_erosion_simd(input: &[f32], width: usize, height: usize) -> V
         downsample_4x_sum(&diff_buffer, out_row);
     }
 
-    pre_erosion
+    Ok(pre_erosion)
 }
 
 /// Downsample by 4x with sum and scale by 0.25.
@@ -441,26 +461,18 @@ pub fn gamma_modulation_sum_8x8(block: &[f32], stride: usize) -> f32 {
     for dy in 0..8 {
         let row_start = dy * stride;
         if row_start + 8 <= block.len() {
-            let row = f32x8::from(unsafe { *(block.as_ptr().add(row_start) as *const [f32; 8]) });
+            let row = load_f32x8(block, row_start);
             let ratio = ratio_of_derivatives_inv_x8(row + bias);
             sum += ratio;
         } else {
-            // Fallback for edge blocks
+            // Fallback for edge blocks - use scalar accumulation
             for dx in 0..8 {
                 let idx = row_start + dx;
                 if idx < block.len() {
                     let val = block[idx] + K_BIAS;
-                    sum = sum
-                        + f32x8::from([
-                            ratio_of_derivatives_scalar(val, true),
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                            0.0,
-                        ]);
+                    let arr: [f32; 8] = sum.into();
+                    let scalar_sum: f32 = arr.iter().sum();
+                    return scalar_sum + ratio_of_derivatives_scalar(val, true);
                 }
             }
         }
@@ -506,10 +518,9 @@ pub fn hf_modulation_sum_8x8(
 
         // Process horizontal differences (|p - p_right|) for positions 0..7 in block
         // Use SIMD: load 8 values, load 8 shifted values, compute abs diff
-        if row_start + 8 <= block.len() && block_x + 8 < img_width {
-            let p = f32x8::from(unsafe { *(block.as_ptr().add(row_start) as *const [f32; 8]) });
-            let p_right =
-                f32x8::from(unsafe { *(block.as_ptr().add(row_start + 1) as *const [f32; 8]) });
+        if row_start + 9 <= block.len() && block_x + 8 < img_width {
+            let p = load_f32x8(block, row_start);
+            let p_right = load_f32x8(block, row_start + 1);
             let h_diff = (p - p_right).abs();
             let h_arr: [f32; 8] = h_diff.into();
             // Only sum first 7 (last pixel in block doesn't have right neighbor within block)
@@ -531,10 +542,8 @@ pub fn hf_modulation_sum_8x8(
         if dy < 7 && y + 1 < img_height {
             let next_row_start = (dy + 1) * stride;
             if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
-                let p = f32x8::from(unsafe { *(block.as_ptr().add(row_start) as *const [f32; 8]) });
-                let p_below = f32x8::from(unsafe {
-                    *(block.as_ptr().add(next_row_start) as *const [f32; 8])
-                });
+                let p = load_f32x8(block, row_start);
+                let p_below = load_f32x8(block, next_row_start);
                 let v_diff = (p - p_below).abs();
                 let v_arr: [f32; 8] = v_diff.into();
                 sum += v_arr[0]
@@ -722,11 +731,11 @@ pub fn fuzzy_erosion_simd(
     block_w: usize,
     block_h: usize,
     aq_map: &mut [f32],
-) {
+) -> Result<(), AllocError> {
     assert_eq!(aq_map.len(), block_w * block_h);
 
     // Temporary buffer for weighted min values
-    let mut tmp = vec![0.0f32; pre_erosion_w * pre_erosion_h];
+    let mut tmp = try_alloc_zeroed(pre_erosion_w * pre_erosion_h)?;
 
     // Process each pixel - find 4 smallest in 3x3 window, compute weighted sum
     // Process row by row to take advantage of cache locality
@@ -766,6 +775,8 @@ pub fn fuzzy_erosion_simd(
     // Sum 2x2 blocks from tmp to get final aq_map values
     // Use SIMD for the block summing
     sum_2x2_blocks_simd(&tmp, pre_erosion_w, pre_erosion_h, block_w, block_h, aq_map);
+
+    Ok(())
 }
 
 /// Sum 2x2 blocks from tmp buffer to produce aq_map values.
@@ -1147,7 +1158,7 @@ mod tests {
             .collect();
 
         // SIMD version
-        let simd_result = compute_pre_erosion_simd(&input, width, height);
+        let simd_result = compute_pre_erosion_simd(&input, width, height).unwrap();
 
         // Scalar reference (inline implementation)
         let pre_erosion_w = (width + 3) / 4;
@@ -1357,7 +1368,8 @@ mod tests {
             block_w,
             block_h,
             &mut aq_map_simd,
-        );
+        )
+        .unwrap();
 
         // Scalar reference
         let mut aq_map_scalar = vec![0.0f32; block_w * block_h];

@@ -107,6 +107,10 @@ harness = false
 name = "encode_matrix"
 harness = false
 
+[[bench]]
+name = "simd_load"
+harness = false
+
 [lints]
 workspace = true
 

@@ -32,11 +32,11 @@ pub(super) fn get_aq_map_or_compute(
     width: usize,
     height: usize,
     y_quant_01: u16,
-) -> AQStrengthMap {
+) -> crate::Result<AQStrengthMap> {
     if let Some(ref custom) = config.custom_aq_map {
-        custom.clone()
+        Ok(custom.clone())
     } else {
-        crate::adaptive_quant::compute_aq_strength_map(y_plane, width, height, y_quant_01)
+        Ok(crate::adaptive_quant::compute_aq_strength_map(y_plane, width, height, y_quant_01)?)
     }
 }
 

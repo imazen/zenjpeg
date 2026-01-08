@@ -58,9 +58,9 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map =
-            hybrid::get_aq_map_or_compute(&self.config, &y_plane_f32, width, height, y_quant_01);
+            hybrid::get_aq_map_or_compute(&self.config, &y_plane_f32, width, height, y_quant_01)?;
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01);
+        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01)?;
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
@@ -191,9 +191,9 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map =
-            hybrid::get_aq_map_or_compute(&self.config, y_plane, width, height, y_quant_01);
+            hybrid::get_aq_map_or_compute(&self.config, y_plane, width, height, y_quant_01)?;
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01);
+        let aq_map = compute_aq_strength_map(y_plane, width, height, y_quant_01)?;
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
@@ -345,9 +345,9 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map =
-            hybrid::get_aq_map_or_compute(&self.config, y_plane, y_width, y_height, y_quant_01);
+            hybrid::get_aq_map_or_compute(&self.config, y_plane, y_width, y_height, y_quant_01)?;
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01);
+        let aq_map = compute_aq_strength_map(y_plane, y_width, y_height, y_quant_01)?;
 
         // Create hybrid quantization context if enabled
         #[cfg(feature = "experimental-hybrid-trellis")]
