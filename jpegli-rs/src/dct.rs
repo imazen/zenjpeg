@@ -224,8 +224,9 @@ mod simd {
 
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::{
-        __m256, _mm256_loadu_ps, _mm256_permute2f128_ps, _mm256_storeu_ps, _mm256_unpackhi_ps,
-        _mm256_unpacklo_ps,
+        __m256, _mm256_add_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_mul_ps,
+        _mm256_permute2f128_ps, _mm256_set1_ps, _mm256_storeu_ps, _mm256_sub_ps,
+        _mm256_unpackhi_ps, _mm256_unpacklo_ps,
     };
 
     // SIMD versions of WC constants for parallel DCT
@@ -600,6 +601,216 @@ mod simd {
             }
         }
     }
+
+    // ========================================================================
+    // Raw AVX2+FMA DCT Implementation
+    // No wide crate, pure intrinsics for maximum performance
+    // ========================================================================
+
+    /// In-place 8x8 transpose on 8 __m256 registers.
+    /// After transpose, r[i] contains column i from all 8 original rows.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    #[inline]
+    unsafe fn transpose_8x8_avx2_inplace(r: &mut [__m256; 8]) {
+        // Phase 1: InterleaveLower/Upper pairs
+        let q0 = _mm256_unpacklo_ps(r[0], r[2]);
+        let q1 = _mm256_unpacklo_ps(r[1], r[3]);
+        let q2 = _mm256_unpackhi_ps(r[0], r[2]);
+        let q3 = _mm256_unpackhi_ps(r[1], r[3]);
+        let q4 = _mm256_unpacklo_ps(r[4], r[6]);
+        let q5 = _mm256_unpacklo_ps(r[5], r[7]);
+        let q6 = _mm256_unpackhi_ps(r[4], r[6]);
+        let q7 = _mm256_unpackhi_ps(r[5], r[7]);
+
+        // Phase 2: Another round
+        let s0 = _mm256_unpacklo_ps(q0, q1);
+        let s1 = _mm256_unpackhi_ps(q0, q1);
+        let s2 = _mm256_unpacklo_ps(q2, q3);
+        let s3 = _mm256_unpackhi_ps(q2, q3);
+        let s4 = _mm256_unpacklo_ps(q4, q5);
+        let s5 = _mm256_unpackhi_ps(q4, q5);
+        let s6 = _mm256_unpacklo_ps(q6, q7);
+        let s7 = _mm256_unpackhi_ps(q6, q7);
+
+        // Phase 3: ConcatLowerLower/UpperUpper
+        r[0] = _mm256_permute2f128_ps(s0, s4, 0x20);
+        r[1] = _mm256_permute2f128_ps(s1, s5, 0x20);
+        r[2] = _mm256_permute2f128_ps(s2, s6, 0x20);
+        r[3] = _mm256_permute2f128_ps(s3, s7, 0x20);
+        r[4] = _mm256_permute2f128_ps(s0, s4, 0x31);
+        r[5] = _mm256_permute2f128_ps(s1, s5, 0x31);
+        r[6] = _mm256_permute2f128_ps(s2, s6, 0x31);
+        r[7] = _mm256_permute2f128_ps(s3, s7, 0x31);
+    }
+
+    /// DCT base case for N=2 on raw AVX2 vectors.
+    /// Computes: out0 = in0 + in1, out1 = in0 - in1
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    #[inline]
+    unsafe fn dct1d_2_avx2(m0: &mut __m256, m1: &mut __m256) {
+        let in0 = *m0;
+        let in1 = *m1;
+        *m0 = _mm256_add_ps(in0, in1);
+        *m1 = _mm256_sub_ps(in0, in1);
+    }
+
+    /// DCT for N=4 on raw AVX2 vectors with FMA.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma")]
+    #[inline]
+    unsafe fn dct1d_4_avx2(m: &mut [__m256; 4]) {
+        let wc4_0 = _mm256_set1_ps(0.541196100146197);
+        let wc4_1 = _mm256_set1_ps(1.3065629648763764);
+        let sqrt2 = _mm256_set1_ps(1.41421356237);
+
+        // AddReverse<2>: tmp[0:2] = m[0:2] + reverse(m[2:4])
+        let t0 = _mm256_add_ps(m[0], m[3]);
+        let t1 = _mm256_add_ps(m[1], m[2]);
+
+        // SubReverse<2>
+        let t2 = _mm256_sub_ps(m[0], m[3]);
+        let t3 = _mm256_sub_ps(m[1], m[2]);
+
+        // DCT1D<2> on first half
+        let r0 = _mm256_add_ps(t0, t1);
+        let r1 = _mm256_sub_ps(t0, t1);
+
+        // Multiply by WC4
+        let t2_scaled = _mm256_mul_ps(t2, wc4_0);
+        let t3_scaled = _mm256_mul_ps(t3, wc4_1);
+
+        // DCT1D<2> on second half
+        let r2 = _mm256_add_ps(t2_scaled, t3_scaled);
+        let r3 = _mm256_sub_ps(t2_scaled, t3_scaled);
+
+        // B<2>: r2 = r2 * sqrt2 + r3 (use FMA)
+        let r2_final = _mm256_fmadd_ps(r2, sqrt2, r3);
+
+        // InverseEvenOdd<4>: interleave
+        m[0] = r0;
+        m[1] = r2_final;
+        m[2] = r1;
+        m[3] = r3;
+    }
+
+    /// DCT for N=8 on raw AVX2 vectors with FMA.
+    /// Processes 8 independent 8-point DCTs in parallel.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma")]
+    #[inline]
+    unsafe fn dct1d_8_avx2(m: &mut [__m256; 8]) {
+        let wc8_0 = _mm256_set1_ps(0.5097955791041592);
+        let wc8_1 = _mm256_set1_ps(0.6013448869350453);
+        let wc8_2 = _mm256_set1_ps(0.8999762231364156);
+        let wc8_3 = _mm256_set1_ps(2.5629154477415055);
+        let sqrt2 = _mm256_set1_ps(1.41421356237);
+
+        // AddReverse<4>: tmp[0:4] = m[0:4] + reverse(m[4:8])
+        let t0 = _mm256_add_ps(m[0], m[7]);
+        let t1 = _mm256_add_ps(m[1], m[6]);
+        let t2 = _mm256_add_ps(m[2], m[5]);
+        let t3 = _mm256_add_ps(m[3], m[4]);
+
+        // SubReverse<4>
+        let t4 = _mm256_sub_ps(m[0], m[7]);
+        let t5 = _mm256_sub_ps(m[1], m[6]);
+        let t6 = _mm256_sub_ps(m[2], m[5]);
+        let t7 = _mm256_sub_ps(m[3], m[4]);
+
+        // DCT1D<4> on first half
+        let mut first = [t0, t1, t2, t3];
+        dct1d_4_avx2(&mut first);
+
+        // Multiply by WC8
+        let t4_scaled = _mm256_mul_ps(t4, wc8_0);
+        let t5_scaled = _mm256_mul_ps(t5, wc8_1);
+        let t6_scaled = _mm256_mul_ps(t6, wc8_2);
+        let t7_scaled = _mm256_mul_ps(t7, wc8_3);
+
+        // DCT1D<4> on second half
+        let mut second = [t4_scaled, t5_scaled, t6_scaled, t7_scaled];
+        dct1d_4_avx2(&mut second);
+
+        // B<4>: cumulative sum with FMA
+        // second[0] = second[0] * sqrt2 + second[1]
+        second[0] = _mm256_fmadd_ps(second[0], sqrt2, second[1]);
+        // second[1] += second[2]
+        second[1] = _mm256_add_ps(second[1], second[2]);
+        // second[2] += second[3]
+        second[2] = _mm256_add_ps(second[2], second[3]);
+        // second[3] stays the same
+
+        // InverseEvenOdd<8>: interleave
+        m[0] = first[0];
+        m[1] = second[0];
+        m[2] = first[1];
+        m[3] = second[1];
+        m[4] = first[2];
+        m[5] = second[2];
+        m[6] = first[3];
+        m[7] = second[3];
+    }
+
+    /// Full 8x8 forward DCT using raw AVX2+FMA intrinsics.
+    /// This is the fastest implementation, avoiding all wide crate overhead.
+    ///
+    /// Algorithm:
+    /// 1. Load rows into registers: reg[i] = row i
+    /// 2. Transpose: reg[i] = column i (position i of all rows)
+    /// 3. Row DCT: dct1d_8_avx2 processes (reg[0]..reg[7]) as 8 positions
+    ///    Each lane processes a separate row. Result: reg[i] = coef i of all rows
+    /// 4. Transpose: reg[i] = row i of coefficient matrix
+    /// 5. Column DCT: dct1d_8_avx2 processes columns (reg[k][j] = coef[k,j])
+    ///    Result: reg[i] = final row i
+    /// 6. Scale and store
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2", enable = "fma")]
+    pub unsafe fn forward_dct_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
+        let scale = _mm256_set1_ps(1.0 / 8.0);
+
+        // Load 8 rows: reg[i] = row i of input
+        let mut reg = [
+            _mm256_loadu_ps(input.as_ptr()),
+            _mm256_loadu_ps(input.as_ptr().add(8)),
+            _mm256_loadu_ps(input.as_ptr().add(16)),
+            _mm256_loadu_ps(input.as_ptr().add(24)),
+            _mm256_loadu_ps(input.as_ptr().add(32)),
+            _mm256_loadu_ps(input.as_ptr().add(40)),
+            _mm256_loadu_ps(input.as_ptr().add(48)),
+            _mm256_loadu_ps(input.as_ptr().add(56)),
+        ];
+
+        // Transpose: reg[i] = column i = [row0[i], row1[i], ..., row7[i]]
+        // dct1d_8_avx2 treats reg[0..7] as positions 0-7 of the sequence
+        // Each lane (element) within a register is a separate row being processed
+        transpose_8x8_avx2_inplace(&mut reg);
+
+        // Row DCT: all 8 rows processed in parallel
+        // Lane k gets: DCT of (reg[0][k], reg[1][k], ..., reg[7][k]) = DCT of row k
+        // Result: reg[i][k] = coefficient i of row k's DCT
+        dct1d_8_avx2(&mut reg);
+
+        // Transpose: reg[i][j] = coef[i, j] (row-major coefficient matrix)
+        // This sets up for column DCT: lane j processes column j
+        transpose_8x8_avx2_inplace(&mut reg);
+
+        // Column DCT: all 8 columns processed in parallel
+        // Lane j gets: DCT of (reg[0][j], reg[1][j], ..., reg[7][j]) = DCT of column j
+        // Result: reg[i][j] = final 2D DCT coefficient at (i, j)
+        dct1d_8_avx2(&mut reg);
+
+        // reg[i] is now row i of the final output - store directly
+        _mm256_storeu_ps(output.as_mut_ptr(), _mm256_mul_ps(reg[0], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(8), _mm256_mul_ps(reg[1], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(16), _mm256_mul_ps(reg[2], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(24), _mm256_mul_ps(reg[3], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(32), _mm256_mul_ps(reg[4], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(40), _mm256_mul_ps(reg[5], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(48), _mm256_mul_ps(reg[6], scale));
+        _mm256_storeu_ps(output.as_mut_ptr().add(56), _mm256_mul_ps(reg[7], scale));
+    }
 }
 
 /// 1D DCT on all 8 rows (scalar, but faster than SIMD due to cache locality)
@@ -626,23 +837,42 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// The output is DCT coefficients ready for quantization.
 /// Includes 1/8 scaling for JPEG decoder compatibility.
 ///
-/// Uses SIMD optimization when the `simd` feature is enabled.
+/// Uses raw AVX2+FMA intrinsics when available for maximum performance.
 ///
 /// # Arguments
 /// * `input` - 8x8 block of input values in row-major order
 ///
 /// # Returns
 /// 8x8 block of DCT coefficients
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
+    // Use raw AVX2+FMA implementation when available (fastest path)
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            let mut output = [0.0f32; 64];
+            // SAFETY: AVX2+FMA are available (checked above)
+            unsafe {
+                simd::forward_dct_8x8_avx2(input, &mut output);
+            }
+            return output;
+        }
+    }
+
+    // Fallback: scalar/SSE implementation
+    forward_dct_8x8_scalar(input)
+}
+
+/// Scalar fallback for forward DCT (also used on non-AVX2 x86_64 and other platforms)
+#[inline]
+fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     let mut scratch = [0.0f32; 64];
     let mut coefficients = [0.0f32; 64];
 
     // Row transform
     dct_rows(input, &mut scratch);
 
-    // Transpose (multiversion handles dispatch efficiently)
+    // Transpose
     #[cfg(feature = "simd")]
     simd::transpose_8x8_simd(&scratch, &mut coefficients);
     #[cfg(not(feature = "simd"))]
@@ -657,36 +887,10 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     #[cfg(not(feature = "simd"))]
     transpose_8x8(&scratch, &mut coefficients);
 
-    // Apply 1/8 scaling for JPEG decoder compatibility (SIMD-optimized)
-    // Note: C++ jpegli applies 1/8 per dimension (1/64 total), but standard JPEG
-    // decoders like libjpeg/jpeg-decoder expect 1/8 total scaling.
-    // Using 1/64 here breaks compatibility (decoded values are 8× too small).
-    #[cfg(feature = "simd")]
-    {
-        let scale = f32x8::splat(1.0 / 8.0);
-        for chunk in 0..8 {
-            let k = chunk * 8;
-            let v = f32x8::from([
-                coefficients[k],
-                coefficients[k + 1],
-                coefficients[k + 2],
-                coefficients[k + 3],
-                coefficients[k + 4],
-                coefficients[k + 5],
-                coefficients[k + 6],
-                coefficients[k + 7],
-            ]);
-            let scaled = v * scale;
-            let arr: [f32; 8] = scaled.into();
-            coefficients[k..k + 8].copy_from_slice(&arr);
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        let scale = 1.0 / 8.0;
-        for v in &mut coefficients {
-            *v *= scale;
-        }
+    // Apply 1/8 scaling
+    let scale = 1.0 / 8.0;
+    for v in &mut coefficients {
+        *v *= scale;
     }
 
     coefficients
@@ -1123,5 +1327,121 @@ mod tests {
                 &aan_output[0..8]
             );
         }
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_avx2_dct_matches_scalar() {
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            return; // Skip on CPUs without AVX2+FMA
+        }
+
+        let patterns: Vec<[f32; 64]> = vec![
+            [64.0; 64],
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = i as f32;
+                }
+                arr
+            },
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = ((i as f32) * 0.5).sin() * 100.0 + 50.0;
+                }
+                arr
+            },
+        ];
+
+        for (pattern_idx, input) in patterns.iter().enumerate() {
+            let scalar_output = forward_dct_8x8_scalar(input);
+
+            let mut avx2_output = [0.0f32; 64];
+            unsafe {
+                simd::forward_dct_8x8_avx2(input, &mut avx2_output);
+            }
+
+            let mut max_error = 0.0f32;
+            for i in 0..64 {
+                let error = (scalar_output[i] - avx2_output[i]).abs();
+                max_error = max_error.max(error);
+            }
+
+            assert!(
+                max_error < 1e-4,
+                "Pattern {}: AVX2 vs scalar max error {} exceeds threshold.\n\
+                 Scalar[0..8]: {:?}\n\
+                 AVX2[0..8]: {:?}",
+                pattern_idx,
+                max_error,
+                &scalar_output[0..8],
+                &avx2_output[0..8]
+            );
+        }
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[test]
+    #[ignore] // Run with: cargo test --release bench_avx2_dct -- --ignored --nocapture
+    fn bench_avx2_dct_vs_scalar() {
+        use std::time::Instant;
+
+        if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+            println!("AVX2+FMA not available, skipping benchmark");
+            return;
+        }
+
+        let input: [f32; 64] = [
+            52., 55., 61., 66., 70., 61., 64., 73., 63., 59., 55., 90., 109., 85., 69., 72., 62.,
+            59., 68., 113., 144., 104., 66., 73., 63., 58., 71., 122., 154., 106., 70., 69., 67.,
+            61., 68., 104., 126., 88., 68., 70., 79., 65., 60., 70., 77., 68., 58., 75., 85., 71.,
+            64., 59., 55., 61., 65., 83., 87., 79., 69., 68., 65., 76., 78., 94.,
+        ];
+
+        let iterations = 10_000_000;
+        let mut output = [0.0f32; 64];
+
+        // Warmup scalar
+        for _ in 0..10000 {
+            let _ = forward_dct_8x8_scalar(&input);
+        }
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let result = forward_dct_8x8_scalar(&input);
+            output[0] = result[0]; // Prevent optimization
+        }
+        let scalar_time = start.elapsed();
+        let scalar_ns = scalar_time.as_nanos() as f64 / iterations as f64;
+
+        // Warmup AVX2
+        for _ in 0..10000 {
+            unsafe {
+                simd::forward_dct_8x8_avx2(&input, &mut output);
+            }
+        }
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            unsafe {
+                simd::forward_dct_8x8_avx2(&input, &mut output);
+            }
+        }
+        let avx2_time = start.elapsed();
+        let avx2_ns = avx2_time.as_nanos() as f64 / iterations as f64;
+
+        println!("DCT Performance ({} iterations):", iterations);
+        println!("  Scalar: {:.2} ns/DCT", scalar_ns);
+        println!("  AVX2:   {:.2} ns/DCT", avx2_ns);
+        println!(
+            "  Speedup: {:.2}x ({})",
+            scalar_ns / avx2_ns,
+            if avx2_ns < scalar_ns {
+                "AVX2 faster"
+            } else {
+                "Scalar faster"
+            }
+        );
     }
 }
