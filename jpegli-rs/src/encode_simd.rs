@@ -42,6 +42,24 @@ fn try_alloc_f32(len: usize, context: &'static str) -> Result<Vec<f32>> {
 }
 
 // ============================================================================
+// Safe SIMD Load/Store Helpers
+// ============================================================================
+
+/// Safely load 8 f32s into f32x8. Panics if slice is too short.
+/// LLVM optimizes this to identical code as unsafe pointer cast.
+#[inline(always)]
+fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
+    f32x8::from(<[f32; 8]>::try_from(&slice[offset..offset + 8]).unwrap())
+}
+
+/// Safely store f32x8 to slice. Panics if slice is too short.
+#[inline(always)]
+fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
+    let arr: [f32; 8] = value.into();
+    slice[offset..offset + 8].copy_from_slice(&arr);
+}
+
+// ============================================================================
 // Type Conversion Helpers
 // ============================================================================
 
@@ -220,11 +238,8 @@ pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
             let sum = p00 + p10 + p01 + p11;
             let avg = sum * scale;
 
-            // Store result using direct SIMD store
-            unsafe {
-                let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
-                *(out_ptr as *mut [f32; 8]) = avg.into();
-            }
+            // Store result
+            store_f32x8(result, out_row_start + out_x, avg);
         }
 
         // Scalar remainder
@@ -286,11 +301,8 @@ pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Result
             // Box filter: (p0 + p1) * 0.5
             let avg = (p0 + p1) * scale;
 
-            // Store result using direct SIMD store
-            unsafe {
-                let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
-                *(out_ptr as *mut [f32; 8]) = avg.into();
-            }
+            // Store result
+            store_f32x8(&mut result, out_row_start + out_x, avg);
         }
 
         // Scalar remainder
@@ -333,11 +345,8 @@ pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, r
             // Box filter: (p0 + p1) * 0.5
             let avg = (p0 + p1) * scale;
 
-            // Store result using direct SIMD store
-            unsafe {
-                let out_ptr = result.as_mut_ptr().add(out_row_start + out_x);
-                *(out_ptr as *mut [f32; 8]) = avg.into();
-            }
+            // Store result
+            store_f32x8(result, out_row_start + out_x, avg);
         }
 
         // Scalar remainder
@@ -370,27 +379,17 @@ pub fn downsample_1x2_simd(plane: &[f32], width: usize, height: usize) -> Result
         for chunk in 0..chunks {
             let x = chunk * 8;
 
-            // Load 8 consecutive pixels from row y0 and y1 using direct SIMD loads
+            // Load 8 consecutive pixels from row y0 and y1
             let row0_idx = y0 * width + x;
             let row1_idx = y1 * width + x;
 
-            // SAFETY: chunks calculation ensures x + 8 <= width
-            let (p0, p1) = unsafe {
-                let ptr0 = plane.as_ptr().add(row0_idx);
-                let ptr1 = plane.as_ptr().add(row1_idx);
-                (
-                    f32x8::from(*(ptr0 as *const [f32; 8])),
-                    f32x8::from(*(ptr1 as *const [f32; 8])),
-                )
-            };
+            let p0 = load_f32x8(plane, row0_idx);
+            let p1 = load_f32x8(plane, row1_idx);
 
             let avg = (p0 + p1) * scale;
 
-            // Store result using direct SIMD store
-            unsafe {
-                let out_ptr = result.as_mut_ptr().add(out_row_start + x);
-                *(out_ptr as *mut [f32; 8]) = avg.into();
-            }
+            // Store result
+            store_f32x8(&mut result, out_row_start + x, avg);
         }
 
         // Scalar remainder
@@ -423,27 +422,17 @@ pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
         for chunk in 0..chunks {
             let x = chunk * 8;
 
-            // Load 8 consecutive pixels from row y0 and y1 using direct SIMD loads
+            // Load 8 consecutive pixels from row y0 and y1
             let row0_idx = y0 * width + x;
             let row1_idx = y1 * width + x;
 
-            // SAFETY: chunks calculation ensures x + 8 <= width
-            let (p0, p1) = unsafe {
-                let ptr0 = plane.as_ptr().add(row0_idx);
-                let ptr1 = plane.as_ptr().add(row1_idx);
-                (
-                    f32x8::from(*(ptr0 as *const [f32; 8])),
-                    f32x8::from(*(ptr1 as *const [f32; 8])),
-                )
-            };
+            let p0 = load_f32x8(plane, row0_idx);
+            let p1 = load_f32x8(plane, row1_idx);
 
             let avg = (p0 + p1) * scale;
 
-            // Store result using direct SIMD store
-            unsafe {
-                let out_ptr = result.as_mut_ptr().add(out_row_start + x);
-                *(out_ptr as *mut [f32; 8]) = avg.into();
-            }
+            // Store result
+            store_f32x8(result, out_row_start + x, avg);
         }
 
         // Scalar remainder
@@ -1037,16 +1026,10 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        // Store results using direct SIMD stores for better performance
-        // SAFETY: We verified buffer lengths in debug_assert above
-        unsafe {
-            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
-            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
-            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
-            *(y_ptr as *mut [f32; 8]) = y.into();
-            *(cb_ptr as *mut [f32; 8]) = cb.into();
-            *(cr_ptr as *mut [f32; 8]) = cr.into();
-        }
+        // Store results
+        store_f32x8(y_plane, pixel_idx, y);
+        store_f32x8(cb_plane, pixel_idx, cb);
+        store_f32x8(cr_plane, pixel_idx, cr);
     }
 
     // Scalar remainder
@@ -1162,14 +1145,9 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        unsafe {
-            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
-            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
-            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
-            *(y_ptr as *mut [f32; 8]) = y.into();
-            *(cb_ptr as *mut [f32; 8]) = cb.into();
-            *(cr_ptr as *mut [f32; 8]) = cr.into();
-        }
+        store_f32x8(y_plane, pixel_idx, y);
+        store_f32x8(cb_plane, pixel_idx, cb);
+        store_f32x8(cr_plane, pixel_idx, cr);
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1307,14 +1285,9 @@ pub fn gray_to_ycbcr_planes_simd_inplace(
             gray_data[idx + 7] as f32,
         ]);
 
-        unsafe {
-            let y_ptr = y_plane.as_mut_ptr().add(idx);
-            let cb_ptr = cb_plane.as_mut_ptr().add(idx);
-            let cr_ptr = cr_plane.as_mut_ptr().add(idx);
-            *(y_ptr as *mut [f32; 8]) = y.into();
-            *(cb_ptr as *mut [f32; 8]) = offset_128.into();
-            *(cr_ptr as *mut [f32; 8]) = offset_128.into();
-        }
+        store_f32x8(y_plane, idx, y);
+        store_f32x8(cb_plane, idx, offset_128);
+        store_f32x8(cr_plane, idx, offset_128);
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1415,14 +1388,9 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        unsafe {
-            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
-            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
-            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
-            *(y_ptr as *mut [f32; 8]) = y.into();
-            *(cb_ptr as *mut [f32; 8]) = cb.into();
-            *(cr_ptr as *mut [f32; 8]) = cr.into();
-        }
+        store_f32x8(y_plane, pixel_idx, y);
+        store_f32x8(cb_plane, pixel_idx, cb);
+        store_f32x8(cr_plane, pixel_idx, cr);
     }
 
     for i in (chunks * 8)..num_pixels {
@@ -1527,14 +1495,9 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
         let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
         let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
 
-        unsafe {
-            let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
-            let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
-            let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
-            *(y_ptr as *mut [f32; 8]) = y.into();
-            *(cb_ptr as *mut [f32; 8]) = cb.into();
-            *(cr_ptr as *mut [f32; 8]) = cr.into();
-        }
+        store_f32x8(y_plane, pixel_idx, y);
+        store_f32x8(cb_plane, pixel_idx, cb);
+        store_f32x8(cr_plane, pixel_idx, cr);
     }
 
     for i in (chunks * 8)..num_pixels {
