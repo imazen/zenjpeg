@@ -17,6 +17,7 @@ name = "jpegli"  # Keep import name as `use jpegli` for compatibility
 
 [dependencies]
 wide = { workspace = true }
+aligned-vec = { workspace = true }
 bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }

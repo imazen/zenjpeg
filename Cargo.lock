@@ -708,6 +708,7 @@ dependencies = [
 name = "jpegli-rs"
 version = "0.3.0"
 dependencies = [
+ "aligned-vec",
  "approx",
  "bincode",
  "butteraugli",
@@ -732,7 +733,7 @@ dependencies = [
  "serde",
  "serde_json",
  "test-case",
- "wide 0.7.33",
+ "wide 1.1.1",
  "yuv",
  "zune-jpeg",
 ]

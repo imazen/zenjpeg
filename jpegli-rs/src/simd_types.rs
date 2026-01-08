@@ -320,10 +320,10 @@ impl QuantTableSimd {
             let abs_qval = qval.abs();
 
             // Zero-copy access with fast rounding
-            let abs_arr = abs_qval.as_array_ref();
-            let thresh_arr = threshold.as_array_ref();
+            let abs_arr = abs_qval.as_array();
+            let thresh_arr = threshold.as_array();
             let rounded = qval.fast_round_int();
-            let rounded_arr = rounded.as_array_ref();
+            let rounded_arr = rounded.as_array();
 
             let k = row * 8;
             for i in 0..8 {
@@ -374,10 +374,10 @@ impl QuantTableSimd {
             let abs_qval = qval.abs();
 
             // Zero-copy access with fast rounding
-            let abs_arr = abs_qval.as_array_ref();
-            let thresh_arr = threshold.as_array_ref();
+            let abs_arr = abs_qval.as_array();
+            let thresh_arr = threshold.as_array();
             let rounded = qval.fast_round_int();
-            let rounded_arr = rounded.as_array_ref();
+            let rounded_arr = rounded.as_array();
 
             for i in 0..8 {
                 if abs_arr[i] >= thresh_arr[i] {
