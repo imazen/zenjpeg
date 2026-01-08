@@ -6,8 +6,8 @@
 //! The hybrid approach combines:
 //! - jpegli's adaptive quantization (WHERE to spend bits)
 //! - mozjpeg's trellis quantization (HOW to spend bits)
-
-#![cfg(feature = "experimental-hybrid-trellis")]
+//!
+//! Note: This module is gated by `experimental-hybrid-trellis` feature in mod.rs.
 
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
@@ -16,7 +16,7 @@ use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 
-use super::{natural_to_zigzag, natural_to_zigzag_into};
+use super::natural_to_zigzag_into;
 
 use super::EncoderConfig;
 
