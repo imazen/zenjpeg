@@ -16,7 +16,7 @@ use crate::consts::{
 use crate::error::Result;
 use crate::types::PixelFormat;
 
-#[cfg(feature = "simd")]
+use multiversion::multiversion;
 use wide::{f32x4, f32x8};
 
 /// Converts a single RGB pixel to YCbCr.
@@ -454,7 +454,7 @@ pub fn ycbcr_planes_to_rgb(
 /// Applies level shift (+128) and clamps to 0-255.
 ///
 /// This is optimized for the decoder which processes planes separately.
-#[inline(never)] // Prevent over-inlining for better cache behavior
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
 pub fn ycbcr_planes_f32_to_rgb_u8(
     y_plane: &[f32],
     cb_plane: &[f32],
@@ -473,103 +473,57 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
     const CR_TO_G: f32 = -0.714136;
     const CB_TO_B: f32 = 1.772;
 
-    #[cfg(feature = "simd")]
-    {
-        let cr_to_r = f32x8::splat(CR_TO_R);
-        let cb_to_g = f32x8::splat(CB_TO_G);
-        let cr_to_g = f32x8::splat(CR_TO_G);
-        let cb_to_b = f32x8::splat(CB_TO_B);
-        let offset = f32x8::splat(128.0);
-        let zero = f32x8::splat(0.0);
-        let max_val = f32x8::splat(255.0);
+    let cr_to_r = f32x8::splat(CR_TO_R);
+    let cb_to_g = f32x8::splat(CB_TO_G);
+    let cr_to_g = f32x8::splat(CR_TO_G);
+    let cb_to_b = f32x8::splat(CB_TO_B);
+    let offset = f32x8::splat(128.0);
+    let zero = f32x8::splat(0.0);
+    let max_val = f32x8::splat(255.0);
 
-        let chunks = num_pixels / 8;
-        for chunk in 0..chunks {
-            let base = chunk * 8;
-            let y = f32x8::from([
-                y_plane[base],
-                y_plane[base + 1],
-                y_plane[base + 2],
-                y_plane[base + 3],
-                y_plane[base + 4],
-                y_plane[base + 5],
-                y_plane[base + 6],
-                y_plane[base + 7],
-            ]);
-            let cb = f32x8::from([
-                cb_plane[base],
-                cb_plane[base + 1],
-                cb_plane[base + 2],
-                cb_plane[base + 3],
-                cb_plane[base + 4],
-                cb_plane[base + 5],
-                cb_plane[base + 6],
-                cb_plane[base + 7],
-            ]);
-            let cr = f32x8::from([
-                cr_plane[base],
-                cr_plane[base + 1],
-                cr_plane[base + 2],
-                cr_plane[base + 3],
-                cr_plane[base + 4],
-                cr_plane[base + 5],
-                cr_plane[base + 6],
-                cr_plane[base + 7],
-            ]);
+    let chunks = num_pixels / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
 
-            // YCbCr to RGB
-            let r = (y + cr_to_r * cr + offset).max(zero).min(max_val);
-            let g = (y + cb_to_g * cb + cr_to_g * cr + offset)
-                .max(zero)
-                .min(max_val);
-            let b = (y + cb_to_b * cb + offset).max(zero).min(max_val);
+        // Load planes directly from slices
+        let y = f32x8::from(&y_plane[base..base + 8]);
+        let cb = f32x8::from(&cb_plane[base..base + 8]);
+        let cr = f32x8::from(&cr_plane[base..base + 8]);
 
-            let r_arr: [f32; 8] = r.into();
-            let g_arr: [f32; 8] = g.into();
-            let b_arr: [f32; 8] = b.into();
+        // YCbCr to RGB
+        let r = (y + cr_to_r * cr + offset).max(zero).min(max_val);
+        let g = (y + cb_to_g * cb + cr_to_g * cr + offset)
+            .max(zero)
+            .min(max_val);
+        let b = (y + cb_to_b * cb + offset).max(zero).min(max_val);
 
-            // Store interleaved RGB
-            for j in 0..8 {
-                let idx = (base + j) * 3;
-                rgb[idx] = r_arr[j] as u8;
-                rgb[idx + 1] = g_arr[j] as u8;
-                rgb[idx + 2] = b_arr[j] as u8;
-            }
-        }
+        let r_arr: [f32; 8] = r.into();
+        let g_arr: [f32; 8] = g.into();
+        let b_arr: [f32; 8] = b.into();
 
-        // Handle remaining pixels with scalar code
-        for i in (chunks * 8)..num_pixels {
-            let y = y_plane[i];
-            let cb = cb_plane[i];
-            let cr = cr_plane[i];
-
-            let r = y + CR_TO_R * cr;
-            let g = y + CB_TO_G * cb + CR_TO_G * cr;
-            let b = y + CB_TO_B * cb;
-
-            let idx = i * 3;
-            rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
-            rgb[idx + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
-            rgb[idx + 2] = (b + 128.0).clamp(0.0, 255.0) as u8;
+        // Store interleaved RGB
+        for j in 0..8 {
+            let idx = (base + j) * 3;
+            rgb[idx] = r_arr[j] as u8;
+            rgb[idx + 1] = g_arr[j] as u8;
+            rgb[idx + 2] = b_arr[j] as u8;
         }
     }
 
-    #[cfg(not(feature = "simd"))]
-    {
-        for i in 0..num_pixels {
-            let y = y_plane[i];
-            let cb = cb_plane[i];
-            let cr = cr_plane[i];
+    // Handle remaining pixels with scalar code
+    for i in (chunks * 8)..num_pixels {
+        let y = y_plane[i];
+        let cb = cb_plane[i];
+        let cr = cr_plane[i];
 
-            let r = y + CR_TO_R * cr;
-            let g = y + CB_TO_G * cb + CR_TO_G * cr;
-            let b = y + CB_TO_B * cb;
+        let r = y + CR_TO_R * cr;
+        let g = y + CB_TO_G * cb + CR_TO_G * cr;
+        let b = y + CB_TO_B * cb;
 
-            let idx = i * 3;
-            rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
-            rgb[idx + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
-            rgb[idx + 2] = (b + 128.0).clamp(0.0, 255.0) as u8;
-        }
+        let idx = i * 3;
+        rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[idx + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[idx + 2] = (b + 128.0).clamp(0.0, 255.0) as u8;
     }
 }
 

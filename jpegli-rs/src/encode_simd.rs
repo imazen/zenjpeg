@@ -226,7 +226,7 @@ pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Result<Vec<f32>> {
 /// * `width` - Input width
 /// * `height` - Input height
 /// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
 pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
