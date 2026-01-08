@@ -765,8 +765,12 @@ mod simd {
     /// 5. Column DCT: dct1d_8_avx2 processes columns (reg[k][j] = coef[k,j])
     ///    Result: reg[i] = final row i
     /// 6. Scale and store
+    ///
+    /// # Safety
+    /// Caller must ensure AVX2+FMA are available.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2", enable = "fma")]
+    #[inline] // Critical: inline into multiversioned caller
     pub unsafe fn forward_dct_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
         let scale = _mm256_set1_ps(1.0 / 8.0);
 
@@ -844,22 +848,36 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// # Returns
 /// 8x8 block of DCT coefficients
+/// Performs an 8x8 forward DCT with automatic CPU dispatch.
+///
+/// Uses multiversion for one-time dispatch at load (not per-call).
+/// Inside each version, `cfg(target_feature)` provides zero-cost branching.
+#[cfg(feature = "simd")]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    // Use raw AVX2+FMA implementation when available (fastest path)
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    // cfg is compile-time: each multiversion variant compiles only the relevant branch
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
     {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            let mut output = [0.0f32; 64];
-            // SAFETY: AVX2+FMA are available (checked above)
-            unsafe {
-                simd::forward_dct_8x8_avx2(input, &mut output);
-            }
-            return output;
+        let mut output = [0.0f32; 64];
+        // SAFETY: This code path only compiles when target_feature includes avx2+fma
+        unsafe {
+            simd::forward_dct_8x8_avx2(input, &mut output);
         }
+        return output;
     }
 
-    // Fallback: scalar/SSE implementation
+    // Fallback for SSE2-only or non-x86
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    {
+        forward_dct_8x8_scalar(input)
+    }
+}
+
+/// Non-SIMD fallback version
+#[cfg(not(feature = "simd"))]
+#[must_use]
+pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     forward_dct_8x8_scalar(input)
 }
 
@@ -1385,6 +1403,7 @@ mod tests {
     #[test]
     #[ignore] // Run with: cargo test --release bench_avx2_dct -- --ignored --nocapture
     fn bench_avx2_dct_vs_scalar() {
+        use std::hint::black_box;
         use std::time::Instant;
 
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
@@ -1404,13 +1423,13 @@ mod tests {
 
         // Warmup scalar
         for _ in 0..10000 {
-            let _ = forward_dct_8x8_scalar(&input);
+            let _ = forward_dct_8x8_scalar(black_box(&input));
         }
 
         let start = Instant::now();
         for _ in 0..iterations {
-            let result = forward_dct_8x8_scalar(&input);
-            output[0] = result[0]; // Prevent optimization
+            let result = forward_dct_8x8_scalar(black_box(&input));
+            black_box(&result);
         }
         let scalar_time = start.elapsed();
         let scalar_ns = scalar_time.as_nanos() as f64 / iterations as f64;
@@ -1418,14 +1437,14 @@ mod tests {
         // Warmup AVX2
         for _ in 0..10000 {
             unsafe {
-                simd::forward_dct_8x8_avx2(&input, &mut output);
+                simd::forward_dct_8x8_avx2(black_box(&input), &mut output);
             }
         }
 
         let start = Instant::now();
         for _ in 0..iterations {
             unsafe {
-                simd::forward_dct_8x8_avx2(&input, &mut output);
+                simd::forward_dct_8x8_avx2(black_box(&input), black_box(&mut output));
             }
         }
         let avx2_time = start.elapsed();
