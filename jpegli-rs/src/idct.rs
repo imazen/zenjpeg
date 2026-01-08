@@ -70,6 +70,109 @@ mod simd {
         output[56..64].copy_from_slice(&transposed[7].to_array());
     }
 
+    /// Transpose 8 f32x8 vectors in-place (no load/store overhead).
+    /// Each f32x8 represents a row; returns transposed rows.
+    #[inline(always)]
+    fn transpose_vec(rows: [f32x8; 8]) -> [f32x8; 8] {
+        f32x8::transpose(rows)
+    }
+
+    /// Vectorized 1D IDCT on 8 rows in parallel.
+    /// Input: 8 f32x8 vectors where each represents corresponding values from 8 rows.
+    /// (i.e., cols[0] contains element 0 from each of 8 rows)
+    /// Returns: transformed values in the same layout.
+    #[inline(always)]
+    fn idct_1d_vec(cols: [f32x8; 8]) -> [f32x8; 8] {
+        let [c0, c1, c2, c3, c4, c5, c6, c7] = cols;
+
+        // ForwardEvenOdd: de-interleave
+        let t0 = c0;
+        let t1 = c2;
+        let t2 = c4;
+        let t3 = c6;
+        let t4 = c1;
+        let t5 = c3;
+        let t6 = c5;
+        let t7 = c7;
+
+        // IDCT1D<4> on even part [t0, t1, t2, t3]
+        let e0 = t0;
+        let e1 = t2;
+        let o0 = t1;
+        let o1 = t3;
+
+        // IDCT1D<2> on [e0, e1]
+        let e00 = e0 + e1;
+        let e01 = e0 - e1;
+
+        // BTranspose<2> and IDCT1D<2> on [o0, o1]
+        let o1b = o1 + o0;
+        let o0b = o0 * f32x8::splat(SQRT2);
+        let o00 = o0b + o1b;
+        let o01 = o0b - o1b;
+
+        // MultiplyAndAdd<4>
+        let wc4_0 = f32x8::splat(WC4[0]);
+        let wc4_1 = f32x8::splat(WC4[1]);
+        let prod0 = wc4_0 * o00;
+        let prod1 = wc4_1 * o01;
+        let r0 = e00 + prod0;
+        let r3 = e00 - prod0;
+        let r1 = e01 + prod1;
+        let r2 = e01 - prod1;
+
+        // BTranspose<4> on odd part [t4, t5, t6, t7]
+        let t7b = t7 + t6;
+        let t6b = t6 + t5;
+        let t5b = t5 + t4;
+        let t4b = t4 * f32x8::splat(SQRT2);
+
+        // IDCT1D<4> on [t4b, t5b, t6b, t7b]
+        let e0o = t4b;
+        let e1o = t6b;
+        let o0o = t5b;
+        let o1o = t7b;
+
+        let e00o = e0o + e1o;
+        let e01o = e0o - e1o;
+
+        let o1bo = o1o + o0o;
+        let o0bo = o0o * f32x8::splat(SQRT2);
+        let o00o = o0bo + o1bo;
+        let o01o = o0bo - o1bo;
+
+        let prod0o = wc4_0 * o00o;
+        let prod1o = wc4_1 * o01o;
+        let r0o = e00o + prod0o;
+        let r3o = e00o - prod0o;
+        let r1o = e01o + prod1o;
+        let r2o = e01o - prod1o;
+
+        // MultiplyAndAdd<8>
+        let wc8 = [
+            f32x8::splat(WC8[0]),
+            f32x8::splat(WC8[1]),
+            f32x8::splat(WC8[2]),
+            f32x8::splat(WC8[3]),
+        ];
+
+        let prod8_0 = wc8[0] * r0o;
+        let prod8_1 = wc8[1] * r1o;
+        let prod8_2 = wc8[2] * r2o;
+        let prod8_3 = wc8[3] * r3o;
+
+        [
+            r0 + prod8_0, // c0
+            r1 + prod8_1, // c1
+            r2 + prod8_2, // c2
+            r3 + prod8_3, // c3
+            r3 - prod8_3, // c4
+            r2 - prod8_2, // c5
+            r1 - prod8_1, // c6
+            r0 - prod8_0, // c7
+        ]
+    }
+
     /// Fast 1D IDCT on a single row (8 values).
     /// Uses the AAN (Arai, Agui, Nakajima) scaled IDCT algorithm.
     #[allow(dead_code)]
@@ -283,31 +386,53 @@ mod simd {
         }
     }
 
-    /// Full SIMD-optimized 2D IDCT.
+    /// Full SIMD-optimized 2D IDCT with f32x8 chaining.
+    /// Keeps data in SIMD registers throughout the pipeline to avoid gather/scatter overhead.
+    /// Uses only 2 transposes instead of the previous 4 gather/scatter cycles.
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
     pub fn inverse_dct_8x8_simd(input: &[f32; 64]) -> [f32; 64] {
-        let mut block = *input;
+        // Load input as rows (each f32x8 is one row of the 8x8 block)
+        let rows = [
+            f32x8::from(&input[0..8]),
+            f32x8::from(&input[8..16]),
+            f32x8::from(&input[16..24]),
+            f32x8::from(&input[24..32]),
+            f32x8::from(&input[32..40]),
+            f32x8::from(&input[40..48]),
+            f32x8::from(&input[48..56]),
+            f32x8::from(&input[56..64]),
+        ];
 
-        // Column IDCT (process all 8 columns in parallel by operating on rows)
-        idct_8rows_simd(&mut block);
+        // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
+        // This layout allows idct_1d_vec to process 8 rows in parallel
+        let cols = transpose_vec(rows);
 
-        // Transpose
-        let mut transposed = [0.0f32; 64];
-        transpose_8x8_simd(&block, &mut transposed);
+        // Row IDCT: processes all 8 rows in parallel
+        // After this, cols[i] = [IDCT(row0)[i], IDCT(row1)[i], ...]
+        let cols_after_row = idct_1d_vec(cols);
 
-        // Row IDCT
-        idct_8rows_simd(&mut transposed);
+        // Transpose back to row layout
+        // rows[j] = complete IDCT'd row j = [IDCT(row_j)[0], IDCT(row_j)[1], ...]
+        // This is also the correct layout for column IDCT:
+        // idct_1d_vec needs input[i] = coeff i from each parallel column
+        // coeff i of column k = row_i[k], so input[i] = rows[i]
+        let rows_for_col = transpose_vec(cols_after_row);
 
-        // Transpose back
-        let mut output = [0.0f32; 64];
-        transpose_8x8_simd(&transposed, &mut output);
+        // Column IDCT: processes all 8 columns in parallel using row layout
+        let final_rows = idct_1d_vec(rows_for_col);
 
-        // Apply 1/8 scaling
+        // Apply 1/8 scaling and store (already in row layout for storage)
         let scale = f32x8::splat(1.0 / 8.0);
-        for i in 0..8 {
-            let row = f32x8::from(&output[i * 8..i * 8 + 8]);
-            let scaled = row * scale;
-            output[i * 8..i * 8 + 8].copy_from_slice(&scaled.to_array());
-        }
+        let mut output = [0.0f32; 64];
+
+        output[0..8].copy_from_slice(&(final_rows[0] * scale).to_array());
+        output[8..16].copy_from_slice(&(final_rows[1] * scale).to_array());
+        output[16..24].copy_from_slice(&(final_rows[2] * scale).to_array());
+        output[24..32].copy_from_slice(&(final_rows[3] * scale).to_array());
+        output[32..40].copy_from_slice(&(final_rows[4] * scale).to_array());
+        output[40..48].copy_from_slice(&(final_rows[5] * scale).to_array());
+        output[48..56].copy_from_slice(&(final_rows[6] * scale).to_array());
+        output[56..64].copy_from_slice(&(final_rows[7] * scale).to_array());
 
         output
     }
