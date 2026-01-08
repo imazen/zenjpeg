@@ -62,10 +62,7 @@ fn bench_encode_matrix(c: &mut Criterion) {
     group.sample_size(20); // Reduce samples for large images
 
     // Resolution presets
-    let resolutions = [
-        ("2k", 1920, 1080),
-        ("4k", 3840, 2160),
-    ];
+    let resolutions = [("2k", 1920, 1080), ("4k", 3840, 2160)];
 
     // Configuration matrix
     let configs = [
@@ -123,23 +120,19 @@ fn bench_encode_matrix(c: &mut Criterion) {
 
             group.throughput(Throughput::Elements(1)); // One image per iteration
 
-            group.bench_with_input(
-                BenchmarkId::new("encode", &bench_name),
-                &data,
-                |b, data| {
-                    b.iter(|| {
-                        let encoder = Encoder::new()
-                            .width(width as u32)
-                            .height(height as u32)
-                            .pixel_format(PixelFormat::Rgb)
-                            .jpegli_quality(Quality::from_quality(90.0))
-                            .subsampling(config.subsampling)
-                            .mode(config.mode)
-                            .optimize_huffman(config.optimize_huffman);
-                        encoder.encode(black_box(data))
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("encode", &bench_name), &data, |b, data| {
+                b.iter(|| {
+                    let encoder = Encoder::new()
+                        .width(width as u32)
+                        .height(height as u32)
+                        .pixel_format(PixelFormat::Rgb)
+                        .jpegli_quality(Quality::from_quality(90.0))
+                        .subsampling(config.subsampling)
+                        .mode(config.mode)
+                        .optimize_huffman(config.optimize_huffman);
+                    encoder.encode(black_box(data))
+                });
+            });
         }
 
         // Print megapixels for context
@@ -161,8 +154,18 @@ fn bench_encode_quick(c: &mut Criterion) {
 
     // Most common production configurations
     let configs = [
-        ("420_prog_opt", Subsampling::S420, JpegMode::Progressive, true),
-        ("444_baseline_opt", Subsampling::S444, JpegMode::Baseline, true),
+        (
+            "420_prog_opt",
+            Subsampling::S420,
+            JpegMode::Progressive,
+            true,
+        ),
+        (
+            "444_baseline_opt",
+            Subsampling::S444,
+            JpegMode::Baseline,
+            true,
+        ),
     ];
 
     for (name, sub, mode, opt) in configs {
