@@ -527,7 +527,11 @@ pub(crate) unsafe fn downsample_2x2_avx2(
     // Calculate how many SIMD chunks we can process per row.
     // We need 16 consecutive input pixels (in_x to in_x+15) per chunk.
     // So max in_x for SIMD is width - 16, meaning max out_x is (width - 16) / 2.
-    let simd_chunks_per_row = if width >= 16 { (width - 16) / 2 / 8 + 1 } else { 0 };
+    let simd_chunks_per_row = if width >= 16 {
+        (width - 16) / 2 / 8 + 1
+    } else {
+        0
+    };
     // But also cap based on output width
     let simd_chunks_per_row = simd_chunks_per_row.min(new_width / 8);
 
@@ -643,8 +647,7 @@ unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
     let v2020 = _mm256_shuffle_ps(lo, hi, 0x88);
     // _mm256_permute4x64_epi64 with 0xD8 reorders 64-bit chunks: [0,2,1,3]
     // Final: [e0,e1,e2,e3,e4,e5,e6,e7]
-    let evens_raw =
-        _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v2020), 0xD8));
+    let evens_raw = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v2020), 0xD8));
 
     // Highway's ConcatOdd pattern for f32:
     // _mm256_shuffle_ps with 0xDD selects elements [1,3] from each source per lane
@@ -2501,9 +2504,7 @@ mod tests {
         }
 
         // Test with 8 pixels (one AVX2 batch)
-        let rgb_data: Vec<u8> = (0..24)
-            .map(|i| ((i * 17 + 5) % 256) as u8)
-            .collect();
+        let rgb_data: Vec<u8> = (0..24).map(|i| ((i * 17 + 5) % 256) as u8).collect();
 
         let mut y_avx2 = vec![0.0f32; 8];
         let mut cb_avx2 = vec![0.0f32; 8];
@@ -2530,17 +2531,26 @@ mod tests {
             assert!(
                 y_diff < EPSILON_ACCUMULATED,
                 "Y mismatch at {}: AVX2={}, scalar={}, diff={}",
-                i, y_avx2[i], y_scalar[i], y_diff
+                i,
+                y_avx2[i],
+                y_scalar[i],
+                y_diff
             );
             assert!(
                 cb_diff < EPSILON_ACCUMULATED,
                 "Cb mismatch at {}: AVX2={}, scalar={}, diff={}",
-                i, cb_avx2[i], cb_scalar[i], cb_diff
+                i,
+                cb_avx2[i],
+                cb_scalar[i],
+                cb_diff
             );
             assert!(
                 cr_diff < EPSILON_ACCUMULATED,
                 "Cr mismatch at {}: AVX2={}, scalar={}, diff={}",
-                i, cr_avx2[i], cr_scalar[i], cr_diff
+                i,
+                cr_avx2[i],
+                cr_scalar[i],
+                cr_diff
             );
         }
     }
@@ -2589,7 +2599,13 @@ mod tests {
                     let mut y_scalar = vec![0.0f32; 8];
                     let mut cb_scalar = vec![0.0f32; 8];
                     let mut cr_scalar = vec![0.0f32; 8];
-                    rgb_to_ycbcr_scalar(&rgb_data, &mut y_scalar, &mut cb_scalar, &mut cr_scalar, 8);
+                    rgb_to_ycbcr_scalar(
+                        &rgb_data,
+                        &mut y_scalar,
+                        &mut cb_scalar,
+                        &mut cr_scalar,
+                        8,
+                    );
 
                     for i in 0..8 {
                         max_y_diff = max_y_diff.max((y_avx2[i] - y_scalar[i]).abs());
@@ -2661,17 +2677,26 @@ mod tests {
             assert!(
                 y_diff < EPSILON_ACCUMULATED,
                 "Y mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
-                i, y_avx2[i], y_simd[i], y_diff
+                i,
+                y_avx2[i],
+                y_simd[i],
+                y_diff
             );
             assert!(
                 cb_diff < EPSILON_ACCUMULATED,
                 "Cb mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
-                i, cb_avx2[i], cb_simd[i], cb_diff
+                i,
+                cb_avx2[i],
+                cb_simd[i],
+                cb_diff
             );
             assert!(
                 cr_diff < EPSILON_ACCUMULATED,
                 "Cr mismatch at {}: AVX2={}, existing SIMD={}, diff={}",
-                i, cr_avx2[i], cr_simd[i], cr_diff
+                i,
+                cr_avx2[i],
+                cr_simd[i],
+                cr_diff
             );
         }
     }
@@ -2972,15 +2997,17 @@ mod tests {
             // All same
             vec![42.0; 16],
             // Alternating
-            (0..16).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect(),
+            (0..16)
+                .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+                .collect(),
             // Large values
             (0..16).map(|i| (i as f32) * 1000.0).collect(),
             // Small values
             (0..16).map(|i| (i as f32) * 0.001).collect(),
             // Random-ish pattern
             vec![
-                3.14, 2.71, 1.41, 1.73, 2.23, 0.57, 1.61, 4.67, 9.81, 6.28, 0.69, 1.38, 2.30,
-                3.45, 4.56, 5.67,
+                3.14, 2.71, 1.41, 1.73, 2.23, 0.57, 1.61, 4.67, 9.81, 6.28, 0.69, 1.38, 2.30, 3.45,
+                4.56, 5.67,
             ],
         ];
 

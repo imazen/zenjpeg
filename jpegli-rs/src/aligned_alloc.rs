@@ -38,7 +38,8 @@ impl std::error::Error for AllocError {}
 #[inline]
 pub fn try_alloc_zeroed(count: usize) -> Result<AlignedVec<f32>, AllocError> {
     let mut vec = AVec::new(0);
-    vec.try_reserve_exact(count).map_err(|_| AllocError::OutOfMemory)?;
+    vec.try_reserve_exact(count)
+        .map_err(|_| AllocError::OutOfMemory)?;
     vec.resize(count, 0.0);
     Ok(vec)
 }
@@ -47,7 +48,8 @@ pub fn try_alloc_zeroed(count: usize) -> Result<AlignedVec<f32>, AllocError> {
 #[inline]
 pub fn try_alloc<T: Copy + Default>(count: usize) -> Result<AlignedVec<T>, AllocError> {
     let mut vec = AVec::new(0);
-    vec.try_reserve_exact(count).map_err(|_| AllocError::OutOfMemory)?;
+    vec.try_reserve_exact(count)
+        .map_err(|_| AllocError::OutOfMemory)?;
     vec.resize(count, T::default());
     Ok(vec)
 }
@@ -60,7 +62,10 @@ pub fn try_alloc<T: Copy + Default>(count: usize) -> Result<AlignedVec<T>, Alloc
 /// Buffer contains `stride * height` elements, with actual image data
 /// in the first `width` elements of each row.
 #[inline]
-pub fn try_alloc_image(width: usize, height: usize) -> Result<(AlignedVec<f32>, usize), AllocError> {
+pub fn try_alloc_image(
+    width: usize,
+    height: usize,
+) -> Result<(AlignedVec<f32>, usize), AllocError> {
     let stride = (width + 7) & !7; // Round up to multiple of 8
     let count = stride.checked_mul(height).ok_or(AllocError::Overflow)?;
     let buffer = try_alloc_zeroed(count)?;
@@ -102,7 +107,12 @@ mod tests {
     fn test_image_buffer_stride_multiple_of_8() {
         for width in [1, 7, 8, 9, 15, 16, 17, 100, 1000, 1920] {
             let (_buffer, stride) = try_alloc_image(width, 1).unwrap();
-            assert_eq!(stride % 8, 0, "Stride for width {} should be multiple of 8", width);
+            assert_eq!(
+                stride % 8,
+                0,
+                "Stride for width {} should be multiple of 8",
+                width
+            );
             assert!(stride >= width, "Stride should be >= width");
         }
     }
