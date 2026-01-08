@@ -39,6 +39,7 @@
 // ============================================================================
 
 // Public modules (stable API)
+pub mod aligned_alloc;
 pub mod decode;
 pub mod encode;
 pub mod error;

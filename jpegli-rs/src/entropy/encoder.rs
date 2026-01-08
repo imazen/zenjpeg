@@ -234,9 +234,9 @@ impl EntropyEncoder {
                 coeffs[start + 7],
             ]);
             // simd_eq returns all 1s (-1) for equal, 0 for not equal
-            let is_zero = v.cmp_eq(zero);
+            let is_zero = v.simd_eq(zero);
             // move_mask extracts the high bit of each lane
-            let zero_bits = is_zero.move_mask() as u8;
+            let zero_bits = is_zero.to_bitmask() as u8;
             let nonzero_bits = !zero_bits;
             nonzero_mask |= (nonzero_bits as u64) << start;
         }
