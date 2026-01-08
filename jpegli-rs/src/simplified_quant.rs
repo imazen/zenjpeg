@@ -170,6 +170,7 @@ fn compute_block_quant_multiplier(
 }
 
 /// Computes the activity (variance) of a block.
+/// Uses SIMD for interior blocks where all 64 pixels are within bounds.
 fn compute_block_activity(
     y_plane: &[f32],
     width: usize,
@@ -177,14 +178,44 @@ fn compute_block_activity(
     bx: usize,
     by: usize,
 ) -> f32 {
+    let px_start = bx * 8;
+    let py_start = by * 8;
+
+    // Fast SIMD path for interior blocks (most common case)
+    #[cfg(feature = "simd")]
+    if px_start + 8 <= width && py_start + 8 <= height {
+        use wide::f32x8;
+
+        let mut sum_vec = f32x8::ZERO;
+        let mut sum_sq_vec = f32x8::ZERO;
+
+        for y in 0..8 {
+            let row_start = (py_start + y) * width + px_start;
+            let row = f32x8::from(&y_plane[row_start..row_start + 8]);
+            sum_vec += row;
+            sum_sq_vec += row * row;
+        }
+
+        // Horizontal sum using to_array
+        let sum_arr = sum_vec.to_array();
+        let sum_sq_arr = sum_sq_vec.to_array();
+        let sum: f32 = sum_arr.iter().sum();
+        let sum_sq: f32 = sum_sq_arr.iter().sum();
+
+        let mean = sum / 64.0;
+        let variance = (sum_sq / 64.0) - (mean * mean);
+        return variance.max(0.0).sqrt();
+    }
+
+    // Scalar fallback for boundary blocks
     let mut sum = 0.0f32;
     let mut sum_sq = 0.0f32;
     let mut count = 0;
 
     for y in 0..8 {
         for x in 0..8 {
-            let px = bx * 8 + x;
-            let py = by * 8 + y;
+            let px = px_start + x;
+            let py = py_start + y;
 
             if px < width && py < height {
                 let val = y_plane[py * width + px];

@@ -32,9 +32,9 @@ use wide::f32x8;
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 use core::arch::x86_64::{
     __m128, __m128i, __m256, _mm256_add_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_permute2f128_ps,
-    _mm256_permutevar8x32_ps, _mm256_set1_ps, _mm256_setr_epi32, _mm256_storeu_ps, _mm_cvtepu8_epi32,
-    _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps, _mm_set1_ps, _mm_setr_epi8, _mm_shuffle_epi8,
-    _mm_storeu_ps,
+    _mm256_permutevar8x32_ps, _mm256_set1_ps, _mm256_setr_epi32, _mm256_storeu_ps,
+    _mm_cvtepu8_epi32, _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps, _mm_set1_ps, _mm_setr_epi8,
+    _mm_shuffle_epi8, _mm_storeu_ps,
 };
 
 use crate::consts::{
