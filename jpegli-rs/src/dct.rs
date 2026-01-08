@@ -348,7 +348,7 @@ pub(crate) mod simd {
     /// Note: Currently slower than scalar row-by-row processing due to f32x8::from([...])
     /// vector construction overhead. Kept for reference and future AVX2 intrinsics optimization.
     #[allow(dead_code)]
-    #[multiversion(targets("x86_64+avx2", "x86_64+sse2"))]
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
     pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
         // Step 1: Load all 8 rows (cache-friendly sequential access)
         let mut rows: [f32x8; 8] = [f32x8::ZERO; 8];
@@ -523,7 +523,7 @@ pub(crate) mod simd {
     ///
     /// The AVX2 version uses vunpcklps/vunpckhps and vperm2f128 for efficient
     /// register-to-register transpose (Highway algorithm).
-    #[multiversion(targets("x86_64+avx2", "x86_64+sse2"))]
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // When compiling for AVX2 target, multiversion adds #[target_feature(enable = "avx2")]
         // so we can use AVX2 intrinsics directly. The is_x86_feature_detected check is
