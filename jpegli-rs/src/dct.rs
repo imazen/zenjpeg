@@ -357,7 +357,7 @@ pub(crate) mod simd {
     /// Note: Currently slower than scalar row-by-row processing due to f32x8::from([...])
     /// vector construction overhead. Kept for reference and future AVX2 intrinsics optimization.
     #[allow(dead_code)]
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
     pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
         // Step 1: Load all 8 rows (cache-friendly sequential access)
         let mut rows: [f32x8; 8] = [f32x8::ZERO; 8];
@@ -527,7 +527,7 @@ pub(crate) mod simd {
     ///
     /// The AVX2 version uses vunpcklps/vunpckhps and vperm2f128 for efficient
     /// register-to-register transpose (Highway algorithm).
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // When compiling for AVX2 target with unsafe_simd feature,
         // use raw intrinsics for maximum performance.
@@ -872,7 +872,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 /// Uses multiversion for one-time dispatch at load (not per-call).
 /// Inside each version, `cfg(target_feature)` provides zero-cost branching.
 #[cfg(feature = "simd")]
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Use raw AVX2 intrinsics only when unsafe_simd feature is enabled

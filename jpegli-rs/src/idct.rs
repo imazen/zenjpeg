@@ -38,9 +38,11 @@ fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 #[cfg(feature = "simd")]
 mod simd {
     use super::*;
+    use multiversion::multiversion;
 
     /// SIMD-optimized 8x8 transpose using wide's built-in transpose.
     /// Accelerated on AVX.
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load all 8 rows
         let rows = [
@@ -142,7 +144,7 @@ mod simd {
 
     /// SIMD-optimized 1D IDCT processing 8 rows at once.
     /// Each f32x8 contains corresponding values from all 8 rows.
-    #[inline]
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
     pub fn idct_8rows_simd(block: &mut [f32; 64]) {
         // Load columns (each lane is from a different row)
         let mut c0 = f32x8::from([
