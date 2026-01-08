@@ -207,7 +207,8 @@ fn test_rust_aq_impl_produces_valid_output() {
     }
 
     // Run our full implementation
-    let map = aq_impl::compute_aq_strength_map_impl(&y_plane, width, height, 1.0);
+    let map = aq_impl::compute_aq_strength_map_impl(&y_plane, width, height, 1.0)
+        .expect("AQ allocation failed");
 
     // Check values are in valid range
     let mut min = f32::INFINITY;
@@ -351,7 +352,8 @@ fn test_rust_vs_cpp_on_testdata() {
         // Run Rust implementation
         let distance = 1.0 / test.config_y_quant_01; // Approximate
         let rust_map =
-            aq_impl::compute_aq_strength_map_impl(&y_plane, img_width, img_height, distance);
+            aq_impl::compute_aq_strength_map_impl(&y_plane, img_width, img_height, distance)
+                .expect("AQ allocation failed");
 
         println!(
             "\nExpected {} values, Rust produced {}",

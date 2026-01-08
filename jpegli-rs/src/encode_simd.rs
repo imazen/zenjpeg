@@ -4,12 +4,32 @@
 //! - Chroma downsampling (2x2, 2x1, 1x2)
 //! - RGB to YCbCr color conversion
 //!
+//! # Safe/Unsafe Architecture
+//!
+//! This module follows a two-layer pattern:
+//!
+//! 1. **Safe public APIs** (e.g., `downsample_2x2_simd`, `rgb_to_ycbcr_planes_simd_inplace`):
+//!    - Use `wide` crate's portable SIMD types (`f32x8`)
+//!    - Safe load/store helpers with bounds checking
+//!    - Runtime CPU feature detection via `multiversion` or `is_x86_feature_detected!`
+//!
+//! 2. **Unsafe internal functions** (e.g., `downsample_2x2_avx2`, `rgb_to_ycbcr_8px_avx2`):
+//!    - Raw AVX2/SSE intrinsics for operations without `wide` equivalents
+//!    - Permute, shuffle, and byte-level operations for de-interleaving
+//!    - Marked `pub(crate)` for testing, but production code uses safe wrappers
+//!
+//! The unsafe intrinsics are necessary for operations like:
+//! - `_mm256_permutevar8x32_ps`: Variable element permute (even/odd gather)
+//! - `_mm_shuffle_epi8`: Byte shuffle (RGB channel extraction)
+//! - `_mm256_permute2f128_ps`: 128-bit lane permute (matrix transpose)
+//!
 //! All functions have tests to verify parity with scalar implementations.
 
 use multiversion::multiversion;
 use wide::f32x8;
 
-#[cfg(target_arch = "x86_64")]
+// Raw AVX2/SSE intrinsics - only available with `unsafe_simd` feature on x86_64
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 use core::arch::x86_64::{
     __m128, __m128i, __m256, __m256i, _mm256_add_ps, _mm256_castps_si256, _mm256_castsi256_ps,
     _mm256_cvtepi32_ps, _mm256_fmadd_ps, _mm256_insertf128_ps, _mm256_loadu_ps, _mm256_mul_ps,
@@ -457,7 +477,7 @@ pub fn downsample_1x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
 /// # Safety
 /// - Requires AVX2 CPU feature
 /// - `ptr` must point to at least 16 readable f32 values
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (__m256, __m256) {
@@ -484,13 +504,16 @@ unsafe fn gather_even_odd_avx2_raw(ptr: *const f32) -> (__m256, __m256) {
 /// Processes 8 output pixels at a time using AVX2 permute instructions
 /// for efficient deinterleaving.
 ///
+/// This is a low-level function exposed for testing parity with the safe
+/// `downsample_2x2_simd_inplace` wrapper. Production code should use the safe wrapper.
+///
 /// # Safety
 /// - Requires AVX2 CPU feature
 /// - All buffer bounds must be pre-validated
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn downsample_2x2_avx2(
+pub(crate) unsafe fn downsample_2x2_avx2(
     plane: &[f32],
     width: usize,
     height: usize,
@@ -602,7 +625,7 @@ pub fn downsample_2x2_scalar(plane: &[f32], width: usize, height: usize) -> Vec<
 
 /// AVX2-optimized deinterleave using Highway's ConcatEven/ConcatOdd pattern.
 /// This is ~4x faster than element-by-element construction.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
@@ -705,7 +728,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 
         // Use runtime dispatch with inline function calls (no pointer indirection)
         // The branch is very predictable and intrinsics are inlined
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") {
                 // SAFETY: AVX2 is detected
@@ -715,7 +738,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
             }
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(feature = "unsafe_simd", target_arch = "x86_64")))]
         {
             return gather_even_odd_x8_scalar(ptr);
         }
@@ -732,7 +755,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 /// Extract 4 R values from 16 bytes of RGB data using SSE shuffle.
 /// Input: [R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5]
 /// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn extract_r_sse(rgb: __m128i) -> __m128i {
@@ -742,7 +765,7 @@ unsafe fn extract_r_sse(rgb: __m128i) -> __m128i {
 }
 
 /// Extract 4 G values from 16 bytes of RGB data using SSE shuffle.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn extract_g_sse(rgb: __m128i) -> __m128i {
@@ -752,7 +775,7 @@ unsafe fn extract_g_sse(rgb: __m128i) -> __m128i {
 }
 
 /// Extract 4 B values from 16 bytes of RGB data using SSE shuffle.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn extract_b_sse(rgb: __m128i) -> __m128i {
@@ -762,7 +785,7 @@ unsafe fn extract_b_sse(rgb: __m128i) -> __m128i {
 }
 
 /// Convert 4 u8 values (in low bytes of __m128i) to __m128 f32.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn u8x4_to_f32x4(v: __m128i) -> core::arch::x86_64::__m128 {
@@ -778,12 +801,15 @@ unsafe fn u8x4_to_f32x4(v: __m128i) -> core::arch::x86_64::__m128 {
 /// deinterleaving RGB data, which LLVM cannot auto-vectorize effectively.
 /// Uses FMA (fused multiply-add) for better performance and precision.
 ///
+/// This is a low-level function called by the safe `rgb_to_ycbcr_planes_simd_inplace` wrapper.
+/// Production code should use the safe wrapper.
+///
 /// # Safety
 /// Requires AVX2+FMA support. Caller must verify with `is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2", enable = "fma")]
 #[inline]
-pub unsafe fn rgb_to_ycbcr_8px_avx2(
+pub(crate) unsafe fn rgb_to_ycbcr_8px_avx2(
     rgb_ptr: *const u8,
     y_ptr: *mut f32,
     cb_ptr: *mut f32,
@@ -919,7 +945,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
 
     // Use AVX2+FMA intrinsics path when available (much faster due to shuffle-based
     // deinterleave instead of scalar gather, plus FMA operations)
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             let chunks = num_pixels / 8;
@@ -953,7 +979,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
         }
     }
 
-    // Fallback path using wide crate's f32x8
+    // Fallback path using wide crate's f32x8 (safe, portable SIMD)
     rgb_to_ycbcr_planes_simd_inplace_fallback(rgb_data, y_plane, cb_plane, cr_plane, num_pixels);
 }
 
@@ -2468,7 +2494,7 @@ mod tests {
 
     /// Test AVX2 intrinsics RGB to YCbCr against scalar reference.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_matches_scalar() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -2521,7 +2547,7 @@ mod tests {
 
     /// Brute force test AVX2 RGB to YCbCr with all possible u8 values.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_brute_force() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -2594,7 +2620,7 @@ mod tests {
 
     /// Test AVX2 RGB to YCbCr matches existing SIMD implementation.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_matches_existing_simd() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -2930,7 +2956,7 @@ mod tests {
 
     /// Test gather_even_odd_avx2_raw against scalar reference with all possible byte patterns.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_gather_even_odd_avx2_brute_force() {
         if !is_x86_feature_detected!("avx2") {
             eprintln!("Skipping AVX2 test - CPU doesn't support AVX2");
@@ -2992,7 +3018,7 @@ mod tests {
 
     /// Exhaustive test of gather_even_odd with sequential integers.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_gather_even_odd_avx2_exhaustive() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -3026,7 +3052,7 @@ mod tests {
 
     /// Test downsample_2x2_avx2 against scalar reference with various sizes.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_downsample_2x2_avx2_brute_force() {
         if !is_x86_feature_detected!("avx2") {
             eprintln!("Skipping AVX2 test - CPU doesn't support AVX2");
@@ -3094,7 +3120,7 @@ mod tests {
 
     /// Test downsample_2x2_avx2 with random data.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_downsample_2x2_avx2_random_patterns() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -3137,7 +3163,7 @@ mod tests {
 
     /// Test downsample_2x2_avx2 matches the existing SIMD implementation.
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_downsample_2x2_avx2_matches_existing_simd() {
         if !is_x86_feature_detected!("avx2") {
             return;
@@ -3176,7 +3202,7 @@ mod tests {
 
     /// Test edge cases: minimum sizes
     #[test]
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     fn test_downsample_2x2_avx2_edge_cases() {
         if !is_x86_feature_detected!("avx2") {
             return;

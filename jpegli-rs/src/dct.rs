@@ -7,6 +7,14 @@
 //! - **AAN (libjpeg)**: Arai-Agui-Nakajima algorithm with only 5 multiplies per 1D DCT
 //!
 //! SIMD optimization is available via the `simd` feature (enabled by default).
+//!
+//! # Safe/Unsafe Architecture
+//!
+//! - **Safe public APIs**: `forward_dct_8x8`, `transpose_8x8_simd`
+//! - **Unsafe internal functions**: `forward_dct_8x8_avx2`, `transpose_8x8_avx2`
+//!
+//! The unsafe AVX2 functions use raw intrinsics for 8x8 matrix transpose
+//! (`_mm256_unpacklo/hi_ps`, `_mm256_permute2f128_ps`) which have no `wide` equivalent.
 
 use crate::consts::DCT_BLOCK_SIZE;
 
@@ -222,7 +230,8 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 pub(crate) mod simd {
     use super::*;
 
-    #[cfg(target_arch = "x86_64")]
+    // Raw AVX2 intrinsics - only available with `unsafe_simd` feature
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     use core::arch::x86_64::{
         __m256, _mm256_add_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_mul_ps,
         _mm256_permute2f128_ps, _mm256_set1_ps, _mm256_storeu_ps, _mm256_sub_ps,
@@ -370,7 +379,7 @@ pub(crate) mod simd {
         // After transpose: mem[col] = [row0[col], row1[col], ..., row7[col]]
         let mut mem: [f32x8; 8];
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") {
                 // Use AVX2 transpose on the raw arrays
@@ -403,7 +412,7 @@ pub(crate) mod simd {
             }
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(feature = "unsafe_simd", target_arch = "x86_64")))]
         {
             mem = transpose_f32x8_array(&rows);
         }
@@ -412,7 +421,7 @@ pub(crate) mod simd {
         dct1d_8_simd(&mut mem);
 
         // Step 4: Transpose back to row-major
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") {
                 let mut input_flat = [0.0f32; 64];
@@ -456,13 +465,15 @@ pub(crate) mod simd {
     /// (vperm2f128) to perform the transpose entirely in registers.
     /// Used by dct_8rows_parallel; transpose_8x8_simd has its own inline implementation.
     ///
+    /// This is a low-level function. Production code should use the safe `transpose_8x8_simd` wrapper.
+    ///
     /// # Safety
     /// Requires AVX2 support.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     #[allow(dead_code)]
     #[inline]
-    pub unsafe fn transpose_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
+    pub(crate) unsafe fn transpose_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load 8 rows into YMM registers
         let i0 = _mm256_loadu_ps(input.as_ptr());
         let i1 = _mm256_loadu_ps(input.as_ptr().add(8));
@@ -525,10 +536,9 @@ pub(crate) mod simd {
     /// register-to-register transpose (Highway algorithm).
     #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
-        // When compiling for AVX2 target, multiversion adds #[target_feature(enable = "avx2")]
-        // so we can use AVX2 intrinsics directly. The is_x86_feature_detected check is
-        // optimized away at compile time when the target features are known.
-        #[cfg(target_arch = "x86_64")]
+        // When compiling for AVX2 target with unsafe_simd feature,
+        // use raw intrinsics for maximum performance.
+        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") {
                 // SAFETY: AVX2 is available (checked above). The multiversion macro
@@ -588,7 +598,7 @@ pub(crate) mod simd {
             }
         }
 
-        // Scalar fallback for non-AVX2 CPUs
+        // Scalar fallback (always available, portable)
         transpose_8x8_scalar(input, output);
     }
 
@@ -609,7 +619,7 @@ pub(crate) mod simd {
 
     /// In-place 8x8 transpose on 8 __m256 registers.
     /// After transpose, r[i] contains column i from all 8 original rows.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     #[inline]
     unsafe fn transpose_8x8_avx2_inplace(r: &mut [__m256; 8]) {
@@ -646,7 +656,7 @@ pub(crate) mod simd {
 
     /// DCT base case for N=2 on raw AVX2 vectors.
     /// Computes: out0 = in0 + in1, out1 = in0 - in1
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     #[inline]
     unsafe fn dct1d_2_avx2(m0: &mut __m256, m1: &mut __m256) {
@@ -657,7 +667,7 @@ pub(crate) mod simd {
     }
 
     /// DCT for N=4 on raw AVX2 vectors with FMA.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[inline]
     unsafe fn dct1d_4_avx2(m: &mut [__m256; 4]) {
@@ -697,7 +707,7 @@ pub(crate) mod simd {
 
     /// DCT for N=8 on raw AVX2 vectors with FMA.
     /// Processes 8 independent 8-point DCTs in parallel.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[inline]
     unsafe fn dct1d_8_avx2(m: &mut [__m256; 8]) {
@@ -766,12 +776,14 @@ pub(crate) mod simd {
     ///    Result: reg[i] = final row i
     /// 6. Scale and store
     ///
+    /// This is a low-level function. Production code should use the safe `forward_dct_8x8` wrapper.
+    ///
     /// # Safety
     /// Caller must ensure AVX2+FMA are available.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[inline] // Critical: inline into multiversioned caller
-    pub unsafe fn forward_dct_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
+    pub(crate) unsafe fn forward_dct_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
         let scale = _mm256_set1_ps(1.0 / 8.0);
 
         // Load 8 rows: reg[i] = row i of input
@@ -856,8 +868,13 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2"))]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    // cfg is compile-time: each multiversion variant compiles only the relevant branch
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+    // Use raw AVX2 intrinsics only when unsafe_simd feature is enabled
+    #[cfg(all(
+        feature = "unsafe_simd",
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
     {
         let mut output = [0.0f32; 64];
         // SAFETY: This code path only compiles when target_feature includes avx2+fma
@@ -867,8 +884,13 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
         return output;
     }
 
-    // Fallback for SSE2-only or non-x86
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    // Safe fallback using scalar implementation (portable to all platforms)
+    #[cfg(not(all(
+        feature = "unsafe_simd",
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    )))]
     {
         forward_dct_8x8_scalar(input)
     }
@@ -1348,7 +1370,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "simd", feature = "unsafe_simd", target_arch = "x86_64"))]
     #[test]
     fn test_avx2_dct_matches_scalar() {
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
@@ -1400,9 +1422,9 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "simd", feature = "unsafe_simd", target_arch = "x86_64"))]
     #[test]
-    #[ignore] // Run with: cargo test --release bench_avx2_dct -- --ignored --nocapture
+    #[ignore] // Run with: cargo test --release --features unsafe_simd bench_avx2_dct -- --ignored --nocapture
     fn bench_avx2_dct_vs_scalar() {
         use std::hint::black_box;
         use std::time::Instant;

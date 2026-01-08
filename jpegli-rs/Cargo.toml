@@ -59,7 +59,10 @@ rayon = { workspace = true }
 
 [features]
 default = ["simd", "cms"]
-simd = []
+simd = []  # Safe portable SIMD via `wide` crate (always recommended)
+# Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
+# Without this, all SIMD uses auto-vectorizable fallbacks that work on all platforms.
+unsafe_simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
