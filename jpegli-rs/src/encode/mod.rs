@@ -344,7 +344,7 @@ impl Encoder {
     /// use jpegli::adaptive_quant::compute_aq_strength_map;
     ///
     /// // Compute AQ map from Y plane
-    /// let mut aq_map = compute_aq_strength_map(&y_plane, width, height, 8);
+    /// let mut aq_map = compute_aq_strength_map(&y_plane, width, height, 8)?;
     ///
     /// // Scale down to reduce file size by ~16%
     /// let scale = aq_map.scale_for_size_reduction(16.0);

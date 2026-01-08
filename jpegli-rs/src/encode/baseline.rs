@@ -417,9 +417,9 @@ impl Encoder {
         let y_quant_01 = y_quant.values[1];
         #[cfg(feature = "experimental-hybrid-trellis")]
         let aq_map =
-            hybrid::get_aq_map_or_compute(&self.config, &y_plane_scaled, width, height, y_quant_01);
+            hybrid::get_aq_map_or_compute(&self.config, &y_plane_scaled, width, height, y_quant_01)?;
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
+        let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01)?;
 
         // Zero-bias parameters for XYB (use YCbCr tables as approximation)
         // X and Y are luma-like (full-res), B is chroma-like (downsampled)

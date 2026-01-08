@@ -203,6 +203,20 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<crate::aligned_alloc::AllocError> for Error {
+    fn from(err: crate::aligned_alloc::AllocError) -> Self {
+        match err {
+            crate::aligned_alloc::AllocError::OutOfMemory => Self::AllocationFailed {
+                bytes: 0, // Size not tracked in AllocError
+                context: "adaptive quantization",
+            },
+            crate::aligned_alloc::AllocError::Overflow => Self::SizeOverflow {
+                context: "adaptive quantization size calculation",
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

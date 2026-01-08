@@ -668,7 +668,7 @@ impl Encoder {
         // Compute AQ map from Y plane (same as baseline XYB, using SIMD scaling)
         let y_plane_scaled = crate::encode_simd::scale_f32_slice_simd(&y_plane, 255.0)?;
         let y_quant_01 = y_quant.values[1];
-        let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01);
+        let aq_map = compute_aq_strength_map(&y_plane_scaled, width, height, y_quant_01)?;
 
         // Generate zero-bias parameters (same as baseline XYB)
         let effective_distance = quant::quant_vals_to_distance(&x_quant, &y_quant, &b_quant);
