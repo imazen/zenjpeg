@@ -222,17 +222,15 @@ impl TimingResult {
 
 fn decode_jpeg(data: &[u8], color: ColorMode) -> Vec<u8> {
     match color {
-        ColorMode::Xyb  => {
-            jpegli::icc::decode_jpeg_with_icc(data)
-                .map(|(pixels, _, _)| pixels)
-                .unwrap_or_else(|_| {
-                    use zune_jpeg::zune_core::bytestream::ZCursor;
-                    use zune_jpeg::JpegDecoder;
-                    let cursor = ZCursor::new(data);
-                    let mut decoder = JpegDecoder::new(cursor);
-                    decoder.decode().expect("JPEG decode failed")
-                })
-        }
+        ColorMode::Xyb => jpegli::icc::decode_jpeg_with_icc(data)
+            .map(|(pixels, _, _)| pixels)
+            .unwrap_or_else(|_| {
+                use zune_jpeg::zune_core::bytestream::ZCursor;
+                use zune_jpeg::JpegDecoder;
+                let cursor = ZCursor::new(data);
+                let mut decoder = JpegDecoder::new(cursor);
+                decoder.decode().expect("JPEG decode failed")
+            }),
         ColorMode::YCbCr => {
             use zune_jpeg::zune_core::bytestream::ZCursor;
             use zune_jpeg::JpegDecoder;
@@ -651,7 +649,6 @@ fn main() {
             chroma: ChromaSampling::S420,
             color: ColorMode::YCbCr,
         },
-
         // XYB
         Config {
             scan: ScanMode::Baseline,
