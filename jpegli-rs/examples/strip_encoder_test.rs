@@ -78,7 +78,7 @@ fn main() {
     }
 
     // Finalize
-    let output: StripProcessorOutput = processor.finalize();
+    let output: StripProcessorOutput = processor.finalize().unwrap();
 
     println!();
     println!("=== Results ===");

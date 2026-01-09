@@ -178,7 +178,7 @@ fn encode_strip_blocks(
         processor.process_strip(rgb_strip, strip_y).unwrap();
     }
 
-    let output = processor.finalize();
+    let output = processor.finalize().unwrap();
     let elapsed = start.elapsed();
 
     let (_, peak, _) = get_stats();
