@@ -269,6 +269,16 @@ impl Encoder {
         self
     }
 
+    /// Force full-plane encoding even for large images (benchmarking only).
+    ///
+    /// When enabled, disables auto-dispatch to strip-based encoding for images > 2MP.
+    /// This is useful for benchmarking to compare full-plane vs strip performance.
+    #[doc(hidden)]
+    pub fn force_full_plane(mut self, force: bool) -> Self {
+        self.config.force_full_plane = force;
+        self
+    }
+
     /// Sets an internal chroma pipeline for benchmarking (undocumented API).
     ///
     /// This method is intentionally not documented in the public API.
