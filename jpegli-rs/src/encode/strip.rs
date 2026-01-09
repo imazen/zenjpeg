@@ -42,7 +42,10 @@ use crate::types::{PixelFormat, Subsampling};
 
 use super::natural_to_zigzag_into;
 
-/// Extracts an 8×8 block from a strip buffer (free function to avoid borrow issues).
+/// Extracts an 8×8 block from a strip buffer with level shift (free function to avoid borrow issues).
+///
+/// Applies JPEG level shift (-128) to convert from [0, 255] to [-128, 127] range
+/// as required by the DCT.
 fn extract_block_from_strip(
     strip: &[f32],
     bx: usize,
@@ -60,12 +63,14 @@ fn extract_block_from_strip(
             let last_y = (strip.len() / strip_width).saturating_sub(1);
             for dx in 0..8 {
                 let x = (x_start + dx).min(strip_width.saturating_sub(1));
-                block[dy * 8 + dx] = strip[last_y * strip_width + x];
+                // Level shift: subtract 128 (values are in [0, 255])
+                block[dy * 8 + dx] = strip[last_y * strip_width + x] - 128.0;
             }
         } else {
             for dx in 0..8 {
                 let x = (x_start + dx).min(strip_width.saturating_sub(1));
-                block[dy * 8 + dx] = strip[y * strip_width + x];
+                // Level shift: subtract 128 (values are in [0, 255])
+                block[dy * 8 + dx] = strip[y * strip_width + x] - 128.0;
             }
         }
     }
