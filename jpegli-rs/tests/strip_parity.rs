@@ -64,7 +64,7 @@ fn encode_strip(
         processor.process_strip(rgb_strip, strip_y).unwrap();
     }
 
-    processor.finalize()
+    processor.finalize().unwrap()
 }
 
 #[test]

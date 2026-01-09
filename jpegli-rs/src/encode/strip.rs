@@ -37,7 +37,9 @@ use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
 use crate::error::Result;
 use crate::huffman::optimize::FrequencyCounter;
+use crate::quant::aq::streaming::StreamingAQParity;
 use crate::quant::{QuantTable, ZeroBiasParams};
+use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::types::{PixelFormat, Subsampling};
 
 use super::natural_to_zigzag_into;
@@ -78,202 +80,8 @@ fn extract_block_from_strip(
     block
 }
 
-/// Streaming AQ state for incremental computation.
-///
-/// This accumulates AQ features strip-by-strip without needing
-/// the full Y plane in memory at once.
-#[derive(Debug)]
-pub struct StreamingAQState {
-    /// Width in pixels
-    width: usize,
-    /// Height in pixels
-    height: usize,
-    /// Width in 8×8 blocks
-    blocks_w: usize,
-    /// Height in 8×8 blocks
-    blocks_h: usize,
-
-    /// Pre-erosion values (1/4 resolution), computed incrementally.
-    /// Size: (width+3)/4 × (height+3)/4
-    pre_erosion: Vec<f32>,
-
-    /// Per-block gamma modulation sums.
-    /// Accumulated as strips are processed.
-    gamma_sums: Vec<f32>,
-
-    /// Per-block HF modulation sums.
-    /// Accumulated as strips are processed.
-    hf_sums: Vec<f32>,
-
-    /// Previous row of Y values for HF modulation vertical diffs.
-    /// Size: width
-    prev_row: Vec<f32>,
-
-    /// How many rows have been processed so far.
-    rows_processed: usize,
-
-    /// Running sum for global normalization.
-    global_sum: f64,
-    /// Running count for global normalization.
-    global_count: usize,
-}
-
-impl StreamingAQState {
-    /// Creates a new streaming AQ state.
-    pub fn new(width: usize, height: usize) -> Result<Self> {
-        let blocks_w = (width + 7) / 8;
-        let blocks_h = (height + 7) / 8;
-        let pre_erosion_w = (width + 3) / 4;
-        let pre_erosion_h = (height + 3) / 4;
-
-        Ok(Self {
-            width,
-            height,
-            blocks_w,
-            blocks_h,
-            pre_erosion: try_with_capacity(pre_erosion_w * pre_erosion_h, "pre_erosion")?,
-            gamma_sums: vec![0.0f32; blocks_w * blocks_h],
-            hf_sums: vec![0.0f32; blocks_w * blocks_h],
-            prev_row: vec![0.0f32; width],
-            rows_processed: 0,
-            global_sum: 0.0,
-            global_count: 0,
-        })
-    }
-
-    /// Processes a strip of Y values, accumulating AQ features.
-    ///
-    /// # Arguments
-    /// * `y_strip` - Y plane values for this strip (width × strip_height)
-    /// * `strip_y` - Starting row index of this strip
-    /// * `strip_height` - Number of rows in this strip
-    pub fn process_strip(&mut self, y_strip: &[f32], strip_y: usize, strip_height: usize) {
-        // Process each row in the strip
-        for local_y in 0..strip_height {
-            let global_y = strip_y + local_y;
-            if global_y >= self.height {
-                break;
-            }
-
-            let row_start = local_y * self.width;
-            let row = &y_strip[row_start..row_start + self.width];
-
-            // Accumulate per-block gamma sums
-            self.accumulate_gamma_row(row, global_y);
-
-            // Accumulate per-block HF sums (needs prev_row for vertical diffs)
-            self.accumulate_hf_row(row, global_y);
-
-            // Update prev_row for next iteration
-            self.prev_row.copy_from_slice(row);
-        }
-
-        self.rows_processed += strip_height;
-    }
-
-    /// Accumulates gamma modulation for one row of the Y plane.
-    fn accumulate_gamma_row(&mut self, row: &[f32], y: usize) {
-        let block_y = y / 8;
-        if block_y >= self.blocks_h {
-            return;
-        }
-
-        // For each block in this row
-        for bx in 0..self.blocks_w {
-            let x_start = bx * 8;
-            let x_end = (x_start + 8).min(self.width);
-
-            // Sum pixel values in this block's portion of the row
-            let mut sum = 0.0f32;
-            for x in x_start..x_end {
-                sum += row[x];
-            }
-
-            self.gamma_sums[block_y * self.blocks_w + bx] += sum;
-        }
-    }
-
-    /// Accumulates HF modulation for one row of the Y plane.
-    fn accumulate_hf_row(&mut self, row: &[f32], y: usize) {
-        let block_y = y / 8;
-        if block_y >= self.blocks_h {
-            return;
-        }
-
-        for bx in 0..self.blocks_w {
-            let x_start = bx * 8;
-            let x_end = (x_start + 8).min(self.width);
-
-            let mut hf_sum = 0.0f32;
-
-            // Horizontal diffs within row
-            for x in x_start..(x_end - 1) {
-                hf_sum += (row[x] - row[x + 1]).abs();
-            }
-
-            // Vertical diffs with previous row
-            if y > 0 {
-                for x in x_start..x_end {
-                    hf_sum += (row[x] - self.prev_row[x]).abs();
-                }
-            }
-
-            self.hf_sums[block_y * self.blocks_w + bx] += hf_sum;
-        }
-    }
-
-    /// Finalizes the AQ map after all strips have been processed.
-    ///
-    /// Returns per-block AQ strength values (0.0 to ~0.2 range).
-    pub fn finalize(self) -> Vec<f32> {
-        let num_blocks = self.blocks_w * self.blocks_h;
-        let mut strengths = Vec::with_capacity(num_blocks);
-
-        // Constants from C++ AQ algorithm
-        const K_INPUT_SCALING: f32 = 1.0 / 255.0;
-        const K_GAMMA_MOD_BIAS: f32 = 0.16 * K_INPUT_SCALING;
-        const K_GAMMA_MOD_SCALE: f32 = 1.0 / 64.0;
-        const K_HF_MOD_COEFF: f32 = -2.0052193233688884 / 112.0;
-
-        for by in 0..self.blocks_h {
-            for bx in 0..self.blocks_w {
-                let idx = by * self.blocks_w + bx;
-
-                // Compute block dimensions (handle edge blocks)
-                let block_w = 8.min(self.width - bx * 8);
-                let block_h = 8.min(self.height - by * 8);
-                let block_pixels = (block_w * block_h) as f32;
-
-                // Gamma modulation (based on average pixel value)
-                let avg_pixel = if block_pixels > 0.0 {
-                    self.gamma_sums[idx] / block_pixels
-                } else {
-                    0.5
-                };
-                let gamma_mod = (avg_pixel * K_INPUT_SCALING - K_GAMMA_MOD_BIAS)
-                    .max(0.0)
-                    .ln()
-                    * K_GAMMA_MOD_SCALE;
-
-                // HF modulation (based on edge strength)
-                let hf_avg = if block_pixels > 0.0 {
-                    self.hf_sums[idx] / block_pixels
-                } else {
-                    0.0
-                };
-                let hf_mod = hf_avg * K_HF_MOD_COEFF;
-
-                // Combine modulations and clamp to valid range
-                let quant_field = 1.0 + gamma_mod + hf_mod;
-                let aq_strength = ((0.6 / quant_field) - 1.0).max(0.0).min(0.25);
-
-                strengths.push(aq_strength);
-            }
-        }
-
-        strengths
-    }
-}
+// StreamingAQState replaced by StreamingAQParity from quant/aq/streaming.rs
+// which produces identical output to full-plane AQ computation.
 
 /// Strip-based encoder for low-memory JPEG encoding.
 ///
@@ -307,19 +115,19 @@ pub struct StripProcessor {
     // === Block scratch space ===
     /// DCT buffer (reused per block)
     dct_buf: [f32; DCT_BLOCK_SIZE],
-    /// Quantized coefficients buffer (reused per block)
-    quant_buf: [i16; DCT_BLOCK_SIZE],
 
-    // === Growing block storage ===
-    /// Y channel quantized blocks (zigzag order)
-    y_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
-    /// Cb channel quantized blocks
-    cb_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
-    /// Cr channel quantized blocks
-    cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+    // === Growing block storage (raw DCT coefficients) ===
+    // Stored as f32 to allow quantization with per-block AQ at the end
+    /// Y channel raw DCT blocks (natural order, not zigzag)
+    y_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
+    /// Cb channel raw DCT blocks
+    cb_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
+    /// Cr channel raw DCT blocks
+    cr_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
 
-    // === Streaming AQ state ===
-    aq_state: StreamingAQState,
+    // === Streaming AQ state (uses parity-matching algorithm) ===
+    // Initialized when quant tables are set (needs y_quant_01)
+    aq_state: Option<StreamingAQParity>,
 
     // === Huffman frequency accumulators ===
     /// DC luma frequency counter
@@ -413,9 +221,8 @@ impl StripProcessor {
 
             // Scratch space
             dct_buf: [0.0f32; DCT_BLOCK_SIZE],
-            quant_buf: [0i16; DCT_BLOCK_SIZE],
 
-            // Block storage (pre-allocated)
+            // Block storage (pre-allocated, stores raw DCT coefficients)
             y_blocks: try_with_capacity(total_y_blocks, "y_blocks")?,
             cb_blocks: if is_color {
                 try_with_capacity(total_c_blocks, "cb_blocks")?
@@ -428,8 +235,8 @@ impl StripProcessor {
                 Vec::new()
             },
 
-            // Streaming AQ
-            aq_state: StreamingAQState::new(width, height)?,
+            // Streaming AQ (initialized when quant tables are set)
+            aq_state: None,
 
             // Huffman counters
             dc_luma_freq: FrequencyCounter::new(),
@@ -458,13 +265,18 @@ impl StripProcessor {
         y_zero_bias: ZeroBiasParams,
         cb_zero_bias: ZeroBiasParams,
         cr_zero_bias: ZeroBiasParams,
-    ) {
+    ) -> Result<()> {
+        // Initialize streaming AQ with y_quant_01 for damping calculation
+        let y_quant_01 = y_quant.values[1] as u16; // Position [0,1] in zigzag
+        self.aq_state = Some(StreamingAQParity::new(self.width, self.height, y_quant_01)?);
+
         self.y_quant = Some(y_quant);
         self.cb_quant = Some(cb_quant);
         self.cr_quant = Some(cr_quant);
         self.y_zero_bias = Some(y_zero_bias);
         self.cb_zero_bias = Some(cb_zero_bias);
         self.cr_zero_bias = Some(cr_zero_bias);
+        Ok(())
     }
 
     /// Returns the strip height for iteration.
@@ -487,79 +299,104 @@ impl StripProcessor {
         self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
 
         // Step 2: Accumulate AQ features from Y strip
-        self.aq_state
-            .process_strip(&self.y_strip, strip_y, actual_strip_height);
+        if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height);
+        }
 
         // Step 3: Downsample chroma if needed
         if self.pixel_format != PixelFormat::Gray {
             self.downsample_chroma_strip(actual_strip_height)?;
         }
 
-        // Step 4: Quantize blocks in this strip
-        // Note: We use a placeholder AQ strength during strip processing.
-        // The final AQ-adjusted re-quantization happens after finalize().
-        let blocks_added = self.quantize_strip_blocks(strip_y, actual_strip_height)?;
+        // Step 4: Compute DCT for blocks in this strip
+        // Raw DCT coefficients are stored; quantization happens in finalize() with actual AQ values.
+        let blocks_added = self.dct_strip_blocks(strip_y, actual_strip_height)?;
 
         Ok(blocks_added)
     }
 
     /// Converts RGB strip data to YCbCr in the strip buffers.
+    ///
+    /// Uses SIMD conversion for floating-point parity with full-plane encoder.
     fn convert_strip_to_ycbcr(&mut self, rgb_strip: &[u8], strip_height: usize) -> Result<()> {
-        let bpp = self.pixel_format.bytes_per_pixel();
-        let is_color = self.pixel_format != PixelFormat::Gray;
+        let num_pixels = strip_height * self.width;
 
-        for y in 0..strip_height {
-            for x in 0..self.width {
-                let rgb_idx = (y * self.width + x) * bpp;
-                let plane_idx = y * self.width + x;
+        // Use the same SIMD conversion as the full-plane encoder for exact floating-point parity
+        match self.pixel_format {
+            PixelFormat::Rgb => {
+                crate::encode_simd::rgb_to_ycbcr_planes_simd_inplace(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_strip[..num_pixels],
+                    &mut self.cr_strip[..num_pixels],
+                    num_pixels,
+                );
+            }
+            PixelFormat::Rgba => {
+                crate::encode_simd::rgba_to_ycbcr_planes_simd_inplace(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_strip[..num_pixels],
+                    &mut self.cr_strip[..num_pixels],
+                    num_pixels,
+                );
+            }
+            PixelFormat::Bgr => {
+                crate::encode_simd::bgr_to_ycbcr_planes_simd_inplace(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_strip[..num_pixels],
+                    &mut self.cr_strip[..num_pixels],
+                    num_pixels,
+                );
+            }
+            PixelFormat::Bgra => {
+                crate::encode_simd::bgra_to_ycbcr_planes_simd_inplace(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_strip[..num_pixels],
+                    &mut self.cr_strip[..num_pixels],
+                    num_pixels,
+                );
+            }
+            PixelFormat::Gray => {
+                crate::encode_simd::gray_to_ycbcr_planes_simd_inplace(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_strip[..num_pixels],
+                    &mut self.cr_strip[..num_pixels],
+                    num_pixels,
+                );
+            }
+            PixelFormat::Cmyk => {
+                // CMYK requires scalar conversion (rare format)
+                let bpp = self.pixel_format.bytes_per_pixel();
+                for y in 0..strip_height {
+                    for x in 0..self.width {
+                        let idx = (y * self.width + x) * bpp;
+                        let plane_idx = y * self.width + x;
 
-                let (r, g, b) = match self.pixel_format {
-                    PixelFormat::Rgb => (
-                        rgb_strip[rgb_idx] as f32,
-                        rgb_strip[rgb_idx + 1] as f32,
-                        rgb_strip[rgb_idx + 2] as f32,
-                    ),
-                    PixelFormat::Rgba => (
-                        rgb_strip[rgb_idx] as f32,
-                        rgb_strip[rgb_idx + 1] as f32,
-                        rgb_strip[rgb_idx + 2] as f32,
-                    ),
-                    PixelFormat::Bgr => (
-                        rgb_strip[rgb_idx + 2] as f32,
-                        rgb_strip[rgb_idx + 1] as f32,
-                        rgb_strip[rgb_idx] as f32,
-                    ),
-                    PixelFormat::Bgra => (
-                        rgb_strip[rgb_idx + 2] as f32,
-                        rgb_strip[rgb_idx + 1] as f32,
-                        rgb_strip[rgb_idx] as f32,
-                    ),
-                    PixelFormat::Gray => {
-                        let gray = rgb_strip[rgb_idx] as f32;
-                        (gray, gray, gray)
-                    }
-                    PixelFormat::Cmyk => {
-                        // CMYK to RGB conversion
-                        let c = rgb_strip[rgb_idx] as f32 / 255.0;
-                        let m = rgb_strip[rgb_idx + 1] as f32 / 255.0;
-                        let y_val = rgb_strip[rgb_idx + 2] as f32 / 255.0;
-                        let k = rgb_strip[rgb_idx + 3] as f32 / 255.0;
+                        let c = rgb_strip[idx] as f32 / 255.0;
+                        let m = rgb_strip[idx + 1] as f32 / 255.0;
+                        let y_val = rgb_strip[idx + 2] as f32 / 255.0;
+                        let k = rgb_strip[idx + 3] as f32 / 255.0;
                         let r = 255.0 * (1.0 - c) * (1.0 - k);
                         let g = 255.0 * (1.0 - m) * (1.0 - k);
                         let b = 255.0 * (1.0 - y_val) * (1.0 - k);
-                        (r, g, b)
+
+                        // Use constants for consistency
+                        use crate::consts::{
+                            YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB,
+                            YCBCR_G_TO_CR, YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
+                            YCBCR_R_TO_Y,
+                        };
+                        self.y_strip[plane_idx] =
+                            YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+                        self.cb_strip[plane_idx] =
+                            128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+                        self.cr_strip[plane_idx] =
+                            128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
                     }
-                };
-
-                // RGB to YCbCr conversion (BT.601)
-                // Y  =  0.299 R + 0.587 G + 0.114 B
-                // Cb = -0.169 R - 0.331 G + 0.500 B + 128
-                // Cr =  0.500 R - 0.419 G - 0.081 B + 128
-                self.y_strip[plane_idx] = 0.299 * r + 0.587 * g + 0.114 * b;
-
-                if is_color {
-                    self.cb_strip[plane_idx] = -0.168736 * r - 0.331264 * g + 0.5 * b + 128.0;
-                    self.cr_strip[plane_idx] = 0.5 * r - 0.418688 * g - 0.081312 * b + 128.0;
                 }
             }
         }
@@ -568,98 +405,81 @@ impl StripProcessor {
     }
 
     /// Downsamples chroma strips according to subsampling mode.
+    ///
+    /// Uses SIMD downsampling for floating-point parity with full-plane encoder.
     fn downsample_chroma_strip(&mut self, strip_height: usize) -> Result<()> {
+        let width = self.width;
+        let num_pixels = strip_height * width;
+
         match self.subsampling {
             Subsampling::S420 => {
-                // 2×2 box filter
+                // 2×2 box filter using SIMD
+                let c_width = (width + 1) / 2;
                 let c_height = (strip_height + 1) / 2;
-                let c_width = (self.width + 1) / 2;
+                let c_size = c_width * c_height;
 
-                for cy in 0..c_height {
-                    for cx in 0..c_width {
-                        let y0 = cy * 2;
-                        let y1 = (y0 + 1).min(strip_height - 1);
-                        let x0 = cx * 2;
-                        let x1 = (x0 + 1).min(self.width - 1);
-
-                        // Average 2×2 block
-                        let cb_avg = (self.cb_strip[y0 * self.width + x0]
-                            + self.cb_strip[y0 * self.width + x1]
-                            + self.cb_strip[y1 * self.width + x0]
-                            + self.cb_strip[y1 * self.width + x1])
-                            * 0.25;
-
-                        let cr_avg = (self.cr_strip[y0 * self.width + x0]
-                            + self.cr_strip[y0 * self.width + x1]
-                            + self.cr_strip[y1 * self.width + x0]
-                            + self.cr_strip[y1 * self.width + x1])
-                            * 0.25;
-
-                        self.cb_down[cy * c_width + cx] = cb_avg;
-                        self.cr_down[cy * c_width + cx] = cr_avg;
-                    }
-                }
+                crate::encode_simd::downsample_2x2_simd_inplace(
+                    &self.cb_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    &mut self.cb_down[..c_size],
+                );
+                crate::encode_simd::downsample_2x2_simd_inplace(
+                    &self.cr_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    &mut self.cr_down[..c_size],
+                );
             }
             Subsampling::S422 => {
-                // 2×1 horizontal filter
-                let c_width = (self.width + 1) / 2;
+                // 2×1 horizontal filter using SIMD
+                let c_width = (width + 1) / 2;
+                let c_size = c_width * strip_height;
 
-                for y in 0..strip_height {
-                    for cx in 0..c_width {
-                        let x0 = cx * 2;
-                        let x1 = (x0 + 1).min(self.width - 1);
-
-                        let cb_avg = (self.cb_strip[y * self.width + x0]
-                            + self.cb_strip[y * self.width + x1])
-                            * 0.5;
-                        let cr_avg = (self.cr_strip[y * self.width + x0]
-                            + self.cr_strip[y * self.width + x1])
-                            * 0.5;
-
-                        self.cb_down[y * c_width + cx] = cb_avg;
-                        self.cr_down[y * c_width + cx] = cr_avg;
-                    }
-                }
+                crate::encode_simd::downsample_2x1_simd_inplace(
+                    &self.cb_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    &mut self.cb_down[..c_size],
+                );
+                crate::encode_simd::downsample_2x1_simd_inplace(
+                    &self.cr_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    &mut self.cr_down[..c_size],
+                );
             }
             Subsampling::S440 => {
-                // 1×2 vertical filter
+                // 1×2 vertical filter using SIMD
                 let c_height = (strip_height + 1) / 2;
+                let c_size = width * c_height;
 
-                for cy in 0..c_height {
-                    let y0 = cy * 2;
-                    let y1 = (y0 + 1).min(strip_height - 1);
-
-                    for x in 0..self.width {
-                        let cb_avg = (self.cb_strip[y0 * self.width + x]
-                            + self.cb_strip[y1 * self.width + x])
-                            * 0.5;
-                        let cr_avg = (self.cr_strip[y0 * self.width + x]
-                            + self.cr_strip[y1 * self.width + x])
-                            * 0.5;
-
-                        self.cb_down[cy * self.width + x] = cb_avg;
-                        self.cr_down[cy * self.width + x] = cr_avg;
-                    }
-                }
+                crate::encode_simd::downsample_1x2_simd_inplace(
+                    &self.cb_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    &mut self.cb_down[..c_size],
+                );
+                crate::encode_simd::downsample_1x2_simd_inplace(
+                    &self.cr_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    &mut self.cr_down[..c_size],
+                );
             }
             Subsampling::S444 => {
                 // No downsampling - copy directly
-                self.cb_down[..strip_height * self.width]
-                    .copy_from_slice(&self.cb_strip[..strip_height * self.width]);
-                self.cr_down[..strip_height * self.width]
-                    .copy_from_slice(&self.cr_strip[..strip_height * self.width]);
+                self.cb_down[..num_pixels].copy_from_slice(&self.cb_strip[..num_pixels]);
+                self.cr_down[..num_pixels].copy_from_slice(&self.cr_strip[..num_pixels]);
             }
         }
 
         Ok(())
     }
 
-    /// Quantizes blocks from the current strip buffers.
-    fn quantize_strip_blocks(&mut self, strip_y: usize, strip_height: usize) -> Result<usize> {
-        // Clone quant tables and bias params upfront to avoid borrow conflicts
-        let y_quant_values = self.y_quant.as_ref().expect("y_quant not set").values;
-        let y_zero_bias = self.y_zero_bias.clone().expect("y_zero_bias not set");
-
+    /// Computes DCT for blocks in the current strip and stores raw coefficients.
+    /// Quantization happens in finalize() with actual per-block AQ values.
+    fn dct_strip_blocks(&mut self, strip_y: usize, strip_height: usize) -> Result<usize> {
         let blocks_w = (self.width + 7) / 8;
         let strip_blocks_h = (strip_height + 7) / 8;
         let start_block_y = strip_y / 8;
@@ -667,8 +487,10 @@ impl StripProcessor {
         let height = self.height;
 
         let mut blocks_added = 0;
+        // Only pass the valid portion of the Y buffer for correct edge detection
+        let y_size = strip_height * width;
 
-        // Quantize Y blocks
+        // Compute DCT for Y blocks
         for local_by in 0..strip_blocks_h {
             let global_by = start_block_y + local_by;
             if global_by >= (height + 7) / 8 {
@@ -676,81 +498,47 @@ impl StripProcessor {
             }
 
             for bx in 0..blocks_w {
-                // Extract 8×8 block from Y strip
-                let block = extract_block_from_strip(&self.y_strip, bx, local_by, width);
+                // Extract 8×8 block from Y strip (use valid portion of buffer)
+                let block =
+                    extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, width);
 
-                // DCT
+                // DCT - store raw coefficients (quantization happens in finalize)
                 let dct = forward_dct_8x8(&block);
-
-                // Quantize with placeholder AQ strength
-                // TODO: Use actual AQ strength after finalization
-                let aq_strength = 0.08; // C++ mean
-                let quant_coeffs = crate::quant::quantize_block_with_zero_bias_simd(
-                    &dct,
-                    &y_quant_values,
-                    &y_zero_bias,
-                    aq_strength,
-                );
-
-                // Convert to zigzag order and store
-                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
-                self.y_blocks.push(zigzag);
-
-                // Count Huffman frequencies
-                self.count_block_frequencies(&zigzag, true);
+                self.y_blocks.push(dct);
 
                 blocks_added += 1;
             }
         }
 
-        // Quantize Cb/Cr blocks (if color)
+        // Compute DCT for Cb/Cr blocks (if color)
         if self.pixel_format != PixelFormat::Gray {
+            // Use ceiling division for chroma dimensions to handle partial strips correctly
             let (c_width, c_strip_height) = match self.subsampling {
-                Subsampling::S420 => ((width + 1) / 2, strip_height / 2),
+                Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
                 Subsampling::S422 => ((width + 1) / 2, strip_height),
-                Subsampling::S440 => (width, strip_height / 2),
+                Subsampling::S440 => (width, (strip_height + 1) / 2),
                 Subsampling::S444 => (width, strip_height),
             };
 
             let c_blocks_w = (c_width + 7) / 8;
             let c_strip_blocks_h = (c_strip_height + 7) / 8;
-
-            // Clone quant tables and bias params upfront
-            let cb_quant_values = self.cb_quant.as_ref().expect("cb_quant not set").values;
-            let cr_quant_values = self.cr_quant.as_ref().expect("cr_quant not set").values;
-            let cb_zero_bias = self.cb_zero_bias.clone().expect("cb_zero_bias not set");
-            let cr_zero_bias = self.cr_zero_bias.clone().expect("cr_zero_bias not set");
+            // Only pass the valid portion of the buffer to extract_block_from_strip,
+            // so edge detection works correctly for partial strips.
+            let c_size = c_width * c_strip_height;
 
             for local_by in 0..c_strip_blocks_h {
                 for bx in 0..c_blocks_w {
-                    // Cb block
-                    let cb_block = extract_block_from_strip(&self.cb_down, bx, local_by, c_width);
+                    // Cb block - DCT only (use valid portion of buffer)
+                    let cb_block =
+                        extract_block_from_strip(&self.cb_down[..c_size], bx, local_by, c_width);
                     let cb_dct = forward_dct_8x8(&cb_block);
-                    let cb_coeffs = crate::quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct,
-                        &cb_quant_values,
-                        &cb_zero_bias,
-                        0.08,
-                    );
-                    let mut cb_zigzag = [0i16; DCT_BLOCK_SIZE];
-                    natural_to_zigzag_into(&cb_coeffs, &mut cb_zigzag);
-                    self.cb_blocks.push(cb_zigzag);
-                    self.count_block_frequencies(&cb_zigzag, false);
+                    self.cb_blocks.push(cb_dct);
 
-                    // Cr block
-                    let cr_block = extract_block_from_strip(&self.cr_down, bx, local_by, c_width);
+                    // Cr block - DCT only (use valid portion of buffer)
+                    let cr_block =
+                        extract_block_from_strip(&self.cr_down[..c_size], bx, local_by, c_width);
                     let cr_dct = forward_dct_8x8(&cr_block);
-                    let cr_coeffs = crate::quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct,
-                        &cr_quant_values,
-                        &cr_zero_bias,
-                        0.08,
-                    );
-                    let mut cr_zigzag = [0i16; DCT_BLOCK_SIZE];
-                    natural_to_zigzag_into(&cr_coeffs, &mut cr_zigzag);
-                    self.cr_blocks.push(cr_zigzag);
-                    self.count_block_frequencies(&cr_zigzag, false);
+                    self.cr_blocks.push(cr_dct);
                 }
             }
         }
@@ -808,21 +596,136 @@ impl StripProcessor {
 
     /// Finalizes encoding after all strips have been processed.
     ///
-    /// Returns the quantized blocks and Huffman frequency counters.
-    pub fn finalize(self) -> StripProcessorOutput {
-        // Finalize AQ map (global normalization)
-        let aq_strengths = self.aq_state.finalize();
+    /// Quantizes all stored raw DCT blocks with per-block AQ values,
+    /// counts Huffman frequencies, and returns the quantized blocks.
+    pub fn finalize(mut self) -> Result<StripProcessorOutput> {
+        // Finalize AQ map (produces identical values to full-plane AQ)
+        let aq_strengths = match self.aq_state.take() {
+            Some(aq) => aq.finalize()?,
+            None => Vec::new(), // AQ not initialized (no quant tables set)
+        };
 
-        StripProcessorOutput {
-            y_blocks: self.y_blocks,
-            cb_blocks: self.cb_blocks,
-            cr_blocks: self.cr_blocks,
+        // Get quant tables and zero bias params
+        // Use SIMD types for parity with full-plane encoder (same floating-point operations)
+        let y_quant = self.y_quant.as_ref().expect("y_quant not set");
+        let y_quant_simd = QuantTableSimd::from_values(&y_quant.values);
+        let y_zero_bias = self.y_zero_bias.clone().expect("y_zero_bias not set");
+        let y_zero_bias_simd = ZeroBiasSimd::from_params(&y_zero_bias);
+
+        let cb_quant_simd = self.cb_quant.as_ref().map(|q| QuantTableSimd::from_values(&q.values));
+        let cr_quant_simd = self.cr_quant.as_ref().map(|q| QuantTableSimd::from_values(&q.values));
+        let cb_zero_bias_simd = self.cb_zero_bias.as_ref().map(ZeroBiasSimd::from_params);
+        let cr_zero_bias_simd = self.cr_zero_bias.as_ref().map(ZeroBiasSimd::from_params);
+
+        // Quantize Y blocks with per-block AQ strengths
+        // Uses the SAME quantization function as the full-plane encoder for identical output
+        let num_y_blocks = self.y_blocks.len();
+        let mut y_quantized = Vec::with_capacity(num_y_blocks);
+        for i in 0..num_y_blocks {
+            let dct = &self.y_blocks[i];
+            // Use per-block AQ strength if available, otherwise fallback to 0.08
+            let aq_strength = if i < aq_strengths.len() {
+                aq_strengths[i]
+            } else {
+                0.08 // C++ mean
+            };
+
+            // Use SIMD quantization for parity with full-plane encoder
+            let quant_coeffs =
+                y_quant_simd.quantize_array_with_zero_bias(dct, &y_zero_bias_simd, aq_strength);
+
+            // Convert to zigzag order
+            let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+            natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
+
+            y_quantized.push(zigzag);
+        }
+
+        // Count Y Huffman frequencies after all blocks are quantized
+        for zigzag in &y_quantized {
+            self.count_block_frequencies(zigzag, true);
+        }
+
+        // Quantize Cb/Cr blocks with per-block AQ derived from corresponding Y blocks
+        // (same as full-plane encoder for parity)
+        let mut cb_quantized = Vec::with_capacity(self.cb_blocks.len());
+        let mut cr_quantized = Vec::with_capacity(self.cr_blocks.len());
+
+        if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) =
+            (cb_quant_simd, cr_quant_simd, cb_zero_bias_simd, cr_zero_bias_simd)
+        {
+            // Compute block dimensions for AQ mapping (same as full-plane encoder)
+            let y_blocks_h = (self.width + 7) / 8;
+            let y_blocks_v = (self.height + 7) / 8;
+            let (c_blocks_h, c_blocks_v) = match self.subsampling {
+                Subsampling::S420 => ((self.width + 15) / 16, (self.height + 15) / 16),
+                Subsampling::S422 => ((self.width + 15) / 16, y_blocks_v),
+                Subsampling::S440 => (y_blocks_h, (self.height + 15) / 16),
+                Subsampling::S444 => (y_blocks_h, y_blocks_v),
+            };
+
+            for i in 0..self.cb_blocks.len() {
+                let dct = &self.cb_blocks[i];
+                // Map chroma block to corresponding Y block for AQ strength
+                // (same formula as quantize_all_blocks_subsampled)
+                let bx = i % c_blocks_h;
+                let by = i / c_blocks_h;
+                let y_bx = (bx * y_blocks_h) / c_blocks_h;
+                let y_by = (by * y_blocks_v) / c_blocks_v;
+                let y_idx = y_by.min(y_blocks_v - 1) * y_blocks_h + y_bx.min(y_blocks_h - 1);
+                let aq_strength = if y_idx < aq_strengths.len() {
+                    aq_strengths[y_idx]
+                } else {
+                    0.08
+                };
+
+                let quant_coeffs =
+                    cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
+                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
+                cb_quantized.push(zigzag);
+            }
+
+            for i in 0..self.cr_blocks.len() {
+                let dct = &self.cr_blocks[i];
+                // Map chroma block to corresponding Y block for AQ strength
+                let bx = i % c_blocks_h;
+                let by = i / c_blocks_h;
+                let y_bx = (bx * y_blocks_h) / c_blocks_h;
+                let y_by = (by * y_blocks_v) / c_blocks_v;
+                let y_idx = y_by.min(y_blocks_v - 1) * y_blocks_h + y_bx.min(y_blocks_h - 1);
+                let aq_strength = if y_idx < aq_strengths.len() {
+                    aq_strengths[y_idx]
+                } else {
+                    0.08
+                };
+
+                let quant_coeffs =
+                    cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
+                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
+                cr_quantized.push(zigzag);
+            }
+
+            // Count chroma Huffman frequencies
+            for zigzag in &cb_quantized {
+                self.count_block_frequencies(zigzag, false);
+            }
+            for zigzag in &cr_quantized {
+                self.count_block_frequencies(zigzag, false);
+            }
+        }
+
+        Ok(StripProcessorOutput {
+            y_blocks: y_quantized,
+            cb_blocks: cb_quantized,
+            cr_blocks: cr_quantized,
             aq_strengths,
             dc_luma_freq: self.dc_luma_freq,
             ac_luma_freq: self.ac_luma_freq,
             dc_chroma_freq: self.dc_chroma_freq,
             ac_chroma_freq: self.ac_chroma_freq,
-        }
+        })
     }
 }
 
@@ -867,12 +770,5 @@ mod tests {
         assert_eq!(processor.strip_height(), 8); // 4:4:4 uses 8-row strips
     }
 
-    #[test]
-    fn test_streaming_aq_state_creation() {
-        let state = StreamingAQState::new(4000, 3000);
-        assert!(state.is_ok());
-        let state = state.unwrap();
-        assert_eq!(state.blocks_w, 500);
-        assert_eq!(state.blocks_h, 375);
-    }
+    // StreamingAQParity tests are in quant/aq/streaming.rs
 }

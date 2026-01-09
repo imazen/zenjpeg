@@ -557,7 +557,7 @@ impl Encoder {
             y_zero_bias,
             cb_zero_bias,
             cr_zero_bias,
-        );
+        )?;
 
         // Process all strips
         let strip_height = processor.strip_height();
@@ -572,7 +572,7 @@ impl Encoder {
         }
 
         // Finalize strip processing to get blocks
-        let strip_output = processor.finalize();
+        let strip_output = processor.finalize()?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Build output JPEG

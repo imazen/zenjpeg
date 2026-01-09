@@ -53,6 +53,9 @@ use crate::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
 // SIMD implementations for hot paths
 pub mod simd;
 
+// Streaming AQ for strip-based encoding
+pub mod streaming;
+
 use simd::{compute_pre_erosion_simd, fuzzy_erosion_simd, per_block_modulations_simd};
 
 // ============================================================================

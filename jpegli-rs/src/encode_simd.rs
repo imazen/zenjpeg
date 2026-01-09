@@ -233,15 +233,19 @@ pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
     debug_assert!(result.len() >= new_width * new_height);
 
     let scale = f32x8::splat(0.25);
-    let chunks = new_width / 8;
+    // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
+    // would read past the row boundary into the next row, so we use scalar path
+    // for any columns where input x + 15 >= width (i.e., last 8 output columns when width % 16 >= 1).
+    // Safe chunks: those where in_x + 16 <= width, i.e., out_x + 8 <= (width / 2)
+    let safe_chunks = if width >= 16 { (width - 15) / 16 } else { 0 };
 
     for y in 0..new_height {
         let y0 = y * 2;
         let y1 = (y0 + 1).min(height - 1);
         let out_row_start = y * new_width;
 
-        // SIMD path: process 8 output pixels at a time
-        for chunk in 0..chunks {
+        // SIMD path: process 8 output pixels at a time (only for chunks that don't cross row boundary)
+        for chunk in 0..safe_chunks {
             let out_x = chunk * 8;
             let in_x = out_x * 2;
 
@@ -260,8 +264,8 @@ pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, r
             store_f32x8(result, out_row_start + out_x, avg);
         }
 
-        // Scalar remainder
-        for out_x in (chunks * 8)..new_width {
+        // Scalar path for remaining columns (handles row boundary correctly)
+        for out_x in (safe_chunks * 8)..new_width {
             let x0 = out_x * 2;
             let x1 = (x0 + 1).min(width - 1);
 
@@ -302,14 +306,16 @@ pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Result
     let mut result = try_alloc_f32(new_width * height, "downsample_2x1_simd")?;
 
     let scale = f32x8::splat(0.5);
-    let chunks = new_width / 8;
+    // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
+    // would read past the row boundary, so use scalar path for edge columns.
+    let safe_chunks = if width >= 16 { (width - 15) / 16 } else { 0 };
 
     for y in 0..height {
         let out_row_start = y * new_width;
         let in_row_start = y * width;
 
-        // SIMD path: process 8 output pixels at a time
-        for chunk in 0..chunks {
+        // SIMD path: process 8 output pixels at a time (only for safe chunks)
+        for chunk in 0..safe_chunks {
             let out_x = chunk * 8;
             let in_x = out_x * 2;
 
@@ -323,8 +329,8 @@ pub fn downsample_2x1_simd(plane: &[f32], width: usize, height: usize) -> Result
             store_f32x8(&mut result, out_row_start + out_x, avg);
         }
 
-        // Scalar remainder
-        for out_x in (chunks * 8)..new_width {
+        // Scalar path for remaining columns (handles edge correctly)
+        for out_x in (safe_chunks * 8)..new_width {
             let x0 = out_x * 2;
             let x1 = (x0 + 1).min(width - 1);
 
@@ -346,14 +352,16 @@ pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, r
     debug_assert!(result.len() >= new_width * height);
 
     let scale = f32x8::splat(0.5);
-    let chunks = new_width / 8;
+    // SIMD path needs 16 input elements per chunk. For odd widths, the last chunk
+    // would read past the row boundary, so use scalar path for edge columns.
+    let safe_chunks = if width >= 16 { (width - 15) / 16 } else { 0 };
 
     for y in 0..height {
         let out_row_start = y * new_width;
         let in_row_start = y * width;
 
-        // SIMD path: process 8 output pixels at a time
-        for chunk in 0..chunks {
+        // SIMD path: process 8 output pixels at a time (only for safe chunks)
+        for chunk in 0..safe_chunks {
             let out_x = chunk * 8;
             let in_x = out_x * 2;
 
@@ -367,8 +375,8 @@ pub fn downsample_2x1_simd_inplace(plane: &[f32], width: usize, height: usize, r
             store_f32x8(result, out_row_start + out_x, avg);
         }
 
-        // Scalar remainder
-        for out_x in (chunks * 8)..new_width {
+        // Scalar path for remaining columns (handles edge correctly)
+        for out_x in (safe_chunks * 8)..new_width {
             let x0 = out_x * 2;
             let x1 = (x0 + 1).min(width - 1);
 
