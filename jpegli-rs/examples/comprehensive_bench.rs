@@ -170,7 +170,7 @@ fn bench_strip(
     }
 }
 
-fn decode_jpeg(data: &[u8]) -> Vec<u8> {
+fn decode_jpeg(data: &[u8]) -> (Vec<u8>, usize, usize) {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
@@ -180,7 +180,41 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new_with_options(cursor, opts);
     decoder.decode_headers().ok();
-    decoder.decode().unwrap_or_default()
+    let info = decoder.info().unwrap();
+    let w = info.width as usize;
+    let h = info.height as usize;
+    (decoder.decode().unwrap_or_default(), w, h)
+}
+
+fn compute_ssimulacra2(
+    img1: &[u8],
+    img2: &[u8],
+    width: usize,
+    height: usize,
+) -> f64 {
+    use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
+
+    let source: Vec<[f32; 3]> = img1
+        .chunks_exact(3)
+        .map(|c| [
+            srgb_u8_to_linear(c[0]),
+            srgb_u8_to_linear(c[1]),
+            srgb_u8_to_linear(c[2]),
+        ])
+        .collect();
+    let distorted: Vec<[f32; 3]> = img2
+        .chunks_exact(3)
+        .map(|c| [
+            srgb_u8_to_linear(c[0]),
+            srgb_u8_to_linear(c[1]),
+            srgb_u8_to_linear(c[2]),
+        ])
+        .collect();
+
+    let source_img = LinearRgbImage::new(source, width, height);
+    let distorted_img = LinearRgbImage::new(distorted, width, height);
+
+    compute_frame_ssimulacra2(source_img, distorted_img).unwrap_or(-1.0)
 }
 
 fn compute_diff(a: &[u8], b: &[u8]) -> (u8, f64) {
@@ -273,46 +307,53 @@ fn main() {
 
     println!(
         "{:<6} {:>4} {:>10} {:>10} {:>8} {:>8} {:>8} {:>6}",
-        "Size", "Sub", "full KB", "strip KB", "Diff%", "MaxDiff", "RMSE", "Status"
+        "Size", "Sub", "full KB", "strip KB", "Diff%", "MaxDiff", "SSIM2", "Status"
     );
-    println!("{}", "-".repeat(70));
+    println!("{}", "-".repeat(72));
 
     for (size_name, sub_name, full, strip, _prog) in &results {
         let size_diff_pct =
             (strip.size_bytes as f64 - full.size_bytes as f64) / full.size_bytes as f64 * 100.0;
 
-        let full_decoded = decode_jpeg(&full.output);
-        let strip_decoded = decode_jpeg(&strip.output);
-        let (max_diff, rmse) = compute_diff(&full_decoded, &strip_decoded);
+        let (full_decoded, fw, fh) = decode_jpeg(&full.output);
+        let (strip_decoded, sw, sh) = decode_jpeg(&strip.output);
+
+        if fw != sw || fh != sh {
+            println!(
+                "{:<6} {:>4} DIM MISMATCH {}x{} vs {}x{}",
+                size_name, sub_name, fw, fh, sw, sh
+            );
+            continue;
+        }
+
+        let (max_diff, _rmse) = compute_diff(&full_decoded, &strip_decoded);
+        let ssim2 = compute_ssimulacra2(&full_decoded, &strip_decoded, fw, fh);
 
         let status = if max_diff == 0 {
             "EXACT"
-        } else if max_diff <= 2 && rmse < 0.5 {
+        } else if ssim2 >= 90.0 {
             "PASS"
-        } else if max_diff <= 5 {
+        } else if ssim2 >= 70.0 {
             "CLOSE"
         } else {
             "DIFF"
         };
 
         println!(
-            "{:<6} {:>4} {:>10} {:>10} {:>+7.2}% {:>8} {:>8.4} {:>6}",
+            "{:<6} {:>4} {:>10} {:>10} {:>+7.2}% {:>8} {:>8.2} {:>6}",
             size_name,
             sub_name,
             full.size_bytes / 1024,
             strip.size_bytes / 1024,
             size_diff_pct,
             max_diff,
-            rmse,
+            ssim2,
             status
         );
     }
 
     println!();
-    println!("EXACT = Bit-identical output");
-    println!("PASS  = Perceptually identical (max diff <= 2, RMSE < 0.5)");
-    println!("CLOSE = Very similar (max diff <= 5)");
-    println!("DIFF  = Different outputs (investigate if unexpected)");
+    println!("SSIMULACRA2: 90+ = excellent, 70-90 = good, <70 = visible differences");
 
     // Performance summary
     println!("\n=== Performance Summary: Strip vs Full-Plane Speedup ===\n");
