@@ -37,6 +37,26 @@ impl Encoder {
     fn encode_baseline_ycbcr(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
+        let pixels = width * height;
+
+        // Auto-dispatch to strip-based encoding for large images (>2MP)
+        // Strip processing keeps working set in L2 cache, avoiding memory bandwidth bottlenecks
+        // Threshold: 2 megapixels (~225MB f32 working set exceeds typical L3 cache)
+        const STRIP_THRESHOLD_PIXELS: usize = 2_000_000;
+
+        let use_strip = pixels > STRIP_THRESHOLD_PIXELS
+            && self.config.internal_pipeline.is_none()
+            && matches!(
+                self.config.chroma_conversion,
+                crate::types::ChromaConversion::Auto | crate::types::ChromaConversion::Intrinsic
+            )
+            && self.config.smoothing_factor == 0;
+
+        if use_strip {
+            // Ignore the pre-allocated output buffer since encode_strip_based creates its own
+            let _ = output;
+            return self.encode_strip_based(data);
+        }
 
         // Check if internal_pipeline specifies gamma-aware downsampling
         if let Some(ref pipeline) = self.config.internal_pipeline {
