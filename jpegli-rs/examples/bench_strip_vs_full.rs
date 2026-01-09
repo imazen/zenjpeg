@@ -79,11 +79,21 @@ fn main() {
 
         let (full_ms, full_size) = bench_full(&data, width, height);
         let full_mpps = pixels / (full_ms / 1000.0) / 1_000_000.0;
-        println!("Full-plane: {:.1} ms, {:.1} MP/s, {} KB", full_ms, full_mpps, full_size / 1024);
+        println!(
+            "Full-plane: {:.1} ms, {:.1} MP/s, {} KB",
+            full_ms,
+            full_mpps,
+            full_size / 1024
+        );
 
         let (strip_ms, strip_size) = bench_strip(&data, width, height);
         let strip_mpps = pixels / (strip_ms / 1000.0) / 1_000_000.0;
-        println!("Strip-based: {:.1} ms, {:.1} MP/s, {} KB", strip_ms, strip_mpps, strip_size / 1024);
+        println!(
+            "Strip-based: {:.1} ms, {:.1} MP/s, {} KB",
+            strip_ms,
+            strip_mpps,
+            strip_size / 1024
+        );
 
         let speedup = full_ms / strip_ms;
         println!("Speedup: {:.2}x", speedup);

@@ -50,7 +50,8 @@ impl Encoder {
                 self.config.chroma_conversion,
                 crate::types::ChromaConversion::Auto | crate::types::ChromaConversion::Intrinsic
             )
-            && self.config.smoothing_factor == 0;
+            && self.config.smoothing_factor == 0
+            && !self.config.force_full_plane;
 
         if use_strip {
             // Ignore the pre-allocated output buffer since encode_strip_based creates its own
