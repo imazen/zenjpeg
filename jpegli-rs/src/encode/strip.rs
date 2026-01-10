@@ -11,11 +11,12 @@
 //! - i16 quantized blocks: ~36 MB
 //! - Total: ~230 MB measured
 //!
-//! Strip-based encoder peak memory:
+//! Strip-based encoder with incremental quantization:
 //! - f32 strip buffers (reused): ~1 MB
+//! - f32 pending iMCU DCT blocks (2x): ~0.7 MB (double-buffered)
 //! - i16 quantized blocks: ~36 MB
-//! - AQ accumulators: ~4 MB
-//! - Total: ~47 MB target
+//! - AQ accumulators: ~2.5 MB
+//! - Total: ~40 MB (vs 72 MB without incremental quantization)
 //!
 //! # Algorithm
 //!
@@ -23,12 +24,15 @@
 //! 1. Convert RGB → YCbCr (f32 strips, reused)
 //! 2. Accumulate AQ features for this strip
 //! 3. Downsample chroma if needed
-//! 4. DCT + quantize → append to i16 block storage
-//! 5. Count Huffman frequencies
-//! 6. Release strip buffers (reuse next iteration)
+//! 4. DCT → store f32 coefficients in pending buffer
+//! 5. If AQ returns strengths for previous iMCU:
+//!    - Quantize pending f32 → i16
+//!    - Count Huffman frequencies
+//!    - Append to final i16 storage
+//! 6. Swap pending buffers
 //!
 //! After all strips:
-//! 1. Finalize AQ map (global normalization)
+//! 1. Flush last iMCU (quantize remaining pending blocks)
 //! 2. Build optimized Huffman tables
 //! 3. Encode from stored i16 blocks
 
@@ -115,14 +119,39 @@ pub struct StripProcessor {
     /// DCT buffer (reused per block)
     dct_buf: [f32; DCT_BLOCK_SIZE],
 
-    // === Growing block storage (raw DCT coefficients) ===
-    // Stored as f32 to allow quantization with per-block AQ at the end
-    /// Y channel raw DCT blocks (natural order, not zigzag)
-    y_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
-    /// Cb channel raw DCT blocks
-    cb_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
-    /// Cr channel raw DCT blocks
-    cr_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
+    // === Final quantized block storage (i16) ===
+    /// Y channel quantized blocks (zigzag order)
+    y_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+    /// Cb channel quantized blocks
+    cb_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+    /// Cr channel quantized blocks
+    cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+
+    // === Pending iMCU DCT blocks (f32, double-buffered) ===
+    // These hold raw DCT coefficients until AQ strengths are available
+    // Double-buffered: [current] and [previous pending quantization]
+    pending_y_blocks: [Vec<[f32; DCT_BLOCK_SIZE]>; 2],
+    pending_cb_blocks: [Vec<[f32; DCT_BLOCK_SIZE]>; 2],
+    pending_cr_blocks: [Vec<[f32; DCT_BLOCK_SIZE]>; 2],
+    /// Index of current pending buffer (0 or 1)
+    pending_current: usize,
+
+    // === SIMD quantization tables (initialized with quant tables) ===
+    y_quant_simd: Option<QuantTableSimd>,
+    cb_quant_simd: Option<QuantTableSimd>,
+    cr_quant_simd: Option<QuantTableSimd>,
+    y_zero_bias_simd: Option<ZeroBiasSimd>,
+    cb_zero_bias_simd: Option<ZeroBiasSimd>,
+    cr_zero_bias_simd: Option<ZeroBiasSimd>,
+
+    // === Block dimension info (for chroma AQ mapping) ===
+    y_blocks_h: usize,
+    y_blocks_v: usize,
+    c_blocks_h: usize,
+    c_blocks_v: usize,
+
+    // === Accumulated AQ strengths for batch finalize (debugging) ===
+    all_aq_strengths: Vec<f32>,
 
     // === Streaming AQ state (low memory, rolling buffers) ===
     // Initialized when quant tables are set (needs y_quant_01)
@@ -180,15 +209,34 @@ impl StripProcessor {
         };
 
         // Pre-allocate block storage based on image size
-        let blocks_w = (width + 7) / 8;
-        let blocks_h = (height + 7) / 8;
-        let total_y_blocks = blocks_w * blocks_h;
-        let total_c_blocks = match subsampling {
-            Subsampling::S420 => ((width + 15) / 16) * ((height + 15) / 16),
-            Subsampling::S422 => ((width + 15) / 16) * blocks_h,
-            Subsampling::S440 => blocks_w * ((height + 15) / 16),
-            Subsampling::S444 => total_y_blocks,
+        let y_blocks_h = (width + 7) / 8;
+        let y_blocks_v = (height + 7) / 8;
+        let total_y_blocks = y_blocks_h * y_blocks_v;
+        let (c_blocks_h, c_blocks_v, total_c_blocks) = match subsampling {
+            Subsampling::S420 => {
+                let h = (width + 15) / 16;
+                let v = (height + 15) / 16;
+                (h, v, h * v)
+            }
+            Subsampling::S422 => {
+                let h = (width + 15) / 16;
+                (h, y_blocks_v, h * y_blocks_v)
+            }
+            Subsampling::S440 => {
+                let v = (height + 15) / 16;
+                (y_blocks_h, v, y_blocks_h * v)
+            }
+            Subsampling::S444 => (y_blocks_h, y_blocks_v, total_y_blocks),
         };
+
+        // Pending buffer capacity: one iMCU row of blocks
+        // For 4:2:0: 2 block rows of Y, 1 block row each of Cb/Cr
+        let v_samp = match subsampling {
+            Subsampling::S420 | Subsampling::S440 => 2,
+            _ => 1,
+        };
+        let pending_y_capacity = y_blocks_h * v_samp;
+        let pending_c_capacity = c_blocks_h; // One chroma block row per iMCU
 
         let is_color = pixel_format != PixelFormat::Gray;
 
@@ -232,7 +280,7 @@ impl StripProcessor {
             // Scratch space
             dct_buf: [0.0f32; DCT_BLOCK_SIZE],
 
-            // Block storage (pre-allocated capacity, stores raw DCT coefficients)
+            // Final i16 block storage (pre-allocated capacity)
             y_blocks: try_with_capacity_tracked(total_y_blocks, "y_blocks", &mut alloc_stats)?,
             cb_blocks: if is_color {
                 try_with_capacity_tracked(total_c_blocks, "cb_blocks", &mut alloc_stats)?
@@ -244,6 +292,46 @@ impl StripProcessor {
             } else {
                 Vec::new()
             },
+
+            // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
+            pending_y_blocks: [
+                Vec::with_capacity(pending_y_capacity),
+                Vec::with_capacity(pending_y_capacity),
+            ],
+            pending_cb_blocks: if is_color {
+                [
+                    Vec::with_capacity(pending_c_capacity),
+                    Vec::with_capacity(pending_c_capacity),
+                ]
+            } else {
+                [Vec::new(), Vec::new()]
+            },
+            pending_cr_blocks: if is_color {
+                [
+                    Vec::with_capacity(pending_c_capacity),
+                    Vec::with_capacity(pending_c_capacity),
+                ]
+            } else {
+                [Vec::new(), Vec::new()]
+            },
+            pending_current: 0,
+
+            // SIMD quant tables (initialized in set_quant_tables)
+            y_quant_simd: None,
+            cb_quant_simd: None,
+            cr_quant_simd: None,
+            y_zero_bias_simd: None,
+            cb_zero_bias_simd: None,
+            cr_zero_bias_simd: None,
+
+            // Block dimensions for chroma AQ mapping
+            y_blocks_h,
+            y_blocks_v,
+            c_blocks_h,
+            c_blocks_v,
+
+            // Accumulated AQ strengths (for output)
+            all_aq_strengths: Vec::with_capacity(total_y_blocks),
 
             // Streaming AQ (initialized when quant tables are set)
             aq_state: None,
@@ -295,6 +383,14 @@ impl StripProcessor {
             v_samp,
         )?);
 
+        // Initialize SIMD quant tables for incremental quantization
+        self.y_quant_simd = Some(QuantTableSimd::from_values(&y_quant.values));
+        self.cb_quant_simd = Some(QuantTableSimd::from_values(&cb_quant.values));
+        self.cr_quant_simd = Some(QuantTableSimd::from_values(&cr_quant.values));
+        self.y_zero_bias_simd = Some(ZeroBiasSimd::from_params(&y_zero_bias));
+        self.cb_zero_bias_simd = Some(ZeroBiasSimd::from_params(&cb_zero_bias));
+        self.cr_zero_bias_simd = Some(ZeroBiasSimd::from_params(&cr_zero_bias));
+
         self.y_quant = Some(y_quant);
         self.cb_quant = Some(cb_quant);
         self.cr_quant = Some(cr_quant);
@@ -323,19 +419,35 @@ impl StripProcessor {
         // Step 1: Color convert RGB → YCbCr into strip buffers
         self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
 
-        // Step 2: Accumulate AQ features from Y strip
-        if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height);
-        }
+        // Step 2: Process AQ and check if previous iMCU strengths are ready
+        let aq_strengths = if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
+                .map(|s| s.to_vec())
+        } else {
+            None
+        };
 
         // Step 3: Downsample chroma if needed
         if self.pixel_format != PixelFormat::Gray {
             self.downsample_chroma_strip(actual_strip_height)?;
         }
 
-        // Step 4: Compute DCT for blocks in this strip
-        // Raw DCT coefficients are stored; quantization happens in finalize() with actual AQ values.
-        let blocks_added = self.dct_strip_blocks(strip_y, actual_strip_height)?;
+        // Step 4: If we got AQ strengths, quantize the previous pending iMCU
+        // This is the key optimization: quantize to i16 immediately instead of storing f32
+        if let Some(strengths) = aq_strengths {
+            let prev_buffer = 1 - self.pending_current;
+            self.quantize_pending_imcu(prev_buffer, &strengths);
+            // Clear the previous buffer for reuse
+            self.pending_y_blocks[prev_buffer].clear();
+            self.pending_cb_blocks[prev_buffer].clear();
+            self.pending_cr_blocks[prev_buffer].clear();
+        }
+
+        // Step 5: Compute DCT for blocks in this strip into the current pending buffer
+        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, actual_strip_height)?;
+
+        // Step 6: Swap pending buffers when iMCU completes
+        // (The swap happens via pending_current tracking in dct_strip_blocks_to_pending)
 
         Ok(blocks_added)
     }
@@ -502,20 +614,25 @@ impl StripProcessor {
         Ok(())
     }
 
-    /// Computes DCT for blocks in the current strip and stores raw coefficients.
-    /// Quantization happens in finalize() with actual per-block AQ values.
-    fn dct_strip_blocks(&mut self, strip_y: usize, strip_height: usize) -> Result<usize> {
+    /// Computes DCT for blocks in the current strip and stores in pending buffer.
+    /// This allows quantization to happen incrementally when AQ strengths become available.
+    fn dct_strip_blocks_to_pending(
+        &mut self,
+        strip_y: usize,
+        strip_height: usize,
+    ) -> Result<usize> {
         let blocks_w = (self.width + 7) / 8;
         let strip_blocks_h = (strip_height + 7) / 8;
         let start_block_y = strip_y / 8;
         let width = self.width;
         let height = self.height;
+        let pending_idx = self.pending_current;
 
         let mut blocks_added = 0;
         // Only pass the valid portion of the Y buffer for correct edge detection
         let y_size = strip_height * width;
 
-        // Compute DCT for Y blocks
+        // Compute DCT for Y blocks into pending buffer
         for local_by in 0..strip_blocks_h {
             let global_by = start_block_y + local_by;
             if global_by >= (height + 7) / 8 {
@@ -526,9 +643,9 @@ impl StripProcessor {
                 // Extract 8×8 block from Y strip (use valid portion of buffer)
                 let block = extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, width);
 
-                // DCT - store raw coefficients (quantization happens in finalize)
+                // DCT - store raw coefficients in pending buffer
                 let dct = forward_dct_8x8(&block);
-                self.y_blocks.push(dct);
+                self.pending_y_blocks[pending_idx].push(dct);
 
                 blocks_added += 1;
             }
@@ -556,18 +673,153 @@ impl StripProcessor {
                     let cb_block =
                         extract_block_from_strip(&self.cb_down[..c_size], bx, local_by, c_width);
                     let cb_dct = forward_dct_8x8(&cb_block);
-                    self.cb_blocks.push(cb_dct);
+                    self.pending_cb_blocks[pending_idx].push(cb_dct);
 
                     // Cr block - DCT only (use valid portion of buffer)
                     let cr_block =
                         extract_block_from_strip(&self.cr_down[..c_size], bx, local_by, c_width);
                     let cr_dct = forward_dct_8x8(&cr_block);
-                    self.cr_blocks.push(cr_dct);
+                    self.pending_cr_blocks[pending_idx].push(cr_dct);
                 }
             }
         }
 
+        // Swap pending buffer for next iMCU
+        self.pending_current = 1 - self.pending_current;
+
         Ok(blocks_added)
+    }
+
+    /// Quantizes pending f32 DCT blocks to i16 using AQ strengths.
+    ///
+    /// This is the key memory optimization: quantize incrementally as soon as
+    /// AQ strengths become available, rather than storing all f32 blocks.
+    fn quantize_pending_imcu(&mut self, buffer_idx: usize, aq_strengths: &[f32]) {
+        // Clone SIMD tables to avoid borrow issues when calling count_block_frequencies
+        let y_quant_simd = self
+            .y_quant_simd
+            .clone()
+            .expect("y_quant_simd not set");
+        let y_zero_bias_simd = self
+            .y_zero_bias_simd
+            .clone()
+            .expect("y_zero_bias_simd not set");
+
+        // Quantize Y blocks - first pass: just quantize
+        let start_y_idx = self.y_blocks.len();
+        let mut y_quantized = Vec::with_capacity(self.pending_y_blocks[buffer_idx].len());
+
+        for (i, dct) in self.pending_y_blocks[buffer_idx].iter().enumerate() {
+            let aq_strength = if i < aq_strengths.len() {
+                aq_strengths[i]
+            } else {
+                0.08 // C++ mean fallback
+            };
+
+            // SIMD quantization for parity with full-plane encoder
+            let quant_coeffs =
+                y_quant_simd.quantize_array_with_zero_bias(dct, &y_zero_bias_simd, aq_strength);
+
+            // Convert to zigzag order
+            let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+            natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
+
+            y_quantized.push((zigzag, aq_strength));
+        }
+
+        // Second pass: store and count frequencies
+        for (zigzag, aq_strength) in y_quantized {
+            self.y_blocks.push(zigzag);
+            self.count_block_frequencies(&zigzag, true);
+            self.all_aq_strengths.push(aq_strength);
+        }
+
+        // Quantize Cb/Cr blocks
+        let cb_quant_simd = self.cb_quant_simd.clone();
+        let cr_quant_simd = self.cr_quant_simd.clone();
+        let cb_zero_bias_simd = self.cb_zero_bias_simd.clone();
+        let cr_zero_bias_simd = self.cr_zero_bias_simd.clone();
+
+        if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) = (
+            cb_quant_simd,
+            cr_quant_simd,
+            cb_zero_bias_simd,
+            cr_zero_bias_simd,
+        ) {
+            let y_blocks_h = self.y_blocks_h;
+            let y_blocks_v = self.y_blocks_v;
+            let c_blocks_h = self.c_blocks_h;
+            let c_blocks_v = self.c_blocks_v;
+
+            // Number of Y blocks added in this iMCU
+            let y_blocks_this_imcu = self.y_blocks.len() - start_y_idx;
+
+            // Quantize Cb blocks - first pass
+            let mut cb_quantized = Vec::with_capacity(self.pending_cb_blocks[buffer_idx].len());
+            for (i, dct) in self.pending_cb_blocks[buffer_idx].iter().enumerate() {
+                let bx = i % c_blocks_h.max(1);
+                let by = i / c_blocks_h.max(1);
+                let y_bx = (bx * y_blocks_h) / c_blocks_h.max(1);
+                let y_by = (by * y_blocks_v) / c_blocks_v.max(1);
+                let y_local_idx = (y_by % 2) * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+                let aq_strength = if y_local_idx < aq_strengths.len() {
+                    aq_strengths[y_local_idx]
+                } else if y_local_idx < y_blocks_this_imcu {
+                    let global_idx = start_y_idx + y_local_idx;
+                    if global_idx < self.all_aq_strengths.len() {
+                        self.all_aq_strengths[global_idx]
+                    } else {
+                        0.08
+                    }
+                } else {
+                    0.08
+                };
+
+                let quant_coeffs = cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
+                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
+                cb_quantized.push(zigzag);
+            }
+
+            // Second pass for Cb
+            for zigzag in cb_quantized {
+                self.cb_blocks.push(zigzag);
+                self.count_block_frequencies(&zigzag, false);
+            }
+
+            // Quantize Cr blocks - first pass
+            let mut cr_quantized = Vec::with_capacity(self.pending_cr_blocks[buffer_idx].len());
+            for (i, dct) in self.pending_cr_blocks[buffer_idx].iter().enumerate() {
+                let bx = i % c_blocks_h.max(1);
+                let by = i / c_blocks_h.max(1);
+                let y_bx = (bx * y_blocks_h) / c_blocks_h.max(1);
+                let y_by = (by * y_blocks_v) / c_blocks_v.max(1);
+                let y_local_idx = (y_by % 2) * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+                let aq_strength = if y_local_idx < aq_strengths.len() {
+                    aq_strengths[y_local_idx]
+                } else if y_local_idx < y_blocks_this_imcu {
+                    let global_idx = start_y_idx + y_local_idx;
+                    if global_idx < self.all_aq_strengths.len() {
+                        self.all_aq_strengths[global_idx]
+                    } else {
+                        0.08
+                    }
+                } else {
+                    0.08
+                };
+
+                let quant_coeffs = cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
+                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
+                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
+                cr_quantized.push(zigzag);
+            }
+
+            // Second pass for Cr
+            for zigzag in cr_quantized {
+                self.cr_blocks.push(zigzag);
+                self.count_block_frequencies(&zigzag, false);
+            }
+        }
     }
 
     /// Counts Huffman frequencies for a quantized block.
@@ -620,141 +872,35 @@ impl StripProcessor {
 
     /// Finalizes encoding after all strips have been processed.
     ///
-    /// Quantizes all stored raw DCT blocks with per-block AQ values,
-    /// counts Huffman frequencies, and returns the quantized blocks.
+    /// With incremental quantization, most blocks are already quantized.
+    /// This method only handles the last pending iMCU.
     pub fn finalize(mut self) -> Result<StripProcessorOutput> {
-        // Finalize AQ map (produces identical values to full-plane AQ)
-        let aq_strengths = match self.aq_state.take() {
-            Some(aq) => aq.finalize()?,
-            None => Vec::new(), // AQ not initialized (no quant tables set)
-        };
-
-        // Get quant tables and zero bias params
-        // Use SIMD types for parity with full-plane encoder (same floating-point operations)
-        let y_quant = self.y_quant.as_ref().expect("y_quant not set");
-        let y_quant_simd = QuantTableSimd::from_values(&y_quant.values);
-        let y_zero_bias = self.y_zero_bias.clone().expect("y_zero_bias not set");
-        let y_zero_bias_simd = ZeroBiasSimd::from_params(&y_zero_bias);
-
-        let cb_quant_simd = self
-            .cb_quant
-            .as_ref()
-            .map(|q| QuantTableSimd::from_values(&q.values));
-        let cr_quant_simd = self
-            .cr_quant
-            .as_ref()
-            .map(|q| QuantTableSimd::from_values(&q.values));
-        let cb_zero_bias_simd = self.cb_zero_bias.as_ref().map(ZeroBiasSimd::from_params);
-        let cr_zero_bias_simd = self.cr_zero_bias.as_ref().map(ZeroBiasSimd::from_params);
-
-        // Quantize Y blocks with per-block AQ strengths
-        // Uses the SAME quantization function as the full-plane encoder for identical output
-        let num_y_blocks = self.y_blocks.len();
-        let mut y_quantized: Vec<[i16; DCT_BLOCK_SIZE]> =
-            try_with_capacity_tracked(num_y_blocks, "y_quantized", &mut self.alloc_stats)?;
-        for i in 0..num_y_blocks {
-            let dct = &self.y_blocks[i];
-            // Use per-block AQ strength if available, otherwise fallback to 0.08
-            let aq_strength = if i < aq_strengths.len() {
-                aq_strengths[i]
-            } else {
-                0.08 // C++ mean
-            };
-
-            // Use SIMD quantization for parity with full-plane encoder
-            let quant_coeffs =
-                y_quant_simd.quantize_array_with_zero_bias(dct, &y_zero_bias_simd, aq_strength);
-
-            // Convert to zigzag order
-            let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-            natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
-
-            y_quantized.push(zigzag);
+        // Flush AQ to get the last iMCU's strengths
+        if let Some(ref mut aq) = self.aq_state {
+            if let Some(last_aq) = aq.flush() {
+                // Quantize the last pending iMCU
+                let last_strengths = last_aq.to_vec();
+                let prev_buffer = 1 - self.pending_current;
+                if !self.pending_y_blocks[prev_buffer].is_empty() {
+                    self.quantize_pending_imcu(prev_buffer, &last_strengths);
+                }
+            }
         }
 
-        // Count Y Huffman frequencies after all blocks are quantized
-        for zigzag in &y_quantized {
-            self.count_block_frequencies(zigzag, true);
-        }
-
-        // Quantize Cb/Cr blocks with per-block AQ derived from corresponding Y blocks
-        // (same as full-plane encoder for parity)
-        let mut cb_quantized: Vec<[i16; DCT_BLOCK_SIZE]> =
-            try_with_capacity_tracked(self.cb_blocks.len(), "cb_quantized", &mut self.alloc_stats)?;
-        let mut cr_quantized: Vec<[i16; DCT_BLOCK_SIZE]> =
-            try_with_capacity_tracked(self.cr_blocks.len(), "cr_quantized", &mut self.alloc_stats)?;
-
-        if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) = (
-            cb_quant_simd,
-            cr_quant_simd,
-            cb_zero_bias_simd,
-            cr_zero_bias_simd,
-        ) {
-            // Compute block dimensions for AQ mapping (same as full-plane encoder)
-            let y_blocks_h = (self.width + 7) / 8;
-            let y_blocks_v = (self.height + 7) / 8;
-            let (c_blocks_h, c_blocks_v) = match self.subsampling {
-                Subsampling::S420 => ((self.width + 15) / 16, (self.height + 15) / 16),
-                Subsampling::S422 => ((self.width + 15) / 16, y_blocks_v),
-                Subsampling::S440 => (y_blocks_h, (self.height + 15) / 16),
-                Subsampling::S444 => (y_blocks_h, y_blocks_v),
-            };
-
-            for i in 0..self.cb_blocks.len() {
-                let dct = &self.cb_blocks[i];
-                // Map chroma block to corresponding Y block for AQ strength
-                // (same formula as quantize_all_blocks_subsampled)
-                let bx = i % c_blocks_h;
-                let by = i / c_blocks_h;
-                let y_bx = (bx * y_blocks_h) / c_blocks_h;
-                let y_by = (by * y_blocks_v) / c_blocks_v;
-                let y_idx = y_by.min(y_blocks_v - 1) * y_blocks_h + y_bx.min(y_blocks_h - 1);
-                let aq_strength = if y_idx < aq_strengths.len() {
-                    aq_strengths[y_idx]
-                } else {
-                    0.08
-                };
-
-                let quant_coeffs = cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
-                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
-                cb_quantized.push(zigzag);
-            }
-
-            for i in 0..self.cr_blocks.len() {
-                let dct = &self.cr_blocks[i];
-                // Map chroma block to corresponding Y block for AQ strength
-                let bx = i % c_blocks_h;
-                let by = i / c_blocks_h;
-                let y_bx = (bx * y_blocks_h) / c_blocks_h;
-                let y_by = (by * y_blocks_v) / c_blocks_v;
-                let y_idx = y_by.min(y_blocks_v - 1) * y_blocks_h + y_bx.min(y_blocks_h - 1);
-                let aq_strength = if y_idx < aq_strengths.len() {
-                    aq_strengths[y_idx]
-                } else {
-                    0.08
-                };
-
-                let quant_coeffs = cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
-                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
-                cr_quantized.push(zigzag);
-            }
-
-            // Count chroma Huffman frequencies
-            for zigzag in &cb_quantized {
-                self.count_block_frequencies(zigzag, false);
-            }
-            for zigzag in &cr_quantized {
-                self.count_block_frequencies(zigzag, false);
-            }
+        // Also quantize any blocks remaining in the current pending buffer
+        // (for edge cases where we have blocks but no AQ was returned)
+        let current_buffer = self.pending_current;
+        if !self.pending_y_blocks[current_buffer].is_empty() {
+            // Use default AQ strength for remaining blocks
+            let default_aq = vec![0.08f32; self.pending_y_blocks[current_buffer].len()];
+            self.quantize_pending_imcu(current_buffer, &default_aq);
         }
 
         Ok(StripProcessorOutput {
-            y_blocks: y_quantized,
-            cb_blocks: cb_quantized,
-            cr_blocks: cr_quantized,
-            aq_strengths,
+            y_blocks: self.y_blocks,
+            cb_blocks: self.cb_blocks,
+            cr_blocks: self.cr_blocks,
+            aq_strengths: self.all_aq_strengths,
             dc_luma_freq: self.dc_luma_freq,
             ac_luma_freq: self.ac_luma_freq,
             dc_chroma_freq: self.dc_chroma_freq,
