@@ -366,6 +366,126 @@ pub fn convert_gamma_aware_iterative_440(
 }
 
 // ============================================================================
+// Strip-Aware Gamma Conversion (for strip-based encoder)
+// ============================================================================
+
+/// Computes gamma-aware chroma for a strip of image data (4:2:0 mode).
+///
+/// This function is designed for strip-based encoding where we process
+/// the image in horizontal strips. It computes Cb/Cr directly at the
+/// downsampled resolution using gamma-aware averaging.
+///
+/// # Arguments
+/// * `rgb_strip` - RGB data for this strip
+/// * `y_strip` - Pre-computed Y values for this strip (output buffer, will be filled)
+/// * `cb_down` - Output buffer for downsampled Cb (size: c_width × c_strip_height)
+/// * `cr_down` - Output buffer for downsampled Cr (size: c_width × c_strip_height)
+/// * `width` - Image width in pixels
+/// * `strip_height` - Height of this strip in pixels
+/// * `strip_y` - Y offset of this strip in the full image
+/// * `image_height` - Total image height (for edge handling)
+/// * `bpp` - Bytes per pixel (3 for RGB, 4 for RGBA)
+/// * `use_iterative` - If true, use iterative refinement for best quality
+pub fn gamma_aware_strip_420(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    strip_y: usize,
+    image_height: usize,
+    bpp: usize,
+    use_iterative: bool,
+) {
+    // Compute Y at full resolution using SIMD
+    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+
+    // Compute chroma at half resolution
+    let c_width = (width + 1) / 2;
+    let c_strip_height = (strip_height + 1) / 2;
+
+    for cy in 0..c_strip_height {
+        for cx in 0..c_width {
+            let (cb, cr) = if use_iterative {
+                iterative_chroma_2x2_strip(
+                    rgb_strip, y_strip, width, strip_height, bpp, cx, cy,
+                )
+            } else {
+                gamma_aware_chroma_2x2_strip(
+                    rgb_strip, width, strip_height, bpp, cx, cy,
+                )
+            };
+            cb_down[cy * c_width + cx] = cb;
+            cr_down[cy * c_width + cx] = cr;
+        }
+    }
+
+    // Suppress unused warnings
+    let _ = (strip_y, image_height);
+}
+
+/// Computes gamma-aware chroma for a strip of image data (4:2:2 mode).
+pub fn gamma_aware_strip_422(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+    use_iterative: bool,
+) {
+    // Compute Y at full resolution using SIMD
+    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+
+    // Compute chroma at half horizontal resolution
+    let c_width = (width + 1) / 2;
+
+    for y in 0..strip_height {
+        for cx in 0..c_width {
+            let (cb, cr) = if use_iterative {
+                iterative_chroma_2x1_strip(rgb_strip, y_strip, width, bpp, cx, y)
+            } else {
+                gamma_aware_chroma_2x1_strip(rgb_strip, width, bpp, cx, y)
+            };
+            cb_down[y * c_width + cx] = cb;
+            cr_down[y * c_width + cx] = cr;
+        }
+    }
+}
+
+/// Computes gamma-aware chroma for a strip of image data (4:4:0 mode).
+pub fn gamma_aware_strip_440(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+    use_iterative: bool,
+) {
+    // Compute Y at full resolution using SIMD
+    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+
+    // Compute chroma at half vertical resolution
+    let c_strip_height = (strip_height + 1) / 2;
+
+    for cy in 0..c_strip_height {
+        for x in 0..width {
+            let (cb, cr) = if use_iterative {
+                iterative_chroma_1x2_strip(rgb_strip, y_strip, width, strip_height, bpp, x, cy)
+            } else {
+                gamma_aware_chroma_1x2_strip(rgb_strip, width, strip_height, bpp, x, cy)
+            };
+            cb_down[cy * width + x] = cb;
+            cr_down[cy * width + x] = cr;
+        }
+    }
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -721,6 +841,90 @@ fn iterative_chroma_1x2(
     }
 
     (cb, cr)
+}
+
+// ============================================================================
+// Strip-Specific Helper Functions
+// ============================================================================
+
+/// Gamma-aware chroma for a 2x2 block within a strip (4:2:0).
+#[inline]
+fn gamma_aware_chroma_2x2_strip(
+    data: &[u8],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+    cx: usize,
+    cy: usize,
+) -> (f32, f32) {
+    // Delegate to the existing function - it already handles edge cases
+    gamma_aware_chroma_2x2(data, width, strip_height, bpp, cx, cy)
+}
+
+/// Gamma-aware chroma for a 2x1 block within a strip (4:2:2).
+#[inline]
+fn gamma_aware_chroma_2x1_strip(
+    data: &[u8],
+    width: usize,
+    bpp: usize,
+    cx: usize,
+    y: usize,
+) -> (f32, f32) {
+    gamma_aware_chroma_2x1(data, width, bpp, cx, y)
+}
+
+/// Gamma-aware chroma for a 1x2 block within a strip (4:4:0).
+#[inline]
+fn gamma_aware_chroma_1x2_strip(
+    data: &[u8],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+    x: usize,
+    cy: usize,
+) -> (f32, f32) {
+    gamma_aware_chroma_1x2(data, width, strip_height, bpp, x, cy)
+}
+
+/// Iterative chroma optimization for a 2x2 block within a strip.
+#[inline]
+fn iterative_chroma_2x2_strip(
+    data: &[u8],
+    y_plane: &[f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+    cx: usize,
+    cy: usize,
+) -> (f32, f32) {
+    iterative_chroma_2x2(data, y_plane, width, strip_height, bpp, cx, cy)
+}
+
+/// Iterative chroma optimization for a 2x1 block within a strip.
+#[inline]
+fn iterative_chroma_2x1_strip(
+    data: &[u8],
+    y_plane: &[f32],
+    width: usize,
+    bpp: usize,
+    cx: usize,
+    y: usize,
+) -> (f32, f32) {
+    iterative_chroma_2x1(data, y_plane, width, bpp, cx, y)
+}
+
+/// Iterative chroma optimization for a 1x2 block within a strip.
+#[inline]
+fn iterative_chroma_1x2_strip(
+    data: &[u8],
+    y_plane: &[f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+    x: usize,
+    cy: usize,
+) -> (f32, f32) {
+    iterative_chroma_1x2(data, y_plane, width, strip_height, bpp, x, cy)
 }
 
 // ============================================================================
