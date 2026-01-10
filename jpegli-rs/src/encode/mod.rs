@@ -540,29 +540,48 @@ impl Encoder {
                 self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
                 self.write_frame_header(&mut output)?;
 
-                // Build optimized Huffman tables from blocks (uses MCU order)
-                let tables = self.build_optimized_tables(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                    is_color,
-                )?;
+                // Respect optimize_huffman config (must match full-plane encoder behavior)
+                let scan_data = if self.config.optimize_huffman {
+                    // Build optimized Huffman tables from blocks (uses MCU order)
+                    let tables = self.build_optimized_tables(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        is_color,
+                    )?;
 
-                self.write_huffman_tables_optimized(&mut output, &tables)?;
+                    self.write_huffman_tables_optimized(&mut output, &tables)?;
 
-                if self.config.restart_interval > 0 {
-                    self.write_restart_interval(&mut output)?;
-                }
-                self.write_scan_header(&mut output)?;
+                    if self.config.restart_interval > 0 {
+                        self.write_restart_interval(&mut output)?;
+                    }
+                    self.write_scan_header(&mut output)?;
 
-                // Encode blocks with optimized tables
-                let scan_data = self.encode_with_tables(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                    is_color,
-                    &tables,
-                )?;
+                    // Encode blocks with optimized tables
+                    self.encode_with_tables(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        is_color,
+                        &tables,
+                    )?
+                } else {
+                    // Use standard (fixed) Huffman tables
+                    self.write_huffman_tables(&mut output)?;
+
+                    if self.config.restart_interval > 0 {
+                        self.write_restart_interval(&mut output)?;
+                    }
+                    self.write_scan_header(&mut output)?;
+
+                    // Encode blocks with standard tables
+                    self.encode_blocks_standard(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        is_color,
+                    )?
+                };
 
                 output.extend_from_slice(&scan_data);
 
