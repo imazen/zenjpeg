@@ -62,11 +62,7 @@ fn test_444_subsampling() {
     assert!(rms < 5.0, "4:4:4 RMS too high");
 }
 
-// Note: Currently only 4:4:4 is fully supported.
-// These tests are marked as ignored until other subsampling modes are implemented.
-
 #[test]
-#[ignore = "4:2:2 subsampling not yet implemented"]
 fn test_422_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
     let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, Subsampling::S422);
@@ -75,10 +71,10 @@ fn test_422_subsampling() {
         "4:2:2: RMS={:.2}, max_diff={}, size={}",
         rms, max_diff, size
     );
+    assert!(rms < 6.0, "4:2:2 RMS too high: {}", rms);
 }
 
 #[test]
-#[ignore = "4:2:0 subsampling not yet implemented"]
 fn test_420_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
     let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, Subsampling::S420);
@@ -87,6 +83,7 @@ fn test_420_subsampling() {
         "4:2:0: RMS={:.2}, max_diff={}, size={}",
         rms, max_diff, size
     );
+    assert!(rms < 7.0, "4:2:0 RMS too high: {}", rms);
 }
 
 // ============================================================================
