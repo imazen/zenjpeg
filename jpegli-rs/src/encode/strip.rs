@@ -37,7 +37,7 @@ use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
 use crate::error::Result;
 use crate::huffman::optimize::FrequencyCounter;
-use crate::quant::aq::streaming::StreamingAQParity;
+use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::types::{PixelFormat, Subsampling};
@@ -80,8 +80,7 @@ fn extract_block_from_strip(
     block
 }
 
-// StreamingAQState replaced by StreamingAQParity from quant/aq/streaming.rs
-// which produces identical output to full-plane AQ computation.
+// StreamingAQ uses rolling buffers for low memory (~2.5 MB for 4K vs 33 MB).
 
 /// Strip-based encoder for low-memory JPEG encoding.
 ///
@@ -125,9 +124,9 @@ pub struct StripProcessor {
     /// Cr channel raw DCT blocks
     cr_blocks: Vec<[f32; DCT_BLOCK_SIZE]>,
 
-    // === Streaming AQ state (uses parity-matching algorithm) ===
+    // === Streaming AQ state (low memory, rolling buffers) ===
     // Initialized when quant tables are set (needs y_quant_01)
-    aq_state: Option<StreamingAQParity>,
+    aq_state: Option<StreamingAQ>,
 
     // === Huffman frequency accumulators ===
     /// DC luma frequency counter
@@ -268,7 +267,8 @@ impl StripProcessor {
     ) -> Result<()> {
         // Initialize streaming AQ with y_quant_01 for damping calculation
         let y_quant_01 = y_quant.values[1] as u16; // Position [0,1] in zigzag
-        self.aq_state = Some(StreamingAQParity::new(self.width, self.height, y_quant_01)?);
+        let v_samp = self.subsampling.v_samp_factor_luma() as usize;
+        self.aq_state = Some(StreamingAQ::new(self.width, self.height, y_quant_01, v_samp)?);
 
         self.y_quant = Some(y_quant);
         self.cb_quant = Some(cb_quant);
@@ -770,5 +770,5 @@ mod tests {
         assert_eq!(processor.strip_height(), 8); // 4:4:4 uses 8-row strips
     }
 
-    // StreamingAQParity tests are in quant/aq/streaming.rs
+    // StreamingAQ tests are in quant/aq/streaming.rs
 }
