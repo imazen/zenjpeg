@@ -30,7 +30,7 @@ use crate::huffman::HuffmanEncodeTable;
 use crate::quant::aq::compute_aq_strength_map;
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, ColorSpace, EncodingBackend, JpegMode, PixelFormat, Subsampling};
 
 /// JPEG encoder.
 pub struct Encoder {
@@ -240,13 +240,18 @@ impl Encoder {
         self
     }
 
-    /// Force full-plane encoding even for large images (benchmarking only).
+    /// Sets the encoding backend.
     ///
-    /// When enabled, disables auto-dispatch to strip-based encoding for images > 2MP.
-    /// This is useful for benchmarking to compare full-plane vs strip performance.
-    #[doc(hidden)]
-    pub fn force_full_plane(mut self, force: bool) -> Self {
-        self.config.force_full_plane = force;
+    /// Controls whether to use full-plane or strip-based encoding:
+    /// - [`EncodingBackend::Auto`]: Automatically selects based on image size (default)
+    /// - [`EncodingBackend::FullPlane`]: Traditional full-image encoding
+    /// - [`EncodingBackend::Strip`]: Low-memory strip-based encoding
+    ///
+    /// Both backends produce identical output for YCbCr encoding.
+    /// Strip backend does not support XYB color space.
+    #[must_use]
+    pub fn encoding_backend(mut self, backend: EncodingBackend) -> Self {
+        self.config.encoding_backend = backend;
         self
     }
 
@@ -341,13 +346,75 @@ impl Encoder {
             });
         }
 
-        // For now, implement baseline encoding only
-        match self.config.mode {
-            JpegMode::Baseline => self.encode_baseline(data),
-            JpegMode::Progressive => self.encode_progressive(data),
-            _ => Err(Error::UnsupportedFeature {
-                feature: "extended/lossless encoding",
-            }),
+        // Check if strip backend is supported for this config
+        let strip_supported = !self.config.use_xyb
+            && (self.config.mode == JpegMode::Baseline
+                || self.config.mode == JpegMode::Progressive);
+
+        // Dispatch based on encoding backend
+        match self.config.encoding_backend {
+            EncodingBackend::Strip => {
+                if !strip_supported {
+                    if self.config.use_xyb {
+                        return Err(Error::UnsupportedFeature {
+                            feature: "strip-based encoding does not support XYB color space",
+                        });
+                    }
+                    return Err(Error::UnsupportedFeature {
+                        feature: "strip-based encoding only supports baseline and progressive modes",
+                    });
+                }
+                self.encode_strip_based(data)
+            }
+            EncodingBackend::FullPlane | EncodingBackend::Auto => {
+                // Full-plane encoding
+                match self.config.mode {
+                    JpegMode::Baseline => self.encode_baseline(data),
+                    JpegMode::Progressive => self.encode_progressive(data),
+                    _ => Err(Error::UnsupportedFeature {
+                        feature: "extended/lossless encoding",
+                    }),
+                }
+            }
+            EncodingBackend::Both => {
+                // Run full-plane first
+                let full_result = match self.config.mode {
+                    JpegMode::Baseline => self.encode_baseline(data),
+                    JpegMode::Progressive => self.encode_progressive(data),
+                    _ => {
+                        return Err(Error::UnsupportedFeature {
+                            feature: "extended/lossless encoding",
+                        })
+                    }
+                }?;
+
+                // If strip is supported, run it and compare
+                if strip_supported {
+                    let strip_result = self.encode_strip_based(data)?;
+
+                    if full_result != strip_result {
+                        // Find first difference for debugging
+                        let first_diff = full_result
+                            .iter()
+                            .zip(strip_result.iter())
+                            .position(|(a, b)| a != b);
+                        let diff_info = match first_diff {
+                            Some(pos) => format!(
+                                "first difference at byte {}: full=0x{:02x}, strip=0x{:02x}",
+                                pos, full_result[pos], strip_result[pos]
+                            ),
+                            None => format!(
+                                "length mismatch: full={}, strip={}",
+                                full_result.len(),
+                                strip_result.len()
+                            ),
+                        };
+                        return Err(Error::EncodingBackendMismatch { details: diff_info });
+                    }
+                }
+
+                Ok(full_result)
+            }
         }
     }
 

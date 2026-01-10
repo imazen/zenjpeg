@@ -3,7 +3,7 @@
 //! This module contains all configuration-related types for the JPEG encoder.
 
 use crate::quant::Quality;
-use crate::types::{ChromaDownsampling, JpegMode, PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, EncodingBackend, JpegMode, PixelFormat, Subsampling};
 
 // ============================================================================
 // Progressive Scan Configuration
@@ -72,10 +72,8 @@ pub struct EncoderConfig {
     #[doc(hidden)]
     pub(crate) custom_quant_matrices: Option<crate::quant::CustomQuantMatrices>,
 
-    /// Force full-plane encoding even for large images (benchmarking only).
-    /// When true, disables auto-dispatch to strip-based encoding.
-    #[doc(hidden)]
-    pub(crate) force_full_plane: bool,
+    /// Encoding backend selection (full-plane, strip-based, or auto).
+    pub encoding_backend: EncodingBackend,
 }
 
 impl Default for EncoderConfig {
@@ -99,7 +97,7 @@ impl Default for EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
             custom_quant_matrices: None,
-            force_full_plane: false,
+            encoding_backend: EncodingBackend::Auto,
         }
     }
 }
