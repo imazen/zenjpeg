@@ -648,6 +648,398 @@ pub fn srgb_to_scaled_xyb_planes_simd(
     (x_plane, y_plane, b_plane)
 }
 
+/// SIMD-accelerated sRGB to scaled XYB conversion - inplace version.
+///
+/// Writes directly to pre-allocated buffers. Used by strip-based encoder
+/// to avoid per-strip allocations.
+pub fn srgb_to_scaled_xyb_planes_simd_inplace(
+    rgb_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    use wide::f32x8;
+
+    assert!(rgb_data.len() >= num_pixels * 3);
+    assert!(x_plane.len() >= num_pixels);
+    assert!(y_plane.len() >= num_pixels);
+    assert!(b_plane.len() >= num_pixels);
+
+    let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
+    let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
+    let neg_bias_cbrt = -cbrtf_fast(bias);
+
+    // SIMD constants for XYB matrix
+    let m00 = f32x8::splat(m[0]);
+    let m01 = f32x8::splat(m[1]);
+    let m02 = f32x8::splat(m[2]);
+    let m10 = f32x8::splat(m[3]);
+    let m11 = f32x8::splat(m[4]);
+    let m12 = f32x8::splat(m[5]);
+    let m20 = f32x8::splat(m[6]);
+    let m21 = f32x8::splat(m[7]);
+    let m22 = f32x8::splat(m[8]);
+    let bias_simd = f32x8::splat(bias);
+    let zero = f32x8::splat(0.0);
+    let neg_bias_cbrt_simd = f32x8::splat(neg_bias_cbrt);
+    let half = f32x8::splat(0.5);
+
+    // SIMD constants for scaling
+    let scale_x = f32x8::splat(SCALED_XYB_SCALE[0]);
+    let scale_y = f32x8::splat(SCALED_XYB_SCALE[1]);
+    let scale_b = f32x8::splat(SCALED_XYB_SCALE[2]);
+    let offset_x = f32x8::splat(SCALED_XYB_OFFSET[0]);
+    let offset_y = f32x8::splat(SCALED_XYB_OFFSET[1]);
+    let offset_b = f32x8::splat(SCALED_XYB_OFFSET[2]);
+
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let pixel_idx = chunk * 8;
+        let rgb_idx = pixel_idx * 3;
+
+        // Gather 8 RGB pixels and convert sRGB to linear via LUT
+        let r = f32x8::from([
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 3] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 6] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 9] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 12] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 15] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 18] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 21] as usize],
+        ]);
+
+        let g = f32x8::from([
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 1] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 4] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 7] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 10] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 13] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 16] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 19] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 22] as usize],
+        ]);
+
+        let b_in = f32x8::from([
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 2] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 5] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 8] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 11] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 14] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 17] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 20] as usize],
+            SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 23] as usize],
+        ]);
+
+        // Apply opsin absorbance matrix: mixed = M * [r, g, b]
+        let mixed0 = m00 * r + m01 * g + m02 * b_in + bias_simd;
+        let mixed1 = m10 * r + m11 * g + m12 * b_in + bias_simd;
+        let mixed2 = m20 * r + m21 * g + m22 * b_in + bias_simd;
+
+        // Clamp to non-negative for cube root
+        let mixed0 = mixed0.max(zero);
+        let mixed1 = mixed1.max(zero);
+        let mixed2 = mixed2.max(zero);
+
+        // Cube root approximation (fast, not perfectly accurate)
+        let gamma0 = cbrtf_x8(mixed0) + neg_bias_cbrt_simd;
+        let gamma1 = cbrtf_x8(mixed1) + neg_bias_cbrt_simd;
+        let gamma2 = cbrtf_x8(mixed2) + neg_bias_cbrt_simd;
+
+        // XYB color space transform
+        let x_out = half * (gamma0 - gamma1);
+        let y_out = half * (gamma0 + gamma1);
+        let b_out = gamma2;
+
+        // Apply scaling to [0, 1] range
+        let scaled_x = x_out * scale_x + offset_x;
+        let scaled_y = y_out * scale_y + offset_y;
+        let scaled_b = b_out * scale_b + offset_b;
+
+        // Store results
+        let x_arr: [f32; 8] = scaled_x.into();
+        let y_arr: [f32; 8] = scaled_y.into();
+        let b_arr: [f32; 8] = scaled_b.into();
+
+        x_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&x_arr);
+        y_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&y_arr);
+        b_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&b_arr);
+    }
+
+    // Scalar remainder
+    for i in (chunks * 8)..num_pixels {
+        let (x, y, b) =
+            srgb_to_scaled_xyb(rgb_data[i * 3], rgb_data[i * 3 + 1], rgb_data[i * 3 + 2]);
+        x_plane[i] = x;
+        y_plane[i] = y;
+        b_plane[i] = b;
+    }
+}
+
+/// SIMD-accelerated sRGB to scaled XYB conversion for RGBA input - inplace version.
+pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
+    rgba_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    use wide::f32x8;
+
+    assert!(rgba_data.len() >= num_pixels * 4);
+    assert!(x_plane.len() >= num_pixels);
+    assert!(y_plane.len() >= num_pixels);
+    assert!(b_plane.len() >= num_pixels);
+
+    let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
+    let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
+    let neg_bias_cbrt = -cbrtf_fast(bias);
+
+    let m00 = f32x8::splat(m[0]);
+    let m01 = f32x8::splat(m[1]);
+    let m02 = f32x8::splat(m[2]);
+    let m10 = f32x8::splat(m[3]);
+    let m11 = f32x8::splat(m[4]);
+    let m12 = f32x8::splat(m[5]);
+    let m20 = f32x8::splat(m[6]);
+    let m21 = f32x8::splat(m[7]);
+    let m22 = f32x8::splat(m[8]);
+    let bias_simd = f32x8::splat(bias);
+    let zero = f32x8::splat(0.0);
+    let neg_bias_cbrt_simd = f32x8::splat(neg_bias_cbrt);
+    let half = f32x8::splat(0.5);
+
+    let scale_x = f32x8::splat(SCALED_XYB_SCALE[0]);
+    let scale_y = f32x8::splat(SCALED_XYB_SCALE[1]);
+    let scale_b = f32x8::splat(SCALED_XYB_SCALE[2]);
+    let offset_x = f32x8::splat(SCALED_XYB_OFFSET[0]);
+    let offset_y = f32x8::splat(SCALED_XYB_OFFSET[1]);
+    let offset_b = f32x8::splat(SCALED_XYB_OFFSET[2]);
+
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let pixel_idx = chunk * 8;
+        let rgba_idx = pixel_idx * 4;
+
+        let r = f32x8::from([
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 4] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 8] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 12] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 16] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 20] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 24] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 28] as usize],
+        ]);
+
+        let g = f32x8::from([
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 1] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 5] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 9] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 13] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 17] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 21] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 25] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 29] as usize],
+        ]);
+
+        let b_in = f32x8::from([
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 2] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 6] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 10] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 14] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 18] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 22] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 26] as usize],
+            SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 30] as usize],
+        ]);
+
+        let mixed0 = m00 * r + m01 * g + m02 * b_in + bias_simd;
+        let mixed1 = m10 * r + m11 * g + m12 * b_in + bias_simd;
+        let mixed2 = m20 * r + m21 * g + m22 * b_in + bias_simd;
+
+        let mixed0 = mixed0.max(zero);
+        let mixed1 = mixed1.max(zero);
+        let mixed2 = mixed2.max(zero);
+
+        let gamma0 = cbrtf_x8(mixed0) + neg_bias_cbrt_simd;
+        let gamma1 = cbrtf_x8(mixed1) + neg_bias_cbrt_simd;
+        let gamma2 = cbrtf_x8(mixed2) + neg_bias_cbrt_simd;
+
+        let x_out = half * (gamma0 - gamma1);
+        let y_out = half * (gamma0 + gamma1);
+        let b_out = gamma2;
+
+        let scaled_x = x_out * scale_x + offset_x;
+        let scaled_y = y_out * scale_y + offset_y;
+        let scaled_b = b_out * scale_b + offset_b;
+
+        let x_arr: [f32; 8] = scaled_x.into();
+        let y_arr: [f32; 8] = scaled_y.into();
+        let b_arr: [f32; 8] = scaled_b.into();
+
+        x_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&x_arr);
+        y_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&y_arr);
+        b_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&b_arr);
+    }
+
+    // Scalar remainder
+    for i in (chunks * 8)..num_pixels {
+        let (x, y, b) =
+            srgb_to_scaled_xyb(rgba_data[i * 4], rgba_data[i * 4 + 1], rgba_data[i * 4 + 2]);
+        x_plane[i] = x;
+        y_plane[i] = y;
+        b_plane[i] = b;
+    }
+}
+
+/// SIMD-accelerated sRGB to scaled XYB conversion for BGRA input - inplace version.
+pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
+    bgra_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    use wide::f32x8;
+
+    assert!(bgra_data.len() >= num_pixels * 4);
+    assert!(x_plane.len() >= num_pixels);
+    assert!(y_plane.len() >= num_pixels);
+    assert!(b_plane.len() >= num_pixels);
+
+    let m = &XYB_OPSIN_ABSORBANCE_MATRIX;
+    let bias = XYB_OPSIN_ABSORBANCE_BIAS[0];
+    let neg_bias_cbrt = -cbrtf_fast(bias);
+
+    let m00 = f32x8::splat(m[0]);
+    let m01 = f32x8::splat(m[1]);
+    let m02 = f32x8::splat(m[2]);
+    let m10 = f32x8::splat(m[3]);
+    let m11 = f32x8::splat(m[4]);
+    let m12 = f32x8::splat(m[5]);
+    let m20 = f32x8::splat(m[6]);
+    let m21 = f32x8::splat(m[7]);
+    let m22 = f32x8::splat(m[8]);
+    let bias_simd = f32x8::splat(bias);
+    let zero = f32x8::splat(0.0);
+    let neg_bias_cbrt_simd = f32x8::splat(neg_bias_cbrt);
+    let half = f32x8::splat(0.5);
+
+    let scale_x = f32x8::splat(SCALED_XYB_SCALE[0]);
+    let scale_y = f32x8::splat(SCALED_XYB_SCALE[1]);
+    let scale_b = f32x8::splat(SCALED_XYB_SCALE[2]);
+    let offset_x = f32x8::splat(SCALED_XYB_OFFSET[0]);
+    let offset_y = f32x8::splat(SCALED_XYB_OFFSET[1]);
+    let offset_b = f32x8::splat(SCALED_XYB_OFFSET[2]);
+
+    let chunks = num_pixels / 8;
+
+    for chunk in 0..chunks {
+        let pixel_idx = chunk * 8;
+        let bgra_idx = pixel_idx * 4;
+
+        // BGRA order: B=0, G=1, R=2, A=3
+        let r = f32x8::from([
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 2] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 6] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 10] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 14] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 18] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 22] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 26] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 30] as usize],
+        ]);
+
+        let g = f32x8::from([
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 1] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 5] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 9] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 13] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 17] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 21] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 25] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 29] as usize],
+        ]);
+
+        let b_in = f32x8::from([
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 4] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 8] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 12] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 16] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 20] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 24] as usize],
+            SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 28] as usize],
+        ]);
+
+        let mixed0 = m00 * r + m01 * g + m02 * b_in + bias_simd;
+        let mixed1 = m10 * r + m11 * g + m12 * b_in + bias_simd;
+        let mixed2 = m20 * r + m21 * g + m22 * b_in + bias_simd;
+
+        let mixed0 = mixed0.max(zero);
+        let mixed1 = mixed1.max(zero);
+        let mixed2 = mixed2.max(zero);
+
+        let gamma0 = cbrtf_x8(mixed0) + neg_bias_cbrt_simd;
+        let gamma1 = cbrtf_x8(mixed1) + neg_bias_cbrt_simd;
+        let gamma2 = cbrtf_x8(mixed2) + neg_bias_cbrt_simd;
+
+        let x_out = half * (gamma0 - gamma1);
+        let y_out = half * (gamma0 + gamma1);
+        let b_out = gamma2;
+
+        let scaled_x = x_out * scale_x + offset_x;
+        let scaled_y = y_out * scale_y + offset_y;
+        let scaled_b = b_out * scale_b + offset_b;
+
+        let x_arr: [f32; 8] = scaled_x.into();
+        let y_arr: [f32; 8] = scaled_y.into();
+        let b_arr: [f32; 8] = scaled_b.into();
+
+        x_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&x_arr);
+        y_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&y_arr);
+        b_plane[pixel_idx..pixel_idx + 8].copy_from_slice(&b_arr);
+    }
+
+    // Scalar remainder
+    for i in (chunks * 8)..num_pixels {
+        let (x, y, b) = srgb_to_scaled_xyb(
+            bgra_data[i * 4 + 2], // R
+            bgra_data[i * 4 + 1], // G
+            bgra_data[i * 4],     // B
+        );
+        x_plane[i] = x;
+        y_plane[i] = y;
+        b_plane[i] = b;
+    }
+}
+
+/// SIMD-accelerated sRGB to scaled XYB conversion for BGR input - inplace version.
+pub fn srgb_to_scaled_xyb_planes_simd_bgr_inplace(
+    bgr_data: &[u8],
+    x_plane: &mut [f32],
+    y_plane: &mut [f32],
+    b_plane: &mut [f32],
+    num_pixels: usize,
+) {
+    // Reuse RGB inplace with swapped channels
+    // For now, use scalar fallback since we need to swap channels
+    for i in 0..num_pixels {
+        let (x, y, b) = srgb_to_scaled_xyb(
+            bgr_data[i * 3 + 2], // R
+            bgr_data[i * 3 + 1], // G
+            bgr_data[i * 3],     // B
+        );
+        x_plane[i] = x;
+        y_plane[i] = y;
+        b_plane[i] = b;
+    }
+}
+
 /// SIMD-accelerated sRGB to scaled XYB conversion for RGBA input (alpha ignored).
 ///
 /// Same as `srgb_to_scaled_xyb_planes_simd` but takes 4 bytes per pixel (RGBA).

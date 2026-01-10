@@ -37,184 +37,107 @@ impl Encoder {
     fn encode_baseline_ycbcr(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
-        // NOTE: Strip-based encoding exists (encode_strip_based) but is not auto-dispatched
-        // because it uses streaming AQ which produces different output than full-plane AQ.
-        // Strip encoding is opt-in only until output parity is achieved.
+        // Strip-based encoding (encode_strip_based) produces identical output for supported
+        // features but lacks: progressive mode, XYB color space, gamma-aware chroma downsampling.
+        // Auto-dispatch to strip encoding for large images could be added here based on
+        // pixel count threshold (e.g., >2MP) when force_full_plane is false.
 
-        // Check if internal_pipeline specifies gamma-aware downsampling
-        if let Some(ref pipeline) = self.config.internal_pipeline {
-            match pipeline.downsampling {
-                DownsamplingMethod::GammaAwareF32 => {
-                    // Use f32 gamma-aware single-pass path
-                    let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        match self.config.subsampling {
-                            Subsampling::S420 => chroma::convert_gamma_aware_420(
-                                data,
-                                width,
-                                height,
-                                self.config.pixel_format,
-                            )?,
-                            Subsampling::S422 => chroma::convert_gamma_aware_422(
-                                data,
-                                width,
-                                height,
-                                self.config.pixel_format,
-                            )?,
-                            Subsampling::S440 => chroma::convert_gamma_aware_440(
-                                data,
-                                width,
-                                height,
-                                self.config.pixel_format,
-                            )?,
-                            Subsampling::S444 => {
-                                // Should not happen - validation prevents this
-                                return Err(Error::InvalidColorFormat {
-                                    reason: "GammaAwareF32 not valid for 4:4:4",
-                                });
-                            }
-                        };
-                    return self.encode_baseline_ycbcr_with_planes(
-                        output,
-                        y_plane,
-                        cb_plane_final,
-                        cr_plane_final,
-                        c_width,
-                        c_height,
-                    );
-                }
-                DownsamplingMethod::GammaAwareIterative => {
-                    // Use f32 gamma-aware iterative path (Sharp YUV style optimization)
-                    let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        match self.config.subsampling {
-                            Subsampling::S420 => chroma::convert_gamma_aware_iterative_420(
-                                data,
-                                width,
-                                height,
-                                self.config.pixel_format,
-                            )?,
-                            Subsampling::S422 => chroma::convert_gamma_aware_iterative_422(
-                                data,
-                                width,
-                                height,
-                                self.config.pixel_format,
-                            )?,
-                            Subsampling::S440 => chroma::convert_gamma_aware_iterative_440(
-                                data,
-                                width,
-                                height,
-                                self.config.pixel_format,
-                            )?,
-                            Subsampling::S444 => {
-                                // Should not happen - validation prevents this
-                                return Err(Error::InvalidColorFormat {
-                                    reason: "GammaAwareIterative not valid for 4:4:4",
-                                });
-                            }
-                        };
-                    return self.encode_baseline_ycbcr_with_planes(
-                        output,
-                        y_plane,
-                        cb_plane_final,
-                        cr_plane_final,
-                        c_width,
-                        c_height,
-                    );
-                }
-                DownsamplingMethod::Sharp => {
-                    // Use internal gamma-aware iterative path (Sharp YUV style)
-                    match self.config.subsampling {
-                        Subsampling::S420 => {
-                            let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                                self.convert_gamma_aware_420(data, true)?;
-                            return self.encode_baseline_ycbcr_with_planes(
-                                output,
-                                y_plane,
-                                cb_plane_final,
-                                cr_plane_final,
-                                c_width,
-                                c_height,
-                            );
-                        }
-                        Subsampling::S422 => {
-                            let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                                self.convert_gamma_aware_422(data, true)?;
-                            return self.encode_baseline_ycbcr_with_planes(
-                                output,
-                                y_plane,
-                                cb_plane_final,
-                                cr_plane_final,
-                                c_width,
-                                c_height,
-                            );
-                        }
-                        Subsampling::S440 => {
-                            // Sharp doesn't support 4:4:0, fall through
-                        }
-                        Subsampling::S444 => {
-                            // No downsampling needed
-                        }
+        // Handle gamma-aware downsampling methods
+        match self.config.chroma_downsampling {
+            ChromaDownsampling::GammaAware => {
+                // Gamma-aware single-pass (linear space averaging)
+                match self.config.subsampling {
+                    Subsampling::S420 => {
+                        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                            self.convert_gamma_aware_420(data, false)?;
+                        return self.encode_baseline_ycbcr_with_planes(
+                            output,
+                            y_plane,
+                            cb_plane_final,
+                            cr_plane_final,
+                            c_width,
+                            c_height,
+                        );
+                    }
+                    Subsampling::S422 => {
+                        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                            self.convert_gamma_aware_422(data, false)?;
+                        return self.encode_baseline_ycbcr_with_planes(
+                            output,
+                            y_plane,
+                            cb_plane_final,
+                            cr_plane_final,
+                            c_width,
+                            c_height,
+                        );
+                    }
+                    Subsampling::S440 => {
+                        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                            self.convert_gamma_aware_440(data, false)?;
+                        return self.encode_baseline_ycbcr_with_planes(
+                            output,
+                            y_plane,
+                            cb_plane_final,
+                            cr_plane_final,
+                            c_width,
+                            c_height,
+                        );
+                    }
+                    Subsampling::S444 => {
+                        // No downsampling needed, fall through to box filter path
                     }
                 }
-                DownsamplingMethod::Box => {
-                    // Use intrinsic box filter path (f32 conversion + box filter downsampling)
-                    let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        self.convert_intrinsic_with_subsampling(data)?;
-                    return self.encode_baseline_ycbcr_with_planes(
-                        output,
-                        y_plane,
-                        cb_plane_final,
-                        cr_plane_final,
-                        c_width,
-                        c_height,
-                    );
+            }
+            ChromaDownsampling::GammaAwareIterative => {
+                // Gamma-aware iterative (Sharp YUV style)
+                match self.config.subsampling {
+                    Subsampling::S420 => {
+                        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                            self.convert_gamma_aware_420(data, true)?;
+                        return self.encode_baseline_ycbcr_with_planes(
+                            output,
+                            y_plane,
+                            cb_plane_final,
+                            cr_plane_final,
+                            c_width,
+                            c_height,
+                        );
+                    }
+                    Subsampling::S422 => {
+                        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                            self.convert_gamma_aware_422(data, true)?;
+                        return self.encode_baseline_ycbcr_with_planes(
+                            output,
+                            y_plane,
+                            cb_plane_final,
+                            cr_plane_final,
+                            c_width,
+                            c_height,
+                        );
+                    }
+                    Subsampling::S440 => {
+                        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+                            self.convert_gamma_aware_440(data, true)?;
+                        return self.encode_baseline_ycbcr_with_planes(
+                            output,
+                            y_plane,
+                            cb_plane_final,
+                            cr_plane_final,
+                            c_width,
+                            c_height,
+                        );
+                    }
+                    Subsampling::S444 => {
+                        // No downsampling needed, fall through to box filter path
+                    }
                 }
-                _ => {}
+            }
+            ChromaDownsampling::Box => {
+                // Fall through to box filter path below
             }
         }
 
-        // Resolve Auto to concrete method based on subsampling
-        let chroma_method = self
-            .config
-            .chroma_conversion
-            .resolve(self.config.subsampling);
-
-        // Gamma-aware path (Sharp or Fast): performs color conversion + downsampling in one step
-        if matches!(
-            chroma_method,
-            ChromaConversion::Sharp | ChromaConversion::Fast
-        ) {
-            let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
-            match self.config.subsampling {
-                Subsampling::S420 => {
-                    let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        self.convert_gamma_aware_420(data, use_sharp)?;
-                    return self.encode_baseline_ycbcr_with_planes(
-                        output,
-                        y_plane,
-                        cb_plane_final,
-                        cr_plane_final,
-                        c_width,
-                        c_height,
-                    );
-                }
-                Subsampling::S422 => {
-                    let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
-                        self.convert_gamma_aware_422(data, use_sharp)?;
-                    return self.encode_baseline_ycbcr_with_planes(
-                        output,
-                        y_plane,
-                        cb_plane_final,
-                        cr_plane_final,
-                        c_width,
-                        c_height,
-                    );
-                }
-                // Gamma-aware path supports 4:2:0 and 4:2:2; fall through to Intrinsic for others
-                _ => {}
-            }
-        }
-
-        // Intrinsic path: convert to YCbCr using f32 precision throughout (matches C++ jpegli)
+        // Box filter path: convert to YCbCr using f32 precision throughout (matches C++ jpegli)
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
         // Handle chroma subsampling
