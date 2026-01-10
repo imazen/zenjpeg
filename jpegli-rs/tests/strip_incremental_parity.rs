@@ -394,6 +394,95 @@ fn test_aq_parity_strip_vs_fullplane() {
     }
 }
 
+/// Verify that streaming AQ incremental mode (process + flush) produces
+/// identical results to batch mode (finalize).
+#[test]
+fn test_streaming_aq_incremental_vs_batch() {
+    use jpegli::quant::aq::streaming::StreamingAQ;
+
+    let test_cases = [
+        (128, 128, 2, "128x128 v_samp=2"),
+        (256, 256, 2, "256x256 v_samp=2"),
+        (320, 240, 2, "320x240 v_samp=2"),
+        (1118, 1105, 2, "frymire-like v_samp=2"),
+        (256, 256, 1, "256x256 v_samp=1"),
+    ];
+
+    for (width, height, v_samp, name) in test_cases {
+        let y_quant_01 = 3u16; // Typical value at quality 85
+        let strip_height = 8 * v_samp;
+
+        // Generate Y plane
+        let y_plane: Vec<f32> = (0..width * height)
+            .map(|i| {
+                let x = i % width;
+                let y = i / width;
+                0.299 * (x * 255 / width.max(1)) as f32
+                    + 0.587 * (y * 255 / height.max(1)) as f32
+                    + 0.114 * ((x + y) * 128 / (width + height).max(1)) as f32
+            })
+            .collect();
+
+        // Batch mode
+        let mut batch_aq = StreamingAQ::new(width, height, y_quant_01, v_samp).unwrap();
+        for strip_y in (0..height).step_by(strip_height) {
+            let actual_height = strip_height.min(height - strip_y);
+            let strip_start = strip_y * width;
+            let strip_end = strip_start + actual_height * width;
+            batch_aq.process_y_strip(&y_plane[strip_start..strip_end], strip_y, actual_height);
+        }
+        let batch_result = batch_aq.finalize().unwrap();
+
+        // Incremental mode
+        let mut incr_aq = StreamingAQ::new(width, height, y_quant_01, v_samp).unwrap();
+        let mut incr_result = Vec::new();
+        for strip_y in (0..height).step_by(strip_height) {
+            let actual_height = strip_height.min(height - strip_y);
+            let strip_start = strip_y * width;
+            let strip_end = strip_start + actual_height * width;
+            if let Some(aq) =
+                incr_aq.process_y_strip(&y_plane[strip_start..strip_end], strip_y, actual_height)
+            {
+                incr_result.extend_from_slice(aq);
+            }
+        }
+        if let Some(aq) = incr_aq.flush() {
+            incr_result.extend_from_slice(aq);
+        }
+
+        assert_eq!(
+            batch_result.len(),
+            incr_result.len(),
+            "{}: length mismatch ({} vs {})",
+            name,
+            batch_result.len(),
+            incr_result.len()
+        );
+
+        let mut max_diff = 0.0f32;
+        let mut diff_count = 0;
+        for (i, (b, inc)) in batch_result.iter().zip(incr_result.iter()).enumerate() {
+            let diff = (b - inc).abs();
+            if diff > 1e-9 {
+                diff_count += 1;
+                max_diff = max_diff.max(diff);
+                if diff_count <= 3 {
+                    eprintln!(
+                        "{}: AQ mismatch at {}: batch={:.6}, incr={:.6}",
+                        name, i, b, inc
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            diff_count, 0,
+            "{}: {} values differ (max_diff={:.9})",
+            name, diff_count, max_diff
+        );
+    }
+}
+
 // =============================================================================
 // Edge case tests
 // =============================================================================

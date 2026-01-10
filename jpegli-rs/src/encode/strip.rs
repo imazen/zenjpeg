@@ -751,28 +751,26 @@ impl StripProcessor {
             let c_blocks_h = self.c_blocks_h;
             let c_blocks_v = self.c_blocks_v;
 
-            // Number of Y blocks added in this iMCU
-            let y_blocks_this_imcu = self.y_blocks.len() - start_y_idx;
+            // Compute global chroma by from how many chroma blocks we've already processed
+            // For 4:2:0, each iMCU has 1 chroma block row
+            let global_chroma_by = self.cb_blocks.len() / c_blocks_h.max(1);
 
             // Quantize Cb blocks - first pass
             let mut cb_quantized = Vec::with_capacity(self.pending_cb_blocks[buffer_idx].len());
             for (i, dct) in self.pending_cb_blocks[buffer_idx].iter().enumerate() {
                 let bx = i % c_blocks_h.max(1);
-                let by = i / c_blocks_h.max(1);
+                let local_by = i / c_blocks_h.max(1);
+                // Compute global Y position for this chroma block
                 let y_bx = (bx * y_blocks_h) / c_blocks_h.max(1);
-                let y_by = (by * y_blocks_v) / c_blocks_v.max(1);
-                let y_local_idx = (y_by % 2) * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
-                let aq_strength = if y_local_idx < aq_strengths.len() {
-                    aq_strengths[y_local_idx]
-                } else if y_local_idx < y_blocks_this_imcu {
-                    let global_idx = start_y_idx + y_local_idx;
-                    if global_idx < self.all_aq_strengths.len() {
-                        self.all_aq_strengths[global_idx]
-                    } else {
-                        0.08
-                    }
+                let chroma_by = global_chroma_by + local_by;
+                let y_by = (chroma_by * y_blocks_v) / c_blocks_v.max(1);
+                // Use global AQ index
+                let global_aq_idx =
+                    y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+                let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {
+                    self.all_aq_strengths[global_aq_idx]
                 } else {
-                    0.08
+                    0.08 // C++ mean fallback
                 };
 
                 let quant_coeffs = cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
@@ -787,25 +785,23 @@ impl StripProcessor {
                 self.count_block_frequencies(&zigzag, false);
             }
 
-            // Quantize Cr blocks - first pass
+            // Quantize Cr blocks - first pass (use same global chroma by calculation)
+            let global_chroma_by_cr = self.cr_blocks.len() / c_blocks_h.max(1);
             let mut cr_quantized = Vec::with_capacity(self.pending_cr_blocks[buffer_idx].len());
             for (i, dct) in self.pending_cr_blocks[buffer_idx].iter().enumerate() {
                 let bx = i % c_blocks_h.max(1);
-                let by = i / c_blocks_h.max(1);
+                let local_by = i / c_blocks_h.max(1);
+                // Compute global Y position for this chroma block
                 let y_bx = (bx * y_blocks_h) / c_blocks_h.max(1);
-                let y_by = (by * y_blocks_v) / c_blocks_v.max(1);
-                let y_local_idx = (y_by % 2) * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
-                let aq_strength = if y_local_idx < aq_strengths.len() {
-                    aq_strengths[y_local_idx]
-                } else if y_local_idx < y_blocks_this_imcu {
-                    let global_idx = start_y_idx + y_local_idx;
-                    if global_idx < self.all_aq_strengths.len() {
-                        self.all_aq_strengths[global_idx]
-                    } else {
-                        0.08
-                    }
+                let chroma_by = global_chroma_by_cr + local_by;
+                let y_by = (chroma_by * y_blocks_v) / c_blocks_v.max(1);
+                // Use global AQ index
+                let global_aq_idx =
+                    y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+                let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {
+                    self.all_aq_strengths[global_aq_idx]
                 } else {
-                    0.08
+                    0.08 // C++ mean fallback
                 };
 
                 let quant_coeffs = cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
