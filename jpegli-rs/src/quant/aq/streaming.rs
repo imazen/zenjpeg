@@ -261,16 +261,29 @@ impl StreamingAQ {
         let next_imcu_boundary = (self.current_imcu_row + 1) * imcu_height;
 
         if self.rows_received >= next_imcu_boundary.min(self.height) {
+            // Edge clamp: fill remaining rows of the iMCU buffer with copies of the last valid row
+            // This is needed for partial iMCU rows at the bottom of the image
+            let valid_rows_in_imcu = self.rows_received - self.current_imcu_row * imcu_height;
+            if valid_rows_in_imcu < imcu_height && valid_rows_in_imcu > 0 {
+                let last_valid_row = valid_rows_in_imcu - 1;
+                let src_start = last_valid_row * self.width;
+                let src_end = src_start + self.width;
+                for fill_row in valid_rows_in_imcu..imcu_height {
+                    let dest_start = fill_row * self.width;
+                    self.y_imcu_buffers[self.y_imcu_current]
+                        .copy_within(src_start..src_end, dest_start);
+                }
+            }
             // Finalize previously pending iMCU (the one waiting for lookahead)
-            let result = if let Some(pending) = self.pending_imcu_row.take() {
+            let valid_count = if let Some(pending) = self.pending_imcu_row.take() {
                 let prev_buffer = 1 - self.y_imcu_current;
-                self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
-                // Accumulate for batch mode
+                let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
+                // Accumulate for batch mode - only the valid portion
                 self.all_aq_strengths
-                    .extend_from_slice(&self.imcu_aq_strengths);
-                true
+                    .extend_from_slice(&self.imcu_aq_strengths[..count]);
+                Some(count)
             } else {
-                false
+                None
             };
 
             // Mark just-completed iMCU as pending
@@ -278,8 +291,8 @@ impl StreamingAQ {
             self.current_imcu_row += 1;
             self.y_imcu_current = 1 - self.y_imcu_current;
 
-            if result {
-                return Some(&self.imcu_aq_strengths);
+            if let Some(count) = valid_count {
+                return Some(&self.imcu_aq_strengths[..count]);
             }
         }
 
@@ -292,10 +305,11 @@ impl StreamingAQ {
     pub fn flush(&mut self) -> Option<&[f32]> {
         if let Some(pending) = self.pending_imcu_row.take() {
             let prev_buffer = 1 - self.y_imcu_current;
-            self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
+            let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
+            // Only append the valid portion for partial iMCU rows
             self.all_aq_strengths
-                .extend_from_slice(&self.imcu_aq_strengths);
-            return Some(&self.imcu_aq_strengths);
+                .extend_from_slice(&self.imcu_aq_strengths[..count]);
+            return Some(&self.imcu_aq_strengths[..count]);
         }
         None
     }
@@ -399,9 +413,21 @@ impl StreamingAQ {
         self.pre_erosion_rows_flushed = block_y + 1;
     }
 
-    fn finalize_imcu_aq_with_buffer(&mut self, imcu_row: usize, y_buffer_idx: usize) {
+    /// Compute AQ strengths for an iMCU row.
+    /// Returns the number of valid AQ values computed (may be less than
+    /// blocks_per_imcu for partial iMCU rows at the bottom of the image).
+    fn finalize_imcu_aq_with_buffer(&mut self, imcu_row: usize, y_buffer_idx: usize) -> usize {
         let v_samp = self.y_imcu_height / 8;
         let blocks_w = self.blocks_w;
+
+        // Compute actual valid pixel height in this iMCU buffer
+        // For partial iMCU rows at the bottom, this may be less than y_imcu_height
+        let imcu_start_row = imcu_row * self.y_imcu_height;
+        let valid_pixel_height = if imcu_start_row + self.y_imcu_height <= self.height {
+            self.y_imcu_height
+        } else {
+            self.height.saturating_sub(imcu_start_row)
+        };
 
         // Damping calculation (from per_block_modulations_simd)
         const K_AC_QUANT: f32 = 0.841;
@@ -419,11 +445,13 @@ impl StreamingAQ {
         let mul = K_AC_QUANT * dampen;
         let add = (1.0 - dampen) * base_level;
 
+        let mut valid_rows = 0;
         for by_offset in 0..v_samp {
             let global_by = imcu_row * v_samp + by_offset;
             if global_by >= self.blocks_h {
                 break;
             }
+            valid_rows += 1;
 
             let row_start = by_offset * blocks_w;
             let row_end = row_start + blocks_w;
@@ -436,10 +464,11 @@ impl StreamingAQ {
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
             // Per-block modulations
+            // Use valid_pixel_height instead of y_imcu_height for proper boundary handling
             per_block_modulations_row(
                 &self.y_imcu_buffers[y_buffer_idx],
                 self.width,
-                self.y_imcu_height,
+                valid_pixel_height,
                 by_offset,
                 blocks_w,
                 &mut self.fuzzy_erosion_out[row_start..row_end],
@@ -454,6 +483,8 @@ impl StreamingAQ {
                 self.imcu_aq_strengths[block_idx] = quant_field_to_aq_strength(qf);
             }
         }
+
+        valid_rows * blocks_w
     }
 
     fn compute_fuzzy_erosion_row_into(&mut self, pe_y_base: usize, start: usize, end: usize) {
