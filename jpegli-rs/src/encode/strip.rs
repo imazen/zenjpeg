@@ -268,7 +268,12 @@ impl StripProcessor {
         // Initialize streaming AQ with y_quant_01 for damping calculation
         let y_quant_01 = y_quant.values[1] as u16; // Position [0,1] in zigzag
         let v_samp = self.subsampling.v_samp_factor_luma() as usize;
-        self.aq_state = Some(StreamingAQ::new(self.width, self.height, y_quant_01, v_samp)?);
+        self.aq_state = Some(StreamingAQ::new(
+            self.width,
+            self.height,
+            y_quant_01,
+            v_samp,
+        )?);
 
         self.y_quant = Some(y_quant);
         self.cb_quant = Some(cb_quant);
@@ -499,8 +504,7 @@ impl StripProcessor {
 
             for bx in 0..blocks_w {
                 // Extract 8×8 block from Y strip (use valid portion of buffer)
-                let block =
-                    extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, width);
+                let block = extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, width);
 
                 // DCT - store raw coefficients (quantization happens in finalize)
                 let dct = forward_dct_8x8(&block);
@@ -612,8 +616,14 @@ impl StripProcessor {
         let y_zero_bias = self.y_zero_bias.clone().expect("y_zero_bias not set");
         let y_zero_bias_simd = ZeroBiasSimd::from_params(&y_zero_bias);
 
-        let cb_quant_simd = self.cb_quant.as_ref().map(|q| QuantTableSimd::from_values(&q.values));
-        let cr_quant_simd = self.cr_quant.as_ref().map(|q| QuantTableSimd::from_values(&q.values));
+        let cb_quant_simd = self
+            .cb_quant
+            .as_ref()
+            .map(|q| QuantTableSimd::from_values(&q.values));
+        let cr_quant_simd = self
+            .cr_quant
+            .as_ref()
+            .map(|q| QuantTableSimd::from_values(&q.values));
         let cb_zero_bias_simd = self.cb_zero_bias.as_ref().map(ZeroBiasSimd::from_params);
         let cr_zero_bias_simd = self.cr_zero_bias.as_ref().map(ZeroBiasSimd::from_params);
 
@@ -651,9 +661,12 @@ impl StripProcessor {
         let mut cb_quantized = Vec::with_capacity(self.cb_blocks.len());
         let mut cr_quantized = Vec::with_capacity(self.cr_blocks.len());
 
-        if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) =
-            (cb_quant_simd, cr_quant_simd, cb_zero_bias_simd, cr_zero_bias_simd)
-        {
+        if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) = (
+            cb_quant_simd,
+            cr_quant_simd,
+            cb_zero_bias_simd,
+            cr_zero_bias_simd,
+        ) {
             // Compute block dimensions for AQ mapping (same as full-plane encoder)
             let y_blocks_h = (self.width + 7) / 8;
             let y_blocks_v = (self.height + 7) / 8;
@@ -679,8 +692,7 @@ impl StripProcessor {
                     0.08
                 };
 
-                let quant_coeffs =
-                    cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
+                let quant_coeffs = cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 cb_quantized.push(zigzag);
@@ -700,8 +712,7 @@ impl StripProcessor {
                     0.08
                 };
 
-                let quant_coeffs =
-                    cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
+                let quant_coeffs = cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 cr_quantized.push(zigzag);

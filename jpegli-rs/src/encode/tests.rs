@@ -298,118 +298,6 @@ fn test_xyb_huffman_optimization() {
 }
 
 #[test]
-fn test_smoothing_factor() {
-    // Create a high-frequency COLOR pattern that will show smoothing effects
-    // (black/white won't work - chroma is constant for grayscale)
-    let width = 64u32;
-    let height = 64u32;
-    let mut data = vec![0u8; (width * height * 3) as usize];
-
-    // Create colorful checkerboard pattern (red/cyan alternating)
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let idx = (y * width as usize + x) * 3;
-            if (x + y) % 2 == 0 {
-                // Red
-                data[idx] = 255;
-                data[idx + 1] = 0;
-                data[idx + 2] = 0;
-            } else {
-                // Cyan
-                data[idx] = 0;
-                data[idx + 1] = 255;
-                data[idx + 2] = 255;
-            }
-        }
-    }
-
-    // Encode with 4:2:0 subsampling, no smoothing
-    let jpeg_no_smooth = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S420)
-        .smoothing_factor(0)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&data)
-        .expect("Encoding without smoothing failed");
-
-    // Encode with 4:2:0 subsampling, moderate smoothing
-    let jpeg_smooth_50 = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S420)
-        .smoothing_factor(50)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&data)
-        .expect("Encoding with smoothing=50 failed");
-
-    // Encode with 4:2:0 subsampling, max smoothing
-    let jpeg_smooth_100 = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S420)
-        .smoothing_factor(100)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&data)
-        .expect("Encoding with smoothing=100 failed");
-
-    // All should produce valid JPEGs
-    assert_eq!(jpeg_no_smooth[0], 0xFF);
-    assert_eq!(jpeg_no_smooth[1], MARKER_SOI);
-    assert_eq!(jpeg_smooth_50[0], 0xFF);
-    assert_eq!(jpeg_smooth_50[1], MARKER_SOI);
-    assert_eq!(jpeg_smooth_100[0], 0xFF);
-    assert_eq!(jpeg_smooth_100[1], MARKER_SOI);
-
-    // All should be decodable
-    assert!(decode_zune(&jpeg_no_smooth[..]).is_ok());
-    assert!(decode_zune(&jpeg_smooth_50[..]).is_ok());
-    assert!(decode_zune(&jpeg_smooth_100[..]).is_ok());
-
-    // Smoothing should reduce file size for high-frequency content
-    // (blurring reduces chroma complexity)
-    println!(
-        "No smooth: {} bytes, Smooth 50: {} bytes, Smooth 100: {} bytes",
-        jpeg_no_smooth.len(),
-        jpeg_smooth_50.len(),
-        jpeg_smooth_100.len()
-    );
-}
-
-#[test]
-fn test_smoothing_factor_444_noop() {
-    // With 4:4:4 subsampling, smoothing should have no effect
-    let width = 32u32;
-    let height = 32u32;
-    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
-
-    let jpeg_no_smooth = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S444)
-        .smoothing_factor(0)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&data)
-        .expect("Encoding 444 without smoothing failed");
-
-    let jpeg_smooth = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S444)
-        .smoothing_factor(100)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&data)
-        .expect("Encoding 444 with smoothing failed");
-
-    // With 4:4:4, smoothing shouldn't change anything (no downsampling)
-    assert_eq!(
-        jpeg_no_smooth.len(),
-        jpeg_smooth.len(),
-        "4:4:4 should not be affected by smoothing_factor"
-    );
-}
-
-#[test]
 fn test_sharp_yuv_420() {
     // Test Sharp YUV with 4:2:0 produces valid JPEG
     let width = 64u32;
@@ -546,23 +434,6 @@ fn test_internal_pathway_valid_f32_box_420() {
         .set_internal_pathway(P_F32_BOX);
 
     assert!(encoder.is_ok(), "P_F32_BOX with 4:2:0 should be valid");
-}
-
-#[test]
-fn test_internal_pathway_valid_f32_box_smooth50() {
-    use internal_pathway::*;
-
-    // P_F32_BOX_SMOOTH50 should work with 4:2:0
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_F32_BOX_SMOOTH50);
-
-    assert!(
-        encoder.is_ok(),
-        "P_F32_BOX_SMOOTH50 with 4:2:0 should be valid"
-    );
 }
 
 #[test]
@@ -898,48 +769,14 @@ fn test_internal_pathway_invalid_color_byte() {
 fn test_internal_pathway_invalid_downsample_byte() {
     use internal_pathway::*;
 
-    // Invalid downsampling byte (7+)
+    // Invalid downsampling byte (6+)
     let encoder = Encoder::new()
         .width(16)
         .height(16)
         .subsampling(Subsampling::S444)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | (7 << 8));
+        .set_internal_pathway(COLOR_INTRINSIC_F32 | (6 << 8));
 
-    assert!(encoder.is_err(), "Downsample byte 7 should be invalid");
-}
-
-#[test]
-fn test_internal_pathway_invalid_smoothing_over_100() {
-    use internal_pathway::*;
-
-    // Smoothing > 100 should fail
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(with_smoothing(
-            COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX_SMOOTHED,
-            101,
-        ));
-
-    assert!(encoder.is_err(), "Smoothing factor 101 should be invalid");
-}
-
-#[test]
-fn test_internal_pathway_invalid_smoothing_without_box_smoothed() {
-    use internal_pathway::*;
-
-    // Smoothing with non-BoxSmoothed downsampling should fail
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(with_smoothing(COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX, 50));
-
-    assert!(
-        encoder.is_err(),
-        "Smoothing with DOWNSAMPLE_BOX should fail"
-    );
+    assert!(encoder.is_err(), "Downsample byte 6 should be invalid");
 }
 
 #[test]
@@ -957,17 +794,6 @@ fn test_internal_pathway_invalid_reserved_bits() {
     assert!(encoder.is_err(), "Reserved bit 32 should be invalid");
 }
 
-#[test]
-fn test_internal_pathway_with_smoothing_helper() {
-    use internal_pathway::*;
-
-    // with_smoothing helper should work correctly
-    let pathway = with_smoothing(COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX_SMOOTHED, 75);
-    assert_eq!(pathway & 0xFF, COLOR_INTRINSIC_F32);
-    assert_eq!((pathway >> 8) & 0xFF, 3); // DOWNSAMPLE_BOX_SMOOTHED = 3
-    assert_eq!((pathway >> 16) & 0xFF, 75);
-}
-
 fn decode_zune(data: &[u8]) -> std::result::Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
@@ -981,18 +807,16 @@ fn test_internal_pathway_pipeline_encode_decode() {
     use internal_pathway::*;
 
     // Test that InternalPipeline roundtrips correctly
-    let pipeline = InternalPipeline::from_u64(P_F32_BOX_SMOOTH50).unwrap();
+    let pipeline = InternalPipeline::from_u64(P_F32_BOX).unwrap();
     assert_eq!(
         pipeline.color_conversion,
         ColorConversionMethod::IntrinsicF32
     );
-    assert_eq!(pipeline.downsampling, DownsamplingMethod::BoxSmoothed);
-    assert_eq!(pipeline.smoothing_factor, 50);
+    assert_eq!(pipeline.downsampling, DownsamplingMethod::Box);
 
     // Test encode/decode roundtrip
     let encoded = pipeline.to_u64();
     let decoded = InternalPipeline::from_u64(encoded).unwrap();
     assert_eq!(decoded.color_conversion, pipeline.color_conversion);
     assert_eq!(decoded.downsampling, pipeline.downsampling);
-    assert_eq!(decoded.smoothing_factor, pipeline.smoothing_factor);
 }

@@ -571,9 +571,7 @@ impl Encoder {
         let (x_plane, y_plane, b_plane) = self.convert_to_scaled_xyb(data)?;
 
         // Downsample B channel to match C++ XYB behavior (2x2,2x2,1x1 subsampling)
-        // Apply input smoothing before downsampling (matches C++ jpegli behavior)
-        let b_smooth = self.apply_input_smoothing(&b_plane, width, height)?;
-        let b_downsampled = self.downsample_2x2_f32(&b_smooth, width, height)?;
+        let b_downsampled = self.downsample_2x2_f32(&b_plane, width, height)?;
         let b_width = (width + 1) / 2;
         let b_height = (height + 1) / 2;
 
@@ -655,8 +653,7 @@ impl Encoder {
         let (x_plane, y_plane, b_plane) = self.convert_to_scaled_xyb(data)?;
 
         // Downsample B channel (2x2,2x2,1x1 subsampling for XYB)
-        let b_smooth = self.apply_input_smoothing(&b_plane, width, height)?;
-        let b_downsampled = self.downsample_2x2_f32(&b_smooth, width, height)?;
+        let b_downsampled = self.downsample_2x2_f32(&b_plane, width, height)?;
         let b_width = (width + 1) / 2;
         let b_height = (height + 1) / 2;
 

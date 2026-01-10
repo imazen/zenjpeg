@@ -98,22 +98,6 @@ impl Encoder {
         crate::encode_simd::downsample_1x2_simd(plane, width, height)
     }
 
-    /// Applies input smoothing to a plane before downsampling.
-    ///
-    /// This is a 3x3 weighted blur matching libjpeg/jpegli's smoothing_factor:
-    /// - Center pixel weight: 1.0 - 8 * (factor / 1024)
-    /// - Neighbor pixel weight: factor / 1024
-    ///
-    /// Only applied when smoothing_factor > 0 and plane will be downsampled.
-    pub(super) fn apply_input_smoothing(
-        &self,
-        plane: &[f32],
-        width: usize,
-        height: usize,
-    ) -> Result<Vec<f32>> {
-        crate::encode_simd::apply_smoothing_simd(plane, width, height, self.config.smoothing_factor)
-    }
-
     /// Converts RGB to YCbCr using yuv crate for 4:2:0 subsampling.
     ///
     /// If `use_sharp` is true, uses Sharp YUV (gamma-aware, better edges).
@@ -391,67 +375,32 @@ impl Encoder {
         // Convert to YCbCr using f32 precision throughout (matches C++ jpegli)
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
 
-        // Handle chroma subsampling (with optional input smoothing)
-        // Only apply smoothing if smoothing_factor > 0 to avoid unnecessary copies
-        let use_smoothing = self.config.smoothing_factor > 0;
+        // Handle chroma subsampling
         let (cb_final, cr_final, c_width, c_height) = match self.config.subsampling {
             Subsampling::S420 => {
-                // 4:2:0: Apply smoothing (if enabled) then downsample both Cb and Cr by 2x2
-                let (cb_down, cr_down) = if use_smoothing {
-                    let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                    let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                    (
-                        self.downsample_2x2_f32(&cb_smooth, width, height)?,
-                        self.downsample_2x2_f32(&cr_smooth, width, height)?,
-                    )
-                } else {
-                    (
-                        self.downsample_2x2_f32(&cb_plane, width, height)?,
-                        self.downsample_2x2_f32(&cr_plane, width, height)?,
-                    )
-                };
+                // 4:2:0: Downsample both Cb and Cr by 2x2
+                let cb_down = self.downsample_2x2_f32(&cb_plane, width, height)?;
+                let cr_down = self.downsample_2x2_f32(&cr_plane, width, height)?;
                 let c_w = (width + 1) / 2;
                 let c_h = (height + 1) / 2;
                 (cb_down, cr_down, c_w, c_h)
             }
             Subsampling::S422 => {
-                // 4:2:2: Apply smoothing (if enabled) then downsample horizontally only
-                let (cb_down, cr_down) = if use_smoothing {
-                    let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                    let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                    (
-                        self.downsample_2x1_f32(&cb_smooth, width, height)?,
-                        self.downsample_2x1_f32(&cr_smooth, width, height)?,
-                    )
-                } else {
-                    (
-                        self.downsample_2x1_f32(&cb_plane, width, height)?,
-                        self.downsample_2x1_f32(&cr_plane, width, height)?,
-                    )
-                };
+                // 4:2:2: Downsample horizontally only
+                let cb_down = self.downsample_2x1_f32(&cb_plane, width, height)?;
+                let cr_down = self.downsample_2x1_f32(&cr_plane, width, height)?;
                 let c_w = (width + 1) / 2;
                 (cb_down, cr_down, c_w, height)
             }
             Subsampling::S440 => {
-                // 4:4:0: Apply smoothing (if enabled) then downsample vertically only
-                let (cb_down, cr_down) = if use_smoothing {
-                    let cb_smooth = self.apply_input_smoothing(&cb_plane, width, height)?;
-                    let cr_smooth = self.apply_input_smoothing(&cr_plane, width, height)?;
-                    (
-                        self.downsample_1x2_f32(&cb_smooth, width, height)?,
-                        self.downsample_1x2_f32(&cr_smooth, width, height)?,
-                    )
-                } else {
-                    (
-                        self.downsample_1x2_f32(&cb_plane, width, height)?,
-                        self.downsample_1x2_f32(&cr_plane, width, height)?,
-                    )
-                };
+                // 4:4:0: Downsample vertically only
+                let cb_down = self.downsample_1x2_f32(&cb_plane, width, height)?;
+                let cr_down = self.downsample_1x2_f32(&cr_plane, width, height)?;
                 let c_h = (height + 1) / 2;
                 (cb_down, cr_down, width, c_h)
             }
             Subsampling::S444 => {
-                // 4:4:4: No subsampling, no smoothing needed
+                // 4:4:4: No subsampling
                 (cb_plane, cr_plane, width, height)
             }
         };
@@ -562,14 +511,7 @@ impl Encoder {
             self.convert_to_ycbcr_f32_inplace(data, y_plane, cb_plane, cr_plane)?;
         }
 
-        // Handle chroma subsampling
-        // For smoothing, fall back to allocating path (rare case)
-        if self.config.smoothing_factor > 0 {
-            // Slow path: smoothing - use the original allocating implementation
-            return self.convert_intrinsic_with_subsampling(data);
-        }
-
-        // Fast path: no smoothing, downsample directly using workspace
+        // Handle chroma subsampling using workspace buffers
         match self.config.subsampling {
             Subsampling::S420 => {
                 let c_w = (width + 1) / 2;

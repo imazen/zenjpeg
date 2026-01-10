@@ -222,15 +222,11 @@ pub enum ChromaConversion {
 // 3. **Chroma downsampling**: Box filter (Intrinsic, Fast) vs Sharp (gamma-aware)
 //
 // Valid combinations and their enum variants:
-// | Variant   | Source     | Precision | Downsampling        | smoothing_factor |
-// |-----------|------------|-----------|---------------------|------------------|
-// | Intrinsic | Builtin    | f32       | Box filter          | ✓ Supported      |
-// | Fast      | yuv crate  | SIMD int  | Box filter          | ✗ Ignored        |
-// | Sharp     | yuv crate  | SIMD int  | Gamma-aware bilinear| ✗ Ignored        |
-//
-// The yuv crate performs RGB→YUV conversion and chroma downsampling in a single
-// pass, so `smoothing_factor` (which applies pre-blur to chroma planes) only
-// works with Intrinsic path where we have separate conversion and downsampling.
+// | Variant   | Source     | Precision | Downsampling         |
+// |-----------|------------|-----------|----------------------|
+// | Intrinsic | Builtin    | f32       | Box filter           |
+// | Fast      | yuv crate  | SIMD int  | Box filter           |
+// | Sharp     | yuv crate  | SIMD int  | Gamma-aware bilinear |
 // ============================================================================
 
 impl ChromaConversion {

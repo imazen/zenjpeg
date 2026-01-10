@@ -186,29 +186,28 @@ fn decode_jpeg(data: &[u8]) -> (Vec<u8>, usize, usize) {
     (decoder.decode().unwrap_or_default(), w, h)
 }
 
-fn compute_ssimulacra2(
-    img1: &[u8],
-    img2: &[u8],
-    width: usize,
-    height: usize,
-) -> f64 {
+fn compute_ssimulacra2(img1: &[u8], img2: &[u8], width: usize, height: usize) -> f64 {
     use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
 
     let source: Vec<[f32; 3]> = img1
         .chunks_exact(3)
-        .map(|c| [
-            srgb_u8_to_linear(c[0]),
-            srgb_u8_to_linear(c[1]),
-            srgb_u8_to_linear(c[2]),
-        ])
+        .map(|c| {
+            [
+                srgb_u8_to_linear(c[0]),
+                srgb_u8_to_linear(c[1]),
+                srgb_u8_to_linear(c[2]),
+            ]
+        })
         .collect();
     let distorted: Vec<[f32; 3]> = img2
         .chunks_exact(3)
-        .map(|c| [
-            srgb_u8_to_linear(c[0]),
-            srgb_u8_to_linear(c[1]),
-            srgb_u8_to_linear(c[2]),
-        ])
+        .map(|c| {
+            [
+                srgb_u8_to_linear(c[0]),
+                srgb_u8_to_linear(c[1]),
+                srgb_u8_to_linear(c[2]),
+            ]
+        })
         .collect();
 
     let source_img = LinearRgbImage::new(source, width, height);

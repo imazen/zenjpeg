@@ -17,9 +17,10 @@ use crate::types::{ChromaConversion, JpegMode, PixelFormat, Subsampling};
 //
 // Pathway encoding (u64):
 //   Bits 0-7:   ColorConversionMethod (0=Auto, 1=IntrinsicF32, 2=YuvBalanced, 3=YuvProfessional)
-//   Bits 8-15:  DownsamplingMethod (0=Auto, 1=None, 2=Box, 3=BoxSmoothed, 4=Sharp, 5=GammaAwareF32, 6=GammaAwareIterative)
-//   Bits 16-23: Smoothing factor (0-100, only for BoxSmoothed)
-//   Bits 24-63: Reserved (must be 0)
+//   Bits 8-15:  DownsamplingMethod (0=Auto, 1=None, 2=Box, 3=Sharp, 4=GammaAwareF32, 5=GammaAwareIterative)
+//   Bits 16-23: Reserved
+//   Bits 24-31: HuffmanMethod (0=JpegliCreateTree, 1=MozjpegClassic)
+//   Bits 32-63: Reserved (must be 0)
 //
 // ============================================================================
 
@@ -49,14 +50,12 @@ pub(crate) enum DownsamplingMethod {
     None = 1,
     /// Simple box filter (2x2, 2x1, or 1x2 averaging)
     Box = 2,
-    /// Box filter with pre-smoothing (3x3 blur before box)
-    BoxSmoothed = 3,
     /// yuv crate Sharp YUV (gamma-aware bilinear)
-    Sharp = 4,
+    Sharp = 3,
     /// Our f32 gamma-aware single-pass (linear space averaging)
-    GammaAwareF32 = 5,
+    GammaAwareF32 = 4,
     /// Our f32 gamma-aware iterative (Sharp YUV style optimization)
-    GammaAwareIterative = 6,
+    GammaAwareIterative = 5,
 }
 
 /// Internal pipeline configuration (not public API).
@@ -67,7 +66,6 @@ pub(crate) enum DownsamplingMethod {
 pub(crate) struct InternalPipeline {
     pub(crate) color_conversion: ColorConversionMethod,
     pub(crate) downsampling: DownsamplingMethod,
-    pub(crate) smoothing_factor: u8,
     pub(crate) huffman_method: crate::types::HuffmanMethod,
 }
 
@@ -83,7 +81,7 @@ impl InternalPipeline {
 
         let color_byte = (value & 0xFF) as u8;
         let downsample_byte = ((value >> 8) & 0xFF) as u8;
-        let smoothing = ((value >> 16) & 0xFF) as u8;
+        // Bits 16-23 reserved (was smoothing_factor, now unused)
         let huffman_byte = ((value >> 24) & 0xFF) as u8;
 
         let color_conversion = match color_byte {
@@ -102,22 +100,15 @@ impl InternalPipeline {
             0 => DownsamplingMethod::Auto,
             1 => DownsamplingMethod::None,
             2 => DownsamplingMethod::Box,
-            3 => DownsamplingMethod::BoxSmoothed,
-            4 => DownsamplingMethod::Sharp,
-            5 => DownsamplingMethod::GammaAwareF32,
-            6 => DownsamplingMethod::GammaAwareIterative,
+            3 => DownsamplingMethod::Sharp,
+            4 => DownsamplingMethod::GammaAwareF32,
+            5 => DownsamplingMethod::GammaAwareIterative,
             _ => {
                 return Err(Error::InvalidColorFormat {
-                    reason: "internal pathway: invalid downsampling method (0-6)",
+                    reason: "internal pathway: invalid downsampling method (0-5)",
                 })
             }
         };
-
-        if smoothing > 100 {
-            return Err(Error::InvalidColorFormat {
-                reason: "internal pathway: smoothing factor must be 0-100",
-            });
-        }
 
         let huffman_method = match huffman_byte {
             0 => crate::types::HuffmanMethod::JpegliCreateTree,
@@ -132,7 +123,6 @@ impl InternalPipeline {
         Ok(Self {
             color_conversion,
             downsampling,
-            smoothing_factor: smoothing,
             huffman_method,
         })
     }
@@ -146,7 +136,6 @@ impl InternalPipeline {
         };
         (self.color_conversion as u64)
             | ((self.downsampling as u64) << 8)
-            | ((self.smoothing_factor as u64) << 16)
             | ((huffman_value as u64) << 24)
     }
 
@@ -200,13 +189,6 @@ impl InternalPipeline {
             _ => {}
         }
 
-        // Smoothing only makes sense with BoxSmoothed
-        if self.smoothing_factor > 0 && self.downsampling != DownsamplingMethod::BoxSmoothed {
-            return Err(Error::InvalidColorFormat {
-                reason: "internal pathway: smoothing_factor only valid with BoxSmoothed",
-            });
-        }
-
         Ok(())
     }
 
@@ -249,25 +231,15 @@ pub mod internal_pathway {
     pub const DOWNSAMPLE_AUTO: u64 = 0 << 8;
     pub const DOWNSAMPLE_NONE: u64 = 1 << 8;
     pub const DOWNSAMPLE_BOX: u64 = 2 << 8;
-    pub const DOWNSAMPLE_BOX_SMOOTHED: u64 = 3 << 8;
-    pub const DOWNSAMPLE_SHARP: u64 = 4 << 8;
-    pub const DOWNSAMPLE_GAMMA_AWARE_F32: u64 = 5 << 8;
-    pub const DOWNSAMPLE_GAMMA_AWARE_ITERATIVE: u64 = 6 << 8;
-
-    /// Create a pathway with smoothing factor (bits 16-23).
-    /// Only valid with `DOWNSAMPLE_BOX_SMOOTHED`.
-    #[inline]
-    pub const fn with_smoothing(pathway: u64, factor: u8) -> u64 {
-        pathway | ((factor as u64) << 16)
-    }
+    pub const DOWNSAMPLE_SHARP: u64 = 3 << 8;
+    pub const DOWNSAMPLE_GAMMA_AWARE_F32: u64 = 4 << 8;
+    pub const DOWNSAMPLE_GAMMA_AWARE_ITERATIVE: u64 = 5 << 8;
 
     // Pre-defined pipeline combinations for common benchmarks
     /// f32 color conversion, no downsampling (4:4:4 only)
     pub const P_F32_NONE: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_NONE;
     /// f32 color conversion, box filter downsampling
     pub const P_F32_BOX: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX;
-    /// f32 color conversion, box filter with smoothing=50
-    pub const P_F32_BOX_SMOOTH50: u64 = COLOR_INTRINSIC_F32 | DOWNSAMPLE_BOX_SMOOTHED | (50 << 16);
     /// yuv crate balanced, box filter (Fast path)
     pub const P_YUV_BOX: u64 = COLOR_YUV_BALANCED | DOWNSAMPLE_BOX;
     /// yuv crate balanced, sharp downsampling (Sharp path)
@@ -323,11 +295,6 @@ pub struct EncoderConfig {
     pub restart_interval: u16,
     /// Use optimized Huffman tables
     pub optimize_huffman: bool,
-    /// Input smoothing factor (0-100, 0 = disabled).
-    /// Applies a 3x3 weighted blur to chroma planes before downsampling
-    /// to reduce aliasing artifacts. Matches libjpeg/jpegli smoothing_factor.
-    /// Only used with `ChromaConversion::Intrinsic`.
-    pub smoothing_factor: u8,
     /// Chroma conversion method for RGB to YCbCr.
     ///
     /// Controls how chroma planes are computed:
@@ -375,8 +342,6 @@ impl Default for EncoderConfig {
             restart_interval: 0,
             // Huffman optimization enabled by default (pseudo-symbol 256 approach ensures Kraft sum < 2^16)
             optimize_huffman: true,
-            // Match C++ jpegli default: smoothing_factor = 0 (disabled)
-            smoothing_factor: 0,
             // Auto selects Intrinsic to match C++ jpegli
             chroma_conversion: ChromaConversion::Auto,
             #[cfg(feature = "experimental-hybrid-trellis")]
