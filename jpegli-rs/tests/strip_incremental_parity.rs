@@ -4,6 +4,23 @@
 //! which is critical for verifying the incremental quantization optimization.
 
 use jpegli::encode::strip::StripProcessor;
+
+/// Assert that two byte slices are equal WITHOUT printing their contents on failure.
+/// This prevents console spam when comparing large JPEG buffers.
+fn assert_bytes_eq(a: &[u8], b: &[u8], msg: &str) {
+    if a != b {
+        // Find first difference
+        let first_diff = a.iter().zip(b.iter()).position(|(x, y)| x != y);
+        let diff_info = match first_diff {
+            Some(pos) => format!(
+                "first difference at byte {}: 0x{:02x} vs 0x{:02x}",
+                pos, a[pos], b[pos]
+            ),
+            None => format!("length mismatch: {} vs {}", a.len(), b.len()),
+        };
+        panic!("{}\n{}", msg, diff_info);
+    }
+}
 use jpegli::quant::aq::compute_aq_strength_map;
 use jpegli::quant::{generate_quant_table, quant_vals_to_distance, Quality, ZeroBiasParams};
 use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
@@ -124,7 +141,14 @@ fn encode_strip_with_aq(
     let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
     processor
-        .set_quant_tables(y_quant, cb_quant, cr_quant, y_zero_bias, cb_zero_bias, cr_zero_bias)
+        .set_quant_tables(
+            y_quant,
+            cb_quant,
+            cr_quant,
+            y_zero_bias,
+            cb_zero_bias,
+            cr_zero_bias,
+        )
         .expect("failed to set quant tables");
 
     let strip_height = processor.strip_height();
@@ -197,14 +221,19 @@ fn test_strip_vs_fullplane_bitexact_420() {
             .optimize_huffman(true);
 
         let standard = encoder.encode(&rgb).expect("standard encode failed");
-        let strip = encoder.encode_strip_based(&rgb).expect("strip encode failed");
+        let strip = encoder
+            .encode_strip_based(&rgb)
+            .expect("strip encode failed");
 
-        assert_eq!(
-            standard, strip,
-            "{} 4:2:0: strip output differs from standard ({} vs {} bytes)",
-            name,
-            standard.len(),
-            strip.len()
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "{} 4:2:0: strip output differs from standard ({} vs {} bytes)",
+                name,
+                standard.len(),
+                strip.len()
+            ),
         );
     }
 }
@@ -225,14 +254,19 @@ fn test_strip_vs_fullplane_bitexact_444() {
             .optimize_huffman(true);
 
         let standard = encoder.encode(&rgb).expect("standard encode failed");
-        let strip = encoder.encode_strip_based(&rgb).expect("strip encode failed");
+        let strip = encoder
+            .encode_strip_based(&rgb)
+            .expect("strip encode failed");
 
-        assert_eq!(
-            standard, strip,
-            "{} 4:4:4: strip output differs from standard ({} vs {} bytes)",
-            name,
-            standard.len(),
-            strip.len()
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "{} 4:4:4: strip output differs from standard ({} vs {} bytes)",
+                name,
+                standard.len(),
+                strip.len()
+            ),
         );
     }
 }
@@ -253,14 +287,19 @@ fn test_strip_vs_fullplane_bitexact_422() {
             .optimize_huffman(true);
 
         let standard = encoder.encode(&rgb).expect("standard encode failed");
-        let strip = encoder.encode_strip_based(&rgb).expect("strip encode failed");
+        let strip = encoder
+            .encode_strip_based(&rgb)
+            .expect("strip encode failed");
 
-        assert_eq!(
-            standard, strip,
-            "{} 4:2:2: strip output differs from standard ({} vs {} bytes)",
-            name,
-            standard.len(),
-            strip.len()
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "{} 4:2:2: strip output differs from standard ({} vs {} bytes)",
+                name,
+                standard.len(),
+                strip.len()
+            ),
         );
     }
 }
@@ -282,14 +321,19 @@ fn test_strip_vs_fullplane_bitexact_progressive() {
             .optimize_huffman(true);
 
         let standard = encoder.encode(&rgb).expect("standard encode failed");
-        let strip = encoder.encode_strip_based(&rgb).expect("strip encode failed");
+        let strip = encoder
+            .encode_strip_based(&rgb)
+            .expect("strip encode failed");
 
-        assert_eq!(
-            standard, strip,
-            "{} progressive: strip output differs from standard ({} vs {} bytes)",
-            name,
-            standard.len(),
-            strip.len()
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "{} progressive: strip output differs from standard ({} vs {} bytes)",
+                name,
+                standard.len(),
+                strip.len()
+            ),
         );
     }
 }
@@ -397,12 +441,15 @@ fn test_strip_edge_sizes() {
         });
 
         if expect_exact {
-            assert_eq!(
-                standard, strip,
-                "{}: outputs differ ({} vs {} bytes)",
-                name,
-                standard.len(),
-                strip.len()
+            assert_bytes_eq(
+                &standard,
+                &strip,
+                &format!(
+                    "{}: outputs differ ({} vs {} bytes)",
+                    name,
+                    standard.len(),
+                    strip.len()
+                ),
             );
         } else {
             // Allow small size differences for known edge cases
@@ -449,12 +496,15 @@ fn test_strip_quality_range() {
             .encode_strip_based(&rgb)
             .unwrap_or_else(|e| panic!("q{}: strip failed: {:?}", quality, e));
 
-        assert_eq!(
-            standard, strip,
-            "q{}: outputs differ ({} vs {} bytes)",
-            quality,
-            standard.len(),
-            strip.len()
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "q{}: outputs differ ({} vs {} bytes)",
+                quality,
+                standard.len(),
+                strip.len()
+            ),
         );
     }
 }
@@ -490,12 +540,15 @@ fn test_strip_image_patterns() {
             .encode_strip_based(&rgb)
             .unwrap_or_else(|e| panic!("{}: strip failed: {:?}", name, e));
 
-        assert_eq!(
-            standard, strip,
-            "{}: outputs differ ({} vs {} bytes)",
-            name,
-            standard.len(),
-            strip.len()
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "{}: outputs differ ({} vs {} bytes)",
+                name,
+                standard.len(),
+                strip.len()
+            ),
         );
     }
 }
@@ -510,8 +563,13 @@ fn test_huffman_frequencies_match() {
     let height = 256;
     let rgb = generate_gradient(width, height);
 
-    let (y_blocks, cb_blocks, cr_blocks, _) =
-        encode_strip_with_aq(&rgb, width, height, Quality::Traditional(85.0), Subsampling::S420);
+    let (y_blocks, cb_blocks, cr_blocks, _) = encode_strip_with_aq(
+        &rgb,
+        width,
+        height,
+        Quality::Traditional(85.0),
+        Subsampling::S420,
+    );
 
     // Count frequencies manually
     let mut dc_luma_count = 0usize;
@@ -571,8 +629,13 @@ fn test_block_ordering_raster() {
         }
     }
 
-    let (y_blocks, _, _, _) =
-        encode_strip_with_aq(&rgb, width, height, Quality::Traditional(85.0), Subsampling::S420);
+    let (y_blocks, _, _, _) = encode_strip_with_aq(
+        &rgb,
+        width,
+        height,
+        Quality::Traditional(85.0),
+        Subsampling::S420,
+    );
 
     // Each block's DC coefficient should roughly correlate with block position
     // (blocks with same color should have similar DC values)
@@ -633,11 +696,228 @@ fn test_allocation_stats_populated() {
     let output = processor.finalize().unwrap();
 
     // Allocation stats should be populated
-    assert!(stats_before.count > 0, "No allocations tracked before finalize");
+    assert!(
+        stats_before.count > 0,
+        "No allocations tracked before finalize"
+    );
     assert!(
         stats_before.total_bytes > 0,
         "No bytes tracked before finalize"
     );
-    assert!(output.alloc_stats.count > 0, "No allocations tracked in output");
-    assert!(output.alloc_stats.total_bytes > 0, "No bytes tracked in output");
+    assert!(
+        output.alloc_stats.count > 0,
+        "No allocations tracked in output"
+    );
+    assert!(
+        output.alloc_stats.total_bytes > 0,
+        "No bytes tracked in output"
+    );
+}
+
+// =============================================================================
+// Real-world image parity tests
+// =============================================================================
+
+/// Load frymire.png - a complex 1118x1105 image with high chroma content
+fn load_frymire() -> (Vec<u8>, usize, usize) {
+    let png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/frymire.png");
+    let png_data = std::fs::read(png_path).expect("Failed to read frymire.png");
+    let decoder = png::Decoder::new(&png_data[..]);
+    let mut reader = decoder.read_info().expect("Failed to read PNG info");
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
+
+    let rgb: Vec<u8> = match info.color_type {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => buf[..info.buffer_size()]
+            .chunks(4)
+            .flat_map(|c| [c[0], c[1], c[2]])
+            .collect(),
+        _ => panic!("Unsupported color type"),
+    };
+
+    assert_eq!(info.width, 1118, "frymire.png width mismatch");
+    assert_eq!(info.height, 1105, "frymire.png height mismatch");
+
+    (rgb, info.width as usize, info.height as usize)
+}
+
+#[test]
+fn test_strip_frymire_420_bitexact() {
+    let (rgb, width, height) = load_frymire();
+
+    let encoder = Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .jpegli_quality(Quality::Traditional(85.0))
+        .pixel_format(PixelFormat::Rgb)
+        .subsampling(Subsampling::S420)
+        .optimize_huffman(true);
+
+    let standard = encoder.encode(&rgb).expect("standard encode failed");
+    let strip = encoder
+        .encode_strip_based(&rgb)
+        .expect("strip encode failed");
+
+    assert_bytes_eq(
+        &standard,
+        &strip,
+        &format!(
+            "frymire 4:2:0: strip differs from standard ({} vs {} bytes, diff={})",
+            standard.len(),
+            strip.len(),
+            (standard.len() as i64 - strip.len() as i64).abs()
+        ),
+    );
+}
+
+#[test]
+fn test_strip_frymire_444_bitexact() {
+    let (rgb, width, height) = load_frymire();
+
+    let encoder = Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .jpegli_quality(Quality::Traditional(85.0))
+        .pixel_format(PixelFormat::Rgb)
+        .subsampling(Subsampling::S444)
+        .optimize_huffman(true);
+
+    let standard = encoder.encode(&rgb).expect("standard encode failed");
+    let strip = encoder
+        .encode_strip_based(&rgb)
+        .expect("strip encode failed");
+
+    assert_bytes_eq(
+        &standard,
+        &strip,
+        &format!(
+            "frymire 4:4:4: strip differs from standard ({} vs {} bytes, diff={})",
+            standard.len(),
+            strip.len(),
+            (standard.len() as i64 - strip.len() as i64).abs()
+        ),
+    );
+}
+
+#[test]
+fn test_strip_frymire_422_bitexact() {
+    let (rgb, width, height) = load_frymire();
+
+    let encoder = Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .jpegli_quality(Quality::Traditional(85.0))
+        .pixel_format(PixelFormat::Rgb)
+        .subsampling(Subsampling::S422)
+        .optimize_huffman(true);
+
+    let standard = encoder.encode(&rgb).expect("standard encode failed");
+    let strip = encoder
+        .encode_strip_based(&rgb)
+        .expect("strip encode failed");
+
+    assert_bytes_eq(
+        &standard,
+        &strip,
+        &format!(
+            "frymire 4:2:2: strip differs from standard ({} vs {} bytes, diff={})",
+            standard.len(),
+            strip.len(),
+            (standard.len() as i64 - strip.len() as i64).abs()
+        ),
+    );
+}
+
+#[test]
+fn test_strip_frymire_440_bitexact() {
+    let (rgb, width, height) = load_frymire();
+
+    let encoder = Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .jpegli_quality(Quality::Traditional(85.0))
+        .pixel_format(PixelFormat::Rgb)
+        .subsampling(Subsampling::S440)
+        .optimize_huffman(true);
+
+    let standard = encoder.encode(&rgb).expect("standard encode failed");
+    let strip = encoder
+        .encode_strip_based(&rgb)
+        .expect("strip encode failed");
+
+    assert_bytes_eq(
+        &standard,
+        &strip,
+        &format!(
+            "frymire 4:4:0: strip differs from standard ({} vs {} bytes, diff={})",
+            standard.len(),
+            strip.len(),
+            (standard.len() as i64 - strip.len() as i64).abs()
+        ),
+    );
+}
+
+#[test]
+fn test_strip_frymire_progressive_bitexact() {
+    let (rgb, width, height) = load_frymire();
+
+    let encoder = Encoder::new()
+        .width(width as u32)
+        .height(height as u32)
+        .jpegli_quality(Quality::Traditional(85.0))
+        .pixel_format(PixelFormat::Rgb)
+        .subsampling(Subsampling::S420)
+        .mode(JpegMode::Progressive)
+        .optimize_huffman(true);
+
+    let standard = encoder.encode(&rgb).expect("standard encode failed");
+    let strip = encoder
+        .encode_strip_based(&rgb)
+        .expect("strip encode failed");
+
+    assert_bytes_eq(
+        &standard,
+        &strip,
+        &format!(
+            "frymire progressive: strip differs from standard ({} vs {} bytes, diff={})",
+            standard.len(),
+            strip.len(),
+            (standard.len() as i64 - strip.len() as i64).abs()
+        ),
+    );
+}
+
+#[test]
+fn test_strip_frymire_quality_range() {
+    let (rgb, width, height) = load_frymire();
+
+    for quality in [50.0, 70.0, 85.0, 90.0, 95.0] {
+        let encoder = Encoder::new()
+            .width(width as u32)
+            .height(height as u32)
+            .jpegli_quality(Quality::Traditional(quality))
+            .pixel_format(PixelFormat::Rgb)
+            .subsampling(Subsampling::S420)
+            .optimize_huffman(true);
+
+        let standard = encoder
+            .encode(&rgb)
+            .unwrap_or_else(|e| panic!("frymire Q{}: standard failed: {:?}", quality, e));
+
+        let strip = encoder
+            .encode_strip_based(&rgb)
+            .unwrap_or_else(|e| panic!("frymire Q{}: strip failed: {:?}", quality, e));
+
+        assert_bytes_eq(
+            &standard,
+            &strip,
+            &format!(
+                "frymire Q{}: outputs differ ({} vs {} bytes)",
+                quality,
+                standard.len(),
+                strip.len()
+            ),
+        );
+    }
 }
