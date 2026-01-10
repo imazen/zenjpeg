@@ -969,29 +969,22 @@ impl Encoder {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 
-        // Resolve Auto to concrete method based on subsampling
-        let chroma_method = self
-            .config
-            .chroma_conversion
-            .resolve(self.config.subsampling);
-
-        // Get YCbCr planes with appropriate chroma handling
-        // Sharp/Fast path: yuv crate performs color conversion + downsampling together
-        // Intrinsic path: f32 conversion then separate downsampling
-        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) = if matches!(
-            chroma_method,
-            ChromaConversion::Sharp | ChromaConversion::Fast
-        ) {
-            let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
-            match self.config.subsampling {
-                Subsampling::S420 => self.convert_gamma_aware_420(data, use_sharp)?,
-                Subsampling::S422 => self.convert_gamma_aware_422(data, use_sharp)?,
-                // yuv crate doesn't support S440/S444, fall through to Intrinsic
-                _ => self.convert_intrinsic_with_subsampling(data)?,
-            }
-        } else {
-            self.convert_intrinsic_with_subsampling(data)?
-        };
+        // Get YCbCr planes with appropriate chroma handling based on downsampling method
+        let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
+            match self.config.chroma_downsampling {
+                ChromaDownsampling::GammaAware | ChromaDownsampling::GammaAwareIterative => {
+                    let use_iterative =
+                        self.config.chroma_downsampling == ChromaDownsampling::GammaAwareIterative;
+                    match self.config.subsampling {
+                        Subsampling::S420 => self.convert_gamma_aware_420(data, use_iterative)?,
+                        Subsampling::S422 => self.convert_gamma_aware_422(data, use_iterative)?,
+                        Subsampling::S440 => self.convert_gamma_aware_440(data, use_iterative)?,
+                        // No downsampling needed for 4:4:4
+                        Subsampling::S444 => self.convert_intrinsic_with_subsampling(data)?,
+                    }
+                }
+                ChromaDownsampling::Box => self.convert_intrinsic_with_subsampling(data)?,
+            };
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
@@ -1224,6 +1217,183 @@ impl Encoder {
                 &context_map,
                 &ac_slot_ids,
                 next_dht_index, // tables_emitted so far
+            )?;
+            output.extend_from_slice(&scan_data);
+        }
+
+        // Write EOI
+        output.push(0xFF);
+        output.push(MARKER_EOI);
+
+        Ok(output)
+    }
+
+    /// Encodes pre-computed blocks as progressive JPEG.
+    ///
+    /// This is used by the strip-based encoder which computes blocks during
+    /// strip processing and then needs to encode them as progressive.
+    ///
+    /// # Arguments
+    /// * `y_blocks` - Y channel quantized DCT blocks (zigzag order)
+    /// * `cb_blocks` - Cb channel quantized DCT blocks
+    /// * `cr_blocks` - Cr channel quantized DCT blocks
+    /// * `y_quant` - Y quantization table
+    /// * `cb_quant` - Cb quantization table
+    /// * `cr_quant` - Cr quantization table
+    pub(super) fn encode_progressive_from_blocks(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+    ) -> Result<Vec<u8>> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        let mut output = crate::foundation::alloc::try_with_capacity(
+            width * height / 4,
+            "progressive from blocks output",
+        )?;
+
+        let is_color = self.config.pixel_format != PixelFormat::Gray;
+        let num_components = if is_color { 3 } else { 1 };
+
+        // Define progressive scan script
+        let scans = self.get_progressive_scan_script(is_color);
+
+        // ========== CREATE CONTEXT CONFIG ==========
+        let context_config = ContextConfig::for_progressive(
+            num_components,
+            scans.iter().map(|s| (s.ss, s.se, s.components.len())),
+        );
+
+        // ========== PASS 1: TOKENIZATION ==========
+        let mut token_buffer =
+            ProgressiveTokenBuffer::new(num_components, context_config.num_contexts);
+
+        for (scan_idx, scan) in scans.iter().enumerate() {
+            let context = if scan.ss == 0 && scan.se == 0 {
+                context_config.dc_context(scan.components[0] as usize) as u8
+            } else {
+                context_config.ac_context(scan_idx, 0) as u8
+            };
+
+            if scan.ss == 0 && scan.se == 0 {
+                // DC scan
+                let blocks: Vec<&[[i16; DCT_BLOCK_SIZE]]> = scan
+                    .components
+                    .iter()
+                    .map(|&c| match c {
+                        0 => y_blocks,
+                        1 => cb_blocks,
+                        2 => cr_blocks,
+                        _ => &[][..],
+                    })
+                    .collect();
+                let component_indices: Vec<usize> =
+                    scan.components.iter().map(|&c| c as usize).collect();
+                token_buffer.tokenize_dc_scan(&blocks, &component_indices, scan.al, scan.ah);
+            } else if scan.ah == 0 {
+                // AC first scan
+                let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
+                    0 => y_blocks,
+                    1 => cb_blocks,
+                    2 => cr_blocks,
+                    _ => {
+                        return Err(Error::InternalError {
+                            reason: "Invalid component",
+                        })
+                    }
+                };
+                token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
+            } else {
+                // AC refinement scan
+                let blocks: &[[i16; DCT_BLOCK_SIZE]] = match scan.components[0] {
+                    0 => y_blocks,
+                    1 => cb_blocks,
+                    2 => cr_blocks,
+                    _ => {
+                        return Err(Error::InternalError {
+                            reason: "Invalid component",
+                        })
+                    }
+                };
+                token_buffer.tokenize_ac_refinement_scan(
+                    blocks, context, scan.ss, scan.se, scan.ah, scan.al,
+                );
+            }
+        }
+
+        // ========== GENERATE OPTIMIZED TABLES ==========
+        let (context_map, num_dc_tables, tables, ac_slot_ids) = token_buffer
+            .generate_optimized_tables(
+                4,  // max DC clusters
+                12, // max AC clusters
+                context_config.ac_offset,
+                false, // force_baseline
+            )?;
+
+        // ========== WRITE JPEG STRUCTURE ==========
+        self.write_header(&mut output)?;
+        self.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
+        self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
+
+        // Write initial Huffman tables
+        let mut next_dht_index = self.write_huffman_tables_progressive_initial(
+            &mut output,
+            &tables,
+            num_dc_tables,
+            4, // max_initial_ac
+        )?;
+
+        if self.config.restart_interval > 0 {
+            self.write_restart_interval(&mut output)?;
+        }
+
+        // ========== PASS 2: REPLAY TOKENS ==========
+        for (scan_idx, scan) in scans.iter().enumerate() {
+            // Emit AC table on-demand if needed
+            if scan.ss > 0 {
+                let ac_context = context_config.ac_context(scan_idx, 0);
+                if let Some(&table_idx) = context_map.get(ac_context) {
+                    if table_idx == next_dht_index && table_idx < tables.len() {
+                        let cluster_idx = table_idx.saturating_sub(num_dc_tables);
+                        let ac_slot = ac_slot_ids
+                            .get(cluster_idx)
+                            .copied()
+                            .unwrap_or(cluster_idx % 4);
+                        self.write_single_ac_table(&mut output, &tables[table_idx], ac_slot)?;
+                        next_dht_index += 1;
+                    }
+                }
+            }
+
+            // Write SOS header
+            self.write_progressive_scan_header_with_slot_ids(
+                &mut output,
+                scan_idx,
+                scan,
+                is_color,
+                &context_config,
+                &context_map,
+                num_dc_tables,
+                &ac_slot_ids,
+            )?;
+
+            // Replay tokens for this scan
+            let scan_data = self.replay_progressive_scan(
+                &token_buffer,
+                scan_idx,
+                scan,
+                is_color,
+                &context_config,
+                &tables,
+                num_dc_tables,
+                &context_map,
+                &ac_slot_ids,
+                next_dht_index,
             )?;
             output.extend_from_slice(&scan_data);
         }

@@ -171,78 +171,53 @@ impl Subsampling {
     }
 }
 
-/// Chroma conversion method for RGB to YCbCr.
+/// Chroma downsampling method for subsampled encoding (4:2:0, 4:2:2, 4:4:0).
 ///
-/// Controls how chroma (Cb/Cr) planes are computed during encoding.
+/// Controls how chroma (Cb/Cr) planes are downsampled during encoding.
 /// Different methods trade off between speed and quality.
+///
+/// Has no effect for 4:4:4 subsampling (no downsampling needed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
-pub enum ChromaConversion {
-    /// Internal f32 YCbCr conversion with box filter downsampling.
+pub enum ChromaDownsampling {
+    /// Simple box filter averaging (default, matches C++ jpegli).
     ///
-    /// Best for 4:4:4 subsampling where no chroma downsampling is needed.
-    /// Uses BT.601 coefficients with f32 precision throughout.
-    /// For 4:2:0/4:2:2/4:4:0, uses simple box filter averaging.
-    Intrinsic,
+    /// Fast and produces good results for most photographic content.
+    /// Uses BT.601 coefficients with f32 precision for color conversion,
+    /// then simple 2x2/2x1/1x2 averaging for downsampling.
+    #[default]
+    Box,
 
-    /// Internal gamma-aware chroma downsampling.
+    /// Gamma-aware chroma downsampling.
     ///
     /// Converts to linear RGB before averaging chroma, then back to sRGB.
     /// Better color preservation on edges compared to box filter.
-    Fast,
+    /// Slightly slower than Box.
+    GammaAware,
 
-    /// Internal iterative gamma-aware chroma downsampling (Sharp YUV-like).
+    /// Iterative gamma-aware optimization (Sharp YUV-like).
     ///
     /// Uses iterative refinement with gamma correction to better preserve
     /// color on edges and thin lines. Best choice for:
     /// - Synthetic images, graphics, text
     /// - Any content with sharp color transitions
     ///
-    /// Handles out-of-gamut clipping gracefully.
-    Sharp,
-
-    /// Auto-select based on subsampling mode.
-    ///
-    /// - 4:4:4 → Intrinsic (no chroma downsampling needed)
-    /// - 4:2:0/4:2:2/4:4:0 → Intrinsic (matches C++ jpegli default)
-    #[default]
-    Auto,
+    /// Handles out-of-gamut clipping gracefully. Slowest option.
+    GammaAwareIterative,
 }
 
-// ============================================================================
-// ChromaConversion Design Notes
-// ============================================================================
-//
-// This enum provides different chroma downsampling strategies:
-//
-// | Variant   | Method              | Quality | Speed   |
-// |-----------|---------------------|---------|---------|
-// | Intrinsic | Box filter (f32)    | Good    | Fast    |
-// | Fast      | Gamma-aware average | Better  | Medium  |
-// | Sharp     | Iterative gamma     | Best    | Slower  |
-//
-// All implementations are internal (no external dependencies).
-// ============================================================================
-
-impl ChromaConversion {
-    /// Returns true if this conversion uses gamma-aware downsampling.
+impl ChromaDownsampling {
+    /// Returns true if this method uses gamma-aware downsampling.
     #[must_use]
     pub const fn uses_gamma_aware(self) -> bool {
-        matches!(self, Self::Fast | Self::Sharp)
-    }
-
-    /// Resolve Auto to a concrete method based on subsampling.
-    ///
-    /// Auto resolves to Intrinsic for all modes to match C++ jpegli behavior.
-    /// Use `ChromaConversion::Sharp` explicitly for gamma-aware downsampling.
-    #[must_use]
-    pub const fn resolve(self, _subsampling: Subsampling) -> Self {
-        match self {
-            Self::Auto => Self::Intrinsic, // Match C++ jpegli default
-            other => other,
-        }
+        matches!(self, Self::GammaAware | Self::GammaAwareIterative)
     }
 }
+
+/// Legacy alias for backwards compatibility.
+#[doc(hidden)]
+#[deprecated(since = "0.4.0", note = "Use ChromaDownsampling instead")]
+pub type ChromaConversion = ChromaDownsampling;
 
 /// JPEG encoding mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

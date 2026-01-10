@@ -1,13 +1,26 @@
 # jpegli-rs Status Report
 
-**Generated:** 2026-01-09 18:45:54 MST
+**Generated:** 2026-01-09 20:15:00 MST
 **Branch:** avx2-dct-intrinsics
 
 ---
 
 ## Recent Work
 
-### Completed This Session
+### Session 3 (Latest)
+- [x] **Added progressive mode to strip encoder** - uses `encode_progressive_from_blocks()`
+- [x] **Removed smoothing_factor feature** - deleted ~880 lines of dead code
+- [x] Added inplace XYB conversion functions for future strip XYB support
+- [ ] XYB strip support (deferred - requires significant architecture changes)
+- [ ] Sharp YUV strip support (deferred - requires gamma-aware strip processing)
+
+### Session 2
+- [x] Removed `smoothing_factor` from EncoderConfig
+- [x] Removed `DownsamplingMethod::BoxSmoothed`
+- [x] Removed `apply_smoothing_simd` functions
+- [x] Simplified chroma downsampling code paths
+
+### Session 1
 - [x] Updated multiversion crate 0.7 → 0.8 (reduces retpoline cfg warnings)
 - [x] Researched optimal SIMD target strings
 - [x] Verified allocation instrumentation (`alloc_tracker` example)
@@ -55,12 +68,12 @@ Current multiversion targets are appropriate:
 |---------|:----------:|:-----------:|-------|
 | **Modes** ||||
 | Baseline (8-bit) | ✅ | ✅ | Standard JPEG |
-| Progressive | ✅ | ❌ | Full-plane only |
+| Progressive | ✅ | ✅ | Added in session 3 |
 | Extended (12-bit) | ❌ | ❌ | Not implemented |
 | Lossless | ❌ | ❌ | Not planned |
 | **Color Spaces** ||||
 | YCbCr (RGB input) | ✅ | ✅ | Standard path |
-| XYB | ✅ | ❌ | Full-plane only |
+| XYB | ✅ | ❌ | Requires architecture changes |
 | Grayscale | ✅ | ✅ | |
 | CMYK | ❌ | ❌ | Not implemented |
 | **Subsampling** ||||
@@ -71,7 +84,7 @@ Current multiversion targets are appropriate:
 | **Quality Features** ||||
 | Adaptive Quantization | ✅ | ✅ | Streaming AQ matches full-plane exactly |
 | Optimized Huffman | ✅ | ✅ | jpegli & mozjpeg methods |
-| Sharp YUV chroma | ✅ | ✅ | Via yuv crate |
+| Sharp YUV chroma | ✅ | ❌ | Uses box filter (Sharp YUV needs gamma-aware strip processing) |
 | Custom quant tables | ✅ | ❌ | Hidden API, full-plane only |
 | **Input Formats** ||||
 | RGB/BGR 8-bit | ✅ | ✅ | |

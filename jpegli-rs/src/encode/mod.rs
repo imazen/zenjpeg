@@ -14,14 +14,11 @@ pub mod strip;
 mod workspace;
 
 // Re-export config types
-#[cfg(test)]
-pub(crate) use config::ColorConversionMethod;
-pub use config::{internal_pathway, EncoderConfig};
-pub(crate) use config::{DownsamplingMethod, InternalPipeline, ProgressiveScan};
+pub use config::EncoderConfig;
+pub(crate) use config::ProgressiveScan;
 pub use workspace::EncoderWorkspace;
 
 use crate::alloc::{checked_size_2d, validate_dimensions, DEFAULT_MAX_PIXELS};
-use crate::chroma;
 #[cfg(test)]
 use crate::consts::MARKER_SOI;
 use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
@@ -35,7 +32,7 @@ use crate::huffman::HuffmanEncodeTable;
 use crate::quant::aq::compute_aq_strength_map;
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{ChromaConversion, ColorSpace, JpegMode, PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
 
 /// JPEG encoder.
 pub struct Encoder {
@@ -185,34 +182,30 @@ impl Encoder {
         self
     }
 
-    /// Set chroma conversion method.
+    /// Set chroma downsampling method for subsampled modes.
     ///
-    /// Controls how RGB is converted to YCbCr chroma planes:
-    /// - [`ChromaConversion::Intrinsic`]: Our f32 conversion with box filter
-    ///   downsampling.
-    /// - [`ChromaConversion::Fast`]: yuv crate SIMD path with box filter.
-    ///   Fast but may have color bleeding on edges.
-    /// - [`ChromaConversion::Sharp`]: yuv crate Sharp YUV (gamma-aware bilinear).
-    ///   Best quality for edges, graphics, and text.
-    /// - [`ChromaConversion::Auto`]: Intrinsic (matches C++ jpegli default)
+    /// Controls how chroma planes are downsampled:
+    /// - [`ChromaDownsampling::Box`]: Simple box filter (default, matches C++ jpegli)
+    /// - [`ChromaDownsampling::GammaAware`]: Gamma-aware averaging (better edges)
+    /// - [`ChromaDownsampling::GammaAwareIterative`]: Sharp YUV-style optimization (best quality)
     ///
-    /// Sharp YUV is often 10-50% FASTER than Intrinsic due to optimized SIMD.
+    /// Has no effect for 4:4:4 subsampling (no downsampling needed).
     #[must_use]
-    pub fn chroma_conversion(mut self, method: ChromaConversion) -> Self {
-        self.config.chroma_conversion = method;
+    pub fn chroma_downsampling(mut self, method: ChromaDownsampling) -> Self {
+        self.config.chroma_downsampling = method;
         self
     }
 
-    /// Convenience method: enable Sharp YUV chroma downsampling.
+    /// Convenience method: enable Sharp YUV-style chroma downsampling.
     ///
-    /// - `enable = true` → `ChromaConversion::Sharp`
-    /// - `enable = false` → `ChromaConversion::Intrinsic`
+    /// - `enable = true` → `ChromaDownsampling::GammaAwareIterative`
+    /// - `enable = false` → `ChromaDownsampling::Box`
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
-        self.config.chroma_conversion = if enable {
-            ChromaConversion::Sharp
+        self.config.chroma_downsampling = if enable {
+            ChromaDownsampling::GammaAwareIterative
         } else {
-            ChromaConversion::Intrinsic
+            ChromaDownsampling::Box
         };
         self
     }
@@ -257,35 +250,6 @@ impl Encoder {
     pub fn force_full_plane(mut self, force: bool) -> Self {
         self.config.force_full_plane = force;
         self
-    }
-
-    /// Sets an internal chroma pipeline for benchmarking (undocumented API).
-    ///
-    /// This method is intentionally not documented in the public API.
-    /// It allows external benchmarks to test different chroma conversion
-    /// and downsampling strategies without committing to a stable API.
-    ///
-    /// # Pathway Encoding (u64)
-    ///
-    /// - Bits 0-7: Color conversion (0=Auto, 1=IntrinsicF32, 2=YuvBalanced, 3=YuvProfessional)
-    /// - Bits 8-15: Downsampling (0=Auto, 1=None, 2=Box, 3=BoxSmoothed, 4=Sharp, 5=GammaAwareF32, 6=GammaAwareIterative)
-    /// - Bits 16-23: Smoothing factor (0-100, only for BoxSmoothed)
-    /// - Bits 24-63: Reserved (must be 0)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Reserved bits are non-zero
-    /// - Invalid color conversion or downsampling method value
-    /// - Smoothing factor > 100
-    /// - Incompatible combination (e.g., Sharp with 4:4:4, None with 4:2:0)
-    /// - Unimplemented method (e.g., YuvProfessional)
-    #[doc(hidden)]
-    pub fn set_internal_pathway(mut self, pathway: u64) -> Result<Self> {
-        let pipeline = InternalPipeline::from_u64(pathway)?;
-        pipeline.validate(self.config.subsampling)?;
-        self.config.internal_pipeline = Some(pipeline);
-        Ok(self)
     }
 
     /// Enable hybrid quantization (jpegli AQ + mozjpeg trellis).
@@ -496,10 +460,10 @@ impl Encoder {
             });
         }
 
-        // Only supports baseline mode for now
-        if self.config.mode != JpegMode::Baseline {
+        // Supports baseline and progressive modes
+        if self.config.mode != JpegMode::Baseline && self.config.mode != JpegMode::Progressive {
             return Err(Error::UnsupportedFeature {
-                feature: "strip-based encoding only supports baseline mode",
+                feature: "strip-based encoding only supports baseline and progressive modes",
             });
         }
 
@@ -553,47 +517,65 @@ impl Encoder {
 
         // Finalize strip processing to get blocks
         let strip_output = processor.finalize()?;
-        let is_color = self.config.pixel_format != PixelFormat::Gray;
 
-        // Build output JPEG
-        let mut output = Vec::with_capacity(width * height / 4); // Rough estimate
+        // Branch based on encoding mode
+        match self.config.mode {
+            JpegMode::Progressive => {
+                // Use progressive encoding path
+                self.encode_progressive_from_blocks(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &y_quant,
+                    &cb_quant,
+                    &cr_quant,
+                )
+            }
+            _ => {
+                // Baseline encoding path
+                let is_color = self.config.pixel_format != PixelFormat::Gray;
 
-        // Write JPEG headers
-        self.write_header(&mut output)?;
-        self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
-        self.write_frame_header(&mut output)?;
+                // Build output JPEG
+                let mut output = Vec::with_capacity(width * height / 4); // Rough estimate
 
-        // Build optimized Huffman tables from blocks (uses MCU order)
-        let tables = self.build_optimized_tables(
-            &strip_output.y_blocks,
-            &strip_output.cb_blocks,
-            &strip_output.cr_blocks,
-            is_color,
-        )?;
+                // Write JPEG headers
+                self.write_header(&mut output)?;
+                self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
+                self.write_frame_header(&mut output)?;
 
-        self.write_huffman_tables_optimized(&mut output, &tables)?;
+                // Build optimized Huffman tables from blocks (uses MCU order)
+                let tables = self.build_optimized_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
 
-        if self.config.restart_interval > 0 {
-            self.write_restart_interval(&mut output)?;
+                self.write_huffman_tables_optimized(&mut output, &tables)?;
+
+                if self.config.restart_interval > 0 {
+                    self.write_restart_interval(&mut output)?;
+                }
+                self.write_scan_header(&mut output)?;
+
+                // Encode blocks with optimized tables
+                let scan_data = self.encode_with_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                    &tables,
+                )?;
+
+                output.extend_from_slice(&scan_data);
+
+                // Write EOI
+                output.push(0xFF);
+                output.push(MARKER_EOI);
+
+                Ok(output)
+            }
         }
-        self.write_scan_header(&mut output)?;
-
-        // Encode blocks with optimized tables
-        let scan_data = self.encode_with_tables(
-            &strip_output.y_blocks,
-            &strip_output.cb_blocks,
-            &strip_output.cr_blocks,
-            is_color,
-            &tables,
-        )?;
-
-        output.extend_from_slice(&scan_data);
-
-        // Write EOI
-        output.push(0xFF);
-        output.push(MARKER_EOI);
-
-        Ok(output)
     }
 
     /// Generate a quantization table, using custom matrices if configured.

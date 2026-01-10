@@ -596,12 +596,8 @@ impl Encoder {
             }
         }
 
-        // Determine which Huffman algorithm to use
-        let huffman_method = self
-            .config
-            .internal_pipeline
-            .map(|p| p.huffman_method)
-            .unwrap_or(crate::types::HuffmanMethod::JpegliCreateTree);
+        // Use jpegli's Huffman algorithm (matches C++ behavior)
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
 
         // Build optimized tables with DHT data using selected algorithm
         let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
@@ -1202,12 +1198,8 @@ impl Encoder {
             prev_dc_b = b_blocks[mcu_idx][0];
         }
 
-        // Determine which Huffman algorithm to use
-        let huffman_method = self
-            .config
-            .internal_pipeline
-            .map(|p| p.huffman_method)
-            .unwrap_or(crate::types::HuffmanMethod::JpegliCreateTree);
+        // Use jpegli's Huffman algorithm (matches C++ behavior)
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
 
         // Generate optimized tables using selected algorithm
         let dc_table = dc_freq.generate_table_with_method(huffman_method)?;

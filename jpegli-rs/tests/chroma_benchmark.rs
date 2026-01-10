@@ -1,11 +1,9 @@
-//! Comprehensive benchmarks for chroma conversion methods and subsampling modes.
+//! Comprehensive benchmarks for chroma downsampling methods and subsampling modes.
 //!
-//! This test module compares all available chroma conversion methods:
-//! - Intrinsic: f32 BT.601 conversion with box filter
-//! - Fast: yuv crate SIMD with box filter
-//! - Sharp: yuv crate Sharp YUV (gamma-aware bilinear)
-//! - GammaAwareF32: f32 linear-space averaging
-//! - GammaAwareIterative: f32 iterative optimization (Sharp YUV style)
+//! This test module compares all available chroma downsampling methods:
+//! - Box: Simple box filter (default, matches C++ jpegli)
+//! - GammaAware: Gamma-aware single-pass averaging
+//! - GammaAwareIterative: Iterative optimization (Sharp YUV style)
 //!
 //! And all subsampling modes:
 //! - 4:4:4: No subsampling (baseline)
@@ -19,8 +17,7 @@
 //! - Encoding time: Performance
 
 use dssim::Dssim;
-use jpegli::encode::internal_pathway::*;
-use jpegli::{Decoder, Encoder, Error, PixelFormat, Quality, Subsampling};
+use jpegli::{ChromaDownsampling, Decoder, Encoder, Error, PixelFormat, Quality, Subsampling};
 use std::time::Instant;
 
 // ============================================================================
@@ -61,7 +58,7 @@ fn generate_gradient_v(width: usize, height: usize) -> Vec<u8> {
 }
 
 /// Generate sharp color edges (alternating color stripes).
-/// This is where Sharp YUV and iterative methods should excel.
+/// This is where gamma-aware methods should excel.
 fn generate_color_stripes(width: usize, height: usize, stripe_width: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
     let colors = [
@@ -187,7 +184,7 @@ fn encode_with_method(
     width: u32,
     height: u32,
     subsampling: Subsampling,
-    pathway: Option<u64>,
+    method: Option<ChromaDownsampling>,
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
@@ -198,8 +195,8 @@ fn encode_with_method(
         .subsampling(subsampling)
         .jpegli_quality(Quality::from_quality(90.0));
 
-    if let Some(p) = pathway {
-        encoder = encoder.set_internal_pathway(p)?;
+    if let Some(m) = method {
+        encoder = encoder.chroma_downsampling(m);
     }
 
     let jpeg_data = encoder.encode(data)?;
@@ -244,9 +241,9 @@ fn measure_quality(
     width: u32,
     height: u32,
     subsampling: Subsampling,
-    pathway: Option<u64>,
+    method: Option<ChromaDownsampling>,
 ) -> Result<QualityResult, Error> {
-    let result = encode_with_method(data, width, height, subsampling, pathway)?;
+    let result = encode_with_method(data, width, height, subsampling, method)?;
     let (decoded, _, _) = decode_jpeg(&result.jpeg_data)?;
     let dssim = compute_dssim(data, &decoded, width as usize, height as usize);
 
@@ -369,86 +366,60 @@ fn benchmark_image(
     for (subsampling, sub_name) in &subsampling_modes {
         let mut results = Vec::new();
 
-        // Default (Auto) - uses Sharp for subsampled, Intrinsic for 4:4:4
+        // Default (Box filter)
         if let Ok(r) = measure_quality(data, width, height, *subsampling, None) {
             results.push(MethodResult {
-                name: "Auto (default)",
+                name: "Box (default)",
                 dssim: r.dssim,
                 file_size: r.file_size,
                 encode_time_us: r.encode_time_us,
             });
         }
 
-        // For 4:4:4, we can only test methods that don't require downsampling
-        if *subsampling == Subsampling::S444 {
-            // P_F32_NONE - f32 conversion, no downsampling
-            if let Ok(r) = measure_quality(data, width, height, *subsampling, Some(P_F32_NONE)) {
-                results.push(MethodResult {
-                    name: "F32 None",
-                    dssim: r.dssim,
-                    file_size: r.file_size,
-                    encode_time_us: r.encode_time_us,
-                });
-            }
-        } else {
-            // Methods that require downsampling
-
-            // P_F32_BOX - f32 conversion with box filter
-            if let Ok(r) = measure_quality(data, width, height, *subsampling, Some(P_F32_BOX)) {
-                results.push(MethodResult {
-                    name: "F32 Box",
-                    dssim: r.dssim,
-                    file_size: r.file_size,
-                    encode_time_us: r.encode_time_us,
-                });
-            }
-
-            // P_YUV_BOX - yuv crate with box filter (Fast)
-            // Only works for 4:2:0 and 4:2:2
-            if *subsampling == Subsampling::S420 || *subsampling == Subsampling::S422 {
-                if let Ok(r) = measure_quality(data, width, height, *subsampling, Some(P_YUV_BOX)) {
-                    results.push(MethodResult {
-                        name: "YUV Box (Fast)",
-                        dssim: r.dssim,
-                        file_size: r.file_size,
-                        encode_time_us: r.encode_time_us,
-                    });
-                }
-
-                // P_YUV_SHARP - yuv crate Sharp YUV
-                if let Ok(r) = measure_quality(data, width, height, *subsampling, Some(P_YUV_SHARP))
-                {
-                    results.push(MethodResult {
-                        name: "YUV Sharp",
-                        dssim: r.dssim,
-                        file_size: r.file_size,
-                        encode_time_us: r.encode_time_us,
-                    });
-                }
-            }
-
-            // P_F32_GAMMA_AWARE - f32 gamma-aware single-pass
-            if let Ok(r) =
-                measure_quality(data, width, height, *subsampling, Some(P_F32_GAMMA_AWARE))
-            {
-                results.push(MethodResult {
-                    name: "F32 Gamma-Aware",
-                    dssim: r.dssim,
-                    file_size: r.file_size,
-                    encode_time_us: r.encode_time_us,
-                });
-            }
-
-            // P_F32_GAMMA_AWARE_ITERATIVE - f32 gamma-aware iterative
+        // For 4:4:4, no downsampling is needed - all methods are equivalent
+        if *subsampling != Subsampling::S444 {
+            // Box filter (explicit)
             if let Ok(r) = measure_quality(
                 data,
                 width,
                 height,
                 *subsampling,
-                Some(P_F32_GAMMA_AWARE_ITERATIVE),
+                Some(ChromaDownsampling::Box),
             ) {
                 results.push(MethodResult {
-                    name: "F32 Gamma-Aware Iterative",
+                    name: "Box (explicit)",
+                    dssim: r.dssim,
+                    file_size: r.file_size,
+                    encode_time_us: r.encode_time_us,
+                });
+            }
+
+            // Gamma-Aware single-pass
+            if let Ok(r) = measure_quality(
+                data,
+                width,
+                height,
+                *subsampling,
+                Some(ChromaDownsampling::GammaAware),
+            ) {
+                results.push(MethodResult {
+                    name: "GammaAware",
+                    dssim: r.dssim,
+                    file_size: r.file_size,
+                    encode_time_us: r.encode_time_us,
+                });
+            }
+
+            // Gamma-Aware iterative (Sharp YUV style)
+            if let Ok(r) = measure_quality(
+                data,
+                width,
+                height,
+                *subsampling,
+                Some(ChromaDownsampling::GammaAwareIterative),
+            ) {
+                results.push(MethodResult {
+                    name: "GammaAwareIterative",
                     dssim: r.dssim,
                     file_size: r.file_size,
                     encode_time_us: r.encode_time_us,
@@ -618,7 +589,7 @@ fn test_thin_lines_quality() {
 #[test]
 fn test_comprehensive_benchmark() {
     println!("\n{}", "=".repeat(80));
-    println!("COMPREHENSIVE CHROMA CONVERSION BENCHMARK");
+    println!("COMPREHENSIVE CHROMA DOWNSAMPLING BENCHMARK");
     println!("{}", "=".repeat(80));
 
     let width = 256;
@@ -697,58 +668,33 @@ fn test_comprehensive_benchmark() {
     }
 }
 
-/// Test that all pathways produce valid JPEGs for all subsampling modes.
+/// Test that all downsampling methods produce valid JPEGs for all subsampling modes.
 #[test]
-fn test_all_pathways_valid() {
+fn test_all_methods_valid() {
     let width = 64;
     let height = 64;
     let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    let pathways_420 = [
-        ("Auto", None),
-        ("F32 Box", Some(P_F32_BOX)),
-        ("YUV Box", Some(P_YUV_BOX)),
-        ("YUV Sharp", Some(P_YUV_SHARP)),
-        ("F32 Gamma-Aware", Some(P_F32_GAMMA_AWARE)),
+    let methods_subsampled = [
+        ("Default", None),
+        ("Box", Some(ChromaDownsampling::Box)),
+        ("GammaAware", Some(ChromaDownsampling::GammaAware)),
         (
-            "F32 Gamma-Aware Iterative",
-            Some(P_F32_GAMMA_AWARE_ITERATIVE),
+            "GammaAwareIterative",
+            Some(ChromaDownsampling::GammaAwareIterative),
         ),
     ];
 
-    let pathways_422 = [
-        ("Auto", None),
-        ("F32 Box", Some(P_F32_BOX)),
-        ("YUV Box", Some(P_YUV_BOX)),
-        ("YUV Sharp", Some(P_YUV_SHARP)),
-        ("F32 Gamma-Aware", Some(P_F32_GAMMA_AWARE)),
-        (
-            "F32 Gamma-Aware Iterative",
-            Some(P_F32_GAMMA_AWARE_ITERATIVE),
-        ),
-    ];
-
-    let pathways_440 = [
-        ("Auto", None),
-        ("F32 Box", Some(P_F32_BOX)),
-        // YUV crate doesn't support 4:4:0
-        ("F32 Gamma-Aware", Some(P_F32_GAMMA_AWARE)),
-        (
-            "F32 Gamma-Aware Iterative",
-            Some(P_F32_GAMMA_AWARE_ITERATIVE),
-        ),
-    ];
-
-    let pathways_444 = [("Auto", None), ("F32 None", Some(P_F32_NONE))];
+    let methods_444 = [("Default", None), ("Box", Some(ChromaDownsampling::Box))];
 
     // Test 4:2:0
-    for (name, pathway) in &pathways_420 {
+    for (name, method) in &methods_subsampled {
         let result = encode_with_method(
             &data,
             width as u32,
             height as u32,
             Subsampling::S420,
-            *pathway,
+            *method,
         );
         assert!(result.is_ok(), "{} should work with 4:2:0", name);
         let jpeg = result.unwrap().jpeg_data;
@@ -761,37 +707,37 @@ fn test_all_pathways_valid() {
     }
 
     // Test 4:2:2
-    for (name, pathway) in &pathways_422 {
+    for (name, method) in &methods_subsampled {
         let result = encode_with_method(
             &data,
             width as u32,
             height as u32,
             Subsampling::S422,
-            *pathway,
+            *method,
         );
         assert!(result.is_ok(), "{} should work with 4:2:2", name);
     }
 
     // Test 4:4:0
-    for (name, pathway) in &pathways_440 {
+    for (name, method) in &methods_subsampled {
         let result = encode_with_method(
             &data,
             width as u32,
             height as u32,
             Subsampling::S440,
-            *pathway,
+            *method,
         );
         assert!(result.is_ok(), "{} should work with 4:4:0", name);
     }
 
-    // Test 4:4:4
-    for (name, pathway) in &pathways_444 {
+    // Test 4:4:4 (no downsampling needed)
+    for (name, method) in &methods_444 {
         let result = encode_with_method(
             &data,
             width as u32,
             height as u32,
             Subsampling::S444,
-            *pathway,
+            *method,
         );
         assert!(result.is_ok(), "{} should work with 4:4:4", name);
     }
@@ -811,27 +757,30 @@ fn test_performance_comparison() {
     );
     println!("{:-<60}", "");
 
-    let pathways = [
-        ("Auto", Subsampling::S420, None),
-        ("F32 Box", Subsampling::S420, Some(P_F32_BOX)),
-        ("YUV Sharp", Subsampling::S420, Some(P_YUV_SHARP)),
+    let methods = [
+        ("Box (default)", Subsampling::S420, None),
         (
-            "F32 Gamma-Aware",
+            "Box (explicit)",
             Subsampling::S420,
-            Some(P_F32_GAMMA_AWARE),
+            Some(ChromaDownsampling::Box),
         ),
         (
-            "F32 Gamma-Aware Iterative",
+            "GammaAware",
             Subsampling::S420,
-            Some(P_F32_GAMMA_AWARE_ITERATIVE),
+            Some(ChromaDownsampling::GammaAware),
+        ),
+        (
+            "GammaAwareIterative",
+            Subsampling::S420,
+            Some(ChromaDownsampling::GammaAwareIterative),
         ),
     ];
 
-    for (name, subsampling, pathway) in &pathways {
+    for (name, subsampling, method) in &methods {
         let mut times = Vec::new();
         for _ in 0..iterations {
             let result =
-                encode_with_method(&data, width as u32, height as u32, *subsampling, *pathway);
+                encode_with_method(&data, width as u32, height as u32, *subsampling, *method);
             if let Ok(r) = result {
                 times.push(r.encode_time_us);
             }
@@ -866,7 +815,7 @@ fn test_gamma_aware_vs_box_differs() {
         width as u32,
         height as u32,
         Subsampling::S420,
-        Some(P_F32_BOX),
+        Some(ChromaDownsampling::Box),
     )
     .unwrap();
 
@@ -876,7 +825,7 @@ fn test_gamma_aware_vs_box_differs() {
         width as u32,
         height as u32,
         Subsampling::S420,
-        Some(P_F32_GAMMA_AWARE),
+        Some(ChromaDownsampling::GammaAware),
     )
     .unwrap();
 
@@ -886,7 +835,7 @@ fn test_gamma_aware_vs_box_differs() {
         width as u32,
         height as u32,
         Subsampling::S420,
-        Some(P_F32_GAMMA_AWARE_ITERATIVE),
+        Some(ChromaDownsampling::GammaAwareIterative),
     )
     .unwrap();
 
@@ -917,15 +866,21 @@ fn test_gamma_aware_vs_box_differs() {
 
     println!("File sizes:");
     println!("  Box: {} bytes", box_result.jpeg_data.len());
-    println!("  Gamma-Aware: {} bytes", gamma_result.jpeg_data.len());
-    println!("  Iterative: {} bytes", iter_result.jpeg_data.len());
+    println!("  GammaAware: {} bytes", gamma_result.jpeg_data.len());
+    println!(
+        "  GammaAwareIterative: {} bytes",
+        iter_result.jpeg_data.len()
+    );
     println!("Byte differences:");
-    println!("  Box vs Gamma-Aware: {} bytes", box_gamma_byte_diff);
-    println!("  Box vs Iterative: {} bytes", box_iter_byte_diff);
-    println!("  Gamma-Aware vs Iterative: {} bytes", gamma_iter_byte_diff);
+    println!("  Box vs GammaAware: {} bytes", box_gamma_byte_diff);
+    println!("  Box vs GammaAwareIterative: {} bytes", box_iter_byte_diff);
+    println!(
+        "  GammaAware vs GammaAwareIterative: {} bytes",
+        gamma_iter_byte_diff
+    );
     println!("Size differences:");
-    println!("  Box vs Gamma-Aware: {} bytes", size_diff_box_gamma);
-    println!("  Box vs Iterative: {} bytes", size_diff_box_iter);
+    println!("  Box vs GammaAware: {} bytes", size_diff_box_gamma);
+    println!("  Box vs GammaAwareIterative: {} bytes", size_diff_box_iter);
 
     // The methods should produce different encoded data
     // Note: With small images and high quality, quantization may make outputs similar
@@ -955,10 +910,10 @@ fn test_gamma_aware_vs_box_differs() {
     );
     assert!(
         decode_jpeg(&gamma_result.jpeg_data).is_ok(),
-        "Gamma-aware should produce valid JPEG"
+        "GammaAware should produce valid JPEG"
     );
     assert!(
         decode_jpeg(&iter_result.jpeg_data).is_ok(),
-        "Iterative should produce valid JPEG"
+        "GammaAwareIterative should produce valid JPEG"
     );
 }

@@ -391,408 +391,8 @@ fn test_sharp_yuv_falls_back_for_444() {
 }
 
 // ========================================================================
-// Internal Pathway Tests (for benchmarking infrastructure)
+// Chroma Downsampling Tests
 // ========================================================================
-
-#[test]
-fn test_internal_pathway_valid_f32_none_444() {
-    use internal_pathway::*;
-
-    // P_F32_NONE should work with 4:4:4
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S444)
-        .set_internal_pathway(P_F32_NONE);
-
-    assert!(encoder.is_ok(), "P_F32_NONE with 4:4:4 should be valid");
-}
-
-#[test]
-fn test_internal_pathway_valid_yuv_sharp_420() {
-    use internal_pathway::*;
-
-    // P_YUV_SHARP should work with 4:2:0
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_YUV_SHARP);
-
-    assert!(encoder.is_ok(), "P_YUV_SHARP with 4:2:0 should be valid");
-}
-
-#[test]
-fn test_internal_pathway_valid_f32_box_420() {
-    use internal_pathway::*;
-
-    // P_F32_BOX should work with 4:2:0
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_F32_BOX);
-
-    assert!(encoder.is_ok(), "P_F32_BOX with 4:2:0 should be valid");
-}
-
-#[test]
-fn test_internal_pathway_invalid_none_with_420() {
-    use internal_pathway::*;
-
-    // DOWNSAMPLE_NONE with 4:2:0 should fail
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_NONE);
-
-    assert!(encoder.is_err(), "DOWNSAMPLE_NONE with 4:2:0 should fail");
-}
-
-#[test]
-fn test_internal_pathway_invalid_sharp_with_444() {
-    use internal_pathway::*;
-
-    // DOWNSAMPLE_SHARP with 4:4:4 should fail
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S444)
-        .set_internal_pathway(COLOR_YUV_BALANCED | DOWNSAMPLE_SHARP);
-
-    assert!(encoder.is_err(), "DOWNSAMPLE_SHARP with 4:4:4 should fail");
-}
-
-#[test]
-fn test_internal_pathway_invalid_sharp_with_440() {
-    use internal_pathway::*;
-
-    // DOWNSAMPLE_SHARP with 4:4:0 should fail (yuv crate doesn't support it)
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S440)
-        .set_internal_pathway(COLOR_YUV_BALANCED | DOWNSAMPLE_SHARP);
-
-    assert!(encoder.is_err(), "DOWNSAMPLE_SHARP with 4:4:0 should fail");
-}
-
-#[test]
-fn test_internal_pathway_invalid_yuv_balanced_with_440() {
-    use internal_pathway::*;
-
-    // COLOR_YUV_BALANCED with 4:4:0 should fail (yuv crate doesn't support 4:4:0)
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S440)
-        .set_internal_pathway(COLOR_YUV_BALANCED | DOWNSAMPLE_BOX);
-
-    assert!(
-        encoder.is_err(),
-        "COLOR_YUV_BALANCED with 4:4:0 should fail"
-    );
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_420() {
-    use internal_pathway::*;
-
-    // DOWNSAMPLE_GAMMA_AWARE_F32 should work with 4:2:0
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_F32_GAMMA_AWARE);
-
-    assert!(
-        encoder.is_ok(),
-        "DOWNSAMPLE_GAMMA_AWARE_F32 should work with 4:2:0"
-    );
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_invalid_with_444() {
-    use internal_pathway::*;
-
-    // DOWNSAMPLE_GAMMA_AWARE_F32 should fail with 4:4:4 (no downsampling needed)
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S444)
-        .set_internal_pathway(P_F32_GAMMA_AWARE);
-
-    assert!(
-        encoder.is_err(),
-        "DOWNSAMPLE_GAMMA_AWARE_F32 should fail with 4:4:4"
-    );
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_encode_420() {
-    use internal_pathway::*;
-
-    // Create a simple gradient test image
-    let width = 32u32;
-    let height = 32u32;
-    let mut data = vec![0u8; (width * height * 3) as usize];
-
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let idx = (y * width as usize + x) * 3;
-            data[idx] = (x * 8) as u8; // R
-            data[idx + 1] = (y * 8) as u8; // G
-            data[idx + 2] = ((x + y) * 4) as u8; // B
-        }
-    }
-
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_F32_GAMMA_AWARE)
-        .expect("Should create encoder");
-
-    let result = encoder.encode(&data);
-    assert!(
-        result.is_ok(),
-        "Gamma-aware 4:2:0 encoding failed: {:?}",
-        result.err()
-    );
-
-    let jpeg = result.unwrap();
-    // Verify it's a valid JPEG
-    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Should start with SOI");
-    assert_eq!(
-        &jpeg[jpeg.len() - 2..],
-        &[0xFF, 0xD9],
-        "Should end with EOI"
-    );
-    assert!(jpeg.len() > 100, "JPEG should have reasonable size");
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_encode_422() {
-    use internal_pathway::*;
-
-    let width = 32u32;
-    let height = 32u32;
-    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
-
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S422)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_F32)
-        .expect("Should create encoder");
-
-    let result = encoder.encode(&data);
-    assert!(
-        result.is_ok(),
-        "Gamma-aware 4:2:2 encoding failed: {:?}",
-        result.err()
-    );
-
-    let jpeg = result.unwrap();
-    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_encode_440() {
-    use internal_pathway::*;
-
-    let width = 32u32;
-    let height = 32u32;
-    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
-
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S440)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_F32)
-        .expect("Should create encoder");
-
-    let result = encoder.encode(&data);
-    assert!(
-        result.is_ok(),
-        "Gamma-aware 4:4:0 encoding failed: {:?}",
-        result.err()
-    );
-
-    let jpeg = result.unwrap();
-    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_iterative_420() {
-    use internal_pathway::*;
-
-    // DOWNSAMPLE_GAMMA_AWARE_ITERATIVE should work with 4:2:0
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_F32_GAMMA_AWARE_ITERATIVE);
-
-    assert!(
-        encoder.is_ok(),
-        "DOWNSAMPLE_GAMMA_AWARE_ITERATIVE should work with 4:2:0"
-    );
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_iterative_encode_420() {
-    use internal_pathway::*;
-
-    // Create a simple gradient test image
-    let width = 32u32;
-    let height = 32u32;
-    let mut data = vec![0u8; (width * height * 3) as usize];
-
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let idx = (y * width as usize + x) * 3;
-            data[idx] = (x * 8) as u8; // R
-            data[idx + 1] = (y * 8) as u8; // G
-            data[idx + 2] = ((x + y) * 4) as u8; // B
-        }
-    }
-
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(P_F32_GAMMA_AWARE_ITERATIVE)
-        .expect("Should create encoder");
-
-    let result = encoder.encode(&data);
-    assert!(
-        result.is_ok(),
-        "Gamma-aware iterative 4:2:0 encoding failed: {:?}",
-        result.err()
-    );
-
-    let jpeg = result.unwrap();
-    // Verify it's a valid JPEG
-    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Should start with SOI");
-    assert_eq!(
-        &jpeg[jpeg.len() - 2..],
-        &[0xFF, 0xD9],
-        "Should end with EOI"
-    );
-    assert!(jpeg.len() > 100, "JPEG should have reasonable size");
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_iterative_encode_422() {
-    use internal_pathway::*;
-
-    let width = 32u32;
-    let height = 32u32;
-    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
-
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S422)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_ITERATIVE)
-        .expect("Should create encoder");
-
-    let result = encoder.encode(&data);
-    assert!(
-        result.is_ok(),
-        "Gamma-aware iterative 4:2:2 encoding failed: {:?}",
-        result.err()
-    );
-
-    let jpeg = result.unwrap();
-    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
-}
-
-#[test]
-fn test_internal_pathway_gamma_aware_iterative_encode_440() {
-    use internal_pathway::*;
-
-    let width = 32u32;
-    let height = 32u32;
-    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
-
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .subsampling(Subsampling::S440)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | DOWNSAMPLE_GAMMA_AWARE_ITERATIVE)
-        .expect("Should create encoder");
-
-    let result = encoder.encode(&data);
-    assert!(
-        result.is_ok(),
-        "Gamma-aware iterative 4:4:0 encoding failed: {:?}",
-        result.err()
-    );
-
-    let jpeg = result.unwrap();
-    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
-}
-
-#[test]
-fn test_internal_pathway_unimplemented_yuv_professional() {
-    use internal_pathway::*;
-
-    // COLOR_YUV_PROFESSIONAL should fail (requires feature)
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S420)
-        .set_internal_pathway(COLOR_YUV_PROFESSIONAL | DOWNSAMPLE_BOX);
-
-    assert!(
-        encoder.is_err(),
-        "COLOR_YUV_PROFESSIONAL should fail (not implemented)"
-    );
-}
-
-#[test]
-fn test_internal_pathway_invalid_color_byte() {
-    // Invalid color conversion byte (4+)
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S444)
-        .set_internal_pathway(4); // Invalid color byte
-
-    assert!(encoder.is_err(), "Color byte 4 should be invalid");
-}
-
-#[test]
-fn test_internal_pathway_invalid_downsample_byte() {
-    use internal_pathway::*;
-
-    // Invalid downsampling byte (6+)
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S444)
-        .set_internal_pathway(COLOR_INTRINSIC_F32 | (6 << 8));
-
-    assert!(encoder.is_err(), "Downsample byte 6 should be invalid");
-}
-
-#[test]
-fn test_internal_pathway_invalid_reserved_bits() {
-    use internal_pathway::*;
-
-    // Reserved bits (32-63) should cause failure
-    // Note: bits 24-31 are the huffman method byte, not reserved
-    let encoder = Encoder::new()
-        .width(16)
-        .height(16)
-        .subsampling(Subsampling::S444)
-        .set_internal_pathway(P_F32_NONE | (1u64 << 32));
-
-    assert!(encoder.is_err(), "Reserved bit 32 should be invalid");
-}
 
 fn decode_zune(data: &[u8]) -> std::result::Result<Vec<u8>, zune_jpeg::errors::DecodeErrors> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -803,20 +403,124 @@ fn decode_zune(data: &[u8]) -> std::result::Result<Vec<u8>, zune_jpeg::errors::D
 }
 
 #[test]
-fn test_internal_pathway_pipeline_encode_decode() {
-    use internal_pathway::*;
+fn test_chroma_downsampling_box_420() {
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    // Test that InternalPipeline roundtrips correctly
-    let pipeline = InternalPipeline::from_u64(P_F32_BOX).unwrap();
-    assert_eq!(
-        pipeline.color_conversion,
-        ColorConversionMethod::IntrinsicF32
-    );
-    assert_eq!(pipeline.downsampling, DownsamplingMethod::Box);
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S420)
+        .chroma_downsampling(ChromaDownsampling::Box)
+        .encode(&data)
+        .expect("Box downsampling should work");
 
-    // Test encode/decode roundtrip
-    let encoded = pipeline.to_u64();
-    let decoded = InternalPipeline::from_u64(encoded).unwrap();
-    assert_eq!(decoded.color_conversion, pipeline.color_conversion);
-    assert_eq!(decoded.downsampling, pipeline.downsampling);
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Should start with SOI");
+    assert!(decode_zune(&jpeg).is_ok(), "Should be decodable");
+}
+
+#[test]
+fn test_chroma_downsampling_gamma_aware_420() {
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S420)
+        .chroma_downsampling(ChromaDownsampling::GammaAware)
+        .encode(&data)
+        .expect("GammaAware downsampling should work");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Should start with SOI");
+    assert!(decode_zune(&jpeg).is_ok(), "Should be decodable");
+}
+
+#[test]
+fn test_chroma_downsampling_gamma_aware_iterative_420() {
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S420)
+        .chroma_downsampling(ChromaDownsampling::GammaAwareIterative)
+        .encode(&data)
+        .expect("GammaAwareIterative downsampling should work");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Should start with SOI");
+    assert!(decode_zune(&jpeg).is_ok(), "Should be decodable");
+}
+
+#[test]
+fn test_chroma_downsampling_gamma_aware_422() {
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S422)
+        .chroma_downsampling(ChromaDownsampling::GammaAware)
+        .encode(&data)
+        .expect("GammaAware 4:2:2 should work");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+}
+
+#[test]
+fn test_chroma_downsampling_gamma_aware_440() {
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S440)
+        .chroma_downsampling(ChromaDownsampling::GammaAware)
+        .encode(&data)
+        .expect("GammaAware 4:4:0 should work");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+}
+
+#[test]
+fn test_chroma_downsampling_444_ignores_setting() {
+    // 4:4:4 has no downsampling, so the setting should be ignored
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S444)
+        .chroma_downsampling(ChromaDownsampling::GammaAwareIterative) // Should be ignored
+        .encode(&data)
+        .expect("4:4:4 should work regardless of downsampling setting");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+}
+
+#[test]
+fn test_sharp_yuv_convenience_method() {
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let jpeg = Encoder::new()
+        .width(width)
+        .height(height)
+        .subsampling(Subsampling::S420)
+        .sharp_yuv(true) // Should set GammaAwareIterative
+        .encode(&data)
+        .expect("sharp_yuv(true) should work");
+
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
 }

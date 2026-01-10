@@ -118,9 +118,13 @@ pub mod test_utils;
 
 pub use error::{Error, Result};
 pub use types::{
-    ChromaConversion, ColorSpace, HuffmanMethod, JpegMode, OutputDataType, PixelFormat,
+    ChromaDownsampling, ColorSpace, HuffmanMethod, JpegMode, OutputDataType, PixelFormat,
     SampleDepth, Subsampling,
 };
+
+// Backward compatibility alias
+#[deprecated(since = "0.4.0", note = "Use ChromaDownsampling instead")]
+pub use types::ChromaDownsampling as ChromaConversion;
 
 // Encoder API
 pub use encode::{Encoder, EncoderConfig, EncoderWorkspace};
