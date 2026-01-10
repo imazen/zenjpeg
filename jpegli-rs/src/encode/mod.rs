@@ -11,14 +11,12 @@ mod hybrid;
 mod output;
 mod progressive;
 pub mod strip;
-mod workspace;
 
 // Re-export config types
 pub use config::EncoderConfig;
 pub(crate) use config::ProgressiveScan;
-pub use workspace::EncoderWorkspace;
 
-use crate::alloc::{checked_size_2d, validate_dimensions, DEFAULT_MAX_PIXELS};
+use crate::alloc::{checked_size_2d, try_with_capacity, validate_dimensions, DEFAULT_MAX_PIXELS};
 #[cfg(test)]
 use crate::consts::MARKER_SOI;
 use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
@@ -353,77 +351,6 @@ impl Encoder {
         }
     }
 
-    /// Encodes the image data using a pre-allocated workspace.
-    ///
-    /// This method reuses buffers from the workspace to avoid allocation
-    /// overhead (~25-30% of encode time for large images). The workspace
-    /// must be able to handle the image dimensions.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use jpegli::{Encoder, EncoderWorkspace};
-    ///
-    /// // Create workspace once, reuse for multiple encodes
-    /// let mut workspace = EncoderWorkspace::new(4096, 4096)?;
-    ///
-    /// for image in images {
-    ///     let jpeg = Encoder::new()
-    ///         .width(image.width)
-    ///         .height(image.height)
-    ///         .encode_with_workspace(&image.pixels, &mut workspace)?;
-    /// }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The workspace cannot handle the image dimensions
-    /// - The input buffer size doesn't match the image dimensions
-    /// - Encoding fails for any other reason
-    pub fn encode_with_workspace(
-        &self,
-        data: &[u8],
-        workspace: &mut EncoderWorkspace,
-    ) -> Result<Vec<u8>> {
-        self.validate()?;
-
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-
-        // Check workspace capacity
-        if !workspace.can_handle(width, height) {
-            return Err(Error::InvalidBufferSize {
-                expected: workspace.max_pixels(),
-                actual: width * height,
-            });
-        }
-
-        // Calculate expected size with overflow checking
-        let expected_size = checked_size_2d(width, height)?;
-        let expected_size =
-            checked_size_2d(expected_size, self.config.pixel_format.bytes_per_pixel())?;
-
-        if data.len() != expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: data.len(),
-            });
-        }
-
-        // Currently falls back to regular path - workspace integration needs
-        // deeper refactoring to pass slices through the pipeline
-        let _ = workspace;
-
-        match self.config.mode {
-            JpegMode::Baseline => self.encode_baseline(data),
-            JpegMode::Progressive => self.encode_progressive(data),
-            _ => Err(Error::UnsupportedFeature {
-                feature: "extended/lossless encoding",
-            }),
-        }
-    }
-
     /// Encodes the image using strip-based processing for reduced memory usage.
     ///
     /// This method processes the image in horizontal strips (MCU rows) instead
@@ -537,7 +464,7 @@ impl Encoder {
                 let is_color = self.config.pixel_format != PixelFormat::Gray;
 
                 // Build output JPEG
-                let mut output = Vec::with_capacity(width * height / 4); // Rough estimate
+                let mut output = try_with_capacity(width * height / 4, "jpeg output")?; // Rough estimate
 
                 // Write JPEG headers
                 self.write_header(&mut output)?;
