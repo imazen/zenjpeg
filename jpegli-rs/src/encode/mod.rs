@@ -430,7 +430,8 @@ impl Encoder {
     /// of materializing full f32 planes, reducing peak memory by ~5x for large
     /// images (e.g., 230 MB → 40 MB for 12MP).
     ///
-    /// Currently only supports YCbCr baseline encoding with optimized Huffman.
+    /// Supports YCbCr baseline and progressive encoding with optimized Huffman.
+    /// XYB color space is not yet supported in strip mode.
     ///
     /// # Example
     ///

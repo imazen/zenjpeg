@@ -306,7 +306,7 @@ fn main() {
     }
 
     println!();
-    println!("Note: Strip encoder only produces quantized blocks (no JPEG output yet).");
+    println!("Note: Strip encoder produces complete JPEG output (baseline or progressive).");
     println!("      Memory savings come from not materializing full f32 planes.");
 
     // Detailed breakdown for 12MP

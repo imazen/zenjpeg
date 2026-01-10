@@ -1,5 +1,5 @@
 // Test at HEAD with explicit settings to match fe0baee behavior
-use jpegli::{Encoder, PixelFormat, Quality, types::Subsampling, ChromaConversion};
+use jpegli::{Encoder, PixelFormat, Quality, types::Subsampling, ChromaDownsampling};
 use jpegli::decode::Decoder;
 
 fn main() {
@@ -15,17 +15,17 @@ fn main() {
     };
     let width = info.width;
     let height = info.height;
-    
+
     println!("Image: {}x{}", width, height);
-    
-    // Encode with EXPLICIT Intrinsic setting
+
+    // Encode with explicit Box (default) setting
     let jpeg = Encoder::new()
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(Quality::from_quality(70.0))
         .subsampling(Subsampling::S420)
-        .chroma_conversion(ChromaConversion::Intrinsic) // Explicit, not Auto
+        .chroma_downsampling(ChromaDownsampling::Box) // Explicit, matches C++ jpegli
         .optimize_huffman(true)
         .encode(&rgb)
         .expect("encode");
