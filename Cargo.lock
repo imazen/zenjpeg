@@ -734,7 +734,6 @@ dependencies = [
  "serde_json",
  "test-case",
  "wide 1.1.1",
- "yuv",
  "zune-jpeg",
 ]
 
@@ -1678,15 +1677,6 @@ name = "wit-bindgen"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
-
-[[package]]
-name = "yuv"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28f1bad143caadcfcaec93039dc9c40a30fc86f23d9e7cc03764a39fe51d9d43"
-dependencies = [
- "num-traits",
-]
 
 [[package]]
 name = "yuvxyb"

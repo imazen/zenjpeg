@@ -59,7 +59,6 @@ multiversion = "0.7"
 # Published crates
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }
 mozjpeg-rs = "0.2.5"
-yuv = { version = "0.8", features = ["professional_mode"] }
 
 
 [profile.release]
