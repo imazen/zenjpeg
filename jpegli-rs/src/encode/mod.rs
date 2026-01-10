@@ -563,7 +563,7 @@ impl Encoder {
                         &strip_output.cb_blocks,
                         &strip_output.cr_blocks,
                         is_color,
-                        &tables,
+                        Some(&tables),
                     )?
                 } else {
                     // Use standard (fixed) Huffman tables
@@ -575,11 +575,12 @@ impl Encoder {
                     self.write_scan_header(&mut output)?;
 
                     // Encode blocks with standard tables
-                    self.encode_blocks_standard(
+                    self.encode_with_tables(
                         &strip_output.y_blocks,
                         &strip_output.cb_blocks,
                         &strip_output.cr_blocks,
                         is_color,
+                        None,
                     )?
                 };
 

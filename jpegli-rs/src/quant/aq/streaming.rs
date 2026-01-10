@@ -106,6 +106,8 @@ pub struct StreamingAQ {
     // Progress tracking
     rows_received: usize,
     current_imcu_row: usize,
+    /// Total number of iMCU rows (reserved for progress tracking)
+    #[allow(dead_code)]
     total_imcu_rows: usize,
 
     // Pre-erosion tracking

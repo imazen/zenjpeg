@@ -27,7 +27,6 @@
 //! 4. DCT → store f32 coefficients in pending buffer
 //! 5. If AQ returns strengths for previous iMCU:
 //!    - Quantize pending f32 → i16
-//!    - Count Huffman frequencies
 //!    - Append to final i16 storage
 //! 6. Swap pending buffers
 //!
@@ -40,7 +39,6 @@ use crate::alloc::{try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, Allo
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
 use crate::error::Result;
-use crate::huffman::optimize::FrequencyCounter;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
@@ -117,10 +115,6 @@ pub struct StripProcessor {
     /// Cr downsampled strip buffer
     cr_down: Vec<f32>,
 
-    // === Block scratch space ===
-    /// DCT buffer (reused per block)
-    dct_buf: [f32; DCT_BLOCK_SIZE],
-
     // === Final quantized block storage (i16) ===
     /// Y channel quantized blocks (zigzag order)
     y_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
@@ -159,16 +153,6 @@ pub struct StripProcessor {
     // Initialized when quant tables are set (needs y_quant_01)
     aq_state: Option<StreamingAQ>,
 
-    // === Huffman frequency accumulators ===
-    /// DC luma frequency counter
-    dc_luma_freq: FrequencyCounter,
-    /// AC luma frequency counter
-    ac_luma_freq: FrequencyCounter,
-    /// DC chroma frequency counter
-    dc_chroma_freq: FrequencyCounter,
-    /// AC chroma frequency counter
-    ac_chroma_freq: FrequencyCounter,
-
     // === Quantization parameters (set before processing) ===
     y_quant: Option<QuantTable>,
     cb_quant: Option<QuantTable>,
@@ -181,7 +165,9 @@ pub struct StripProcessor {
     /// Tracks all allocations made by this processor
     alloc_stats: crate::alloc::AllocationStats,
 
-    /// Restart interval in MCUs (0 = disabled)
+    /// Restart interval in MCUs (0 = disabled).
+    /// Reserved for future implementation - currently stored but not used.
+    #[allow(dead_code)]
     restart_interval: u16,
 }
 
@@ -311,9 +297,6 @@ impl StripProcessor {
                 Vec::new()
             },
 
-            // Scratch space
-            dct_buf: [0.0f32; DCT_BLOCK_SIZE],
-
             // Final i16 block storage (pre-allocated capacity)
             y_blocks: try_with_capacity_tracked(total_y_blocks, "y_blocks", &mut alloc_stats)?,
             cb_blocks: if is_color {
@@ -369,12 +352,6 @@ impl StripProcessor {
 
             // Streaming AQ (initialized when quant tables are set)
             aq_state: None,
-
-            // Huffman counters
-            dc_luma_freq: FrequencyCounter::new(),
-            ac_luma_freq: FrequencyCounter::new(),
-            dc_chroma_freq: FrequencyCounter::new(),
-            ac_chroma_freq: FrequencyCounter::new(),
 
             // Quant tables (set later)
             y_quant: None,
@@ -817,10 +794,7 @@ impl StripProcessor {
             .clone()
             .expect("y_zero_bias_simd not set");
 
-        // Quantize Y blocks - first pass: just quantize
-        let start_y_idx = self.y_blocks.len();
-        let mut y_quantized = Vec::with_capacity(self.pending_y_blocks[buffer_idx].len());
-
+        // Quantize Y blocks
         for (i, dct) in self.pending_y_blocks[buffer_idx].iter().enumerate() {
             let aq_strength = if i < aq_strengths.len() {
                 aq_strengths[i]
@@ -836,13 +810,7 @@ impl StripProcessor {
             let mut zigzag = [0i16; DCT_BLOCK_SIZE];
             natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
 
-            y_quantized.push((zigzag, aq_strength));
-        }
-
-        // Second pass: store and count frequencies
-        for (zigzag, aq_strength) in y_quantized {
             self.y_blocks.push(zigzag);
-            self.count_block_frequencies(&zigzag, true);
             self.all_aq_strengths.push(aq_strength);
         }
 
@@ -867,8 +835,7 @@ impl StripProcessor {
             // For 4:2:0, each iMCU has 1 chroma block row
             let global_chroma_by = self.cb_blocks.len() / c_blocks_h.max(1);
 
-            // Quantize Cb blocks - first pass
-            let mut cb_quantized = Vec::with_capacity(self.pending_cb_blocks[buffer_idx].len());
+            // Quantize Cb blocks
             for (i, dct) in self.pending_cb_blocks[buffer_idx].iter().enumerate() {
                 let bx = i % c_blocks_h.max(1);
                 let local_by = i / c_blocks_h.max(1);
@@ -888,18 +855,11 @@ impl StripProcessor {
                 let quant_coeffs = cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
-                cb_quantized.push(zigzag);
-            }
-
-            // Second pass for Cb
-            for zigzag in cb_quantized {
                 self.cb_blocks.push(zigzag);
-                self.count_block_frequencies(&zigzag, false);
             }
 
-            // Quantize Cr blocks - first pass (use same global chroma by calculation)
+            // Quantize Cr blocks
             let global_chroma_by_cr = self.cr_blocks.len() / c_blocks_h.max(1);
-            let mut cr_quantized = Vec::with_capacity(self.pending_cr_blocks[buffer_idx].len());
             for (i, dct) in self.pending_cr_blocks[buffer_idx].iter().enumerate() {
                 let bx = i % c_blocks_h.max(1);
                 let local_by = i / c_blocks_h.max(1);
@@ -919,61 +879,7 @@ impl StripProcessor {
                 let quant_coeffs = cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
-                cr_quantized.push(zigzag);
-            }
-
-            // Second pass for Cr
-            for zigzag in cr_quantized {
                 self.cr_blocks.push(zigzag);
-                self.count_block_frequencies(&zigzag, false);
-            }
-        }
-    }
-
-    /// Counts Huffman frequencies for a quantized block.
-    fn count_block_frequencies(&mut self, block: &[i16; DCT_BLOCK_SIZE], is_luma: bool) {
-        // DC coefficient - encode as category
-        let dc = block[0];
-        let dc_cat = crate::entropy::category(dc);
-        if is_luma {
-            self.dc_luma_freq.count(dc_cat);
-        } else {
-            self.dc_chroma_freq.count(dc_cat);
-        }
-
-        // AC coefficients
-        let mut run = 0u8;
-        for i in 1..DCT_BLOCK_SIZE {
-            let ac = block[i];
-            if ac == 0 {
-                run += 1;
-                if run == 16 {
-                    // ZRL symbol
-                    if is_luma {
-                        self.ac_luma_freq.count(0xF0);
-                    } else {
-                        self.ac_chroma_freq.count(0xF0);
-                    }
-                    run = 0;
-                }
-            } else {
-                let cat = crate::entropy::category(ac);
-                let symbol = (run << 4) | cat;
-                if is_luma {
-                    self.ac_luma_freq.count(symbol);
-                } else {
-                    self.ac_chroma_freq.count(symbol);
-                }
-                run = 0;
-            }
-        }
-
-        // EOB if we have trailing zeros
-        if run > 0 {
-            if is_luma {
-                self.ac_luma_freq.count(0x00);
-            } else {
-                self.ac_chroma_freq.count(0x00);
             }
         }
     }
@@ -1009,10 +915,6 @@ impl StripProcessor {
             cb_blocks: self.cb_blocks,
             cr_blocks: self.cr_blocks,
             aq_strengths: self.all_aq_strengths,
-            dc_luma_freq: self.dc_luma_freq,
-            ac_luma_freq: self.ac_luma_freq,
-            dc_chroma_freq: self.dc_chroma_freq,
-            ac_chroma_freq: self.ac_chroma_freq,
             alloc_stats: self.alloc_stats,
         })
     }
@@ -1029,14 +931,6 @@ pub struct StripProcessorOutput {
     pub cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
     /// Per-block AQ strengths (for optional re-quantization)
     pub aq_strengths: Vec<f32>,
-    /// DC luma Huffman frequencies
-    pub dc_luma_freq: FrequencyCounter,
-    /// AC luma Huffman frequencies
-    pub ac_luma_freq: FrequencyCounter,
-    /// DC chroma Huffman frequencies
-    pub dc_chroma_freq: FrequencyCounter,
-    /// AC chroma Huffman frequencies
-    pub ac_chroma_freq: FrequencyCounter,
     /// Allocation statistics from the encoding process
     pub alloc_stats: AllocationStats,
 }

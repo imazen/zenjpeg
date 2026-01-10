@@ -107,6 +107,7 @@ impl EntropyEncoder {
     }
 
     /// Scalar implementation of block encoding (kept for reference/testing).
+    #[allow(dead_code)]
     #[inline]
     fn encode_block_scalar(
         &mut self,
