@@ -1,4 +1,4 @@
-use jpegli::{Encoder, PixelFormat, Quality, Subsampling};
+use jpegli::{Encoder, EncodingBackend, PixelFormat, Quality, Subsampling};
 
 fn main() {
     let w = 256;
@@ -22,7 +22,7 @@ fn main() {
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .jpegli_quality(Quality::from_quality(90.0))
-        .force_full_plane(true)
+        .encoding_backend(EncodingBackend::FullPlane)
         .encode(&data)
         .unwrap();
 
