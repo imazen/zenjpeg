@@ -44,7 +44,7 @@ use crate::huffman::optimize::FrequencyCounter;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 
 use super::natural_to_zigzag_into;
 
@@ -102,6 +102,8 @@ pub struct StripProcessor {
     subsampling: Subsampling,
     /// Pixel format of input data
     pixel_format: PixelFormat,
+    /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
+    chroma_downsampling: ChromaDownsampling,
 
     // === Reusable strip buffers (f32) ===
     /// Y channel strip buffer
@@ -178,10 +180,13 @@ pub struct StripProcessor {
     // === Allocation tracking ===
     /// Tracks all allocations made by this processor
     alloc_stats: crate::alloc::AllocationStats,
+
+    /// Restart interval in MCUs (0 = disabled)
+    restart_interval: u16,
 }
 
 impl StripProcessor {
-    /// Creates a new strip processor.
+    /// Creates a new strip processor with default settings.
     ///
     /// # Arguments
     /// * `width` - Image width in pixels
@@ -193,6 +198,33 @@ impl StripProcessor {
         height: usize,
         subsampling: Subsampling,
         pixel_format: PixelFormat,
+    ) -> Result<Self> {
+        Self::with_options(
+            width,
+            height,
+            subsampling,
+            pixel_format,
+            ChromaDownsampling::Box,
+            0,
+        )
+    }
+
+    /// Creates a new strip processor with custom chroma downsampling and restart interval.
+    ///
+    /// # Arguments
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    /// * `subsampling` - Chroma subsampling mode
+    /// * `pixel_format` - Input pixel format
+    /// * `chroma_downsampling` - Chroma downsampling method
+    /// * `restart_interval` - Restart interval in MCUs (0 = disabled)
+    pub fn with_options(
+        width: usize,
+        height: usize,
+        subsampling: Subsampling,
+        pixel_format: PixelFormat,
+        chroma_downsampling: ChromaDownsampling,
+        restart_interval: u16,
     ) -> Result<Self> {
         // Strip height is 16 for 4:2:0 (2 MCU rows), 8 otherwise
         let strip_height = match subsampling {
@@ -249,6 +281,8 @@ impl StripProcessor {
             strip_height,
             subsampling,
             pixel_format,
+            chroma_downsampling,
+            restart_interval,
 
             // Strip buffers (sized for one strip)
             y_strip: try_alloc_zeroed_f32_tracked(
@@ -417,7 +451,12 @@ impl StripProcessor {
         let actual_strip_height = self.strip_height.min(self.height - strip_y);
 
         // Step 1: Color convert RGB → YCbCr into strip buffers
-        self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+        // For gamma-aware modes, this computes chroma directly at downsampled resolution
+        if self.chroma_downsampling.uses_gamma_aware() && self.pixel_format != PixelFormat::Gray {
+            self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+        } else {
+            self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+        }
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         let aq_strengths = if let Some(ref mut aq) = self.aq_state {
@@ -427,8 +466,8 @@ impl StripProcessor {
             None
         };
 
-        // Step 3: Downsample chroma if needed
-        if self.pixel_format != PixelFormat::Gray {
+        // Step 3: Downsample chroma if needed (skipped for gamma-aware modes)
+        if self.pixel_format != PixelFormat::Gray && !self.chroma_downsampling.uses_gamma_aware() {
             self.downsample_chroma_strip(actual_strip_height)?;
         }
 
@@ -536,6 +575,79 @@ impl StripProcessor {
                     }
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Converts RGB strip to YCbCr using gamma-aware chroma downsampling.
+    ///
+    /// This computes Y at full resolution and Cb/Cr directly at the downsampled
+    /// resolution using gamma-aware averaging in linear RGB space.
+    fn convert_strip_gamma_aware(
+        &mut self,
+        rgb_strip: &[u8],
+        strip_y: usize,
+        strip_height: usize,
+    ) -> Result<()> {
+        let width = self.width;
+        let bpp = self.pixel_format.bytes_per_pixel();
+        let use_iterative = self.chroma_downsampling == ChromaDownsampling::GammaAwareIterative;
+
+        // Determine chroma strip dimensions
+        let (c_width, c_strip_height) = match self.subsampling {
+            Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
+            Subsampling::S422 => ((width + 1) / 2, strip_height),
+            Subsampling::S440 => (width, (strip_height + 1) / 2),
+            Subsampling::S444 => {
+                // No downsampling needed for 4:4:4, use standard path
+                return self.convert_strip_to_ycbcr(rgb_strip, strip_height);
+            }
+        };
+
+        let num_pixels = strip_height * width;
+        let c_size = c_width * c_strip_height;
+
+        match self.subsampling {
+            Subsampling::S420 => {
+                crate::chroma::gamma_aware_strip_420(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    width,
+                    strip_height,
+                    strip_y,
+                    self.height,
+                    bpp,
+                    use_iterative,
+                );
+            }
+            Subsampling::S422 => {
+                crate::chroma::gamma_aware_strip_422(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    width,
+                    strip_height,
+                    bpp,
+                    use_iterative,
+                );
+            }
+            Subsampling::S440 => {
+                crate::chroma::gamma_aware_strip_440(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    width,
+                    strip_height,
+                    bpp,
+                    use_iterative,
+                );
+            }
+            Subsampling::S444 => unreachable!(), // Handled above
         }
 
         Ok(())
