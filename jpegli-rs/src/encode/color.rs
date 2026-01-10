@@ -5,18 +5,13 @@
 //! - XYB color space conversion
 //! - YCbCr conversion (f32 and legacy u8)
 //! - Chroma downsampling (2x2, 2x1, 1x2)
-//! - YUV crate integration for Sharp YUV
+//! - Gamma-aware chroma downsampling (internal implementation)
 
 use super::Encoder;
 use crate::alloc::{checked_size_2d, try_alloc_filled, try_with_capacity};
 use crate::color;
 use crate::error::{Error, Result};
 use crate::types::{PixelFormat, Subsampling};
-
-use yuv::{
-    rgb_to_sharp_yuv420, rgb_to_sharp_yuv422, rgb_to_yuv420, rgb_to_yuv422, SharpYuvGammaTransfer,
-    YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
-};
 
 impl Encoder {
     /// Converts input data to scaled XYB planes.
@@ -98,13 +93,13 @@ impl Encoder {
         crate::encode_simd::downsample_1x2_simd(plane, width, height)
     }
 
-    /// Converts RGB to YCbCr using yuv crate for 4:2:0 subsampling.
+    /// Converts RGB to YCbCr using gamma-aware downsampling for 4:2:0 subsampling.
     ///
-    /// If `use_sharp` is true, uses Sharp YUV (gamma-aware, better edges).
-    /// If `use_sharp` is false, uses standard conversion (fast, simple box filter).
+    /// If `use_sharp` is true, uses iterative gamma-aware algorithm (Sharp YUV-like).
+    /// If `use_sharp` is false, uses simple gamma-aware averaging (better than box filter).
     ///
     /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
-    pub(super) fn convert_yuv_crate_420(
+    pub(super) fn convert_gamma_aware_420(
         &self,
         data: &[u8],
         use_sharp: bool,
@@ -114,46 +109,8 @@ impl Encoder {
         let c_width = (width + 1) / 2;
         let c_height = (height + 1) / 2;
 
-        // Allocate YUV planar image
-        let mut yuv_image =
-            YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv420);
-
-        // Get RGB data in the right format
-        let (rgb_data, rgb_stride) = match self.config.pixel_format {
-            PixelFormat::Rgb => (data, width as u32 * 3),
-            PixelFormat::Rgba => {
-                // Convert RGBA to RGB
-                let mut rgb = try_with_capacity(width * height * 3, "RGBA to RGB")?;
-                for i in 0..(width * height) {
-                    rgb.push(data[i * 4]);
-                    rgb.push(data[i * 4 + 1]);
-                    rgb.push(data[i * 4 + 2]);
-                }
-                return self
-                    .convert_yuv_crate_420_rgb(&rgb, width, height, c_width, c_height, use_sharp);
-            }
-            PixelFormat::Bgr => {
-                // Convert BGR to RGB
-                let mut rgb = try_with_capacity(width * height * 3, "BGR to RGB")?;
-                for i in 0..(width * height) {
-                    rgb.push(data[i * 3 + 2]); // R
-                    rgb.push(data[i * 3 + 1]); // G
-                    rgb.push(data[i * 3]); // B
-                }
-                return self
-                    .convert_yuv_crate_420_rgb(&rgb, width, height, c_width, c_height, use_sharp);
-            }
-            PixelFormat::Bgra => {
-                // Convert BGRA to RGB
-                let mut rgb = try_with_capacity(width * height * 3, "BGRA to RGB")?;
-                for i in 0..(width * height) {
-                    rgb.push(data[i * 4 + 2]); // R
-                    rgb.push(data[i * 4 + 1]); // G
-                    rgb.push(data[i * 4]); // B
-                }
-                return self
-                    .convert_yuv_crate_420_rgb(&rgb, width, height, c_width, c_height, use_sharp);
-            }
+        // Handle special pixel formats
+        match self.config.pixel_format {
             PixelFormat::Gray => {
                 // Grayscale: Y = pixel value, Cb/Cr = 128
                 let num_pixels = checked_size_2d(width, height)?;
@@ -166,111 +123,82 @@ impl Encoder {
             }
             PixelFormat::Cmyk => {
                 return Err(Error::InvalidColorFormat {
-                    reason: "yuv crate does not support CMYK input",
+                    reason: "gamma-aware conversion does not support CMYK input",
                 });
             }
-        };
-
-        // Perform YUV conversion (sharp or standard)
-        if use_sharp {
-            rgb_to_sharp_yuv420(
-                &mut yuv_image,
-                rgb_data,
-                rgb_stride,
-                YuvRange::Full,              // JPEG uses full range (0-255)
-                YuvStandardMatrix::Bt601,    // Standard JPEG matrix
-                SharpYuvGammaTransfer::Srgb, // sRGB input
-            )
-            .map_err(|e| Error::IoError {
-                reason: format!("Sharp YUV conversion failed: {:?}", e),
-            })?;
-        } else {
-            rgb_to_yuv420(
-                &mut yuv_image,
-                rgb_data,
-                rgb_stride,
-                YuvRange::Full,
-                YuvStandardMatrix::Bt601,
-                YuvConversionMode::Balanced, // Fast path uses balanced mode
-            )
-            .map_err(|e| Error::IoError {
-                reason: format!("YUV conversion failed: {:?}", e),
-            })?;
+            _ => {}
         }
 
-        // Convert u8 planes to f32
-        let num_pixels = checked_size_2d(width, height)?;
-        let c_size = checked_size_2d(c_width, c_height)?;
+        // Get RGB data (convert if needed)
+        let rgb_data: Vec<u8>;
+        let rgb_ref: &[u8] = match self.config.pixel_format {
+            PixelFormat::Rgb => data,
+            PixelFormat::Rgba => {
+                rgb_data = try_with_capacity(width * height * 3, "RGBA to RGB")?;
+                let mut rgb = rgb_data;
+                for i in 0..(width * height) {
+                    rgb.push(data[i * 4]);
+                    rgb.push(data[i * 4 + 1]);
+                    rgb.push(data[i * 4 + 2]);
+                }
+                return self.convert_gamma_aware_420_rgb(&rgb, width, height, use_sharp);
+            }
+            PixelFormat::Bgr => {
+                rgb_data = try_with_capacity(width * height * 3, "BGR to RGB")?;
+                let mut rgb = rgb_data;
+                for i in 0..(width * height) {
+                    rgb.push(data[i * 3 + 2]); // R
+                    rgb.push(data[i * 3 + 1]); // G
+                    rgb.push(data[i * 3]); // B
+                }
+                return self.convert_gamma_aware_420_rgb(&rgb, width, height, use_sharp);
+            }
+            PixelFormat::Bgra => {
+                rgb_data = try_with_capacity(width * height * 3, "BGRA to RGB")?;
+                let mut rgb = rgb_data;
+                for i in 0..(width * height) {
+                    rgb.push(data[i * 4 + 2]); // R
+                    rgb.push(data[i * 4 + 1]); // G
+                    rgb.push(data[i * 4]); // B
+                }
+                return self.convert_gamma_aware_420_rgb(&rgb, width, height, use_sharp);
+            }
+            _ => unreachable!(),
+        };
 
-        // Convert u8 planes to f32 using SIMD
-        let y_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels])?;
-        let cb_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size])?;
-        let cr_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size])?;
-
-        Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
+        // Use internal gamma-aware implementation (data is already RGB)
+        if use_sharp {
+            crate::chroma::convert_gamma_aware_iterative_420(
+                rgb_ref,
+                width,
+                height,
+                PixelFormat::Rgb,
+            )
+        } else {
+            crate::chroma::convert_gamma_aware_420(rgb_ref, width, height, PixelFormat::Rgb)
+        }
     }
 
-    /// Helper for yuv crate with pre-converted RGB data.
-    fn convert_yuv_crate_420_rgb(
+    /// Helper for gamma-aware 4:2:0 with pre-converted RGB data.
+    fn convert_gamma_aware_420_rgb(
         &self,
         rgb: &[u8],
         width: usize,
         height: usize,
-        c_width: usize,
-        c_height: usize,
         use_sharp: bool,
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
-        let mut yuv_image =
-            YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv420);
-
         if use_sharp {
-            rgb_to_sharp_yuv420(
-                &mut yuv_image,
-                rgb,
-                width as u32 * 3,
-                YuvRange::Full,
-                YuvStandardMatrix::Bt601,
-                SharpYuvGammaTransfer::Srgb,
-            )
-            .map_err(|e| Error::IoError {
-                reason: format!("Sharp YUV conversion failed: {:?}", e),
-            })?;
+            crate::chroma::convert_gamma_aware_iterative_420(rgb, width, height, PixelFormat::Rgb)
         } else {
-            rgb_to_yuv420(
-                &mut yuv_image,
-                rgb,
-                width as u32 * 3,
-                YuvRange::Full,
-                YuvStandardMatrix::Bt601,
-                YuvConversionMode::Balanced,
-            )
-            .map_err(|e| Error::IoError {
-                reason: format!("YUV conversion failed: {:?}", e),
-            })?;
+            crate::chroma::convert_gamma_aware_420(rgb, width, height, PixelFormat::Rgb)
         }
-
-        let num_pixels = checked_size_2d(width, height)?;
-        let c_size = checked_size_2d(c_width, c_height)?;
-
-        // Convert u8 planes to f32 using SIMD
-        let y_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels])?;
-        let cb_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size])?;
-        let cr_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size])?;
-
-        Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, c_height))
     }
 
-    /// Converts RGB to YCbCr using yuv crate for 4:2:2 subsampling.
+    /// Converts RGB to YCbCr using gamma-aware downsampling for 4:2:2 subsampling.
     ///
-    /// If `use_sharp` is true, uses Sharp YUV (gamma-aware, better edges).
-    /// If `use_sharp` is false, uses standard conversion (fast, simple box filter).
-    pub(super) fn convert_yuv_crate_422(
+    /// If `use_sharp` is true, uses iterative gamma-aware algorithm (Sharp YUV-like).
+    /// If `use_sharp` is false, uses simple gamma-aware averaging.
+    pub(super) fn convert_gamma_aware_422(
         &self,
         data: &[u8],
         use_sharp: bool,
@@ -279,7 +207,26 @@ impl Encoder {
         let height = self.config.height as usize;
         let c_width = (width + 1) / 2;
 
-        // For formats other than RGB, convert first
+        // Handle special pixel formats
+        match self.config.pixel_format {
+            PixelFormat::Gray => {
+                // Grayscale: Y = pixel value, Cb/Cr = 128
+                let num_pixels = checked_size_2d(width, height)?;
+                let c_size = checked_size_2d(c_width, height)?;
+                let cb_plane = try_alloc_filled(c_size, 128.0f32, "Cb plane")?;
+                let cr_plane = try_alloc_filled(c_size, 128.0f32, "Cr plane")?;
+                let y_plane = crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels])?;
+                return Ok((y_plane, cb_plane, cr_plane, c_width, height));
+            }
+            PixelFormat::Cmyk => {
+                return Err(Error::InvalidColorFormat {
+                    reason: "gamma-aware conversion does not support CMYK input",
+                });
+            }
+            _ => {}
+        }
+
+        // Get RGB data (convert if needed)
         let rgb_data: Vec<u8>;
         let rgb_ref: &[u8] = match self.config.pixel_format {
             PixelFormat::Rgb => data,
@@ -301,64 +248,90 @@ impl Encoder {
                     .collect();
                 &rgb_data
             }
+            _ => unreachable!(),
+        };
+
+        // Use internal gamma-aware implementation (data is already RGB)
+        if use_sharp {
+            crate::chroma::convert_gamma_aware_iterative_422(
+                rgb_ref,
+                width,
+                height,
+                PixelFormat::Rgb,
+            )
+        } else {
+            crate::chroma::convert_gamma_aware_422(rgb_ref, width, height, PixelFormat::Rgb)
+        }
+    }
+
+    /// Converts RGB to YCbCr using gamma-aware downsampling for 4:4:0 subsampling.
+    ///
+    /// If `use_sharp` is true, uses iterative gamma-aware algorithm (Sharp YUV-like).
+    /// If `use_sharp` is false, uses simple gamma-aware averaging.
+    pub(super) fn convert_gamma_aware_440(
+        &self,
+        data: &[u8],
+        use_sharp: bool,
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let c_height = (height + 1) / 2;
+
+        // Handle special pixel formats
+        match self.config.pixel_format {
             PixelFormat::Gray => {
-                // Grayscale doesn't benefit from yuv crate conversion
+                // Grayscale: Y = pixel value, Cb/Cr = 128
                 let num_pixels = checked_size_2d(width, height)?;
-                let c_size = checked_size_2d(c_width, height)?;
+                let c_size = checked_size_2d(width, c_height)?;
                 let cb_plane = try_alloc_filled(c_size, 128.0f32, "Cb plane")?;
                 let cr_plane = try_alloc_filled(c_size, 128.0f32, "Cr plane")?;
-                // Convert u8 to f32 using SIMD
                 let y_plane = crate::encode_simd::u8_slice_to_f32_simd(&data[..num_pixels])?;
-                return Ok((y_plane, cb_plane, cr_plane, c_width, height));
+                return Ok((y_plane, cb_plane, cr_plane, width, c_height));
             }
             PixelFormat::Cmyk => {
                 return Err(Error::InvalidColorFormat {
-                    reason: "yuv crate does not support CMYK input",
+                    reason: "gamma-aware conversion does not support CMYK input",
                 });
             }
-        };
-
-        let mut yuv_image =
-            YuvPlanarImageMut::alloc(width as u32, height as u32, YuvChromaSubsampling::Yuv422);
-
-        if use_sharp {
-            rgb_to_sharp_yuv422(
-                &mut yuv_image,
-                rgb_ref,
-                width as u32 * 3,
-                YuvRange::Full,
-                YuvStandardMatrix::Bt601,
-                SharpYuvGammaTransfer::Srgb,
-            )
-            .map_err(|e| Error::IoError {
-                reason: format!("Sharp YUV 422 conversion failed: {:?}", e),
-            })?;
-        } else {
-            rgb_to_yuv422(
-                &mut yuv_image,
-                rgb_ref,
-                width as u32 * 3,
-                YuvRange::Full,
-                YuvStandardMatrix::Bt601,
-                YuvConversionMode::Balanced,
-            )
-            .map_err(|e| Error::IoError {
-                reason: format!("YUV 422 conversion failed: {:?}", e),
-            })?;
+            _ => {}
         }
 
-        let num_pixels = checked_size_2d(width, height)?;
-        let c_size = checked_size_2d(c_width, height)?;
+        // Get RGB data (convert if needed)
+        let rgb_data: Vec<u8>;
+        let rgb_ref: &[u8] = match self.config.pixel_format {
+            PixelFormat::Rgb => data,
+            PixelFormat::Rgba => {
+                rgb_data = (0..(width * height))
+                    .flat_map(|i| [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]])
+                    .collect();
+                &rgb_data
+            }
+            PixelFormat::Bgr => {
+                rgb_data = (0..(width * height))
+                    .flat_map(|i| [data[i * 3 + 2], data[i * 3 + 1], data[i * 3]])
+                    .collect();
+                &rgb_data
+            }
+            PixelFormat::Bgra => {
+                rgb_data = (0..(width * height))
+                    .flat_map(|i| [data[i * 4 + 2], data[i * 4 + 1], data[i * 4]])
+                    .collect();
+                &rgb_data
+            }
+            _ => unreachable!(),
+        };
 
-        // Convert u8 planes to f32 using SIMD
-        let y_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.y_plane.borrow()[..num_pixels])?;
-        let cb_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.u_plane.borrow()[..c_size])?;
-        let cr_plane_f32 =
-            crate::encode_simd::u8_slice_to_f32_simd(&yuv_image.v_plane.borrow()[..c_size])?;
-
-        Ok((y_plane_f32, cb_plane_f32, cr_plane_f32, c_width, height))
+        // Use internal gamma-aware implementation (data is already RGB)
+        if use_sharp {
+            crate::chroma::convert_gamma_aware_iterative_440(
+                rgb_ref,
+                width,
+                height,
+                PixelFormat::Rgb,
+            )
+        } else {
+            crate::chroma::convert_gamma_aware_440(rgb_ref, width, height, PixelFormat::Rgb)
+        }
     }
 
     /// Converts to YCbCr using f32 Intrinsic path and applies chroma subsampling.

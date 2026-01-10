@@ -178,35 +178,33 @@ impl Subsampling {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum ChromaConversion {
-    /// Our internal f32 YCbCr conversion.
+    /// Internal f32 YCbCr conversion with box filter downsampling.
     ///
     /// Best for 4:4:4 subsampling where no chroma downsampling is needed.
     /// Uses BT.601 coefficients with f32 precision throughout.
-    ///
-    /// TODO: Add proper edge handling and gamma-aware conversion.
+    /// For 4:2:0/4:2:2/4:4:0, uses simple box filter averaging.
     Intrinsic,
 
-    /// yuv crate fast path (SIMD-optimized, simple box filter).
+    /// Internal gamma-aware chroma downsampling.
     ///
-    /// Uses the yuv crate's standard conversion functions with optimized
-    /// SIMD implementations. Good for speed when chroma accuracy is less critical.
+    /// Converts to linear RGB before averaging chroma, then back to sRGB.
+    /// Better color preservation on edges compared to box filter.
     Fast,
 
-    /// yuv crate Sharp YUV (gamma-aware, best quality).
+    /// Internal iterative gamma-aware chroma downsampling (Sharp YUV-like).
     ///
-    /// Uses bi-linear interpolation with gamma correction to better preserve
+    /// Uses iterative refinement with gamma correction to better preserve
     /// color on edges and thin lines. Best choice for:
     /// - Synthetic images, graphics, text
     /// - Any content with sharp color transitions
     ///
-    /// Despite the algorithmic complexity, often 10-50% FASTER than Intrinsic
-    /// due to the yuv crate's optimized SIMD and single-pass conversion.
+    /// Handles out-of-gamut clipping gracefully.
     Sharp,
 
     /// Auto-select based on subsampling mode.
     ///
     /// - 4:4:4 → Intrinsic (no chroma downsampling needed)
-    /// - 4:2:0/4:2:2/4:4:0 → Sharp (best quality for downsampled chroma)
+    /// - 4:2:0/4:2:2/4:4:0 → Intrinsic (matches C++ jpegli default)
     #[default]
     Auto,
 }
@@ -215,24 +213,21 @@ pub enum ChromaConversion {
 // ChromaConversion Design Notes
 // ============================================================================
 //
-// This enum intentionally conflates 3 orthogonal concerns for simplicity:
+// This enum provides different chroma downsampling strategies:
 //
-// 1. **Implementation source**: Builtin (Intrinsic) vs yuv crate (Fast, Sharp)
-// 2. **Numeric precision**: f32 (Intrinsic) vs SIMD integer (yuv crate)
-// 3. **Chroma downsampling**: Box filter (Intrinsic, Fast) vs Sharp (gamma-aware)
+// | Variant   | Method              | Quality | Speed   |
+// |-----------|---------------------|---------|---------|
+// | Intrinsic | Box filter (f32)    | Good    | Fast    |
+// | Fast      | Gamma-aware average | Better  | Medium  |
+// | Sharp     | Iterative gamma     | Best    | Slower  |
 //
-// Valid combinations and their enum variants:
-// | Variant   | Source     | Precision | Downsampling         |
-// |-----------|------------|-----------|----------------------|
-// | Intrinsic | Builtin    | f32       | Box filter           |
-// | Fast      | yuv crate  | SIMD int  | Box filter           |
-// | Sharp     | yuv crate  | SIMD int  | Gamma-aware bilinear |
+// All implementations are internal (no external dependencies).
 // ============================================================================
 
 impl ChromaConversion {
-    /// Returns true if this conversion uses the yuv crate.
+    /// Returns true if this conversion uses gamma-aware downsampling.
     #[must_use]
-    pub const fn uses_yuv_crate(self) -> bool {
+    pub const fn uses_gamma_aware(self) -> bool {
         matches!(self, Self::Fast | Self::Sharp)
     }
 

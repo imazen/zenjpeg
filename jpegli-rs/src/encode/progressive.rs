@@ -984,8 +984,8 @@ impl Encoder {
         ) {
             let use_sharp = matches!(chroma_method, ChromaConversion::Sharp);
             match self.config.subsampling {
-                Subsampling::S420 => self.convert_yuv_crate_420(data, use_sharp)?,
-                Subsampling::S422 => self.convert_yuv_crate_422(data, use_sharp)?,
+                Subsampling::S420 => self.convert_gamma_aware_420(data, use_sharp)?,
+                Subsampling::S422 => self.convert_gamma_aware_422(data, use_sharp)?,
                 // yuv crate doesn't support S440/S444, fall through to Intrinsic
                 _ => self.convert_intrinsic_with_subsampling(data)?,
             }
