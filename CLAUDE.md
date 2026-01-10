@@ -94,19 +94,44 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
 
 ## Running Tests
 
+### Default Tests (no external dependencies)
 ```bash
-# All tests
-cargo test --release
+cargo test --release                    # All non-ignored tests (~340 tests)
+cargo test --release --test <name>      # Specific test file
+```
 
-# Specific test file
-cargo test --release --test progressive_xyb_decode
+### Full Test Suite (requires C++, testdata, corpus)
 
-# Ignored tests (require external files)
+Prerequisites:
+1. Build C++ jpegli: `cd internal/jpegli-cpp && mkdir -p build && cd build && cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_TOOLS=ON .. && ninja cjpegli djpegli`
+2. Generate testdata: `GENERATE_RUST_TEST_DATA=1 ./build/tools/cjpegli input.png output.jpg`
+3. Corpus available at `~/work/codec-eval/codec-corpus/`
+
+```bash
+# Run ALL tests including ignored ones
 cargo test --release -- --ignored
 
-# With test utilities
-cargo test --release --features test-utils
+# C++ parity tests (most important)
+cargo test --release --test parity_enforcement -- --ignored     # 7 tests
+cargo test --release --test cpp_comparison -- --ignored         # 4 tests
+cargo test --release --test cpp_filesize_comparison -- --ignored
+
+# Corpus-based tests (need corpus-tests feature)
+cargo test --release --features corpus-tests -- --ignored
+
+# FFI tests (need ffi-tests feature + C++ build)
+cargo test --release --features ffi-tests -- --ignored
 ```
+
+### Test Categories
+
+| Category | Command | Notes |
+|----------|---------|-------|
+| Unit tests | `cargo test --release --lib` | 324 tests, no deps |
+| Integration | `cargo test --release` | Includes strip parity |
+| C++ parity | `cargo test --release -- --ignored` | Needs C++ build |
+| Corpus | `--features corpus-tests -- --ignored` | Needs image corpus |
+| FFI | `--features ffi-tests` | Direct C++ bindings |
 
 ## Benchmarks
 
