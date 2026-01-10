@@ -105,6 +105,182 @@ impl Default for MemoryTracker {
     }
 }
 
+/// Tracks allocation statistics during encoding/decoding operations.
+///
+/// Unlike `MemoryTracker`, this doesn't enforce limits - it just records
+/// what was allocated for analysis and prediction purposes.
+#[derive(Debug, Clone, Default)]
+pub struct AllocationStats {
+    /// Number of allocations made
+    pub count: usize,
+    /// Total bytes allocated (sum of all allocations)
+    pub total_bytes: usize,
+    /// Peak bytes allocated at any point (requires manual tracking)
+    pub peak_bytes: usize,
+    /// Current bytes allocated (for tracking peak)
+    current_bytes: usize,
+}
+
+impl AllocationStats {
+    /// Creates a new empty stats tracker.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records an allocation.
+    #[inline]
+    pub fn record_alloc(&mut self, bytes: usize) {
+        self.count += 1;
+        self.total_bytes += bytes;
+        self.current_bytes += bytes;
+        if self.current_bytes > self.peak_bytes {
+            self.peak_bytes = self.current_bytes;
+        }
+    }
+
+    /// Records a deallocation (for peak tracking).
+    #[inline]
+    pub fn record_dealloc(&mut self, bytes: usize) {
+        self.current_bytes = self.current_bytes.saturating_sub(bytes);
+    }
+
+    /// Resets all statistics.
+    pub fn reset(&mut self) {
+        self.count = 0;
+        self.total_bytes = 0;
+        self.peak_bytes = 0;
+        self.current_bytes = 0;
+    }
+
+    /// Merges another stats tracker into this one.
+    pub fn merge(&mut self, other: &AllocationStats) {
+        self.count += other.count;
+        self.total_bytes += other.total_bytes;
+        // Peak is the max of either tracker's peak
+        if other.peak_bytes > self.peak_bytes {
+            self.peak_bytes = other.peak_bytes;
+        }
+    }
+
+    /// Returns a human-readable summary.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "{} allocations, {} total, {} peak",
+            self.count,
+            format_bytes(self.total_bytes),
+            format_bytes(self.peak_bytes)
+        )
+    }
+}
+
+/// Formats bytes as human-readable string.
+fn format_bytes(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.2} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+// ============================================================================
+// Tracked allocation functions
+// ============================================================================
+
+/// Allocate a Vec with tracking.
+#[inline]
+pub fn try_alloc_vec_tracked<T: Default + Clone>(
+    count: usize,
+    context: &'static str,
+    stats: &mut AllocationStats,
+) -> Result<Vec<T>> {
+    let byte_size = count
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+    v.resize(count, T::default());
+
+    stats.record_alloc(byte_size);
+    Ok(v)
+}
+
+/// Allocate a Vec of f32 zeros with tracking.
+#[inline]
+pub fn try_alloc_zeroed_f32_tracked(
+    count: usize,
+    context: &'static str,
+    stats: &mut AllocationStats,
+) -> Result<Vec<f32>> {
+    let byte_size = count
+        .checked_mul(4)
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+    v.resize(count, 0.0f32);
+
+    stats.record_alloc(byte_size);
+    Ok(v)
+}
+
+/// Allocate a Vec with specific capacity with tracking.
+#[inline]
+pub fn try_with_capacity_tracked<T>(
+    capacity: usize,
+    context: &'static str,
+    stats: &mut AllocationStats,
+) -> Result<Vec<T>> {
+    let byte_size = capacity
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(capacity)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+
+    stats.record_alloc(byte_size);
+    Ok(v)
+}
+
+/// Allocate a Vec of DCT blocks with tracking.
+#[inline]
+pub fn try_alloc_dct_blocks_tracked(
+    count: usize,
+    context: &'static str,
+    stats: &mut AllocationStats,
+) -> Result<Vec<[i16; 64]>> {
+    let byte_size = count
+        .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+    v.resize(count, [0i16; 64]);
+
+    stats.record_alloc(byte_size);
+    Ok(v)
+}
+
 /// Calculate size with overflow checking.
 ///
 /// Returns an error if the multiplication would overflow.
@@ -386,5 +562,66 @@ mod tests {
         // This would overflow
         let result = tracker.try_alloc(100, "test2");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_allocation_stats_basic() {
+        let mut stats = AllocationStats::new();
+        assert_eq!(stats.count, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.peak_bytes, 0);
+
+        stats.record_alloc(1000);
+        assert_eq!(stats.count, 1);
+        assert_eq!(stats.total_bytes, 1000);
+        assert_eq!(stats.peak_bytes, 1000);
+
+        stats.record_alloc(500);
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.total_bytes, 1500);
+        assert_eq!(stats.peak_bytes, 1500);
+    }
+
+    #[test]
+    fn test_allocation_stats_peak_tracking() {
+        let mut stats = AllocationStats::new();
+
+        stats.record_alloc(1000);
+        assert_eq!(stats.peak_bytes, 1000);
+
+        stats.record_dealloc(400);
+        assert_eq!(stats.peak_bytes, 1000); // Peak unchanged
+
+        stats.record_alloc(200);
+        assert_eq!(stats.peak_bytes, 1000); // Still at 800, peak unchanged
+
+        stats.record_alloc(500); // Now at 1300 (600 + 200 + 500)
+        assert_eq!(stats.peak_bytes, 1300); // New peak
+    }
+
+    #[test]
+    fn test_allocation_stats_tracked_alloc() {
+        let mut stats = AllocationStats::new();
+
+        let v: Vec<f32> = try_alloc_zeroed_f32_tracked(100, "test", &mut stats).unwrap();
+        assert_eq!(v.len(), 100);
+        assert_eq!(stats.count, 1);
+        assert_eq!(stats.total_bytes, 400); // 100 * 4 bytes
+
+        let v2: Vec<[i16; 64]> = try_alloc_dct_blocks_tracked(10, "blocks", &mut stats).unwrap();
+        assert_eq!(v2.len(), 10);
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.total_bytes, 400 + 1280); // + 10 * 128 bytes
+    }
+
+    #[test]
+    fn test_allocation_stats_summary() {
+        let mut stats = AllocationStats::new();
+        stats.record_alloc(1024 * 1024); // 1 MB
+        stats.record_alloc(512 * 1024); // 512 KB
+
+        let summary = stats.summary();
+        assert!(summary.contains("2 allocations"));
+        assert!(summary.contains("MB")); // Total should be in MB
     }
 }

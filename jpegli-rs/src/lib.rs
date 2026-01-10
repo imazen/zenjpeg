@@ -127,7 +127,7 @@ pub use types::{
 pub use types::ChromaDownsampling as ChromaConversion;
 
 // Encoder API
-pub use encode::{Encoder, EncoderConfig, EncoderWorkspace};
+pub use encode::{Encoder, EncoderConfig};
 
 // Decoder API
 pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
@@ -135,6 +135,9 @@ pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
 // Quality settings
 pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
 pub use quant::{Quality, QuantTable};
+
+// Allocation tracking
+pub use foundation::AllocationStats;
 
 // Pixel types for typed encode/decode API
 pub use pixel::{Gray16, Gray8, Pixel, RGB16, RGB8, RGBA16, RGBA8};
