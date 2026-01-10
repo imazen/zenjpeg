@@ -11,27 +11,41 @@ cargo test --release
 
 ## C++ Parity Verification (IMPORTANT)
 
-Run the comprehensive Rust vs C++ jpegli comparison matrix:
+All features enabled by default. Tests auto-find corpus at `~/work/codec-eval/codec-corpus/`.
 
+### Quick Parity Check
 ```bash
-# Requires: git submodule update --init --recursive && build C++ jpegli first
-cargo test --release -p jpegli-rs --features ffi-tests --test comprehensive_cpp_comparison -- --nocapture --ignored
+# Comprehensive test: 10 images × 50 quality levels (live cjpegli FFI)
+cargo test --release -p jpegli-rs --test comprehensive_cpp_comparison -- --nocapture --ignored
 ```
 
-This produces a table comparing 10 images × 50 quality levels showing:
-- **Size**: Rust vs C++ file sizes (expect ~0.1% difference)
-- **DSSIM**: Quality metric (expect 0.00% difference)
-- **Butteraugli**: Perceptual quality (expect 0.00% difference)
-- **Speed**: Encoding time comparison
+Expected results:
+- **Size**: +0.04% (Rust slightly larger)
+- **DSSIM**: +0.14% (essentially identical quality)
+- **Butteraugli**: -0.01% (Rust slightly better)
 
-Other parity tests:
+### All C++ Comparison Tests
 ```bash
-# Quick locked parity tests (no C++ rebuild needed)
-cargo test --release -p jpegli-rs --test cpp_parity_locked
+# Run ALL comparison tests with live C++ FFI
+cargo test --release -p jpegli-rs -- comparison --nocapture --ignored
 
-# Encoder configuration matrix (all modes × all decoders)
-cargo test --release -p jpegli-rs --features ffi-tests --test encoder_matrix -- --nocapture
+# Corpus-based comparison (CID22 images)
+cargo test --release -p jpegli-rs --test corpus_cpp_comparison -- --nocapture --ignored
+
+# XYB mode comparison (larger differences expected: 0.2-3%)
+cargo run --release --example xyb_parity_test
+
+# SSIMULACRA2 comparison (synthetic images)
+cargo run --release --example ssim2_comparison
 ```
+
+### Key Parity Tests
+| Test | Command | Expected |
+|------|---------|----------|
+| comprehensive | `--test comprehensive_cpp_comparison` | Size +0.04%, DSSIM +0.14% |
+| corpus | `--test corpus_cpp_comparison` | Size -0.1% |
+| xyb | `--example xyb_parity_test` | Size 0.2-3% |
+| locked | `--test cpp_parity_locked` | Hash-locked values |
 
 ## Tools
 
@@ -186,11 +200,15 @@ use butteraugli::compute_butteraugli;
 
 ```toml
 [features]
-default = ["simd"]
-simd = []           # SIMD optimizations
-test-utils = []     # Testing utilities (synthetic images, etc.)
+default = ["simd", "cms", "ffi-tests", "corpus-tests", "test-utils"]
+simd = []           # SIMD optimizations (always on)
+cms = ["cms-lcms2"] # Color management
 ffi-tests = []      # C++ parity tests (requires jpegli-sys)
+corpus-tests = []   # Corpus comparison tests
+test-utils = []     # Testing utilities
 ```
+
+Note: All development features enabled by default for local testing.
 
 ## Key Files for Debugging
 

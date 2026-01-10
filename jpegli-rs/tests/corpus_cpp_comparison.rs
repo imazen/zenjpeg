@@ -22,14 +22,17 @@ fn find_corpus_path() -> Option<PathBuf> {
         }
     }
 
-    // Check relative paths
+    // Check relative paths and well-known locations
+    let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
-        "../corpus/CID22-512",
-        "../codec-corpus/CID22/CID22-512",
-        "corpus/CID22-512",
+        format!("{}/work/codec-eval/codec-corpus/CID22/CID22-512/training", home),
+        format!("{}/work/codec-eval/codec-corpus/kodak", home),
+        "../corpus/CID22-512".to_string(),
+        "../codec-corpus/CID22/CID22-512".to_string(),
+        "corpus/CID22-512".to_string(),
     ];
     for p in candidates {
-        let path = PathBuf::from(p);
+        let path = PathBuf::from(&p);
         if path.exists() {
             return Some(path);
         }
@@ -92,7 +95,8 @@ fn register_rust_jpegli(session: &mut EvalSession) {
                 .width(width as u32)
                 .height(height as u32)
                 .pixel_format(jpegli::PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(quality));
+                .jpegli_quality(Quality::from_quality(quality))
+                .optimize_huffman(false); // Match C++ --fixed_code
 
             let encoded = encoder
                 .encode(&rgb_data)
