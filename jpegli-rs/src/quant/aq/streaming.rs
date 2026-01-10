@@ -266,7 +266,8 @@ impl StreamingAQ {
                 let prev_buffer = 1 - self.y_imcu_current;
                 self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
                 // Accumulate for batch mode
-                self.all_aq_strengths.extend_from_slice(&self.imcu_aq_strengths);
+                self.all_aq_strengths
+                    .extend_from_slice(&self.imcu_aq_strengths);
                 true
             } else {
                 false
@@ -292,7 +293,8 @@ impl StreamingAQ {
         if let Some(pending) = self.pending_imcu_row.take() {
             let prev_buffer = 1 - self.y_imcu_current;
             self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
-            self.all_aq_strengths.extend_from_slice(&self.imcu_aq_strengths);
+            self.all_aq_strengths
+                .extend_from_slice(&self.imcu_aq_strengths);
             return Some(&self.imcu_aq_strengths);
         }
         None
@@ -476,10 +478,19 @@ impl StreamingAQ {
 
                     let mut vals = [0.0f32; 9];
                     for (i, (ny, nx)) in [
-                        (-1, -1), (-1, 0), (-1, 1),
-                        (0, -1), (0, 0), (0, 1),
-                        (1, -1), (1, 0), (1, 1),
-                    ].iter().enumerate() {
+                        (-1, -1),
+                        (-1, 0),
+                        (-1, 1),
+                        (0, -1),
+                        (0, 0),
+                        (0, 1),
+                        (1, -1),
+                        (1, 0),
+                        (1, 1),
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
                         let px = (cx + nx).clamp(0, pe_w as isize - 1) as usize;
                         let py = (cy + ny).clamp(0, max_filled_row.max(0)) as usize;
                         let buffer_row = py % buffer_rows;
@@ -560,7 +571,9 @@ mod tests {
 
         assert_eq!(full_result.strengths.len(), streaming_result.len());
 
-        let max_diff: f32 = full_result.strengths.iter()
+        let max_diff: f32 = full_result
+            .strengths
+            .iter()
             .zip(streaming_result.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0, f32::max);
@@ -594,7 +607,9 @@ mod tests {
         }
         let streaming_result = streaming.finalize().unwrap();
 
-        let max_diff: f32 = full_result.strengths.iter()
+        let max_diff: f32 = full_result
+            .strengths
+            .iter()
             .zip(streaming_result.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0, f32::max);
@@ -621,7 +636,9 @@ mod tests {
             let strip_start = strip_y * width;
             let strip_end = strip_start + actual_height * width;
 
-            if let Some(aq) = streaming.process_y_strip(&y_plane[strip_start..strip_end], strip_y, actual_height) {
+            if let Some(aq) =
+                streaming.process_y_strip(&y_plane[strip_start..strip_end], strip_y, actual_height)
+            {
                 collected.extend_from_slice(aq);
             }
         }

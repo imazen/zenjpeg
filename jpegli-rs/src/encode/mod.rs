@@ -185,31 +185,11 @@ impl Encoder {
         self
     }
 
-    /// Sets the input smoothing factor (0-100).
-    ///
-    /// When non-zero, applies a 3x3 weighted blur to chroma planes before
-    /// downsampling to reduce aliasing artifacts. Higher values = more blur.
-    ///
-    /// This matches libjpeg/jpegli's `smoothing_factor` parameter.
-    /// Default is 0 (disabled), which is also jpegli's default.
-    ///
-    /// **Important**: Only works with [`ChromaConversion::Intrinsic`].
-    /// The yuv crate paths (Fast, Sharp) perform conversion + downsampling
-    /// in a single pass, so there's no intermediate chroma plane to blur.
-    ///
-    /// Only affects chroma subsampling modes (4:2:0, 4:2:2, 4:4:0).
-    /// Has no effect on 4:4:4 mode since no downsampling occurs.
-    #[must_use]
-    pub fn smoothing_factor(mut self, factor: u8) -> Self {
-        self.config.smoothing_factor = factor.min(100);
-        self
-    }
-
     /// Set chroma conversion method.
     ///
     /// Controls how RGB is converted to YCbCr chroma planes:
     /// - [`ChromaConversion::Intrinsic`]: Our f32 conversion with box filter
-    ///   downsampling. Supports `smoothing_factor` for pre-blur.
+    ///   downsampling.
     /// - [`ChromaConversion::Fast`]: yuv crate SIMD path with box filter.
     ///   Fast but may have color bleeding on edges.
     /// - [`ChromaConversion::Sharp`]: yuv crate Sharp YUV (gamma-aware bilinear).
