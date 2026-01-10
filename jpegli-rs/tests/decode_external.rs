@@ -5,7 +5,6 @@
 
 use dssim::Dssim;
 use rgb::RGBA8;
-use std::path::Path;
 
 fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
     data.chunks(3)
@@ -24,16 +23,24 @@ fn compute_dssim(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
 }
 
 fn decode_with_jpegli(data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
-    let mut decoder = jpegli::Decoder::new();
+    let decoder = jpegli::Decoder::new();
     let img = decoder.decode(data).map_err(|e| e.to_string())?;
     Ok((img.data, img.width as usize, img.height as usize))
 }
 
-fn decode_with_jpeg_decoder(data: &[u8]) -> (Vec<u8>, usize, usize) {
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
-    let pixels = decoder.decode().expect("jpeg-decoder failed");
-    let (width, height) = decoder.dimensions().unwrap();
+/// Decode using mozjpeg (libjpeg-compatible, handles non-interleaved correctly)
+///
+/// Note: zune-jpeg has a bug with non-interleaved JPEGs (returns all gray),
+/// so we use mozjpeg as the reference decoder for all tests.
+fn decode_with_mozjpeg(data: &[u8]) -> (Vec<u8>, usize, usize) {
+    let decompress = mozjpeg::Decompress::new_mem(data).expect("mozjpeg decompress");
+    let mut decompress = decompress.rgb().expect("mozjpeg rgb");
+    let width = decompress.width();
+    let height = decompress.height();
+    let pixels = decompress
+        .read_scanlines::<u8>()
+        .expect("mozjpeg read scanlines");
+    let _ = decompress.finish();
     (pixels, width, height)
 }
 
@@ -49,7 +56,7 @@ fn test_decode_im_q85_444() {
     let jpeg_data = std::fs::read(path).expect("read file");
 
     let (jpegli_pixels, jw, jh) = decode_with_jpegli(&jpeg_data).expect("jpegli decode");
-    let (ref_pixels, rw, rh) = decode_with_jpeg_decoder(&jpeg_data);
+    let (ref_pixels, rw, rh) = decode_with_mozjpeg(&jpeg_data);
 
     assert_eq!((jw, jh), (rw, rh), "Dimension mismatch");
 
@@ -67,6 +74,9 @@ fn test_decode_im_q85_444() {
 }
 
 /// Test decoding non-interleaved 4:4:4 JPEG
+///
+/// Note: zune-jpeg has a bug with non-interleaved JPEGs (returns all gray).
+/// We use mozjpeg as the reference decoder here.
 #[test]
 fn test_decode_444_non_interleaved() {
     let path = jpegli::test_utils::get_testdata_dir()
@@ -79,7 +89,8 @@ fn test_decode_444_non_interleaved() {
     let jpeg_data = std::fs::read(path).expect("read file");
 
     let (jpegli_pixels, jw, jh) = decode_with_jpegli(&jpeg_data).expect("jpegli decode");
-    let (ref_pixels, rw, rh) = decode_with_jpeg_decoder(&jpeg_data);
+    // Use mozjpeg as reference - zune-jpeg has a bug with non-interleaved scans
+    let (ref_pixels, rw, rh) = decode_with_mozjpeg(&jpeg_data);
 
     assert_eq!((jw, jh), (rw, rh), "Dimension mismatch");
 
@@ -109,7 +120,7 @@ fn test_decode_420_mcu_interleaved() {
 
     // 4:2:0 now works with proper MCU interleaving
     let (jpegli_pixels, jw, jh) = decode_with_jpegli(&jpeg_data).expect("jpegli decode");
-    let (ref_pixels, rw, rh) = decode_with_jpeg_decoder(&jpeg_data);
+    let (ref_pixels, rw, rh) = decode_with_mozjpeg(&jpeg_data);
 
     assert_eq!((jw, jh), (rw, rh), "Dimension mismatch");
 
@@ -144,10 +155,10 @@ fn test_decode_grayscale() {
     // Try to decode - grayscale may or may not be supported yet
     match decode_with_jpegli(&jpeg_data) {
         Ok((jpegli_pixels, jw, jh)) => {
-            let (ref_pixels, rw, rh) = decode_with_jpeg_decoder(&jpeg_data);
+            let (ref_pixels, rw, rh) = decode_with_mozjpeg(&jpeg_data);
             assert_eq!((jw, jh), (rw, rh), "Dimension mismatch");
 
-            // jpeg-decoder returns grayscale as single channel
+            // mozjpeg returns grayscale as RGB (gray expanded to all channels)
             // jpegli returns RGB (grayscale expanded to RGB)
             // Compare luminance only
             let jpegli_luma: Vec<u8> = if jpegli_pixels.len() == jw * jh * 3 {
