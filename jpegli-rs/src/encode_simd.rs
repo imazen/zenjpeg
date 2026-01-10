@@ -593,6 +593,7 @@ pub(crate) unsafe fn downsample_2x2_avx2(
 /// Scalar reference implementation of gather_even_odd for testing.
 ///
 /// This is the ground truth implementation that AVX2 versions are tested against.
+#[cfg(test)]
 #[inline]
 fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
     debug_assert!(data.len() >= 16);

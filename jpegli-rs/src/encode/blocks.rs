@@ -9,149 +9,6 @@
 use super::*;
 
 impl Encoder {
-    fn encode_scan(
-        &self,
-        y_plane: &[u8],
-        cb_plane: &[u8],
-        cr_plane: &[u8],
-        y_quant: &QuantTable,
-        c_quant: &QuantTable,
-    ) -> Result<Vec<u8>> {
-        let mut encoder = EntropyEncoder::new();
-
-        // Set up Huffman tables
-        encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
-        encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
-        encoder.set_dc_table(1, HuffmanEncodeTable::std_dc_chrominance());
-        encoder.set_ac_table(1, HuffmanEncodeTable::std_ac_chrominance());
-
-        if self.config.restart_interval > 0 {
-            encoder.set_restart_interval(self.config.restart_interval);
-        }
-
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-
-        // For 4:2:0, process MCUs
-        let _mcu_width = ((width + 15) / 16) * 16;
-        let _mcu_height = ((height + 15) / 16) * 16;
-
-        // TODO: Implement full MCU processing with subsampling
-        // For now, simplified 4:4:4 encoding
-        let blocks_h = (width + 7) / 8;
-        let blocks_v = (height + 7) / 8;
-
-        // Zero-bias parameters for each component
-        // Use effective distance inferred from quant tables (like C++ QuantValsToDistance)
-        // For YCbCr mode, Cb and Cr share the same quant table (c_quant)
-        let _input_distance = self.config.quality.to_distance();
-        let effective_distance = quant::quant_vals_to_distance(y_quant, c_quant, c_quant);
-        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
-        let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
-        let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
-
-        // Convert Y plane to f32 for AQ computation (SIMD)
-        let y_plane_f32 = crate::encode_simd::u8_slice_to_f32_simd(y_plane)?;
-
-        // Compute per-block adaptive quantization strength from Y plane
-        // C++ uses y_quant_01 = quant_table[1] for dampen calculation
-        let y_quant_01 = y_quant.values[1];
-        #[cfg(feature = "experimental-hybrid-trellis")]
-        let aq_map =
-            hybrid::get_aq_map_or_compute(&self.config, &y_plane_f32, width, height, y_quant_01)?;
-        #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        let aq_map = compute_aq_strength_map(&y_plane_f32, width, height, y_quant_01)?;
-
-        // Create hybrid quantization context if enabled
-        #[cfg(feature = "experimental-hybrid-trellis")]
-        let hybrid_ctx = hybrid::create_hybrid_ctx(&self.config);
-
-        for by in 0..blocks_v {
-            for bx in 0..blocks_h {
-                // Get per-block aq_strength (C++ AQ produces 0.0-0.2, mean ~0.08)
-                let aq_strength = aq_map.get(bx, by);
-
-                // Extract and encode Y block
-                let y_block = self.extract_block(y_plane, width, height, bx, by);
-                let y_dct = forward_dct_8x8(&y_block);
-
-                #[cfg(feature = "experimental-hybrid-trellis")]
-                let y_quant_coeffs = hybrid::quantize_block_dispatch(
-                    &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
-                    aq_strength,
-                    true,
-                    hybrid_ctx.as_ref(),
-                );
-                #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                let y_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                    &y_dct,
-                    &y_quant.values,
-                    &y_zero_bias,
-                    aq_strength,
-                );
-
-                let y_zigzag = natural_to_zigzag(&y_quant_coeffs);
-                encoder.encode_block(&y_zigzag, 0, 0, 0)?;
-
-                if self.config.pixel_format != PixelFormat::Gray {
-                    // Cb block
-                    let cb_block = self.extract_block(cb_plane, width, height, bx, by);
-                    let cb_dct = forward_dct_8x8(&cb_block);
-
-                    #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cb_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cb_dct,
-                        &c_quant.values,
-                        &cb_zero_bias,
-                        aq_strength,
-                        false,
-                        hybrid_ctx.as_ref(),
-                    );
-                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cb_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cb_dct,
-                        &c_quant.values,
-                        &cb_zero_bias,
-                        aq_strength,
-                    );
-
-                    let cb_zigzag = natural_to_zigzag(&cb_quant_coeffs);
-                    encoder.encode_block(&cb_zigzag, 1, 1, 1)?;
-
-                    // Cr block
-                    let cr_block = self.extract_block(cr_plane, width, height, bx, by);
-                    let cr_dct = forward_dct_8x8(&cr_block);
-
-                    #[cfg(feature = "experimental-hybrid-trellis")]
-                    let cr_quant_coeffs = hybrid::quantize_block_dispatch(
-                        &cr_dct,
-                        &c_quant.values,
-                        &cr_zero_bias,
-                        aq_strength,
-                        false,
-                        hybrid_ctx.as_ref(),
-                    );
-                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    let cr_quant_coeffs = quant::quantize_block_with_zero_bias_simd(
-                        &cr_dct,
-                        &c_quant.values,
-                        &cr_zero_bias,
-                        aq_strength,
-                    );
-
-                    let cr_zigzag = natural_to_zigzag(&cr_quant_coeffs);
-                    encoder.encode_block(&cr_zigzag, 2, 1, 1)?;
-                }
-
-                encoder.check_restart();
-            }
-        }
-
-        Ok(encoder.finish())
-    }
-
     /// Quantizes all blocks in the image.
     ///
     /// This is separated from encoding to allow Huffman optimization:
@@ -638,8 +495,9 @@ impl Encoder {
         })
     }
 
-    /// Encodes blocks using optimized Huffman tables.
+    /// Encodes blocks using Huffman tables.
     ///
+    /// If `tables` is Some, uses the optimized tables. If None, uses standard (fixed) tables.
     /// Handles MCU interleaving for subsampled modes (4:2:0, 4:2:2, 4:4:0).
     pub(super) fn encode_with_tables(
         &self,
@@ -647,16 +505,24 @@ impl Encoder {
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
         is_color: bool,
-        tables: &OptimizedHuffmanTables,
+        tables: Option<&OptimizedHuffmanTables>,
     ) -> Result<Vec<u8>> {
         // Estimate output size: ~100 bytes per block for typical quality
         let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
         let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
 
-        encoder.set_dc_table(0, tables.dc_luma.table.clone());
-        encoder.set_ac_table(0, tables.ac_luma.table.clone());
-        encoder.set_dc_table(1, tables.dc_chroma.table.clone());
-        encoder.set_ac_table(1, tables.ac_chroma.table.clone());
+        // Set up Huffman tables - optimized if provided, standard otherwise
+        if let Some(tables) = tables {
+            encoder.set_dc_table(0, tables.dc_luma.table.clone());
+            encoder.set_ac_table(0, tables.ac_luma.table.clone());
+            encoder.set_dc_table(1, tables.dc_chroma.table.clone());
+            encoder.set_ac_table(1, tables.ac_chroma.table.clone());
+        } else {
+            encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
+            encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
+            encoder.set_dc_table(1, HuffmanEncodeTable::std_dc_chrominance());
+            encoder.set_ac_table(1, HuffmanEncodeTable::std_ac_chrominance());
+        }
 
         if self.config.restart_interval > 0 {
             encoder.set_restart_interval(self.config.restart_interval);
@@ -693,105 +559,6 @@ impl Encoder {
             let c_blocks_h = (c_width + 7) / 8;
             let c_blocks_v = (c_height + 7) / 8;
 
-            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
-            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
-
-            // Zero block for padding out-of-bounds MCU positions
-            const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
-
-            for mcu_y in 0..mcu_v {
-                for mcu_x in 0..mcu_h {
-                    // Encode Y blocks in this MCU (must encode all 4 even if out of bounds)
-                    for dy in 0..v_samp {
-                        for dx in 0..h_samp {
-                            let y_bx = mcu_x * h_samp + dx;
-                            let y_by = mcu_y * v_samp + dy;
-                            if y_bx < y_blocks_h && y_by < y_blocks_v {
-                                let y_idx = y_by * y_blocks_h + y_bx;
-                                encoder.encode_block(&y_blocks[y_idx], 0, 0, 0)?;
-                            } else {
-                                // Out of bounds - encode zero block (padding)
-                                encoder.encode_block(&ZERO_BLOCK, 0, 0, 0)?;
-                            }
-                        }
-                    }
-
-                    // Encode Cb and Cr blocks (always, even if out of bounds)
-                    if is_color {
-                        if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
-                            let c_idx = mcu_y * c_blocks_h + mcu_x;
-                            encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1)?;
-                            encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1)?;
-                        } else {
-                            // Out of bounds - encode zero blocks (padding)
-                            encoder.encode_block(&ZERO_BLOCK, 1, 1, 1)?;
-                            encoder.encode_block(&ZERO_BLOCK, 2, 1, 1)?;
-                        }
-                    }
-
-                    encoder.check_restart();
-                }
-            }
-        }
-
-        Ok(encoder.finish())
-    }
-
-    /// Encodes blocks using standard (fixed) Huffman tables - single pass.
-    ///
-    /// Handles MCU interleaving for subsampled modes (4:2:0, 4:2:2, 4:4:0).
-    pub(super) fn encode_blocks_standard(
-        &self,
-        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
-        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
-        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
-        is_color: bool,
-    ) -> Result<Vec<u8>> {
-        // Estimate output size: ~100 bytes per block for typical quality
-        let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
-        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
-
-        encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
-        encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
-        encoder.set_dc_table(1, HuffmanEncodeTable::std_dc_chrominance());
-        encoder.set_ac_table(1, HuffmanEncodeTable::std_ac_chrominance());
-
-        if self.config.restart_interval > 0 {
-            encoder.set_restart_interval(self.config.restart_interval);
-        }
-
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-        let (h_samp, v_samp) = match self.config.subsampling {
-            Subsampling::S444 => (1, 1),
-            Subsampling::S422 => (2, 1),
-            Subsampling::S420 => (2, 2),
-            Subsampling::S440 => (1, 2),
-        };
-
-        if h_samp == 1 && v_samp == 1 {
-            // 4:4:4 mode - simple 1:1 interleaving
-            for (i, y_block) in y_blocks.iter().enumerate() {
-                encoder.encode_block(y_block, 0, 0, 0)?;
-
-                if is_color {
-                    encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
-                    encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
-                }
-
-                encoder.check_restart();
-            }
-        } else {
-            // Subsampled mode - MCU interleaving
-            let y_blocks_h = (width + 7) / 8;
-            let y_blocks_v = (height + 7) / 8;
-            // Use ceiling division for chroma dimensions: (n + d - 1) / d
-            let c_width = (width + h_samp - 1) / h_samp;
-            let c_height = (height + v_samp - 1) / v_samp;
-            let c_blocks_h = (c_width + 7) / 8;
-            let c_blocks_v = (c_height + 7) / 8;
-
-            // MCU dimensions in terms of Y blocks
             let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
             let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
 

@@ -131,23 +131,30 @@ fn test_strip_dc_coefficients_reasonable() {
 
 #[test]
 fn test_strip_output_can_be_encoded() {
-    // Test that strip processor output can be used for Huffman table building
+    // Test that strip processor produces blocks that can be encoded
     let width = 256;
     let height = 256;
     let rgb_data = generate_test_image(width, height);
     let output = encode_strip(&rgb_data, width, height, Quality::Traditional(85.0));
 
-    // Huffman frequency counters should have accumulated frequencies
-    let dc_luma_total = output.dc_luma_freq.total();
-    let ac_luma_total = output.ac_luma_freq.total();
-    let dc_chroma_total = output.dc_chroma_freq.total();
-    let ac_chroma_total = output.ac_chroma_freq.total();
+    // Calculate expected block counts
+    let y_blocks_h = (width + 7) / 8;
+    let y_blocks_v = (height + 7) / 8;
+    let expected_y_blocks = y_blocks_h * y_blocks_v;
 
-    // Should have counted symbols
-    assert!(dc_luma_total > 0, "No DC luma frequencies recorded");
-    assert!(ac_luma_total > 0, "No AC luma frequencies recorded");
-    assert!(dc_chroma_total > 0, "No DC chroma frequencies recorded");
-    assert!(ac_chroma_total > 0, "No AC chroma frequencies recorded");
+    // For 4:2:0 subsampling (default)
+    let c_blocks_h = (width + 15) / 16;
+    let c_blocks_v = (height + 15) / 16;
+    let expected_c_blocks = c_blocks_h * c_blocks_v;
+
+    // Verify correct number of blocks produced
+    assert_eq!(output.y_blocks.len(), expected_y_blocks, "Wrong number of Y blocks");
+    assert_eq!(output.cb_blocks.len(), expected_c_blocks, "Wrong number of Cb blocks");
+    assert_eq!(output.cr_blocks.len(), expected_c_blocks, "Wrong number of Cr blocks");
+
+    // Verify blocks have valid content (not all zeros after quantization)
+    let non_zero_y = output.y_blocks.iter().filter(|b| b.iter().any(|&v| v != 0)).count();
+    assert!(non_zero_y > 0, "All Y blocks are zero");
 }
 
 #[test]

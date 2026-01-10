@@ -215,7 +215,7 @@ impl Encoder {
             self.write_scan_header(output)?;
 
             // Encode with optimized tables
-            self.encode_with_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color, &tables)?
+            self.encode_with_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color, Some(&tables))?
         } else {
             self.write_huffman_tables(output)?;
 
@@ -225,7 +225,7 @@ impl Encoder {
             self.write_scan_header(output)?;
 
             // Encode with standard tables
-            self.encode_blocks_standard(&y_blocks, &cb_blocks, &cr_blocks, is_color)?
+            self.encode_with_tables(&y_blocks, &cb_blocks, &cr_blocks, is_color, None)?
         };
 
         output.extend_from_slice(&scan_data);
