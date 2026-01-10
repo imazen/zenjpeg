@@ -22,10 +22,8 @@ impl Encoder {
     fn encode_baseline_ycbcr(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
-        // Strip-based encoding (encode_strip_based) produces identical output for supported
-        // features but lacks: progressive mode, XYB color space, gamma-aware chroma downsampling.
-        // Auto-dispatch to strip encoding for large images could be added here based on
-        // pixel count threshold (e.g., >2MP) when force_full_plane is false.
+        // Strip-based encoding (EncodingBackend::Strip) produces identical output for supported
+        // features. The encode() dispatcher handles backend selection based on config.encoding_backend.
 
         // Handle gamma-aware downsampling methods
         match self.config.chroma_downsampling {
