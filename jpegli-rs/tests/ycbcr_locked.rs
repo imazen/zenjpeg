@@ -28,7 +28,7 @@ use jpegli::{Encoder, JpegMode, PixelFormat, Quality};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
-// Generated: 2026-01-05
+// Generated: 2026-01-09
 // Mode: YCbCr with optimized Huffman
 // =============================================================================
 
@@ -38,38 +38,38 @@ use jpegli::{Encoder, JpegMode, PixelFormat, Quality};
 
 /// Sequential S444 optimized Huffman - frymire.png
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
-    (50, 330137),
-    (70, 439129),
-    (85, 600731),
-    (90, 718245),
-    (95, 937564),
+    (50, 329838),
+    (70, 438797),
+    (85, 600401),
+    (90, 717865),
+    (95, 937148),
 ];
 
 /// Sequential S422 optimized Huffman - frymire.png
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
-    (50, 293635),
-    (70, 386979),
-    (85, 520650),
-    (90, 613851),
-    (95, 784200),
+    (50, 293361),
+    (70, 386682),
+    (85, 520353),
+    (90, 613589),
+    (95, 783875),
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269830),
-    (70, 362103),
-    (85, 493060),
-    (90, 580756),
-    (95, 737288),
+    (50, 269536),
+    (70, 361917),
+    (85, 492806),
+    (90, 580610),
+    (95, 736931),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 293829),
-    (70, 387491),
-    (85, 521927),
-    (90, 615696),
-    (95, 785549),
+    (50, 293565),
+    (70, 387207),
+    (85, 521670),
+    (90, 615528),
+    (95, 785296),
 ];
 
 // =============================================================================
@@ -78,52 +78,52 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 
 /// Progressive S444 optimized Huffman - frymire.png
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 320884),
-    (70, 425956),
-    (85, 582224),
-    (90, 697029),
-    (95, 908344),
+    (50, 320645),
+    (70, 425666),
+    (85, 581885),
+    (90, 696609),
+    (95, 908023),
 ];
 
 /// Progressive S422 optimized Huffman - frymire.png
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 286103),
-    (70, 375922),
-    (85, 505649),
-    (90, 595952),
-    (95, 760576),
+    (50, 285904),
+    (70, 375694),
+    (85, 505401),
+    (90, 595629),
+    (95, 760331),
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 261084),
-    (70, 350187),
-    (85, 476388),
-    (90, 561365),
-    (95, 712304),
+    (50, 260900),
+    (70, 349965),
+    (85, 476205),
+    (90, 561101),
+    (95, 712084),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 284276),
-    (70, 374332),
-    (85, 504924),
-    (90, 595348),
-    (95, 759578),
+    (50, 284083),
+    (70, 374127),
+    (85, 504689),
+    (90, 595059),
+    (95, 759344),
 ];
 
 // =============================================================================
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x0d24859d4c1daed3;
-const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x169dd02ec79a38ad;
-const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x9fba9388e728d492;
-const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xbb9b6b764c01fafa;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x8b6db5e9fe981d6f;
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xf6b8a0409cc47be1;
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x13d4b4fce1cdf821;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xd7cf3f2d6b363778;
+const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0xe67ceac4e2cb923c;
+const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x5ac37bc64f50e6d8;
+const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x9179f00d4062fbe6;
+const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xd217840b58ae5201;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x8a2cf89e1cb17482;
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1af23d8ca12924c8;
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x32f1ba4eb4bd1c53;
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xa7743ef726156417;
 
 // =============================================================================
 // Helper functions
