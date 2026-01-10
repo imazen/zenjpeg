@@ -402,12 +402,14 @@ impl Encoder {
             });
         }
 
-        // Create strip processor
-        let mut processor = strip::StripProcessor::new(
+        // Create strip processor with chroma downsampling and restart interval
+        let mut processor = strip::StripProcessor::with_options(
             width,
             height,
             self.config.subsampling,
             self.config.pixel_format,
+            self.config.chroma_downsampling,
+            self.config.restart_interval,
         )?;
 
         // Generate quantization tables
