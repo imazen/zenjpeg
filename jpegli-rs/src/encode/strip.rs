@@ -32,7 +32,7 @@
 //! 2. Build optimized Huffman tables
 //! 3. Encode from stored i16 blocks
 
-use crate::alloc::try_with_capacity;
+use crate::alloc::{try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, AllocationStats};
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
 use crate::error::Result;
@@ -145,6 +145,10 @@ pub struct StripProcessor {
     y_zero_bias: Option<ZeroBiasParams>,
     cb_zero_bias: Option<ZeroBiasParams>,
     cr_zero_bias: Option<ZeroBiasParams>,
+
+    // === Allocation tracking ===
+    /// Tracks all allocations made by this processor
+    alloc_stats: crate::alloc::AllocationStats,
 }
 
 impl StripProcessor {
@@ -188,6 +192,9 @@ impl StripProcessor {
 
         let is_color = pixel_format != PixelFormat::Gray;
 
+        // Track all allocations
+        let mut alloc_stats = AllocationStats::new();
+
         Ok(Self {
             width,
             height,
@@ -196,24 +203,28 @@ impl StripProcessor {
             pixel_format,
 
             // Strip buffers (sized for one strip)
-            y_strip: vec![0.0f32; width * strip_height],
+            y_strip: try_alloc_zeroed_f32_tracked(
+                width * strip_height,
+                "y_strip",
+                &mut alloc_stats,
+            )?,
             cb_strip: if is_color {
-                vec![0.0f32; width * strip_height]
+                try_alloc_zeroed_f32_tracked(width * strip_height, "cb_strip", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
             cr_strip: if is_color {
-                vec![0.0f32; width * strip_height]
+                try_alloc_zeroed_f32_tracked(width * strip_height, "cr_strip", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
             cb_down: if is_color {
-                vec![0.0f32; c_width * c_strip_height]
+                try_alloc_zeroed_f32_tracked(c_width * c_strip_height, "cb_down", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
             cr_down: if is_color {
-                vec![0.0f32; c_width * c_strip_height]
+                try_alloc_zeroed_f32_tracked(c_width * c_strip_height, "cr_down", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
@@ -221,15 +232,15 @@ impl StripProcessor {
             // Scratch space
             dct_buf: [0.0f32; DCT_BLOCK_SIZE],
 
-            // Block storage (pre-allocated, stores raw DCT coefficients)
-            y_blocks: try_with_capacity(total_y_blocks, "y_blocks")?,
+            // Block storage (pre-allocated capacity, stores raw DCT coefficients)
+            y_blocks: try_with_capacity_tracked(total_y_blocks, "y_blocks", &mut alloc_stats)?,
             cb_blocks: if is_color {
-                try_with_capacity(total_c_blocks, "cb_blocks")?
+                try_with_capacity_tracked(total_c_blocks, "cb_blocks", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
             cr_blocks: if is_color {
-                try_with_capacity(total_c_blocks, "cr_blocks")?
+                try_with_capacity_tracked(total_c_blocks, "cr_blocks", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
@@ -250,7 +261,16 @@ impl StripProcessor {
             y_zero_bias: None,
             cb_zero_bias: None,
             cr_zero_bias: None,
+
+            // Allocation tracking
+            alloc_stats,
         })
+    }
+
+    /// Returns allocation statistics for this processor.
+    #[must_use]
+    pub fn allocation_stats(&self) -> &AllocationStats {
+        &self.alloc_stats
     }
 
     /// Sets quantization tables and zero-bias parameters.
@@ -630,7 +650,8 @@ impl StripProcessor {
         // Quantize Y blocks with per-block AQ strengths
         // Uses the SAME quantization function as the full-plane encoder for identical output
         let num_y_blocks = self.y_blocks.len();
-        let mut y_quantized = Vec::with_capacity(num_y_blocks);
+        let mut y_quantized: Vec<[i16; DCT_BLOCK_SIZE]> =
+            try_with_capacity_tracked(num_y_blocks, "y_quantized", &mut self.alloc_stats)?;
         for i in 0..num_y_blocks {
             let dct = &self.y_blocks[i];
             // Use per-block AQ strength if available, otherwise fallback to 0.08
@@ -658,8 +679,10 @@ impl StripProcessor {
 
         // Quantize Cb/Cr blocks with per-block AQ derived from corresponding Y blocks
         // (same as full-plane encoder for parity)
-        let mut cb_quantized = Vec::with_capacity(self.cb_blocks.len());
-        let mut cr_quantized = Vec::with_capacity(self.cr_blocks.len());
+        let mut cb_quantized: Vec<[i16; DCT_BLOCK_SIZE]> =
+            try_with_capacity_tracked(self.cb_blocks.len(), "cb_quantized", &mut self.alloc_stats)?;
+        let mut cr_quantized: Vec<[i16; DCT_BLOCK_SIZE]> =
+            try_with_capacity_tracked(self.cr_blocks.len(), "cr_quantized", &mut self.alloc_stats)?;
 
         if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) = (
             cb_quant_simd,
@@ -736,6 +759,7 @@ impl StripProcessor {
             ac_luma_freq: self.ac_luma_freq,
             dc_chroma_freq: self.dc_chroma_freq,
             ac_chroma_freq: self.ac_chroma_freq,
+            alloc_stats: self.alloc_stats,
         })
     }
 }
@@ -759,6 +783,8 @@ pub struct StripProcessorOutput {
     pub dc_chroma_freq: FrequencyCounter,
     /// AC chroma Huffman frequencies
     pub ac_chroma_freq: FrequencyCounter,
+    /// Allocation statistics from the encoding process
+    pub alloc_stats: AllocationStats,
 }
 
 #[cfg(test)]

@@ -11,8 +11,10 @@ pub mod consts;
 
 // Re-export commonly used items at module level
 pub use alloc::{
-    checked_size_2d, try_alloc_filled, try_alloc_zeroed_f32, validate_dimensions, MemoryTracker,
-    DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION, MAX_ICC_PROFILE_SIZE, MAX_SCANS,
+    checked_size_2d, try_alloc_dct_blocks_tracked, try_alloc_filled, try_alloc_zeroed_f32,
+    try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, validate_dimensions, AllocationStats,
+    MemoryTracker, DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS, JPEG_MAX_DIMENSION,
+    MAX_ICC_PROFILE_SIZE, MAX_SCANS,
 };
 
 pub use consts::{

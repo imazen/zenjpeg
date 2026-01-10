@@ -852,9 +852,9 @@ impl Encoder {
         mcu_blocks: &[[i16; DCT_BLOCK_SIZE]],
         blocks_x: usize,
         blocks_y: usize,
-    ) -> Vec<[i16; DCT_BLOCK_SIZE]> {
+    ) -> Result<Vec<[i16; DCT_BLOCK_SIZE]>> {
         let total_blocks = blocks_x * blocks_y;
-        let mut raster = vec![[0i16; DCT_BLOCK_SIZE]; total_blocks];
+        let mut raster = crate::alloc::try_alloc_dct_blocks(total_blocks, "raster blocks")?;
 
         let mcu_cols = (blocks_x + 1) / 2;
 
@@ -882,7 +882,7 @@ impl Encoder {
             }
         }
 
-        raster
+        Ok(raster)
     }
 
     /// Collects symbol frequencies from a block for Huffman optimization.
@@ -943,11 +943,11 @@ impl Encoder {
         x_quant: &QuantTable,
         y_quant: &QuantTable,
         b_quant: &QuantTable,
-    ) -> (
+    ) -> Result<(
         Vec<[i16; DCT_BLOCK_SIZE]>,
         Vec<[i16; DCT_BLOCK_SIZE]>,
         Vec<[i16; DCT_BLOCK_SIZE]>,
-    ) {
+    )> {
         // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
         let mcu_cols = (width + 15) / 16;
         let mcu_rows = (height + 15) / 16;
@@ -955,9 +955,9 @@ impl Encoder {
         let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
         // Pre-allocate block arrays to avoid push() overhead
-        let mut x_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
-        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
-        let mut b_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_b_blocks];
+        let mut x_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "x_blocks")?;
+        let mut y_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "y_blocks")?;
+        let mut b_blocks = crate::alloc::try_alloc_dct_blocks(num_b_blocks, "b_blocks")?;
 
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
@@ -1010,7 +1010,7 @@ impl Encoder {
             }
         }
 
-        (x_blocks, y_blocks, b_blocks)
+        Ok((x_blocks, y_blocks, b_blocks))
     }
 
     /// Quantizes all XYB blocks with jpegli-style adaptive quantization (no trellis).
@@ -1038,11 +1038,11 @@ impl Encoder {
         x_zero_bias: &ZeroBiasParams,
         y_zero_bias: &ZeroBiasParams,
         b_zero_bias: &ZeroBiasParams,
-    ) -> (
+    ) -> Result<(
         Vec<[i16; DCT_BLOCK_SIZE]>,
         Vec<[i16; DCT_BLOCK_SIZE]>,
         Vec<[i16; DCT_BLOCK_SIZE]>,
-    ) {
+    )> {
         // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
         let mcu_cols = (width + 15) / 16;
         let mcu_rows = (height + 15) / 16;
@@ -1050,9 +1050,9 @@ impl Encoder {
         let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
         // Pre-allocate block arrays to avoid push() overhead
-        let mut x_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
-        let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
-        let mut b_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_b_blocks];
+        let mut x_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "x_blocks")?;
+        let mut y_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "y_blocks")?;
+        let mut b_blocks = crate::alloc::try_alloc_dct_blocks(num_b_blocks, "b_blocks")?;
 
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
@@ -1137,7 +1137,7 @@ impl Encoder {
             }
         }
 
-        (x_blocks, y_blocks, b_blocks)
+        Ok((x_blocks, y_blocks, b_blocks))
     }
 
     /// Builds optimized Huffman tables for XYB mode.

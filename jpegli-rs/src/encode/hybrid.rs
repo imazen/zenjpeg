@@ -154,11 +154,11 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
     b_quant: &QuantTable,
     aq_map: &AQStrengthMap,
     hybrid_ctx: Option<&HybridQuantContext>,
-) -> (
+) -> crate::error::Result<(
     Vec<[i16; DCT_BLOCK_SIZE]>,
     Vec<[i16; DCT_BLOCK_SIZE]>,
     Vec<[i16; DCT_BLOCK_SIZE]>,
-) {
+)> {
     // MCU size for 2×2, 2×2, 1×1 sampling: 16×16 pixels
     let mcu_cols = (width + 15) / 16;
     let mcu_rows = (height + 15) / 16;
@@ -166,9 +166,9 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
     let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
     // Pre-allocate block arrays to avoid push() overhead
-    let mut x_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
-    let mut y_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_xy_blocks];
-    let mut b_blocks = vec![[0i16; DCT_BLOCK_SIZE]; num_b_blocks];
+    let mut x_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "x_blocks")?;
+    let mut y_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "y_blocks")?;
+    let mut b_blocks = crate::alloc::try_alloc_dct_blocks(num_b_blocks, "b_blocks")?;
 
     for mcu_y in 0..mcu_rows {
         for mcu_x in 0..mcu_cols {
@@ -248,5 +248,5 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
         }
     }
 
-    (x_blocks, y_blocks, b_blocks)
+    Ok((x_blocks, y_blocks, b_blocks))
 }
