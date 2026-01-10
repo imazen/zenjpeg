@@ -55,12 +55,13 @@ const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
+/// Updated 2026-01-10 after K420_RESCALE fix for C++ parity.
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269536),
-    (70, 361917),
-    (85, 492806),
-    (90, 580610),
-    (95, 736931),
+    (50, 269733),
+    (70, 362495),
+    (85, 494934),
+    (90, 584318),
+    (95, 743568),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
@@ -95,12 +96,13 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
+/// Updated 2026-01-10 after K420_RESCALE fix for C++ parity.
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 260900),
-    (70, 349965),
-    (85, 476205),
-    (90, 561101),
-    (95, 712084),
+    (50, 260968),
+    (70, 350463),
+    (85, 478042),
+    (90, 564228),
+    (95, 717856),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
@@ -120,8 +122,8 @@ const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0xe67ceac4e2cb923c;
 const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x5ac37bc64f50e6d8;
 const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x9179f00d4062fbe6;
 const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xd217840b58ae5201;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x8a2cf89e1cb17482;
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1af23d8ca12924c8;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xd46edb3e2bd5b931; // Updated 2026-01-10 after K420_RESCALE fix
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1e580af331c42285; // Updated 2026-01-10 after K420_RESCALE fix
 const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x32f1ba4eb4bd1c53;
 const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xa7743ef726156417;
 

@@ -36,15 +36,15 @@ const EXPECTED_HASHES: &[(&str, u8, &str)] = &[
     ("baseline_444_fixed", 50, "f961a29321d4ada499026186eb6b36b04eb06a6175f636ba4d6d18cd29d6dd75"), // 344304 bytes
     ("baseline_444_fixed", 75, "fc8e10ac52c4d1f73b61a00283b2141c58d8b8abc4b6137ec3b5de3f448c4dc2"), // 496204 bytes
     ("baseline_444_fixed", 90, "c75faad1289ffd8ae105145ec357f1a71bc84f25d4ebe5c1deabd29f92d36b6c"), // 766744 bytes
-    ("baseline_420_opt", 50, "f341b0b88d8049780b08c3eae3f502fdbf90a96b3269807cb7684f3328f1fd51"), // 269536 bytes
-    ("baseline_420_opt", 75, "b7bafc5cdc70159b5f4904e933e5f4a7f262992b96501dbb07090c0e2e2d3627"), // 396326 bytes
-    ("baseline_420_opt", 90, "29ff6021f2193dc2fd0e267ad54a97aa5c06afdd0262c4c07d9f7eb7f1b80164"), // 580610 bytes
-    ("baseline_420_gamma", 50, "12febcf5613642983d7b69e59a941aaf775a28940890675c07cba1d0e13aa002"), // 270504 bytes
-    ("baseline_420_gamma", 75, "e369b0be0ac62849ac80e06ec9bca6c2b9b3d6051bc8ce02662f1a848a5d6764"), // 397693 bytes
-    ("baseline_420_gamma", 90, "fec8891b248b6d9a8c4384ba18376b358b6b27793b6ce19aafdaeeb5ba571eeb"), // 582645 bytes
-    ("baseline_420_sharpyuv", 50, "a8071aed0782f60fe74f5a274359513bea828948a289f70b6abd5d87bf9058b3"), // 270080 bytes
-    ("baseline_420_sharpyuv", 75, "59e06928e33bb4836a6a1336b3d7ab3fffd78a75307b4da146d6786302cae6c8"), // 397038 bytes
-    ("baseline_420_sharpyuv", 90, "678d668e0d11ae54683ab9d046120f9995360c3fd3137355fe4adf344e10e4e1"), // 581818 bytes
+    ("baseline_420_opt", 50, "387e3113d0e9f3905c13844a52bb0c074d2c5c8ed5038a3564d4dd7e5e1f4ac9"), // 269733 bytes
+    ("baseline_420_opt", 75, "73354cf049e91b6629692c24c7f730f9287382dd28baad91f5fa143c3a4ef9ce"), // 397281 bytes
+    ("baseline_420_opt", 90, "fbb52118e0647760ec56c359037797c9e0d752e4ed5e28e0994608f5784c3f87"), // 584318 bytes
+    ("baseline_420_gamma", 50, "c8fe3b94816de36aca51fc59b826ee0c6e4804a06c0b6a451720f99a1308bfb9"), // 270639 bytes
+    ("baseline_420_gamma", 75, "6e678f775f23245a1784067472e673b1a8f0e820c4b66d5aa9267452b6f5459b"), // 398916 bytes
+    ("baseline_420_gamma", 90, "afb1d96586208252d359e5ad1496c640717494172ed9835fa50590bb4eaebbf7"), // 586888 bytes
+    ("baseline_420_sharpyuv", 50, "4373392d64c72fff46cee6b7903e6426f9cb90f59751896ee8b64464fdd5b94b"), // 270213 bytes
+    ("baseline_420_sharpyuv", 75, "ebd1e2d59d48b7671127deb46266cfa94791d62770d8cf632f760ec375c1bd89"), // 398174 bytes
+    ("baseline_420_sharpyuv", 90, "4b9799eb86b3ade8249e6a227fe5c949feba6e37cb474c7b2b8ca3f751751d33"), // 585699 bytes
     ("baseline_422_opt", 50, "0d1b325e5c3f2d18453a9eed2cfa144dca0bfb62409f4775d392e28c7fc0e274"), // 293361 bytes
     ("baseline_422_opt", 75, "1ad289e1e8ddbaec83bb2c1bb4f5750622b162a0b6d5047dad114db2dbbb06d6"), // 419126 bytes
     ("baseline_422_opt", 90, "3ba26c5c1d3d486a8fae6728a4f98ca4e8c3376e46c85c40f625a58c8c1dd7bf"), // 613589 bytes
@@ -54,9 +54,9 @@ const EXPECTED_HASHES: &[(&str, u8, &str)] = &[
     ("progressive_444_opt", 50, "f815f753ca0b9241e654165acb60a26cf1c26be9738b9013b452a04c0371f23e"), // 320645 bytes
     ("progressive_444_opt", 75, "80359f1f47353efe92203fb7e81881d4fd90ceb0aff0030239c64f6e9dea75d4"), // 462529 bytes
     ("progressive_444_opt", 90, "36f64b31c75184ca1e95144dbbfdc0ee9936c729a55fe0e679a0eb8b7ddc7629"), // 696609 bytes
-    ("progressive_420_opt", 50, "4e615b3fc3b4797159ab302fac58ccd502aa883cf506247434eceeb89795ec43"), // 260900 bytes
-    ("progressive_420_opt", 75, "998be4a42e09e7426a055f3f85ff3996953863babcb8577504a160014d2e1407"), // 383019 bytes
-    ("progressive_420_opt", 90, "fa23d2e9c2d96ede42d99ececf9b5e7847bdb02dc6e6a359013e1be076ec6010"), // 561101 bytes
+    ("progressive_420_opt", 50, "b81b74f16062d57224c751f79630f8cf46d09d8e36298f777d36064d4c8c6133"), // 260968 bytes
+    ("progressive_420_opt", 75, "348f95fd3962aa936ae91aa2e30881c18e67484f1de1f9d7e1ae9cacbc7e5eb7"), // 383821 bytes
+    ("progressive_420_opt", 90, "31436a3a5a7fbaee0ef4e8490613a5951289ed3d18ac7d1246782e47efd03f48"), // 564228 bytes
 ];
 
 // =============================================================================
@@ -97,6 +97,7 @@ struct EncoderTestConfig {
     subsampling: Subsampling,
     optimize_huffman: bool,
     chroma_downsampling: ChromaDownsampling,
+    use_xyb: bool,
 }
 
 impl EncoderTestConfig {
@@ -110,6 +111,7 @@ impl EncoderTestConfig {
             .subsampling(self.subsampling)
             .optimize_huffman(self.optimize_huffman)
             .chroma_downsampling(self.chroma_downsampling)
+            .use_xyb(self.use_xyb)
             .encoding_backend(EncodingBackend::FullPlane) // Lock to one backend for hash stability
             .encode(rgb)
             .expect("Encoding failed")
@@ -119,13 +121,14 @@ impl EncoderTestConfig {
 /// All configurations to test
 fn test_configs() -> Vec<EncoderTestConfig> {
     vec![
-        // Baseline modes
+        // Baseline modes (YCbCr)
         EncoderTestConfig {
             name: "baseline_444_opt",
             mode: JpegMode::Baseline,
             subsampling: Subsampling::S444,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_444_fixed",
@@ -133,6 +136,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S444,
             optimize_huffman: false,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_420_opt",
@@ -140,6 +144,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S420,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_420_gamma",
@@ -147,6 +152,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S420,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::GammaAware,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_420_sharpyuv",
@@ -154,6 +160,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S420,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::GammaAwareIterative,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_422_opt",
@@ -161,6 +168,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S422,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_440_opt",
@@ -168,14 +176,16 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S440,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
         },
-        // Progressive modes
+        // Progressive modes (YCbCr)
         EncoderTestConfig {
             name: "progressive_444_opt",
             mode: JpegMode::Progressive,
             subsampling: Subsampling::S444,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
         },
         EncoderTestConfig {
             name: "progressive_420_opt",
@@ -183,6 +193,32 @@ fn test_configs() -> Vec<EncoderTestConfig> {
             subsampling: Subsampling::S420,
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: false,
+        },
+        // XYB modes (subsampling is ignored for XYB)
+        EncoderTestConfig {
+            name: "baseline_xyb_opt",
+            mode: JpegMode::Baseline,
+            subsampling: Subsampling::S420, // Ignored for XYB
+            optimize_huffman: true,
+            chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: true,
+        },
+        EncoderTestConfig {
+            name: "baseline_xyb_fixed",
+            mode: JpegMode::Baseline,
+            subsampling: Subsampling::S420, // Ignored for XYB
+            optimize_huffman: false,
+            chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: true,
+        },
+        EncoderTestConfig {
+            name: "progressive_xyb_opt",
+            mode: JpegMode::Progressive,
+            subsampling: Subsampling::S420, // Ignored for XYB
+            optimize_huffman: true,
+            chroma_downsampling: ChromaDownsampling::Box,
+            use_xyb: true,
         },
     ]
 }
@@ -225,7 +261,7 @@ fn test_frymire_hashes_locked() {
 fn test_frymire_backend_parity() {
     let (rgb, width, height) = load_frymire();
 
-    // Test subset of configs that support strip encoding (not XYB)
+    // Test all configs that support strip encoding (baseline and progressive, including XYB)
     let strip_configs = test_configs()
         .into_iter()
         .filter(|c| c.mode == JpegMode::Baseline || c.mode == JpegMode::Progressive)
@@ -243,6 +279,7 @@ fn test_frymire_backend_parity() {
                 .subsampling(config.subsampling)
                 .optimize_huffman(config.optimize_huffman)
                 .chroma_downsampling(config.chroma_downsampling)
+                .use_xyb(config.use_xyb)
                 .encoding_backend(EncodingBackend::Both)
                 .encode(&rgb)
                 .unwrap_or_else(|e| panic!("{} Q{}: backend mismatch: {}", config.name, quality, e));
