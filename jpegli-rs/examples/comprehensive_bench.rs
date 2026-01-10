@@ -3,9 +3,9 @@
 //! Tests 1K, 2K, 3K, 4K images with 4:4:4/4:2:0, progressive/baseline,
 //! comparing full-plane vs strip-based encoding.
 //!
-//! Uses force_full_plane() to bypass auto-dispatch for true comparison.
+//! Uses encoding_backend(FullPlane) to bypass auto-dispatch for true comparison.
 
-use jpegli::{Encoder, JpegMode, PixelFormat, Quality, Subsampling};
+use jpegli::{Encoder, EncodingBackend, JpegMode, PixelFormat, Quality, Subsampling};
 use png::Decoder;
 use std::fs::File;
 use std::io::BufReader;
@@ -74,7 +74,7 @@ fn bench_full_plane(
                 JpegMode::Baseline
             })
             .jpegli_quality(Quality::from_quality(quality))
-            .force_full_plane(true); // Force full-plane, bypass auto-dispatch
+            .encoding_backend(EncodingBackend::FullPlane); // Force full-plane
         let _ = enc.encode(data);
     }
 
@@ -93,7 +93,7 @@ fn bench_full_plane(
                 JpegMode::Baseline
             })
             .jpegli_quality(Quality::from_quality(quality))
-            .force_full_plane(true); // Force full-plane, bypass auto-dispatch
+            .encoding_backend(EncodingBackend::FullPlane); // Force full-plane
 
         let start = Instant::now();
         let result = enc.encode(data);
@@ -242,7 +242,7 @@ fn main() {
     println!("Source: {}", source_path);
     println!();
     println!("Comparing full-plane vs strip-based encoding with same chroma conversion.");
-    println!("Using force_full_plane() to bypass auto-dispatch for true comparison.");
+    println!("Using encoding_backend(FullPlane) to bypass auto-dispatch for true comparison.");
     println!();
 
     let sizes = [
