@@ -54,7 +54,7 @@ libc = "0.2"
 libloading = "0.8"
 
 # Runtime CPU feature detection and dispatch
-multiversion = "0.7"
+multiversion = "0.8"
 
 # Published crates
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }

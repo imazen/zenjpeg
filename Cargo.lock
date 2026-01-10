@@ -725,7 +725,7 @@ dependencies = [
  "moxcms",
  "mozjpeg",
  "mozjpeg-rs",
- "multiversion 0.7.4",
+ "multiversion 0.8.0",
  "png",
  "proptest",
  "rayon",
