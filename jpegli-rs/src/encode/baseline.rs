@@ -18,21 +18,6 @@ impl Encoder {
         }
     }
 
-    /// Encodes as baseline JPEG using workspace buffers.
-    ///
-    /// Note: Currently falls back to regular path. The workspace approach requires
-    /// modifying the entire encode pipeline to use slices instead of owned Vecs
-    /// to avoid the extra copy overhead that negates the workspace benefits.
-    pub(super) fn encode_baseline_with_workspace(
-        &self,
-        data: &[u8],
-        _workspace: &mut super::EncoderWorkspace,
-    ) -> Result<Vec<u8>> {
-        // Fall back to regular path - workspace integration needs deeper refactoring
-        // to pass slices through the pipeline instead of copying to Vecs
-        self.encode_baseline(data)
-    }
-
     /// Encodes using standard YCbCr color space.
     fn encode_baseline_ycbcr(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
@@ -330,7 +315,7 @@ impl Encoder {
                 &b_quant,
                 &aq_map,
                 hybrid_ctx.as_ref(),
-            );
+            )?;
             #[cfg(not(feature = "experimental-hybrid-trellis"))]
             let (x_blocks, y_blocks, b_blocks) = self.quantize_all_blocks_xyb_with_aq_simple(
                 &x_plane,
@@ -347,7 +332,7 @@ impl Encoder {
                 &x_zero_bias,
                 &y_zero_bias,
                 &b_zero_bias,
-            );
+            )?;
             let (dc_table, ac_table) =
                 self.build_optimized_tables_xyb(&x_blocks, &y_blocks, &b_blocks)?;
             self.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);

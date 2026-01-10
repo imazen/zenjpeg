@@ -595,7 +595,7 @@ impl Encoder {
             &x_quant,
             &y_quant,
             &b_quant,
-        );
+        )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
         // Write XYB-specific headers
@@ -689,7 +689,7 @@ impl Encoder {
             &x_zero_bias,
             &y_zero_bias,
             &b_zero_bias,
-        );
+        )?;
 
         // quantize_all_blocks_xyb_with_aq_simple produces blocks in MCU order:
         // - x_blocks[mcu_idx*4..mcu_idx*4+4] = 4 X blocks for mcu_idx
@@ -702,8 +702,8 @@ impl Encoder {
         // B blocks don't need reordering since B has 1×1 sampling (1 block per MCU).
         let blocks_x = (width + 7) / 8;
         let blocks_y = (height + 7) / 8;
-        let x_blocks_raster = Self::reorder_mcu_to_raster(&x_blocks, blocks_x, blocks_y);
-        let y_blocks_raster = Self::reorder_mcu_to_raster(&y_blocks, blocks_x, blocks_y);
+        let x_blocks_raster = Self::reorder_mcu_to_raster(&x_blocks, blocks_x, blocks_y)?;
+        let y_blocks_raster = Self::reorder_mcu_to_raster(&y_blocks, blocks_x, blocks_y)?;
 
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
@@ -935,22 +935,6 @@ impl Encoder {
         output.push(MARKER_EOI);
 
         Ok(output)
-    }
-
-    /// Encodes as progressive JPEG using workspace buffers.
-    ///
-    /// Note: Currently falls back to regular path. Workspace is primarily
-    /// beneficial for baseline encoding where it avoids intermediate allocations.
-    /// Progressive encoding has more complex dependencies that make workspace
-    /// integration more involved.
-    pub(super) fn encode_progressive_with_workspace(
-        &self,
-        data: &[u8],
-        _workspace: &mut super::EncoderWorkspace,
-    ) -> Result<Vec<u8>> {
-        // For now, fall back to regular progressive encoding.
-        // The workspace benefits baseline encoding more significantly.
-        self.encode_progressive(data)
     }
 
     /// Encodes progressive JPEG with optimized Huffman tables using two-pass tokenization.
