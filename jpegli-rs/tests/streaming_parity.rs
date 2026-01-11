@@ -1,6 +1,6 @@
 //! Test that streaming encoder produces identical output to standard encoder.
 
-use jpegli::{Encoder, EncodingBackend, Quality, StreamingEncoder, Subsampling};
+use jpegli::{Encoder, EncodingBackend, JpegMode, Quality, StreamingEncoder, Subsampling};
 
 #[test]
 fn test_streaming_matches_standard_various_sizes() {
@@ -135,4 +135,108 @@ fn test_memory_estimate_reasonable() {
         "unexpected ratio {:.2}x",
         ratio
     );
+}
+
+#[test]
+fn test_streaming_progressive_mode() {
+    // Test that progressive mode works with streaming encoder
+    let tests = [
+        (256, 256, Subsampling::S420),
+        (640, 480, Subsampling::S420),
+        (640, 480, Subsampling::S444),
+        (123, 87, Subsampling::S420),
+    ];
+
+    for (width, height, subsampling) in tests {
+        let pixels: Vec<u8> = (0..width * height * 3)
+            .map(|i| ((i * 17 + i / 256) % 256) as u8)
+            .collect();
+
+        // Encode with standard encoder (strip backend, progressive)
+        #[allow(deprecated)]
+        let standard = Encoder::new()
+            .width(width)
+            .height(height)
+            .quality(Quality::from_quality(85.0))
+            .subsampling(subsampling)
+            .mode(JpegMode::Progressive)
+            .encoding_backend(EncodingBackend::Strip)
+            .encode(&pixels)
+            .expect("standard progressive encode failed");
+
+        // Encode with streaming encoder (progressive)
+        let streaming_result = StreamingEncoder::new(width, height)
+            .quality(Quality::from_quality(85.0))
+            .subsampling(subsampling)
+            .mode(JpegMode::Progressive)
+            .encode_all(&pixels)
+            .expect("streaming progressive encode failed");
+
+        // Compare
+        assert_eq!(
+            standard.len(),
+            streaming_result.len(),
+            "Progressive {}×{} {:?}: length mismatch (standard={}, streaming={})",
+            width,
+            height,
+            subsampling,
+            standard.len(),
+            streaming_result.len()
+        );
+        assert_eq!(
+            standard, streaming_result,
+            "Progressive {}×{} {:?}: content mismatch",
+            width, height, subsampling
+        );
+
+        // Verify it's actually progressive (SOF2 marker = 0xFFC2)
+        let has_sof2 = standard
+            .windows(2)
+            .any(|w| w[0] == 0xFF && w[1] == 0xC2);
+        assert!(
+            has_sof2,
+            "Progressive {}×{} {:?}: missing SOF2 marker",
+            width, height, subsampling
+        );
+
+        println!(
+            "✓ Progressive {}×{} {:?}: identical ({} bytes)",
+            width, height, subsampling, standard.len()
+        );
+    }
+}
+
+#[test]
+fn test_streaming_encode_all() {
+    // Test the encode_all convenience method
+    let width = 320u32;
+    let height = 240u32;
+    let pixels: Vec<u8> = (0..width * height * 3)
+        .map(|i| ((i * 17) % 256) as u8)
+        .collect();
+
+    // Using encode_all
+    let encode_all_result = StreamingEncoder::new(width, height)
+        .quality(Quality::from_quality(85.0))
+        .subsampling(Subsampling::S420)
+        .encode_all(&pixels)
+        .unwrap();
+
+    // Using build + push_row + finish
+    let mut streaming = StreamingEncoder::new(width, height)
+        .quality(Quality::from_quality(85.0))
+        .subsampling(Subsampling::S420)
+        .build()
+        .unwrap();
+
+    let row_size = width as usize * 3;
+    for y in 0..height as usize {
+        let start = y * row_size;
+        streaming.push_row(&pixels[start..start + row_size]).unwrap();
+    }
+    let manual_result = streaming.finish().unwrap();
+
+    // Should be identical
+    assert_eq!(encode_all_result, manual_result);
+    println!("✓ encode_all matches manual push_row ({} bytes)", encode_all_result.len());
 }

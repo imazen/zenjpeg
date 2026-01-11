@@ -134,6 +134,80 @@ impl StreamingEncoderBuilder {
         StreamingEncoder::from_builder(self)
     }
 
+    /// Encodes a complete image buffer in one call.
+    ///
+    /// This is a convenience method that builds the encoder, pushes all rows,
+    /// and finishes in a single call. For large images or streaming scenarios,
+    /// use `.build()` and push rows incrementally instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::{StreamingEncoder, Quality, Subsampling};
+    ///
+    /// let pixels: Vec<u8> = vec![128; 640 * 480 * 3];
+    /// let jpeg = StreamingEncoder::new(640, 480)
+    ///     .quality(Quality::from_quality(85.0))
+    ///     .subsampling(Subsampling::S420)
+    ///     .encode_all(&pixels)?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Buffer size doesn't match width × height × bytes_per_pixel
+    /// - Encoding fails
+    pub fn encode_all(self, data: &[u8]) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let bpp = self.pixel_format.bytes_per_pixel();
+        let expected_size = width * height * bpp;
+
+        if data.len() != expected_size {
+            return Err(Error::InvalidBufferSize {
+                expected: expected_size,
+                actual: data.len(),
+            });
+        }
+
+        let mut encoder = self.build()?;
+        let row_size = width * bpp;
+
+        for y in 0..height {
+            let start = y * row_size;
+            encoder.push_row(&data[start..start + row_size])?;
+        }
+
+        encoder.finish()
+    }
+
+    /// Encodes a complete image buffer with cancellation support.
+    ///
+    /// Like `encode_all()`, but checks for cancellation between strips.
+    pub fn encode_all_with_stop(self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let bpp = self.pixel_format.bytes_per_pixel();
+        let expected_size = width * height * bpp;
+
+        if data.len() != expected_size {
+            return Err(Error::InvalidBufferSize {
+                expected: expected_size,
+                actual: data.len(),
+            });
+        }
+
+        let mut encoder = self.build()?;
+        let row_size = width * bpp;
+
+        for y in 0..height {
+            let start = y * row_size;
+            encoder.push_row_with_stop(&data[start..start + row_size], &stop)?;
+        }
+
+        encoder.finish_with_stop(stop)
+    }
+
     /// Estimates the peak memory usage for this configuration.
     ///
     /// Returns the estimated peak memory in bytes based on image dimensions,
@@ -607,16 +681,44 @@ impl StreamingEncoder {
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
-        width: usize,
-        height: usize,
+        _width: usize,
+        _height: usize,
         strip_output: crate::encode::strip::StripProcessorOutput,
         stop: impl Stop,
     ) -> Result<Vec<u8>> {
         stop.check()?;
 
-        // Re-use the encoder's output generation
-        // This mirrors encode_strip_based in encode/mod.rs
+        // Branch based on encoding mode (mirrors encode_strip_based in encode/mod.rs)
+        match encoder.config.mode {
+            JpegMode::Progressive => {
+                // Use progressive encoding path
+                encoder.encode_progressive_from_blocks(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    y_quant,
+                    cb_quant,
+                    cr_quant,
+                )
+            }
+            _ => {
+                // Baseline encoding path
+                Self::build_jpeg_baseline(encoder, y_quant, cb_quant, cr_quant, strip_output)
+            }
+        }
+    }
+
+    /// Builds baseline JPEG output from processed blocks.
+    fn build_jpeg_baseline(
+        encoder: &Encoder,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: crate::encode::strip::StripProcessorOutput,
+    ) -> Result<Vec<u8>> {
         let is_color = encoder.config.pixel_format != PixelFormat::Gray;
+        let width = encoder.config.width as usize;
+        let height = encoder.config.height as usize;
 
         let mut output = Vec::with_capacity(width * height / 4);
 
