@@ -1032,11 +1032,9 @@ impl StripProcessor {
                 0.08 // C++ mean fallback
             };
 
-            // SIMD quantization for parity with full-plane encoder
-            // Convert Block8x8f to array for quantization (TODO: add Block8x8f-native quantize)
-            let dct_arr = dct.to_array();
-            let quant_coeffs = quant.y_quant_simd.quantize_array_with_zero_bias(
-                &dct_arr,
+            // SIMD quantization - Block8x8f-native, zero conversion overhead
+            let quant_coeffs = quant.y_quant_simd.quantize_with_zero_bias(
+                dct,
                 &quant.y_zero_bias_simd,
                 aq_strength,
             );
@@ -1076,9 +1074,8 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let dct_arr = dct.to_array();
-                let quant_coeffs = quant.cb_quant_simd.quantize_array_with_zero_bias(
-                    &dct_arr,
+                let quant_coeffs = quant.cb_quant_simd.quantize_with_zero_bias(
+                    dct,
                     &quant.cb_zero_bias_simd,
                     aq_strength,
                 );
@@ -1104,9 +1101,8 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let dct_arr = dct.to_array();
-                let quant_coeffs = quant.cr_quant_simd.quantize_array_with_zero_bias(
-                    &dct_arr,
+                let quant_coeffs = quant.cr_quant_simd.quantize_with_zero_bias(
+                    dct,
                     &quant.cr_zero_bias_simd,
                     aq_strength,
                 );
