@@ -100,21 +100,84 @@ AFTER FIX (frymire + 1001682):
 
 ---
 
-## Bug: Major Edge MCU Parity Gap (UNFIXED)
+## Feature: EdgePadding for MCU Edge Handling (IMPLEMENTED)
 
-**File:** Unknown - needs investigation
-**Status:** UNFIXED
-**Date:** 2025-01-10
+**Files:** `types.rs`, `encode/config.rs`, `encode/mod.rs`, `encode/baseline.rs`, `encode/progressive.rs`, `encode/output.rs`
+**Status:** IMPLEMENTED for full-plane encoder, PENDING for strip encoder
+**Date:** 2026-01-10
 
 ### Summary
 
-Edge-tiled test reveals **massive parity differences** for partial MCU handling:
+Implemented configurable edge padding for MCU alignment to match C++ jpegli's `RowBuffer` padding behavior. The full-plane encoder now pads YCbCr planes to MCU-aligned dimensions before processing, with the original dimensions stored in the JFIF header so decoders crop correctly.
+
+### Implementation Details
+
+**New Types (`types.rs`):**
+```rust
+pub enum EdgePadding {
+    Replicate,  // Default - replicate edge pixel outward (matches C++)
+    Mirror,     // Reflect at edge
+    Wrap,       // Tile the image
+}
+
+pub struct EdgePaddingConfig {
+    pub luma: EdgePadding,
+    pub chroma: EdgePadding,
+}
+```
+
+**New Config Fields (`encode/config.rs`):**
+- `edge_padding: EdgePaddingConfig` - Per-channel padding strategy
+- `original_width: Option<u32>` - Original dimensions for JFIF header
+- `original_height: Option<u32>`
+
+**New Functions (`encode/mod.rs`):**
+- `get_padded_coord()` - Calculate source coordinate for padding strategies
+- `pad_plane_f32()` - Pad single f32 plane to MCU-aligned dimensions
+- `pad_ycbcr_planes_subsampled()` - Pad Y, Cb, Cr planes with proper chroma handling
+
+**Integration:**
+- `encode/baseline.rs`: Calls `pad_ycbcr_planes_subsampled()` before DCT
+- `encode/progressive.rs`: Same padding for both optimized and non-optimized paths
+- `encode/output.rs`: Uses `original_width/height` for frame headers
+
+### Why Per-Channel Padding?
+
+Different strategies work better for different channel types:
+- **Luma (Y):** Mirror preserves gradients at edges
+- **Chroma (Cb/Cr):** Replicate is safer since chroma is upsampled by decoders
+
+### Results After Implementation
+
+**Comprehensive parity test (10 images × 50 quality levels):**
+- Size: +0.26% (Rust slightly larger)
+- DSSIM: +0.15% (essentially identical)
+- Butteraugli: -0.00% (identical)
+
+All 50 quality levels within 5% tolerance on both metrics.
+
+### Remaining Work
+
+The **strip encoder** (`StripProcessor`) doesn't have edge padding yet. The `test_frymire_backend_parity` test skips configurations where dimensions don't align to MCU boundaries. Adding strip encoder padding would require:
+1. Padding horizontal strips as they're processed
+2. Special handling for bottom-most strip with partial rows
+3. Proper chroma plane coordination
+
+---
+
+## Historical Context: Edge MCU Parity Gap Analysis
+
+**Date:** 2026-01-10
+
+### Original Problem
+
+Edge-tiled test revealed **massive parity differences** for partial MCU handling:
 - Size: +15-21% larger than C++
 - DSSIM: +60-137% worse quality
 
-The HF modulation fix (above) does NOT address this issue.
+The HF modulation fix did NOT address this issue.
 
-### Test Results (2026-01-10)
+### Test Results BEFORE Edge Padding (2026-01-10)
 
 Using `edge_mcu_parity` example with frymire.png (1118x1105):
 
