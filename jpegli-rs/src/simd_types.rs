@@ -28,16 +28,9 @@ impl Block8x8f {
         let mut rows = [f32x8::ZERO; 8];
         for (row_idx, row) in rows.iter_mut().enumerate() {
             let start = row_idx * 8;
-            *row = f32x8::from([
-                arr[start],
-                arr[start + 1],
-                arr[start + 2],
-                arr[start + 3],
-                arr[start + 4],
-                arr[start + 5],
-                arr[start + 6],
-                arr[start + 7],
-            ]);
+            // Use slice-to-array conversion - zero-cost load from contiguous memory
+            let row_slice: [f32; 8] = arr[start..start + 8].try_into().unwrap();
+            *row = f32x8::from(row_slice);
         }
         Self { rows }
     }
@@ -126,16 +119,9 @@ impl Block8x8i16 {
         let mut rows = [i16x8::ZERO; 8];
         for (row_idx, row) in rows.iter_mut().enumerate() {
             let start = row_idx * 8;
-            *row = i16x8::from([
-                arr[start],
-                arr[start + 1],
-                arr[start + 2],
-                arr[start + 3],
-                arr[start + 4],
-                arr[start + 5],
-                arr[start + 6],
-                arr[start + 7],
-            ]);
+            // Use slice-to-array conversion - zero-cost load from contiguous memory
+            let row_slice: [i16; 8] = arr[start..start + 8].try_into().unwrap();
+            *row = i16x8::from(row_slice);
         }
         Self { rows }
     }
@@ -196,26 +182,11 @@ impl ZeroBiasSimd {
         let mut mul_rows = [f32x8::ZERO; 8];
         for row in 0..8 {
             let start = row * 8;
-            offset_rows[row] = f32x8::from([
-                params.offset[start],
-                params.offset[start + 1],
-                params.offset[start + 2],
-                params.offset[start + 3],
-                params.offset[start + 4],
-                params.offset[start + 5],
-                params.offset[start + 6],
-                params.offset[start + 7],
-            ]);
-            mul_rows[row] = f32x8::from([
-                params.mul[start],
-                params.mul[start + 1],
-                params.mul[start + 2],
-                params.mul[start + 3],
-                params.mul[start + 4],
-                params.mul[start + 5],
-                params.mul[start + 6],
-                params.mul[start + 7],
-            ]);
+            // Zero-cost load from contiguous memory
+            let offset_slice: [f32; 8] = params.offset[start..start + 8].try_into().unwrap();
+            let mul_slice: [f32; 8] = params.mul[start..start + 8].try_into().unwrap();
+            offset_rows[row] = f32x8::from(offset_slice);
+            mul_rows[row] = f32x8::from(mul_slice);
         }
         Self {
             offset_rows,
@@ -228,18 +199,21 @@ impl QuantTableSimd {
     /// Create from u16 quantization values
     pub fn from_values(values: &[u16; 64]) -> Self {
         let mut mul_rows = [f32x8::ZERO; 8];
+        let one = f32x8::splat(1.0);
         for row in 0..8 {
             let start = row * 8;
-            mul_rows[row] = f32x8::from([
-                1.0 / values[start] as f32,
-                1.0 / values[start + 1] as f32,
-                1.0 / values[start + 2] as f32,
-                1.0 / values[start + 3] as f32,
-                1.0 / values[start + 4] as f32,
-                1.0 / values[start + 5] as f32,
-                1.0 / values[start + 6] as f32,
-                1.0 / values[start + 7] as f32,
-            ]);
+            // Convert u16 -> f32 (unavoidable), then SIMD divide
+            let row_f32: [f32; 8] = [
+                values[start] as f32,
+                values[start + 1] as f32,
+                values[start + 2] as f32,
+                values[start + 3] as f32,
+                values[start + 4] as f32,
+                values[start + 5] as f32,
+                values[start + 6] as f32,
+                values[start + 7] as f32,
+            ];
+            mul_rows[row] = one / f32x8::from(row_f32);
         }
         Self {
             mul_rows,
@@ -251,18 +225,12 @@ impl QuantTableSimd {
     pub fn from_f32_values(values: &[f32; 64]) -> Self {
         let mut mul_rows = [f32x8::ZERO; 8];
         let mut u16_values = [0u16; 64];
+        let one = f32x8::splat(1.0);
         for row in 0..8 {
             let start = row * 8;
-            mul_rows[row] = f32x8::from([
-                1.0 / values[start],
-                1.0 / values[start + 1],
-                1.0 / values[start + 2],
-                1.0 / values[start + 3],
-                1.0 / values[start + 4],
-                1.0 / values[start + 5],
-                1.0 / values[start + 6],
-                1.0 / values[start + 7],
-            ]);
+            // Zero-cost load, SIMD divide
+            let values_slice: [f32; 8] = values[start..start + 8].try_into().unwrap();
+            mul_rows[row] = one / f32x8::from(values_slice);
             for col in 0..8 {
                 u16_values[start + col] = values[start + col].round() as u16;
             }

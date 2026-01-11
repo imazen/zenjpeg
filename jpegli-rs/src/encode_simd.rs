@@ -186,19 +186,11 @@ pub fn scale_f32_slice_simd(input: &[f32], scale: f32) -> Result<Vec<f32>> {
     let chunks = len / 8;
     let scale_vec = f32x8::splat(scale);
 
-    // Process 8 elements at a time
+    // Process 8 elements at a time (zero-cost load from contiguous memory)
     for i in 0..chunks {
         let k = i * 8;
-        let vals = f32x8::from([
-            input[k],
-            input[k + 1],
-            input[k + 2],
-            input[k + 3],
-            input[k + 4],
-            input[k + 5],
-            input[k + 6],
-            input[k + 7],
-        ]);
+        let vals_arr: [f32; 8] = input[k..k + 8].try_into().unwrap();
+        let vals = f32x8::from(vals_arr);
         let scaled = vals * scale_vec;
         let arr: [f32; 8] = scaled.into();
         result[k..k + 8].copy_from_slice(&arr);
@@ -1605,18 +1597,9 @@ pub fn extract_block_simd(
         for y in 0..8 {
             let row_start = (py_start + y) * width + px_start;
 
-            // Load 8 consecutive f32 values
-            let row_slice = &plane[row_start..row_start + 8];
-            let row = f32x8::from([
-                row_slice[0],
-                row_slice[1],
-                row_slice[2],
-                row_slice[3],
-                row_slice[4],
-                row_slice[5],
-                row_slice[6],
-                row_slice[7],
-            ]);
+            // Load 8 consecutive f32 values (zero-cost from contiguous memory)
+            let row_arr: [f32; 8] = plane[row_start..row_start + 8].try_into().unwrap();
+            let row = f32x8::from(row_arr);
 
             // Subtract level shift
             let shifted = row - level_shift;
@@ -1669,17 +1652,9 @@ pub fn extract_block_xyb_simd(
     if is_interior {
         for y in 0..8 {
             let row_start = (py_start + y) * width + px_start;
-            let row_slice = &plane[row_start..row_start + 8];
-            let row = f32x8::from([
-                row_slice[0],
-                row_slice[1],
-                row_slice[2],
-                row_slice[3],
-                row_slice[4],
-                row_slice[5],
-                row_slice[6],
-                row_slice[7],
-            ]);
+            // Load 8 consecutive f32 values (zero-cost from contiguous memory)
+            let row_arr: [f32; 8] = plane[row_start..row_start + 8].try_into().unwrap();
+            let row = f32x8::from(row_arr);
 
             // XYB: val * 255.0 - 128.0
             let scaled = row * scale - level_shift;
