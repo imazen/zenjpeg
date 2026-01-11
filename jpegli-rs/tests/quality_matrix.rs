@@ -519,6 +519,15 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     decoder.decode().expect("decode failed")
 }
 
+/// Decode using jpegli-rs with ICC profile support (required for XYB)
+fn decode_jpeg_jpegli(data: &[u8]) -> Vec<u8> {
+    jpegli::Decoder::new()
+        .apply_icc(true)
+        .decode(data)
+        .expect("jpegli decode failed")
+        .data
+}
+
 // ============================================================================
 // TEST RUNNER
 // ============================================================================
@@ -568,7 +577,12 @@ fn test_configuration(
             mode,
             use_xyb,
         );
-        let rust_decoded = decode_jpeg(&rust_jpeg);
+        // Use jpegli decoder for XYB (has ICC support), zune-jpeg for YCbCr
+        let rust_decoded = if use_xyb {
+            decode_jpeg_jpegli(&rust_jpeg)
+        } else {
+            decode_jpeg(&rust_jpeg)
+        };
         let rust_ssim2 = compute_ssim2(rgb, &rust_decoded, width, height);
 
         // Get C++ result (live or reference)
@@ -583,7 +597,11 @@ fn test_configuration(
                 progressive,
                 use_xyb,
             ) {
-                let cpp_decoded = decode_jpeg(&cpp_jpeg);
+                let cpp_decoded = if use_xyb {
+                    decode_jpeg_jpegli(&cpp_jpeg)
+                } else {
+                    decode_jpeg(&cpp_jpeg)
+                };
                 let ssim2 = compute_ssim2(rgb, &cpp_decoded, width, height);
                 (ssim2, cpp_jpeg.len())
             } else {
@@ -866,11 +884,9 @@ fn test_ycbcr_440_progressive() {
     );
 }
 
-/// XYB tests are ignored because zune-jpeg doesn't handle ICC profiles.
-/// XYB JPEGs require ICC-aware decoding for correct color conversion.
-/// TODO: Use jpegli decoder with CMS or PIL for XYB quality tests.
+/// XYB baseline quality test.
+/// Uses jpegli-rs decoder with ICC/CMS support for correct XYB→sRGB conversion.
 #[test]
-#[ignore = "XYB requires ICC-aware decoder (zune-jpeg doesn't support ICC)"]
 fn test_xyb_444_baseline() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");
@@ -898,8 +914,9 @@ fn test_xyb_444_baseline() {
     }
 }
 
+/// XYB progressive quality test.
+/// Uses jpegli-rs decoder with ICC/CMS support for correct XYB→sRGB conversion.
 #[test]
-#[ignore = "XYB requires ICC-aware decoder (zune-jpeg doesn't support ICC)"]
 fn test_xyb_444_progressive() {
     let path = get_frymire_path();
     let (rgb, width, height) = load_png(&path).expect("Failed to load frymire.png");
