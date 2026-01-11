@@ -495,9 +495,18 @@ impl StripProcessor {
         let actual_strip_height = self.strip_height.min(self.height - strip_y);
 
         // Step 1: Color convert RGB → YCbCr into strip buffers
-        // For gamma-aware modes, this computes chroma directly at downsampled resolution
-        if self.chroma_downsampling.uses_gamma_aware() && self.pixel_format != PixelFormat::Gray {
+        // Choose the optimal path based on mode and subsampling:
+        // - Gamma-aware: fused Y + downsampled CbCr (quality)
+        // - Box + subsampling: fused Y + downsampled CbCr (fast, avoids separate downsample)
+        // - Box + 4:4:4 or Gray: standard path (no downsampling needed)
+        let uses_fused_path = self.pixel_format != PixelFormat::Gray
+            && self.subsampling != Subsampling::S444;
+
+        if self.chroma_downsampling.uses_gamma_aware() && uses_fused_path {
             self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+        } else if uses_fused_path {
+            // Fast fused Box path: Y at full res + CbCr directly at downsampled res
+            self.convert_strip_box_fused(rgb_strip, actual_strip_height)?;
         } else {
             self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
         }
@@ -516,15 +525,17 @@ impl StripProcessor {
             None
         };
 
-        // Step 3: Downsample chroma if needed (skipped for gamma-aware modes)
-        // Use full strip_height if we padded vertically, so downsampling has complete rows
+        // Step 3: Downsample chroma if needed
+        // Skipped for fused paths (gamma-aware and box fused) which already output downsampled chroma
         let downsample_height = if actual_strip_height < self.strip_height {
             self.strip_height
         } else {
             actual_strip_height
         };
-        if self.pixel_format != PixelFormat::Gray && !self.chroma_downsampling.uses_gamma_aware() {
-            self.downsample_chroma_strip(downsample_height)?;
+        let needs_separate_downsample = self.pixel_format != PixelFormat::Gray
+            && self.subsampling == Subsampling::S444;
+        if needs_separate_downsample {
+            // Only 4:4:4 goes through the old path and doesn't need downsampling anyway
         }
 
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
@@ -702,6 +713,75 @@ impl StripProcessor {
                     strip_height,
                     bpp,
                     use_iterative,
+                );
+            }
+            Subsampling::S444 => unreachable!(), // Handled above
+        }
+
+        // Rearrange Y strip from packed to padded layout
+        self.rearrange_y_strip_only(strip_height);
+
+        // Pad chroma strips (cb_down, cr_down are already at downsampled resolution)
+        self.pad_chroma_down_strip(c_strip_height, c_width);
+
+        Ok(())
+    }
+
+    /// Converts RGB strip using fast fused Box downsampling.
+    ///
+    /// This computes Y at full resolution and Cb/Cr directly at the downsampled
+    /// resolution using simple box averaging (no gamma correction).
+    /// Faster than separate convert + downsample steps.
+    fn convert_strip_box_fused(&mut self, rgb_strip: &[u8], strip_height: usize) -> Result<()> {
+        let width = self.width;
+        let bpp = self.pixel_format.bytes_per_pixel();
+        let num_pixels = strip_height * width;
+
+        // Determine chroma strip dimensions
+        let (c_width, c_strip_height) = match self.subsampling {
+            Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
+            Subsampling::S422 => ((width + 1) / 2, strip_height),
+            Subsampling::S440 => (width, (strip_height + 1) / 2),
+            Subsampling::S444 => {
+                // No downsampling needed for 4:4:4, use standard path
+                return self.convert_strip_to_ycbcr(rgb_strip, strip_height);
+            }
+        };
+
+        let c_size = c_width * c_strip_height;
+
+        match self.subsampling {
+            Subsampling::S420 => {
+                crate::chroma::box_fused_strip_420(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    width,
+                    strip_height,
+                    bpp,
+                );
+            }
+            Subsampling::S422 => {
+                crate::chroma::box_fused_strip_422(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    width,
+                    strip_height,
+                    bpp,
+                );
+            }
+            Subsampling::S440 => {
+                crate::chroma::box_fused_strip_440(
+                    rgb_strip,
+                    &mut self.y_strip[..num_pixels],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    width,
+                    strip_height,
+                    bpp,
                 );
             }
             Subsampling::S444 => unreachable!(), // Handled above
