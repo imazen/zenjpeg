@@ -89,7 +89,7 @@ fn masking_sqrt_scalar(v: f32) -> f32 {
 
 /// SIMD version of ratio_of_derivatives (non-inverted).
 /// Processes 8 f32 values at once.
-#[inline]
+#[inline(always)]
 pub fn ratio_of_derivatives_x8(vals: f32x8) -> f32x8 {
     let v = vals.fast_max(f32x8::ZERO);
     let v2 = v * v;
@@ -103,7 +103,7 @@ pub fn ratio_of_derivatives_x8(vals: f32x8) -> f32x8 {
 
 /// SIMD version of ratio_of_derivatives (inverted).
 /// Processes 8 f32 values at once.
-#[inline]
+#[inline(always)]
 pub fn ratio_of_derivatives_inv_x8(vals: f32x8) -> f32x8 {
     let v = vals.fast_max(f32x8::ZERO);
     let v2 = v * v;
@@ -116,7 +116,7 @@ pub fn ratio_of_derivatives_inv_x8(vals: f32x8) -> f32x8 {
 
 /// SIMD version of masking_sqrt.
 /// Processes 8 f32 values at once.
-#[inline]
+#[inline(always)]
 pub fn masking_sqrt_x8(v: f32x8) -> f32x8 {
     let k_mul_sqrt = f32x8::splat((K_MASKING_MUL * 1e8_f32).sqrt());
     let k_offset = f32x8::splat(K_MASKING_LOG_OFFSET);
@@ -144,7 +144,7 @@ const GAMMA_OFFSET: f32 = MATCH_GAMMA_OFFSET / K_INPUT_SCALING; // ~4.845
 ///
 /// # Returns
 /// 8 masked diff values ready for accumulation
-#[inline]
+#[inline(always)]
 pub fn pre_erosion_pixel_x8(
     pixels: f32x8,
     left: f32x8,
