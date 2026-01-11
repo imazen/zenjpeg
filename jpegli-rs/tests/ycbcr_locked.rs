@@ -28,8 +28,9 @@ use jpegli::{Encoder, JpegMode, PixelFormat, Quality};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
-// Generated: 2026-01-09
+// Generated: 2026-01-11
 // Mode: YCbCr with optimized Huffman
+// Updated: FMA optimization changes rounding behavior slightly
 // =============================================================================
 
 // =============================================================================
@@ -39,39 +40,39 @@ use jpegli::{Encoder, JpegMode, PixelFormat, Quality};
 /// Sequential S444 optimized Huffman - frymire.png
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
     (50, 329838),
-    (70, 438797),
-    (85, 600401),
-    (90, 717865),
-    (95, 937148),
+    (70, 438814),
+    (85, 600382),
+    (90, 717812),
+    (95, 937285),
 ];
 
 /// Sequential S422 optimized Huffman - frymire.png
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
     (50, 293361),
-    (70, 386682),
+    (70, 386676),
     (85, 520353),
-    (90, 613589),
-    (95, 783875),
+    (90, 613614),
+    (95, 783905),
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
-/// Updated 2026-01-10: K420_RESCALE fix, edge padding for C++ parity.
+/// Updated 2026-01-11: FMA optimization.
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269475),
+    (50, 269382),
     (70, 362197),
     (85, 494215),
-    (90, 583788),
-    (95, 743191),
+    (90, 583695),
+    (95, 743239),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
-/// Updated 2026-01-10: Edge padding for C++ parity.
+/// Updated 2026-01-11: FMA optimization.
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
     (50, 293066),
     (70, 386533),
     (85, 520183),
-    (90, 613721),
-    (95, 783774),
+    (90, 613628),
+    (95, 783780),
 ];
 
 // =============================================================================
@@ -81,10 +82,10 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 /// Progressive S444 optimized Huffman - frymire.png
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
     (50, 320645),
-    (70, 425666),
-    (85, 581885),
-    (90, 696609),
-    (95, 908023),
+    (70, 425670),
+    (85, 581882),
+    (90, 696599),
+    (95, 908011),
 ];
 
 /// Progressive S422 optimized Huffman - frymire.png
@@ -92,42 +93,43 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
     (50, 285904),
     (70, 375694),
     (85, 505401),
-    (90, 595629),
-    (95, 760331),
+    (90, 595625),
+    (95, 760319),
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
-/// Updated 2026-01-10: K420_RESCALE fix, edge padding for C++ parity.
+/// Updated 2026-01-11: FMA optimization.
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 260695),
+    (50, 260688),
     (70, 350150),
-    (85, 477389),
-    (90, 563855),
-    (95, 717464),
+    (85, 477395),
+    (90, 563852),
+    (95, 717458),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
-/// Updated 2026-01-10: Edge padding for C++ parity.
+/// Updated 2026-01-11: FMA optimization.
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
     (50, 283519),
     (70, 373385),
     (85, 503285),
-    (90, 593391),
-    (95, 757931),
+    (90, 593387),
+    (95, 757919),
 ];
 
 // =============================================================================
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0xe67ceac4e2cb923c;
-const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x5ac37bc64f50e6d8;
-const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x9179f00d4062fbe6;
-const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xd217840b58ae5201;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x6b0b45c15688c2de; // Updated 2026-01-10: edge padding
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x36afce2e1831f76e; // Updated 2026-01-10: edge padding
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x8065c8580b7bea7c; // Updated 2026-01-10: edge padding
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x49f21365faabb72f; // Updated 2026-01-10: edge padding
+// Updated 2026-01-11: FMA optimization changes rounding behavior
+const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x37395b82bdad1672;
+const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x09b9fbe2b95253b9;
+const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0xf35ab94474d1c609;
+const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x17f4f5100a48569f;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xc54e8fad96b73fb0;
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xd9b7daaab8fdef4e;
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x5781673c45c6da9b;
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x3115a2a457d2327f;
 
 // =============================================================================
 // Helper functions
