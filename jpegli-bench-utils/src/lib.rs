@@ -364,6 +364,290 @@ pub fn generate_complex(width: u32, height: u32) -> RgbImage {
 }
 
 // ============================================================================
+// Edge MCU Tiling (for testing partial MCU handling)
+// ============================================================================
+
+/// Configuration for which edges to replicate when creating edge test images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EdgeReplicationMode {
+    /// Replicate only the rightmost columns (for width % 8 != 0)
+    Right,
+    /// Replicate only the bottom rows (for height % 8 != 0)
+    Bottom,
+    /// Replicate both right columns and bottom rows
+    Both,
+    /// Automatically replicate whichever edges have non-8-aligned dimensions
+    #[default]
+    Auto,
+}
+
+/// Configuration for edge MCU test image generation.
+#[derive(Debug, Clone)]
+pub struct EdgeTestConfig {
+    /// Which edges to replicate
+    pub mode: EdgeReplicationMode,
+    /// Override width of right edge strip (None = use width % 8)
+    pub right_edge_width: Option<usize>,
+    /// Override height of bottom edge strip (None = use height % 8)
+    pub bottom_edge_height: Option<usize>,
+    /// Target output width (None = same as source)
+    pub target_width: Option<usize>,
+    /// Target output height (None = same as source)
+    pub target_height: Option<usize>,
+}
+
+impl Default for EdgeTestConfig {
+    fn default() -> Self {
+        Self {
+            mode: EdgeReplicationMode::Auto,
+            right_edge_width: None,
+            bottom_edge_height: None,
+            target_width: None,
+            target_height: None,
+        }
+    }
+}
+
+impl EdgeTestConfig {
+    /// Create config for right-edge-only testing with specific width.
+    #[must_use]
+    pub fn right_only(edge_width: usize) -> Self {
+        Self {
+            mode: EdgeReplicationMode::Right,
+            right_edge_width: Some(edge_width),
+            ..Default::default()
+        }
+    }
+
+    /// Create config for bottom-edge-only testing with specific height.
+    #[must_use]
+    pub fn bottom_only(edge_height: usize) -> Self {
+        Self {
+            mode: EdgeReplicationMode::Bottom,
+            bottom_edge_height: Some(edge_height),
+            ..Default::default()
+        }
+    }
+
+    /// Create config for both edges with specific dimensions.
+    #[must_use]
+    pub fn both(edge_width: usize, edge_height: usize) -> Self {
+        Self {
+            mode: EdgeReplicationMode::Both,
+            right_edge_width: Some(edge_width),
+            bottom_edge_height: Some(edge_height),
+            ..Default::default()
+        }
+    }
+
+    /// Set target output dimensions.
+    #[must_use]
+    pub fn with_target_size(mut self, width: usize, height: usize) -> Self {
+        self.target_width = Some(width);
+        self.target_height = Some(height);
+        self
+    }
+}
+
+/// Create an edge test image by tiling edge strips from the source.
+///
+/// This is useful for testing edge-case handling in JPEG encoders. By tiling
+/// just the partial MCU edge strips across the full image, we amplify any bugs
+/// in boundary handling - instead of affecting <1% of blocks, every block in
+/// the tiled image exercises the edge case.
+///
+/// # Example
+/// ```rust,ignore
+/// use jpegli_bench_utils::{create_edge_test_image, EdgeTestConfig};
+///
+/// let source = load_png("frymire.png").unwrap(); // 1118x1105
+///
+/// // Auto mode: tiles both right (6 cols) and bottom (1 row)
+/// let tiled = create_edge_test_image(&source, EdgeTestConfig::default());
+///
+/// // Right-only with width=1 (most extreme edge case)
+/// let tiled = create_edge_test_image(&source, EdgeTestConfig::right_only(1));
+///
+/// // Both edges with custom dimensions
+/// let config = EdgeTestConfig::both(3, 2).with_target_size(512, 512);
+/// let tiled = create_edge_test_image(&source, config);
+/// ```
+#[must_use]
+pub fn create_edge_test_image(source: &RgbImage, config: EdgeTestConfig) -> Option<RgbImage> {
+    let src_width = source.width();
+    let src_height = source.height();
+
+    // Determine which edges to process
+    let (do_right, do_bottom) = match config.mode {
+        EdgeReplicationMode::Right => (true, false),
+        EdgeReplicationMode::Bottom => (false, true),
+        EdgeReplicationMode::Both => (true, true),
+        EdgeReplicationMode::Auto => (src_width % 8 != 0, src_height % 8 != 0),
+    };
+
+    // Determine edge strip dimensions
+    let right_width = config
+        .right_edge_width
+        .unwrap_or_else(|| src_width % 8)
+        .max(1)
+        .min(src_width);
+    let bottom_height = config
+        .bottom_edge_height
+        .unwrap_or_else(|| src_height % 8)
+        .max(1)
+        .min(src_height);
+
+    // If nothing to do, return None
+    if !do_right && !do_bottom {
+        return None;
+    }
+
+    // Determine output dimensions
+    let out_width = config.target_width.unwrap_or(src_width);
+    let out_height = config.target_height.unwrap_or(src_height);
+
+    // Source strip positions
+    let right_start = src_width.saturating_sub(right_width);
+    let bottom_start = src_height.saturating_sub(bottom_height);
+
+    let mut pixels = Vec::with_capacity(out_width * out_height);
+
+    for out_y in 0..out_height {
+        for out_x in 0..out_width {
+            // Determine source coordinates based on replication mode
+            let src_x = if do_right {
+                right_start + (out_x % right_width)
+            } else {
+                out_x % src_width
+            };
+
+            let src_y = if do_bottom {
+                bottom_start + (out_y % bottom_height)
+            } else {
+                out_y % src_height
+            };
+
+            let src_pixel = source.buf()[src_y * src_width + src_x];
+            pixels.push(src_pixel);
+        }
+    }
+
+    Some(ImgVec::new(pixels, out_width, out_height))
+}
+
+/// Extract the rightmost N columns from an image and tile them horizontally.
+///
+/// Convenience wrapper around `create_edge_test_image` for right-edge-only testing.
+#[must_use]
+pub fn tile_edge_columns(source: &RgbImage, edge_columns: usize, target_width: usize) -> RgbImage {
+    let config = EdgeTestConfig::right_only(edge_columns)
+        .with_target_size(target_width, source.height());
+    create_edge_test_image(source, config).unwrap_or_else(|| source.clone())
+}
+
+/// Extract the bottom N rows from an image and tile them vertically.
+///
+/// Convenience wrapper around `create_edge_test_image` for bottom-edge-only testing.
+#[must_use]
+pub fn tile_edge_rows(source: &RgbImage, edge_rows: usize, target_height: usize) -> RgbImage {
+    let config = EdgeTestConfig::bottom_only(edge_rows)
+        .with_target_size(source.width(), target_height);
+    create_edge_test_image(source, config).unwrap_or_else(|| source.clone())
+}
+
+/// Information about MCU edge characteristics of an image.
+#[derive(Debug, Clone)]
+pub struct McuEdgeInfo {
+    /// Image width
+    pub width: usize,
+    /// Image height
+    pub height: usize,
+    /// Number of full MCU columns (width / 8)
+    pub full_mcu_columns: usize,
+    /// Number of full MCU rows (height / 8)
+    pub full_mcu_rows: usize,
+    /// Width of rightmost partial MCU (width % 8, 0 if none)
+    pub partial_mcu_width: usize,
+    /// Height of bottom partial MCU (height % 8, 0 if none)
+    pub partial_mcu_height: usize,
+    /// Percentage of blocks affected by partial width MCU
+    pub width_affected_pct: f64,
+    /// Percentage of blocks affected by partial height MCU
+    pub height_affected_pct: f64,
+    /// Percentage of blocks affected by either edge (union)
+    pub total_affected_pct: f64,
+}
+
+impl McuEdgeInfo {
+    /// Analyze an image for MCU edge characteristics.
+    #[must_use]
+    pub fn analyze(width: usize, height: usize) -> Self {
+        let full_mcu_columns = width / 8;
+        let full_mcu_rows = height / 8;
+        let partial_mcu_width = width % 8;
+        let partial_mcu_height = height % 8;
+
+        let total_mcu_columns = full_mcu_columns + if partial_mcu_width > 0 { 1 } else { 0 };
+        let total_mcu_rows = full_mcu_rows + if partial_mcu_height > 0 { 1 } else { 0 };
+        let total_blocks = total_mcu_columns * total_mcu_rows;
+
+        // Blocks affected by partial width (rightmost column)
+        let width_affected = if partial_mcu_width > 0 { total_mcu_rows } else { 0 };
+        // Blocks affected by partial height (bottom row)
+        let height_affected = if partial_mcu_height > 0 { total_mcu_columns } else { 0 };
+        // Corner block is counted in both, subtract 1 to avoid double-counting
+        let corner_overlap = if partial_mcu_width > 0 && partial_mcu_height > 0 { 1 } else { 0 };
+        let total_affected = width_affected + height_affected - corner_overlap;
+
+        let width_affected_pct = if total_blocks > 0 {
+            width_affected as f64 / total_blocks as f64 * 100.0
+        } else {
+            0.0
+        };
+        let height_affected_pct = if total_blocks > 0 {
+            height_affected as f64 / total_blocks as f64 * 100.0
+        } else {
+            0.0
+        };
+        let total_affected_pct = if total_blocks > 0 {
+            total_affected as f64 / total_blocks as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        Self {
+            width,
+            height,
+            full_mcu_columns,
+            full_mcu_rows,
+            partial_mcu_width,
+            partial_mcu_height,
+            width_affected_pct,
+            height_affected_pct,
+            total_affected_pct,
+        }
+    }
+
+    /// Check if this image has a partial rightmost MCU.
+    #[must_use]
+    pub fn has_partial_width(&self) -> bool {
+        self.partial_mcu_width > 0
+    }
+
+    /// Check if this image has a partial bottom MCU.
+    #[must_use]
+    pub fn has_partial_height(&self) -> bool {
+        self.partial_mcu_height > 0
+    }
+
+    /// Check if this image has any partial MCU edges.
+    #[must_use]
+    pub fn has_partial_edges(&self) -> bool {
+        self.has_partial_width() || self.has_partial_height()
+    }
+}
+
+// ============================================================================
 // Convenience: Generate Standard Test Suite
 // ============================================================================
 
