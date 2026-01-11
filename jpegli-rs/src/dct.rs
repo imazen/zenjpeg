@@ -17,6 +17,7 @@
 //! (`_mm256_unpacklo/hi_ps`, `_mm256_permute2f128_ps`) which have no `wide` equivalent.
 
 use crate::consts::DCT_BLOCK_SIZE;
+use crate::simd_types::Block8x8f;
 
 #[cfg(feature = "simd")]
 use wide::f32x8;
@@ -751,6 +752,41 @@ pub(crate) mod simd {
         output[56..64].copy_from_slice(&(final_rows[7] * scale).to_array());
 
         output
+    }
+
+    /// Wide-native 2D forward DCT: takes Block8x8f, returns Block8x8f.
+    ///
+    /// This eliminates all conversion overhead when data is already in wide format.
+    /// Use this in hot paths where blocks are stored as Block8x8f.
+    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+    #[inline]
+    pub fn forward_dct_8x8_wide(input: &Block8x8f) -> Block8x8f {
+        // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
+        let cols = transpose_vec(input.rows);
+
+        // Row DCT: processes all 8 rows in parallel
+        let cols_after_row = dct_1d_vec(cols);
+
+        // Transpose back to row layout
+        let rows_for_col = transpose_vec(cols_after_row);
+
+        // Column DCT: processes all 8 columns in parallel
+        let final_rows = dct_1d_vec(rows_for_col);
+
+        // Apply 1/8 scaling
+        let scale = f32x8::splat(1.0 / 8.0);
+        Block8x8f {
+            rows: [
+                final_rows[0] * scale,
+                final_rows[1] * scale,
+                final_rows[2] * scale,
+                final_rows[3] * scale,
+                final_rows[4] * scale,
+                final_rows[5] * scale,
+                final_rows[6] * scale,
+                final_rows[7] * scale,
+            ],
+        }
     }
 
     // ========================================================================
@@ -1631,5 +1667,63 @@ mod tests {
                 "Scalar faster"
             }
         );
+    }
+
+    #[cfg(feature = "simd")]
+    #[test]
+    fn test_wide_dct_matches_array_dct() {
+        use crate::simd_types::Block8x8f;
+
+        // Test with various patterns
+        let patterns: [[f32; 64]; 4] = [
+            [128.0; 64], // Constant
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = i as f32;
+                }
+                arr
+            },
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = (i as f32 * 0.3).sin() * 100.0;
+                }
+                arr
+            },
+            {
+                let mut arr = [0.0f32; 64];
+                for row in 0..8 {
+                    for col in 0..8 {
+                        arr[row * 8 + col] = if (row + col) % 2 == 0 { 100.0 } else { -100.0 };
+                    }
+                }
+                arr
+            },
+        ];
+
+        for (idx, input) in patterns.iter().enumerate() {
+            // Array-based DCT
+            let array_output = forward_dct_8x8(input);
+
+            // Wide-native DCT
+            let block_input = Block8x8f::from_array(input);
+            let block_output = simd::forward_dct_8x8_wide(&block_input);
+            let wide_output = block_output.to_array();
+
+            // Compare
+            let mut max_error = 0.0f32;
+            for i in 0..64 {
+                let error = (array_output[i] - wide_output[i]).abs();
+                max_error = max_error.max(error);
+            }
+
+            assert!(
+                max_error < 1e-4,
+                "Pattern {}: wide DCT differs from array DCT by {}",
+                idx,
+                max_error
+            );
+        }
     }
 }
