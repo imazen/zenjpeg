@@ -380,25 +380,15 @@ pub(crate) mod simd {
 
     /// Process 8 rows simultaneously using SIMD with AVX2 transpose.
     /// Uses cache-friendly row loads + fast transpose instead of element-by-element gather.
-    /// Note: Currently slower than scalar row-by-row processing due to f32x8::from([...])
-    /// vector construction overhead. Kept for reference and future AVX2 intrinsics optimization.
     #[allow(dead_code)]
     #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
     pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
-        // Step 1: Load all 8 rows (cache-friendly sequential access)
+        // Step 1: Load all 8 rows (cache-friendly sequential access, zero-cost)
         let mut rows: [f32x8; 8] = [f32x8::ZERO; 8];
         for row in 0..8 {
             let k = row * 8;
-            rows[row] = f32x8::from([
-                input[k],
-                input[k + 1],
-                input[k + 2],
-                input[k + 3],
-                input[k + 4],
-                input[k + 5],
-                input[k + 6],
-                input[k + 7],
-            ]);
+            let row_slice: [f32; 8] = input[k..k + 8].try_into().unwrap();
+            rows[row] = f32x8::from(row_slice);
         }
 
         // Step 2: Transpose to column-major using AVX2 if available
@@ -421,16 +411,8 @@ pub(crate) mod simd {
                 mem = [f32x8::ZERO; 8];
                 for col in 0..8 {
                     let k = col * 8;
-                    mem[col] = f32x8::from([
-                        output_flat[k],
-                        output_flat[k + 1],
-                        output_flat[k + 2],
-                        output_flat[k + 3],
-                        output_flat[k + 4],
-                        output_flat[k + 5],
-                        output_flat[k + 6],
-                        output_flat[k + 7],
-                    ]);
+                    let col_slice: [f32; 8] = output_flat[k..k + 8].try_into().unwrap();
+                    mem[col] = f32x8::from(col_slice);
                 }
             } else {
                 // Scalar transpose fallback
