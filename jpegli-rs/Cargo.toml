@@ -33,7 +33,7 @@ mozjpeg-rs = { workspace = true, optional = true }
 #   git submodule update --init --recursive internal/jpegli-cpp
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
 # For corpus comparison testing
-codec-eval = { version = "0.2", optional = true }
+#codec-eval = { version = "0.2", optional = true }
 
 [dev-dependencies]
 jpegli-bench-utils = { path = "../jpegli-bench-utils", features = ["cjpegli-ffi"] }
@@ -58,7 +58,7 @@ sha2 = "0.10"
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["simd", "cms", "ffi-tests", "corpus-tests", "test-utils"]
+default = ["simd", "cms", "ffi-tests", "test-utils"]
 simd = []  # Safe portable SIMD via `wide` crate (always recommended)
 # Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
 # Without this, all SIMD uses auto-vectorizable fallbacks that work on all platforms.
@@ -68,7 +68,7 @@ cms = ["cms-lcms2"]  # Default CMS backend
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
 ffi-tests = ["dep:jpegli-internals-sys"]
 # Enable corpus comparison tests (requires codec-eval)
-corpus-tests = ["dep:codec-eval"]
+#corpus-tests = ["dep:codec-eval"]
 cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
 cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 # Enable debug token serialization for C++ comparison

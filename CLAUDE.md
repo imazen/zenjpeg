@@ -2,6 +2,20 @@
 
 Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 
+## Context Preservation (CRITICAL)
+
+**You may lose context at any time.** Always record findings immediately:
+
+1. **Suspected bugs** → Add to "Known Bugs" section below with file:line references
+2. **Code analysis/details** → Save to `CODE.md` with:
+   - Relevant code snippets
+   - Root cause analysis
+   - Proposed fixes
+   - C++ reference behavior
+3. **Investigation progress** → Commit WIP notes before switching tasks
+
+**Do this BEFORE continuing investigation.** Lost context = wasted work.
+
 ## Quick Start
 
 ```bash
@@ -80,6 +94,26 @@ See **`jpegli-rs/examples/README.md`** for complete documentation.
 | `quality_compare` | Compare encoder quality/size metrics |
 | `xyb_parity_test` | Compare Rust vs C++ XYB output |
 | `test_libjpeg_compat` | Verify libjpeg decoder compatibility |
+| `edge_mcu_parity` | Test partial MCU edge handling parity |
+
+### Edge MCU Parity Testing
+
+The `edge_mcu_parity` example and `jpegli_bench_utils` provide tools for testing
+edge-case handling in images with non-8-aligned dimensions:
+
+```rust
+use jpegli_bench_utils::{tile_edge_columns, create_edge_mcu_test_image, McuEdgeInfo};
+
+// Analyze image for edge characteristics
+let info = McuEdgeInfo::analyze(1118, 1105);
+// partial_mcu_width = 6, affected_block_pct = 0.71%
+
+// Create test image that amplifies edge bugs
+let tiled = tile_edge_columns(&source, 6, 518);
+// Now 100% of content comes from edge strip
+```
+
+Use `--edge-width N` to test specific column widths (1-7).
 
 ### XYB Debugging (Quality Gap Investigation)
 
@@ -105,6 +139,31 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    from C++ cjpegli. Baseline XYB works. See `tests/progressive_xyb_decode.rs`.
 
 2. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
+
+3. **HF modulation index wrap (FIXED)** - `jpegli-rs/src/quant/aq/simd.rs:566`
+   Rightmost partial blocks were reading pixels from next row due to missing column check.
+   - Added `block_x + 8 <= img_width` guard to vertical SIMD path
+   - Affects images where `width % 8 != 0`
+   - See `CODE.md` for full analysis
+
+4. **Major edge MCU parity gap (UNFIXED)** - Unknown location
+   Edge-tiled test reveals +10-44% size for partial MCU images. Normal images: +0.26%.
+   - NOT fixed by #3 above
+   - Run `cargo run --release --example edge_mcu_parity` to reproduce
+   - See `CODE.md` for details
+
+   **Proposed Fix Strategy:**
+   - Consider replicating rightmost/bottom column/row and/or tiling it outwards
+     (including bottom-right corner) to calculate a more easily compressible block
+   - Create an enum for edge handling strategies (clamp vs replicate vs pad)
+   - Expand all internal buffers to multiples of 8 pixels
+   - Store crop dimensions and apply at the end
+
+   **How C++ handles it:** C++ uses `PadInputBuffer()` which:
+   - Pads rows to MCU-aligned width with edge replication: `row[len0...len1] = row[len0-1]`
+   - Creates a 1-pixel border: `row[-1] = row[0]`
+   - Uses `RowBuffer` class with proper stride/padding so accesses stay within row bounds
+   - See `internal/jpegli-cpp/lib/jpegli/encode.cc:571-627`
 
 ## Running Tests
 

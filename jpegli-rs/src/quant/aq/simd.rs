@@ -563,7 +563,12 @@ pub fn hf_modulation_sum_8x8(
         // Process vertical differences (|p - p_below|) for first 7 rows
         if dy < 7 && y + 1 < img_height {
             let next_row_start = (dy + 1) * stride;
-            if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
+            // Must also check block_x + 8 <= img_width to avoid reading wrapped pixels
+            // from the next row (contiguous memory layout issue for rightmost partial blocks)
+            if row_start + 8 <= block.len()
+                && next_row_start + 8 <= block.len()
+                && block_x + 8 <= img_width
+            {
                 let p = load_f32x8(block, row_start);
                 let p_below = load_f32x8(block, next_row_start);
                 let v_diff = (p - p_below).abs();
