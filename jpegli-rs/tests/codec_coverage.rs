@@ -898,9 +898,10 @@ mod error_coverage {
             Error::InvalidJpegData {
                 reason: "not a valid JPEG",
             },
-            Error::UnexpectedEof {
+            Error::TruncatedData {
                 context: "reading header",
             },
+            Error::EndOfScanData,
             Error::InvalidMarker {
                 marker: 0xFF,
                 context: "parsing markers",
@@ -939,6 +940,9 @@ mod error_coverage {
             Error::TooManyScans {
                 count: 200,
                 limit: 100,
+            },
+            Error::EncodingBackendMismatch {
+                details: "strip vs fullplane mismatch".to_string(),
             },
         ];
 

@@ -508,8 +508,8 @@ impl<'a> JpegParser<'a> {
 
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(Error::UnexpectedEof {
-                context: "reading byte",
+            return Err(Error::TruncatedData {
+                context: "reading marker data",
             });
         }
         let byte = self.data[self.position];
@@ -1044,7 +1044,7 @@ impl<'a> JpegParser<'a> {
                                         // Encoder included padding block
                                         self.coeffs[*comp_idx][block_idx] = coeffs;
                                     }
-                                    Err(Error::UnexpectedEof { .. }) => {
+                                    Err(Error::EndOfScanData) => {
                                         // Encoder omitted padding block - restore state and fill zeros
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
@@ -1187,7 +1187,7 @@ impl<'a> JpegParser<'a> {
                     if is_first_scan {
                         match decoder.decode_dc_first(comp_idx, dc_table as usize, al) {
                             Ok(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
-                            Err(Error::UnexpectedEof { .. }) => {
+                            Err(Error::EndOfScanData) => {
                                 // End of scan data - remaining blocks have DC=0
                                 break;
                             }
@@ -1196,7 +1196,7 @@ impl<'a> JpegParser<'a> {
                     } else {
                         match decoder.decode_dc_refine(al) {
                             Ok(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
-                            Err(Error::UnexpectedEof { .. }) => {
+                            Err(Error::EndOfScanData) => {
                                 // End of scan data - remaining blocks unchanged
                                 break;
                             }
@@ -1246,7 +1246,7 @@ impl<'a> JpegParser<'a> {
                                             Ok(dc) => {
                                                 self.coeffs[*comp_idx][block_idx][0] = dc;
                                             }
-                                            Err(Error::UnexpectedEof { .. }) => {
+                                            Err(Error::EndOfScanData) => {
                                                 // End of scan data - remaining blocks have DC=0
                                                 break 'dc_scan;
                                             }
@@ -1258,7 +1258,7 @@ impl<'a> JpegParser<'a> {
                                             Ok(bit) => {
                                                 self.coeffs[*comp_idx][block_idx][0] |= bit;
                                             }
-                                            Err(Error::UnexpectedEof { .. }) => {
+                                            Err(Error::EndOfScanData) => {
                                                 // End of scan data - remaining blocks unchanged
                                                 break 'dc_scan;
                                             }
@@ -1321,7 +1321,7 @@ impl<'a> JpegParser<'a> {
                         &mut eob_run,
                     ) {
                         Ok(()) => {}
-                        Err(Error::UnexpectedEof { .. }) => {
+                        Err(Error::EndOfScanData) => {
                             // End of scan data - remaining blocks have zeros (implicit EOB)
                             // This is normal in progressive JPEG when encoder uses
                             // implicit EOB at end of scan
@@ -1340,7 +1340,7 @@ impl<'a> JpegParser<'a> {
                         &mut eob_run,
                     ) {
                         Ok(()) => {}
-                        Err(Error::UnexpectedEof { .. }) => {
+                        Err(Error::EndOfScanData) => {
                             // End of scan data - remaining blocks unchanged
                             break;
                         }
