@@ -289,6 +289,77 @@ cargo run --release --example edge_mcu_parity -- --edge-width 6 --edge-height 6
 
 ---
 
+## Bug: Progressive Non-Interleaved Block Count Mismatch
+
+**File:** `jpegli-rs/src/encode/progressive.rs`
+**Status:** FIXED
+**Date:** 2026-01-10
+
+### Summary
+
+Progressive JPEG encoding with subsampled modes (4:2:0, 4:2:2, 4:4:0) and non-MCU-aligned dimensions produced malformed JPEGs that failed to decode with zune-jpeg ("Marker missing where expected").
+
+### Root Cause
+
+For **non-interleaved progressive scans**, the JPEG spec requires block counts based on ORIGINAL dimensions, not MCU-padded dimensions:
+
+- **Interleaved scans:** blocks = MCUs × blocks_per_MCU (uses MCU-aligned dimensions)
+- **Non-interleaved scans:** blocks = ceil(width/8) × ceil(height/8) (uses original dimensions)
+
+Example for 67×71 with 4:2:0:
+- MCU-padded dimensions: 80×80
+- Interleaved (baseline): 5×5 MCUs × 4 Y blocks = 100 Y blocks ✓
+- Non-interleaved (progressive): ceil(67/8) × ceil(71/8) = 9×9 = 81 Y blocks
+
+We were encoding 100 Y blocks but the SOF header said 67×71, so decoders expected only 81 blocks and failed when they didn't find the next marker.
+
+### The Fix
+
+After `quantize_all_blocks_subsampled()` returns blocks for the padded dimensions, filter them to keep only blocks that correspond to the original dimensions:
+
+```rust
+let orig_y_blocks_h = (width + 7) / 8;
+let orig_y_blocks_v = (height + 7) / 8;
+let padded_y_blocks_h = padded_w / 8;
+let padded_y_blocks_v = padded_h / 8;
+
+let y_blocks = if padded_y_blocks_h != orig_y_blocks_h
+    || padded_y_blocks_v != orig_y_blocks_v
+{
+    // Filter Y blocks: extract blocks for original dimensions
+    let mut filtered = Vec::with_capacity(orig_y_blocks_h * orig_y_blocks_v);
+    for by in 0..orig_y_blocks_v {
+        for bx in 0..orig_y_blocks_h {
+            let padded_idx = by * padded_y_blocks_h + bx;
+            filtered.push(y_blocks_padded[padded_idx]);
+        }
+    }
+    filtered
+} else {
+    y_blocks_padded
+};
+```
+
+The same filtering is applied to chroma blocks.
+
+### Testing
+
+Test cases verified:
+- 67×71 (small, both dimensions non-aligned)
+- 1118×1105 (frymire, both dimensions non-aligned)
+- 100×100 (vertical edge: height non-aligned)
+- 127×129 (both edges)
+
+All progressive subsampled modes now decode successfully with zune-jpeg.
+
+### Impact
+
+- File sizes decreased slightly (encoding fewer padding blocks)
+- Hash updates required for `progressive_420_opt` in locked tests
+- Strip encoder unaffected (uses baseline which is interleaved)
+
+---
+
 ## Template for Future Bugs
 
 **File:**

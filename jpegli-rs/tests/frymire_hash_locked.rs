@@ -55,9 +55,9 @@ const EXPECTED_HASHES: &[(&str, u8, &str)] = &[
     ("progressive_444_opt", 50, "f815f753ca0b9241e654165acb60a26cf1c26be9738b9013b452a04c0371f23e"), // 320645 bytes
     ("progressive_444_opt", 75, "80359f1f47353efe92203fb7e81881d4fd90ceb0aff0030239c64f6e9dea75d4"), // 462529 bytes
     ("progressive_444_opt", 90, "36f64b31c75184ca1e95144dbbfdc0ee9936c729a55fe0e679a0eb8b7ddc7629"), // 696609 bytes
-    ("progressive_420_opt", 50, "3f2a3f319b8a11838c89edc2091e1af049ea3490ccb138fc34bcd8be3f1427e2"), // 260753 bytes
-    ("progressive_420_opt", 75, "7820716ef1ec84d03c652e6f9cbc801b67c67f7e949b0d895052e4306f5721c0"), // 383463 bytes
-    ("progressive_420_opt", 90, "a7a16b2e7e4216a3a0ed3bbd05636e509e0fa75df3053ff473cc8113dda8c744"), // 563908 bytes
+    ("progressive_420_opt", 50, "fc8c542210ca52e2ceac4100dc4d684e4abb12b63e4287cb13f0ddc8bdc45821"), // 260695 bytes
+    ("progressive_420_opt", 75, "626b2dce5070a00a50cb20567dc51ab0ccdc2e9f142dc131b2bef2722c7a5384"), // 383367 bytes
+    ("progressive_420_opt", 90, "78cbe34e22dd278312e20a95950ced9a5249c15ad2acf195fd59afc364a87cfd"), // 563855 bytes
 ];
 
 // =============================================================================
