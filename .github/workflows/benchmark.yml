@@ -1,0 +1,211 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: benchmark
+
+      - name: Run encode benchmarks
+        run: |
+          cargo bench --bench encode -p jpegli-rs -- --noplot --save-baseline main 2>&1 | tee encode_bench.txt
+
+      - name: Run decode benchmarks
+        run: |
+          cargo bench --bench decode -p jpegli-rs -- --noplot --save-baseline main 2>&1 | tee decode_bench.txt
+
+      - name: Parse benchmark results
+        id: parse
+        run: |
+          # Extract benchmark results into a format for github-action-benchmark
+          mkdir -p benchmark-results
+
+          # Parse criterion output to JSON format
+          python3 << 'EOF'
+          import json
+          import re
+          import os
+
+          results = []
+
+          def parse_criterion_output(filename, prefix):
+              with open(filename, 'r') as f:
+                  content = f.read()
+
+              # Match lines like: encode/rgb/512x512    time:   [1.2345 ms 1.2456 ms 1.2567 ms]
+              pattern = r'(\S+)\s+time:\s+\[[\d.]+ \w+ ([\d.]+) (\w+)'
+
+              for match in re.finditer(pattern, content):
+                  name = match.group(1)
+                  value = float(match.group(2))
+                  unit = match.group(3)
+
+                  # Convert to consistent units (nanoseconds)
+                  if unit == 'ms':
+                      value *= 1_000_000
+                  elif unit == 'µs' or unit == 'us':
+                      value *= 1_000
+                  elif unit == 's':
+                      value *= 1_000_000_000
+
+                  results.append({
+                      'name': f'{prefix}/{name}',
+                      'unit': 'ns',
+                      'value': value
+                  })
+
+          if os.path.exists('encode_bench.txt'):
+              parse_criterion_output('encode_bench.txt', 'encode')
+          if os.path.exists('decode_bench.txt'):
+              parse_criterion_output('decode_bench.txt', 'decode')
+
+          with open('benchmark-results/results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+
+          print(f"Parsed {len(results)} benchmark results")
+          EOF
+
+          cat benchmark-results/results.json
+
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'customSmallerIsBetter'
+          output-file-path: benchmark-results/results.json
+          # Store results in gh-pages branch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # Alert if performance regresses by more than 10%
+          alert-threshold: '110%'
+          # Comment on PR with performance comparison
+          comment-on-alert: true
+          fail-on-alert: false
+          # Only keep last 100 data points
+          max-items-in-chart: 100
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-results
+          path: |
+            encode_bench.txt
+            decode_bench.txt
+            benchmark-results/
+
+  benchmark-comparison:
+    name: PR Benchmark Comparison
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: benchmark-pr
+
+      - name: Checkout base branch
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git checkout origin/${{ github.base_ref }}
+
+      - name: Run base branch benchmarks
+        run: |
+          cargo bench --bench encode -p jpegli-rs -- --noplot --save-baseline base 2>&1 | tee base_encode.txt
+          cargo bench --bench decode -p jpegli-rs -- --noplot --save-baseline base 2>&1 | tee base_decode.txt
+
+      - name: Checkout PR branch
+        run: |
+          git checkout ${{ github.sha }}
+
+      - name: Run PR branch benchmarks and compare
+        run: |
+          cargo bench --bench encode -p jpegli-rs -- --noplot --baseline base 2>&1 | tee pr_encode.txt
+          cargo bench --bench decode -p jpegli-rs -- --noplot --baseline base 2>&1 | tee pr_decode.txt
+
+      - name: Generate comparison report
+        id: report
+        run: |
+          echo "## Benchmark Comparison" > comparison.md
+          echo "" >> comparison.md
+          echo "### Encode Benchmarks" >> comparison.md
+          echo '```' >> comparison.md
+          # Extract comparison lines (those with change percentages)
+          grep -E "(faster|slower|change)" pr_encode.txt >> comparison.md || echo "No significant changes" >> comparison.md
+          echo '```' >> comparison.md
+          echo "" >> comparison.md
+          echo "### Decode Benchmarks" >> comparison.md
+          echo '```' >> comparison.md
+          grep -E "(faster|slower|change)" pr_decode.txt >> comparison.md || echo "No significant changes" >> comparison.md
+          echo '```' >> comparison.md
+
+          cat comparison.md
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('comparison.md', 'utf8');
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## Benchmark Comparison')
+            );
+
+            const body = report + '\n\n*Updated: ' + new Date().toISOString() + '*';
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Upload comparison artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-comparison
+          path: |
+            base_encode.txt
+            base_decode.txt
+            pr_encode.txt
+            pr_decode.txt
+            comparison.md
