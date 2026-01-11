@@ -435,10 +435,13 @@ fn fast_log2(x: f32) -> f32 {
     // Simplified to polynomial for speed:
     // log2(f) ≈ 1.442695 * ln(f) where ln(f) ≈ (f-1) - (f-1)²/2 + (f-1)³/3
     // = (f-1) * (1.442695 - 0.721348*(f-1) + 0.480899*(f-1)² - 0.360674*(f-1)³)
+    // Using FMA (Horner's method) for better accuracy and performance
     let t = f_minus_1;
-    let log2_f = t
-        * (1.442695041
-            + t * (-0.7213475204 + t * (0.4808983470 + t * (-0.3606737602 + t * 0.2885390082))));
+    let log2_f = t * 0.2885390082_f32
+        .mul_add(t, -0.3606737602)
+        .mul_add(t, 0.4808983470)
+        .mul_add(t, -0.7213475204)
+        .mul_add(t, 1.442695041);
 
     e as f32 + log2_f
 }
@@ -685,7 +688,8 @@ pub fn per_block_modulations_row(
         let v2 = 1.0 / (v1 + K_MASK_OFFSET2);
         let v3 = 1.0 / (v1 * v1 + K_MASK_OFFSET3);
         let v4 = 1.0 / (v1 * v1 + K_MASK_OFFSET4);
-        let mut out_val = K_MASK_BASE + K_MASK_MUL4 * v4 + K_MASK_MUL2 * v2 + K_MASK_MUL3 * v3;
+        // Use FMA for weighted sum
+        let mut out_val = K_MASK_MUL4.mul_add(v4, K_MASK_MUL2.mul_add(v2, K_MASK_MUL3.mul_add(v3, K_MASK_BASE)));
 
         // 2. HfModulation with SIMD
         let block_offset = y_start * width + x_start;
@@ -739,7 +743,8 @@ fn weighted_min4_of_9(v: [f32; 9]) -> f32 {
         }
     }
 
-    FUZZY_MUL0 * a[0] + FUZZY_MUL1 * a[1] + FUZZY_MUL2 * a[2] + FUZZY_MUL3 * a[3]
+    // Use FMA for weighted sum
+    FUZZY_MUL0.mul_add(a[0], FUZZY_MUL1.mul_add(a[1], FUZZY_MUL2.mul_add(a[2], FUZZY_MUL3 * a[3])))
 }
 
 /// SIMD-optimized FuzzyErosion.

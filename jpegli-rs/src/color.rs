@@ -152,10 +152,10 @@ mod simd {
 
         let offset_128 = f32x4::splat(128.0);
 
-        // Compute Y, Cb, Cr
-        let y = rf * r_to_y + gf * g_to_y + bf * b_to_y;
-        let cb = offset_128 + rf * r_to_cb + gf * g_to_cb + bf * b_to_cb;
-        let cr = offset_128 + rf * r_to_cr + gf * g_to_cr + bf * b_to_cr;
+        // Compute Y, Cb, Cr (using FMA)
+        let y = r_to_y.mul_add(rf, g_to_y.mul_add(gf, b_to_y * bf));
+        let cb = r_to_cb.mul_add(rf, g_to_cb.mul_add(gf, b_to_cb.mul_add(bf, offset_128)));
+        let cr = r_to_cr.mul_add(rf, g_to_cr.mul_add(gf, b_to_cr.mul_add(bf, offset_128)));
 
         // Round and clamp to u8
         let y_arr = y.to_array();
@@ -209,10 +209,10 @@ mod simd {
         let cb_to_b = f32x4::splat(YCBCR_CB_TO_B);
         let cr_to_b = f32x4::splat(YCBCR_CR_TO_B);
 
-        // Compute R, G, B
-        let r = yf * y_to_r + cbf * cb_to_r + crf * cr_to_r;
-        let g = yf * y_to_g + cbf * cb_to_g + crf * cr_to_g;
-        let b = yf * y_to_b + cbf * cb_to_b + crf * cr_to_b;
+        // Compute R, G, B (using FMA)
+        let r = y_to_r.mul_add(yf, cb_to_r.mul_add(cbf, cr_to_r * crf));
+        let g = y_to_g.mul_add(yf, cb_to_g.mul_add(cbf, cr_to_g * crf));
+        let b = y_to_b.mul_add(yf, cb_to_b.mul_add(cbf, cr_to_b * crf));
 
         // Round and clamp to u8
         let r_arr = r.to_array();
@@ -491,12 +491,12 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
         let cb = f32x8::from(&cb_plane[base..base + 8]);
         let cr = f32x8::from(&cr_plane[base..base + 8]);
 
-        // YCbCr to RGB
-        let r = (y + cr_to_r * cr + offset).max(zero).min(max_val);
-        let g = (y + cb_to_g * cb + cr_to_g * cr + offset)
+        // YCbCr to RGB (using FMA)
+        let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
+        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset))
             .max(zero)
             .min(max_val);
-        let b = (y + cb_to_b * cb + offset).max(zero).min(max_val);
+        let b = cb_to_b.mul_add(cb, y + offset).max(zero).min(max_val);
 
         let r_arr: [f32; 8] = r.into();
         let g_arr: [f32; 8] = g.into();
@@ -517,9 +517,10 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
         let cb = cb_plane[i];
         let cr = cr_plane[i];
 
-        let r = y + CR_TO_R * cr;
-        let g = y + CB_TO_G * cb + CR_TO_G * cr;
-        let b = y + CB_TO_B * cb;
+        // Use FMA for scalar remainder
+        let r = CR_TO_R.mul_add(cr, y);
+        let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
+        let b = CB_TO_B.mul_add(cb, y);
 
         let idx = i * 3;
         rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
@@ -568,12 +569,12 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
             let cb = f32x8::from(&cb_plane[base..base + 8]);
             let cr = f32x8::from(&cr_plane[base..base + 8]);
 
-            // YCbCr to RGB, level shift, normalize to 0-1
-            let r = ((y + cr_to_r * cr + offset) * scale).max(zero).min(one);
-            let g = ((y + cb_to_g * cb + cr_to_g * cr + offset) * scale)
+            // YCbCr to RGB, level shift, normalize to 0-1 (using FMA)
+            let r = (cr_to_r.mul_add(cr, y + offset) * scale).max(zero).min(one);
+            let g = (cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)) * scale)
                 .max(zero)
                 .min(one);
-            let b = ((y + cb_to_b * cb + offset) * scale).max(zero).min(one);
+            let b = (cb_to_b.mul_add(cb, y + offset) * scale).max(zero).min(one);
 
             let r_arr: [f32; 8] = r.into();
             let g_arr: [f32; 8] = g.into();
@@ -587,15 +588,15 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
             }
         }
 
-        // Scalar remainder
+        // Scalar remainder (using FMA)
         for i in (chunks * 8)..num_pixels {
             let y = y_plane[i];
             let cb = cb_plane[i];
             let cr = cr_plane[i];
 
-            let r = y + CR_TO_R * cr;
-            let g = y + CB_TO_G * cb + CR_TO_G * cr;
-            let b = y + CB_TO_B * cb;
+            let r = CR_TO_R.mul_add(cr, y);
+            let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
+            let b = CB_TO_B.mul_add(cb, y);
 
             let idx = i * 3;
             rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
@@ -611,9 +612,9 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
             let cb = cb_plane[i];
             let cr = cr_plane[i];
 
-            let r = y + CR_TO_R * cr;
-            let g = y + CB_TO_G * cb + CR_TO_G * cr;
-            let b = y + CB_TO_B * cb;
+            let r = CR_TO_R.mul_add(cr, y);
+            let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
+            let b = CB_TO_B.mul_add(cb, y);
 
             let idx = i * 3;
             rgb[idx] = ((r + 128.0) / 255.0).clamp(0.0, 1.0);
