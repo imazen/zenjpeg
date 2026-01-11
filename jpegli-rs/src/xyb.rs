@@ -391,9 +391,10 @@ pub fn xyb_to_linear_rgb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
         2.712_923, 1.945_928,
     ];
 
-    let r = INV_OPSIN[0] * opsin_r + INV_OPSIN[1] * opsin_g + INV_OPSIN[2] * opsin_b;
-    let g = INV_OPSIN[3] * opsin_r + INV_OPSIN[4] * opsin_g + INV_OPSIN[5] * opsin_b;
-    let b_out = INV_OPSIN[6] * opsin_r + INV_OPSIN[7] * opsin_g + INV_OPSIN[8] * opsin_b;
+    // Use FMA for matrix multiply
+    let r = INV_OPSIN[0].mul_add(opsin_r, INV_OPSIN[1].mul_add(opsin_g, INV_OPSIN[2] * opsin_b));
+    let g = INV_OPSIN[3].mul_add(opsin_r, INV_OPSIN[4].mul_add(opsin_g, INV_OPSIN[5] * opsin_b));
+    let b_out = INV_OPSIN[6].mul_add(opsin_r, INV_OPSIN[7].mul_add(opsin_g, INV_OPSIN[8] * opsin_b));
 
     (r, g, b_out)
 }
@@ -733,10 +734,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_inplace(
             SRGB_TO_LINEAR_LUT[rgb_data[rgb_idx + 23] as usize],
         ]);
 
-        // Apply opsin absorbance matrix: mixed = M * [r, g, b]
-        let mixed0 = m00 * r + m01 * g + m02 * b_in + bias_simd;
-        let mixed1 = m10 * r + m11 * g + m12 * b_in + bias_simd;
-        let mixed2 = m20 * r + m21 * g + m22 * b_in + bias_simd;
+        // Apply opsin absorbance matrix: mixed = M * [r, g, b] (using FMA)
+        let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias_simd)));
+        let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias_simd)));
+        let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b_in, bias_simd)));
 
         // Clamp to non-negative for cube root
         let mixed0 = mixed0.max(zero);
@@ -857,9 +858,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
             SRGB_TO_LINEAR_LUT[rgba_data[rgba_idx + 30] as usize],
         ]);
 
-        let mixed0 = m00 * r + m01 * g + m02 * b_in + bias_simd;
-        let mixed1 = m10 * r + m11 * g + m12 * b_in + bias_simd;
-        let mixed2 = m20 * r + m21 * g + m22 * b_in + bias_simd;
+        // Apply opsin absorbance matrix (using FMA)
+        let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias_simd)));
+        let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias_simd)));
+        let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b_in, bias_simd)));
 
         let mixed0 = mixed0.max(zero);
         let mixed1 = mixed1.max(zero);
@@ -976,9 +978,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
             SRGB_TO_LINEAR_LUT[bgra_data[bgra_idx + 28] as usize],
         ]);
 
-        let mixed0 = m00 * r + m01 * g + m02 * b_in + bias_simd;
-        let mixed1 = m10 * r + m11 * g + m12 * b_in + bias_simd;
-        let mixed2 = m20 * r + m21 * g + m22 * b_in + bias_simd;
+        // Apply opsin absorbance matrix (using FMA)
+        let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b_in, bias_simd)));
+        let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b_in, bias_simd)));
+        let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b_in, bias_simd)));
 
         let mixed0 = mixed0.max(zero);
         let mixed1 = mixed1.max(zero);

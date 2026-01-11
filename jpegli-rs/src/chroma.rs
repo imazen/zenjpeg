@@ -540,9 +540,9 @@ pub fn box_fused_strip_420(
             let g_avg = g_sum * 0.25;
             let b_avg = b_sum * 0.25;
 
-            // Convert averaged RGB to Cb/Cr
-            let cb = 128.0 + YCBCR_R_TO_CB * r_avg + YCBCR_G_TO_CB * g_avg + YCBCR_B_TO_CB * b_avg;
-            let cr = 128.0 + YCBCR_R_TO_CR * r_avg + YCBCR_G_TO_CR * g_avg + YCBCR_B_TO_CR * b_avg;
+            // Convert averaged RGB to Cb/Cr (using FMA)
+            let cb = YCBCR_R_TO_CB.mul_add(r_avg, YCBCR_G_TO_CB.mul_add(g_avg, YCBCR_B_TO_CB.mul_add(b_avg, 128.0)));
+            let cr = YCBCR_R_TO_CR.mul_add(r_avg, YCBCR_G_TO_CR.mul_add(g_avg, YCBCR_B_TO_CR.mul_add(b_avg, 128.0)));
 
             cb_down[cy * c_width + cx] = cb;
             cr_down[cy * c_width + cx] = cr;
@@ -584,8 +584,9 @@ pub fn box_fused_strip_422(
             let g_avg = (rgb_strip[idx0 + 1] as f32 + rgb_strip[idx1 + 1] as f32) * 0.5;
             let b_avg = (rgb_strip[idx0 + 2] as f32 + rgb_strip[idx1 + 2] as f32) * 0.5;
 
-            let cb = 128.0 + YCBCR_R_TO_CB * r_avg + YCBCR_G_TO_CB * g_avg + YCBCR_B_TO_CB * b_avg;
-            let cr = 128.0 + YCBCR_R_TO_CR * r_avg + YCBCR_G_TO_CR * g_avg + YCBCR_B_TO_CR * b_avg;
+            // Using FMA for accuracy
+            let cb = YCBCR_R_TO_CB.mul_add(r_avg, YCBCR_G_TO_CB.mul_add(g_avg, YCBCR_B_TO_CB.mul_add(b_avg, 128.0)));
+            let cr = YCBCR_R_TO_CR.mul_add(r_avg, YCBCR_G_TO_CR.mul_add(g_avg, YCBCR_B_TO_CR.mul_add(b_avg, 128.0)));
 
             cb_down[y * c_width + cx] = cb;
             cr_down[y * c_width + cx] = cr;
@@ -627,8 +628,9 @@ pub fn box_fused_strip_440(
             let g_avg = (rgb_strip[idx0 + 1] as f32 + rgb_strip[idx1 + 1] as f32) * 0.5;
             let b_avg = (rgb_strip[idx0 + 2] as f32 + rgb_strip[idx1 + 2] as f32) * 0.5;
 
-            let cb = 128.0 + YCBCR_R_TO_CB * r_avg + YCBCR_G_TO_CB * g_avg + YCBCR_B_TO_CB * b_avg;
-            let cr = 128.0 + YCBCR_R_TO_CR * r_avg + YCBCR_G_TO_CR * g_avg + YCBCR_B_TO_CR * b_avg;
+            // Using FMA for accuracy
+            let cb = YCBCR_R_TO_CB.mul_add(r_avg, YCBCR_G_TO_CB.mul_add(g_avg, YCBCR_B_TO_CB.mul_add(b_avg, 128.0)));
+            let cr = YCBCR_R_TO_CR.mul_add(r_avg, YCBCR_G_TO_CR.mul_add(g_avg, YCBCR_B_TO_CR.mul_add(b_avg, 128.0)));
 
             cb_down[cy * width + x] = cb;
             cr_down[cy * width + x] = cr;
