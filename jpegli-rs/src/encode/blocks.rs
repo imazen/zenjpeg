@@ -9,12 +9,16 @@
 use super::*;
 
 impl Encoder {
-    /// Quantizes all blocks in the image.
+    /// Quantizes all blocks in the image (4:4:4 only, no subsampling).
     ///
     /// This is separated from encoding to allow Huffman optimization:
     /// 1. Quantize all blocks
     /// 2. Collect frequencies to build optimal tables
     /// 3. Encode with optimal tables
+    ///
+    /// Note: This function handles non-subsampled 4:4:4 mode. For subsampled modes,
+    /// use `quantize_all_blocks_subsampled` instead.
+    #[allow(dead_code)] // Kept for potential future use with non-AQ 4:4:4 paths
     pub(super) fn quantize_all_blocks(
         &self,
         y_plane: &[f32],

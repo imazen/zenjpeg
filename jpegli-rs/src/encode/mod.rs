@@ -773,6 +773,7 @@ pub(crate) fn pad_ycbcr_planes_subsampled(
 /// Pad grayscale f32 plane to MCU-aligned dimensions.
 ///
 /// Returns (padded_plane, padded_width, padded_height).
+#[allow(dead_code)] // Kept for future grayscale encoding support
 pub(crate) fn pad_gray_plane(
     y: &[f32],
     width: usize,
