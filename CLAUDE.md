@@ -135,6 +135,11 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
 
 ## Known Bugs
 
+0. **Debug env var in hot loop (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:798`
+   `std::env::var("DEBUG_HUFFMAN_LOOKUP")` was called on every token write.
+   Even though the debug code only ran when the env var existed, the syscall
+   overhead consumed ~12% of total encode time. Removed entirely.
+
 1. **Progressive XYB decode (FIXED)** - `jpegli-rs/src/decode/mod.rs:1187-1275`
    Progressive DC scans now handle `EndOfScanData` gracefully (same as AC scans).
    Previously failed on XYB with non-standard component IDs (R/G/B = 82/71/66).
@@ -166,6 +171,23 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    - Creates a 1-pixel border: `row[-1] = row[0]`
    - Uses `RowBuffer` class with proper stride/padding so accesses stay within row bounds
    - See `internal/jpegli-cpp/lib/jpegli/encode.cc:571-627`
+
+5. **FFI benchmark symbol conflict (UNFIXED)** - mozjpeg and jpegli both provide libjpeg-62 API
+   When both mozjpeg and jpegli-internals-sys are linked, the linker picks mozjpeg's symbols.
+   This means "cjpegli FFI" benchmarks actually call mozjpeg with trellis quantization!
+
+   **Verification:**
+   ```bash
+   objdump -t target/release/examples/perf_ffi_compare | grep quantize_trellis
+   # If this shows a match, you're calling mozjpeg, not jpegli!
+   ```
+
+   **Workaround:** Use CLI-based comparison with actual cjpegli binary (but adds I/O overhead).
+
+   **Proper fix needed:** Either:
+   - Build jpegli with symbol prefixing (e.g., `jpegli_` prefix)
+   - Use separate binary without mozjpeg in dep tree
+   - Link jpegli with +whole-archive before mozjpeg
 
 ## Running Tests
 
