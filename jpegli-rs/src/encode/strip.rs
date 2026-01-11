@@ -40,7 +40,6 @@ use crate::alloc::{
     AllocationStats,
 };
 use crate::consts::DCT_BLOCK_SIZE;
-// forward_dct_8x8 replaced by forward_dct_8x8_wide for wide-native pipeline
 use crate::error::Result;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
@@ -101,42 +100,6 @@ use super::natural_to_zigzag_into;
 
 use crate::simd_types::Block8x8f;
 use wide::f32x8;
-
-/// Extracts an 8×8 block from a strip buffer with level shift (free function to avoid borrow issues).
-///
-/// Applies JPEG level shift (-128) to convert from [0, 255] to [-128, 127] range
-/// as required by the DCT.
-fn extract_block_from_strip(
-    strip: &[f32],
-    bx: usize,
-    local_by: usize,
-    strip_width: usize,
-) -> [f32; DCT_BLOCK_SIZE] {
-    let mut block = [0.0f32; DCT_BLOCK_SIZE];
-    let x_start = bx * 8;
-    let y_start = local_by * 8;
-
-    for dy in 0..8 {
-        let y = y_start + dy;
-        if y * strip_width >= strip.len() {
-            // Past end of strip, fill with edge replication
-            let last_y = (strip.len() / strip_width).saturating_sub(1);
-            for dx in 0..8 {
-                let x = (x_start + dx).min(strip_width.saturating_sub(1));
-                // Level shift: subtract 128 (values are in [0, 255])
-                block[dy * 8 + dx] = strip[last_y * strip_width + x] - 128.0;
-            }
-        } else {
-            for dx in 0..8 {
-                let x = (x_start + dx).min(strip_width.saturating_sub(1));
-                // Level shift: subtract 128 (values are in [0, 255])
-                block[dy * 8 + dx] = strip[y * strip_width + x] - 128.0;
-            }
-        }
-    }
-
-    block
-}
 
 /// Wide-native block extraction: returns Block8x8f directly.
 ///
