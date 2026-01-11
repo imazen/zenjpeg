@@ -440,6 +440,110 @@ pub fn try_alloc_filled<T: Clone>(count: usize, value: T, context: &'static str)
     Ok(v)
 }
 
+/// Clone a slice into a new Vec using fallible allocation.
+#[inline]
+pub fn try_clone_slice<T: Clone>(slice: &[T], context: &'static str) -> Result<Vec<T>> {
+    let byte_size = slice
+        .len()
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(slice.len())
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+    v.extend_from_slice(slice);
+    Ok(v)
+}
+
+// ============================================================================
+// Pixel format conversion with fallible allocation
+// ============================================================================
+
+/// Convert grayscale to RGB with fallible allocation.
+/// Each gray byte becomes [gray, gray, gray].
+#[inline]
+pub fn try_gray_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
+    let len = data
+        .len()
+        .checked_mul(3)
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)
+        .map_err(|_| Error::AllocationFailed { bytes: len, context })?;
+
+    for &byte in data {
+        v.push(byte);
+        v.push(byte);
+        v.push(byte);
+    }
+    Ok(v)
+}
+
+/// Convert RGBA to RGB with fallible allocation.
+/// Drops alpha channel: [R, G, B, A] -> [R, G, B]
+#[inline]
+pub fn try_rgba_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
+    let num_pixels = data.len() / 4;
+    let len = num_pixels
+        .checked_mul(3)
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)
+        .map_err(|_| Error::AllocationFailed { bytes: len, context })?;
+
+    for chunk in data.chunks_exact(4) {
+        v.push(chunk[0]);
+        v.push(chunk[1]);
+        v.push(chunk[2]);
+    }
+    Ok(v)
+}
+
+/// Convert BGR to RGB with fallible allocation.
+/// Swaps B and R: [B, G, R] -> [R, G, B]
+#[inline]
+pub fn try_bgr_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(data.len())
+        .map_err(|_| Error::AllocationFailed {
+            bytes: data.len(),
+            context,
+        })?;
+
+    for chunk in data.chunks_exact(3) {
+        v.push(chunk[2]);
+        v.push(chunk[1]);
+        v.push(chunk[0]);
+    }
+    Ok(v)
+}
+
+/// Convert BGRA to RGB with fallible allocation.
+/// Swaps B and R, drops alpha: [B, G, R, A] -> [R, G, B]
+#[inline]
+pub fn try_bgra_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
+    let num_pixels = data.len() / 4;
+    let len = num_pixels
+        .checked_mul(3)
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)
+        .map_err(|_| Error::AllocationFailed { bytes: len, context })?;
+
+    for chunk in data.chunks_exact(4) {
+        v.push(chunk[2]);
+        v.push(chunk[1]);
+        v.push(chunk[0]);
+    }
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

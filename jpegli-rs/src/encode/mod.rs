@@ -16,7 +16,10 @@ pub mod strip;
 pub use config::EncoderConfig;
 pub(crate) use config::ProgressiveScan;
 
-use crate::alloc::{checked_size_2d, try_with_capacity, validate_dimensions, DEFAULT_MAX_PIXELS};
+use crate::alloc::{
+    checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, try_with_capacity, validate_dimensions,
+    DEFAULT_MAX_PIXELS,
+};
 #[cfg(test)]
 use crate::consts::MARKER_SOI;
 use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
@@ -34,6 +37,7 @@ use crate::types::{
     ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, EncodingBackend, JpegMode,
     PixelFormat, Subsampling,
 };
+use enough::{Never, Stop};
 
 /// JPEG encoder.
 pub struct Encoder {
@@ -379,7 +383,30 @@ impl Encoder {
     }
 
     /// Encodes the image data.
+    ///
+    /// This is equivalent to calling `encode_with_stop(data, Never)`.
     pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_with_stop(data, Never)
+    }
+
+    /// Encodes the image data with cooperative cancellation support.
+    ///
+    /// The encoding can be cancelled at MCU row boundaries by signalling the `stop` source.
+    /// Returns `Error::Cancelled` if cancellation is requested.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::{Encoder, Stopper};
+    /// use std::time::Duration;
+    ///
+    /// let stop = Stopper::new();
+    /// let timed = stop.clone().with_timeout(Duration::from_secs(30));
+    ///
+    /// // In another thread: stop.cancel();
+    /// let result = encoder.encode_with_stop(&data, timed);
+    /// ```
+    pub fn encode_with_stop(&self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
         self.validate()?;
 
         // Calculate expected size with overflow checking
@@ -410,16 +437,17 @@ impl Encoder {
                         });
                     }
                     return Err(Error::UnsupportedFeature {
-                        feature: "strip-based encoding only supports baseline and progressive modes",
+                        feature:
+                            "strip-based encoding only supports baseline and progressive modes",
                     });
                 }
-                self.encode_strip_based(data)
+                self.encode_strip_based_with_stop(data, stop)
             }
             EncodingBackend::FullPlane | EncodingBackend::Auto => {
                 // Full-plane encoding
                 match self.config.mode {
-                    JpegMode::Baseline => self.encode_baseline(data),
-                    JpegMode::Progressive => self.encode_progressive(data),
+                    JpegMode::Baseline => self.encode_baseline_with_stop(data, &stop),
+                    JpegMode::Progressive => self.encode_progressive_with_stop(data, &stop),
                     _ => Err(Error::UnsupportedFeature {
                         feature: "extended/lossless encoding",
                     }),
@@ -428,8 +456,8 @@ impl Encoder {
             EncodingBackend::Both => {
                 // Run full-plane first
                 let full_result = match self.config.mode {
-                    JpegMode::Baseline => self.encode_baseline(data),
-                    JpegMode::Progressive => self.encode_progressive(data),
+                    JpegMode::Baseline => self.encode_baseline_with_stop(data, &stop),
+                    JpegMode::Progressive => self.encode_progressive_with_stop(data, &stop),
                     _ => {
                         return Err(Error::UnsupportedFeature {
                             feature: "extended/lossless encoding",
@@ -439,7 +467,7 @@ impl Encoder {
 
                 // If strip is supported, run it and compare
                 if strip_supported {
-                    let strip_result = self.encode_strip_based(data)?;
+                    let strip_result = self.encode_strip_based_with_stop(data, &stop)?;
 
                     if full_result != strip_result {
                         // Find first difference for debugging
@@ -487,6 +515,13 @@ impl Encoder {
     ///     .encode_strip_based(&rgb_data)?;
     /// ```
     pub fn encode_strip_based(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_strip_based_with_stop(data, Never)
+    }
+
+    /// Encodes using strip-based processing with cancellation support.
+    ///
+    /// The encoding can be cancelled at strip boundaries by signalling the `stop` source.
+    fn encode_strip_based_with_stop(&self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
         self.validate()?;
 
         let width = self.config.width as usize;
@@ -553,6 +588,9 @@ impl Encoder {
         let strip_height = processor.strip_height();
         let bpp = self.config.pixel_format.bytes_per_pixel();
         for strip_y in (0..height).step_by(strip_height) {
+            // Check for cancellation at each strip boundary
+            stop.check()?;
+
             let strip_end = (strip_y + strip_height).min(height);
             let strip_start = strip_y * width * bpp;
             let strip_end_idx = strip_end * width * bpp;
@@ -726,16 +764,16 @@ pub(crate) fn pad_plane_f32(
     height: usize,
     mcu_size: usize,
     strategy: EdgePadding,
-) -> (Vec<f32>, usize, usize) {
+) -> Result<(Vec<f32>, usize, usize)> {
     let padded_w = (width + mcu_size - 1) / mcu_size * mcu_size;
     let padded_h = (height + mcu_size - 1) / mcu_size * mcu_size;
 
     // No padding needed
     if padded_w == width && padded_h == height {
-        return (plane.to_vec(), width, height);
+        return Ok((try_clone_slice(plane, "pad_plane_f32 clone")?, width, height));
     }
 
-    let mut out = vec![0.0f32; padded_w * padded_h];
+    let mut out = try_alloc_zeroed_f32(padded_w * padded_h, "pad_plane_f32 output")?;
 
     for y in 0..padded_h {
         let src_y = get_padded_coord(y, height, strategy);
@@ -745,7 +783,7 @@ pub(crate) fn pad_plane_f32(
         }
     }
 
-    (out, padded_w, padded_h)
+    Ok((out, padded_w, padded_h))
 }
 
 /// Pad YCbCr f32 planes to MCU-aligned dimensions with per-channel strategies.
@@ -765,17 +803,23 @@ pub(crate) fn pad_ycbcr_planes_subsampled(
     c_height: usize,
     mcu_size: usize,
     config: EdgePaddingConfig,
-) -> ((Vec<f32>, Vec<f32>, Vec<f32>), usize, usize, usize, usize) {
+) -> Result<((Vec<f32>, Vec<f32>, Vec<f32>), usize, usize, usize, usize)> {
     // Pad luma to MCU-aligned dimensions
-    let (y_padded, padded_w, padded_h) = pad_plane_f32(y, width, height, mcu_size, config.luma);
+    let (y_padded, padded_w, padded_h) = pad_plane_f32(y, width, height, mcu_size, config.luma)?;
 
     // Chroma blocks are always 8x8. Padding chroma to multiples of 8 aligns with
     // the MCU grid because c_width = ceil(width / h_factor) and:
     // ceil(ceil(width / h_factor) / 8) * 8 == ceil(width / mcu_size) * (mcu_size / h_factor)
-    let (cb_padded, padded_cw, padded_ch) = pad_plane_f32(cb, c_width, c_height, 8, config.chroma);
-    let (cr_padded, _, _) = pad_plane_f32(cr, c_width, c_height, 8, config.chroma);
+    let (cb_padded, padded_cw, padded_ch) = pad_plane_f32(cb, c_width, c_height, 8, config.chroma)?;
+    let (cr_padded, _, _) = pad_plane_f32(cr, c_width, c_height, 8, config.chroma)?;
 
-    ((y_padded, cb_padded, cr_padded), padded_w, padded_h, padded_cw, padded_ch)
+    Ok((
+        (y_padded, cb_padded, cr_padded),
+        padded_w,
+        padded_h,
+        padded_cw,
+        padded_ch,
+    ))
 }
 
 /// Pad grayscale f32 plane to MCU-aligned dimensions.
@@ -788,7 +832,7 @@ pub(crate) fn pad_gray_plane(
     height: usize,
     mcu_size: usize,
     config: EdgePaddingConfig,
-) -> (Vec<f32>, usize, usize) {
+) -> Result<(Vec<f32>, usize, usize)> {
     pad_plane_f32(y, width, height, mcu_size, config.luma)
 }
 

@@ -4,22 +4,37 @@
 //! for both YCbCr and XYB color modes.
 
 use super::*;
+use enough::Stop;
 
 impl Encoder {
     /// Encodes as baseline JPEG.
     pub(super) fn encode_baseline(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_baseline_with_stop(data, &enough::Never)
+    }
+
+    /// Encodes as baseline JPEG with cancellation support.
+    pub(super) fn encode_baseline_with_stop(
+        &self,
+        data: &[u8],
+        stop: &impl Stop,
+    ) -> Result<Vec<u8>> {
         let mut output =
             crate::foundation::alloc::try_with_capacity(data.len() / 4, "baseline output")?;
 
         if self.config.use_xyb {
-            self.encode_baseline_xyb(data, &mut output)
+            self.encode_baseline_xyb_with_stop(data, &mut output, stop)
         } else {
-            self.encode_baseline_ycbcr(data, &mut output)
+            self.encode_baseline_ycbcr_with_stop(data, &mut output, stop)
         }
     }
 
-    /// Encodes using standard YCbCr color space.
-    fn encode_baseline_ycbcr(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
+    /// Encodes using standard YCbCr color space with cancellation support.
+    fn encode_baseline_ycbcr_with_stop(
+        &self,
+        data: &[u8],
+        output: &mut Vec<u8>,
+        stop: &impl Stop,
+    ) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
         // Strip-based encoding (EncodingBackend::Strip) produces identical output for supported
@@ -40,6 +55,7 @@ impl Encoder {
                             cr_plane_final,
                             c_width,
                             c_height,
+                            Some(stop as &dyn Stop),
                         );
                     }
                     Subsampling::S422 => {
@@ -52,6 +68,7 @@ impl Encoder {
                             cr_plane_final,
                             c_width,
                             c_height,
+                            Some(stop as &dyn Stop),
                         );
                     }
                     Subsampling::S440 => {
@@ -64,6 +81,7 @@ impl Encoder {
                             cr_plane_final,
                             c_width,
                             c_height,
+                            Some(stop as &dyn Stop),
                         );
                     }
                     Subsampling::S444 => {
@@ -84,6 +102,7 @@ impl Encoder {
                             cr_plane_final,
                             c_width,
                             c_height,
+                            Some(stop as &dyn Stop),
                         );
                     }
                     Subsampling::S422 => {
@@ -96,6 +115,7 @@ impl Encoder {
                             cr_plane_final,
                             c_width,
                             c_height,
+                            Some(stop as &dyn Stop),
                         );
                     }
                     Subsampling::S440 => {
@@ -108,6 +128,7 @@ impl Encoder {
                             cr_plane_final,
                             c_width,
                             c_height,
+                            Some(stop as &dyn Stop),
                         );
                     }
                     Subsampling::S444 => {
@@ -160,6 +181,7 @@ impl Encoder {
             cr_plane_final,
             c_width,
             c_height,
+            Some(stop as &dyn Stop),
         )
     }
 
@@ -172,6 +194,7 @@ impl Encoder {
         cr_plane_final: Vec<f32>,
         c_width: usize,
         c_height: usize,
+        stop: Option<&dyn Stop>,
     ) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
@@ -190,7 +213,7 @@ impl Encoder {
                 c_height,
                 mcu_size,
                 self.config.edge_padding,
-            );
+            )?;
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
@@ -201,16 +224,8 @@ impl Encoder {
 
         // Quantize all blocks using padded planes and dimensions
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
-            &y_padded,
-            padded_w,
-            padded_h,
-            &cb_padded,
-            &cr_padded,
-            padded_cw,
-            padded_ch,
-            &y_quant,
-            &cb_quant,
-            &cr_quant,
+            &y_padded, padded_w, padded_h, &cb_padded, &cr_padded, padded_cw, padded_ch, &y_quant,
+            &cb_quant, &cr_quant, stop,
         )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
@@ -253,13 +268,18 @@ impl Encoder {
         Ok(std::mem::take(output))
     }
 
-    /// Encodes using XYB mode (perceptually optimized color space).
+    /// Encodes using XYB mode (perceptually optimized color space) with cancellation support.
     ///
     /// XYB encoding pipeline:
     /// 1. sRGB → linear RGB → XYB → scaled XYB (values in [0, 1])
     /// 2. Multiply by 255 for JPEG sample range
     /// 3. Level shift by subtracting 128 for DCT
-    fn encode_baseline_xyb(&self, data: &[u8], output: &mut Vec<u8>) -> Result<Vec<u8>> {
+    fn encode_baseline_xyb_with_stop(
+        &self,
+        data: &[u8],
+        output: &mut Vec<u8>,
+        _stop: &impl Stop,
+    ) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
 

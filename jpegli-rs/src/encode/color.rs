@@ -8,7 +8,10 @@
 //! - Gamma-aware chroma downsampling (internal implementation)
 
 use super::Encoder;
-use crate::alloc::{checked_size_2d, try_alloc_filled, try_with_capacity};
+use crate::alloc::{
+    checked_size_2d, try_alloc_filled, try_bgr_to_rgb, try_bgra_to_rgb, try_clone_slice,
+    try_gray_to_rgb, try_rgba_to_rgb, try_with_capacity,
+};
 use crate::color;
 use crate::error::{Error, Result};
 use crate::types::{PixelFormat, Subsampling};
@@ -39,15 +42,12 @@ impl Encoder {
             }
             PixelFormat::Gray => {
                 // Grayscale: expand to RGB then use SIMD
-                let rgb: Vec<u8> = data.iter().flat_map(|&v| [v, v, v]).collect();
+                let rgb = try_gray_to_rgb(data, "XYB gray to RGB")?;
                 Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
             PixelFormat::Bgr => {
                 // Swap B and R, then use SIMD
-                let rgb: Vec<u8> = data
-                    .chunks(3)
-                    .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
-                    .collect();
+                let rgb = try_bgr_to_rgb(data, "XYB BGR to RGB")?;
                 Ok(crate::xyb::srgb_to_scaled_xyb_planes_simd(&rgb, num_pixels))
             }
             PixelFormat::Bgra => {
@@ -231,21 +231,15 @@ impl Encoder {
         let rgb_ref: &[u8] = match self.config.pixel_format {
             PixelFormat::Rgb => data,
             PixelFormat::Rgba => {
-                rgb_data = (0..(width * height))
-                    .flat_map(|i| [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]])
-                    .collect();
+                rgb_data = try_rgba_to_rgb(data, "gamma-aware 422 RGBA to RGB")?;
                 &rgb_data
             }
             PixelFormat::Bgr => {
-                rgb_data = (0..(width * height))
-                    .flat_map(|i| [data[i * 3 + 2], data[i * 3 + 1], data[i * 3]])
-                    .collect();
+                rgb_data = try_bgr_to_rgb(data, "gamma-aware 422 BGR to RGB")?;
                 &rgb_data
             }
             PixelFormat::Bgra => {
-                rgb_data = (0..(width * height))
-                    .flat_map(|i| [data[i * 4 + 2], data[i * 4 + 1], data[i * 4]])
-                    .collect();
+                rgb_data = try_bgra_to_rgb(data, "gamma-aware 422 BGRA to RGB")?;
                 &rgb_data
             }
             _ => unreachable!(),
@@ -301,21 +295,15 @@ impl Encoder {
         let rgb_ref: &[u8] = match self.config.pixel_format {
             PixelFormat::Rgb => data,
             PixelFormat::Rgba => {
-                rgb_data = (0..(width * height))
-                    .flat_map(|i| [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]])
-                    .collect();
+                rgb_data = try_rgba_to_rgb(data, "gamma-aware 440 RGBA to RGB")?;
                 &rgb_data
             }
             PixelFormat::Bgr => {
-                rgb_data = (0..(width * height))
-                    .flat_map(|i| [data[i * 3 + 2], data[i * 3 + 1], data[i * 3]])
-                    .collect();
+                rgb_data = try_bgr_to_rgb(data, "gamma-aware 440 BGR to RGB")?;
                 &rgb_data
             }
             PixelFormat::Bgra => {
-                rgb_data = (0..(width * height))
-                    .flat_map(|i| [data[i * 4 + 2], data[i * 4 + 1], data[i * 4]])
-                    .collect();
+                rgb_data = try_bgra_to_rgb(data, "gamma-aware 440 BGRA to RGB")?;
                 &rgb_data
             }
             _ => unreachable!(),
@@ -390,7 +378,7 @@ impl Encoder {
 
         match self.config.pixel_format {
             PixelFormat::Gray => {
-                let y = data.to_vec();
+                let y = try_clone_slice(data, "YCbCr Y plane")?;
                 let cb = try_alloc_filled(num_pixels, 128u8, "YCbCr Cb plane")?;
                 let cr = try_alloc_filled(num_pixels, 128u8, "YCbCr Cr plane")?;
                 Ok((y, cb, cr))
@@ -398,24 +386,15 @@ impl Encoder {
             PixelFormat::Rgb => color::rgb_to_ycbcr_planes(data, width, height),
             PixelFormat::Rgba => {
                 // Strip alpha and convert
-                let rgb: Vec<u8> = data
-                    .chunks(4)
-                    .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
-                    .collect();
+                let rgb = try_rgba_to_rgb(data, "YCbCr RGBA to RGB")?;
                 color::rgb_to_ycbcr_planes(&rgb, width, height)
             }
             PixelFormat::Bgr => {
-                let rgb: Vec<u8> = data
-                    .chunks(3)
-                    .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
-                    .collect();
+                let rgb = try_bgr_to_rgb(data, "YCbCr BGR to RGB")?;
                 color::rgb_to_ycbcr_planes(&rgb, width, height)
             }
             PixelFormat::Bgra => {
-                let rgb: Vec<u8> = data
-                    .chunks(4)
-                    .flat_map(|chunk| [chunk[2], chunk[1], chunk[0]])
-                    .collect();
+                let rgb = try_bgra_to_rgb(data, "YCbCr BGRA to RGB")?;
                 color::rgb_to_ycbcr_planes(&rgb, width, height)
             }
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
@@ -461,5 +440,4 @@ impl Encoder {
             }),
         }
     }
-
 }
