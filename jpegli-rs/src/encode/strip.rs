@@ -525,17 +525,17 @@ impl StripProcessor {
             None
         };
 
-        // Step 3: Downsample chroma if needed
-        // Skipped for fused paths (gamma-aware and box fused) which already output downsampled chroma
+        // Step 3: Copy and pad chroma for 4:4:4 mode
+        // For subsampled modes (4:2:0, 4:2:2, 4:4:0), the fused paths already wrote
+        // to cb_down/cr_down at downsampled resolution.
+        // For 4:4:4, cb_strip/cr_strip need to be copied to cb_down/cr_down and padded.
         let downsample_height = if actual_strip_height < self.strip_height {
             self.strip_height
         } else {
             actual_strip_height
         };
-        let needs_separate_downsample = self.pixel_format != PixelFormat::Gray
-            && self.subsampling == Subsampling::S444;
-        if needs_separate_downsample {
-            // Only 4:4:4 goes through the old path and doesn't need downsampling anyway
+        if self.pixel_format != PixelFormat::Gray && self.subsampling == Subsampling::S444 {
+            self.downsample_chroma_strip(downsample_height)?;
         }
 
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
@@ -561,61 +561,71 @@ impl StripProcessor {
 
     /// Converts RGB strip data to YCbCr in the strip buffers.
     ///
-    /// Uses SIMD conversion for floating-point parity with full-plane encoder.
+    /// Uses strided SIMD conversion that writes Y directly with padded stride,
+    /// eliminating the need for a separate rearrange pass.
     fn convert_strip_to_ycbcr(&mut self, rgb_strip: &[u8], strip_height: usize) -> Result<()> {
-        let num_pixels = strip_height * self.width;
+        let width = self.width;
+        let padded_width = self.padded_width;
+        let num_pixels = strip_height * width;
+        let y_size = strip_height * padded_width;
 
-        // Use the same SIMD conversion as the full-plane encoder for exact floating-point parity
         match self.pixel_format {
-            PixelFormat::Rgb => {
-                crate::encode_simd::rgb_to_ycbcr_planes_simd_inplace(
+            PixelFormat::Rgb | PixelFormat::Rgba => {
+                let bpp = self.pixel_format.bytes_per_pixel();
+                crate::encode_simd::rgb_to_ycbcr_strided_inplace(
                     rgb_strip,
-                    &mut self.y_strip[..num_pixels],
+                    &mut self.y_strip[..y_size],
                     &mut self.cb_strip[..num_pixels],
                     &mut self.cr_strip[..num_pixels],
-                    num_pixels,
+                    width,
+                    strip_height,
+                    padded_width,
+                    bpp,
                 );
             }
-            PixelFormat::Rgba => {
-                crate::encode_simd::rgba_to_ycbcr_planes_simd_inplace(
+            PixelFormat::Bgr | PixelFormat::Bgra => {
+                let bpp = self.pixel_format.bytes_per_pixel();
+                crate::encode_simd::bgr_to_ycbcr_strided_inplace(
                     rgb_strip,
-                    &mut self.y_strip[..num_pixels],
+                    &mut self.y_strip[..y_size],
                     &mut self.cb_strip[..num_pixels],
                     &mut self.cr_strip[..num_pixels],
-                    num_pixels,
-                );
-            }
-            PixelFormat::Bgr => {
-                crate::encode_simd::bgr_to_ycbcr_planes_simd_inplace(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_strip[..num_pixels],
-                    &mut self.cr_strip[..num_pixels],
-                    num_pixels,
-                );
-            }
-            PixelFormat::Bgra => {
-                crate::encode_simd::bgra_to_ycbcr_planes_simd_inplace(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_strip[..num_pixels],
-                    &mut self.cr_strip[..num_pixels],
-                    num_pixels,
+                    width,
+                    strip_height,
+                    padded_width,
+                    bpp,
                 );
             }
             PixelFormat::Gray => {
-                // For grayscale, only Y plane is used (no chroma)
-                for i in 0..num_pixels {
-                    self.y_strip[i] = rgb_strip[i] as f32;
+                // Grayscale: write Y with strided layout directly
+                for row in 0..strip_height {
+                    let src_start = row * width;
+                    let dst_start = row * padded_width;
+                    for x in 0..width {
+                        self.y_strip[dst_start + x] = rgb_strip[src_start + x] as f32;
+                    }
+                    // Edge-pad Y row
+                    if width < padded_width {
+                        let edge_val = self.y_strip[dst_start + width - 1];
+                        for x in width..padded_width {
+                            self.y_strip[dst_start + x] = edge_val;
+                        }
+                    }
                 }
             }
             PixelFormat::Cmyk => {
-                // CMYK requires scalar conversion (rare format)
+                // CMYK: scalar conversion with strided Y output
+                use crate::consts::{
+                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB,
+                    YCBCR_G_TO_CR, YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
+                    YCBCR_R_TO_Y,
+                };
                 let bpp = self.pixel_format.bytes_per_pixel();
-                for y in 0..strip_height {
-                    for x in 0..self.width {
-                        let idx = (y * self.width + x) * bpp;
-                        let plane_idx = y * self.width + x;
+                for row in 0..strip_height {
+                    let y_row_start = row * padded_width;
+                    let cbcr_row_start = row * width;
+                    for x in 0..width {
+                        let idx = (row * width + x) * bpp;
 
                         let c = rgb_strip[idx] as f32 / 255.0;
                         let m = rgb_strip[idx + 1] as f32 / 255.0;
@@ -625,25 +635,23 @@ impl StripProcessor {
                         let g = 255.0 * (1.0 - m) * (1.0 - k);
                         let b = 255.0 * (1.0 - y_val) * (1.0 - k);
 
-                        // Use constants for consistency
-                        use crate::consts::{
-                            YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB,
-                            YCBCR_G_TO_CR, YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
-                            YCBCR_R_TO_Y,
-                        };
-                        self.y_strip[plane_idx] =
+                        self.y_strip[y_row_start + x] =
                             YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
-                        self.cb_strip[plane_idx] =
+                        self.cb_strip[cbcr_row_start + x] =
                             128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
-                        self.cr_strip[plane_idx] =
+                        self.cr_strip[cbcr_row_start + x] =
                             128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+                    }
+                    // Edge-pad Y row
+                    if width < padded_width {
+                        let edge_val = self.y_strip[y_row_start + width - 1];
+                        for x in width..padded_width {
+                            self.y_strip[y_row_start + x] = edge_val;
+                        }
                     }
                 }
             }
         }
-
-        // Rearrange Y strip to padded layout (Cb/Cr stay packed for downsampling)
-        self.rearrange_y_strip_only(strip_height);
 
         Ok(())
     }
