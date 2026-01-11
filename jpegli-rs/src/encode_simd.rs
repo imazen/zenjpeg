@@ -1561,6 +1561,328 @@ pub fn bgra_to_ycbcr_planes_simd(
 }
 
 // ============================================================================
+// Strided RGB→YCbCr Conversion (for strip encoder)
+// ============================================================================
+
+/// SIMD-optimized RGB to YCbCr conversion with strided Y output.
+///
+/// Writes Y plane with `y_stride` stride (for 8-aligned block extraction),
+/// while Cb/Cr use packed stride (width). This eliminates the need for
+/// a separate rearrange pass when Y needs padding.
+///
+/// # Arguments
+/// * `rgb_data` - Input RGB data (3 bytes per pixel, interleaved)
+/// * `y_plane` - Output Y plane (y_stride × height elements)
+/// * `cb_plane` - Output Cb plane (width × height elements)
+/// * `cr_plane` - Output Cr plane (width × height elements)
+/// * `width` - Image width in pixels
+/// * `height` - Number of rows to process
+/// * `y_stride` - Y output stride (typically padded_width)
+/// * `bpp` - Bytes per pixel (3 for RGB)
+#[inline]
+pub fn rgb_to_ycbcr_strided_inplace(
+    rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    bpp: usize,
+) {
+    debug_assert!(rgb_data.len() >= width * height * bpp);
+    debug_assert!(y_plane.len() >= y_stride * height);
+    debug_assert!(cb_plane.len() >= width * height);
+    debug_assert!(cr_plane.len() >= width * height);
+
+    // Fast path: if Y stride matches width, use contiguous conversion
+    if y_stride == width {
+        let num_pixels = width * height;
+        match bpp {
+            3 => rgb_to_ycbcr_planes_simd_inplace(rgb_data, y_plane, cb_plane, cr_plane, num_pixels),
+            4 => rgba_to_ycbcr_planes_simd_inplace(rgb_data, y_plane, cb_plane, cr_plane, num_pixels),
+            _ => return, // Unsupported
+        }
+        return;
+    }
+
+    // Strided path: process row-by-row
+    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let offset_128 = f32x8::splat(128.0);
+
+    for row in 0..height {
+        let rgb_row_start = row * width * bpp;
+        let y_row_start = row * y_stride;
+        let cbcr_row_start = row * width;
+
+        let chunks = width / 8;
+
+        // SIMD loop for 8-pixel chunks
+        for chunk in 0..chunks {
+            let px = chunk * 8;
+            let rgb_idx = rgb_row_start + px * bpp;
+
+            // Gather RGB (bpp=3 or 4)
+            let (r, g, b) = if bpp == 3 {
+                (
+                    f32x8::from([
+                        rgb_data[rgb_idx] as f32,
+                        rgb_data[rgb_idx + 3] as f32,
+                        rgb_data[rgb_idx + 6] as f32,
+                        rgb_data[rgb_idx + 9] as f32,
+                        rgb_data[rgb_idx + 12] as f32,
+                        rgb_data[rgb_idx + 15] as f32,
+                        rgb_data[rgb_idx + 18] as f32,
+                        rgb_data[rgb_idx + 21] as f32,
+                    ]),
+                    f32x8::from([
+                        rgb_data[rgb_idx + 1] as f32,
+                        rgb_data[rgb_idx + 4] as f32,
+                        rgb_data[rgb_idx + 7] as f32,
+                        rgb_data[rgb_idx + 10] as f32,
+                        rgb_data[rgb_idx + 13] as f32,
+                        rgb_data[rgb_idx + 16] as f32,
+                        rgb_data[rgb_idx + 19] as f32,
+                        rgb_data[rgb_idx + 22] as f32,
+                    ]),
+                    f32x8::from([
+                        rgb_data[rgb_idx + 2] as f32,
+                        rgb_data[rgb_idx + 5] as f32,
+                        rgb_data[rgb_idx + 8] as f32,
+                        rgb_data[rgb_idx + 11] as f32,
+                        rgb_data[rgb_idx + 14] as f32,
+                        rgb_data[rgb_idx + 17] as f32,
+                        rgb_data[rgb_idx + 20] as f32,
+                        rgb_data[rgb_idx + 23] as f32,
+                    ]),
+                )
+            } else {
+                // bpp == 4 (RGBA)
+                (
+                    f32x8::from([
+                        rgb_data[rgb_idx] as f32,
+                        rgb_data[rgb_idx + 4] as f32,
+                        rgb_data[rgb_idx + 8] as f32,
+                        rgb_data[rgb_idx + 12] as f32,
+                        rgb_data[rgb_idx + 16] as f32,
+                        rgb_data[rgb_idx + 20] as f32,
+                        rgb_data[rgb_idx + 24] as f32,
+                        rgb_data[rgb_idx + 28] as f32,
+                    ]),
+                    f32x8::from([
+                        rgb_data[rgb_idx + 1] as f32,
+                        rgb_data[rgb_idx + 5] as f32,
+                        rgb_data[rgb_idx + 9] as f32,
+                        rgb_data[rgb_idx + 13] as f32,
+                        rgb_data[rgb_idx + 17] as f32,
+                        rgb_data[rgb_idx + 21] as f32,
+                        rgb_data[rgb_idx + 25] as f32,
+                        rgb_data[rgb_idx + 29] as f32,
+                    ]),
+                    f32x8::from([
+                        rgb_data[rgb_idx + 2] as f32,
+                        rgb_data[rgb_idx + 6] as f32,
+                        rgb_data[rgb_idx + 10] as f32,
+                        rgb_data[rgb_idx + 14] as f32,
+                        rgb_data[rgb_idx + 18] as f32,
+                        rgb_data[rgb_idx + 22] as f32,
+                        rgb_data[rgb_idx + 26] as f32,
+                        rgb_data[rgb_idx + 30] as f32,
+                    ]),
+                )
+            };
+
+            let y = r * r_to_y + g * g_to_y + b * b_to_y;
+            let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
+            let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
+
+            // Write Y with strided offset, Cb/Cr with packed offset
+            store_f32x8(y_plane, y_row_start + px, y);
+            store_f32x8(cb_plane, cbcr_row_start + px, cb);
+            store_f32x8(cr_plane, cbcr_row_start + px, cr);
+        }
+
+        // Scalar remainder for this row
+        for px in (chunks * 8)..width {
+            let rgb_idx = rgb_row_start + px * bpp;
+            let r = rgb_data[rgb_idx] as f32;
+            let g = rgb_data[rgb_idx + 1] as f32;
+            let b = rgb_data[rgb_idx + 2] as f32;
+
+            y_plane[y_row_start + px] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+            cb_plane[cbcr_row_start + px] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+            cr_plane[cbcr_row_start + px] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+        }
+
+        // Edge-pad Y row to stride
+        if width < y_stride {
+            let edge_val = y_plane[y_row_start + width - 1];
+            for px in width..y_stride {
+                y_plane[y_row_start + px] = edge_val;
+            }
+        }
+    }
+}
+
+/// BGR variant of strided conversion (for BGR/BGRA input).
+#[inline]
+pub fn bgr_to_ycbcr_strided_inplace(
+    bgr_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    bpp: usize,
+) {
+    debug_assert!(bgr_data.len() >= width * height * bpp);
+    debug_assert!(y_plane.len() >= y_stride * height);
+    debug_assert!(cb_plane.len() >= width * height);
+    debug_assert!(cr_plane.len() >= width * height);
+
+    // Fast path: if Y stride matches width, use contiguous conversion
+    if y_stride == width {
+        let num_pixels = width * height;
+        match bpp {
+            3 => bgr_to_ycbcr_planes_simd_inplace(bgr_data, y_plane, cb_plane, cr_plane, num_pixels),
+            4 => bgra_to_ycbcr_planes_simd_inplace(bgr_data, y_plane, cb_plane, cr_plane, num_pixels),
+            _ => return,
+        }
+        return;
+    }
+
+    // Strided path: process row-by-row (swap R/B channels)
+    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let offset_128 = f32x8::splat(128.0);
+
+    for row in 0..height {
+        let bgr_row_start = row * width * bpp;
+        let y_row_start = row * y_stride;
+        let cbcr_row_start = row * width;
+
+        let chunks = width / 8;
+
+        for chunk in 0..chunks {
+            let px = chunk * 8;
+            let bgr_idx = bgr_row_start + px * bpp;
+
+            // Gather BGR (channels swapped vs RGB)
+            let (r, g, b) = if bpp == 3 {
+                (
+                    f32x8::from([
+                        bgr_data[bgr_idx + 2] as f32,
+                        bgr_data[bgr_idx + 5] as f32,
+                        bgr_data[bgr_idx + 8] as f32,
+                        bgr_data[bgr_idx + 11] as f32,
+                        bgr_data[bgr_idx + 14] as f32,
+                        bgr_data[bgr_idx + 17] as f32,
+                        bgr_data[bgr_idx + 20] as f32,
+                        bgr_data[bgr_idx + 23] as f32,
+                    ]),
+                    f32x8::from([
+                        bgr_data[bgr_idx + 1] as f32,
+                        bgr_data[bgr_idx + 4] as f32,
+                        bgr_data[bgr_idx + 7] as f32,
+                        bgr_data[bgr_idx + 10] as f32,
+                        bgr_data[bgr_idx + 13] as f32,
+                        bgr_data[bgr_idx + 16] as f32,
+                        bgr_data[bgr_idx + 19] as f32,
+                        bgr_data[bgr_idx + 22] as f32,
+                    ]),
+                    f32x8::from([
+                        bgr_data[bgr_idx] as f32,
+                        bgr_data[bgr_idx + 3] as f32,
+                        bgr_data[bgr_idx + 6] as f32,
+                        bgr_data[bgr_idx + 9] as f32,
+                        bgr_data[bgr_idx + 12] as f32,
+                        bgr_data[bgr_idx + 15] as f32,
+                        bgr_data[bgr_idx + 18] as f32,
+                        bgr_data[bgr_idx + 21] as f32,
+                    ]),
+                )
+            } else {
+                // bpp == 4 (BGRA)
+                (
+                    f32x8::from([
+                        bgr_data[bgr_idx + 2] as f32,
+                        bgr_data[bgr_idx + 6] as f32,
+                        bgr_data[bgr_idx + 10] as f32,
+                        bgr_data[bgr_idx + 14] as f32,
+                        bgr_data[bgr_idx + 18] as f32,
+                        bgr_data[bgr_idx + 22] as f32,
+                        bgr_data[bgr_idx + 26] as f32,
+                        bgr_data[bgr_idx + 30] as f32,
+                    ]),
+                    f32x8::from([
+                        bgr_data[bgr_idx + 1] as f32,
+                        bgr_data[bgr_idx + 5] as f32,
+                        bgr_data[bgr_idx + 9] as f32,
+                        bgr_data[bgr_idx + 13] as f32,
+                        bgr_data[bgr_idx + 17] as f32,
+                        bgr_data[bgr_idx + 21] as f32,
+                        bgr_data[bgr_idx + 25] as f32,
+                        bgr_data[bgr_idx + 29] as f32,
+                    ]),
+                    f32x8::from([
+                        bgr_data[bgr_idx] as f32,
+                        bgr_data[bgr_idx + 4] as f32,
+                        bgr_data[bgr_idx + 8] as f32,
+                        bgr_data[bgr_idx + 12] as f32,
+                        bgr_data[bgr_idx + 16] as f32,
+                        bgr_data[bgr_idx + 20] as f32,
+                        bgr_data[bgr_idx + 24] as f32,
+                        bgr_data[bgr_idx + 28] as f32,
+                    ]),
+                )
+            };
+
+            let y = r * r_to_y + g * g_to_y + b * b_to_y;
+            let cb = offset_128 + r * r_to_cb + g * g_to_cb + b * b_to_cb;
+            let cr = offset_128 + r * r_to_cr + g * g_to_cr + b * b_to_cr;
+
+            store_f32x8(y_plane, y_row_start + px, y);
+            store_f32x8(cb_plane, cbcr_row_start + px, cb);
+            store_f32x8(cr_plane, cbcr_row_start + px, cr);
+        }
+
+        for px in (chunks * 8)..width {
+            let bgr_idx = bgr_row_start + px * bpp;
+            let b = bgr_data[bgr_idx] as f32;
+            let g = bgr_data[bgr_idx + 1] as f32;
+            let r = bgr_data[bgr_idx + 2] as f32;
+
+            y_plane[y_row_start + px] = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+            cb_plane[cbcr_row_start + px] = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+            cr_plane[cbcr_row_start + px] = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+        }
+
+        if width < y_stride {
+            let edge_val = y_plane[y_row_start + width - 1];
+            for px in width..y_stride {
+                y_plane[y_row_start + px] = edge_val;
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Block Extraction
 // ============================================================================
 
