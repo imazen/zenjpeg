@@ -135,8 +135,10 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
 
 ## Known Bugs
 
-1. **Progressive XYB decode** - jpegli-rs decoder fails on progressive XYB JPEGs
-   from C++ cjpegli. Baseline XYB works. See `tests/progressive_xyb_decode.rs`.
+1. **Progressive XYB decode (FIXED)** - `jpegli-rs/src/decode/mod.rs:1187-1275`
+   Progressive DC scans now handle UnexpectedEof gracefully (same as AC scans).
+   Previously failed on XYB with non-standard component IDs (R/G/B = 82/71/66).
+   See `tests/progressive_xyb_decode.rs`.
 
 2. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
 

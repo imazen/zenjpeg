@@ -1185,18 +1185,30 @@ impl<'a> JpegParser<'a> {
                     }
 
                     if is_first_scan {
-                        let dc = decoder.decode_dc_first(comp_idx, dc_table as usize, al)?;
-                        self.coeffs[comp_idx][block_idx][0] = dc;
+                        match decoder.decode_dc_first(comp_idx, dc_table as usize, al) {
+                            Ok(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
+                            Err(Error::UnexpectedEof { .. }) => {
+                                // End of scan data - remaining blocks have DC=0
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        }
                     } else {
-                        let bit = decoder.decode_dc_refine(al)?;
-                        self.coeffs[comp_idx][block_idx][0] |= bit;
+                        match decoder.decode_dc_refine(al) {
+                            Ok(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
+                            Err(Error::UnexpectedEof { .. }) => {
+                                // End of scan data - remaining blocks unchanged
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
 
                     mcu_count += 1;
                 }
             } else {
                 // Interleaved DC scan: blocks in MCU order
-                for mcu_y in 0..mcu_rows {
+                'dc_scan: for mcu_y in 0..mcu_rows {
                     for mcu_x in 0..mcu_cols {
                         // Check for restart marker
                         if restart_interval > 0
@@ -1226,16 +1238,32 @@ impl<'a> JpegParser<'a> {
 
                                     if is_first_scan {
                                         // DC first scan
-                                        let dc = decoder.decode_dc_first(
+                                        match decoder.decode_dc_first(
                                             *comp_idx,
                                             *dc_table as usize,
                                             al,
-                                        )?;
-                                        self.coeffs[*comp_idx][block_idx][0] = dc;
+                                        ) {
+                                            Ok(dc) => {
+                                                self.coeffs[*comp_idx][block_idx][0] = dc;
+                                            }
+                                            Err(Error::UnexpectedEof { .. }) => {
+                                                // End of scan data - remaining blocks have DC=0
+                                                break 'dc_scan;
+                                            }
+                                            Err(e) => return Err(e),
+                                        }
                                     } else {
                                         // DC refinement scan
-                                        let bit = decoder.decode_dc_refine(al)?;
-                                        self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                        match decoder.decode_dc_refine(al) {
+                                            Ok(bit) => {
+                                                self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                            }
+                                            Err(Error::UnexpectedEof { .. }) => {
+                                                // End of scan data - remaining blocks unchanged
+                                                break 'dc_scan;
+                                            }
+                                            Err(e) => return Err(e),
+                                        }
                                     }
                                 }
                             }
