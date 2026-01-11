@@ -55,22 +55,23 @@ const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
-/// Updated 2026-01-10 after K420_RESCALE fix for C++ parity.
+/// Updated 2026-01-10: K420_RESCALE fix, edge padding for C++ parity.
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269733),
-    (70, 362495),
-    (85, 494934),
-    (90, 584318),
-    (95, 743568),
+    (50, 269475),
+    (70, 362197),
+    (85, 494215),
+    (90, 583788),
+    (95, 743191),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
+/// Updated 2026-01-10: Edge padding for C++ parity.
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 293565),
-    (70, 387207),
-    (85, 521670),
-    (90, 615528),
-    (95, 785296),
+    (50, 293066),
+    (70, 386533),
+    (85, 520183),
+    (90, 613721),
+    (95, 783774),
 ];
 
 // =============================================================================
@@ -96,22 +97,23 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
-/// Updated 2026-01-10 after K420_RESCALE fix for C++ parity.
+/// Updated 2026-01-10: K420_RESCALE fix, edge padding for C++ parity.
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 260968),
-    (70, 350463),
-    (85, 478042),
-    (90, 564228),
-    (95, 717856),
+    (50, 260695),
+    (70, 350150),
+    (85, 477389),
+    (90, 563855),
+    (95, 717464),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
+/// Updated 2026-01-10: Edge padding for C++ parity.
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 284083),
-    (70, 374127),
-    (85, 504689),
-    (90, 595059),
-    (95, 759344),
+    (50, 283519),
+    (70, 373385),
+    (85, 503285),
+    (90, 593391),
+    (95, 757931),
 ];
 
 // =============================================================================
@@ -122,10 +124,10 @@ const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0xe67ceac4e2cb923c;
 const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x5ac37bc64f50e6d8;
 const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x9179f00d4062fbe6;
 const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xd217840b58ae5201;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xd46edb3e2bd5b931; // Updated 2026-01-10 after K420_RESCALE fix
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1e580af331c42285; // Updated 2026-01-10 after K420_RESCALE fix
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x32f1ba4eb4bd1c53;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xa7743ef726156417;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x6b0b45c15688c2de; // Updated 2026-01-10: edge padding
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x36afce2e1831f76e; // Updated 2026-01-10: edge padding
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x8065c8580b7bea7c; // Updated 2026-01-10: edge padding
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x49f21365faabb72f; // Updated 2026-01-10: edge padding
 
 // =============================================================================
 // Helper functions

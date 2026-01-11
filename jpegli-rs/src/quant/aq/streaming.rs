@@ -60,6 +60,8 @@ pub struct StreamingAQ {
     // Image dimensions
     width: usize,
     height: usize,
+    /// Row stride in input data (may be larger than width for padded strips)
+    strip_stride: usize,
 
     // Block dimensions
     blocks_w: usize,
@@ -154,6 +156,7 @@ impl StreamingAQ {
         Ok(Self {
             width,
             height,
+            strip_stride: width, // Default: stride equals width
             blocks_w,
             blocks_h,
             pre_erosion_w,
@@ -184,10 +187,19 @@ impl StreamingAQ {
         })
     }
 
+    /// Sets the input strip stride (row width in the input data).
+    ///
+    /// Use this when the input Y strip is laid out with a different stride
+    /// than the image width (e.g., for MCU-aligned padding).
+    pub fn set_strip_stride(&mut self, stride: usize) {
+        self.strip_stride = stride;
+    }
+
     fn empty(y_quant_01: f32) -> Self {
         Self {
             width: 0,
             height: 0,
+            strip_stride: 0,
             blocks_w: 0,
             blocks_h: 0,
             pre_erosion_w: 0,
@@ -218,7 +230,8 @@ impl StreamingAQ {
     /// Process Y strip data and compute AQ for completed iMCU rows.
     ///
     /// # Arguments
-    /// * `y_strip` - Y plane values for this strip (width × strip_height), 0-255 range
+    /// * `y_strip` - Y plane values for this strip (strip_stride × strip_height), 0-255 range.
+    ///              Use `set_strip_stride` if stride differs from width (e.g., for padded data).
     /// * `strip_y` - Starting row index of this strip
     /// * `strip_height` - Number of rows in this strip
     ///
@@ -235,6 +248,9 @@ impl StreamingAQ {
             return None;
         }
 
+        // Use strip_stride for indexing input data, width for actual pixel count
+        let stride = self.strip_stride;
+
         // Process each row in the strip
         for local_y in 0..strip_height {
             let global_y = strip_y + local_y;
@@ -242,7 +258,8 @@ impl StreamingAQ {
                 break;
             }
 
-            let row_start = local_y * self.width;
+            // Input uses strip_stride, we only read width pixels
+            let row_start = local_y * stride;
             let row_end = row_start + self.width;
             let row = &y_strip[row_start..row_end];
 

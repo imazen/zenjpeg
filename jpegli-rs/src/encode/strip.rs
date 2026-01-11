@@ -42,7 +42,7 @@ use crate::error::Result;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, EdgePadding, PixelFormat, Subsampling};
 
 use super::natural_to_zigzag_into;
 
@@ -90,10 +90,26 @@ fn extract_block_from_strip(
 /// full f32 planes in memory.
 #[derive(Debug)]
 pub struct StripProcessor {
-    /// Image width in pixels
+    /// Image width in pixels (original)
     width: usize,
-    /// Image height in pixels
+    /// Image height in pixels (original)
     height: usize,
+    /// Padded width (MCU-aligned for block extraction)
+    padded_width: usize,
+    /// Padded height (MCU-aligned, reserved for future use)
+    #[allow(dead_code)]
+    padded_height: usize,
+    /// Chroma width (original, reserved for future use)
+    #[allow(dead_code)]
+    c_width: usize,
+    /// Chroma height (original, reserved for future use)
+    #[allow(dead_code)]
+    c_height: usize,
+    /// Padded chroma width
+    padded_c_width: usize,
+    /// Padded chroma height (reserved for future use)
+    #[allow(dead_code)]
+    padded_c_height: usize,
     /// Strip height in pixels (16 for 4:2:0, 8 for 4:4:4)
     strip_height: usize,
     /// Chroma subsampling mode
@@ -102,6 +118,9 @@ pub struct StripProcessor {
     pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
     chroma_downsampling: ChromaDownsampling,
+    /// Edge padding strategy (reserved for future configurable padding)
+    #[allow(dead_code)]
+    edge_padding: EdgePadding,
 
     // === Reusable strip buffers (f32) ===
     /// Y channel strip buffer
@@ -218,13 +237,24 @@ impl StripProcessor {
             _ => 8,
         };
 
-        // Chroma dimensions
-        let (c_width, c_strip_height) = match subsampling {
-            Subsampling::S420 => ((width + 1) / 2, strip_height / 2),
-            Subsampling::S422 => ((width + 1) / 2, strip_height),
-            Subsampling::S440 => (width, strip_height / 2),
-            Subsampling::S444 => (width, strip_height),
+        // MCU size for padding calculation
+        let mcu_size = subsampling.mcu_size();
+
+        // Calculate padded dimensions (MCU-aligned) for parity with full-plane encoder
+        let padded_width = (width + mcu_size - 1) / mcu_size * mcu_size;
+        let padded_height = (height + mcu_size - 1) / mcu_size * mcu_size;
+
+        // Chroma dimensions (original and padded)
+        let (c_width, c_height, c_strip_height) = match subsampling {
+            Subsampling::S420 => ((width + 1) / 2, (height + 1) / 2, strip_height / 2),
+            Subsampling::S422 => ((width + 1) / 2, height, strip_height),
+            Subsampling::S440 => (width, (height + 1) / 2, strip_height / 2),
+            Subsampling::S444 => (width, height, strip_height),
         };
+
+        // Chroma planes are padded to multiples of 8 (block size)
+        let padded_c_width = (c_width + 7) / 8 * 8;
+        let padded_c_height = (c_height + 7) / 8 * 8;
 
         // Pre-allocate block storage based on image size
         let y_blocks_h = (width + 7) / 8;
@@ -248,13 +278,15 @@ impl StripProcessor {
         };
 
         // Pending buffer capacity: one iMCU row of blocks
-        // For 4:2:0: 2 block rows of Y, 1 block row each of Cb/Cr
+        // Use padded block counts for pending buffers
+        let padded_y_blocks_h = padded_width / 8;
         let v_samp = match subsampling {
             Subsampling::S420 | Subsampling::S440 => 2,
             _ => 1,
         };
-        let pending_y_capacity = y_blocks_h * v_samp;
-        let pending_c_capacity = c_blocks_h; // One chroma block row per iMCU
+        let pending_y_capacity = padded_y_blocks_h * v_samp;
+        let padded_c_blocks_h = padded_c_width / 8;
+        let pending_c_capacity = padded_c_blocks_h;
 
         let is_color = pixel_format != PixelFormat::Gray;
 
@@ -264,35 +296,58 @@ impl StripProcessor {
         Ok(Self {
             width,
             height,
+            padded_width,
+            padded_height,
+            c_width,
+            c_height,
+            padded_c_width,
+            padded_c_height,
             strip_height,
             subsampling,
             pixel_format,
             chroma_downsampling,
+            edge_padding: EdgePadding::Replicate, // Match full-plane default
             restart_interval,
 
-            // Strip buffers (sized for one strip)
+            // Strip buffers (sized for PADDED width for edge handling parity)
             y_strip: try_alloc_zeroed_f32_tracked(
-                width * strip_height,
+                padded_width * strip_height,
                 "y_strip",
                 &mut alloc_stats,
             )?,
             cb_strip: if is_color {
-                try_alloc_zeroed_f32_tracked(width * strip_height, "cb_strip", &mut alloc_stats)?
+                try_alloc_zeroed_f32_tracked(
+                    padded_width * strip_height,
+                    "cb_strip",
+                    &mut alloc_stats,
+                )?
             } else {
                 Vec::new()
             },
             cr_strip: if is_color {
-                try_alloc_zeroed_f32_tracked(width * strip_height, "cr_strip", &mut alloc_stats)?
+                try_alloc_zeroed_f32_tracked(
+                    padded_width * strip_height,
+                    "cr_strip",
+                    &mut alloc_stats,
+                )?
             } else {
                 Vec::new()
             },
             cb_down: if is_color {
-                try_alloc_zeroed_f32_tracked(c_width * c_strip_height, "cb_down", &mut alloc_stats)?
+                try_alloc_zeroed_f32_tracked(
+                    padded_c_width * c_strip_height,
+                    "cb_down",
+                    &mut alloc_stats,
+                )?
             } else {
                 Vec::new()
             },
             cr_down: if is_color {
-                try_alloc_zeroed_f32_tracked(c_width * c_strip_height, "cr_down", &mut alloc_stats)?
+                try_alloc_zeroed_f32_tracked(
+                    padded_c_width * c_strip_height,
+                    "cr_down",
+                    &mut alloc_stats,
+                )?
             } else {
                 Vec::new()
             },
@@ -387,12 +442,10 @@ impl StripProcessor {
         // Initialize streaming AQ with y_quant_01 for damping calculation
         let y_quant_01 = y_quant.values[1] as u16; // Position [0,1] in zigzag
         let v_samp = self.subsampling.v_samp_factor_luma() as usize;
-        self.aq_state = Some(StreamingAQ::new(
-            self.width,
-            self.height,
-            y_quant_01,
-            v_samp,
-        )?);
+        let mut aq = StreamingAQ::new(self.width, self.height, y_quant_01, v_samp)?;
+        // Y strip is laid out with padded_width stride for edge handling parity
+        aq.set_strip_stride(self.padded_width);
+        self.aq_state = Some(aq);
 
         // Initialize SIMD quant tables for incremental quantization
         self.y_quant_simd = Some(QuantTableSimd::from_values(&y_quant.values));
@@ -435,6 +488,12 @@ impl StripProcessor {
             self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
         }
 
+        // Step 1b: Pad strips vertically if this is a partial bottom strip
+        // This is needed for vertical downsampling modes (4:2:0, 4:4:0) at image bottom
+        if actual_strip_height < self.strip_height {
+            self.pad_strips_vertically(actual_strip_height, self.strip_height);
+        }
+
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         let aq_strengths = if let Some(ref mut aq) = self.aq_state {
             aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
@@ -444,8 +503,14 @@ impl StripProcessor {
         };
 
         // Step 3: Downsample chroma if needed (skipped for gamma-aware modes)
+        // Use full strip_height if we padded vertically, so downsampling has complete rows
+        let downsample_height = if actual_strip_height < self.strip_height {
+            self.strip_height
+        } else {
+            actual_strip_height
+        };
         if self.pixel_format != PixelFormat::Gray && !self.chroma_downsampling.uses_gamma_aware() {
-            self.downsample_chroma_strip(actual_strip_height)?;
+            self.downsample_chroma_strip(downsample_height)?;
         }
 
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
@@ -460,7 +525,8 @@ impl StripProcessor {
         }
 
         // Step 5: Compute DCT for blocks in this strip into the current pending buffer
-        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, actual_strip_height)?;
+        // Use downsample_height (full strip if padded) to include padding in DCT
+        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
 
         // Step 6: Swap pending buffers when iMCU completes
         // (The swap happens via pending_current tracking in dct_strip_blocks_to_pending)
@@ -513,13 +579,10 @@ impl StripProcessor {
                 );
             }
             PixelFormat::Gray => {
-                crate::encode_simd::gray_to_ycbcr_planes_simd_inplace(
-                    rgb_strip,
-                    &mut self.y_strip[..num_pixels],
-                    &mut self.cb_strip[..num_pixels],
-                    &mut self.cr_strip[..num_pixels],
-                    num_pixels,
-                );
+                // For grayscale, only Y plane is used (no chroma)
+                for i in 0..num_pixels {
+                    self.y_strip[i] = rgb_strip[i] as f32;
+                }
             }
             PixelFormat::Cmyk => {
                 // CMYK requires scalar conversion (rare format)
@@ -553,6 +616,9 @@ impl StripProcessor {
                 }
             }
         }
+
+        // Rearrange Y strip to padded layout (Cb/Cr stay packed for downsampling)
+        self.rearrange_y_strip_only(strip_height);
 
         Ok(())
     }
@@ -627,17 +693,113 @@ impl StripProcessor {
             Subsampling::S444 => unreachable!(), // Handled above
         }
 
+        // Rearrange Y strip from packed to padded layout
+        self.rearrange_y_strip_only(strip_height);
+
+        // Pad chroma strips (cb_down, cr_down are already at downsampled resolution)
+        self.pad_chroma_down_strip(c_strip_height, c_width);
+
         Ok(())
+    }
+
+    /// Rearranges only the Y strip from packed to padded layout.
+    /// Used by gamma-aware conversion where Cb/Cr go directly to cb_down/cr_down.
+    fn rearrange_y_strip_only(&mut self, strip_height: usize) {
+        let width = self.width;
+        let padded_width = self.padded_width;
+
+        if padded_width == width {
+            return;
+        }
+
+        for row in (0..strip_height).rev() {
+            let src_start = row * width;
+            let dst_start = row * padded_width;
+
+            for x in (0..width).rev() {
+                self.y_strip[dst_start + x] = self.y_strip[src_start + x];
+            }
+
+            let edge_val = self.y_strip[dst_start + width - 1];
+            for x in width..padded_width {
+                self.y_strip[dst_start + x] = edge_val;
+            }
+        }
+    }
+
+    /// Pads strips vertically by replicating the last valid row.
+    ///
+    /// This is needed for the bottom strip when it has fewer rows than strip_height.
+    /// Called after color conversion and horizontal padding.
+    fn pad_strips_vertically(&mut self, actual_height: usize, target_height: usize) {
+        if actual_height >= target_height {
+            return;
+        }
+
+        let padded_width = self.padded_width;
+        let is_color = self.pixel_format != PixelFormat::Gray;
+
+        // Get last valid row index
+        let last_row = actual_height - 1;
+        let src_start = last_row * padded_width;
+
+        // Replicate to all remaining rows
+        for row in actual_height..target_height {
+            let dst_start = row * padded_width;
+            self.y_strip
+                .copy_within(src_start..src_start + padded_width, dst_start);
+        }
+
+        if is_color {
+            // For cb_strip/cr_strip (if they're in padded layout)
+            // Note: these are still in packed layout at this point
+            let width = self.width;
+            let last_src = last_row * width;
+            for row in actual_height..target_height {
+                let dst = row * width;
+                self.cb_strip.copy_within(last_src..last_src + width, dst);
+                self.cr_strip.copy_within(last_src..last_src + width, dst);
+            }
+        }
+    }
+
+    /// Pads chroma down strips (cb_down, cr_down) horizontally.
+    fn pad_chroma_down_strip(&mut self, c_strip_height: usize, c_width: usize) {
+        let padded_c_width = self.padded_c_width;
+
+        if padded_c_width == c_width {
+            return;
+        }
+
+        // Rearrange and pad cb_down
+        for row in (0..c_strip_height).rev() {
+            let src_start = row * c_width;
+            let dst_start = row * padded_c_width;
+
+            for x in (0..c_width).rev() {
+                self.cb_down[dst_start + x] = self.cb_down[src_start + x];
+                self.cr_down[dst_start + x] = self.cr_down[src_start + x];
+            }
+
+            let cb_edge = self.cb_down[dst_start + c_width - 1];
+            let cr_edge = self.cr_down[dst_start + c_width - 1];
+            for x in c_width..padded_c_width {
+                self.cb_down[dst_start + x] = cb_edge;
+                self.cr_down[dst_start + x] = cr_edge;
+            }
+        }
     }
 
     /// Downsamples chroma strips according to subsampling mode.
     ///
     /// Uses SIMD downsampling for floating-point parity with full-plane encoder.
+    /// Input cb_strip/cr_strip are in packed layout (width pixels per row).
+    /// Output cb_down/cr_down are rearranged to padded layout.
     fn downsample_chroma_strip(&mut self, strip_height: usize) -> Result<()> {
         let width = self.width;
         let num_pixels = strip_height * width;
 
-        match self.subsampling {
+        let (c_width, c_strip_height) = match self.subsampling {
             Subsampling::S420 => {
                 // 2×2 box filter using SIMD
                 let c_width = (width + 1) / 2;
@@ -656,6 +818,7 @@ impl StripProcessor {
                     strip_height,
                     &mut self.cr_down[..c_size],
                 );
+                (c_width, c_height)
             }
             Subsampling::S422 => {
                 // 2×1 horizontal filter using SIMD
@@ -674,6 +837,7 @@ impl StripProcessor {
                     strip_height,
                     &mut self.cr_down[..c_size],
                 );
+                (c_width, strip_height)
             }
             Subsampling::S440 => {
                 // 1×2 vertical filter using SIMD
@@ -692,13 +856,18 @@ impl StripProcessor {
                     strip_height,
                     &mut self.cr_down[..c_size],
                 );
+                (width, c_height)
             }
             Subsampling::S444 => {
                 // No downsampling - copy directly
                 self.cb_down[..num_pixels].copy_from_slice(&self.cb_strip[..num_pixels]);
                 self.cr_down[..num_pixels].copy_from_slice(&self.cr_strip[..num_pixels]);
+                (width, strip_height)
             }
-        }
+        };
+
+        // Rearrange cb_down/cr_down to padded layout for DCT block extraction
+        self.pad_chroma_down_strip(c_strip_height, c_width);
 
         Ok(())
     }
@@ -710,16 +879,19 @@ impl StripProcessor {
         strip_y: usize,
         strip_height: usize,
     ) -> Result<usize> {
+        // Use original dimensions for block counts (parity with full-plane encoder)
         let blocks_w = (self.width + 7) / 8;
         let strip_blocks_h = (strip_height + 7) / 8;
         let start_block_y = strip_y / 8;
-        let width = self.width;
         let height = self.height;
         let pending_idx = self.pending_current;
 
+        // Y strip is now in padded layout (padded_width pixels per row)
+        let padded_width = self.padded_width;
+
         let mut blocks_added = 0;
-        // Only pass the valid portion of the Y buffer for correct edge detection
-        let y_size = strip_height * width;
+        // y_strip is in padded layout, so use padded_width for sizing
+        let y_size = strip_height * padded_width;
 
         // Compute DCT for Y blocks into pending buffer
         for local_by in 0..strip_blocks_h {
@@ -729,8 +901,9 @@ impl StripProcessor {
             }
 
             for bx in 0..blocks_w {
-                // Extract 8×8 block from Y strip (use valid portion of buffer)
-                let block = extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, width);
+                // Extract 8×8 block from Y strip (padded layout)
+                let block =
+                    extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, padded_width);
 
                 // DCT - store raw coefficients in pending buffer
                 let dct = forward_dct_8x8(&block);
@@ -742,7 +915,8 @@ impl StripProcessor {
 
         // Compute DCT for Cb/Cr blocks (if color)
         if self.pixel_format != PixelFormat::Gray {
-            // Use ceiling division for chroma dimensions to handle partial strips correctly
+            let width = self.width;
+            // Use original chroma dimensions for block counts
             let (c_width, c_strip_height) = match self.subsampling {
                 Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
                 Subsampling::S422 => ((width + 1) / 2, strip_height),
@@ -752,21 +926,30 @@ impl StripProcessor {
 
             let c_blocks_w = (c_width + 7) / 8;
             let c_strip_blocks_h = (c_strip_height + 7) / 8;
-            // Only pass the valid portion of the buffer to extract_block_from_strip,
-            // so edge detection works correctly for partial strips.
-            let c_size = c_width * c_strip_height;
+
+            // cb_down/cr_down are in padded layout (padded_c_width pixels per row)
+            let padded_c_width = self.padded_c_width;
+            let c_size = c_strip_height * padded_c_width;
 
             for local_by in 0..c_strip_blocks_h {
                 for bx in 0..c_blocks_w {
-                    // Cb block - DCT only (use valid portion of buffer)
-                    let cb_block =
-                        extract_block_from_strip(&self.cb_down[..c_size], bx, local_by, c_width);
+                    // Cb block - DCT only (padded layout)
+                    let cb_block = extract_block_from_strip(
+                        &self.cb_down[..c_size],
+                        bx,
+                        local_by,
+                        padded_c_width,
+                    );
                     let cb_dct = forward_dct_8x8(&cb_block);
                     self.pending_cb_blocks[pending_idx].push(cb_dct);
 
-                    // Cr block - DCT only (use valid portion of buffer)
-                    let cr_block =
-                        extract_block_from_strip(&self.cr_down[..c_size], bx, local_by, c_width);
+                    // Cr block - DCT only (padded layout)
+                    let cr_block = extract_block_from_strip(
+                        &self.cr_down[..c_size],
+                        bx,
+                        local_by,
+                        padded_c_width,
+                    );
                     let cr_dct = forward_dct_8x8(&cr_block);
                     self.pending_cr_blocks[pending_idx].push(cr_dct);
                 }
