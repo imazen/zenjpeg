@@ -496,18 +496,17 @@ impl StripProcessor {
 
         // Step 1: Color convert RGB → YCbCr into strip buffers
         // Choose the optimal path based on mode and subsampling:
-        // - Gamma-aware: fused Y + downsampled CbCr (quality)
-        // - Box + subsampling: fused Y + downsampled CbCr (fast, avoids separate downsample)
-        // - Box + 4:4:4 or Gray: standard path (no downsampling needed)
-        let uses_fused_path = self.pixel_format != PixelFormat::Gray
+        // - Gamma-aware + subsampling: fused Y + downsampled CbCr (quality-focused)
+        // - Box: standard convert + separate downsample (for bitexact parity with fullplane)
+        let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
+            && self.pixel_format != PixelFormat::Gray
             && self.subsampling != Subsampling::S444;
 
-        if self.chroma_downsampling.uses_gamma_aware() && uses_fused_path {
+        if uses_gamma_aware_fused {
             self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
-        } else if uses_fused_path {
-            // Fast fused Box path: Y at full res + CbCr directly at downsampled res
-            self.convert_strip_box_fused(rgb_strip, actual_strip_height)?;
         } else {
+            // Standard path: convert to YCbCr, then downsample separately
+            // This matches the fullplane encoder's code path for bitexact output
             self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
         }
 
@@ -525,16 +524,15 @@ impl StripProcessor {
             None
         };
 
-        // Step 3: Copy and pad chroma for 4:4:4 mode
-        // For subsampled modes (4:2:0, 4:2:2, 4:4:0), the fused paths already wrote
-        // to cb_down/cr_down at downsampled resolution.
-        // For 4:4:4, cb_strip/cr_strip need to be copied to cb_down/cr_down and padded.
+        // Step 3: Downsample chroma if needed
+        // - Gamma-aware fused path already wrote to cb_down/cr_down
+        // - Standard path wrote to cb_strip/cr_strip at full res, needs downsampling
         let downsample_height = if actual_strip_height < self.strip_height {
             self.strip_height
         } else {
             actual_strip_height
         };
-        if self.pixel_format != PixelFormat::Gray && self.subsampling == Subsampling::S444 {
+        if self.pixel_format != PixelFormat::Gray && !uses_gamma_aware_fused {
             self.downsample_chroma_strip(downsample_height)?;
         }
 
