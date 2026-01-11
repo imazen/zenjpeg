@@ -1249,15 +1249,13 @@ pub fn load_corpus(dir: &std::path::Path, max_files: Option<usize>) -> Vec<Image
 
 /// Encoder implementation identifier.
 ///
-/// Distinguishes between Rust and C implementations of each encoder.
+/// Distinguishes between Rust and C++ implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncoderImpl {
     /// jpegli-rs: Pure Rust port of Google's jpegli
     JpegliRs,
     /// cjpegli: Original C++ jpegli via FFI (requires cjpegli-ffi feature)
     CJpegli,
-    /// libjpeg-turbo via turbojpeg crate
-    Libjpeg,
 }
 
 impl EncoderImpl {
@@ -1267,7 +1265,6 @@ impl EncoderImpl {
         match self {
             Self::JpegliRs => "jpegli-rs",
             Self::CJpegli => "cjpegli",
-            Self::Libjpeg => "libjpeg",
         }
     }
 
@@ -1500,9 +1497,6 @@ impl EncoderConfig {
             EncoderImpl::CJpegli => self.encode_with_cjpegli_ffi(img),
             #[cfg(not(feature = "cjpegli-ffi"))]
             EncoderImpl::CJpegli => Err("cjpegli requires cjpegli-ffi feature".to_string()),
-            EncoderImpl::Libjpeg => {
-                Err(format!("{} encoder not yet implemented", self.encoder))
-            }
         }
     }
 
