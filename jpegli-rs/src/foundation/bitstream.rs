@@ -201,14 +201,12 @@ impl<'a> BitReader<'a> {
     fn read_byte(&mut self) -> Result<u8> {
         // If we've already found a marker, don't read more data
         if self.marker_found.is_some() {
-            return Err(Error::UnexpectedEof {
-                context: "marker found, end of entropy data",
-            });
+            return Err(Error::EndOfScanData);
         }
 
         if self.position >= self.data.len() {
-            return Err(Error::UnexpectedEof {
-                context: "reading bit stream",
+            return Err(Error::TruncatedData {
+                context: "reading entropy data",
             });
         }
 
@@ -222,8 +220,8 @@ impl<'a> BitReader<'a> {
             }
 
             if self.position >= self.data.len() {
-                return Err(Error::UnexpectedEof {
-                    context: "after 0xFF byte",
+                return Err(Error::TruncatedData {
+                    context: "after 0xFF marker prefix",
                 });
             }
 
@@ -236,9 +234,7 @@ impl<'a> BitReader<'a> {
                 // Rewind position to before the FF so the parser can read the marker
                 self.position -= 1;
                 self.marker_found = Some(next);
-                return Err(Error::UnexpectedEof {
-                    context: "marker found, end of entropy data",
-                });
+                return Err(Error::EndOfScanData);
             }
         }
 
@@ -282,9 +278,8 @@ impl<'a> BitReader<'a> {
         debug_assert!(count <= 32);
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
-            return Err(Error::UnexpectedEof {
-                context: "not enough bits in buffer",
-            });
+            // Not enough bits after trying to fill - end of scan data
+            return Err(Error::EndOfScanData);
         }
         Ok(((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32)
     }
@@ -293,9 +288,8 @@ impl<'a> BitReader<'a> {
     pub fn read_bits(&mut self, count: u8) -> Result<u32> {
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
-            return Err(Error::UnexpectedEof {
-                context: "not enough bits to read",
-            });
+            // Not enough bits after trying to fill - end of scan data
+            return Err(Error::EndOfScanData);
         }
         let bits =
             ((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32;
@@ -411,7 +405,7 @@ impl<'a> BitReader<'a> {
     /// Reads a raw byte (assumes byte-aligned).
     pub fn read_byte_raw(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(Error::UnexpectedEof {
+            return Err(Error::TruncatedData {
                 context: "reading raw byte",
             });
         }

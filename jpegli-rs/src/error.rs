@@ -42,9 +42,12 @@ pub enum Error {
         /// Description of the issue
         reason: &'static str,
     },
-    /// Unexpected end of input data.
-    UnexpectedEof {
-        /// Context where EOF occurred
+    /// End of entropy-coded scan data (marker found).
+    /// This is expected during progressive JPEG decoding between scans.
+    EndOfScanData,
+    /// Input data is truncated or corrupted.
+    TruncatedData {
+        /// Context where truncation was detected
         context: &'static str,
     },
     /// Invalid marker or segment in JPEG stream.
@@ -148,8 +151,11 @@ impl fmt::Display for Error {
             Self::InvalidJpegData { reason } => {
                 write!(f, "invalid JPEG data: {}", reason)
             }
-            Self::UnexpectedEof { context } => {
-                write!(f, "unexpected end of data while {}", context)
+            Self::EndOfScanData => {
+                write!(f, "end of scan data")
+            }
+            Self::TruncatedData { context } => {
+                write!(f, "truncated data while {}", context)
             }
             Self::InvalidMarker { marker, context } => {
                 write!(f, "invalid marker 0x{:02X} while {}", marker, context)
