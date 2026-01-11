@@ -85,7 +85,7 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
     let strip_y = width * strip_height * 4;
     let strip_cb = width * strip_height * 4; // Full res, not c_width
     let strip_cr = width * strip_height * 4; // Full res, not c_width
-    // Downsampled chroma temp buffers
+                                             // Downsampled chroma temp buffers
     let strip_cb_down = c_width * c_strip_height * 4;
     let strip_cr_down = c_width * c_strip_height * 4;
 
@@ -95,7 +95,7 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
     let c_blocks_per_imcu_row = match subsampling {
         Subsampling::S420 => (width + 15) / 16, // 1 Cb + 1 Cr per 16x16
         Subsampling::S422 => (width + 15) / 16 * 2, // 2 rows of Cb/Cr
-        Subsampling::S440 => y_blocks_w, // 1 row of Cb/Cr
+        Subsampling::S440 => y_blocks_w,        // 1 row of Cb/Cr
         _ => y_blocks_w * 2,
     };
     // Double-buffered: 2 buffers × blocks_per_row × 256 bytes (f32)
@@ -236,7 +236,7 @@ fn main() {
         ("65000x1", 65000, 1),
         ("1x65000", 1, 65000),
         ("256x256", 256, 256),
-        ("65500x1", 65500, 1),  // Near max JPEG dimension
+        ("65500x1", 65500, 1), // Near max JPEG dimension
     ];
 
     for (name, width, height) in extreme {
@@ -261,7 +261,12 @@ fn main() {
                     delta_pct
                 );
             }
-            Err(e) => println!("{:<20} {:>12} err: {}", name, format_bytes(strip_peak_calc), e),
+            Err(e) => println!(
+                "{:<20} {:>12} err: {}",
+                name,
+                format_bytes(strip_peak_calc),
+                e
+            ),
         }
     }
 
@@ -295,7 +300,11 @@ fn main() {
                 println!("  {:<35} {:>12}", ctx, format_bytes(*bytes));
             }
             println!("{:-<50}", "");
-            println!("  {:<35} {:>12}", "MEASURED TOTAL", format_bytes(m.peak_bytes));
+            println!(
+                "  {:<35} {:>12}",
+                "MEASURED TOTAL",
+                format_bytes(m.peak_bytes)
+            );
             println!("  {:<35} {:>12}", "ESTIMATED", format_bytes(estimated));
             let delta = m.peak_bytes as i64 - estimated as i64;
             let sign = if delta >= 0 { "+" } else { "-" };
@@ -303,6 +312,13 @@ fn main() {
                 "  {:<35} {:>12}",
                 "DELTA",
                 format!("{}{}", sign, format_bytes(delta.unsigned_abs() as usize))
+            );
+            // Show input size for reference
+            let input_rgb = width * height * 3;
+            println!(
+                "  {:<35} {:>12}",
+                "(input RGB/BGR8 for reference)",
+                format_bytes(input_rgb)
             );
         }
     }

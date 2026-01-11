@@ -379,21 +379,45 @@ impl StripProcessor {
 
             // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
             pending_y_blocks: [
-                try_with_capacity_tracked(pending_y_capacity, "pending_y_blocks[0]", &mut alloc_stats)?,
-                try_with_capacity_tracked(pending_y_capacity, "pending_y_blocks[1]", &mut alloc_stats)?,
+                try_with_capacity_tracked(
+                    pending_y_capacity,
+                    "pending_y_blocks[0]",
+                    &mut alloc_stats,
+                )?,
+                try_with_capacity_tracked(
+                    pending_y_capacity,
+                    "pending_y_blocks[1]",
+                    &mut alloc_stats,
+                )?,
             ],
             pending_cb_blocks: if is_color {
                 [
-                    try_with_capacity_tracked(pending_c_capacity, "pending_cb_blocks[0]", &mut alloc_stats)?,
-                    try_with_capacity_tracked(pending_c_capacity, "pending_cb_blocks[1]", &mut alloc_stats)?,
+                    try_with_capacity_tracked(
+                        pending_c_capacity,
+                        "pending_cb_blocks[0]",
+                        &mut alloc_stats,
+                    )?,
+                    try_with_capacity_tracked(
+                        pending_c_capacity,
+                        "pending_cb_blocks[1]",
+                        &mut alloc_stats,
+                    )?,
                 ]
             } else {
                 [Vec::new(), Vec::new()]
             },
             pending_cr_blocks: if is_color {
                 [
-                    try_with_capacity_tracked(pending_c_capacity, "pending_cr_blocks[0]", &mut alloc_stats)?,
-                    try_with_capacity_tracked(pending_c_capacity, "pending_cr_blocks[1]", &mut alloc_stats)?,
+                    try_with_capacity_tracked(
+                        pending_c_capacity,
+                        "pending_cr_blocks[0]",
+                        &mut alloc_stats,
+                    )?,
+                    try_with_capacity_tracked(
+                        pending_c_capacity,
+                        "pending_cr_blocks[1]",
+                        &mut alloc_stats,
+                    )?,
                 ]
             } else {
                 [Vec::new(), Vec::new()]
@@ -410,7 +434,11 @@ impl StripProcessor {
             c_blocks_v,
 
             // Accumulated AQ strengths (for output)
-            all_aq_strengths: try_with_capacity_tracked(total_y_blocks, "all_aq_strengths", &mut alloc_stats)?,
+            all_aq_strengths: try_with_capacity_tracked(
+                total_y_blocks,
+                "all_aq_strengths",
+                &mut alloc_stats,
+            )?,
 
             // Streaming AQ (initialized when quant tables are set)
             aq_state: None,

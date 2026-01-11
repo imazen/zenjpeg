@@ -1,4 +1,8 @@
-use super::*;
+#[allow(deprecated)]
+use super::super::Encoder;
+use crate::consts::{MARKER_EOI, MARKER_SOI};
+use crate::quant::Quality;
+use crate::types::{ChromaDownsampling, EncodingBackend, PixelFormat, Subsampling};
 
 #[test]
 fn test_encoder_creation() {

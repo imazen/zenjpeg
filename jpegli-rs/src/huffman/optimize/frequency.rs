@@ -27,7 +27,11 @@ impl OptimizedTable {
     /// Creates an optimized table from bits and values arrays.
     pub fn from_bits_values(bits: [u8; 16], values: Vec<u8>) -> crate::error::Result<Self> {
         let table = HuffmanEncodeTable::from_bits_values(&bits, &values)?;
-        Ok(Self { table, bits, values })
+        Ok(Self {
+            table,
+            bits,
+            values,
+        })
     }
 
     /// Returns the code and length for a symbol.

@@ -148,12 +148,28 @@ fn test_strip_output_can_be_encoded() {
     let expected_c_blocks = c_blocks_h * c_blocks_v;
 
     // Verify correct number of blocks produced
-    assert_eq!(output.y_blocks.len(), expected_y_blocks, "Wrong number of Y blocks");
-    assert_eq!(output.cb_blocks.len(), expected_c_blocks, "Wrong number of Cb blocks");
-    assert_eq!(output.cr_blocks.len(), expected_c_blocks, "Wrong number of Cr blocks");
+    assert_eq!(
+        output.y_blocks.len(),
+        expected_y_blocks,
+        "Wrong number of Y blocks"
+    );
+    assert_eq!(
+        output.cb_blocks.len(),
+        expected_c_blocks,
+        "Wrong number of Cb blocks"
+    );
+    assert_eq!(
+        output.cr_blocks.len(),
+        expected_c_blocks,
+        "Wrong number of Cr blocks"
+    );
 
     // Verify blocks have valid content (not all zeros after quantization)
-    let non_zero_y = output.y_blocks.iter().filter(|b| b.iter().any(|&v| v != 0)).count();
+    let non_zero_y = output
+        .y_blocks
+        .iter()
+        .filter(|b| b.iter().any(|&v| v != 0))
+        .count();
     assert!(non_zero_y > 0, "All Y blocks are zero");
 }
 

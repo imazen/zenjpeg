@@ -123,6 +123,8 @@ pub enum Error {
         /// Details about the mismatch
         details: String,
     },
+    /// Operation was cancelled via Stop trait.
+    Cancelled,
 }
 
 impl fmt::Display for Error {
@@ -207,7 +209,16 @@ impl fmt::Display for Error {
                     details
                 )
             }
+            Self::Cancelled => {
+                write!(f, "operation cancelled")
+            }
         }
+    }
+}
+
+impl From<enough::StopReason> for Error {
+    fn from(_: enough::StopReason) -> Self {
+        Self::Cancelled
     }
 }
 

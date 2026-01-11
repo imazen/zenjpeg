@@ -100,7 +100,12 @@ fn test_filesize_comparison_synthetic() {
 
             println!(
                 "{} Q{}: C++={} Rust={} ({:+.1}%, {:+} bytes)",
-                name, quality, cpp_size, rust_size, diff_pct, rust_size as i64 - cpp_size as i64
+                name,
+                quality,
+                cpp_size,
+                rust_size,
+                diff_pct,
+                rust_size as i64 - cpp_size as i64
             );
 
             // For tiny images (<1KB), fixed overhead dominates - check absolute bytes instead
@@ -118,10 +123,7 @@ fn test_filesize_comparison_synthetic() {
             assert!(
                 pass,
                 "{} Q{}: file size differs by {:.1}% ({} bytes)",
-                name,
-                quality,
-                diff_pct,
-                diff_bytes
+                name, quality, diff_pct, diff_bytes
             );
         }
     }

@@ -6,7 +6,20 @@
 //! - Huffman table optimization
 //! - Scan encoding
 
-use super::*;
+use super::super::{natural_to_zigzag, natural_to_zigzag_into, Encoder};
+use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE};
+use crate::dct::forward_dct_8x8;
+#[cfg(feature = "experimental-hybrid-trellis")]
+use crate::encode::hybrid;
+use crate::entropy::{self, EntropyEncoder};
+use crate::error::Result;
+use crate::huffman::optimize::{FrequencyCounter, OptimizedHuffmanTables};
+use crate::huffman::HuffmanEncodeTable;
+use crate::quant::aq::compute_aq_strength_map;
+use crate::quant::{self, QuantTable, ZeroBiasParams};
+use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
+use crate::types::{PixelFormat, Subsampling};
+use enough::Stop;
 
 impl Encoder {
     /// Quantizes all blocks in the image (4:4:4 only, no subsampling).
@@ -19,7 +32,7 @@ impl Encoder {
     /// Note: This function handles non-subsampled 4:4:4 mode. For subsampled modes,
     /// use `quantize_all_blocks_subsampled` instead.
     #[allow(dead_code)] // Kept for potential future use with non-AQ 4:4:4 paths
-    pub(super) fn quantize_all_blocks(
+    pub(crate) fn quantize_all_blocks(
         &self,
         y_plane: &[f32],
         cb_plane: &[f32],
@@ -164,8 +177,10 @@ impl Encoder {
     ///
     /// Uses SIMD-native types (Block8x8f, QuantTableSimd, ZeroBiasSimd) for
     /// optimized DCT and quantization with minimal load/store overhead.
+    ///
+    /// If `stop` is Some, checks for cancellation at each MCU row boundary.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn quantize_all_blocks_subsampled(
+    pub(crate) fn quantize_all_blocks_subsampled(
         &self,
         y_plane: &[f32],
         y_width: usize,
@@ -177,6 +192,7 @@ impl Encoder {
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
+        stop: Option<&dyn Stop>,
     ) -> Result<(
         Vec<[i16; DCT_BLOCK_SIZE]>,
         Vec<[i16; DCT_BLOCK_SIZE]>,
@@ -232,6 +248,11 @@ impl Encoder {
 
         // Quantize Y blocks using SIMD-optimized pipeline (pre-computed 1/quant, fast_round_int)
         for by in 0..y_blocks_v {
+            // Check for cancellation at each MCU row (cooperative cancellation)
+            // This is a no-op for Never, optimized out by the compiler
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
             for bx in 0..y_blocks_h {
                 let block_idx = by * y_blocks_h + bx;
                 let aq_strength = aq_map.get(bx, by);
@@ -264,6 +285,10 @@ impl Encoder {
         // Quantize chroma blocks using SIMD-optimized pipeline
         if is_color {
             for by in 0..c_blocks_v {
+                // Check for cancellation at each MCU row
+                if let Some(stop) = stop {
+                    stop.check()?;
+                }
                 for bx in 0..c_blocks_h {
                     let block_idx = by * c_blocks_h + bx;
                     // For chroma, use average AQ strength from corresponding Y region
@@ -332,7 +357,7 @@ impl Encoder {
     ///
     /// For subsampled modes, this iterates blocks in MCU order to correctly
     /// account for padding blocks.
-    pub(super) fn build_optimized_tables(
+    pub(crate) fn build_optimized_tables(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -503,7 +528,7 @@ impl Encoder {
     ///
     /// If `tables` is Some, uses the optimized tables. If None, uses standard (fixed) tables.
     /// Handles MCU interleaving for subsampled modes (4:2:0, 4:2:2, 4:4:0).
-    pub(super) fn encode_with_tables(
+    pub(crate) fn encode_with_tables(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -619,7 +644,7 @@ impl Encoder {
     /// But progressive scans need raster order:
     /// - Row 0: (0,0), (1,0), (2,0), (3,0), ... at indices 0,1,2,3,...
     /// - Row 1: (0,1), (1,1), (2,1), (3,1), ... at indices 8,9,10,11,...
-    pub(super) fn reorder_mcu_to_raster(
+    pub(crate) fn reorder_mcu_to_raster(
         mcu_blocks: &[[i16; DCT_BLOCK_SIZE]],
         blocks_x: usize,
         blocks_y: usize,
@@ -702,7 +727,7 @@ impl Encoder {
     /// B component is already downsampled (half resolution).
     #[allow(clippy::too_many_arguments)]
     #[allow(dead_code)] // Reserved for future XYB encoding improvements
-    pub(super) fn quantize_all_blocks_xyb(
+    pub(crate) fn quantize_all_blocks_xyb(
         &self,
         x_plane: &[f32],
         y_plane: &[f32],
@@ -793,7 +818,7 @@ impl Encoder {
     /// - X and Y use luma tables (both are full-resolution "luma-like" channels)
     /// - B uses chroma tables (downsampled blue channel)
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn quantize_all_blocks_xyb_with_aq_simple(
+    pub(crate) fn quantize_all_blocks_xyb_with_aq_simple(
         &self,
         x_plane: &[f32],
         y_plane: &[f32],
@@ -915,7 +940,7 @@ impl Encoder {
     ///
     /// XYB uses a single shared table for all components (luminance tables).
     /// Returns the optimized DC and AC tables.
-    pub(super) fn build_optimized_tables_xyb(
+    pub(crate) fn build_optimized_tables_xyb(
         &self,
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -981,7 +1006,7 @@ impl Encoder {
 
     /// Encodes XYB blocks using optimized Huffman tables.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn encode_with_tables_xyb(
+    pub(crate) fn encode_with_tables_xyb(
         &self,
         x_blocks: &[[i16; DCT_BLOCK_SIZE]],
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -1029,7 +1054,7 @@ impl Encoder {
     /// Uses scaled XYB values (in [0, 1] range), converts to [0, 255],
     /// then level shifts by subtracting 128 before DCT.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn encode_scan_xyb_float(
+    pub(crate) fn encode_scan_xyb_float(
         &self,
         x_plane: &[f32],
         y_plane: &[f32],

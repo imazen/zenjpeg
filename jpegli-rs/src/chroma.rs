@@ -408,13 +408,9 @@ pub fn gamma_aware_strip_420(
     for cy in 0..c_strip_height {
         for cx in 0..c_width {
             let (cb, cr) = if use_iterative {
-                iterative_chroma_2x2_strip(
-                    rgb_strip, y_strip, width, strip_height, bpp, cx, cy,
-                )
+                iterative_chroma_2x2_strip(rgb_strip, y_strip, width, strip_height, bpp, cx, cy)
             } else {
-                gamma_aware_chroma_2x2_strip(
-                    rgb_strip, width, strip_height, bpp, cx, cy,
-                )
+                gamma_aware_chroma_2x2_strip(rgb_strip, width, strip_height, bpp, cx, cy)
             };
             cb_down[cy * c_width + cx] = cb;
             cr_down[cy * c_width + cx] = cr;

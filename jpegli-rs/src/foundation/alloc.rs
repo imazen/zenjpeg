@@ -482,7 +482,10 @@ pub fn try_gray_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
 
     let mut v = Vec::new();
     v.try_reserve_exact(len)
-        .map_err(|_| Error::AllocationFailed { bytes: len, context })?;
+        .map_err(|_| Error::AllocationFailed {
+            bytes: len,
+            context,
+        })?;
 
     for &byte in data {
         v.push(byte);
@@ -503,7 +506,10 @@ pub fn try_rgba_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
 
     let mut v = Vec::new();
     v.try_reserve_exact(len)
-        .map_err(|_| Error::AllocationFailed { bytes: len, context })?;
+        .map_err(|_| Error::AllocationFailed {
+            bytes: len,
+            context,
+        })?;
 
     for chunk in data.chunks_exact(4) {
         v.push(chunk[0]);
@@ -543,7 +549,10 @@ pub fn try_bgra_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
 
     let mut v = Vec::new();
     v.try_reserve_exact(len)
-        .map_err(|_| Error::AllocationFailed { bytes: len, context })?;
+        .map_err(|_| Error::AllocationFailed {
+            bytes: len,
+            context,
+        })?;
 
     for chunk in data.chunks_exact(4) {
         v.push(chunk[2]);

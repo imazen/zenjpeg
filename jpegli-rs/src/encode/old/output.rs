@@ -16,14 +16,14 @@ use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedT
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, PixelFormat, Subsampling};
 
-use super::{Encoder, ProgressiveScan};
+use super::super::{Encoder, ProgressiveScan};
 
 impl Encoder {
     /// Writes the JPEG header (SOI only, no JFIF APP0).
     ///
     /// Note: C++ jpegli does not write JFIF APP0, so we skip it for parity.
     /// The JFIF marker is optional and many modern decoders don't require it.
-    pub(super) fn write_header(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_header(&self, output: &mut Vec<u8>) -> Result<()> {
         // SOI only - no JFIF marker for C++ parity
         output.push(0xFF);
         output.push(MARKER_SOI);
@@ -34,7 +34,7 @@ impl Encoder {
     ///
     /// XYB mode uses RGB component IDs and an ICC profile for color interpretation.
     /// JFIF APP0 is not appropriate because it implies YCbCr colorspace.
-    pub(super) fn write_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
         // SOI only - no JFIF marker for XYB mode
         output.push(0xFF);
         output.push(MARKER_SOI);
@@ -53,7 +53,7 @@ impl Encoder {
     ///   - 0 = RGB or CMYK (no transform)
     ///   - 1 = YCbCr
     ///   - 2 = YCCK
-    pub(super) fn write_app14_adobe(&self, output: &mut Vec<u8>, transform: u8) -> Result<()> {
+    pub(crate) fn write_app14_adobe(&self, output: &mut Vec<u8>, transform: u8) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_APP14);
         output.extend_from_slice(&[
@@ -71,7 +71,7 @@ impl Encoder {
     ///
     /// ICC profiles are stored in APP2 marker segments with the signature "ICC_PROFILE\0".
     /// Large profiles are split into multiple segments (max ~65519 bytes per segment).
-    pub(super) fn write_icc_profile(&self, output: &mut Vec<u8>, icc_data: &[u8]) -> Result<()> {
+    pub(crate) fn write_icc_profile(&self, output: &mut Vec<u8>, icc_data: &[u8]) -> Result<()> {
         if icc_data.is_empty() {
             return Ok(());
         }
@@ -110,7 +110,7 @@ impl Encoder {
 
     /// Writes quantization tables (3 separate tables for Y, Cb, Cr).
     /// This matches C++ jpegli behavior with add_two_chroma_tables=true.
-    pub(super) fn write_quant_tables(
+    pub(crate) fn write_quant_tables(
         &self,
         output: &mut Vec<u8>,
         y_quant: &QuantTable,
@@ -146,7 +146,7 @@ impl Encoder {
     }
 
     /// Writes quantization tables for XYB mode (3 separate tables).
-    pub(super) fn write_quant_tables_xyb(
+    pub(crate) fn write_quant_tables_xyb(
         &self,
         output: &mut Vec<u8>,
         r_quant: &QuantTable,
@@ -184,7 +184,7 @@ impl Encoder {
     /// Writes the frame header (SOF0 or SOF2).
     ///
     /// Uses original dimensions (before MCU padding) so decoders can crop correctly.
-    pub(super) fn write_frame_header(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_frame_header(&self, output: &mut Vec<u8>) -> Result<()> {
         let marker = if self.config.mode == JpegMode::Progressive {
             MARKER_SOF2
         } else {
@@ -247,7 +247,7 @@ impl Encoder {
     }
 
     /// Writes the frame header for XYB mode (RGB with B subsampling).
-    pub(super) fn write_frame_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_frame_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOF0); // Baseline DCT
 
@@ -285,7 +285,7 @@ impl Encoder {
     }
 
     /// Writes the frame header for XYB progressive mode.
-    pub(super) fn write_frame_header_xyb_progressive(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_frame_header_xyb_progressive(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOF2); // Progressive DCT
 
@@ -322,7 +322,7 @@ impl Encoder {
     }
 
     /// Writes standard Huffman tables in a single DHT segment.
-    pub(super) fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_huffman_tables(&self, output: &mut Vec<u8>) -> Result<()> {
         use crate::huffman::{
             STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_AC_LUMINANCE_BITS,
             STD_AC_LUMINANCE_VALUES, STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
@@ -370,7 +370,7 @@ impl Encoder {
     ///
     /// This is used when `optimize_huffman` is enabled to write the
     /// image-specific optimized tables to the DHT markers.
-    pub(super) fn write_huffman_tables_optimized(
+    pub(crate) fn write_huffman_tables_optimized(
         &self,
         output: &mut Vec<u8>,
         tables: &OptimizedHuffmanTables,
@@ -425,7 +425,7 @@ impl Encoder {
     /// - DC tables: class 0, id = table index within DC range (0-3)
     /// - AC tables: class 1, id = table index within AC range (0-3)
     #[allow(dead_code)]
-    pub(super) fn write_huffman_tables_from_vec(
+    pub(crate) fn write_huffman_tables_from_vec(
         &self,
         output: &mut Vec<u8>,
         tables: &[OptimizedTable],
@@ -468,7 +468,7 @@ impl Encoder {
     /// Additional AC tables are emitted on-demand before the scans that need them.
     ///
     /// Returns the number of tables written (next_dht_index).
-    pub(super) fn write_huffman_tables_progressive_initial(
+    pub(crate) fn write_huffman_tables_progressive_initial(
         &self,
         output: &mut Vec<u8>,
         tables: &[OptimizedTable],
@@ -524,7 +524,7 @@ impl Encoder {
     ///
     /// This is used for on-demand emission of AC tables in progressive mode.
     /// The table is written with class 1 and the specified slot ID.
-    pub(super) fn write_single_ac_table(
+    pub(crate) fn write_single_ac_table(
         &self,
         output: &mut Vec<u8>,
         table: &OptimizedTable,
@@ -546,7 +546,7 @@ impl Encoder {
     }
 
     /// Writes restart interval.
-    pub(super) fn write_restart_interval(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_restart_interval(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_DRI);
         output.push(0x00);
@@ -557,7 +557,7 @@ impl Encoder {
     }
 
     /// Writes scan header.
-    pub(super) fn write_scan_header(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_scan_header(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
@@ -595,7 +595,7 @@ impl Encoder {
     }
 
     /// Writes scan header for XYB mode.
-    pub(super) fn write_scan_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn write_scan_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
@@ -626,7 +626,7 @@ impl Encoder {
     }
 
     /// Writes DHT markers for XYB optimized tables.
-    pub(super) fn write_huffman_tables_xyb_optimized(
+    pub(crate) fn write_huffman_tables_xyb_optimized(
         &self,
         output: &mut Vec<u8>,
         dc_table: &OptimizedTable,
@@ -650,7 +650,7 @@ impl Encoder {
     }
 
     /// Writes SOS header for a progressive scan (legacy, hardcoded table selection).
-    pub(super) fn write_progressive_scan_header(
+    pub(crate) fn write_progressive_scan_header(
         &self,
         output: &mut Vec<u8>,
         scan: &ProgressiveScan,
@@ -699,7 +699,7 @@ impl Encoder {
     /// * `context_config` - Context configuration for proper context lookup
     /// * `context_map` - Maps context indices to table indices from clustering
     /// * `num_dc_tables` - Number of DC tables (AC tables start at this offset)
-    pub(super) fn write_progressive_scan_header_with_context(
+    pub(crate) fn write_progressive_scan_header_with_context(
         &self,
         output: &mut Vec<u8>,
         scan_idx: usize,
@@ -759,7 +759,7 @@ impl Encoder {
     ///
     /// This version uses `ac_slot_ids` to get the correct JPEG DHT slot for each AC table,
     /// which is needed when more than 4 AC tables are used (slot IDs cycle through 0-3).
-    pub(super) fn write_progressive_scan_header_with_slot_ids(
+    pub(crate) fn write_progressive_scan_header_with_slot_ids(
         &self,
         output: &mut Vec<u8>,
         scan_idx: usize,

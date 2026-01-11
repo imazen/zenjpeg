@@ -5,15 +5,25 @@
 //! - Successive approximation (refinement scans)
 //! - Scan script generation
 
-use super::*;
+use super::super::{pad_ycbcr_planes_subsampled, Encoder, ProgressiveScan};
 use crate::alloc::try_with_capacity;
+use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, MARKER_EOI, XYB_ICC_PROFILE};
+use crate::entropy::EntropyEncoder;
+use crate::error::{Error, Result};
+use crate::huffman::optimize::{
+    ContextConfig, FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer,
+};
+use crate::huffman::HuffmanEncodeTable;
+use crate::quant::aq::compute_aq_strength_map;
+use crate::quant::{self, QuantTable, ZeroBiasParams};
+use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 use enough::Stop;
 
 impl Encoder {
     /// Builds OptimizedHuffmanTables from the clustered tables.
     /// Currently unused - kept for potential debugging or future use.
     #[allow(dead_code)]
-    pub(super) fn build_progressive_huffman_tables(
+    pub(crate) fn build_progressive_huffman_tables(
         &self,
         tables: &[OptimizedTable],
         num_components: usize,
@@ -77,7 +87,7 @@ impl Encoder {
     /// * `ac_slot_ids` - Maps AC table index to JPEG slot ID (0-3)
     /// * `tables_emitted` - Number of tables emitted so far (DC + AC)
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn replay_progressive_scan(
+    pub(crate) fn replay_progressive_scan(
         &self,
         token_buffer: &ProgressiveTokenBuffer,
         scan_idx: usize,
@@ -178,7 +188,7 @@ impl Encoder {
     }
 
     /// Returns the progressive scan script for level 2.
-    pub(super) fn get_progressive_scan_script(&self, is_color: bool) -> Vec<ProgressiveScan> {
+    pub(crate) fn get_progressive_scan_script(&self, is_color: bool) -> Vec<ProgressiveScan> {
         let num_components = if is_color { 3 } else { 1 };
         let mut scans = Vec::new();
 
@@ -282,7 +292,7 @@ impl Encoder {
     }
 
     /// Encodes a single progressive scan.
-    pub(super) fn encode_progressive_scan(
+    pub(crate) fn encode_progressive_scan(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -863,7 +873,7 @@ impl Encoder {
     /// 3. AC 3-63 first: Ss=3, Se=63, Ah=0, Al=2 (high AC, top bits)
     /// 4. AC 3-63 refine: Ss=3, Se=63, Ah=2, Al=1 (bit 1 refinement)
     /// 5. AC 3-63 refine: Ss=3, Se=63, Ah=1, Al=0 (bit 0 refinement)
-    pub(super) fn encode_progressive_with_stop(
+    pub(crate) fn encode_progressive_with_stop(
         &self,
         data: &[u8],
         _stop: &impl Stop,
@@ -908,7 +918,7 @@ impl Encoder {
         // Pad planes to MCU-aligned dimensions for consistent edge handling.
         // For 4:4:4, all planes have the same dimensions.
         let ((y_padded, cb_padded, cr_padded), padded_w, padded_h, _, _) =
-            super::pad_ycbcr_planes_subsampled(
+            pad_ycbcr_planes_subsampled(
                 &y_plane,
                 width,
                 height,
@@ -1007,7 +1017,7 @@ impl Encoder {
         // Pad planes to MCU-aligned dimensions for consistent edge handling.
         // This matches C++ jpegli's RowBuffer padding strategy.
         let ((y_padded, cb_padded, cr_padded), padded_w, padded_h, padded_cw, padded_ch) =
-            super::pad_ycbcr_planes_subsampled(
+            pad_ycbcr_planes_subsampled(
                 &y_plane,
                 width,
                 height,
@@ -1322,7 +1332,7 @@ impl Encoder {
     /// * `y_quant` - Y quantization table
     /// * `cb_quant` - Cb quantization table
     /// * `cr_quant` - Cr quantization table
-    pub(super) fn encode_progressive_from_blocks(
+    pub(crate) fn encode_progressive_from_blocks(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],

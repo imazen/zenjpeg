@@ -99,7 +99,9 @@ fn test_streaming_push_rows() {
     for chunk_idx in 0..(height as usize / chunk_rows) {
         let start = chunk_idx * chunk_size;
         let end = start + chunk_size;
-        streaming.push_rows(&pixels[start..end], chunk_rows).unwrap();
+        streaming
+            .push_rows(&pixels[start..end], chunk_rows)
+            .unwrap();
     }
 
     let result = streaming.finish().unwrap();
@@ -118,7 +120,11 @@ fn test_memory_estimate_reasonable() {
     let estimate_mb = estimate as f64 / 1024.0 / 1024.0;
     println!("4K 4:2:0 estimate: {:.2} MB", estimate_mb);
     assert!(estimate_mb > 20.0, "estimate {:.2} MB too low", estimate_mb);
-    assert!(estimate_mb < 40.0, "estimate {:.2} MB too high", estimate_mb);
+    assert!(
+        estimate_mb < 40.0,
+        "estimate {:.2} MB too high",
+        estimate_mb
+    );
 
     // 1080p image
     let estimate_1080p = StreamingEncoder::new(1920, 1080)
@@ -130,11 +136,7 @@ fn test_memory_estimate_reasonable() {
     // 1080p should be about 1/4 of 4K
     let ratio = estimate as f64 / estimate_1080p as f64;
     println!("4K/1080p ratio: {:.2}x", ratio);
-    assert!(
-        ratio > 3.5 && ratio < 4.5,
-        "unexpected ratio {:.2}x",
-        ratio
-    );
+    assert!(ratio > 3.5 && ratio < 4.5, "unexpected ratio {:.2}x", ratio);
 }
 
 #[test]
@@ -190,9 +192,7 @@ fn test_streaming_progressive_mode() {
         );
 
         // Verify it's actually progressive (SOF2 marker = 0xFFC2)
-        let has_sof2 = standard
-            .windows(2)
-            .any(|w| w[0] == 0xFF && w[1] == 0xC2);
+        let has_sof2 = standard.windows(2).any(|w| w[0] == 0xFF && w[1] == 0xC2);
         assert!(
             has_sof2,
             "Progressive {}×{} {:?}: missing SOF2 marker",
@@ -201,7 +201,10 @@ fn test_streaming_progressive_mode() {
 
         println!(
             "✓ Progressive {}×{} {:?}: identical ({} bytes)",
-            width, height, subsampling, standard.len()
+            width,
+            height,
+            subsampling,
+            standard.len()
         );
     }
 }
@@ -232,11 +235,16 @@ fn test_streaming_encode_all() {
     let row_size = width as usize * 3;
     for y in 0..height as usize {
         let start = y * row_size;
-        streaming.push_row(&pixels[start..start + row_size]).unwrap();
+        streaming
+            .push_row(&pixels[start..start + row_size])
+            .unwrap();
     }
     let manual_result = streaming.finish().unwrap();
 
     // Should be identical
     assert_eq!(encode_all_result, manual_result);
-    println!("✓ encode_all matches manual push_row ({} bytes)", encode_all_result.len());
+    println!(
+        "✓ encode_all matches manual push_row ({} bytes)",
+        encode_all_result.len()
+    );
 }

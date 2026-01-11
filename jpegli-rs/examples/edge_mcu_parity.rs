@@ -13,8 +13,8 @@
 use jpegli::types::{JpegMode, PixelFormat};
 use jpegli::{Encoder, Quality};
 use jpegli_bench_utils::{
-    create_edge_test_image, EdgeTestConfig, EdgeReplicationMode, McuEdgeInfo,
-    ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode,
+    create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
+    EncoderConfig, EncoderImpl, ImageData, McuEdgeInfo, ScanMode,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -139,10 +139,14 @@ fn main() {
 
     let info = McuEdgeInfo::analyze(width as usize, height as usize);
     println!("Source image: {}x{}", width, height);
-    println!("  Partial MCU width:  {} columns ({:.2}% of blocks)",
-             info.partial_mcu_width, info.width_affected_pct);
-    println!("  Partial MCU height: {} rows ({:.2}% of blocks)",
-             info.partial_mcu_height, info.height_affected_pct);
+    println!(
+        "  Partial MCU width:  {} columns ({:.2}% of blocks)",
+        info.partial_mcu_width, info.width_affected_pct
+    );
+    println!(
+        "  Partial MCU height: {} rows ({:.2}% of blocks)",
+        info.partial_mcu_height, info.height_affected_pct
+    );
     println!("  Total affected:     {:.2}%\n", info.total_affected_pct);
 
     // Convert to imgref for tiling
@@ -209,7 +213,12 @@ fn main() {
 
     for quality in qualities {
         // Encode
-        let rust_jpeg = encode_rust(&tiled_bytes, target_width as u32, tiled_height as u32, quality);
+        let rust_jpeg = encode_rust(
+            &tiled_bytes,
+            target_width as u32,
+            tiled_height as u32,
+            quality,
+        );
         let cpp_jpeg = encode_cpp(&tiled_image_data, quality);
 
         // Decode
@@ -220,7 +229,8 @@ fn main() {
         let rust_dssim = compute_dssim(&tiled_bytes, &rust_decoded, target_width, tiled_height);
         let cpp_dssim = compute_dssim(&tiled_bytes, &cpp_decoded, target_width, tiled_height);
 
-        let size_diff = (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
+        let size_diff =
+            (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
         let dssim_diff = if cpp_dssim > 0.0 {
             (rust_dssim - cpp_dssim) / cpp_dssim * 100.0
         } else {
