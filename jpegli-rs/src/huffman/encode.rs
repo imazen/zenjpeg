@@ -5,7 +5,15 @@
 //! - Huffman table building from symbol frequencies
 //! - Lookup table generation for fast encoding/decoding
 
+use std::sync::OnceLock;
+
 use crate::error::{Error, Result};
+
+// Static standard encode tables (lazily initialized, ~1.3KB each)
+static STD_DC_LUMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
+static STD_DC_CHROMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
+static STD_AC_LUMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
+static STD_AC_CHROMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
 
 /// Maximum code length in bits for JPEG Huffman codes.
 pub const MAX_CODE_LENGTH: usize = 16;
@@ -133,32 +141,40 @@ impl HuffmanEncodeTable {
         (self.codes[idx], self.lengths[idx])
     }
 
-    /// Creates the standard DC luminance table.
+    /// Returns a reference to the standard DC luminance table (lazily initialized).
     #[must_use]
-    pub fn std_dc_luminance() -> Self {
-        Self::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
-            .expect("standard table should be valid")
+    pub fn std_dc_luminance() -> &'static Self {
+        STD_DC_LUMINANCE_ENC.get_or_init(|| {
+            Self::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
+                .expect("standard table should be valid")
+        })
     }
 
-    /// Creates the standard DC chrominance table.
+    /// Returns a reference to the standard DC chrominance table (lazily initialized).
     #[must_use]
-    pub fn std_dc_chrominance() -> Self {
-        Self::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
-            .expect("standard table should be valid")
+    pub fn std_dc_chrominance() -> &'static Self {
+        STD_DC_CHROMINANCE_ENC.get_or_init(|| {
+            Self::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
+                .expect("standard table should be valid")
+        })
     }
 
-    /// Creates the standard AC luminance table.
+    /// Returns a reference to the standard AC luminance table (lazily initialized).
     #[must_use]
-    pub fn std_ac_luminance() -> Self {
-        Self::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
-            .expect("standard table should be valid")
+    pub fn std_ac_luminance() -> &'static Self {
+        STD_AC_LUMINANCE_ENC.get_or_init(|| {
+            Self::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
+                .expect("standard table should be valid")
+        })
     }
 
-    /// Creates the standard AC chrominance table.
+    /// Returns a reference to the standard AC chrominance table (lazily initialized).
     #[must_use]
-    pub fn std_ac_chrominance() -> Self {
-        Self::from_bits_values(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
-            .expect("standard table should be valid")
+    pub fn std_ac_chrominance() -> &'static Self {
+        STD_AC_CHROMINANCE_ENC.get_or_init(|| {
+            Self::from_bits_values(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
+                .expect("standard table should be valid")
+        })
     }
 }
 

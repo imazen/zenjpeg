@@ -98,7 +98,7 @@ impl Encoder {
 
         // Set up DC Huffman tables (up to 4)
         for (i, table) in tables.iter().take(num_dc_tables).enumerate() {
-            encoder.set_dc_table(i, table.table.clone());
+            encoder.set_dc_table(i, &table.table);
         }
 
         // Set up AC Huffman tables using slot IDs
@@ -112,7 +112,7 @@ impl Encoder {
         {
             // Use the slot ID from ac_slot_ids (cycles 0-3)
             let slot = ac_slot_ids.get(i).copied().unwrap_or(i % 4);
-            encoder.set_ac_table(slot, table.table.clone());
+            encoder.set_ac_table(slot, &table.table);
         }
 
         if self.config.restart_interval > 0 {
@@ -296,11 +296,11 @@ impl Encoder {
 
         // Set up Huffman tables
         if let Some(ref opt_tables) = tables {
-            encoder.set_dc_table(0, opt_tables.dc_luma.table.clone());
-            encoder.set_ac_table(0, opt_tables.ac_luma.table.clone());
+            encoder.set_dc_table(0, &opt_tables.dc_luma.table);
+            encoder.set_ac_table(0, &opt_tables.ac_luma.table);
             if is_color {
-                encoder.set_dc_table(1, opt_tables.dc_chroma.table.clone());
-                encoder.set_ac_table(1, opt_tables.ac_chroma.table.clone());
+                encoder.set_dc_table(1, &opt_tables.dc_chroma.table);
+                encoder.set_ac_table(1, &opt_tables.ac_chroma.table);
             }
         } else {
             encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());

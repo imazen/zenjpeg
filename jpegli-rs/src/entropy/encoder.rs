@@ -12,13 +12,15 @@ use wide::{i16x8, CmpEq};
 use super::{additional_bits_with_cat, category};
 
 /// Entropy encoder for a single scan.
-pub struct EntropyEncoder {
+///
+/// Uses borrowed Huffman tables to avoid cloning ~1.3KB per table.
+pub struct EntropyEncoder<'a> {
     /// Bit writer
     writer: BitWriter,
     /// DC Huffman tables (indexed by table selector)
-    dc_tables: [Option<HuffmanEncodeTable>; 4],
+    dc_tables: [Option<&'a HuffmanEncodeTable>; 4],
     /// AC Huffman tables (indexed by table selector)
-    ac_tables: [Option<HuffmanEncodeTable>; 4],
+    ac_tables: [Option<&'a HuffmanEncodeTable>; 4],
     /// Previous DC values for each component
     prev_dc: [i16; 4],
     /// Restart interval counter
@@ -29,7 +31,7 @@ pub struct EntropyEncoder {
     restart_num: u8,
 }
 
-impl EntropyEncoder {
+impl<'a> EntropyEncoder<'a> {
     /// Creates a new entropy encoder.
     #[must_use]
     pub fn new() -> Self {
@@ -61,15 +63,15 @@ impl EntropyEncoder {
         }
     }
 
-    /// Sets a DC Huffman table.
-    pub fn set_dc_table(&mut self, idx: usize, table: HuffmanEncodeTable) {
+    /// Sets a DC Huffman table (borrowed, not cloned).
+    pub fn set_dc_table(&mut self, idx: usize, table: &'a HuffmanEncodeTable) {
         if idx < 4 {
             self.dc_tables[idx] = Some(table);
         }
     }
 
-    /// Sets an AC Huffman table.
-    pub fn set_ac_table(&mut self, idx: usize, table: HuffmanEncodeTable) {
+    /// Sets an AC Huffman table (borrowed, not cloned).
+    pub fn set_ac_table(&mut self, idx: usize, table: &'a HuffmanEncodeTable) {
         if idx < 4 {
             self.ac_tables[idx] = Some(table);
         }
@@ -543,12 +545,9 @@ impl EntropyEncoder {
         al: u8,
         eob_run: &mut u16,
     ) -> Result<()> {
-        let ac_table = self.ac_tables[table_idx]
-            .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set for refinement",
-            })?
-            .clone();
+        let ac_table = self.ac_tables[table_idx].ok_or(Error::InternalError {
+            reason: "AC table not set for refinement",
+        })?;
 
         let mut k = ss;
         let mut run = 0u32;
@@ -723,12 +722,9 @@ impl EntropyEncoder {
     /// * `tokens` - Slice of tokens to replay
     /// * `table_idx` - AC Huffman table index to use
     pub fn write_ac_first_tokens(&mut self, tokens: &[Token], table_idx: usize) -> Result<()> {
-        let ac_table = self.ac_tables[table_idx]
-            .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set for token replay",
-            })?
-            .clone();
+        let ac_table = self.ac_tables[table_idx].ok_or(Error::InternalError {
+            reason: "AC table not set for token replay",
+        })?;
 
         for token in tokens {
             // Write the Huffman code for the symbol
@@ -780,12 +776,9 @@ impl EntropyEncoder {
         scan_info: &ScanTokenInfo,
         table_idx: usize,
     ) -> Result<()> {
-        let ac_table = self.ac_tables[table_idx]
-            .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set for refinement replay",
-            })?
-            .clone();
+        let ac_table = self.ac_tables[table_idx].ok_or(Error::InternalError {
+            reason: "AC table not set for refinement replay",
+        })?;
 
         let mut refbit_idx = 0;
         let mut eobrun_idx = 0;
@@ -894,7 +887,7 @@ impl EntropyEncoder {
     }
 }
 
-impl Default for EntropyEncoder {
+impl Default for EntropyEncoder<'_> {
     fn default() -> Self {
         Self::new()
     }
@@ -938,25 +931,25 @@ mod tests {
 
     #[test]
     fn test_entropy_encoder_set_tables() {
-        let mut encoder = EntropyEncoder::new();
-
-        // Create a simple DC table using JPEG standard luminance DC table
+        // Create tables first (must outlive encoder)
         let dc_bits: [u8; 16] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
         let dc_values: [u8; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
         let dc_table = HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_values).unwrap();
-        encoder.set_dc_table(0, dc_table.clone());
-        assert!(encoder.dc_tables[0].is_some());
 
-        // Create a simple AC table using a subset of JPEG standard AC table
         let ac_bits: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
         let ac_values: Vec<u8> = (0..162).collect();
         let ac_table = HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_values).unwrap();
-        encoder.set_ac_table(0, ac_table.clone());
+
+        let mut encoder = EntropyEncoder::new();
+        encoder.set_dc_table(0, &dc_table);
+        assert!(encoder.dc_tables[0].is_some());
+
+        encoder.set_ac_table(0, &ac_table);
         assert!(encoder.ac_tables[0].is_some());
 
         // Test out of range indices (should be no-op)
-        encoder.set_dc_table(5, dc_table.clone());
-        encoder.set_ac_table(5, ac_table);
+        encoder.set_dc_table(5, &dc_table);
+        encoder.set_ac_table(5, &ac_table);
     }
 
     #[test]
@@ -990,22 +983,11 @@ mod tests {
         assert!(bytes.is_empty());
     }
 
-    /// Helper to create encoder with standard tables
-    fn encoder_with_tables() -> EntropyEncoder {
+    /// Helper to create encoder with standard tables (uses static tables)
+    fn encoder_with_tables() -> EntropyEncoder<'static> {
         let mut encoder = EntropyEncoder::new();
-
-        // Standard luminance DC table
-        let dc_bits: [u8; 16] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
-        let dc_values: [u8; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-        let dc_table = HuffmanEncodeTable::from_bits_values(&dc_bits, &dc_values).unwrap();
-        encoder.set_dc_table(0, dc_table);
-
-        // Standard luminance AC table
-        let ac_bits: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
-        let ac_values: Vec<u8> = (0..162).collect();
-        let ac_table = HuffmanEncodeTable::from_bits_values(&ac_bits, &ac_values).unwrap();
-        encoder.set_ac_table(0, ac_table);
-
+        encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
+        encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
         encoder
     }
 
