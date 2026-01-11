@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-01-11
+
+### Added
+
+- CI workflow testing on 6 platform targets (Linux/macOS/Windows x x64/ARM64)
+- Benchmark tracking workflow with regression detection
+
 ## [0.4.0] - 2026-01-11
 
 ### Added
