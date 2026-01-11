@@ -33,9 +33,8 @@ moxcms = "0.6"
 # Image I/O (for testing)
 png = "0.17"
 zune-jpeg = "0.5"      # Reference decoder for comparison (fastest pure Rust)
-# mozjpeg REMOVED - C wrapper conflicts with jpegli FFI (duplicate libjpeg-62 symbols)
-# jpeg-decoder BANNED - use zune-jpeg instead (faster, better maintained)
-turbojpeg = "1.3"      # libjpeg-turbo wrapper (fastest C decoder)
+# NOTE: C-based JPEG libraries (mozjpeg, turbojpeg, libjpeg-turbo) are intentionally
+# excluded to avoid symbol conflicts with jpegli C++ FFI. Use jpegli-cpp for C++ parity testing.
 
 # Quality metrics
 dssim = "3.2"
