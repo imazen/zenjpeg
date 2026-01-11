@@ -377,3 +377,71 @@ All progressive subsampled modes now decode successfully with zune-jpeg.
 ### Testing
 
 ---
+
+## Performance Analysis: Rust vs C++ jpegli
+
+**Date:** 2026-01-11
+**Status:** Analysis complete, optimizations TBD
+
+### Profiling Results
+
+Profiled with `perf record` on 2048x2048 encoding, 5 iterations.
+
+**Key Finding: Huffman encoding is NOT the bottleneck (only 3.59% of CPU time)**
+
+#### CPU Time Breakdown
+
+| Component | CPU % | Notes |
+|-----------|-------|-------|
+| **AQ (Adaptive Quant)** | 17.74% | Biggest bottleneck |
+| ↳ per_block_modulations | 6.26% | |
+| ↳ fuzzy_erosion | 5.89% | |
+| ↳ pre_erosion | ~5% | |
+| **DCT** | 14.35% | forward_dct_8x8 |
+| **Memory ops** | 6.82% | memset/memmove from zeroed allocs |
+| **Huffman table build** | 5.65% | Optimized tables construction |
+| **Huffman encode** | 3.59% | The actual encoding |
+
+#### Timing Matrix (Rust vs C++)
+
+Overall: Rust is ~90% slower than C++ across configurations.
+
+| Mode | Config | Rust Slowdown |
+|------|--------|---------------|
+| YUV/SEQ/FIX | Fixed Huffman | 133-184% |
+| YUV/SEQ/OPT | Optimized Huffman | 155-241% |
+| YUV/PROG/* | Progressive | 62-97% |
+
+### C++ vs Rust Implementation Differences
+
+1. **Horizontal SIMD reduction**: C++ uses `SumOfLanes(d, sum)` (single vectorized instruction). We extract to array and sum scalarly:
+   ```rust
+   // Our approach (slower)
+   let arr: [f32; 8] = h_diff.into();
+   sum += arr[0] + arr[1] + arr[2] + ... // 7 scalar adds
+
+   // C++ approach (faster)
+   sum = SumOfLanes(d, sum);  // Single instruction
+   ```
+
+2. **Buffer allocation**: Our `fuzzy_erosion_simd` allocates fresh tmp buffer (`try_alloc_zeroed`) every call. C++ reuses buffers via RowBuffer class.
+
+3. **Per-block processing**: C++ keeps values in SIMD registers through ComputeMask→HfModulation→GammaModulation chain. We extract to scalar for each block.
+
+4. **Selection sort in weighted_min4_of_9**: Pure scalar with 32 comparisons. C++ likely uses SIMD min operations.
+
+### Optimization Opportunities
+
+1. **Replace array sum with SIMD horizontal sum** - Use `wide` crate's `reduce_add()` on f32x8
+2. **Reuse fuzzy_erosion tmp buffer** - Pass pre-allocated workspace, avoid zeroed alloc
+3. **Batch multiple blocks** - Process 8 blocks in parallel (one per SIMD lane)
+4. **Profile and optimize DCT** - Second largest cost (14.35%)
+
+### Files Involved
+
+- `jpegli-rs/src/quant/aq/simd.rs` - AQ SIMD implementation
+- `jpegli-rs/src/dct/forward.rs` - Forward DCT
+- `jpegli-rs/src/entropy/encoder.rs` - Huffman encoding
+- `jpegli-rs/src/huffman/encode.rs` - Huffman table construction
+
+---
