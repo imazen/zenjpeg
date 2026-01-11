@@ -30,7 +30,10 @@ use crate::huffman::HuffmanEncodeTable;
 use crate::quant::aq::compute_aq_strength_map;
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{ChromaDownsampling, ColorSpace, EncodingBackend, JpegMode, PixelFormat, Subsampling};
+use crate::types::{
+    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, EncodingBackend, JpegMode,
+    PixelFormat, Subsampling,
+};
 
 /// JPEG encoder.
 pub struct Encoder {
@@ -252,6 +255,44 @@ impl Encoder {
     #[must_use]
     pub fn encoding_backend(mut self, backend: EncodingBackend) -> Self {
         self.config.encoding_backend = backend;
+        self
+    }
+
+    /// Sets the edge padding strategy for partial MCU blocks.
+    ///
+    /// When image dimensions are not multiples of the MCU size (8 or 16 pixels),
+    /// the encoder must pad edge blocks. This setting controls how that padding
+    /// is performed, with separate strategies for luma and chroma channels.
+    ///
+    /// # Presets
+    ///
+    /// - [`EdgePaddingConfig::cpp_compat()`]: Match C++ jpegli behavior (Replicate all)
+    /// - [`EdgePaddingConfig::recommended()`]: Mirror for luma, Replicate for chroma
+    /// - [`EdgePaddingConfig::uniform(strategy)`]: Same strategy for all channels
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use jpegli::{Encoder, EdgePaddingConfig, EdgePadding};
+    ///
+    /// // Match C++ jpegli behavior
+    /// let encoder = Encoder::new()
+    ///     .edge_padding(EdgePaddingConfig::cpp_compat());
+    ///
+    /// // Use recommended settings (better gradients, safe chroma)
+    /// let encoder = Encoder::new()
+    ///     .edge_padding(EdgePaddingConfig::recommended());
+    ///
+    /// // Custom per-channel configuration
+    /// let encoder = Encoder::new()
+    ///     .edge_padding(EdgePaddingConfig {
+    ///         luma: EdgePadding::Mirror,
+    ///         chroma: EdgePadding::Replicate,
+    ///     });
+    /// ```
+    #[must_use]
+    pub fn edge_padding(mut self, config: EdgePaddingConfig) -> Self {
+        self.config.edge_padding = config;
         self
     }
 
@@ -639,6 +680,107 @@ fn natural_to_zigzag_into(natural: &[i16; DCT_BLOCK_SIZE], dest: &mut [i16; DCT_
     for i in 0..DCT_BLOCK_SIZE {
         dest[JPEG_ZIGZAG_ORDER[i] as usize] = natural[i];
     }
+}
+
+// ============================================================================
+// Edge Padding Helpers
+// ============================================================================
+
+/// Compute the source coordinate for a padded pixel using the specified strategy.
+///
+/// For coordinates within the original image, returns the coordinate unchanged.
+/// For coordinates beyond the edge, applies the padding strategy.
+#[inline]
+fn get_padded_coord(coord: usize, size: usize, strategy: EdgePadding) -> usize {
+    if coord < size {
+        return coord;
+    }
+
+    match strategy {
+        EdgePadding::Replicate => size - 1,
+        EdgePadding::Mirror => {
+            // Reflect: coord beyond edge mirrors back
+            // For coord = size + d, return size - 1 - d
+            let d = coord - size;
+            size.saturating_sub(1).saturating_sub(d)
+        }
+        EdgePadding::Wrap => coord % size,
+    }
+}
+
+/// Pad a single-channel f32 plane to MCU-aligned dimensions.
+///
+/// Returns (padded_plane, padded_width, padded_height).
+/// If no padding is needed, returns a clone of the input.
+pub(crate) fn pad_plane_f32(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    mcu_size: usize,
+    strategy: EdgePadding,
+) -> (Vec<f32>, usize, usize) {
+    let padded_w = (width + mcu_size - 1) / mcu_size * mcu_size;
+    let padded_h = (height + mcu_size - 1) / mcu_size * mcu_size;
+
+    // No padding needed
+    if padded_w == width && padded_h == height {
+        return (plane.to_vec(), width, height);
+    }
+
+    let mut out = vec![0.0f32; padded_w * padded_h];
+
+    for y in 0..padded_h {
+        let src_y = get_padded_coord(y, height, strategy);
+        for x in 0..padded_w {
+            let src_x = get_padded_coord(x, width, strategy);
+            out[y * padded_w + x] = plane[src_y * width + src_x];
+        }
+    }
+
+    (out, padded_w, padded_h)
+}
+
+/// Pad YCbCr f32 planes to MCU-aligned dimensions with per-channel strategies.
+///
+/// Y plane uses the luma strategy, Cb/Cr planes use the chroma strategy.
+/// Handles subsampled chroma planes correctly (cb/cr may have different dimensions than y).
+///
+/// Returns ((y, cb, cr), padded_luma_w, padded_luma_h, padded_chroma_w, padded_chroma_h).
+#[allow(clippy::type_complexity)]
+pub(crate) fn pad_ycbcr_planes_subsampled(
+    y: &[f32],
+    width: usize,
+    height: usize,
+    cb: &[f32],
+    cr: &[f32],
+    c_width: usize,
+    c_height: usize,
+    mcu_size: usize,
+    config: EdgePaddingConfig,
+) -> ((Vec<f32>, Vec<f32>, Vec<f32>), usize, usize, usize, usize) {
+    // Pad luma to MCU-aligned dimensions
+    let (y_padded, padded_w, padded_h) = pad_plane_f32(y, width, height, mcu_size, config.luma);
+
+    // Chroma blocks are always 8x8. Padding chroma to multiples of 8 aligns with
+    // the MCU grid because c_width = ceil(width / h_factor) and:
+    // ceil(ceil(width / h_factor) / 8) * 8 == ceil(width / mcu_size) * (mcu_size / h_factor)
+    let (cb_padded, padded_cw, padded_ch) = pad_plane_f32(cb, c_width, c_height, 8, config.chroma);
+    let (cr_padded, _, _) = pad_plane_f32(cr, c_width, c_height, 8, config.chroma);
+
+    ((y_padded, cb_padded, cr_padded), padded_w, padded_h, padded_cw, padded_ch)
+}
+
+/// Pad grayscale f32 plane to MCU-aligned dimensions.
+///
+/// Returns (padded_plane, padded_width, padded_height).
+pub(crate) fn pad_gray_plane(
+    y: &[f32],
+    width: usize,
+    height: usize,
+    mcu_size: usize,
+    config: EdgePaddingConfig,
+) -> (Vec<f32>, usize, usize) {
+    pad_plane_f32(y, width, height, mcu_size, config.luma)
 }
 
 #[cfg(test)]

@@ -169,6 +169,98 @@ impl Subsampling {
             Self::S420 | Self::S440 => 2,
         }
     }
+
+    /// Returns the MCU (Minimum Coded Unit) size for this subsampling mode.
+    ///
+    /// - 16 for modes with 2x sampling (4:2:0, 4:2:2, 4:4:0)
+    /// - 8 for 4:4:4 (no subsampling)
+    #[must_use]
+    pub const fn mcu_size(self) -> usize {
+        match self {
+            Self::S444 => 8,
+            Self::S420 | Self::S422 | Self::S440 => 16,
+        }
+    }
+}
+
+/// Strategy for padding partial MCU blocks at image edges.
+///
+/// When image dimensions are not multiples of the MCU size (8 or 16 pixels),
+/// the encoder must pad the edge blocks. Different strategies produce different
+/// compression characteristics and visual artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum EdgePadding {
+    /// Replicate the edge pixel outward (C++ jpegli behavior).
+    ///
+    /// For pixels beyond the edge, use the last valid pixel value.
+    /// This is the safest choice for chroma as it produces smooth
+    /// upsampling results with no color fringing.
+    #[default]
+    Replicate,
+
+    /// Mirror/reflect at the edge boundary.
+    ///
+    /// For pixels beyond the edge, reflect back into the image.
+    /// Better preserves gradients but may cause slight color fringing
+    /// on chroma channels due to upsampling artifacts.
+    Mirror,
+
+    /// Wrap around (tile the image).
+    ///
+    /// For pixels beyond the edge, wrap to the opposite side.
+    /// Generally produces poor results due to discontinuities.
+    /// Included for completeness/testing.
+    Wrap,
+}
+
+/// Edge padding configuration with per-channel control.
+///
+/// Allows different padding strategies for luma (Y) and chroma (Cb/Cr) channels.
+/// This is useful because:
+/// - Luma: Mirror can better preserve gradients at edges
+/// - Chroma: Replicate is safer due to upsampling artifacts
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EdgePaddingConfig {
+    /// Padding strategy for luma (Y) channel.
+    pub luma: EdgePadding,
+    /// Padding strategy for chroma (Cb/Cr) channels.
+    pub chroma: EdgePadding,
+}
+
+impl EdgePaddingConfig {
+    /// Use the same strategy for all channels.
+    #[must_use]
+    pub const fn uniform(strategy: EdgePadding) -> Self {
+        Self {
+            luma: strategy,
+            chroma: strategy,
+        }
+    }
+
+    /// Recommended configuration: Mirror for luma, Replicate for chroma.
+    ///
+    /// - Luma uses Mirror to better preserve gradients at edges
+    /// - Chroma uses Replicate for safe upsampling without color fringing
+    #[must_use]
+    pub const fn recommended() -> Self {
+        Self {
+            luma: EdgePadding::Mirror,
+            chroma: EdgePadding::Replicate,
+        }
+    }
+
+    /// C++ jpegli compatible configuration: Replicate for all channels.
+    #[must_use]
+    pub const fn cpp_compat() -> Self {
+        Self::uniform(EdgePadding::Replicate)
+    }
+}
+
+impl Default for EdgePaddingConfig {
+    fn default() -> Self {
+        Self::cpp_compat()
+    }
 }
 
 /// Chroma downsampling method for subsampled encoding (4:2:0, 4:2:2, 4:4:0).

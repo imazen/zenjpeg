@@ -3,7 +3,9 @@
 //! This module contains all configuration-related types for the JPEG encoder.
 
 use crate::quant::Quality;
-use crate::types::{ChromaDownsampling, EncodingBackend, JpegMode, PixelFormat, Subsampling};
+use crate::types::{
+    ChromaDownsampling, EdgePaddingConfig, EncodingBackend, JpegMode, PixelFormat, Subsampling,
+};
 
 // ============================================================================
 // Progressive Scan Configuration
@@ -74,6 +76,24 @@ pub struct EncoderConfig {
 
     /// Encoding backend selection (full-plane, strip-based, or auto).
     pub encoding_backend: EncodingBackend,
+
+    /// Edge padding strategy for partial MCU blocks.
+    ///
+    /// Controls how edge pixels are padded when image dimensions are not
+    /// multiples of the MCU size. Different strategies for luma and chroma
+    /// can be specified to optimize for both gradient preservation (luma)
+    /// and safe upsampling (chroma).
+    pub edge_padding: EdgePaddingConfig,
+
+    /// Original image width before MCU padding (for JFIF header).
+    ///
+    /// When edge padding expands the image to MCU-aligned dimensions,
+    /// this stores the original width to write to the JFIF header.
+    /// Decoders will crop to these dimensions after decoding.
+    pub(crate) original_width: Option<u32>,
+
+    /// Original image height before MCU padding (for JFIF header).
+    pub(crate) original_height: Option<u32>,
 }
 
 impl Default for EncoderConfig {
@@ -98,6 +118,9 @@ impl Default for EncoderConfig {
             custom_aq_map: None,
             custom_quant_matrices: None,
             encoding_backend: EncodingBackend::Auto,
+            edge_padding: EdgePaddingConfig::default(),
+            original_width: None,
+            original_height: None,
         }
     }
 }

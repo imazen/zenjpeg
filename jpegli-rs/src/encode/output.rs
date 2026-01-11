@@ -182,6 +182,8 @@ impl Encoder {
     }
 
     /// Writes the frame header (SOF0 or SOF2).
+    ///
+    /// Uses original dimensions (before MCU padding) so decoders can crop correctly.
     pub(super) fn write_frame_header(&self, output: &mut Vec<u8>) -> Result<()> {
         let marker = if self.config.mode == JpegMode::Progressive {
             MARKER_SOF2
@@ -202,11 +204,16 @@ impl Encoder {
         output.push((length >> 8) as u8);
         output.push(length as u8);
 
+        // Use original dimensions (before MCU padding) for the header.
+        // Decoders will decode full MCUs but crop to these dimensions.
+        let header_width = self.config.original_width.unwrap_or(self.config.width);
+        let header_height = self.config.original_height.unwrap_or(self.config.height);
+
         output.push(8); // Sample precision
-        output.push((self.config.height >> 8) as u8);
-        output.push(self.config.height as u8);
-        output.push((self.config.width >> 8) as u8);
-        output.push(self.config.width as u8);
+        output.push((header_height >> 8) as u8);
+        output.push(header_height as u8);
+        output.push((header_width >> 8) as u8);
+        output.push(header_width as u8);
         output.push(num_components);
 
         if num_components == 1 {
@@ -249,11 +256,15 @@ impl Encoder {
         output.push((length >> 8) as u8);
         output.push(length as u8);
 
+        // Use original dimensions (before MCU padding) for the header
+        let header_width = self.config.original_width.unwrap_or(self.config.width);
+        let header_height = self.config.original_height.unwrap_or(self.config.height);
+
         output.push(8); // Sample precision
-        output.push((self.config.height >> 8) as u8);
-        output.push(self.config.height as u8);
-        output.push((self.config.width >> 8) as u8);
-        output.push(self.config.width as u8);
+        output.push((header_height >> 8) as u8);
+        output.push(header_height as u8);
+        output.push((header_width >> 8) as u8);
+        output.push(header_width as u8);
         output.push(3); // Number of components
 
         // XYB sampling: R:2×2, G:2×2, B:1×1
@@ -283,11 +294,15 @@ impl Encoder {
         output.push((length >> 8) as u8);
         output.push(length as u8);
 
+        // Use original dimensions (before MCU padding) for the header
+        let header_width = self.config.original_width.unwrap_or(self.config.width);
+        let header_height = self.config.original_height.unwrap_or(self.config.height);
+
         output.push(8); // Sample precision
-        output.push((self.config.height >> 8) as u8);
-        output.push(self.config.height as u8);
-        output.push((self.config.width >> 8) as u8);
-        output.push(self.config.width as u8);
+        output.push((header_height >> 8) as u8);
+        output.push(header_height as u8);
+        output.push((header_width >> 8) as u8);
+        output.push(header_width as u8);
         output.push(3); // Number of components
 
         // XYB sampling: R:2×2, G:2×2, B:1×1

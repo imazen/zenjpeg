@@ -175,6 +175,22 @@ impl Encoder {
     ) -> Result<Vec<u8>> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
+        let mcu_size = self.config.subsampling.mcu_size();
+
+        // Pad planes to MCU-aligned dimensions for consistent edge handling.
+        // This matches C++ jpegli's RowBuffer padding strategy.
+        let ((y_padded, cb_padded, cr_padded), padded_w, padded_h, padded_cw, padded_ch) =
+            super::pad_ycbcr_planes_subsampled(
+                &y_plane,
+                width,
+                height,
+                &cb_plane_final,
+                &cr_plane_final,
+                c_width,
+                c_height,
+                mcu_size,
+                self.config.edge_padding,
+            );
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
@@ -183,15 +199,15 @@ impl Encoder {
         let cb_quant = self.gen_quant_table(1, false, is_420);
         let cr_quant = self.gen_quant_table(2, false, is_420);
 
-        // Quantize all blocks first (needed for both standard and optimized encoding)
+        // Quantize all blocks using padded planes and dimensions
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
-            &y_plane,
-            width,
-            height,
-            &cb_plane_final,
-            &cr_plane_final,
-            c_width,
-            c_height,
+            &y_padded,
+            padded_w,
+            padded_h,
+            &cb_padded,
+            &cr_padded,
+            padded_cw,
+            padded_ch,
             &y_quant,
             &cb_quant,
             &cr_quant,
