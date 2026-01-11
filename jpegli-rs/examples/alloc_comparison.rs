@@ -1,10 +1,11 @@
 //! Compare allocation patterns between full-plane and strip-based encoding.
 //!
-//! Key finding: Strip encoder currently provides NO peak memory savings because:
-//! 1. It pre-allocates f32 DCT block storage for the entire image
-//! 2. The strip buffers are in addition to this
+//! Key finding: Strip encoder provides significant peak memory savings:
+//! 1. Incremental quantization: f32→i16 as soon as AQ strengths available
+//! 2. Double-buffered pending blocks: only 2 iMCU rows of f32, not full image
+//! 3. Strip buffers are small (16 rows) and reused
 //!
-//! The strip encoder's benefit is cache locality during processing, not memory reduction.
+//! Benefits: both cache locality AND reduced peak memory.
 
 use jpegli::encode::strip::StripProcessor;
 use jpegli::quant::{generate_quant_table, quant_vals_to_distance, ZeroBiasParams};
@@ -67,7 +68,7 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
         + full_aq;
 
     // =================
-    // STRIP ENCODER
+    // STRIP ENCODER (with incremental quantization)
     // =================
     let strip_height = 16usize;
     let c_strip_height = match subsampling {
@@ -79,7 +80,7 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
         _ => width,
     };
 
-    // Strip f32 buffers (small, 16 rows)
+    // Strip f32 buffers (small, 16 rows, reused each strip)
     let strip_y = width * strip_height * 4;
     let strip_cb = c_width * c_strip_height * 4;
     let strip_cr = c_width * c_strip_height * 4;
@@ -87,26 +88,37 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
     let strip_cb_down = c_width * c_strip_height * 4;
     let strip_cr_down = c_width * c_strip_height * 4;
 
-    // f32 DCT blocks - FULL IMAGE (the problem!)
-    let strip_y_blocks_f32 = y_block_count * 256; // [f32; 64] = 256 bytes
-    let strip_c_blocks_f32 = c_block_count * 2 * 256;
+    // Pending f32 DCT blocks - ONLY 2 iMCU rows (double-buffered)
+    // For 4:2:0: one iMCU = 4 Y blocks + 1 Cb + 1 Cr = 6 blocks per column
+    let y_blocks_per_imcu_row = y_blocks_w * 2; // 2 rows of 8x8 Y blocks
+    let c_blocks_per_imcu_row = match subsampling {
+        Subsampling::S420 => (width + 15) / 16, // 1 Cb + 1 Cr per 16x16
+        Subsampling::S422 => (width + 15) / 16 * 2, // 2 rows of Cb/Cr
+        Subsampling::S440 => y_blocks_w, // 1 row of Cb/Cr
+        _ => y_blocks_w * 2,
+    };
+    // Double-buffered: 2 buffers × blocks_per_row × 256 bytes (f32)
+    let pending_y_f32 = 2 * y_blocks_per_imcu_row * 256;
+    let pending_cb_f32 = 2 * c_blocks_per_imcu_row * 256;
+    let pending_cr_f32 = 2 * c_blocks_per_imcu_row * 256;
 
-    // i16 blocks in finalize() - these replace f32 blocks
+    // Final i16 blocks (grows incrementally as blocks are quantized)
     let strip_y_blocks_i16 = y_block_count * 128;
     let strip_c_blocks_i16 = c_block_count * 2 * 128;
 
-    // AQ map
+    // AQ strengths (one per Y block)
     let strip_aq = y_block_count * 4;
 
-    // Peak is when both f32 blocks and i16 blocks exist during finalize transition
-    // Actually, finalize creates new i16 vecs while f32 still exists
+    // Peak memory: strip buffers + pending f32 (2 iMCU rows) + growing i16 storage
+    // The i16 storage grows as we process, but pending f32 stays constant
     let strip_peak = strip_y
         + strip_cb
         + strip_cr
         + strip_cb_down
         + strip_cr_down
-        + strip_y_blocks_f32
-        + strip_c_blocks_f32
+        + pending_y_f32
+        + pending_cb_f32
+        + pending_cr_f32
         + strip_y_blocks_i16
         + strip_c_blocks_i16
         + strip_aq;
@@ -134,7 +146,12 @@ fn measure_strip_allocs(
     let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
     processor.set_quant_tables(
-        y_quant, cb_quant, cr_quant, y_zero_bias, cb_zero_bias, cr_zero_bias,
+        y_quant,
+        cb_quant,
+        cr_quant,
+        y_zero_bias,
+        cb_zero_bias,
+        cr_zero_bias,
     )?;
 
     let strip_height = processor.strip_height();
@@ -190,14 +207,13 @@ fn main() {
         );
     }
 
-    println!("\n\nWhy Strip Encoder Uses MORE Memory:");
+    println!("\n\nWhy Strip Encoder Uses LESS Memory:");
     println!("====================================");
-    println!("1. Full-plane: stores f32 planes + i16 blocks (after quantization)");
-    println!("2. Strip: stores f32 blocks (pre-quant) + i16 blocks (post-quant)");
-    println!("   - f32 blocks: 256 bytes each (double i16's 128 bytes)");
-    println!("   - During finalize(), BOTH exist simultaneously");
+    println!("1. Incremental quantization: f32→i16 as AQ strengths become available");
+    println!("2. Double-buffered pending: only 2 iMCU rows of f32, not full image");
+    println!("3. Strip buffers: 16 rows, reused each iteration");
     println!("");
-    println!("Strip encoder's benefit is CACHE LOCALITY, not memory reduction.");
+    println!("Strip encoder provides BOTH cache locality AND memory savings.");
     println!("The 16-row strips fit in L2/L3 cache during color conversion + DCT.");
 
     // Show the breakdown for 4K
@@ -221,18 +237,32 @@ fn main() {
     );
 
     println!("\nStrip encoder:");
+    let y_blocks_w = (width + 7) / 8;
+    let y_blocks_per_imcu = y_blocks_w * 2;
+    let c_blocks_per_imcu = (width + 15) / 16;
     println!("  Strip buffers:      {}", format_bytes(width * 16 * 4 * 5)); // y, cb, cr, cb_down, cr_down
     println!(
-        "  Y blocks (f32):     {} (problem!)",
-        format_bytes(y_blocks * 256)
+        "  Pending Y (f32):    {} (2 iMCU rows, double-buffered)",
+        format_bytes(2 * y_blocks_per_imcu * 256)
     );
     println!(
-        "  Cb/Cr blocks (f32): {} (problem!)",
-        format_bytes(c_blocks * 2 * 256)
+        "  Pending Cb/Cr (f32):{} (2 iMCU rows, double-buffered)",
+        format_bytes(2 * c_blocks_per_imcu * 2 * 256)
     );
     println!(
-        "  + i16 blocks in finalize: {}",
+        "  Final i16 blocks:   {} (grows incrementally)",
         format_bytes(y_blocks * 128 + c_blocks * 256)
     );
     println!("  AQ map:             {}", format_bytes(y_blocks * 4));
+    println!(
+        "  TOTAL (peak):       {}",
+        format_bytes(
+            width * 16 * 4 * 5
+                + 2 * y_blocks_per_imcu * 256
+                + 2 * c_blocks_per_imcu * 2 * 256
+                + y_blocks * 128
+                + c_blocks * 256
+                + y_blocks * 4
+        )
+    );
 }
