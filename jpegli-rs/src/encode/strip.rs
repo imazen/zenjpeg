@@ -96,7 +96,6 @@ impl QuantContext {
     }
 }
 
-use super::natural_to_zigzag_into;
 
 use crate::simd_types::Block8x8f;
 use wide::f32x8;
@@ -995,16 +994,12 @@ impl StripProcessor {
                 0.08 // C++ mean fallback
             };
 
-            // SIMD quantization - Block8x8f-native, zero conversion overhead
-            let quant_coeffs = quant.y_quant_simd.quantize_with_zero_bias(
+            // Fused quantization + zigzag reorder (single pass, no intermediate array)
+            let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
                 dct,
                 &quant.y_zero_bias_simd,
                 aq_strength,
             );
-
-            // Convert to zigzag order
-            let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-            natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
 
             self.y_blocks.push(zigzag);
             self.all_aq_strengths.push(aq_strength);
@@ -1037,13 +1032,11 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let quant_coeffs = quant.cb_quant_simd.quantize_with_zero_bias(
+                let zigzag = quant.cb_quant_simd.quantize_with_zero_bias_zigzag(
                     dct,
                     &quant.cb_zero_bias_simd,
                     aq_strength,
                 );
-                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 self.cb_blocks.push(zigzag);
             }
 
@@ -1064,13 +1057,11 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let quant_coeffs = quant.cr_quant_simd.quantize_with_zero_bias(
+                let zigzag = quant.cr_quant_simd.quantize_with_zero_bias_zigzag(
                     dct,
                     &quant.cr_zero_bias_simd,
                     aq_strength,
                 );
-                let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-                natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 self.cr_blocks.push(zigzag);
             }
         }

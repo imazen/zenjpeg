@@ -267,6 +267,65 @@ impl QuantTableSimd {
     ///
     /// # Returns
     /// Quantized coefficients ready for entropy coding
+    /// Quantize a block with zero-bias, outputting directly in zigzag order.
+    ///
+    /// This fuses quantization and zigzag reordering into a single pass,
+    /// eliminating the separate natural_to_zigzag_into call.
+    #[inline]
+    pub fn quantize_with_zero_bias_zigzag(
+        &self,
+        block: &Block8x8f,
+        zero_bias: &ZeroBiasSimd,
+        aq_strength: f32,
+    ) -> [i16; 64] {
+        use crate::consts::JPEG_ZIGZAG_ORDER;
+
+        let mut result = [0i16; 64];
+        let aq = f32x8::splat(aq_strength);
+        let zero_i32 = i32x8::ZERO;
+
+        // Process each row and scatter to zigzag positions
+        // Using unsafe get_unchecked since all indices are compile-time bounded 0-63
+        for row in 0..8 {
+            let qval = block.rows[row] * self.mul_rows[row];
+            let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
+            let abs_qval = qval.abs();
+            let mask_f32 = abs_qval.simd_ge(threshold);
+            let mask_i32: i32x8 = bytemuck::cast(mask_f32);
+            let rounded = qval.fast_round_int();
+            let blended = mask_i32.blend(rounded, zero_i32);
+
+            let arr = blended.as_array();
+            let k = row * 8;
+
+            #[cfg(feature = "unsafe_simd")]
+            // SAFETY: JPEG_ZIGZAG_ORDER contains values 0-63, result is [i16; 64]
+            unsafe {
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k] as usize) = arr[0] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 1] as usize) = arr[1] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 2] as usize) = arr[2] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 3] as usize) = arr[3] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 4] as usize) = arr[4] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 5] as usize) = arr[5] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 6] as usize) = arr[6] as i16;
+                *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 7] as usize) = arr[7] as i16;
+            }
+            #[cfg(not(feature = "unsafe_simd"))]
+            {
+                result[JPEG_ZIGZAG_ORDER[k] as usize] = arr[0] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 1] as usize] = arr[1] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 2] as usize] = arr[2] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 3] as usize] = arr[3] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 4] as usize] = arr[4] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 5] as usize] = arr[5] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 6] as usize] = arr[6] as i16;
+                result[JPEG_ZIGZAG_ORDER[k + 7] as usize] = arr[7] as i16;
+            }
+        }
+
+        result
+    }
+
     #[inline]
     pub fn quantize_with_zero_bias(
         &self,
@@ -279,34 +338,40 @@ impl QuantTableSimd {
         let zero_i32 = i32x8::ZERO;
 
         for row in 0..8 {
-            // qval = coeffs / quant (using pre-computed 1/quant)
             let qval = block.rows[row] * self.mul_rows[row];
-
-            // threshold = offset + mul * aq_strength
             let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
-
-            // SIMD comparison: |qval| >= threshold
             let abs_qval = qval.abs();
             let mask_f32 = abs_qval.simd_ge(threshold);
-
-            // Cast mask to i32 for blending with rounded integers
             let mask_i32: i32x8 = bytemuck::cast(mask_f32);
-
-            // Round and blend: keep rounded value where |qval| >= threshold, else 0
             let rounded = qval.fast_round_int();
             let blended = mask_i32.blend(rounded, zero_i32);
 
-            // Write to result (still scalar i32→i16, but no branch)
             let arr = blended.as_array();
             let k = row * 8;
-            result[k] = arr[0] as i16;
-            result[k + 1] = arr[1] as i16;
-            result[k + 2] = arr[2] as i16;
-            result[k + 3] = arr[3] as i16;
-            result[k + 4] = arr[4] as i16;
-            result[k + 5] = arr[5] as i16;
-            result[k + 6] = arr[6] as i16;
-            result[k + 7] = arr[7] as i16;
+
+            #[cfg(feature = "unsafe_simd")]
+            // SAFETY: k ranges 0-56, k+7 max is 63, result is [i16; 64]
+            unsafe {
+                *result.get_unchecked_mut(k) = arr[0] as i16;
+                *result.get_unchecked_mut(k + 1) = arr[1] as i16;
+                *result.get_unchecked_mut(k + 2) = arr[2] as i16;
+                *result.get_unchecked_mut(k + 3) = arr[3] as i16;
+                *result.get_unchecked_mut(k + 4) = arr[4] as i16;
+                *result.get_unchecked_mut(k + 5) = arr[5] as i16;
+                *result.get_unchecked_mut(k + 6) = arr[6] as i16;
+                *result.get_unchecked_mut(k + 7) = arr[7] as i16;
+            }
+            #[cfg(not(feature = "unsafe_simd"))]
+            {
+                result[k] = arr[0] as i16;
+                result[k + 1] = arr[1] as i16;
+                result[k + 2] = arr[2] as i16;
+                result[k + 3] = arr[3] as i16;
+                result[k + 4] = arr[4] as i16;
+                result[k + 5] = arr[5] as i16;
+                result[k + 6] = arr[6] as i16;
+                result[k + 7] = arr[7] as i16;
+            }
         }
 
         result
