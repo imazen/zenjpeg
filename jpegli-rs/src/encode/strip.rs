@@ -40,7 +40,7 @@ use crate::alloc::{
     AllocationStats,
 };
 use crate::consts::DCT_BLOCK_SIZE;
-use crate::dct::forward_dct_8x8;
+// forward_dct_8x8 replaced by forward_dct_8x8_wide for wide-native pipeline
 use crate::error::Result;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
@@ -99,6 +99,9 @@ impl QuantContext {
 
 use super::natural_to_zigzag_into;
 
+use crate::simd_types::Block8x8f;
+use wide::f32x8;
+
 /// Extracts an 8×8 block from a strip buffer with level shift (free function to avoid borrow issues).
 ///
 /// Applies JPEG level shift (-128) to convert from [0, 255] to [-128, 127] range
@@ -133,6 +136,32 @@ fn extract_block_from_strip(
     }
 
     block
+}
+
+/// Wide-native block extraction: returns Block8x8f directly.
+///
+/// Assumes strip is properly padded (MCU-aligned) so no bounds checking needed.
+/// This is the fast path for the hot encoding loop.
+#[inline]
+fn extract_block_from_strip_wide(
+    strip: &[f32],
+    bx: usize,
+    local_by: usize,
+    strip_width: usize,
+) -> Block8x8f {
+    let level_shift = f32x8::splat(128.0);
+    let x_start = bx * 8;
+    let y_start = local_by * 8;
+
+    let mut rows = [f32x8::ZERO; 8];
+    for dy in 0..8 {
+        let row_start = (y_start + dy) * strip_width + x_start;
+        // Zero-cost load from contiguous padded strip
+        let row_slice: [f32; 8] = strip[row_start..row_start + 8].try_into().unwrap();
+        rows[dy] = f32x8::from(row_slice) - level_shift;
+    }
+
+    Block8x8f { rows }
 }
 
 // StreamingAQ uses rolling buffers for low memory (~2.5 MB for 4K vs 33 MB).
@@ -180,12 +209,13 @@ pub struct StripProcessor {
     /// Cr channel quantized blocks
     cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
 
-    // === Pending iMCU DCT blocks (f32, double-buffered) ===
+    // === Pending iMCU DCT blocks (wide-native, double-buffered) ===
     // These hold raw DCT coefficients until AQ strengths are available
     // Double-buffered: [current] and [previous pending quantization]
-    pending_y_blocks: [Vec<[f32; DCT_BLOCK_SIZE]>; 2],
-    pending_cb_blocks: [Vec<[f32; DCT_BLOCK_SIZE]>; 2],
-    pending_cr_blocks: [Vec<[f32; DCT_BLOCK_SIZE]>; 2],
+    // Using Block8x8f for zero-overhead SIMD operations
+    pending_y_blocks: [Vec<Block8x8f>; 2],
+    pending_cb_blocks: [Vec<Block8x8f>; 2],
+    pending_cr_blocks: [Vec<Block8x8f>; 2],
     /// Index of current pending buffer (0 or 1)
     pending_current: usize,
 
@@ -923,12 +953,14 @@ impl StripProcessor {
             }
 
             for bx in 0..blocks_w {
-                // Extract 8×8 block from Y strip (padded layout)
-                let block =
-                    extract_block_from_strip(&self.y_strip[..y_size], bx, local_by, padded_width);
-
-                // DCT - store raw coefficients in pending buffer
-                let dct = forward_dct_8x8(&block);
+                // Extract 8×8 block from Y strip and DCT (wide-native path)
+                let block = extract_block_from_strip_wide(
+                    &self.y_strip[..y_size],
+                    bx,
+                    local_by,
+                    padded_width,
+                );
+                let dct = crate::dct::simd::forward_dct_8x8_wide(&block);
                 self.pending_y_blocks[pending_idx].push(dct);
 
                 blocks_added += 1;
@@ -955,24 +987,24 @@ impl StripProcessor {
 
             for local_by in 0..c_strip_blocks_h {
                 for bx in 0..c_blocks_w {
-                    // Cb block - DCT only (padded layout)
-                    let cb_block = extract_block_from_strip(
+                    // Cb block - DCT only (wide-native path)
+                    let cb_block = extract_block_from_strip_wide(
                         &self.cb_down[..c_size],
                         bx,
                         local_by,
                         padded_c_width,
                     );
-                    let cb_dct = forward_dct_8x8(&cb_block);
+                    let cb_dct = crate::dct::simd::forward_dct_8x8_wide(&cb_block);
                     self.pending_cb_blocks[pending_idx].push(cb_dct);
 
-                    // Cr block - DCT only (padded layout)
-                    let cr_block = extract_block_from_strip(
+                    // Cr block - DCT only (wide-native path)
+                    let cr_block = extract_block_from_strip_wide(
                         &self.cr_down[..c_size],
                         bx,
                         local_by,
                         padded_c_width,
                     );
-                    let cr_dct = forward_dct_8x8(&cr_block);
+                    let cr_dct = crate::dct::simd::forward_dct_8x8_wide(&cr_block);
                     self.pending_cr_blocks[pending_idx].push(cr_dct);
                 }
             }
@@ -1001,8 +1033,10 @@ impl StripProcessor {
             };
 
             // SIMD quantization for parity with full-plane encoder
+            // Convert Block8x8f to array for quantization (TODO: add Block8x8f-native quantize)
+            let dct_arr = dct.to_array();
             let quant_coeffs = quant.y_quant_simd.quantize_array_with_zero_bias(
-                dct,
+                &dct_arr,
                 &quant.y_zero_bias_simd,
                 aq_strength,
             );
@@ -1042,8 +1076,9 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
+                let dct_arr = dct.to_array();
                 let quant_coeffs = quant.cb_quant_simd.quantize_array_with_zero_bias(
-                    dct,
+                    &dct_arr,
                     &quant.cb_zero_bias_simd,
                     aq_strength,
                 );
@@ -1069,8 +1104,9 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
+                let dct_arr = dct.to_array();
                 let quant_coeffs = quant.cr_quant_simd.quantize_array_with_zero_bias(
-                    dct,
+                    &dct_arr,
                     &quant.cr_zero_bias_simd,
                     aq_strength,
                 );
