@@ -27,6 +27,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "almost-enough"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f9316adbe71484a0f65bf10667e913c6c358924359e74dda31ff67a51d84dca"
+dependencies = [
+ "enough",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -433,6 +442,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "enough"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7458bc83b94a574edee34eeb90e34164d2f74277562dbcca2e7e354e00c7b2a"
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -707,6 +722,7 @@ name = "jpegli-rs"
 version = "0.3.0"
 dependencies = [
  "aligned-vec",
+ "almost-enough",
  "approx",
  "bincode",
  "butteraugli",
@@ -714,6 +730,7 @@ dependencies = [
  "chrono",
  "criterion",
  "dssim",
+ "enough",
  "fast-ssim2",
  "imgref",
  "jpegli-bench-utils",

@@ -524,3 +524,67 @@ fn test_sharp_yuv_convenience_method() {
 
     assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
 }
+
+// ============================================================================
+// Cancellation tests
+// ============================================================================
+
+#[test]
+fn test_encode_with_stop_never() {
+    // Test that encoding with Never (no cancellation) works normally
+    let width = 32u32;
+    let height = 32u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let encoder = Encoder::new()
+        .width(width)
+        .height(height)
+        .pixel_format(PixelFormat::Rgb);
+
+    // Using Never should be equivalent to encode()
+    let result = encoder.encode_with_stop(&data, enough::Never);
+    assert!(result.is_ok());
+    let jpeg = result.unwrap();
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+}
+
+#[test]
+fn test_encode_with_stop_cancelled() {
+    // Test that encoding with a pre-cancelled stopper returns Cancelled error
+    let width = 64u32;
+    let height = 64u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let encoder = Encoder::new()
+        .width(width)
+        .height(height)
+        .pixel_format(PixelFormat::Rgb);
+
+    // Create a stopper and cancel it immediately
+    let stopper = almost_enough::Stopper::new();
+    stopper.cancel();
+
+    let result = encoder.encode_with_stop(&data, &stopper);
+    assert!(matches!(result, Err(crate::Error::Cancelled)));
+}
+
+#[test]
+fn test_encode_strip_based_with_stop_cancelled() {
+    // Test that strip-based encoding also respects cancellation
+    let width = 64u32;
+    let height = 64u32;
+    let data: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
+
+    let encoder = Encoder::new()
+        .width(width)
+        .height(height)
+        .pixel_format(PixelFormat::Rgb)
+        .encoding_backend(EncodingBackend::Strip);
+
+    // Create a stopper and cancel it immediately
+    let stopper = almost_enough::Stopper::new();
+    stopper.cancel();
+
+    let result = encoder.encode_with_stop(&data, &stopper);
+    assert!(matches!(result, Err(crate::Error::Cancelled)));
+}
