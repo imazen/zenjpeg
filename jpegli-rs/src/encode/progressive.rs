@@ -885,9 +885,27 @@ impl Encoder {
             data.len() / 4,
             "progressive ycbcr output",
         )?;
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let mcu_size = self.config.subsampling.mcu_size();
 
         // Convert to YCbCr using f32 precision
         let (y_plane, cb_plane, cr_plane) = self.convert_to_ycbcr_f32(data)?;
+
+        // Pad planes to MCU-aligned dimensions for consistent edge handling.
+        // For 4:4:4, all planes have the same dimensions.
+        let ((y_padded, cb_padded, cr_padded), padded_w, padded_h, _, _) =
+            super::pad_ycbcr_planes_subsampled(
+                &y_plane,
+                width,
+                height,
+                &cb_plane,
+                &cr_plane,
+                width,
+                height,
+                mcu_size,
+                self.config.edge_padding,
+            );
 
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Progressive mode uses 4:4:4, so is_420 = false
@@ -895,9 +913,12 @@ impl Encoder {
         let cb_quant = self.gen_quant_table(1, false, false);
         let cr_quant = self.gen_quant_table(2, false, false);
 
-        // Quantize all blocks to get full-precision coefficients
-        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks(
-            &y_plane, &cb_plane, &cr_plane, &y_quant, &cb_quant, &cr_quant,
+        // Quantize all blocks to get full-precision coefficients (using padded planes)
+        // For 4:4:4, all planes have the same padded dimensions
+        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
+            &y_padded, padded_w, padded_h,
+            &cb_padded, &cr_padded, padded_w, padded_h,
+            &y_quant, &cb_quant, &cr_quant,
         )?;
         let is_color = self.config.pixel_format != PixelFormat::Gray;
 
@@ -952,6 +973,7 @@ impl Encoder {
         )?;
         let width = self.config.width as usize;
         let height = self.config.height as usize;
+        let mcu_size = self.config.subsampling.mcu_size();
 
         // Get YCbCr planes with appropriate chroma handling based on downsampling method
         let (y_plane, cb_plane_final, cr_plane_final, c_width, c_height) =
@@ -970,6 +992,21 @@ impl Encoder {
                 ChromaDownsampling::Box => self.convert_intrinsic_with_subsampling(data)?,
             };
 
+        // Pad planes to MCU-aligned dimensions for consistent edge handling.
+        // This matches C++ jpegli's RowBuffer padding strategy.
+        let ((y_padded, cb_padded, cr_padded), padded_w, padded_h, padded_cw, padded_ch) =
+            super::pad_ycbcr_planes_subsampled(
+                &y_plane,
+                width,
+                height,
+                &cb_plane_final,
+                &cr_plane_final,
+                c_width,
+                c_height,
+                mcu_size,
+                self.config.edge_padding,
+            );
+
         // Generate quantization tables (3 separate tables like C++ cjpegli)
         // Apply 4:2:0 quality compensation if using 4:2:0 subsampling
         let is_420 = self.config.subsampling == Subsampling::S420;
@@ -977,15 +1014,15 @@ impl Encoder {
         let cb_quant = self.gen_quant_table(1, false, is_420);
         let cr_quant = self.gen_quant_table(2, false, is_420);
 
-        // Quantize all blocks with proper subsampling support
+        // Quantize all blocks using padded planes and dimensions
         let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
-            &y_plane,
-            width,
-            height,
-            &cb_plane_final,
-            &cr_plane_final,
-            c_width,
-            c_height,
+            &y_padded,
+            padded_w,
+            padded_h,
+            &cb_padded,
+            &cr_padded,
+            padded_cw,
+            padded_ch,
             &y_quant,
             &cb_quant,
             &cr_quant,
