@@ -7,7 +7,7 @@
 //! - Chroma downsampling (2x2, 2x1, 1x2)
 //! - Gamma-aware chroma downsampling (internal implementation)
 
-use super::Encoder;
+use super::super::Encoder;
 use crate::alloc::{
     checked_size_2d, try_alloc_filled, try_bgr_to_rgb, try_bgra_to_rgb, try_clone_slice,
     try_gray_to_rgb, try_rgba_to_rgb, try_with_capacity,
@@ -21,7 +21,7 @@ impl Encoder {
     ///
     /// Performs the full conversion: sRGB u8 → linear RGB → XYB → scaled XYB
     /// Output values are in [0, 1] range, ready to be scaled to [0, 255] for JPEG.
-    pub(super) fn convert_to_scaled_xyb(
+    pub(crate) fn convert_to_scaled_xyb(
         &self,
         data: &[u8],
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
@@ -63,7 +63,7 @@ impl Encoder {
     }
 
     /// Downsamples a float plane by 2x2 (box filter averaging).
-    pub(super) fn downsample_2x2_f32(
+    pub(crate) fn downsample_2x2_f32(
         &self,
         plane: &[f32],
         width: usize,
@@ -74,7 +74,7 @@ impl Encoder {
     }
 
     /// Downsamples a float plane by 2x1 (horizontal only, box filter averaging).
-    pub(super) fn downsample_2x1_f32(
+    pub(crate) fn downsample_2x1_f32(
         &self,
         plane: &[f32],
         width: usize,
@@ -84,7 +84,7 @@ impl Encoder {
     }
 
     /// Downsamples a float plane by 1x2 (vertical only, box filter averaging).
-    pub(super) fn downsample_1x2_f32(
+    pub(crate) fn downsample_1x2_f32(
         &self,
         plane: &[f32],
         width: usize,
@@ -99,7 +99,7 @@ impl Encoder {
     /// If `use_sharp` is false, uses simple gamma-aware averaging (better than box filter).
     ///
     /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
-    pub(super) fn convert_gamma_aware_420(
+    pub(crate) fn convert_gamma_aware_420(
         &self,
         data: &[u8],
         use_sharp: bool,
@@ -198,7 +198,7 @@ impl Encoder {
     ///
     /// If `use_sharp` is true, uses iterative gamma-aware algorithm (Sharp YUV-like).
     /// If `use_sharp` is false, uses simple gamma-aware averaging.
-    pub(super) fn convert_gamma_aware_422(
+    pub(crate) fn convert_gamma_aware_422(
         &self,
         data: &[u8],
         use_sharp: bool,
@@ -262,7 +262,7 @@ impl Encoder {
     ///
     /// If `use_sharp` is true, uses iterative gamma-aware algorithm (Sharp YUV-like).
     /// If `use_sharp` is false, uses simple gamma-aware averaging.
-    pub(super) fn convert_gamma_aware_440(
+    pub(crate) fn convert_gamma_aware_440(
         &self,
         data: &[u8],
         use_sharp: bool,
@@ -326,7 +326,7 @@ impl Encoder {
     ///
     /// This is the default path that matches C++ jpegli behavior.
     /// Returns: (y_plane, cb_plane, cr_plane, chroma_width, chroma_height)
-    pub(super) fn convert_intrinsic_with_subsampling(
+    pub(crate) fn convert_intrinsic_with_subsampling(
         &self,
         data: &[u8],
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize, usize)> {
@@ -371,7 +371,7 @@ impl Encoder {
 
     /// Converts input data to YCbCr planes (u8 version - legacy).
     #[allow(dead_code)]
-    pub(super) fn convert_to_ycbcr(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    pub(crate) fn convert_to_ycbcr(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
         let num_pixels = checked_size_2d(width, height)?;
@@ -406,7 +406,7 @@ impl Encoder {
     /// Converts input data to YCbCr planes using full f32 precision.
     /// This matches C++ jpegli which uses float throughout the pipeline.
     /// Output values are in [0, 255] range (not level-shifted).
-    pub(super) fn convert_to_ycbcr_f32(
+    pub(crate) fn convert_to_ycbcr_f32(
         &self,
         data: &[u8],
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {

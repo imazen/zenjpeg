@@ -1,15 +1,52 @@
 //! JPEG encoder implementation.
 //!
-//! This module provides the main encoder interface for creating JPEG images.
+//! This module provides JPEG encoding capabilities with two APIs:
+//!
+//! ## Recommended: StreamingEncoder (new)
+//!
+//! The streaming encoder accepts rows incrementally, reducing peak memory
+//! and providing better performance:
+//!
+//! ```rust,ignore
+//! use jpegli::{StreamingEncoder, Quality, Subsampling};
+//!
+//! // Simple all-at-once encoding
+//! let jpeg = StreamingEncoder::new(640, 480)
+//!     .quality(Quality::from_quality(85.0))
+//!     .subsampling(Subsampling::S420)
+//!     .encode_all(&pixels)?;
+//!
+//! // Or stream rows for large images
+//! let mut enc = StreamingEncoder::new(640, 480)
+//!     .quality(Quality::from_quality(85.0))
+//!     .build()?;
+//! for row in image_rows {
+//!     enc.push_row(row)?;
+//! }
+//! let jpeg = enc.finish()?;
+//! ```
+//!
+//! ## Legacy: Encoder (deprecated)
+//!
+//! The original encoder API is still available but deprecated. It requires
+//! the full image in memory and has higher peak memory usage.
+//!
+//! ```rust,ignore
+//! use jpegli::Encoder;
+//!
+//! #[allow(deprecated)]
+//! let jpeg = Encoder::new()
+//!     .width(640)
+//!     .height(480)
+//!     .encode(&pixels)?;
+//! ```
 
-mod baseline;
-mod blocks;
-mod color;
+// Legacy encoder implementation (deprecated, kept for backwards compatibility)
+mod old;
+
 pub mod config;
 #[cfg(feature = "experimental-hybrid-trellis")]
 mod hybrid;
-mod output;
-mod progressive;
 pub mod streaming;
 pub mod strip;
 
@@ -21,19 +58,9 @@ use crate::alloc::{
     checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, try_with_capacity, validate_dimensions,
     DEFAULT_MAX_PIXELS,
 };
-#[cfg(test)]
-use crate::consts::MARKER_SOI;
-use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
-use crate::dct::forward_dct_8x8;
-use crate::entropy::{self, EntropyEncoder};
+use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI};
 use crate::error::{Error, Result};
-use crate::huffman::optimize::{
-    ContextConfig, FrequencyCounter, OptimizedHuffmanTables, OptimizedTable, ProgressiveTokenBuffer,
-};
-use crate::huffman::HuffmanEncodeTable;
-use crate::quant::aq::compute_aq_strength_map;
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
-use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::types::{
     ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, EncodingBackend, JpegMode,
     PixelFormat, Subsampling,
@@ -41,6 +68,29 @@ use crate::types::{
 use enough::{Never, Stop};
 
 /// JPEG encoder.
+///
+/// **Deprecated:** Use [`StreamingEncoder`] instead, which provides better
+/// performance and lower memory usage. The streaming API is now the
+/// recommended way to encode JPEG images.
+///
+/// # Migration
+///
+/// ```rust,ignore
+/// // Old API (deprecated):
+/// #[allow(deprecated)]
+/// let jpeg = Encoder::new()
+///     .width(640)
+///     .height(480)
+///     .encode(&pixels)?;
+///
+/// // New API (recommended):
+/// let jpeg = StreamingEncoder::new(640, 480)
+///     .encode_all(&pixels)?;
+/// ```
+#[deprecated(
+    since = "0.4.0",
+    note = "Use StreamingEncoder instead, which provides better performance and lower memory usage"
+)]
 pub struct Encoder {
     /// Encoder configuration (accessible within crate for streaming encoder).
     pub(crate) config: EncoderConfig,
@@ -772,7 +822,11 @@ pub(crate) fn pad_plane_f32(
 
     // No padding needed
     if padded_w == width && padded_h == height {
-        return Ok((try_clone_slice(plane, "pad_plane_f32 clone")?, width, height));
+        return Ok((
+            try_clone_slice(plane, "pad_plane_f32 clone")?,
+            width,
+            height,
+        ));
     }
 
     let mut out = try_alloc_zeroed_f32(padded_w * padded_h, "pad_plane_f32 output")?;
@@ -838,6 +892,4 @@ pub(crate) fn pad_gray_plane(
     pad_plane_f32(y, width, height, mcu_size, config.luma)
 }
 
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;
+// Tests are in the old module (old/tests.rs)

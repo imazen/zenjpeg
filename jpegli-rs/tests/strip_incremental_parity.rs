@@ -390,7 +390,7 @@ fn test_strip_vs_fullplane_bitexact_grayscale() {
 fn test_strip_vs_fullplane_grayscale_edge_sizes() {
     // Test non-MCU-aligned grayscale images
     let test_cases = [
-        (67, 71, "67x71"),    // Non-8-aligned
+        (67, 71, "67x71"),     // Non-8-aligned
         (100, 100, "100x100"), // Non-8-aligned
         (127, 129, "127x129"), // Non-8-aligned
     ];

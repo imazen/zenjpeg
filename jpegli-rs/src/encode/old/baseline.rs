@@ -3,17 +3,24 @@
 //! This module contains the baseline (non-progressive) encoding functions
 //! for both YCbCr and XYB color modes.
 
-use super::*;
+use super::super::{pad_ycbcr_planes_subsampled, Encoder};
+use crate::consts::{MARKER_EOI, XYB_ICC_PROFILE};
+#[cfg(feature = "experimental-hybrid-trellis")]
+use crate::encode::hybrid;
+use crate::error::Result;
+use crate::quant::aq::compute_aq_strength_map;
+use crate::quant::{self, ZeroBiasParams};
+use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 use enough::Stop;
 
 impl Encoder {
     /// Encodes as baseline JPEG.
-    pub(super) fn encode_baseline(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn encode_baseline(&self, data: &[u8]) -> Result<Vec<u8>> {
         self.encode_baseline_with_stop(data, &enough::Never)
     }
 
     /// Encodes as baseline JPEG with cancellation support.
-    pub(super) fn encode_baseline_with_stop(
+    pub(crate) fn encode_baseline_with_stop(
         &self,
         data: &[u8],
         stop: &impl Stop,
@@ -186,7 +193,7 @@ impl Encoder {
     }
 
     /// Encodes YCbCr planes to JPEG (shared by standard and Sharp YUV paths).
-    pub(super) fn encode_baseline_ycbcr_with_planes(
+    pub(crate) fn encode_baseline_ycbcr_with_planes(
         &self,
         output: &mut Vec<u8>,
         y_plane: Vec<f32>,
@@ -203,7 +210,7 @@ impl Encoder {
         // Pad planes to MCU-aligned dimensions for consistent edge handling.
         // This matches C++ jpegli's RowBuffer padding strategy.
         let ((y_padded, cb_padded, cr_padded), padded_w, padded_h, padded_cw, padded_ch) =
-            super::pad_ycbcr_planes_subsampled(
+            pad_ycbcr_planes_subsampled(
                 &y_plane,
                 width,
                 height,

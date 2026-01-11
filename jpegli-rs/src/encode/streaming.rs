@@ -416,24 +416,13 @@ impl StreamingEncoder {
             false, // not XYB
             is_420,
         );
-        let cb_quant = quant::generate_quant_table(
-            builder.quality,
-            1,
-            ColorSpace::YCbCr,
-            false,
-            is_420,
-        );
-        let cr_quant = quant::generate_quant_table(
-            builder.quality,
-            2,
-            ColorSpace::YCbCr,
-            false,
-            is_420,
-        );
+        let cb_quant =
+            quant::generate_quant_table(builder.quality, 1, ColorSpace::YCbCr, false, is_420);
+        let cr_quant =
+            quant::generate_quant_table(builder.quality, 2, ColorSpace::YCbCr, false, is_420);
 
         // Compute zero bias params
-        let effective_distance =
-            quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
+        let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
         let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
         let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
@@ -540,10 +529,7 @@ impl StreamingEncoder {
         // Check if we've already received all rows
         if self.current_y + self.rows_buffered >= self.height {
             return Err(Error::IoError {
-                reason: format!(
-                    "already received all {} rows",
-                    self.height
-                ),
+                reason: format!("already received all {} rows", self.height),
             });
         }
 
@@ -638,11 +624,7 @@ impl StreamingEncoder {
         // Validate all rows were pushed before trying to process
         if total_rows < self.height {
             return Err(Error::IoError {
-                reason: format!(
-                    "only {} of {} rows were pushed",
-                    total_rows,
-                    self.height
-                ),
+                reason: format!("only {} of {} rows were pushed", total_rows, self.height),
             });
         }
 
@@ -897,9 +879,6 @@ mod tests {
             streaming_result.len(),
             "output lengths differ"
         );
-        assert_eq!(
-            standard_result, streaming_result,
-            "outputs differ"
-        );
+        assert_eq!(standard_result, streaming_result, "outputs differ");
     }
 }

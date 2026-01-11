@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-11
+
 ### Added
 
+- **StreamingEncoder API**: New recommended encoder with row-by-row input
+  - `StreamingEncoder::new(width, height).build()` - Builder pattern for configuration
+  - `push_row()` / `push_rows()` - Incremental row input
+  - `push_row_with_stop()` / `push_rows_with_stop()` - With cancellation support
+  - `encode_all()` - Convenience method for single-call encoding
+  - `estimate_memory_usage()` - Predict peak memory before encoding
+  - ~50% lower peak memory vs legacy Encoder
+  - 16-20% faster than legacy Encoder at 1080p+ resolutions
+  - Full progressive mode support
 - Multi-decoder compatibility test: validates jpegli-rs output works with jpeg-decoder, zune-jpeg, and mozjpeg
 - Butteraugli-based quality thresholds in decoder compatibility tests
 - **Quality conversion API**: `QualityConversion` and `QualityComparisonMetric` for matching other encoders
@@ -24,10 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated butteraugli to 0.3.1 with `unsafe-perf` feature for 1.5x faster quality metrics
 - Updated zune-jpeg to 0.5 (API changes for ZCursor wrapper)
 - Updated mozjpeg-rs to 0.2.5
+- Updated `enough` crate to 0.2.0 (Stopper moved to `almost-enough` crate)
+- All encoder allocations are now fallible (returns `Error::AllocationFailed` instead of panicking)
+- Eliminated HuffmanEncodeTable/HuffmanDecodeTable clones in hot paths
 
 ### Deprecated
 
+- **`Encoder` struct** - Use `StreamingEncoder` instead for better performance and lower memory usage
 - `Encoder::quality()` - Use `jpegli_quality()` or `equivalent_quality()` instead
+
+### Fixed
+
+- Strip encoder edge padding for grayscale parity with full-plane encoder
+- Progressive non-interleaved block count for non-MCU-aligned images
+- Handle UnexpectedEof in progressive DC scans
 
 ### Notes
 
@@ -94,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SIMD acceleration via `wide` crate
 - Butteraugli quality metric integration
 
+[0.4.0]: https://github.com/imazen/jpegli-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/imazen/jpegli-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/imazen/jpegli-rs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/imazen/jpegli-rs/releases/tag/v0.1.0

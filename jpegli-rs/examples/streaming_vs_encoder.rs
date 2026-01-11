@@ -170,12 +170,12 @@ fn main() {
 
     // Test various sizes
     let configs = [
-        (640, 480, Subsampling::S420, 50),    // VGA
-        (1920, 1080, Subsampling::S420, 20),  // 1080p
-        (1920, 1080, Subsampling::S444, 20),  // 1080p 4:4:4
-        (3840, 2160, Subsampling::S420, 5),   // 4K
-        (256, 256, Subsampling::S420, 100),   // Small
-        (123, 87, Subsampling::S420, 100),    // Non-aligned
+        (640, 480, Subsampling::S420, 50),   // VGA
+        (1920, 1080, Subsampling::S420, 20), // 1080p
+        (1920, 1080, Subsampling::S444, 20), // 1080p 4:4:4
+        (3840, 2160, Subsampling::S420, 5),  // 4K
+        (256, 256, Subsampling::S420, 100),  // Small
+        (123, 87, Subsampling::S420, 100),   // Non-aligned
     ];
 
     for (width, height, subsampling, iterations) in configs {

@@ -25,7 +25,10 @@ fn find_corpus_path() -> Option<PathBuf> {
     // Check relative paths and well-known locations
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
-        format!("{}/work/codec-eval/codec-corpus/CID22/CID22-512/training", home),
+        format!(
+            "{}/work/codec-eval/codec-corpus/CID22/CID22-512/training",
+            home
+        ),
         format!("{}/work/codec-eval/codec-corpus/kodak", home),
         "../corpus/CID22-512".to_string(),
         "../codec-corpus/CID22/CID22-512".to_string(),

@@ -24,16 +24,21 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 }
 
 fn compute_psnr(a: &[u8], b: &[u8]) -> f64 {
-    let mse: f64 = a.iter().zip(b.iter())
+    let mse: f64 = a
+        .iter()
+        .zip(b.iter())
         .map(|(&x, &y)| (x as f64 - y as f64).powi(2))
-        .sum::<f64>() / a.len() as f64;
-    if mse == 0.0 { return f64::INFINITY; }
+        .sum::<f64>()
+        / a.len() as f64;
+    if mse == 0.0 {
+        return f64::INFINITY;
+    }
     10.0 * (255.0 * 255.0 / mse).log10()
 }
 
 fn create_gradient_image(width: usize, height: usize) -> Vec<u8> {
     let mut pixels = vec![0u8; width * height * 3];
-    
+
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 3;
@@ -55,21 +60,26 @@ fn main() {
     // 71 = 8*8 + 7 (7 partial rows)
     let width = 67;
     let height = 71;
-    
+
     println!("=== Edge Padding Parity Test (Synthetic Gradient) ===\n");
-    println!("Image: {}x{} (partial MCU: {} cols, {} rows)", 
-             width, height, width % 8, height % 8);
-    
+    println!(
+        "Image: {}x{} (partial MCU: {} cols, {} rows)",
+        width,
+        height,
+        width % 8,
+        height % 8
+    );
+
     let pixels = create_gradient_image(width, height);
-    
+
     // Save source
     save_png("/mnt/v/gradient_source.png", &pixels, width, height);
     println!("Saved source to /mnt/v/gradient_source.png");
-    
+
     // Test at different quality levels with baseline mode
     println!("\n{:>7} | {:>10} | {:>10}", "Quality", "Size", "PSNR");
     println!("{}", "-".repeat(35));
-    
+
     for quality in [50, 75, 90, 95] {
         let jpeg = Encoder::new()
             .width(width as u32)
@@ -81,12 +91,17 @@ fn main() {
             .optimize_huffman(true)
             .encode(&pixels)
             .expect("Encode failed");
-        
+
         let decoded = decode_jpeg(&jpeg);
         let psnr = compute_psnr(&pixels, &decoded);
-        
-        println!("{:>7} | {:>10} | {:>10.2}", format!("q{}", quality), jpeg.len(), psnr);
-        
+
+        println!(
+            "{:>7} | {:>10} | {:>10.2}",
+            format!("q{}", quality),
+            jpeg.len(),
+            psnr
+        );
+
         // Save q75 and q90
         if quality == 75 {
             fs::write("/mnt/v/gradient_q75.jpg", &jpeg).ok();
@@ -97,13 +112,13 @@ fn main() {
             save_png("/mnt/v/gradient_decoded_q90.png", &decoded, width, height);
         }
     }
-    
+
     // Also test with 4:2:0
     println!("\n=== 4:2:0 Subsampling (16x16 MCU) ===");
     println!("Partial MCU: {} cols, {} rows", width % 16, height % 16);
     println!("\n{:>7} | {:>10} | {:>10}", "Quality", "Size", "PSNR");
     println!("{}", "-".repeat(35));
-    
+
     for quality in [50, 75, 90, 95] {
         let jpeg = Encoder::new()
             .width(width as u32)
@@ -115,13 +130,18 @@ fn main() {
             .optimize_huffman(true)
             .encode(&pixels)
             .expect("Encode failed");
-        
+
         let decoded = decode_jpeg(&jpeg);
         let psnr = compute_psnr(&pixels, &decoded);
-        
-        println!("{:>7} | {:>10} | {:>10.2}", format!("q{}", quality), jpeg.len(), psnr);
+
+        println!(
+            "{:>7} | {:>10} | {:>10.2}",
+            format!("q{}", quality),
+            jpeg.len(),
+            psnr
+        );
     }
-    
+
     println!("\n=== Progressive Mode ===");
     for quality in [50, 75, 90, 95] {
         let jpeg = Encoder::new()
@@ -134,12 +154,17 @@ fn main() {
             .optimize_huffman(true)
             .encode(&pixels)
             .expect("Encode failed");
-        
+
         let decoded = decode_jpeg(&jpeg);
         let psnr = compute_psnr(&pixels, &decoded);
-        
-        println!("{:>7} | {:>10} | {:>10.2}", format!("q{}", quality), jpeg.len(), psnr);
+
+        println!(
+            "{:>7} | {:>10} | {:>10.2}",
+            format!("q{}", quality),
+            jpeg.len(),
+            psnr
+        );
     }
-    
+
     println!("\nImages saved to /mnt/v/");
 }
