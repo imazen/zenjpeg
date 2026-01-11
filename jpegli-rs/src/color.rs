@@ -30,14 +30,14 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let gf = g as f32;
     let bf = b as f32;
 
-    // Y = 0.299*R + 0.587*G + 0.114*B
-    let y = YCBCR_R_TO_Y * rf + YCBCR_G_TO_Y * gf + YCBCR_B_TO_Y * bf;
+    // Y = 0.299*R + 0.587*G + 0.114*B - use FMA for accuracy
+    let y = YCBCR_R_TO_Y.mul_add(rf, YCBCR_G_TO_Y.mul_add(gf, YCBCR_B_TO_Y * bf));
 
     // Cb = 128 - 0.168736*R - 0.331264*G + 0.5*B
-    let cb = 128.0 + YCBCR_R_TO_CB * rf + YCBCR_G_TO_CB * gf + YCBCR_B_TO_CB * bf;
+    let cb = YCBCR_R_TO_CB.mul_add(rf, YCBCR_G_TO_CB.mul_add(gf, YCBCR_B_TO_CB.mul_add(bf, 128.0)));
 
     // Cr = 128 + 0.5*R - 0.418688*G - 0.081312*B
-    let cr = 128.0 + YCBCR_R_TO_CR * rf + YCBCR_G_TO_CR * gf + YCBCR_B_TO_CR * bf;
+    let cr = YCBCR_R_TO_CR.mul_add(rf, YCBCR_G_TO_CR.mul_add(gf, YCBCR_B_TO_CR.mul_add(bf, 128.0)));
 
     (
         y.round().clamp(0.0, 255.0) as u8,
@@ -54,14 +54,14 @@ pub fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> (u8, u8, u8) {
     let cbf = cb as f32 - 128.0;
     let crf = cr as f32 - 128.0;
 
-    // R = Y + 1.402*Cr
-    let r = YCBCR_Y_TO_R * yf + YCBCR_CB_TO_R * cbf + YCBCR_CR_TO_R * crf;
+    // R = Y + 1.402*Cr - use FMA for accuracy
+    let r = YCBCR_Y_TO_R.mul_add(yf, YCBCR_CB_TO_R.mul_add(cbf, YCBCR_CR_TO_R * crf));
 
     // G = Y - 0.344136*Cb - 0.714136*Cr
-    let g = YCBCR_Y_TO_G * yf + YCBCR_CB_TO_G * cbf + YCBCR_CR_TO_G * crf;
+    let g = YCBCR_Y_TO_G.mul_add(yf, YCBCR_CB_TO_G.mul_add(cbf, YCBCR_CR_TO_G * crf));
 
     // B = Y + 1.772*Cb
-    let b = YCBCR_Y_TO_B * yf + YCBCR_CB_TO_B * cbf + YCBCR_CR_TO_B * crf;
+    let b = YCBCR_Y_TO_B.mul_add(yf, YCBCR_CB_TO_B.mul_add(cbf, YCBCR_CR_TO_B * crf));
 
     (
         r.round().clamp(0.0, 255.0) as u8,
@@ -76,9 +76,10 @@ pub fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> (u8, u8, u8) {
 #[inline]
 #[must_use]
 pub fn rgb_to_ycbcr_f32(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let y = YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
-    let cb = 128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
-    let cr = 128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+    // Use FMA for accuracy (single rounding)
+    let y = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+    let cb = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+    let cr = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     (y, cb, cr)
 }
 

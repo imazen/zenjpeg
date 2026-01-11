@@ -103,8 +103,8 @@ fn compute_y_plane_from_rgb(
             data[rgb_base + 7 * bpp + 2] as f32,
         ]);
 
-        // Y = R_TO_Y * R + G_TO_Y * G + B_TO_Y * B
-        let y = r_to_y * r + g_to_y * g + b_to_y * b;
+        // Y = R_TO_Y * R + G_TO_Y * G + B_TO_Y * B - use FMA for accuracy
+        let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
         let arr: [f32; 8] = y.into();
         y_plane[base..base + 8].copy_from_slice(&arr);
     }
