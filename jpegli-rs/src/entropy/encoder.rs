@@ -794,14 +794,6 @@ impl<'a> EntropyEncoder<'a> {
             // Write the Huffman code for the masked symbol
             let (code, len) = ac_table.encode(masked_symbol);
 
-            // Debug: check for missing symbols
-            if std::env::var("DEBUG_HUFFMAN_LOOKUP").is_ok() && len == 0 && masked_symbol != 0x00 {
-                eprintln!(
-                    "WARNING: Symbol 0x{:02X} (masked from 0x{:02X}) has len=0 in table {}",
-                    masked_symbol, ref_token.symbol, table_idx
-                );
-            }
-
             // Check if this is an EOB symbol (low nibble = 0, not ZRL)
             let is_eob = (masked_symbol & 0x0F) == 0 && masked_symbol != 0xF0;
 

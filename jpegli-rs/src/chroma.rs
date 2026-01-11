@@ -482,6 +482,161 @@ pub fn gamma_aware_strip_440(
 }
 
 // ============================================================================
+// Box Fused Functions (Fast Path)
+// ============================================================================
+
+/// Fused Y + downsampled CbCr computation using simple box averaging.
+///
+/// This is the fast path that:
+/// - Computes Y at full resolution (SIMD)
+/// - Computes Cb/Cr directly at half resolution using simple 2x2 box averaging
+/// - Avoids intermediate full-resolution Cb/Cr buffers
+/// - No gamma correction (same as C++ jpegli default)
+#[inline]
+pub fn box_fused_strip_420(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+) {
+    use crate::consts::{
+        YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
+    };
+
+    // Compute Y at full resolution using SIMD
+    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+
+    // Compute chroma at half resolution with simple box averaging
+    let c_width = (width + 1) / 2;
+    let c_strip_height = (strip_height + 1) / 2;
+
+    for cy in 0..c_strip_height {
+        let y0 = cy * 2;
+        let y1 = (y0 + 1).min(strip_height - 1);
+
+        for cx in 0..c_width {
+            let x0 = cx * 2;
+            let x1 = (x0 + 1).min(width - 1);
+
+            // Gather 2x2 block of RGB values
+            let mut r_sum = 0.0f32;
+            let mut g_sum = 0.0f32;
+            let mut b_sum = 0.0f32;
+
+            for &py in &[y0, y1] {
+                for &px in &[x0, x1] {
+                    let idx = (py * width + px) * bpp;
+                    r_sum += rgb_strip[idx] as f32;
+                    g_sum += rgb_strip[idx + 1] as f32;
+                    b_sum += rgb_strip[idx + 2] as f32;
+                }
+            }
+
+            // Average (divide by 4)
+            let r_avg = r_sum * 0.25;
+            let g_avg = g_sum * 0.25;
+            let b_avg = b_sum * 0.25;
+
+            // Convert averaged RGB to Cb/Cr
+            let cb = 128.0 + YCBCR_R_TO_CB * r_avg + YCBCR_G_TO_CB * g_avg + YCBCR_B_TO_CB * b_avg;
+            let cr = 128.0 + YCBCR_R_TO_CR * r_avg + YCBCR_G_TO_CR * g_avg + YCBCR_B_TO_CR * b_avg;
+
+            cb_down[cy * c_width + cx] = cb;
+            cr_down[cy * c_width + cx] = cr;
+        }
+    }
+}
+
+/// Fused Y + downsampled CbCr for 4:2:2 (horizontal only).
+#[inline]
+pub fn box_fused_strip_422(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+) {
+    use crate::consts::{
+        YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
+    };
+
+    // Compute Y at full resolution using SIMD
+    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+
+    // Compute chroma at half horizontal resolution
+    let c_width = (width + 1) / 2;
+
+    for y in 0..strip_height {
+        for cx in 0..c_width {
+            let x0 = cx * 2;
+            let x1 = (x0 + 1).min(width - 1);
+
+            // Average 2 horizontal pixels
+            let idx0 = (y * width + x0) * bpp;
+            let idx1 = (y * width + x1) * bpp;
+
+            let r_avg = (rgb_strip[idx0] as f32 + rgb_strip[idx1] as f32) * 0.5;
+            let g_avg = (rgb_strip[idx0 + 1] as f32 + rgb_strip[idx1 + 1] as f32) * 0.5;
+            let b_avg = (rgb_strip[idx0 + 2] as f32 + rgb_strip[idx1 + 2] as f32) * 0.5;
+
+            let cb = 128.0 + YCBCR_R_TO_CB * r_avg + YCBCR_G_TO_CB * g_avg + YCBCR_B_TO_CB * b_avg;
+            let cr = 128.0 + YCBCR_R_TO_CR * r_avg + YCBCR_G_TO_CR * g_avg + YCBCR_B_TO_CR * b_avg;
+
+            cb_down[y * c_width + cx] = cb;
+            cr_down[y * c_width + cx] = cr;
+        }
+    }
+}
+
+/// Fused Y + downsampled CbCr for 4:4:0 (vertical only).
+#[inline]
+pub fn box_fused_strip_440(
+    rgb_strip: &[u8],
+    y_strip: &mut [f32],
+    cb_down: &mut [f32],
+    cr_down: &mut [f32],
+    width: usize,
+    strip_height: usize,
+    bpp: usize,
+) {
+    use crate::consts::{
+        YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
+    };
+
+    // Compute Y at full resolution using SIMD
+    compute_y_plane_from_rgb(rgb_strip, width, strip_height, bpp, y_strip);
+
+    // Compute chroma at half vertical resolution
+    let c_strip_height = (strip_height + 1) / 2;
+
+    for cy in 0..c_strip_height {
+        let y0 = cy * 2;
+        let y1 = (y0 + 1).min(strip_height - 1);
+
+        for x in 0..width {
+            // Average 2 vertical pixels
+            let idx0 = (y0 * width + x) * bpp;
+            let idx1 = (y1 * width + x) * bpp;
+
+            let r_avg = (rgb_strip[idx0] as f32 + rgb_strip[idx1] as f32) * 0.5;
+            let g_avg = (rgb_strip[idx0 + 1] as f32 + rgb_strip[idx1 + 1] as f32) * 0.5;
+            let b_avg = (rgb_strip[idx0 + 2] as f32 + rgb_strip[idx1 + 2] as f32) * 0.5;
+
+            let cb = 128.0 + YCBCR_R_TO_CB * r_avg + YCBCR_G_TO_CB * g_avg + YCBCR_B_TO_CB * b_avg;
+            let cr = 128.0 + YCBCR_R_TO_CR * r_avg + YCBCR_G_TO_CR * g_avg + YCBCR_B_TO_CR * b_avg;
+
+            cb_down[cy * width + x] = cb;
+            cr_down[cy * width + x] = cr;
+        }
+    }
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
