@@ -37,7 +37,9 @@ jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = [
 #codec-eval = { version = "0.2", optional = true }
 
 [dev-dependencies]
-jpegli-bench-utils = { path = "../jpegli-bench-utils", features = ["cjpegli-ffi"] }
+# NOTE: default-features = false to avoid complex FFI linking requirements
+# cjpegli-ffi requires libjpeg-compatible symbols which aren't in jpegli-static
+jpegli-bench-utils = { path = "../jpegli-bench-utils", default-features = false }
 almost-enough = { workspace = true }
 butteraugli = { workspace = true }
 chrono = "0.4"
@@ -52,15 +54,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
-mozjpeg = { workspace = true }
-# jpeg-decoder BANNED - use zune-jpeg
+# NOTE: mozjpeg conflicts with jpegli FFI - both provide libjpeg-62 symbols!
+# Only enable for mozjpeg-specific benchmarks, not when using cjpegli-ffi
+# mozjpeg = { workspace = true }
 rayon = { workspace = true }
 sha2 = "0.10"
 # Note: turbojpeg conflicts with mozjpeg (duplicate libjpeg symbols)
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["simd", "cms", "ffi-tests", "test-utils"]
+default = ["simd", "cms", "test-utils"]
 simd = []  # Safe portable SIMD via `wide` crate (always recommended)
 # Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
 # Without this, all SIMD uses auto-vectorizable fallbacks that work on all platforms.
@@ -114,10 +117,6 @@ harness = false
 
 [[bench]]
 name = "simd_load"
-harness = false
-
-[[bench]]
-name = "vs_mozjpeg"
 harness = false
 
 [lints]

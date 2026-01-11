@@ -1,17 +1,12 @@
 //! Multi-decoder compatibility test.
 //!
-//! Tests that JPEGs encoded by jpegli-rs can be correctly decoded by all major
+//! Tests that JPEGs encoded by jpegli-rs can be correctly decoded by major
 //! JPEG decoders in the Rust ecosystem, and that the quality metrics are
 //! appropriate for the encoding quality level.
 //!
 //! Decoders tested:
 //! - jpegli-rs (our decoder, 12-bit precision f32 pipeline)
-//! - jpeg-decoder (used by image crate, integer IDCT)
 //! - zune-jpeg (fastest pure Rust decoder, integer IDCT)
-//! - mozjpeg (C wrapper, libjpeg-compatible)
-//!
-//! Note: turbojpeg is not included because it conflicts with mozjpeg
-//! (both link libjpeg symbols, causing duplicate symbol errors).
 //!
 //! Run with:
 //! ```
@@ -117,28 +112,6 @@ fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
     }
 }
 
-fn decode_jpeg_decoder(data: &[u8]) -> Option<DecoderResult> {
-    let start = std::time::Instant::now();
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
-    match decoder.decode() {
-        Ok(pixels) => {
-            let (width, height) = decoder.dimensions().unwrap();
-            Some(DecoderResult {
-                decoder_name: "jpeg-decoder".to_string(),
-                pixels,
-                width,
-                height,
-                decode_time_us: start.elapsed().as_micros() as u64,
-            })
-        }
-        Err(e) => {
-            eprintln!("jpeg-decoder decode failed: {}", e);
-            None
-        }
-    }
-}
-
 fn decode_zune_jpeg(data: &[u8]) -> Option<DecoderResult> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::JpegDecoder;
@@ -159,43 +132,6 @@ fn decode_zune_jpeg(data: &[u8]) -> Option<DecoderResult> {
         }
         Err(e) => {
             eprintln!("zune-jpeg decode failed: {:?}", e);
-            None
-        }
-    }
-}
-
-fn decode_mozjpeg(data: &[u8]) -> Option<DecoderResult> {
-    let start = std::time::Instant::now();
-    match mozjpeg::Decompress::new_mem(data) {
-        Ok(decompress) => {
-            let width = decompress.width();
-            let height = decompress.height();
-            match decompress.rgb() {
-                Ok(mut decompressor) => {
-                    let mut pixels = vec![0u8; width * height * 3];
-                    #[allow(deprecated)]
-                    match decompressor.read_scanlines_into::<u8>(&mut pixels) {
-                        Ok(_) => Some(DecoderResult {
-                            decoder_name: "mozjpeg".to_string(),
-                            pixels,
-                            width,
-                            height,
-                            decode_time_us: start.elapsed().as_micros() as u64,
-                        }),
-                        Err(e) => {
-                            eprintln!("mozjpeg: failed to read scanlines: {:?}", e);
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("mozjpeg rgb() failed: {:?}", e);
-                    None
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("mozjpeg decompress failed: {:?}", e);
             None
         }
     }
@@ -250,9 +186,7 @@ fn test_all_decoders(
     // Collect all decoder results
     let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
         ("jpegli-rs", decode_jpegli),
-        ("jpeg-decoder", decode_jpeg_decoder),
         ("zune-jpeg", decode_zune_jpeg),
-        ("mozjpeg", decode_mozjpeg),
     ];
 
     let mut decoder_results: Vec<DecoderResult> = Vec::new();
@@ -376,10 +310,10 @@ fn test_multi_decoder_compatibility() {
 
     println!("\n=== Multi-Decoder Compatibility Test ===\n");
     println!(
-        "{:<25} {:>12} {:>12} {:>12} {:>12}",
-        "Config", "jpegli-rs", "jpeg-dec", "zune-jpeg", "mozjpeg"
+        "{:<25} {:>12} {:>12}",
+        "Config", "jpegli-rs", "zune-jpeg"
     );
-    println!("{}", "-".repeat(85));
+    println!("{}", "-".repeat(55));
 
     let mut all_passed = true;
 
@@ -401,7 +335,7 @@ fn test_multi_decoder_compatibility() {
         let max_allowed = max_butteraugli_for_quality(config.quality);
 
         print!("{:<25}", config.name);
-        for decoder_name in &["jpegli-rs", "jpeg-decoder", "zune-jpeg", "mozjpeg"] {
+        for decoder_name in &["jpegli-rs", "zune-jpeg"] {
             if let Some((butteraugli, _, _)) = results.get(*decoder_name) {
                 let status = if *butteraugli <= max_allowed {
                     "OK"
@@ -534,9 +468,7 @@ fn benchmark_decoders() {
     let iterations = 50;
     let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
         ("jpegli-rs", decode_jpegli),
-        ("jpeg-decoder", decode_jpeg_decoder),
         ("zune-jpeg", decode_zune_jpeg),
-        ("mozjpeg", decode_mozjpeg),
     ];
 
     for (name, decoder_fn) in &decoder_fns {
@@ -587,9 +519,7 @@ fn test_grayscale_compatibility() {
     // All decoders should handle RGB that happens to be grayscale
     let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
         ("jpegli-rs", decode_jpegli),
-        ("jpeg-decoder", decode_jpeg_decoder),
         ("zune-jpeg", decode_zune_jpeg),
-        ("mozjpeg", decode_mozjpeg),
     ];
 
     for (name, decoder_fn) in &decoder_fns {

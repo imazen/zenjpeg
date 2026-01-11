@@ -450,15 +450,6 @@ fn validate_jpeg(data: &[u8], path: &str) {
         Err(e) => println!("ERROR: {}", e),
     }
 
-    // Test with mozjpeg if available
-    print!("  mozjpeg:    ");
-    match mozjpeg::Decompress::new_mem(data) {
-        Ok(decompress) => match decompress.rgb() {
-            Ok(img) => println!("OK ({}x{})", img.width(), img.height()),
-            Err(e) => println!("ERROR: {:?}", e),
-        },
-        Err(e) => println!("ERROR: {:?}", e),
-    }
 }
 
 fn validate_directory(dir: &Path) {
