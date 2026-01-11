@@ -56,6 +56,10 @@ libloading = "0.8"
 # Runtime CPU feature detection and dispatch
 multiversion = "0.8"
 
+# Cooperative cancellation
+enough = { version = "0.2", features = ["std"] }
+almost-enough = { version = "0.2", features = ["std"] }
+
 # Published crates
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }
 mozjpeg-rs = "0.2.5"
