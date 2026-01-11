@@ -43,13 +43,15 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
 }
 
 /// Entropy decoder for a single scan.
-pub struct EntropyDecoder<'a> {
+///
+/// Uses borrowed Huffman tables to avoid cloning ~1.5KB per table.
+pub struct EntropyDecoder<'data, 'tables> {
     /// Bit reader
-    reader: BitReader<'a>,
-    /// DC Huffman tables
-    dc_tables: [Option<HuffmanDecodeTable>; 4],
-    /// AC Huffman tables
-    ac_tables: [Option<HuffmanDecodeTable>; 4],
+    reader: BitReader<'data>,
+    /// DC Huffman tables (borrowed)
+    dc_tables: [Option<&'tables HuffmanDecodeTable>; 4],
+    /// AC Huffman tables (borrowed)
+    ac_tables: [Option<&'tables HuffmanDecodeTable>; 4],
     /// Previous DC values for each component
     prev_dc: [i16; 4],
 }
@@ -61,9 +63,9 @@ pub struct EntropyDecoderState {
     prev_dc: [i16; 4],
 }
 
-impl<'a> EntropyDecoder<'a> {
+impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// Creates a new entropy decoder.
-    pub fn new(data: &'a [u8]) -> Self {
+    pub fn new(data: &'data [u8]) -> Self {
         Self {
             reader: BitReader::new(data),
             dc_tables: [None, None, None, None],
@@ -72,15 +74,15 @@ impl<'a> EntropyDecoder<'a> {
         }
     }
 
-    /// Sets a DC Huffman table.
-    pub fn set_dc_table(&mut self, idx: usize, table: HuffmanDecodeTable) {
+    /// Sets a DC Huffman table (borrowed, not cloned).
+    pub fn set_dc_table(&mut self, idx: usize, table: &'tables HuffmanDecodeTable) {
         if idx < 4 {
             self.dc_tables[idx] = Some(table);
         }
     }
 
-    /// Sets an AC Huffman table.
-    pub fn set_ac_table(&mut self, idx: usize, table: HuffmanDecodeTable) {
+    /// Sets an AC Huffman table (borrowed, not cloned).
+    pub fn set_ac_table(&mut self, idx: usize, table: &'tables HuffmanDecodeTable) {
         if idx < 4 {
             self.ac_tables[idx] = Some(table);
         }
@@ -133,21 +135,23 @@ impl<'a> EntropyDecoder<'a> {
         })
     }
 
-    /// Safely gets a DC table, handling out-of-bounds indices.
-    fn get_dc_table(&self, idx: usize) -> Result<HuffmanDecodeTable> {
+    /// Safely gets a DC table reference, handling out-of-bounds indices.
+    /// Returns with 'tables lifetime to avoid borrowing self.
+    fn get_dc_table(&self, idx: usize) -> Result<&'tables HuffmanDecodeTable> {
         self.dc_tables
             .get(idx)
-            .and_then(|t| t.clone())
+            .and_then(|&t| t)
             .ok_or(Error::InternalError {
                 reason: "DC table not set or invalid index",
             })
     }
 
-    /// Safely gets an AC table, handling out-of-bounds indices.
-    fn get_ac_table(&self, idx: usize) -> Result<HuffmanDecodeTable> {
+    /// Safely gets an AC table reference, handling out-of-bounds indices.
+    /// Returns with 'tables lifetime to avoid borrowing self.
+    fn get_ac_table(&self, idx: usize) -> Result<&'tables HuffmanDecodeTable> {
         self.ac_tables
             .get(idx)
-            .and_then(|t| t.clone())
+            .and_then(|&t| t)
             .ok_or(Error::InternalError {
                 reason: "AC table not set or invalid index",
             })
@@ -160,17 +164,13 @@ impl<'a> EntropyDecoder<'a> {
         dc_table_idx: usize,
         ac_table_idx: usize,
     ) -> Result<[i16; DCT_BLOCK_SIZE]> {
-        // Get table references once (tables are cheap to reference)
-        let dc_table = self.dc_tables[dc_table_idx]
-            .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "DC table not set",
-            })?;
-        let ac_table = self.ac_tables[ac_table_idx]
-            .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+        // Get table references once (tables are borrowed, no copying)
+        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::InternalError {
+            reason: "DC table not set",
+        })?;
+        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::InternalError {
+            reason: "AC table not set",
+        })?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
@@ -518,18 +518,18 @@ mod tests {
         let bits: [u8; 16] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
         let values = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
         let dc_table = HuffmanDecodeTable::from_bits_values(&bits, &values).unwrap();
-        decoder.set_dc_table(0, dc_table.clone());
+        decoder.set_dc_table(0, &dc_table);
         assert!(decoder.dc_tables[0].is_some());
 
         let ac_bits: [u8; 16] = [0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
         let ac_values: Vec<u8> = (0..162).collect();
         let ac_table = HuffmanDecodeTable::from_bits_values(&ac_bits, &ac_values).unwrap();
-        decoder.set_ac_table(0, ac_table.clone());
+        decoder.set_ac_table(0, &ac_table);
         assert!(decoder.ac_tables[0].is_some());
 
         // Test out of range indices (should be no-op)
-        decoder.set_dc_table(5, dc_table);
-        decoder.set_ac_table(5, ac_table);
+        decoder.set_dc_table(5, &dc_table);
+        decoder.set_ac_table(5, &ac_table);
     }
 
     #[test]
