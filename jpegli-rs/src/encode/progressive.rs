@@ -1015,18 +1015,77 @@ impl Encoder {
         let cr_quant = self.gen_quant_table(2, false, is_420);
 
         // Quantize all blocks using padded planes and dimensions
-        let (y_blocks, cb_blocks, cr_blocks) = self.quantize_all_blocks_subsampled(
-            &y_padded,
-            padded_w,
-            padded_h,
-            &cb_padded,
-            &cr_padded,
-            padded_cw,
-            padded_ch,
-            &y_quant,
-            &cb_quant,
-            &cr_quant,
-        )?;
+        let (y_blocks_padded, cb_blocks_padded, cr_blocks_padded) =
+            self.quantize_all_blocks_subsampled(
+                &y_padded,
+                padded_w,
+                padded_h,
+                &cb_padded,
+                &cr_padded,
+                padded_cw,
+                padded_ch,
+                &y_quant,
+                &cb_quant,
+                &cr_quant,
+            )?;
+
+        // For non-interleaved progressive scans, the block count is based on ORIGINAL
+        // dimensions, not padded dimensions. This differs from interleaved baseline scans
+        // which use MCU-aligned block counts.
+        //
+        // Per JPEG spec for non-interleaved scan with component i:
+        //   MCUx = ceil(X * Hi / (8 * Hmax))
+        //   MCUy = ceil(Y * Vi / (8 * Vmax))
+        //
+        // For Y (Hi=Hmax, Vi=Vmax): ceil(width/8) x ceil(height/8) blocks
+        // For Cb/Cr with 4:2:0: ceil(width/16) x ceil(height/16) blocks
+        let orig_y_blocks_h = (width + 7) / 8;
+        let orig_y_blocks_v = (height + 7) / 8;
+        let padded_y_blocks_h = padded_w / 8;
+        let padded_y_blocks_v = padded_h / 8;
+
+        let y_blocks = if padded_y_blocks_h != orig_y_blocks_h
+            || padded_y_blocks_v != orig_y_blocks_v
+        {
+            // Filter Y blocks: extract blocks that correspond to original dimensions
+            let mut filtered =
+                Vec::with_capacity(orig_y_blocks_h * orig_y_blocks_v);
+            for by in 0..orig_y_blocks_v {
+                for bx in 0..orig_y_blocks_h {
+                    let padded_idx = by * padded_y_blocks_h + bx;
+                    filtered.push(y_blocks_padded[padded_idx]);
+                }
+            }
+            filtered
+        } else {
+            y_blocks_padded
+        };
+
+        // Chroma blocks: same logic but using chroma dimensions
+        let orig_c_blocks_h = (c_width + 7) / 8;
+        let orig_c_blocks_v = (c_height + 7) / 8;
+        let padded_c_blocks_h = padded_cw / 8;
+        let padded_c_blocks_v = padded_ch / 8;
+
+        let (cb_blocks, cr_blocks) = if padded_c_blocks_h != orig_c_blocks_h
+            || padded_c_blocks_v != orig_c_blocks_v
+        {
+            let mut cb_filtered =
+                Vec::with_capacity(orig_c_blocks_h * orig_c_blocks_v);
+            let mut cr_filtered =
+                Vec::with_capacity(orig_c_blocks_h * orig_c_blocks_v);
+            for by in 0..orig_c_blocks_v {
+                for bx in 0..orig_c_blocks_h {
+                    let padded_idx = by * padded_c_blocks_h + bx;
+                    cb_filtered.push(cb_blocks_padded[padded_idx]);
+                    cr_filtered.push(cr_blocks_padded[padded_idx]);
+                }
+            }
+            (cb_filtered, cr_filtered)
+        } else {
+            (cb_blocks_padded, cr_blocks_padded)
+        };
+
         let is_color = self.config.pixel_format != PixelFormat::Gray;
         let num_components = if is_color { 3 } else { 1 };
 
