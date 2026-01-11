@@ -251,6 +251,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_error_size() {
+        let size = std::mem::size_of::<Error>();
+        println!("\n=== ERROR SIZES ===");
+        println!("Error: {} bytes", size);
+        println!("Option<Error>: {} bytes", std::mem::size_of::<Option<Error>>());
+        println!("Result<()>: {} bytes", std::mem::size_of::<Result<()>>());
+        println!("std::result::Result<(), Error>: {} bytes", std::mem::size_of::<std::result::Result<(), Error>>());
+        println!("Box<Error>: {} bytes", std::mem::size_of::<Box<Error>>());
+        // Error should ideally be <= 32 bytes for efficient Result types
+        // Current size is larger due to String variants
+        assert!(size <= 64, "Error is {} bytes, consider boxing large variants", size);
+    }
+
+    #[test]
     fn test_error_display() {
         let err = Error::InvalidDimensions {
             width: 0,
