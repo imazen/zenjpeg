@@ -367,6 +367,14 @@ impl Encoder {
     fn validate(&self) -> Result<()> {
         // Use validate_dimensions for comprehensive checks (zero, max dimension, max pixels)
         validate_dimensions(self.config.width, self.config.height, DEFAULT_MAX_PIXELS)?;
+
+        // Validate backend/feature compatibility
+        if self.config.use_xyb && self.config.encoding_backend == EncodingBackend::Strip {
+            return Err(Error::UnsupportedFeature {
+                feature: "XYB color space is not supported with the Strip encoding backend. Use FullPlane or Auto.",
+            });
+        }
+
         Ok(())
     }
 
