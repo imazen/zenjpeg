@@ -119,6 +119,8 @@ pub struct AllocationStats {
     pub peak_bytes: usize,
     /// Current bytes allocated (for tracking peak)
     current_bytes: usize,
+    /// Per-allocation breakdown by context name
+    pub by_context: Vec<(&'static str, usize)>,
 }
 
 impl AllocationStats {
@@ -137,6 +139,13 @@ impl AllocationStats {
         if self.current_bytes > self.peak_bytes {
             self.peak_bytes = self.current_bytes;
         }
+    }
+
+    /// Records an allocation with context name for detailed tracking.
+    #[inline]
+    pub fn record_alloc_named(&mut self, bytes: usize, context: &'static str) {
+        self.record_alloc(bytes);
+        self.by_context.push((context, bytes));
     }
 
     /// Records a deallocation (for peak tracking).
@@ -209,7 +218,7 @@ pub fn try_alloc_vec_tracked<T: Default + Clone>(
         })?;
     v.resize(count, T::default());
 
-    stats.record_alloc(byte_size);
+    stats.record_alloc_named(byte_size, context);
     Ok(v)
 }
 
@@ -232,7 +241,7 @@ pub fn try_alloc_zeroed_f32_tracked(
         })?;
     v.resize(count, 0.0f32);
 
-    stats.record_alloc(byte_size);
+    stats.record_alloc_named(byte_size, context);
     Ok(v)
 }
 
@@ -254,7 +263,7 @@ pub fn try_with_capacity_tracked<T>(
             context,
         })?;
 
-    stats.record_alloc(byte_size);
+    stats.record_alloc_named(byte_size, context);
     Ok(v)
 }
 
@@ -277,7 +286,7 @@ pub fn try_alloc_dct_blocks_tracked(
         })?;
     v.resize(count, [0i16; 64]);
 
-    stats.record_alloc(byte_size);
+    stats.record_alloc_named(byte_size, context);
     Ok(v)
 }
 

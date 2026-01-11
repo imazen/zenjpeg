@@ -81,9 +81,10 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
     };
 
     // Strip f32 buffers (small, 16 rows, reused each strip)
+    // Note: cb_strip/cr_strip are FULL resolution before downsampling
     let strip_y = width * strip_height * 4;
-    let strip_cb = c_width * c_strip_height * 4;
-    let strip_cr = c_width * c_strip_height * 4;
+    let strip_cb = width * strip_height * 4; // Full res, not c_width
+    let strip_cr = width * strip_height * 4; // Full res, not c_width
     // Downsampled chroma temp buffers
     let strip_cb_down = c_width * c_strip_height * 4;
     let strip_cr_down = c_width * c_strip_height * 4;
@@ -126,12 +127,18 @@ fn calc_allocations(width: usize, height: usize, subsampling: Subsampling) -> (u
     (full_peak, strip_peak)
 }
 
+/// Result of measuring strip allocations
+struct StripMeasurement {
+    peak_bytes: usize,
+    by_context: Vec<(&'static str, usize)>,
+}
+
 fn measure_strip_allocs(
     width: usize,
     height: usize,
     subsampling: Subsampling,
     data: &[u8],
-) -> Result<usize, jpegli::Error> {
+) -> Result<StripMeasurement, jpegli::Error> {
     let mut processor = StripProcessor::new(width, height, subsampling, PixelFormat::Rgb)?;
 
     let quality = Quality::from_quality(85.0);
@@ -163,14 +170,26 @@ fn measure_strip_allocs(
         processor.process_strip(&data[strip_start..strip_end_idx], strip_y)?;
     }
 
-    let pre_finalize_peak = processor.allocation_stats().peak_bytes;
     let output = processor.finalize()?;
-    Ok(pre_finalize_peak.max(output.alloc_stats.peak_bytes))
+    Ok(StripMeasurement {
+        peak_bytes: output.alloc_stats.peak_bytes,
+        by_context: output.alloc_stats.by_context.clone(),
+    })
 }
 
 fn main() {
     println!("Peak Allocation Comparison: Full-Plane vs Strip-Based Encoding");
     println!("================================================================\n");
+
+    let subsampling = Subsampling::S420;
+
+    // Standard resolutions
+    println!("=== Standard Resolutions (4:2:0) ===\n");
+    println!(
+        "{:<20} {:>12} {:>12} {:>10}",
+        "Resolution", "Estimated", "Measured", "Delta"
+    );
+    println!("{:-<58}", "");
 
     let resolutions = [
         ("1K (1920x1080)", 1920usize, 1080usize),
@@ -179,90 +198,112 @@ fn main() {
         ("8K (7680x4320)", 7680, 4320),
     ];
 
-    let subsampling = Subsampling::S420;
-
-    println!("Subsampling: 4:2:0\n");
-    println!(
-        "{:<20} {:>15} {:>15} {:>15}",
-        "Resolution", "Full-Plane", "Strip (calc)", "Strip (meas)"
-    );
-    println!("{:-<70}", "");
-
     for (name, width, height) in resolutions {
-        let (full_peak, strip_peak_calc) = calc_allocations(width, height, subsampling);
+        let (_, strip_peak_calc) = calc_allocations(width, height, subsampling);
 
         let pixels = width * height;
         let data: Vec<u8> = (0..pixels * 3).map(|i| ((i * 17) % 256) as u8).collect();
 
-        let strip_peak_meas = measure_strip_allocs(width, height, subsampling, &data)
-            .map(|p| format_bytes(p))
-            .unwrap_or_else(|e| format!("err: {}", e));
-
-        println!(
-            "{:<20} {:>15} {:>15} {:>15}",
-            name,
-            format_bytes(full_peak),
-            format_bytes(strip_peak_calc),
-            strip_peak_meas,
-        );
+        match measure_strip_allocs(width, height, subsampling, &data) {
+            Ok(m) => {
+                let delta = m.peak_bytes as i64 - strip_peak_calc as i64;
+                let delta_pct = (delta as f64 / strip_peak_calc as f64) * 100.0;
+                println!(
+                    "{:<20} {:>12} {:>12} {:>+9.1}%",
+                    name,
+                    format_bytes(strip_peak_calc),
+                    format_bytes(m.peak_bytes),
+                    delta_pct
+                );
+            }
+            Err(e) => println!("{:<20} err: {}", name, e),
+        }
     }
 
-    println!("\n\nWhy Strip Encoder Uses LESS Memory:");
-    println!("====================================");
-    println!("1. Incremental quantization: f32→i16 as AQ strengths become available");
-    println!("2. Double-buffered pending: only 2 iMCU rows of f32, not full image");
-    println!("3. Strip buffers: 16 rows, reused each iteration");
-    println!("");
-    println!("Strip encoder provides BOTH cache locality AND memory savings.");
-    println!("The 16-row strips fit in L2/L3 cache during color conversion + DCT.");
+    // Extreme aspect ratios
+    println!("\n\n=== Extreme Aspect Ratios (4:2:0) ===\n");
+    println!(
+        "{:<20} {:>12} {:>12} {:>10}",
+        "Resolution", "Estimated", "Measured", "Delta"
+    );
+    println!("{:-<58}", "");
 
-    // Show the breakdown for 4K
-    println!("\n\n4K Allocation Breakdown:");
-    println!("========================");
-    let (width, height) = (3840, 2160);
-    let pixels = width * height;
-    let y_blocks = ((width + 7) / 8) * ((height + 7) / 8);
-    let c_blocks = ((width + 15) / 16) * ((height + 15) / 16);
-    let c_pixels = ((width + 1) / 2) * ((height + 1) / 2);
+    let extreme = [
+        ("8000x1 (line)", 8000usize, 1usize),
+        ("1x8000 (column)", 1, 8000),
+        ("8000x16 (banner)", 8000, 16),
+        ("16x8000 (tall)", 16, 8000),
+        ("65000x1", 65000, 1),
+        ("1x65000", 1, 65000),
+        ("256x256", 256, 256),
+        ("65500x1", 65500, 1),  // Near max JPEG dimension
+    ];
 
-    println!("\nFull-plane encoder:");
-    println!("  Y plane (f32):      {}", format_bytes(pixels * 4));
-    println!("  Cb/Cr planes (f32): {}", format_bytes(c_pixels * 4 * 2));
-    println!("  Y blocks (i16):     {}", format_bytes(y_blocks * 128));
-    println!("  Cb/Cr blocks (i16): {}", format_bytes(c_blocks * 2 * 128));
-    println!("  AQ map:             {}", format_bytes(y_blocks * 4));
-    println!(
-        "  TOTAL:              {}",
-        format_bytes(pixels * 4 + c_pixels * 8 + y_blocks * 128 + c_blocks * 256 + y_blocks * 4)
-    );
+    for (name, width, height) in extreme {
+        let (_, strip_peak_calc) = calc_allocations(width, height, subsampling);
 
-    println!("\nStrip encoder:");
-    let y_blocks_w = (width + 7) / 8;
-    let y_blocks_per_imcu = y_blocks_w * 2;
-    let c_blocks_per_imcu = (width + 15) / 16;
-    println!("  Strip buffers:      {}", format_bytes(width * 16 * 4 * 5)); // y, cb, cr, cb_down, cr_down
-    println!(
-        "  Pending Y (f32):    {} (2 iMCU rows, double-buffered)",
-        format_bytes(2 * y_blocks_per_imcu * 256)
-    );
-    println!(
-        "  Pending Cb/Cr (f32):{} (2 iMCU rows, double-buffered)",
-        format_bytes(2 * c_blocks_per_imcu * 2 * 256)
-    );
-    println!(
-        "  Final i16 blocks:   {} (grows incrementally)",
-        format_bytes(y_blocks * 128 + c_blocks * 256)
-    );
-    println!("  AQ map:             {}", format_bytes(y_blocks * 4));
-    println!(
-        "  TOTAL (peak):       {}",
-        format_bytes(
-            width * 16 * 4 * 5
-                + 2 * y_blocks_per_imcu * 256
-                + 2 * c_blocks_per_imcu * 2 * 256
-                + y_blocks * 128
-                + c_blocks * 256
-                + y_blocks * 4
-        )
-    );
+        let pixels = width * height;
+        let data: Vec<u8> = (0..pixels * 3).map(|i| ((i * 17) % 256) as u8).collect();
+
+        match measure_strip_allocs(width, height, subsampling, &data) {
+            Ok(m) => {
+                let delta = m.peak_bytes as i64 - strip_peak_calc as i64;
+                let delta_pct = if strip_peak_calc > 0 {
+                    (delta as f64 / strip_peak_calc as f64) * 100.0
+                } else {
+                    0.0
+                };
+                println!(
+                    "{:<20} {:>12} {:>12} {:>+9.1}%",
+                    name,
+                    format_bytes(strip_peak_calc),
+                    format_bytes(m.peak_bytes),
+                    delta_pct
+                );
+            }
+            Err(e) => println!("{:<20} {:>12} err: {}", name, format_bytes(strip_peak_calc), e),
+        }
+    }
+
+    // Show detailed breakdown for standard and extreme cases
+    for (label, width, height) in [
+        ("4K (3840x2160)", 3840usize, 2160usize),
+        ("Wide (8000x1)", 8000, 1),
+    ] {
+        println!("\n\n=== Detailed Breakdown: {} ===\n", label);
+        let pixels = width * height;
+        let data: Vec<u8> = (0..pixels * 3).map(|i| ((i * 17) % 256) as u8).collect();
+
+        let (_, estimated) = calc_allocations(width, height, subsampling);
+
+        if let Ok(m) = measure_strip_allocs(width, height, subsampling, &data) {
+            println!("Measured allocations by context:");
+            println!("{:-<50}", "");
+
+            // Group and sum by context
+            let mut grouped: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for (ctx, bytes) in &m.by_context {
+                *grouped.entry(*ctx).or_insert(0) += bytes;
+            }
+
+            // Sort by size descending
+            let mut sorted: Vec<_> = grouped.into_iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+            for (ctx, bytes) in &sorted {
+                println!("  {:<35} {:>12}", ctx, format_bytes(*bytes));
+            }
+            println!("{:-<50}", "");
+            println!("  {:<35} {:>12}", "MEASURED TOTAL", format_bytes(m.peak_bytes));
+            println!("  {:<35} {:>12}", "ESTIMATED", format_bytes(estimated));
+            let delta = m.peak_bytes as i64 - estimated as i64;
+            let sign = if delta >= 0 { "+" } else { "-" };
+            println!(
+                "  {:<35} {:>12}",
+                "DELTA",
+                format!("{}{}", sign, format_bytes(delta.unsigned_abs() as usize))
+            );
+        }
+    }
 }
