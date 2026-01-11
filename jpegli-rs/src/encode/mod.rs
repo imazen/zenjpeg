@@ -10,6 +10,7 @@ pub mod config;
 mod hybrid;
 mod output;
 mod progressive;
+pub mod streaming;
 pub mod strip;
 
 // Re-export config types
@@ -41,7 +42,8 @@ use enough::{Never, Stop};
 
 /// JPEG encoder.
 pub struct Encoder {
-    config: EncoderConfig,
+    /// Encoder configuration (accessible within crate for streaming encoder).
+    pub(crate) config: EncoderConfig,
 }
 
 impl Encoder {

@@ -127,6 +127,7 @@ pub use types::{
 pub use types::ChromaDownsampling as ChromaConversion;
 
 // Encoder API
+pub use encode::streaming::{StreamingEncoder, StreamingEncoderBuilder};
 pub use encode::{Encoder, EncoderConfig};
 
 // Decoder API
