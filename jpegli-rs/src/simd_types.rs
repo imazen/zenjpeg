@@ -3,7 +3,7 @@
 //! These types store data in SIMD-friendly layouts to eliminate load/store overhead
 //! during DCT and quantization operations.
 
-use wide::{f32x8, i16x8, i32x8};
+use wide::{f32x8, i16x8, i32x8, CmpGe};
 
 /// An 8x8 block stored as 8 rows of f32x8 for SIMD-native access.
 ///
@@ -276,6 +276,7 @@ impl QuantTableSimd {
     ) -> [i16; 64] {
         let mut result = [0i16; 64];
         let aq = f32x8::splat(aq_strength);
+        let zero_i32 = i32x8::ZERO;
 
         for row in 0..8 {
             // qval = coeffs / quant (using pre-computed 1/quant)
@@ -284,21 +285,28 @@ impl QuantTableSimd {
             // threshold = offset + mul * aq_strength
             let threshold = zero_bias.offset_rows[row] + zero_bias.mul_rows[row] * aq;
 
-            // |qval| >= threshold ? round(qval) : 0
+            // SIMD comparison: |qval| >= threshold
             let abs_qval = qval.abs();
+            let mask_f32 = abs_qval.simd_ge(threshold);
 
-            // Zero-copy access with fast rounding
-            let abs_arr = abs_qval.as_array();
-            let thresh_arr = threshold.as_array();
+            // Cast mask to i32 for blending with rounded integers
+            let mask_i32: i32x8 = bytemuck::cast(mask_f32);
+
+            // Round and blend: keep rounded value where |qval| >= threshold, else 0
             let rounded = qval.fast_round_int();
-            let rounded_arr = rounded.as_array();
+            let blended = mask_i32.blend(rounded, zero_i32);
 
+            // Write to result (still scalar i32→i16, but no branch)
+            let arr = blended.as_array();
             let k = row * 8;
-            for i in 0..8 {
-                if abs_arr[i] >= thresh_arr[i] {
-                    result[k + i] = rounded_arr[i] as i16;
-                }
-            }
+            result[k] = arr[0] as i16;
+            result[k + 1] = arr[1] as i16;
+            result[k + 2] = arr[2] as i16;
+            result[k + 3] = arr[3] as i16;
+            result[k + 4] = arr[4] as i16;
+            result[k + 5] = arr[5] as i16;
+            result[k + 6] = arr[6] as i16;
+            result[k + 7] = arr[7] as i16;
         }
 
         result
