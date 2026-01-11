@@ -479,12 +479,12 @@ impl Encoder {
 
             (
                 OptimizedTable {
-                    table: HuffmanEncodeTable::std_dc_chrominance(),
+                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
                     bits: STD_DC_CHROMINANCE_BITS,
                     values: STD_DC_CHROMINANCE_VALUES.to_vec(),
                 },
                 OptimizedTable {
-                    table: HuffmanEncodeTable::std_ac_chrominance(),
+                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
                     bits: STD_AC_CHROMINANCE_BITS,
                     values: STD_AC_CHROMINANCE_VALUES.to_vec(),
                 },
@@ -517,10 +517,10 @@ impl Encoder {
 
         // Set up Huffman tables - optimized if provided, standard otherwise
         if let Some(tables) = tables {
-            encoder.set_dc_table(0, tables.dc_luma.table.clone());
-            encoder.set_ac_table(0, tables.ac_luma.table.clone());
-            encoder.set_dc_table(1, tables.dc_chroma.table.clone());
-            encoder.set_ac_table(1, tables.ac_chroma.table.clone());
+            encoder.set_dc_table(0, &tables.dc_luma.table);
+            encoder.set_ac_table(0, &tables.ac_luma.table);
+            encoder.set_dc_table(1, &tables.dc_chroma.table);
+            encoder.set_ac_table(1, &tables.ac_chroma.table);
         } else {
             encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
             encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
@@ -994,8 +994,8 @@ impl Encoder {
         let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
 
         // Use the same optimized table for all components
-        encoder.set_dc_table(0, dc_table.table.clone());
-        encoder.set_ac_table(0, ac_table.table.clone());
+        encoder.set_dc_table(0, &dc_table.table);
+        encoder.set_ac_table(0, &ac_table.table);
 
         if self.config.restart_interval > 0 {
             encoder.set_restart_interval(self.config.restart_interval);
