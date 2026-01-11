@@ -106,18 +106,17 @@ fn encode_with_cjpegli(cjpegli_path: &str, input_path: &Path, quality: u8) -> Op
 }
 
 fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
+    use zune_jpeg::zune_core::colorspace::ColorSpace;
+    use zune_jpeg::zune_core::options::DecoderOptions;
+
+    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
+    let cursor = zune_jpeg::zune_core::bytestream::ZCursor::new(data);
+    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(cursor, opts);
+    decoder.decode_headers().ok()?;
+    let info = decoder.info()?;
     let pixels = decoder.decode().ok()?;
-    let info = decoder.dimensions()?;
 
-    let rgb = match info.pixel_format {
-        3 /* RGB */ => pixels,
-        1 /* Grayscale */ => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
-        _ => return None,
-    };
-
-    Some((rgb, info.width as u32, info.height as u32))
+    Some((pixels, info.width as u32, info.height as u32))
 }
 
 fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
