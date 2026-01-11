@@ -10,7 +10,7 @@
 //! - Kraft inequality guaranteed
 
 use crate::error::Result;
-use crate::huffman::HuffmanEncodeTable;
+use crate::huffman::optimize::OptimizedTable;
 
 /// Symbol frequencies for Huffman table generation.
 ///
@@ -206,81 +206,6 @@ impl CodeLengths {
     }
 }
 
-/// An optimized Huffman table ready for encoding.
-///
-/// Contains both the fast lookup table and the DHT marker data.
-#[derive(Clone, Debug)]
-pub struct OptimizedTable {
-    /// Fast encoding table (symbol -> code, length)
-    pub encode_table: HuffmanEncodeTable,
-    /// Number of codes at each length (1-16 bits) for DHT marker
-    pub bits: [u8; 16],
-    /// Symbol values in code-length order for DHT marker
-    pub values: Vec<u8>,
-}
-
-impl OptimizedTable {
-    /// Creates an optimized table from code lengths.
-    pub fn from_code_lengths(lengths: &CodeLengths) -> Result<Self> {
-        let (bits, values) = lengths.to_bits_values();
-        let encode_table = HuffmanEncodeTable::from_bits_values(&bits, &values)?;
-        Ok(Self {
-            encode_table,
-            bits,
-            values,
-        })
-    }
-
-    /// Returns the code and length for a symbol.
-    #[inline]
-    pub fn encode(&self, symbol: u8) -> (u32, u8) {
-        self.encode_table.encode(symbol)
-    }
-}
-
-/// Complete set of Huffman tables for JPEG encoding.
-///
-/// For YCbCr: separate luma/chroma tables (4 total)
-/// For XYB: same table for all components (effectively 2, duplicated)
-#[derive(Clone, Debug)]
-pub struct HuffmanTableSet {
-    /// DC table for luminance (component 0)
-    pub dc_luma: OptimizedTable,
-    /// AC table for luminance (component 0)
-    pub ac_luma: OptimizedTable,
-    /// DC table for chrominance (components 1, 2)
-    pub dc_chroma: OptimizedTable,
-    /// AC table for chrominance (components 1, 2)
-    pub ac_chroma: OptimizedTable,
-}
-
-impl HuffmanTableSet {
-    /// Creates a table set where all components use the same tables (for XYB).
-    pub fn merged(dc: OptimizedTable, ac: OptimizedTable) -> Self {
-        Self {
-            dc_luma: dc.clone(),
-            ac_luma: ac.clone(),
-            dc_chroma: dc,
-            ac_chroma: ac,
-        }
-    }
-
-    /// Creates a table set with separate luma/chroma tables (for YCbCr).
-    pub fn luma_chroma(
-        dc_luma: OptimizedTable,
-        ac_luma: OptimizedTable,
-        dc_chroma: OptimizedTable,
-        ac_chroma: OptimizedTable,
-    ) -> Self {
-        Self {
-            dc_luma,
-            ac_luma,
-            dc_chroma,
-            ac_chroma,
-        }
-    }
-}
-
 // =============================================================================
 // Huffman Algorithm Trait and Implementations
 // =============================================================================
@@ -335,7 +260,8 @@ impl HuffmanAlgorithm {
     /// Generates an optimized table from symbol frequencies.
     pub fn generate_table(&self, frequencies: &SymbolFrequencies) -> Result<OptimizedTable> {
         let lengths = self.generate_code_lengths(frequencies)?;
-        OptimizedTable::from_code_lengths(&lengths)
+        let (bits, values) = lengths.to_bits_values();
+        OptimizedTable::from_bits_values(bits, values)
     }
 }
 

@@ -42,7 +42,57 @@ use crate::error::Result;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{ChromaDownsampling, EdgePadding, PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
+
+/// Quantization context: groups all quantization tables and bias parameters.
+///
+/// This struct is created once via `set_quant_tables()` and ensures all
+/// quantization parameters are set together (no partial initialization).
+#[derive(Debug, Clone)]
+pub struct QuantContext {
+    // SIMD quantization tables (for fast quantization)
+    pub y_quant_simd: QuantTableSimd,
+    pub cb_quant_simd: QuantTableSimd,
+    pub cr_quant_simd: QuantTableSimd,
+    pub y_zero_bias_simd: ZeroBiasSimd,
+    pub cb_zero_bias_simd: ZeroBiasSimd,
+    pub cr_zero_bias_simd: ZeroBiasSimd,
+
+    // Original tables (for progressive encoding and table output)
+    pub y_quant: QuantTable,
+    pub cb_quant: QuantTable,
+    pub cr_quant: QuantTable,
+    pub y_zero_bias: ZeroBiasParams,
+    pub cb_zero_bias: ZeroBiasParams,
+    pub cr_zero_bias: ZeroBiasParams,
+}
+
+impl QuantContext {
+    /// Creates a new quantization context from the component tables.
+    pub fn new(
+        y_quant: QuantTable,
+        cb_quant: QuantTable,
+        cr_quant: QuantTable,
+        y_zero_bias: ZeroBiasParams,
+        cb_zero_bias: ZeroBiasParams,
+        cr_zero_bias: ZeroBiasParams,
+    ) -> Self {
+        Self {
+            y_quant_simd: QuantTableSimd::from_values(&y_quant.values),
+            cb_quant_simd: QuantTableSimd::from_values(&cb_quant.values),
+            cr_quant_simd: QuantTableSimd::from_values(&cr_quant.values),
+            y_zero_bias_simd: ZeroBiasSimd::from_params(&y_zero_bias),
+            cb_zero_bias_simd: ZeroBiasSimd::from_params(&cb_zero_bias),
+            cr_zero_bias_simd: ZeroBiasSimd::from_params(&cr_zero_bias),
+            y_quant,
+            cb_quant,
+            cr_quant,
+            y_zero_bias,
+            cb_zero_bias,
+            cr_zero_bias,
+        }
+    }
+}
 
 use super::natural_to_zigzag_into;
 
@@ -96,20 +146,8 @@ pub struct StripProcessor {
     height: usize,
     /// Padded width (MCU-aligned for block extraction)
     padded_width: usize,
-    /// Padded height (MCU-aligned, reserved for future use)
-    #[allow(dead_code)]
-    padded_height: usize,
-    /// Chroma width (original, reserved for future use)
-    #[allow(dead_code)]
-    c_width: usize,
-    /// Chroma height (original, reserved for future use)
-    #[allow(dead_code)]
-    c_height: usize,
     /// Padded chroma width
     padded_c_width: usize,
-    /// Padded chroma height (reserved for future use)
-    #[allow(dead_code)]
-    padded_c_height: usize,
     /// Strip height in pixels (16 for 4:2:0, 8 for 4:4:4)
     strip_height: usize,
     /// Chroma subsampling mode
@@ -118,9 +156,6 @@ pub struct StripProcessor {
     pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
     chroma_downsampling: ChromaDownsampling,
-    /// Edge padding strategy (reserved for future configurable padding)
-    #[allow(dead_code)]
-    edge_padding: EdgePadding,
 
     // === Reusable strip buffers (f32) ===
     /// Y channel strip buffer
@@ -151,13 +186,8 @@ pub struct StripProcessor {
     /// Index of current pending buffer (0 or 1)
     pending_current: usize,
 
-    // === SIMD quantization tables (initialized with quant tables) ===
-    y_quant_simd: Option<QuantTableSimd>,
-    cb_quant_simd: Option<QuantTableSimd>,
-    cr_quant_simd: Option<QuantTableSimd>,
-    y_zero_bias_simd: Option<ZeroBiasSimd>,
-    cb_zero_bias_simd: Option<ZeroBiasSimd>,
-    cr_zero_bias_simd: Option<ZeroBiasSimd>,
+    // === Quantization context (set via set_quant_tables) ===
+    quant: Option<QuantContext>,
 
     // === Block dimension info (for chroma AQ mapping) ===
     y_blocks_h: usize,
@@ -172,22 +202,9 @@ pub struct StripProcessor {
     // Initialized when quant tables are set (needs y_quant_01)
     aq_state: Option<StreamingAQ>,
 
-    // === Quantization parameters (set before processing) ===
-    y_quant: Option<QuantTable>,
-    cb_quant: Option<QuantTable>,
-    cr_quant: Option<QuantTable>,
-    y_zero_bias: Option<ZeroBiasParams>,
-    cb_zero_bias: Option<ZeroBiasParams>,
-    cr_zero_bias: Option<ZeroBiasParams>,
-
     // === Allocation tracking ===
     /// Tracks all allocations made by this processor
     alloc_stats: crate::alloc::AllocationStats,
-
-    /// Restart interval in MCUs (0 = disabled).
-    /// Reserved for future implementation - currently stored but not used.
-    #[allow(dead_code)]
-    restart_interval: u16,
 }
 
 impl StripProcessor {
@@ -222,14 +239,14 @@ impl StripProcessor {
     /// * `subsampling` - Chroma subsampling mode
     /// * `pixel_format` - Input pixel format
     /// * `chroma_downsampling` - Chroma downsampling method
-    /// * `restart_interval` - Restart interval in MCUs (0 = disabled)
+    /// * `_restart_interval` - Restart interval in MCUs (0 = disabled) - reserved for future use
     pub fn with_options(
         width: usize,
         height: usize,
         subsampling: Subsampling,
         pixel_format: PixelFormat,
         chroma_downsampling: ChromaDownsampling,
-        restart_interval: u16,
+        _restart_interval: u16,
     ) -> Result<Self> {
         // Strip height is 16 for 4:2:0 (2 MCU rows), 8 otherwise
         let strip_height = match subsampling {
@@ -240,21 +257,19 @@ impl StripProcessor {
         // MCU size for padding calculation
         let mcu_size = subsampling.mcu_size();
 
-        // Calculate padded dimensions (MCU-aligned) for parity with full-plane encoder
+        // Calculate padded width (MCU-aligned) for parity with full-plane encoder
         let padded_width = (width + mcu_size - 1) / mcu_size * mcu_size;
-        let padded_height = (height + mcu_size - 1) / mcu_size * mcu_size;
 
-        // Chroma dimensions (original and padded)
-        let (c_width, c_height, c_strip_height) = match subsampling {
-            Subsampling::S420 => ((width + 1) / 2, (height + 1) / 2, strip_height / 2),
-            Subsampling::S422 => ((width + 1) / 2, height, strip_height),
-            Subsampling::S440 => (width, (height + 1) / 2, strip_height / 2),
-            Subsampling::S444 => (width, height, strip_height),
+        // Chroma dimensions for strip allocation
+        let (c_width, c_strip_height) = match subsampling {
+            Subsampling::S420 => ((width + 1) / 2, strip_height / 2),
+            Subsampling::S422 => ((width + 1) / 2, strip_height),
+            Subsampling::S440 => (width, strip_height / 2),
+            Subsampling::S444 => (width, strip_height),
         };
 
         // Chroma planes are padded to multiples of 8 (block size)
         let padded_c_width = (c_width + 7) / 8 * 8;
-        let padded_c_height = (c_height + 7) / 8 * 8;
 
         // Pre-allocate block storage based on image size
         let y_blocks_h = (width + 7) / 8;
@@ -297,17 +312,11 @@ impl StripProcessor {
             width,
             height,
             padded_width,
-            padded_height,
-            c_width,
-            c_height,
             padded_c_width,
-            padded_c_height,
             strip_height,
             subsampling,
             pixel_format,
             chroma_downsampling,
-            edge_padding: EdgePadding::Replicate, // Match full-plane default
-            restart_interval,
 
             // Strip buffers (sized for PADDED width for edge handling parity)
             y_strip: try_alloc_zeroed_f32_tracked(
@@ -388,13 +397,8 @@ impl StripProcessor {
             },
             pending_current: 0,
 
-            // SIMD quant tables (initialized in set_quant_tables)
-            y_quant_simd: None,
-            cb_quant_simd: None,
-            cr_quant_simd: None,
-            y_zero_bias_simd: None,
-            cb_zero_bias_simd: None,
-            cr_zero_bias_simd: None,
+            // Quantization context (set via set_quant_tables)
+            quant: None,
 
             // Block dimensions for chroma AQ mapping
             y_blocks_h,
@@ -407,14 +411,6 @@ impl StripProcessor {
 
             // Streaming AQ (initialized when quant tables are set)
             aq_state: None,
-
-            // Quant tables (set later)
-            y_quant: None,
-            cb_quant: None,
-            cr_quant: None,
-            y_zero_bias: None,
-            cb_zero_bias: None,
-            cr_zero_bias: None,
 
             // Allocation tracking
             alloc_stats,
@@ -447,20 +443,15 @@ impl StripProcessor {
         aq.set_strip_stride(self.padded_width);
         self.aq_state = Some(aq);
 
-        // Initialize SIMD quant tables for incremental quantization
-        self.y_quant_simd = Some(QuantTableSimd::from_values(&y_quant.values));
-        self.cb_quant_simd = Some(QuantTableSimd::from_values(&cb_quant.values));
-        self.cr_quant_simd = Some(QuantTableSimd::from_values(&cr_quant.values));
-        self.y_zero_bias_simd = Some(ZeroBiasSimd::from_params(&y_zero_bias));
-        self.cb_zero_bias_simd = Some(ZeroBiasSimd::from_params(&cb_zero_bias));
-        self.cr_zero_bias_simd = Some(ZeroBiasSimd::from_params(&cr_zero_bias));
-
-        self.y_quant = Some(y_quant);
-        self.cb_quant = Some(cb_quant);
-        self.cr_quant = Some(cr_quant);
-        self.y_zero_bias = Some(y_zero_bias);
-        self.cb_zero_bias = Some(cb_zero_bias);
-        self.cr_zero_bias = Some(cr_zero_bias);
+        // Create quantization context with all tables
+        self.quant = Some(QuantContext::new(
+            y_quant,
+            cb_quant,
+            cr_quant,
+            y_zero_bias,
+            cb_zero_bias,
+            cr_zero_bias,
+        ));
         Ok(())
     }
 
@@ -967,15 +958,8 @@ impl StripProcessor {
     /// This is the key memory optimization: quantize incrementally as soon as
     /// AQ strengths become available, rather than storing all f32 blocks.
     fn quantize_pending_imcu(&mut self, buffer_idx: usize, aq_strengths: &[f32]) {
-        // Clone SIMD tables to avoid borrow issues when calling count_block_frequencies
-        let y_quant_simd = self
-            .y_quant_simd
-            .clone()
-            .expect("y_quant_simd not set");
-        let y_zero_bias_simd = self
-            .y_zero_bias_simd
-            .clone()
-            .expect("y_zero_bias_simd not set");
+        // Get quantization context (must be set before processing)
+        let quant = self.quant.clone().expect("quant context not set");
 
         // Quantize Y blocks
         for (i, dct) in self.pending_y_blocks[buffer_idx].iter().enumerate() {
@@ -986,8 +970,9 @@ impl StripProcessor {
             };
 
             // SIMD quantization for parity with full-plane encoder
-            let quant_coeffs =
-                y_quant_simd.quantize_array_with_zero_bias(dct, &y_zero_bias_simd, aq_strength);
+            let quant_coeffs = quant
+                .y_quant_simd
+                .quantize_array_with_zero_bias(dct, &quant.y_zero_bias_simd, aq_strength);
 
             // Convert to zigzag order
             let mut zigzag = [0i16; DCT_BLOCK_SIZE];
@@ -997,18 +982,8 @@ impl StripProcessor {
             self.all_aq_strengths.push(aq_strength);
         }
 
-        // Quantize Cb/Cr blocks
-        let cb_quant_simd = self.cb_quant_simd.clone();
-        let cr_quant_simd = self.cr_quant_simd.clone();
-        let cb_zero_bias_simd = self.cb_zero_bias_simd.clone();
-        let cr_zero_bias_simd = self.cr_zero_bias_simd.clone();
-
-        if let (Some(cb_qs), Some(cr_qs), Some(cb_zbs), Some(cr_zbs)) = (
-            cb_quant_simd,
-            cr_quant_simd,
-            cb_zero_bias_simd,
-            cr_zero_bias_simd,
-        ) {
+        // Quantize Cb/Cr blocks (always present when quant is set)
+        {
             let y_blocks_h = self.y_blocks_h;
             let y_blocks_v = self.y_blocks_v;
             let c_blocks_h = self.c_blocks_h;
@@ -1035,7 +1010,9 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let quant_coeffs = cb_qs.quantize_array_with_zero_bias(dct, &cb_zbs, aq_strength);
+                let quant_coeffs = quant
+                    .cb_quant_simd
+                    .quantize_array_with_zero_bias(dct, &quant.cb_zero_bias_simd, aq_strength);
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 self.cb_blocks.push(zigzag);
@@ -1059,7 +1036,9 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let quant_coeffs = cr_qs.quantize_array_with_zero_bias(dct, &cr_zbs, aq_strength);
+                let quant_coeffs = quant
+                    .cr_quant_simd
+                    .quantize_array_with_zero_bias(dct, &quant.cr_zero_bias_simd, aq_strength);
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 self.cr_blocks.push(zigzag);

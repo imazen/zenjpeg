@@ -23,6 +23,20 @@ pub struct OptimizedTable {
     pub values: Vec<u8>,
 }
 
+impl OptimizedTable {
+    /// Creates an optimized table from bits and values arrays.
+    pub fn from_bits_values(bits: [u8; 16], values: Vec<u8>) -> crate::error::Result<Self> {
+        let table = HuffmanEncodeTable::from_bits_values(&bits, &values)?;
+        Ok(Self { table, bits, values })
+    }
+
+    /// Returns the code and length for a symbol.
+    #[inline]
+    pub fn encode(&self, symbol: u8) -> (u32, u8) {
+        self.table.encode(symbol)
+    }
+}
+
 /// A complete set of optimized Huffman tables for JPEG encoding.
 ///
 /// Contains DC and AC tables for both luminance and chrominance components.

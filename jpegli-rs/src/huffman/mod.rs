@@ -22,10 +22,8 @@ pub use encode::{
 // Re-export from classic
 pub use classic::{depths_to_bits_values, generate_code_lengths, generate_optimal_table};
 
-// Re-export from types (legacy types)
-pub use types::{
-    compare_algorithms, CodeLengths, HuffmanAlgorithm, HuffmanTableSet, SymbolFrequencies,
-};
+// Re-export from types
+pub use types::{compare_algorithms, CodeLengths, HuffmanAlgorithm, SymbolFrequencies};
 
 // Re-export from optimize (new types from huffman_opt.rs refactor)
 pub use optimize::{
