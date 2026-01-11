@@ -19,9 +19,7 @@ struct MatrixResult {
     config: String,
     encode_result: EncodeOutcome,
     jpegli_decode: bool,
-    jpeg_decoder: bool,
     zune_jpeg: bool,
-    mozjpeg: bool,
     file_size: usize,
 }
 
@@ -55,13 +53,6 @@ fn decode_jpegli(data: &[u8]) -> bool {
     jpegli::Decoder::new().decode(data).is_ok()
 }
 
-/// Decode with jpeg-decoder
-fn decode_jpeg_decoder(data: &[u8]) -> bool {
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
-    decoder.decode().is_ok()
-}
-
 /// Decode with zune-jpeg
 fn decode_zune_jpeg(data: &[u8]) -> bool {
     use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -69,23 +60,6 @@ fn decode_zune_jpeg(data: &[u8]) -> bool {
     let cursor = ZCursor::new(data);
     let mut decoder = JpegDecoder::new(cursor);
     decoder.decode().is_ok()
-}
-
-/// Decode with mozjpeg
-fn decode_mozjpeg(data: &[u8]) -> bool {
-    match mozjpeg::Decompress::new_mem(data) {
-        Ok(decompress) => match decompress.rgb() {
-            Ok(mut decompressor) => {
-                let width = decompressor.width();
-                let height = decompressor.height();
-                let mut pixels = vec![0u8; width * height * 3];
-                #[allow(deprecated)]
-                decompressor.read_scanlines_into::<u8>(&mut pixels).is_ok()
-            }
-            Err(_) => false,
-        },
-        Err(_) => false,
-    }
 }
 
 /// Test a single encoder configuration
@@ -126,17 +100,13 @@ fn test_config(
     match encode_result {
         Ok(jpeg_data) => {
             let jpegli = decode_jpegli(&jpeg_data);
-            let jpeg_dec = decode_jpeg_decoder(&jpeg_data);
             let zune = decode_zune_jpeg(&jpeg_data);
-            let moz = decode_mozjpeg(&jpeg_data);
 
             MatrixResult {
                 config: config_name,
                 encode_result: EncodeOutcome::Success,
                 jpegli_decode: jpegli,
-                jpeg_decoder: jpeg_dec,
                 zune_jpeg: zune,
-                mozjpeg: moz,
                 file_size: jpeg_data.len(),
             }
         }
@@ -153,9 +123,7 @@ fn test_config(
                     EncodeOutcome::UnexpectedError(err_str)
                 },
                 jpegli_decode: false,
-                jpeg_decoder: false,
                 zune_jpeg: false,
-                mozjpeg: false,
                 file_size: 0,
             }
         }
@@ -244,16 +212,15 @@ fn test_encoder_matrix() {
 
     // Print results table
     println!(
-        "{:<55} {:>6} {:>8} {:>8} {:>6} {:>8} {:>8}",
-        "Configuration", "Status", "jpegli", "jpeg-dec", "zune", "mozjpeg", "Size"
+        "{:<55} {:>6} {:>8} {:>8} {:>8}",
+        "Configuration", "Status", "jpegli", "zune", "Size"
     );
-    println!("{}", "-".repeat(110));
+    println!("{}", "-".repeat(90));
 
     for result in &results {
         let status = match &result.encode_result {
             EncodeOutcome::Success => {
-                if result.jpegli_decode && result.jpeg_decoder && result.zune_jpeg && result.mozjpeg
-                {
+                if result.jpegli_decode && result.zune_jpeg {
                     pass_count += 1;
                     "OK"
                 } else {
@@ -275,13 +242,11 @@ fn test_encoder_matrix() {
         };
 
         println!(
-            "{:<55} {:>6} {:>8} {:>8} {:>6} {:>8} {:>8}",
+            "{:<55} {:>6} {:>8} {:>8} {:>8}",
             result.config,
             status,
             decode_str(result.jpegli_decode),
-            decode_str(result.jpeg_decoder),
             decode_str(result.zune_jpeg),
-            decode_str(result.mozjpeg),
             size_str
         );
 
@@ -291,7 +256,7 @@ fn test_encoder_matrix() {
         }
     }
 
-    println!("{}", "-".repeat(110));
+    println!("{}", "-".repeat(90));
     println!("\nSummary: {} passed, {} failures", pass_count, fail_count);
 
     assert_eq!(fail_count, 0, "There were {} failures!", fail_count);
@@ -374,11 +339,9 @@ fn test_common_configurations() {
         match result {
             Ok(jpeg) => {
                 let jpegli_ok = decode_jpegli(&jpeg);
-                let jpeg_dec_ok = decode_jpeg_decoder(&jpeg);
                 let zune_ok = decode_zune_jpeg(&jpeg);
-                let moz_ok = decode_mozjpeg(&jpeg);
 
-                let all_ok = jpegli_ok && jpeg_dec_ok && zune_ok && moz_ok;
+                let all_ok = jpegli_ok && zune_ok;
                 println!(
                     "{:<25}: {} bytes, decoders: {}",
                     name,

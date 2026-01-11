@@ -3,9 +3,8 @@
 //! These tests verify that progressive JPEG encoding produces valid output
 //! that can be decoded by standard decoders.
 //!
-//! NOTE: We use zune-jpeg and mozjpeg for decoder verification as they handle
-//! our progressive output correctly. The jpeg-decoder crate (and libjpeg's djpeg)
-//! have stricter Huffman parsing that rejects some valid progressive streams.
+//! NOTE: We use zune-jpeg for decoder verification as it handles
+//! our progressive output correctly.
 
 use jpegli::quant::Quality;
 use jpegli::types::JpegMode;
@@ -19,16 +18,6 @@ fn decode_with_zune(jpeg_data: &[u8]) -> Result<Vec<u8>, String> {
     zune_jpeg::JpegDecoder::new(cursor)
         .decode()
         .map_err(|e| format!("{:?}", e))
-}
-
-/// Helper function to decode JPEG using mozjpeg
-fn decode_with_mozjpeg(jpeg_data: &[u8]) -> Result<Vec<u8>, String> {
-    let d = mozjpeg::Decompress::new_mem(jpeg_data).map_err(|e| format!("{:?}", e))?;
-    let mut rgb = d.rgb().map_err(|e| format!("{:?}", e))?;
-    let lines = rgb
-        .read_scanlines::<[u8; 3]>()
-        .map_err(|e| format!("{:?}", e))?;
-    Ok(lines.into_iter().flatten().collect())
 }
 
 /// Test that progressive encoding of a grayscale gradient produces valid output.
@@ -307,9 +296,6 @@ fn test_progressive_optimized_external_decode() {
     // Note: zune-jpeg decodes grayscale to RGB (3 bytes per pixel)
     let decoded = decode_with_zune(&jpeg_data).expect("zune-jpeg should decode");
     assert_eq!(decoded.len(), (width * height * 3) as usize);
-
-    // Also verify with mozjpeg
-    let _ = mozjpeg::Decompress::new_mem(&jpeg_data).expect("mozjpeg should parse");
 }
 
 /// Test optimized progressive with a larger image shows file size benefit.
@@ -917,7 +903,7 @@ fn test_progressive_extreme_low_quality() {
 ///
 /// NOTE: This test is marked as ignored because it currently fails.
 /// The djpeg tool (and jpeg-decoder crate) reject our AC refinement encoding,
-/// even though mozjpeg and zune-jpeg decode it correctly.
+/// even though zune-jpeg decodes it correctly.
 #[test]
 #[ignore] // KNOWN BUG: djpeg rejects our AC refinement encoding
 fn test_libjpeg_compatibility_noise() {
@@ -948,16 +934,10 @@ fn test_libjpeg_compatibility_noise() {
 
     // Verify the file decodes with our test decoders
     let zune_decoded = decode_with_zune(&jpeg_data).expect("zune-jpeg should decode");
-    let moz_decoded = decode_with_mozjpeg(&jpeg_data).expect("mozjpeg should decode");
 
     // Basic sanity check
     assert_eq!(
         zune_decoded.len(),
-        (width * height * 3) as usize,
-        "Decoded size should match"
-    );
-    assert_eq!(
-        moz_decoded.len(),
         (width * height * 3) as usize,
         "Decoded size should match"
     );
@@ -1031,8 +1011,8 @@ fn test_cpp_pixel_parity() {
         .encode(&data)
         .expect("Encoding should succeed");
 
-    // Decode with mozjpeg
-    let rust_decoded = decode_with_mozjpeg(&rust_jpeg).expect("Should decode");
+    // Decode with zune-jpeg
+    let rust_decoded = decode_with_zune(&rust_jpeg).expect("Should decode");
 
     // Check that decoded size matches
     assert_eq!(

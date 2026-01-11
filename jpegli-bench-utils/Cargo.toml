@@ -28,18 +28,15 @@ dssim = { workspace = true }
 fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 
-# JPEG encoding (for comparison)
-mozjpeg = { workspace = true }
-
 # For test image discovery
-jpegli-rs = { path = "../jpegli-rs", default-features = false }
+jpegli-rs = { path = "../jpegli-rs", default-features = false, features = ["simd"] }
 
 # C++ jpegli FFI bindings (optional)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }
 libc = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["cjpegli-ffi"]
 experimental-hybrid-trellis = ["jpegli-rs/experimental-hybrid-trellis"]
 # Enable C++ jpegli encoding via FFI (requires building internal/jpegli-cpp)
 cjpegli-ffi = ["dep:jpegli-internals-sys", "dep:libc"]

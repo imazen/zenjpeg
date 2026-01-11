@@ -49,23 +49,6 @@ fn test_progressive_subsampling_external_decoder_compat() {
             .encode(&rgb)
             .unwrap_or_else(|e| panic!("Progressive {} encode failed: {:?}", name, e));
 
-        // Test with mozjpeg decoder
-        let moz_result = mozjpeg::Decompress::new_mem(&jpeg)
-            .and_then(|d| d.rgb())
-            .and_then(|mut dec| {
-                let mut buf = vec![0u8; dec.width() * dec.height() * 3];
-                #[allow(deprecated)]
-                dec.read_scanlines_into::<u8>(&mut buf)?;
-                Ok(buf)
-            });
-
-        assert!(
-            moz_result.is_ok(),
-            "Progressive {} failed mozjpeg decode: {:?}",
-            name,
-            moz_result.err()
-        );
-
         // Test with zune-jpeg decoder
         use zune_jpeg::zune_core::bytestream::ZCursor;
         use zune_jpeg::JpegDecoder;

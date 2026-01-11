@@ -9,7 +9,7 @@
 //! Options:
 //!   --encoder <name>    Encoder to test. Can specify multiple times. Default: all
 //!                       Available: jpegli-rs-ycbcr, jpegli-rs-ycbcr-hybrid, jpegli-rs-xyb,
-//!                                  cmozjpeg, jpegli-rs-ycbcr-444, jpegli-rs-ycbcr-hybrid-444
+//!                                  jpegli-rs-ycbcr-444, jpegli-rs-ycbcr-hybrid-444
 //!   --quality <n>       Single quality level (0-100). Default: sweep 10-95
 //!   --metric <name>     Metric to use (dssim, ssim2, butteraugli, all). Default: all
 //!   --output <file>     Output CSV file
@@ -159,7 +159,7 @@ fn parse_args() -> Config {
 
     let image_path = image_path.unwrap_or_else(|| {
         eprintln!("Usage: quality_compare [OPTIONS] <image.png>");
-        eprintln!("  --encoder <name>   jpegli-rs-ycbcr, jpegli-rs-xyb, cmozjpeg");
+        eprintln!("  --encoder <name>   jpegli-rs-ycbcr, jpegli-rs-xyb, cjpegli");
         eprintln!("  --quality <n>      Quality level 0-100");
         eprintln!("  --metric <name>    dssim, ssim2, butteraugli, all");
         eprintln!("  --output <file>    CSV output file");
@@ -192,7 +192,7 @@ fn parse_encoder(name: &str) -> EncoderConfig {
         "jpegli-rs-xyb" | "jpegli-xyb" | "xyb" => {
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::Xyb)
         }
-        "cmozjpeg" | "mozjpeg" => EncoderConfig::new(EncoderImpl::CMozjpeg).color(ColorMode::YCbCr),
+        "cjpegli" => EncoderConfig::new(EncoderImpl::CJpegli).color(ColorMode::YCbCr),
         "jpegli-rs-ycbcr-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::YCbCr)
             .subsampling(ChromaSubsampling::S444),

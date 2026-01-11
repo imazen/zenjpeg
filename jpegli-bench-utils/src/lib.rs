@@ -1254,12 +1254,8 @@ pub fn load_corpus(dir: &std::path::Path, max_files: Option<usize>) -> Vec<Image
 pub enum EncoderImpl {
     /// jpegli-rs: Pure Rust port of Google's jpegli
     JpegliRs,
-    /// cjpegli: Original C++ jpegli via FFI (requires ffi-tests feature)
+    /// cjpegli: Original C++ jpegli via FFI (requires cjpegli-ffi feature)
     CJpegli,
-    /// mozjpeg-rs: Pure Rust port of mozjpeg
-    MozjpegRs,
-    /// cmozjpeg: Original C mozjpeg via FFI
-    CMozjpeg,
     /// libjpeg-turbo via turbojpeg crate
     Libjpeg,
 }
@@ -1271,8 +1267,6 @@ impl EncoderImpl {
         match self {
             Self::JpegliRs => "jpegli-rs",
             Self::CJpegli => "cjpegli",
-            Self::MozjpegRs => "mozjpeg-rs",
-            Self::CMozjpeg => "cmozjpeg",
             Self::Libjpeg => "libjpeg",
         }
     }
@@ -1280,7 +1274,7 @@ impl EncoderImpl {
     /// Whether this is a Rust implementation.
     #[must_use]
     pub const fn is_rust(&self) -> bool {
-        matches!(self, Self::JpegliRs | Self::MozjpegRs)
+        matches!(self, Self::JpegliRs)
     }
 }
 
@@ -1502,12 +1496,11 @@ impl EncoderConfig {
     pub fn encode(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         match self.encoder {
             EncoderImpl::JpegliRs => self.encode_with_jpegli_rs(img),
-            EncoderImpl::CMozjpeg => self.encode_with_cmozjpeg(img),
             #[cfg(feature = "cjpegli-ffi")]
             EncoderImpl::CJpegli => self.encode_with_cjpegli_ffi(img),
             #[cfg(not(feature = "cjpegli-ffi"))]
             EncoderImpl::CJpegli => Err("cjpegli requires cjpegli-ffi feature".to_string()),
-            EncoderImpl::MozjpegRs | EncoderImpl::Libjpeg => {
+            EncoderImpl::Libjpeg => {
                 Err(format!("{} encoder not yet implemented", self.encoder))
             }
         }
@@ -1536,34 +1529,6 @@ impl EncoderConfig {
         encoder
             .encode(&img.pixels)
             .map_err(|e| format!("jpegli-rs encode failed: {e}"))
-    }
-
-    fn encode_with_cmozjpeg(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        use mozjpeg::{ColorSpace, Compress, ScanMode as MozScanMode};
-
-        if self.color == ColorMode::Xyb {
-            return Err("cmozjpeg does not support XYB color mode".to_string());
-        }
-
-        let mut comp = Compress::new(ColorSpace::JCS_RGB);
-        comp.set_size(img.width, img.height);
-        comp.set_quality(self.quality as f32);
-        comp.set_optimize_coding(true);
-
-        // Set scan mode
-        match self.scan {
-            ScanMode::Baseline => {
-                comp.set_scan_optimization_mode(MozScanMode::AllComponentsTogether)
-            }
-            ScanMode::Progressive => comp.set_scan_optimization_mode(MozScanMode::Auto),
-        }
-
-        let mut comp = comp
-            .start_compress(Vec::new())
-            .map_err(|e| format!("mozjpeg start: {e}"))?;
-        comp.write_scanlines(&img.pixels)
-            .map_err(|e| format!("mozjpeg write: {e}"))?;
-        comp.finish().map_err(|e| format!("mozjpeg finish: {e}"))
     }
 
     /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
@@ -1759,25 +1724,6 @@ pub fn encode_jpegli_rs_xyb_progressive_444(img: &ImageData, quality: u8) -> Vec
         .expect("jpegli-rs xyb progressive 444 encode")
 }
 
-/// Encode with C mozjpeg (via mozjpeg crate).
-pub fn encode_cmozjpeg_ycbcr(img: &ImageData, quality: u8) -> Vec<u8> {
-    EncoderConfig::new(EncoderImpl::CMozjpeg)
-        .color(ColorMode::YCbCr)
-        .quality(quality)
-        .encode(img)
-        .expect("cmozjpeg ycbcr encode")
-}
-
-/// Encode with C mozjpeg, progressive mode.
-pub fn encode_cmozjpeg_ycbcr_progressive(img: &ImageData, quality: u8) -> Vec<u8> {
-    EncoderConfig::new(EncoderImpl::CMozjpeg)
-        .color(ColorMode::YCbCr)
-        .scan(ScanMode::Progressive)
-        .quality(quality)
-        .encode(img)
-        .expect("cmozjpeg ycbcr progressive encode")
-}
-
 /// Encode with C++ jpegli via FFI (requires cjpegli-ffi feature).
 #[cfg(feature = "cjpegli-ffi")]
 pub fn encode_cjpegli_ffi(img: &ImageData, quality: u8) -> Vec<u8> {
@@ -1823,11 +1769,6 @@ pub fn encode_jpegli(img: &ImageData, quality: u8) -> Vec<u8> {
 #[deprecated(note = "Use encode_jpegli_rs_xyb instead")]
 pub fn encode_jpegli_xyb(img: &ImageData, quality: u8) -> Vec<u8> {
     encode_jpegli_rs_xyb(img, quality)
-}
-
-#[deprecated(note = "Use encode_cmozjpeg_ycbcr instead")]
-pub fn encode_mozjpeg(img: &ImageData, quality: u8) -> Vec<u8> {
-    encode_cmozjpeg_ycbcr(img, quality)
 }
 
 /// Full encoding + quality measurement result.
@@ -2902,12 +2843,12 @@ mod tests {
         assert_eq!(config.name(), "jpegli-rs-xyb-progressive-444");
         assert_eq!(config.short_name(), "jpegli-rs-xyb");
 
-        let config2 = EncoderConfig::new(EncoderImpl::CMozjpeg)
+        let config2 = EncoderConfig::new(EncoderImpl::CJpegli)
             .color(ColorMode::YCbCr)
             .scan(ScanMode::Baseline)
             .subsampling(ChromaSubsampling::S420);
 
-        assert_eq!(config2.name(), "cmozjpeg-ycbcr-baseline-420");
+        assert_eq!(config2.name(), "cjpegli-ycbcr-baseline-420");
 
         // Test hybrid naming
         let config3 = EncoderConfig::new(EncoderImpl::JpegliRs)

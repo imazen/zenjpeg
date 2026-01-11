@@ -213,9 +213,9 @@ fn test_metrics_distortion_levels() {
     }
 }
 
-/// Benchmark encoding quality across encoders using multiple metrics.
+/// Test encoding quality metrics at various quality levels.
 #[test]
-fn test_metrics_encoder_comparison() {
+fn test_metrics_encoder_quality() {
     let path = jpegli::test_utils::get_testdata_dir().join("jxl/flower/flower_small.rgb.png");
     if !path.exists() {
         eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
@@ -240,12 +240,12 @@ fn test_metrics_encoder_comparison() {
         _ => panic!("Unsupported color type"),
     };
 
-    println!("\n=== Encoder Comparison (flower_small.rgb.png) ===");
+    println!("\n=== jpegli Quality Metrics (flower_small.rgb.png) ===");
     println!(
-        "{:>8} {:>10} {:>10} {:>12} {:>14}",
-        "Quality", "jpegli KB", "moz KB", "DSSIM", "SSIMULACRA2"
+        "{:>8} {:>10} {:>12} {:>14}",
+        "Quality", "KB", "DSSIM", "SSIMULACRA2"
     );
-    println!("{}", "-".repeat(58));
+    println!("{}", "-".repeat(48));
 
     for quality in [70, 80, 90] {
         // Encode with jpegli
@@ -255,24 +255,10 @@ fn test_metrics_encoder_comparison() {
         let dssim = compute_dssim(&rgb, &jpegli_decoded, width, height);
         let ssim2 = compute_ssimulacra2(&rgb, &jpegli_decoded, width, height);
 
-        // Encode with mozjpeg for comparison
-        use mozjpeg::{ColorSpace, Compress};
-        let mut comp = Compress::new(ColorSpace::JCS_RGB);
-        comp.set_size(width, height);
-        comp.set_quality(quality as f32);
-        comp.set_chroma_sampling_pixel_sizes((1, 1), (1, 1));
-        let mut started = comp.start_compress(Vec::new()).expect("mozjpeg");
-        for y in 0..height {
-            let row = &rgb[y * width * 3..(y + 1) * width * 3];
-            let _ = started.write_scanlines(row);
-        }
-        let moz_data = started.finish().expect("mozjpeg finish");
-
         println!(
-            "{:>8} {:>10.1} {:>10.1} {:>12.6} {:>14.4}",
+            "{:>8} {:>10.1} {:>12.6} {:>14.4}",
             quality,
             jpegli_data.len() as f64 / 1024.0,
-            moz_data.len() as f64 / 1024.0,
             dssim,
             ssim2
         );
