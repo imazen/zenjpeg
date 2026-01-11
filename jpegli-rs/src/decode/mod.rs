@@ -955,23 +955,30 @@ impl<'a> JpegParser<'a> {
 
             // Use explicit table if provided, otherwise use standard JPEG tables.
             // MJPEG files often omit DHT markers and expect standard tables.
-            let dc_table_to_use = self.dc_tables[dc_idx].clone().unwrap_or_else(|| {
-                if dc_idx == 0 {
-                    HuffmanDecodeTable::std_dc_luminance()
-                } else {
-                    HuffmanDecodeTable::std_dc_chrominance()
+            // Tables are borrowed, not cloned (~1.5KB savings per table).
+            let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
+                Some(table) => table,
+                None => {
+                    if dc_idx == 0 {
+                        HuffmanDecodeTable::std_dc_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_dc_chrominance()
+                    }
                 }
-            });
-            decoder.set_dc_table(dc_idx, dc_table_to_use);
+            };
+            decoder.set_dc_table(dc_idx, dc_table_ref);
 
-            let ac_table_to_use = self.ac_tables[ac_idx].clone().unwrap_or_else(|| {
-                if ac_idx == 0 {
-                    HuffmanDecodeTable::std_ac_luminance()
-                } else {
-                    HuffmanDecodeTable::std_ac_chrominance()
+            let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
+                Some(table) => table,
+                None => {
+                    if ac_idx == 0 {
+                        HuffmanDecodeTable::std_ac_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_ac_chrominance()
+                    }
                 }
-            });
-            decoder.set_ac_table(ac_idx, ac_table_to_use);
+            };
+            decoder.set_ac_table(ac_idx, ac_table_ref);
         }
 
         // Decode MCUs with proper interleaving
@@ -1130,23 +1137,30 @@ impl<'a> JpegParser<'a> {
 
             // Use explicit table if provided, otherwise use standard JPEG tables.
             // MJPEG files often omit DHT markers and expect standard tables.
-            let dc_table_to_use = self.dc_tables[dc_idx].clone().unwrap_or_else(|| {
-                if dc_idx == 0 {
-                    HuffmanDecodeTable::std_dc_luminance()
-                } else {
-                    HuffmanDecodeTable::std_dc_chrominance()
+            // Tables are borrowed, not cloned (~1.5KB savings per table).
+            let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
+                Some(table) => table,
+                None => {
+                    if dc_idx == 0 {
+                        HuffmanDecodeTable::std_dc_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_dc_chrominance()
+                    }
                 }
-            });
-            decoder.set_dc_table(dc_idx, dc_table_to_use);
+            };
+            decoder.set_dc_table(dc_idx, dc_table_ref);
 
-            let ac_table_to_use = self.ac_tables[ac_idx].clone().unwrap_or_else(|| {
-                if ac_idx == 0 {
-                    HuffmanDecodeTable::std_ac_luminance()
-                } else {
-                    HuffmanDecodeTable::std_ac_chrominance()
+            let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
+                Some(table) => table,
+                None => {
+                    if ac_idx == 0 {
+                        HuffmanDecodeTable::std_ac_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_ac_chrominance()
+                    }
                 }
-            });
-            decoder.set_ac_table(ac_idx, ac_table_to_use);
+            };
+            decoder.set_ac_table(ac_idx, ac_table_ref);
         }
 
         // Determine scan type
