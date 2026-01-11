@@ -633,12 +633,13 @@ impl StripProcessor {
                         let g = 255.0 * (1.0 - m) * (1.0 - k);
                         let b = 255.0 * (1.0 - y_val) * (1.0 - k);
 
+                        // Use FMA for accuracy (single rounding)
                         self.y_strip[y_row_start + x] =
-                            YCBCR_R_TO_Y * r + YCBCR_G_TO_Y * g + YCBCR_B_TO_Y * b;
+                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
                         self.cb_strip[cbcr_row_start + x] =
-                            128.0 + YCBCR_R_TO_CB * r + YCBCR_G_TO_CB * g + YCBCR_B_TO_CB * b;
+                            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
                         self.cr_strip[cbcr_row_start + x] =
-                            128.0 + YCBCR_R_TO_CR * r + YCBCR_G_TO_CR * g + YCBCR_B_TO_CR * b;
+                            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
                     }
                     // Edge-pad Y row
                     if width < padded_width {
