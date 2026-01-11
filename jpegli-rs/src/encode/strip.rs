@@ -35,7 +35,10 @@
 //! 2. Build optimized Huffman tables
 //! 3. Encode from stored i16 blocks
 
-use crate::alloc::{try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, AllocationStats};
+use crate::alloc::{
+    try_alloc_filled, try_alloc_zeroed_f32_tracked, try_clone_slice, try_with_capacity_tracked,
+    AllocationStats,
+};
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::forward_dct_8x8;
 use crate::error::Result;
@@ -376,21 +379,21 @@ impl StripProcessor {
 
             // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
             pending_y_blocks: [
-                Vec::with_capacity(pending_y_capacity),
-                Vec::with_capacity(pending_y_capacity),
+                try_with_capacity_tracked(pending_y_capacity, "pending_y_blocks[0]", &mut alloc_stats)?,
+                try_with_capacity_tracked(pending_y_capacity, "pending_y_blocks[1]", &mut alloc_stats)?,
             ],
             pending_cb_blocks: if is_color {
                 [
-                    Vec::with_capacity(pending_c_capacity),
-                    Vec::with_capacity(pending_c_capacity),
+                    try_with_capacity_tracked(pending_c_capacity, "pending_cb_blocks[0]", &mut alloc_stats)?,
+                    try_with_capacity_tracked(pending_c_capacity, "pending_cb_blocks[1]", &mut alloc_stats)?,
                 ]
             } else {
                 [Vec::new(), Vec::new()]
             },
             pending_cr_blocks: if is_color {
                 [
-                    Vec::with_capacity(pending_c_capacity),
-                    Vec::with_capacity(pending_c_capacity),
+                    try_with_capacity_tracked(pending_c_capacity, "pending_cr_blocks[0]", &mut alloc_stats)?,
+                    try_with_capacity_tracked(pending_c_capacity, "pending_cr_blocks[1]", &mut alloc_stats)?,
                 ]
             } else {
                 [Vec::new(), Vec::new()]
@@ -407,7 +410,7 @@ impl StripProcessor {
             c_blocks_v,
 
             // Accumulated AQ strengths (for output)
-            all_aq_strengths: Vec::with_capacity(total_y_blocks),
+            all_aq_strengths: try_with_capacity_tracked(total_y_blocks, "all_aq_strengths", &mut alloc_stats)?,
 
             // Streaming AQ (initialized when quant tables are set)
             aq_state: None,
@@ -970,9 +973,11 @@ impl StripProcessor {
             };
 
             // SIMD quantization for parity with full-plane encoder
-            let quant_coeffs = quant
-                .y_quant_simd
-                .quantize_array_with_zero_bias(dct, &quant.y_zero_bias_simd, aq_strength);
+            let quant_coeffs = quant.y_quant_simd.quantize_array_with_zero_bias(
+                dct,
+                &quant.y_zero_bias_simd,
+                aq_strength,
+            );
 
             // Convert to zigzag order
             let mut zigzag = [0i16; DCT_BLOCK_SIZE];
@@ -1002,17 +1007,18 @@ impl StripProcessor {
                 let chroma_by = global_chroma_by + local_by;
                 let y_by = (chroma_by * y_blocks_v) / c_blocks_v.max(1);
                 // Use global AQ index
-                let global_aq_idx =
-                    y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+                let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
                 let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {
                     self.all_aq_strengths[global_aq_idx]
                 } else {
                     0.08 // C++ mean fallback
                 };
 
-                let quant_coeffs = quant
-                    .cb_quant_simd
-                    .quantize_array_with_zero_bias(dct, &quant.cb_zero_bias_simd, aq_strength);
+                let quant_coeffs = quant.cb_quant_simd.quantize_array_with_zero_bias(
+                    dct,
+                    &quant.cb_zero_bias_simd,
+                    aq_strength,
+                );
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 self.cb_blocks.push(zigzag);
@@ -1028,17 +1034,18 @@ impl StripProcessor {
                 let chroma_by = global_chroma_by_cr + local_by;
                 let y_by = (chroma_by * y_blocks_v) / c_blocks_v.max(1);
                 // Use global AQ index
-                let global_aq_idx =
-                    y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+                let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
                 let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {
                     self.all_aq_strengths[global_aq_idx]
                 } else {
                     0.08 // C++ mean fallback
                 };
 
-                let quant_coeffs = quant
-                    .cr_quant_simd
-                    .quantize_array_with_zero_bias(dct, &quant.cr_zero_bias_simd, aq_strength);
+                let quant_coeffs = quant.cr_quant_simd.quantize_array_with_zero_bias(
+                    dct,
+                    &quant.cr_zero_bias_simd,
+                    aq_strength,
+                );
                 let mut zigzag = [0i16; DCT_BLOCK_SIZE];
                 natural_to_zigzag_into(&quant_coeffs, &mut zigzag);
                 self.cr_blocks.push(zigzag);
@@ -1055,7 +1062,7 @@ impl StripProcessor {
         if let Some(ref mut aq) = self.aq_state {
             if let Some(last_aq) = aq.flush() {
                 // Quantize the last pending iMCU
-                let last_strengths = last_aq.to_vec();
+                let last_strengths = try_clone_slice(last_aq, "last_aq_strengths")?;
                 let prev_buffer = 1 - self.pending_current;
                 if !self.pending_y_blocks[prev_buffer].is_empty() {
                     self.quantize_pending_imcu(prev_buffer, &last_strengths);
@@ -1068,7 +1075,11 @@ impl StripProcessor {
         let current_buffer = self.pending_current;
         if !self.pending_y_blocks[current_buffer].is_empty() {
             // Use default AQ strength for remaining blocks
-            let default_aq = vec![0.08f32; self.pending_y_blocks[current_buffer].len()];
+            let default_aq = try_alloc_filled(
+                self.pending_y_blocks[current_buffer].len(),
+                0.08f32,
+                "default_aq_strengths",
+            )?;
             self.quantize_pending_imcu(current_buffer, &default_aq);
         }
 
