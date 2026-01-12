@@ -252,7 +252,7 @@ impl Decoder {
         let mut parser = JpegParser::new(data, self.config.max_pixels)?;
         parser.read_header()?;
 
-        // Only baseline 4:4:4 supported for scanline reading
+        // Only baseline supported for scanline reading
         if parser.mode != JpegMode::Baseline {
             return Err(Error::UnsupportedFeature {
                 feature: "scanline reader only supports baseline JPEG",
@@ -265,20 +265,24 @@ impl Decoder {
             });
         }
 
-        // Check for 4:4:4 (all components same sampling)
-        let h0 = parser.components[0].h_samp_factor;
-        let v0 = parser.components[0].v_samp_factor;
-        for i in 1..3 {
-            if parser.components[i].h_samp_factor != h0 || parser.components[i].v_samp_factor != v0
-            {
-                return Err(Error::UnsupportedFeature {
-                    feature: "scanline reader requires 4:4:4 subsampling",
-                });
-            }
-        }
-        if h0 != 1 || v0 != 1 {
+        // Extract sampling factors
+        let h_samp = [
+            parser.components[0].h_samp_factor,
+            parser.components[1].h_samp_factor,
+            parser.components[2].h_samp_factor,
+        ];
+        let v_samp = [
+            parser.components[0].v_samp_factor,
+            parser.components[1].v_samp_factor,
+            parser.components[2].v_samp_factor,
+        ];
+
+        // Validate sampling factors - support 4:4:4, 4:2:2, and 4:2:0
+        let max_h = h_samp.iter().copied().max().unwrap_or(1);
+        let max_v = v_samp.iter().copied().max().unwrap_or(1);
+        if max_h > 2 || max_v > 2 {
             return Err(Error::UnsupportedFeature {
-                feature: "scanline reader requires 1x1 sampling factors",
+                feature: "scanline reader only supports sampling factors up to 2x2",
             });
         }
 
@@ -300,6 +304,8 @@ impl Decoder {
             parser.width,
             parser.height,
             parser.num_components,
+            h_samp,
+            v_samp,
             parser.quant_tables,
             quant_indices,
             parser.dc_tables,

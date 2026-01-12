@@ -573,9 +573,15 @@ impl Encoder {
             Subsampling::S440 => (1, 2),
         };
 
-        // Use parallel encoding when enabled and restart interval is set
+        // Use parallel encoding when explicitly enabled
         #[cfg(feature = "parallel")]
-        if self.config.restart_interval > 0 {
+        if self.config.parallel {
+            // Auto-set restart interval if not specified
+            let restart_interval = if self.config.restart_interval > 0 {
+                self.config.restart_interval
+            } else {
+                64 // Default restart interval for parallel encoding
+            };
             use super::super::parallel::{
                 parallel_entropy_encode_444, parallel_entropy_encode_subsampled,
                 ParallelEntropyConfig,
@@ -603,7 +609,7 @@ impl Encoder {
                     cb_blocks,
                     cr_blocks,
                     is_color,
-                    self.config.restart_interval,
+                    restart_interval,
                     &config,
                 ))
             } else {
@@ -616,7 +622,7 @@ impl Encoder {
                     h_samp,
                     v_samp,
                     is_color,
-                    self.config.restart_interval,
+                    restart_interval,
                     &config,
                 ))
             };

@@ -32,7 +32,7 @@ use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
 use crate::idct_int::idct_int_tiered;
 use crate::quant::dequantize_unzigzag_i32_into;
-use crate::types::{ColorSpace, Dimensions};
+use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
 
 /// Information about the JPEG being decoded.
@@ -44,6 +44,8 @@ pub struct ScanlineInfo {
     pub color_space: ColorSpace,
     /// Whether this is an XYB image
     pub is_xyb: bool,
+    /// Chroma subsampling mode
+    pub subsampling: Subsampling,
 }
 
 /// Pull-based scanline reader for JPEG decoding.
@@ -63,17 +65,32 @@ pub struct ScanlineReader<'a> {
     mcu_rows: usize,
     mcu_cols: usize,
     strip_width: usize,
+    mcu_height: usize, // Pixel rows per MCU row (8 for 4:4:4, 16 for 4:2:0)
+
+    // Sampling factors
+    h_samp: [u8; 3],
+    v_samp: [u8; 3],
+    max_h_samp: u8,
+    max_v_samp: u8,
+    subsampling: Subsampling,
 
     // Current position
     current_row: usize,     // Current output row (0 to height-1)
     current_mcu_row: usize, // Current MCU row being processed
-    row_in_mcu: usize,      // Row within current MCU (0-7)
+    row_in_mcu: usize,      // Row within current MCU (0 to mcu_height-1)
     mcu_row_decoded: bool,  // Whether current MCU row has been decoded
 
-    // Strip buffers (one MCU row = 8 pixel rows)
+    // Y strip buffer: full resolution, mcu_height rows
     y_strip: Vec<i16>,
+    // Cb/Cr strip buffers at native chroma resolution
     cb_strip: Vec<i16>,
     cr_strip: Vec<i16>,
+    // Chroma dimensions (may be half of Y for 4:2:0)
+    chroma_strip_width: usize,
+    chroma_strip_height: usize,
+    // Upsampled chroma buffers (full resolution, for non-4:4:4)
+    cb_upsampled: Vec<i16>,
+    cr_upsampled: Vec<i16>,
 
     // Quantization tables (copied, since we outlive the parser)
     quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4],
@@ -104,11 +121,14 @@ impl<'a> ScanlineReader<'a> {
     /// Creates a new scanline reader from parsed JPEG data.
     ///
     /// This is called internally by `Decoder::scanline_reader()`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         data: &'a [u8],
         width: u32,
         height: u32,
         num_components: u8,
+        h_samp: [u8; 3],
+        v_samp: [u8; 3],
         quant_tables: [Option<[u16; DCT_BLOCK_SIZE]>; 4],
         quant_indices: [usize; 3],
         dc_tables: [Option<HuffmanDecodeTable>; MAX_HUFFMAN_TABLES],
@@ -118,15 +138,50 @@ impl<'a> ScanlineReader<'a> {
         restart_interval: u16,
         is_xyb: bool,
     ) -> Result<Self> {
-        let mcu_cols = (width as usize + 7) / 8;
-        let mcu_rows = (height as usize + 7) / 8;
-        let strip_width = mcu_cols * 8;
-        let strip_size = strip_width * 8;
+        // Determine max sampling factors
+        let max_h_samp = h_samp.iter().copied().max().unwrap_or(1);
+        let max_v_samp = v_samp.iter().copied().max().unwrap_or(1);
+
+        // Determine subsampling mode
+        let subsampling = match (max_h_samp, max_v_samp) {
+            (1, 1) => Subsampling::S444,
+            (2, 1) => Subsampling::S422,
+            (2, 2) => Subsampling::S420,
+            (1, 2) => Subsampling::S440,
+            // For other sampling patterns, treat as 4:2:0
+            _ => Subsampling::S420,
+        };
+
+        // MCU dimensions depend on max sampling factors
+        let mcu_width = max_h_samp as usize * 8;
+        let mcu_height = max_v_samp as usize * 8;
+        let mcu_cols = (width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height as usize + mcu_height - 1) / mcu_height;
+
+        // Y strip: full resolution
+        let strip_width = mcu_cols * mcu_width;
+        let y_strip_size = strip_width * mcu_height;
+
+        // Chroma strip: at native (potentially subsampled) resolution
+        let chroma_strip_width = mcu_cols * 8; // One block per MCU for chroma
+        let chroma_strip_height = 8; // Always 8 rows in native chroma resolution
+        let chroma_strip_size = chroma_strip_width * chroma_strip_height;
 
         // Allocate strip buffers
-        let y_strip = unsafe { try_alloc_uninitialized(strip_size, "Y strip buffer")? };
-        let cb_strip = unsafe { try_alloc_uninitialized(strip_size, "Cb strip buffer")? };
-        let cr_strip = unsafe { try_alloc_uninitialized(strip_size, "Cr strip buffer")? };
+        let y_strip = unsafe { try_alloc_uninitialized(y_strip_size, "Y strip buffer")? };
+        let cb_strip = unsafe { try_alloc_uninitialized(chroma_strip_size, "Cb strip buffer")? };
+        let cr_strip = unsafe { try_alloc_uninitialized(chroma_strip_size, "Cr strip buffer")? };
+
+        // Upsampled chroma buffers (only needed for non-4:4:4)
+        let (cb_upsampled, cr_upsampled) = if subsampling != Subsampling::S444 {
+            let upsampled_size = strip_width * mcu_height;
+            (
+                unsafe { try_alloc_uninitialized(upsampled_size, "Cb upsampled buffer")? },
+                unsafe { try_alloc_uninitialized(upsampled_size, "Cr upsampled buffer")? },
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         Ok(Self {
             data,
@@ -136,6 +191,12 @@ impl<'a> ScanlineReader<'a> {
             mcu_rows,
             mcu_cols,
             strip_width,
+            mcu_height,
+            h_samp,
+            v_samp,
+            max_h_samp,
+            max_v_samp,
+            subsampling,
             current_row: 0,
             current_mcu_row: 0,
             row_in_mcu: 0,
@@ -143,6 +204,10 @@ impl<'a> ScanlineReader<'a> {
             y_strip,
             cb_strip,
             cr_strip,
+            chroma_strip_width,
+            chroma_strip_height,
+            cb_upsampled,
+            cr_upsampled,
             quant_tables,
             quant_indices,
             dc_tables,
@@ -183,7 +248,14 @@ impl<'a> ScanlineReader<'a> {
                 ColorSpace::YCbCr
             },
             is_xyb: self.is_xyb,
+            subsampling: self.subsampling,
         }
+    }
+
+    /// Returns the chroma subsampling mode.
+    #[inline]
+    pub fn subsampling(&self) -> Subsampling {
+        self.subsampling
     }
 
     /// Returns the current row position (0 to height-1).
@@ -238,12 +310,13 @@ impl<'a> ScanlineReader<'a> {
                 decoder.reset_dc();
             }
 
-            // Decode each component's block
+            // Decode each component's blocks
+            // For 4:2:0: Y has h_samp[0]*v_samp[0] blocks, Cb/Cr have 1 each
             for comp_idx in 0..self.num_components as usize {
-                let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
-                let (coeffs, coeff_count) =
-                    decoder.decode_block_with_count(comp_idx, dc_idx, ac_idx)?;
+                let h_blocks = self.h_samp[comp_idx] as usize;
+                let v_blocks = self.v_samp[comp_idx] as usize;
 
+                let (dc_idx, ac_idx) = self.table_mapping[comp_idx];
                 let quant_idx = self.quant_indices[comp_idx];
                 let quant = self.quant_tables[quant_idx]
                     .as_ref()
@@ -251,21 +324,39 @@ impl<'a> ScanlineReader<'a> {
                         reason: "missing quantization table",
                     })?;
 
-                let strip = match comp_idx {
-                    0 => &mut self.y_strip,
-                    1 => &mut self.cb_strip,
-                    _ => &mut self.cr_strip,
-                };
+                // Decode h_blocks * v_blocks blocks for this component
+                for v in 0..v_blocks {
+                    for h in 0..h_blocks {
+                        let (coeffs, coeff_count) =
+                            decoder.decode_block_with_count(comp_idx, dc_idx, ac_idx)?;
 
-                // Dequantize and IDCT
-                dequantize_unzigzag_i32_into(&coeffs, quant, &mut self.dequant_buf);
-                let dst_offset = mcu_x * 8;
-                idct_int_tiered(
-                    &mut self.dequant_buf,
-                    &mut strip[dst_offset..],
-                    self.strip_width,
-                    coeff_count,
-                );
+                        dequantize_unzigzag_i32_into(&coeffs, quant, &mut self.dequant_buf);
+
+                        // Calculate destination offset in strip buffer
+                        let (strip, stride) = match comp_idx {
+                            0 => {
+                                // Y: full resolution, write to appropriate position
+                                // mcu_x determines horizontal MCU, h determines block within MCU
+                                // v determines vertical block row within MCU
+                                let x_offset = mcu_x * self.max_h_samp as usize * 8 + h * 8;
+                                let y_offset = v * 8 * self.strip_width;
+                                (&mut self.y_strip[y_offset + x_offset..], self.strip_width)
+                            }
+                            1 => {
+                                // Cb: chroma resolution (one 8x8 block per MCU)
+                                let x_offset = mcu_x * 8;
+                                (&mut self.cb_strip[x_offset..], self.chroma_strip_width)
+                            }
+                            _ => {
+                                // Cr: chroma resolution (one 8x8 block per MCU)
+                                let x_offset = mcu_x * 8;
+                                (&mut self.cr_strip[x_offset..], self.chroma_strip_width)
+                            }
+                        };
+
+                        idct_int_tiered(&mut self.dequant_buf, strip, stride, coeff_count);
+                    }
+                }
             }
 
             self.mcu_count += 1;
@@ -273,9 +364,166 @@ impl<'a> ScanlineReader<'a> {
 
         // Save full state for next MCU row (includes bit buffer position)
         self.decoder_state = Some(decoder.save_state());
+
+        // Upsample chroma if needed
+        if self.subsampling != Subsampling::S444 {
+            self.upsample_chroma();
+        }
+
         self.mcu_row_decoded = true;
 
         Ok(())
+    }
+
+    /// Upsamples chroma buffers to full resolution using bilinear interpolation.
+    fn upsample_chroma(&mut self) {
+        match self.subsampling {
+            Subsampling::S444 => {} // No upsampling needed
+            Subsampling::S422 => self.upsample_h2v1(),
+            Subsampling::S420 => self.upsample_h2v2(),
+            Subsampling::S440 => self.upsample_h1v2(),
+        }
+    }
+
+    /// Horizontal 2x upsampling (4:2:2) with triangle filter.
+    fn upsample_h2v1(&mut self) {
+        let in_width = self.chroma_strip_width;
+        let out_width = self.strip_width;
+        let height = self.mcu_height;
+
+        for y in 0..height {
+            let in_row = y.min(self.chroma_strip_height - 1);
+            for out_x in 0..out_width {
+                let in_x = out_x / 2;
+                let in_idx = in_row * in_width + in_x.min(in_width - 1);
+
+                let cb_curr = self.cb_strip[in_idx] as i32;
+                let cr_curr = self.cr_strip[in_idx] as i32;
+
+                let (cb_val, cr_val) = if out_x % 2 == 0 {
+                    // Left pixel: weight 3:1 with left neighbor
+                    let left_idx = in_row * in_width + in_x.saturating_sub(1);
+                    let cb_left = self.cb_strip[left_idx] as i32;
+                    let cr_left = self.cr_strip[left_idx] as i32;
+                    (
+                        ((3 * cb_curr + cb_left + 2) >> 2) as i16,
+                        ((3 * cr_curr + cr_left + 2) >> 2) as i16,
+                    )
+                } else {
+                    // Right pixel: weight 3:1 with right neighbor
+                    let right_idx = in_row * in_width + (in_x + 1).min(in_width - 1);
+                    let cb_right = self.cb_strip[right_idx] as i32;
+                    let cr_right = self.cr_strip[right_idx] as i32;
+                    (
+                        ((3 * cb_curr + cb_right + 2) >> 2) as i16,
+                        ((3 * cr_curr + cr_right + 2) >> 2) as i16,
+                    )
+                };
+
+                let out_idx = y * out_width + out_x;
+                self.cb_upsampled[out_idx] = cb_val;
+                self.cr_upsampled[out_idx] = cr_val;
+            }
+        }
+    }
+
+    /// Vertical 2x upsampling (4:4:0) with triangle filter.
+    fn upsample_h1v2(&mut self) {
+        let in_width = self.chroma_strip_width;
+        let in_height = self.chroma_strip_height;
+        let out_width = self.strip_width;
+        let out_height = self.mcu_height;
+
+        for out_y in 0..out_height {
+            let in_y = out_y / 2;
+            let is_top = out_y % 2 == 0;
+
+            for out_x in 0..out_width {
+                let in_x = out_x.min(in_width - 1);
+                let in_y_clamped = in_y.min(in_height - 1);
+
+                let curr_idx = in_y_clamped * in_width + in_x;
+                let cb_curr = self.cb_strip[curr_idx] as i32;
+                let cr_curr = self.cr_strip[curr_idx] as i32;
+
+                // Vertical neighbor
+                let neighbor_y = if is_top {
+                    in_y_clamped.saturating_sub(1)
+                } else {
+                    (in_y + 1).min(in_height - 1)
+                };
+                let neighbor_idx = neighbor_y * in_width + in_x;
+                let cb_neighbor = self.cb_strip[neighbor_idx] as i32;
+                let cr_neighbor = self.cr_strip[neighbor_idx] as i32;
+
+                // Triangle filter weights: 3:1
+                let cb_val = ((3 * cb_curr + cb_neighbor + 2) >> 2) as i16;
+                let cr_val = ((3 * cr_curr + cr_neighbor + 2) >> 2) as i16;
+
+                let out_idx = out_y * out_width + out_x;
+                self.cb_upsampled[out_idx] = cb_val;
+                self.cr_upsampled[out_idx] = cr_val;
+            }
+        }
+    }
+
+    /// Both horizontal and vertical 2x upsampling (4:2:0) with triangle filter.
+    fn upsample_h2v2(&mut self) {
+        let in_width = self.chroma_strip_width;
+        let in_height = self.chroma_strip_height;
+        let out_width = self.strip_width;
+        let out_height = self.mcu_height;
+
+        for out_y in 0..out_height {
+            let in_y = out_y / 2;
+            let is_top = out_y % 2 == 0;
+
+            for out_x in 0..out_width {
+                let in_x = out_x / 2;
+                let is_left = out_x % 2 == 0;
+
+                // Get the four neighbors for bilinear interpolation
+                let in_x_clamped = in_x.min(in_width - 1);
+                let in_y_clamped = in_y.min(in_height - 1);
+
+                let curr_idx = in_y_clamped * in_width + in_x_clamped;
+                let cb_curr = self.cb_strip[curr_idx] as i32;
+                let cr_curr = self.cr_strip[curr_idx] as i32;
+
+                // Vertical neighbor
+                let v_neighbor_y = if is_top {
+                    in_y_clamped.saturating_sub(1)
+                } else {
+                    (in_y + 1).min(in_height - 1)
+                };
+                let v_idx = v_neighbor_y * in_width + in_x_clamped;
+                let cb_v = self.cb_strip[v_idx] as i32;
+                let cr_v = self.cr_strip[v_idx] as i32;
+
+                // Horizontal neighbor
+                let h_neighbor_x = if is_left {
+                    in_x_clamped.saturating_sub(1)
+                } else {
+                    (in_x + 1).min(in_width - 1)
+                };
+                let h_idx = in_y_clamped * in_width + h_neighbor_x;
+                let cb_h = self.cb_strip[h_idx] as i32;
+                let cr_h = self.cr_strip[h_idx] as i32;
+
+                // Diagonal neighbor
+                let d_idx = v_neighbor_y * in_width + h_neighbor_x;
+                let cb_d = self.cb_strip[d_idx] as i32;
+                let cr_d = self.cr_strip[d_idx] as i32;
+
+                // Bilinear weights: 9:3:3:1 for curr:h:v:d
+                let cb_val = ((9 * cb_curr + 3 * cb_h + 3 * cb_v + cb_d + 8) >> 4) as i16;
+                let cr_val = ((9 * cr_curr + 3 * cr_h + 3 * cr_v + cr_d + 8) >> 4) as i16;
+
+                let out_idx = out_y * out_width + out_x;
+                self.cb_upsampled[out_idx] = cb_val;
+                self.cr_upsampled[out_idx] = cr_val;
+            }
+        }
     }
 
     /// Advances to the next MCU row.
@@ -312,11 +560,24 @@ impl<'a> ScanlineReader<'a> {
 
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
+            // Get chroma references - use upsampled buffers for non-4:4:4
+            let (cb_slice, cr_slice) = if self.subsampling == Subsampling::S444 {
+                (
+                    &self.cb_strip[strip_offset..strip_offset + cols],
+                    &self.cr_strip[strip_offset..strip_offset + cols],
+                )
+            } else {
+                (
+                    &self.cb_upsampled[strip_offset..strip_offset + cols],
+                    &self.cr_upsampled[strip_offset..strip_offset + cols],
+                )
+            };
+
             // Convert YCbCr to RGB using the same function as the main decoder
             ycbcr_planes_i16_to_rgb_u8(
                 &self.y_strip[strip_offset..strip_offset + cols],
-                &self.cb_strip[strip_offset..strip_offset + cols],
-                &self.cr_strip[strip_offset..strip_offset + cols],
+                cb_slice,
+                cr_slice,
                 out_row,
             );
 
@@ -325,7 +586,7 @@ impl<'a> ScanlineReader<'a> {
             self.row_in_mcu += 1;
 
             // Move to next MCU row if needed
-            if self.row_in_mcu >= 8 {
+            if self.row_in_mcu >= self.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -357,10 +618,17 @@ impl<'a> ScanlineReader<'a> {
 
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
+            // Get chroma references - use upsampled buffers for non-4:4:4
+            let (cb_buf, cr_buf): (&[i16], &[i16]) = if self.subsampling == Subsampling::S444 {
+                (&self.cb_strip, &self.cr_strip)
+            } else {
+                (&self.cb_upsampled, &self.cr_upsampled)
+            };
+
             for x in 0..cols {
                 let y = self.y_strip[strip_offset + x];
-                let cb = self.cb_strip[strip_offset + x];
-                let cr = self.cr_strip[strip_offset + x];
+                let cb = cb_buf[strip_offset + x];
+                let cr = cr_buf[strip_offset + x];
                 let (r, g, b) = ycbcr_to_rgb(
                     y.clamp(0, 255) as u8,
                     cb.clamp(0, 255) as u8,
@@ -376,7 +644,7 @@ impl<'a> ScanlineReader<'a> {
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= 8 {
+            if self.row_in_mcu >= self.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -409,10 +677,17 @@ impl<'a> ScanlineReader<'a> {
 
             let out_row = output.rows_mut().nth(rows_written).unwrap();
 
+            // Get chroma references - use upsampled buffers for non-4:4:4
+            let (cb_buf, cr_buf): (&[i16], &[i16]) = if self.subsampling == Subsampling::S444 {
+                (&self.cb_strip, &self.cr_strip)
+            } else {
+                (&self.cb_upsampled, &self.cr_upsampled)
+            };
+
             for x in 0..cols {
                 let y = self.y_strip[strip_offset + x];
-                let cb = self.cb_strip[strip_offset + x];
-                let cr = self.cr_strip[strip_offset + x];
+                let cb = cb_buf[strip_offset + x];
+                let cr = cr_buf[strip_offset + x];
                 let (r, g, b) = ycbcr_to_rgb(
                     y.clamp(0, 255) as u8,
                     cb.clamp(0, 255) as u8,
@@ -430,7 +705,7 @@ impl<'a> ScanlineReader<'a> {
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= 8 {
+            if self.row_in_mcu >= self.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -441,6 +716,7 @@ impl<'a> ScanlineReader<'a> {
     /// Read rows into separate YCbCr f32 planes.
     ///
     /// Each plane receives normalized values in range [0, 1] for Y, [-0.5, 0.5] for Cb/Cr.
+    /// Chroma values are upsampled to full resolution for subsampled images.
     /// Returns the number of rows actually written.
     pub fn read_rows_ycbcr_planes(
         &mut self,
@@ -469,19 +745,26 @@ impl<'a> ScanlineReader<'a> {
 
             let out_offset = rows_written * stride;
 
+            // Get chroma references - use upsampled buffers for non-4:4:4
+            let (cb_buf, cr_buf): (&[i16], &[i16]) = if self.subsampling == Subsampling::S444 {
+                (&self.cb_strip, &self.cr_strip)
+            } else {
+                (&self.cb_upsampled, &self.cr_upsampled)
+            };
+
             for x in 0..cols {
                 // Normalize: Y from [0, 255] to [0, 1]
                 // Cb/Cr from [0, 255] (centered at 128) to [-0.5, 0.5]
                 y_plane[out_offset + x] = self.y_strip[strip_offset + x] as f32 / 255.0;
-                cb_plane[out_offset + x] = (self.cb_strip[strip_offset + x] as f32 - 128.0) / 255.0;
-                cr_plane[out_offset + x] = (self.cr_strip[strip_offset + x] as f32 - 128.0) / 255.0;
+                cb_plane[out_offset + x] = (cb_buf[strip_offset + x] as f32 - 128.0) / 255.0;
+                cr_plane[out_offset + x] = (cr_buf[strip_offset + x] as f32 - 128.0) / 255.0;
             }
 
             rows_written += 1;
             self.current_row += 1;
             self.row_in_mcu += 1;
 
-            if self.row_in_mcu >= 8 {
+            if self.row_in_mcu >= self.mcu_height {
                 self.advance_mcu_row();
             }
         }
@@ -857,5 +1140,161 @@ mod tests {
 
         assert_eq!(total_rows, height as usize);
         assert_eq!(scanline_pixels, decoded.data);
+    }
+
+    #[test]
+    fn test_scanline_reader_420() {
+        use crate::{Decoder, Quality, StreamingEncoder, Subsampling};
+
+        // Create test image - 64x48 for multiple MCU rows
+        // 4:2:0 has 16x16 MCUs, so this is 4x3 MCUs
+        let width = 64u32;
+        let height = 48u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = (x * 4) as u8; // R gradient
+                pixels[idx + 1] = (y * 5) as u8; // G gradient
+                pixels[idx + 2] = 128; // B constant
+            }
+        }
+
+        // Encode as 4:2:0
+        let encoder = StreamingEncoder::new(width, height)
+            .quality(Quality::from_quality(95.0))
+            .subsampling(Subsampling::S420);
+        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+
+        // Decode normally for comparison
+        let decoder = Decoder::new();
+        let decoded = decoder.decode(&jpeg).expect("decode failed");
+
+        // Decode via scanline reader
+        let mut reader = decoder
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+        assert_eq!(reader.width(), width);
+        assert_eq!(reader.height(), height);
+        assert_eq!(reader.subsampling(), Subsampling::S420);
+
+        let mut scanline_pixels = vec![0u8; (width * height * 3) as usize];
+        let stride = (width * 3) as usize;
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let buf_start = total_rows * stride;
+            let output =
+                imgref::ImgRefMut::new(&mut scanline_pixels[buf_start..], stride, remaining);
+            let rows = reader
+                .read_rows_rgb8(output)
+                .expect("read_rows_rgb8 failed");
+            total_rows += rows;
+        }
+
+        assert_eq!(total_rows, height as usize);
+        assert_eq!(
+            scanline_pixels.len(),
+            decoded.data.len(),
+            "output size mismatch"
+        );
+
+        // Compare outputs with tolerance - scanline reader uses simpler i16 processing
+        // while regular decoder uses f32 with bias computation, so outputs won't be bit-identical
+        let mut max_diff = 0i32;
+        let mut total_diff = 0u64;
+        for (i, (&a, &b)) in scanline_pixels.iter().zip(decoded.data.iter()).enumerate() {
+            let diff = (a as i32 - b as i32).abs();
+            max_diff = max_diff.max(diff);
+            total_diff += diff as u64;
+            if diff > 10 {
+                panic!(
+                    "Pixel at index {} differs by {} (scanline={}, regular={})",
+                    i, diff, a, b
+                );
+            }
+        }
+        let avg_diff = total_diff as f64 / scanline_pixels.len() as f64;
+        assert!(
+            avg_diff < 3.0,
+            "Average pixel difference {} too high (max diff: {})",
+            avg_diff,
+            max_diff
+        );
+    }
+
+    #[test]
+    fn test_scanline_reader_420_non_mcu_aligned() {
+        use crate::{Decoder, Quality, StreamingEncoder, Subsampling};
+
+        // Non-MCU-aligned dimensions (not multiples of 16 for 4:2:0)
+        let width = 37u32;
+        let height = 29u32;
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                pixels[idx] = (x * 7) as u8;
+                pixels[idx + 1] = (y * 9) as u8;
+                pixels[idx + 2] = ((x + y) * 3) as u8;
+            }
+        }
+
+        // Encode as 4:2:0
+        let encoder = StreamingEncoder::new(width, height)
+            .quality(Quality::from_quality(90.0))
+            .subsampling(Subsampling::S420);
+        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+
+        // Decode normally for comparison
+        let decoder = Decoder::new();
+        let decoded = decoder.decode(&jpeg).expect("decode failed");
+
+        // Decode via scanline reader
+        let mut reader = decoder
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+        let mut scanline_pixels = vec![0u8; (width * height * 3) as usize];
+        let stride = (width * 3) as usize;
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let buf_start = total_rows * stride;
+            let output =
+                imgref::ImgRefMut::new(&mut scanline_pixels[buf_start..], stride, remaining);
+            let rows = reader.read_rows_rgb8(output).expect("read failed");
+            total_rows += rows;
+        }
+
+        assert_eq!(total_rows, height as usize);
+        assert_eq!(
+            scanline_pixels.len(),
+            decoded.data.len(),
+            "output size mismatch"
+        );
+
+        // Compare with tolerance
+        let mut max_diff = 0i32;
+        let mut total_diff = 0u64;
+        for (i, (&a, &b)) in scanline_pixels.iter().zip(decoded.data.iter()).enumerate() {
+            let diff = (a as i32 - b as i32).abs();
+            max_diff = max_diff.max(diff);
+            total_diff += diff as u64;
+            if diff > 10 {
+                panic!(
+                    "Pixel at index {} differs by {} (scanline={}, regular={})",
+                    i, diff, a, b
+                );
+            }
+        }
+        let avg_diff = total_diff as f64 / scanline_pixels.len() as f64;
+        assert!(
+            avg_diff < 3.0,
+            "Average pixel difference {} too high (max diff: {})",
+            avg_diff,
+            max_diff
+        );
     }
 }
