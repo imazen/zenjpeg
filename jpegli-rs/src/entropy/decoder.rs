@@ -100,6 +100,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.prev_dc = [0; 4];
     }
 
+    /// Gets the current DC predictor values.
+    pub fn get_prev_dc(&self) -> [i16; 4] {
+        self.prev_dc
+    }
+
+    /// Sets the DC predictor values (for resuming decode).
+    pub fn set_prev_dc(&mut self, prev_dc: &[i16; 4]) {
+        self.prev_dc = *prev_dc;
+    }
+
     /// Decodes a Huffman symbol.
     #[inline]
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> Result<u8> {
