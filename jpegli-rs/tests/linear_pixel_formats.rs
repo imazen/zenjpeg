@@ -280,6 +280,42 @@ fn test_linear_format_subsampling_modes() {
     }
 }
 
+/// Test XYB mode with linear RGB input.
+/// XYB is defined in linear space, so this should work well.
+///
+/// IGNORED: XYB encoding via legacy path has a bug with chroma block indexing.
+/// See CLAUDE.md "Known Bugs" #2 about XYB quality gap.
+#[test]
+#[ignore]
+fn test_xyb_with_linear_formats() {
+    let width = 64;
+    let height = 64;
+
+    // Test RgbF32 with XYB
+    let pixels_f32 = create_gradient_rgbf32(width, height);
+    let jpeg_f32 = StreamingEncoder::new(width as u32, height as u32)
+        .quality(Quality::from_distance(1.0))
+        .pixel_format(PixelFormat::RgbF32)
+        .use_xyb(true)
+        .encode_all(&pixels_f32)
+        .expect("XYB with RgbF32 should succeed");
+
+    assert!(verify_jpeg(&jpeg_f32), "Output should be valid JPEG");
+    println!("XYB RgbF32: {} bytes", jpeg_f32.len());
+
+    // Test Rgb16 with XYB
+    let pixels_16 = create_gradient_rgb16(width, height);
+    let jpeg_16 = StreamingEncoder::new(width as u32, height as u32)
+        .quality(Quality::from_distance(1.0))
+        .pixel_format(PixelFormat::Rgb16)
+        .use_xyb(true)
+        .encode_all(&pixels_16)
+        .expect("XYB with Rgb16 should succeed");
+
+    assert!(verify_jpeg(&jpeg_16), "Output should be valid JPEG");
+    println!("XYB Rgb16: {} bytes", jpeg_16.len());
+}
+
 /// Test that gamma correction is being applied correctly.
 /// Linear 0.5 should map to sRGB ~0.735 (brighter), not 0.5.
 #[test]
