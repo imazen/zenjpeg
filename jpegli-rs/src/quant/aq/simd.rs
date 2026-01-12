@@ -29,7 +29,9 @@ use wide::f32x8;
 #[inline(always)]
 fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
     // Convert slice to array, then array to f32x8 (cast/transmute)
-    <[f32; 8]>::try_from(&slice[offset..offset + 8]).unwrap().into()
+    <[f32; 8]>::try_from(&slice[offset..offset + 8])
+        .unwrap()
+        .into()
 }
 
 /// Store f32x8 to slice. Panics if slice is too short.
@@ -541,7 +543,11 @@ pub fn hf_modulation_sum_8x8(
         } else {
             // Scalar fallback for edge blocks
             let max_x = (block_x + 7).min(img_width.saturating_sub(1));
-            let h_count = if block_x < max_x { (max_x - block_x).min(7) } else { 0 };
+            let h_count = if block_x < max_x {
+                (max_x - block_x).min(7)
+            } else {
+                0
+            };
             for dx in 0..h_count {
                 let idx = row_start + dx;
                 scalar_sum += (block[idx] - block[idx + 1]).abs();
@@ -663,7 +669,10 @@ pub fn per_block_modulations_row(
         let v3 = 1.0 / (v1 * v1 + K_MASK_OFFSET3);
         let v4 = 1.0 / (v1 * v1 + K_MASK_OFFSET4);
         // Use FMA for weighted sum
-        let mut out_val = K_MASK_MUL4.mul_add(v4, K_MASK_MUL2.mul_add(v2, K_MASK_MUL3.mul_add(v3, K_MASK_BASE)));
+        let mut out_val = K_MASK_MUL4.mul_add(
+            v4,
+            K_MASK_MUL2.mul_add(v2, K_MASK_MUL3.mul_add(v3, K_MASK_BASE)),
+        );
 
         // 2. HfModulation with SIMD
         let block_offset = y_start * width + x_start;
@@ -718,7 +727,10 @@ fn weighted_min4_of_9(v: [f32; 9]) -> f32 {
     }
 
     // Use FMA for weighted sum
-    FUZZY_MUL0.mul_add(a[0], FUZZY_MUL1.mul_add(a[1], FUZZY_MUL2.mul_add(a[2], FUZZY_MUL3 * a[3])))
+    FUZZY_MUL0.mul_add(
+        a[0],
+        FUZZY_MUL1.mul_add(a[1], FUZZY_MUL2.mul_add(a[2], FUZZY_MUL3 * a[3])),
+    )
 }
 
 /// SIMD-optimized FuzzyErosion.

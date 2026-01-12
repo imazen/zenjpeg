@@ -420,6 +420,20 @@ impl Encoder {
         self.encode_with_stop(data, Never)
     }
 
+    /// Encodes using the fullplane encoder (for testing/comparison).
+    ///
+    /// This uses the original full-plane encoding path which allocates
+    /// complete f32 planes. Useful for comparing against strip-based encoding.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn encode_fullplane(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.validate()?;
+        if self.config.mode == JpegMode::Progressive {
+            self.encode_progressive(data)
+        } else {
+            self.encode_baseline(data)
+        }
+    }
+
     /// Encodes the image data with cooperative cancellation support.
     ///
     /// The encoding can be cancelled at MCU row boundaries by signalling the `stop` source.
@@ -571,7 +585,8 @@ impl Encoder {
                 // Progressive mode requires optimized Huffman tables
                 if !self.config.optimize_huffman {
                     return Err(Error::UnsupportedFeature {
-                        feature: "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                        feature:
+                            "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
                     });
                 }
                 // Use progressive encoding path
@@ -598,7 +613,7 @@ impl Encoder {
                     self.write_header_xyb(&mut output)?;
                     // Write APP14 Adobe marker for RGB colorspace (required by decoders)
                     self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
-                    // Write XYB ICC profile so decoders can interpret the colors correctly
+                                                             // Write XYB ICC profile so decoders can interpret the colors correctly
                     self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
                     self.write_quant_tables_xyb(&mut output, &y_quant, &cb_quant, &cr_quant)?;
                     self.write_frame_header_xyb(&mut output)?;

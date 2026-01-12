@@ -1145,7 +1145,12 @@ impl Encoder {
                         } else {
                             &ZERO_BLOCK
                         };
-                        Self::collect_block_frequencies(block, prev_dc_x, &mut dc_freq, &mut ac_freq);
+                        Self::collect_block_frequencies(
+                            block,
+                            prev_dc_x,
+                            &mut dc_freq,
+                            &mut ac_freq,
+                        );
                         prev_dc_x = block[0];
                     }
                 }
@@ -1161,7 +1166,12 @@ impl Encoder {
                         } else {
                             &ZERO_BLOCK
                         };
-                        Self::collect_block_frequencies(block, prev_dc_y, &mut dc_freq, &mut ac_freq);
+                        Self::collect_block_frequencies(
+                            block,
+                            prev_dc_y,
+                            &mut dc_freq,
+                            &mut ac_freq,
+                        );
                         prev_dc_y = block[0];
                     }
                 }

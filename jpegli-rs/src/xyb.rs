@@ -392,9 +392,18 @@ pub fn xyb_to_linear_rgb(x: f32, y: f32, b: f32) -> (f32, f32, f32) {
     ];
 
     // Use FMA for matrix multiply
-    let r = INV_OPSIN[0].mul_add(opsin_r, INV_OPSIN[1].mul_add(opsin_g, INV_OPSIN[2] * opsin_b));
-    let g = INV_OPSIN[3].mul_add(opsin_r, INV_OPSIN[4].mul_add(opsin_g, INV_OPSIN[5] * opsin_b));
-    let b_out = INV_OPSIN[6].mul_add(opsin_r, INV_OPSIN[7].mul_add(opsin_g, INV_OPSIN[8] * opsin_b));
+    let r = INV_OPSIN[0].mul_add(
+        opsin_r,
+        INV_OPSIN[1].mul_add(opsin_g, INV_OPSIN[2] * opsin_b),
+    );
+    let g = INV_OPSIN[3].mul_add(
+        opsin_r,
+        INV_OPSIN[4].mul_add(opsin_g, INV_OPSIN[5] * opsin_b),
+    );
+    let b_out = INV_OPSIN[6].mul_add(
+        opsin_r,
+        INV_OPSIN[7].mul_add(opsin_g, INV_OPSIN[8] * opsin_b),
+    );
 
     (r, g, b_out)
 }

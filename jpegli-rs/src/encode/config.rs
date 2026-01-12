@@ -73,7 +73,6 @@ pub struct EncoderConfig {
     pub(crate) custom_quant_matrices: Option<crate::quant::CustomQuantMatrices>,
 
     // EncodingBackend removed - strip-based encoding is now the only backend
-
     /// Edge padding strategy for partial MCU blocks.
     ///
     /// Controls how edge pixels are padded when image dimensions are not
