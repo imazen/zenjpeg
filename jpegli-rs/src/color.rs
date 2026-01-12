@@ -487,9 +487,9 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
         let base = chunk * 8;
 
         // Load planes directly from slices
-        let y = f32x8::from(&y_plane[base..base + 8]);
-        let cb = f32x8::from(&cb_plane[base..base + 8]);
-        let cr = f32x8::from(&cr_plane[base..base + 8]);
+        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+        let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
+        let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
 
         // YCbCr to RGB (using FMA)
         let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
@@ -565,9 +565,9 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
         for chunk in 0..chunks {
             let base = chunk * 8;
             // Use slice loads instead of manual gather
-            let y = f32x8::from(&y_plane[base..base + 8]);
-            let cb = f32x8::from(&cb_plane[base..base + 8]);
-            let cr = f32x8::from(&cr_plane[base..base + 8]);
+            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
+            let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
+            let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
 
             // YCbCr to RGB, level shift, normalize to 0-1 (using FMA)
             let r = (cr_to_r.mul_add(cr, y + offset) * scale).max(zero).min(one);
@@ -640,7 +640,7 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from(&y_plane[base..base + 8]);
+            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
             let val = (y + offset).max(zero).min(max_val);
             let arr: [f32; 8] = val.into();
@@ -693,7 +693,7 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from(&y_plane[base..base + 8]);
+            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
             let val = ((y + offset) * scale).max(zero).min(one);
             let arr: [f32; 8] = val.into();
@@ -744,7 +744,7 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from(&y_plane[base..base + 8]);
+            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
             let val = (y + offset).max(zero).min(max_val);
             let arr: [f32; 8] = val.into();
@@ -785,7 +785,7 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
         let chunks = num_pixels / 8;
         for chunk in 0..chunks {
             let base = chunk * 8;
-            let y = f32x8::from(&y_plane[base..base + 8]);
+            let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
 
             let val = ((y + offset) * scale).max(zero).min(one);
             let arr: [f32; 8] = val.into();
