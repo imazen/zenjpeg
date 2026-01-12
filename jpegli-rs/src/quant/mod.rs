@@ -947,10 +947,12 @@ impl DequantBiasStats {
 pub struct CustomQuantMatrices {
     /// Custom YCbCr base matrix (192 f32 values: Y[64], Cb[64], Cr[64])
     /// If None, uses `BASE_QUANT_MATRIX_YCBCR`
+    /// These are SCALED by quality/distance - use `direct_tables` for unscaled.
     pub ycbcr: Option<[f32; 192]>,
 
     /// Custom XYB base matrix (192 f32 values: X[64], Y[64], B[64])
     /// If None, uses `BASE_QUANT_MATRIX_XYB`
+    /// These are SCALED by quality/distance - use `direct_tables` for unscaled.
     pub xyb: Option<[f32; 192]>,
 
     /// Custom global scale for YCbCr (default: 1.73966010)
@@ -962,6 +964,16 @@ pub struct CustomQuantMatrices {
     /// Custom frequency exponents for non-linear distance scaling (64 values)
     /// If None, uses `FREQUENCY_EXPONENT`
     pub frequency_exponents: Option<[f32; 64]>,
+
+    /// Direct quantization tables (NOT scaled by quality).
+    ///
+    /// When set, these tables are used as-is, ignoring quality settings
+    /// and all base matrix / scaling options above.
+    ///
+    /// Format: 3 components × 64 coefficients = 192 u16 values.
+    /// Values must be in range 1-255 for baseline JPEG.
+    /// Coefficient ordering is row-major within each 8×8 block (NOT zigzag).
+    pub direct_tables: Option<[u16; 192]>,
 }
 
 impl CustomQuantMatrices {
@@ -1004,6 +1016,53 @@ impl CustomQuantMatrices {
     pub fn with_frequency_exponents(mut self, exponents: [f32; 64]) -> Self {
         self.frequency_exponents = Some(exponents);
         self
+    }
+
+    /// Set direct quantization tables (NOT scaled by quality).
+    ///
+    /// When set, these tables are used as-is, ignoring quality settings
+    /// and all base matrix / scaling options.
+    ///
+    /// Format: 3 components × 64 coefficients = 192 u16 values (Y[64], Cb[64], Cr[64]).
+    /// Values should be in range 1-255 for baseline JPEG.
+    /// Coefficient ordering is row-major within each 8×8 block (NOT zigzag).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::CustomQuantMatrices;
+    ///
+    /// // Create tables with uniform quantization (not recommended, just for demo)
+    /// let mut tables = [16u16; 192];
+    /// // Y component (indices 0-63): finer quantization
+    /// for i in 0..64 { tables[i] = 8; }
+    /// // Cb/Cr components (indices 64-191): coarser quantization
+    /// for i in 64..192 { tables[i] = 16; }
+    ///
+    /// let custom = CustomQuantMatrices::new()
+    ///     .with_direct_tables(tables);
+    /// ```
+    #[must_use]
+    pub fn with_direct_tables(mut self, tables: [u16; 192]) -> Self {
+        self.direct_tables = Some(tables);
+        self
+    }
+
+    /// Check if direct tables are set
+    #[inline]
+    pub(crate) fn has_direct_tables(&self) -> bool {
+        self.direct_tables.is_some()
+    }
+
+    /// Get direct table for a component (returns None if not set)
+    #[inline]
+    pub(crate) fn get_direct_table(&self, component: usize) -> Option<[u16; 64]> {
+        self.direct_tables.map(|tables| {
+            let start = component.min(2) * 64;
+            let mut result = [0u16; 64];
+            result.copy_from_slice(&tables[start..start + 64]);
+            result
+        })
     }
 
     /// Get the base matrix value for a given component and coefficient index
@@ -1059,6 +1118,10 @@ impl CustomQuantMatrices {
 /// Generate a quantization table using custom matrices.
 ///
 /// This is the internal function that respects custom matrix overrides.
+///
+/// If `direct_tables` is set in `custom`, those values are used as-is
+/// (ignoring distance, use_xyb, and all scaling options).
+/// Otherwise, base matrices are scaled by distance and global scale.
 #[must_use]
 pub fn generate_quant_table_custom(
     distance: f32,
@@ -1066,6 +1129,15 @@ pub fn generate_quant_table_custom(
     use_xyb: bool,
     custom: &CustomQuantMatrices,
 ) -> QuantTable {
+    // If direct tables are set, use them as-is (no scaling)
+    if let Some(direct) = custom.get_direct_table(component) {
+        return QuantTable {
+            values: direct,
+            precision: 0,
+        };
+    }
+
+    // Otherwise, generate scaled tables from base matrices
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
     if use_xyb {
