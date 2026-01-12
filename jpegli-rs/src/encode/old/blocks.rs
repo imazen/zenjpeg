@@ -1049,6 +1049,317 @@ impl Encoder {
         Ok(encoder.finish())
     }
 
+    /// Encodes XYB blocks using standard (non-optimized) Huffman tables.
+    pub(crate) fn encode_with_tables_xyb_standard(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ) -> Result<Vec<u8>> {
+        // Estimate output size: ~100 bytes per block for typical quality
+        let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
+
+        // Use standard luminance tables for all components in XYB mode
+        encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
+        encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
+
+        if self.config.restart_interval > 0 {
+            encoder.set_restart_interval(self.config.restart_interval);
+        }
+
+        let mcu_count = b_blocks.len();
+        for mcu_idx in 0..mcu_count {
+            // X blocks (4 per MCU)
+            let x_start = mcu_idx * 4;
+            for i in 0..4 {
+                encoder.encode_block(&x_blocks[x_start + i], 0, 0, 0)?;
+            }
+
+            // Y blocks (4 per MCU)
+            let y_start = mcu_idx * 4;
+            for i in 0..4 {
+                encoder.encode_block(&y_blocks[y_start + i], 1, 0, 0)?;
+            }
+
+            // B block (1 per MCU)
+            encoder.encode_block(&b_blocks[mcu_idx], 2, 0, 0)?;
+
+            encoder.check_restart();
+        }
+
+        Ok(encoder.finish())
+    }
+
+    /// Builds optimized Huffman tables for XYB mode with raster-ordered blocks.
+    ///
+    /// This function handles blocks that are stored in raster order (row by row),
+    /// as produced by the strip encoder, rather than MCU-interleaved order.
+    ///
+    /// XYB uses a single shared table for all components (luminance tables).
+    pub(crate) fn build_optimized_tables_xyb_raster(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ) -> Result<(
+        crate::huffman::optimize::OptimizedTable,
+        crate::huffman::optimize::OptimizedTable,
+    )> {
+        let mut dc_freq = FrequencyCounter::new();
+        let mut ac_freq = FrequencyCounter::new();
+
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        // X and Y are full resolution
+        let xy_blocks_h = (width + 7) / 8;
+        let xy_blocks_v = (height + 7) / 8;
+
+        // B is 2x2 downsampled
+        let b_blocks_h = (width + 15) / 16;
+        let b_blocks_v = (height + 15) / 16;
+
+        // MCU is 16x16 pixels (2x2 blocks for X/Y, 1x1 for B)
+        let mcu_h = (xy_blocks_h + 1) / 2;
+        let mcu_v = (xy_blocks_v + 1) / 2;
+
+        // Zero block for padding
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        // Each component maintains its own DC prediction
+        let mut prev_dc_x: i16 = 0;
+        let mut prev_dc_y: i16 = 0;
+        let mut prev_dc_b: i16 = 0;
+
+        for mcu_y in 0..mcu_v {
+            for mcu_x in 0..mcu_h {
+                // X blocks (4 per MCU in 2x2 arrangement)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
+                            let idx = by * xy_blocks_h + bx;
+                            &x_blocks[idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        Self::collect_block_frequencies(block, prev_dc_x, &mut dc_freq, &mut ac_freq);
+                        prev_dc_x = block[0];
+                    }
+                }
+
+                // Y blocks (4 per MCU in 2x2 arrangement)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
+                            let idx = by * xy_blocks_h + bx;
+                            &y_blocks[idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        Self::collect_block_frequencies(block, prev_dc_y, &mut dc_freq, &mut ac_freq);
+                        prev_dc_y = block[0];
+                    }
+                }
+
+                // B block (1 per MCU)
+                let b_block = if mcu_x < b_blocks_h && mcu_y < b_blocks_v {
+                    let idx = mcu_y * b_blocks_h + mcu_x;
+                    &b_blocks[idx]
+                } else {
+                    &ZERO_BLOCK
+                };
+                Self::collect_block_frequencies(b_block, prev_dc_b, &mut dc_freq, &mut ac_freq);
+                prev_dc_b = b_block[0];
+            }
+        }
+
+        // Use jpegli's Huffman algorithm (matches C++ behavior)
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+
+        // Generate optimized tables
+        let dc_table = dc_freq.generate_table_with_method(huffman_method)?;
+        let ac_table = ac_freq.generate_table_with_method(huffman_method)?;
+
+        Ok((dc_table, ac_table))
+    }
+
+    /// Encodes XYB raster-ordered blocks using optimized Huffman tables.
+    pub(crate) fn encode_with_tables_xyb_raster(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        dc_table: &crate::huffman::optimize::OptimizedTable,
+        ac_table: &crate::huffman::optimize::OptimizedTable,
+    ) -> Result<Vec<u8>> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        // X and Y are full resolution
+        let xy_blocks_h = (width + 7) / 8;
+        let xy_blocks_v = (height + 7) / 8;
+
+        // B is 2x2 downsampled
+        let b_blocks_h = (width + 15) / 16;
+        let b_blocks_v = (height + 15) / 16;
+
+        // MCU is 16x16 pixels
+        let mcu_h = (xy_blocks_h + 1) / 2;
+        let mcu_v = (xy_blocks_v + 1) / 2;
+
+        // Zero block for padding
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        // Estimate output size
+        let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
+
+        // Use the same optimized table for all components
+        encoder.set_dc_table(0, &dc_table.table);
+        encoder.set_ac_table(0, &ac_table.table);
+
+        if self.config.restart_interval > 0 {
+            encoder.set_restart_interval(self.config.restart_interval);
+        }
+
+        for mcu_y in 0..mcu_v {
+            for mcu_x in 0..mcu_h {
+                // X blocks (4 per MCU in 2x2 arrangement)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
+                            let idx = by * xy_blocks_h + bx;
+                            &x_blocks[idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        encoder.encode_block(block, 0, 0, 0)?;
+                    }
+                }
+
+                // Y blocks (4 per MCU in 2x2 arrangement)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
+                            let idx = by * xy_blocks_h + bx;
+                            &y_blocks[idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        encoder.encode_block(block, 1, 0, 0)?;
+                    }
+                }
+
+                // B block (1 per MCU)
+                let b_block = if mcu_x < b_blocks_h && mcu_y < b_blocks_v {
+                    let idx = mcu_y * b_blocks_h + mcu_x;
+                    &b_blocks[idx]
+                } else {
+                    &ZERO_BLOCK
+                };
+                encoder.encode_block(b_block, 2, 0, 0)?;
+
+                encoder.check_restart();
+            }
+        }
+
+        Ok(encoder.finish())
+    }
+
+    /// Encodes XYB raster-ordered blocks using standard (non-optimized) Huffman tables.
+    pub(crate) fn encode_with_tables_xyb_standard_raster(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ) -> Result<Vec<u8>> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+
+        // X and Y are full resolution
+        let xy_blocks_h = (width + 7) / 8;
+        let xy_blocks_v = (height + 7) / 8;
+
+        // B is 2x2 downsampled
+        let b_blocks_h = (width + 15) / 16;
+        let b_blocks_v = (height + 15) / 16;
+
+        // MCU is 16x16 pixels
+        let mcu_h = (xy_blocks_h + 1) / 2;
+        let mcu_v = (xy_blocks_v + 1) / 2;
+
+        // Zero block for padding
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        // Estimate output size
+        let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
+
+        // Use standard luminance tables for all components in XYB mode
+        encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
+        encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
+
+        if self.config.restart_interval > 0 {
+            encoder.set_restart_interval(self.config.restart_interval);
+        }
+
+        for mcu_y in 0..mcu_v {
+            for mcu_x in 0..mcu_h {
+                // X blocks (4 per MCU in 2x2 arrangement)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
+                            let idx = by * xy_blocks_h + bx;
+                            &x_blocks[idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        encoder.encode_block(block, 0, 0, 0)?;
+                    }
+                }
+
+                // Y blocks (4 per MCU in 2x2 arrangement)
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
+                            let idx = by * xy_blocks_h + bx;
+                            &y_blocks[idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        encoder.encode_block(block, 1, 0, 0)?;
+                    }
+                }
+
+                // B block (1 per MCU)
+                let b_block = if mcu_x < b_blocks_h && mcu_y < b_blocks_v {
+                    let idx = mcu_y * b_blocks_h + mcu_x;
+                    &b_blocks[idx]
+                } else {
+                    &ZERO_BLOCK
+                };
+                encoder.encode_block(b_block, 2, 0, 0)?;
+
+                encoder.check_restart();
+            }
+        }
+
+        Ok(encoder.finish())
+    }
+
     /// Encodes scan data for XYB mode with float planes.
     ///
     /// Uses scaled XYB values (in [0, 1] range), converts to [0, 255],

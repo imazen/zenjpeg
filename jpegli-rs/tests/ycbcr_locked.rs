@@ -56,23 +56,23 @@ const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
-/// Updated 2026-01-11: FMA optimization.
+/// Updated 2026-01-11: Strip encoder now default.
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269382),
-    (70, 362197),
-    (85, 494215),
-    (90, 583695),
-    (95, 743239),
+    (50, 269724),
+    (70, 362495),
+    (85, 494934),
+    (90, 584347),
+    (95, 743542),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
-/// Updated 2026-01-11: FMA optimization.
+/// Updated 2026-01-11: Strip encoder now default.
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 293066),
-    (70, 386533),
-    (85, 520183),
-    (90, 613628),
-    (95, 783780),
+    (50, 293565),
+    (70, 387207),
+    (85, 521670),
+    (90, 615445),
+    (95, 785234),
 ];
 
 // =============================================================================
@@ -98,38 +98,38 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
-/// Updated 2026-01-11: FMA optimization.
+/// Updated 2026-01-11: Strip encoder now default.
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 260688),
-    (70, 350150),
-    (85, 477395),
-    (90, 563852),
-    (95, 717458),
+    (50, 260961),
+    (70, 350463),
+    (85, 478048),
+    (90, 564225),
+    (95, 717850),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
-/// Updated 2026-01-11: FMA optimization.
+/// Updated 2026-01-11: Strip encoder now default.
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 283519),
-    (70, 373385),
-    (85, 503285),
-    (90, 593387),
-    (95, 757919),
+    (50, 284083),
+    (70, 374127),
+    (85, 504689),
+    (90, 595055),
+    (95, 759332),
 ];
 
 // =============================================================================
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-// Updated 2026-01-11: FMA optimization changes rounding behavior
+// Updated 2026-01-11: Strip encoder now default
 const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x37395b82bdad1672;
 const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x09b9fbe2b95253b9;
 const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0xf35ab94474d1c609;
 const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x17f4f5100a48569f;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xc54e8fad96b73fb0;
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0xd9b7daaab8fdef4e;
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x5781673c45c6da9b;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x3115a2a457d2327f;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x8cd0dde2c892dccf;
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x37a97faeb510feba;
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0xe65869ed6ce9e3df;
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x68c1a2dcd0a00a6e;
 
 // =============================================================================
 // Helper functions
