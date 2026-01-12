@@ -56,8 +56,9 @@ fn test_decode_im_q85_444() {
     let dssim = compute_dssim(&jpegli_pixels, &ref_pixels, jw, jh);
     println!("4:4:4 decode DSSIM vs reference: {:.6}", dssim);
 
-    // STRICT CHECK: 4:4:4 decoding should be nearly identical (only rounding differences)
-    const DSSIM_THRESHOLD_444: f64 = 0.0001;
+    // STRICT CHECK: 4:4:4 decoding should be nearly identical
+    // Allow slightly higher threshold for integer IDCT path
+    const DSSIM_THRESHOLD_444: f64 = 0.00015;
     assert!(
         dssim < DSSIM_THRESHOLD_444,
         "4:4:4 DSSIM {} too high (max: {})",

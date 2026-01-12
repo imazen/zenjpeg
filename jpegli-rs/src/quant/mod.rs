@@ -733,6 +733,22 @@ pub fn quantize_block_compare(
     (result, zeros_from_bias)
 }
 
+/// Dequantizes a block of coefficients to i32 for integer IDCT.
+///
+/// This is the fast path for standard (non-XYB) JPEG decoding.
+/// Output is suitable for `idct_int::idct_int_auto()`.
+#[inline]
+pub fn dequantize_block_i32(
+    quantized: &[i16; DCT_BLOCK_SIZE],
+    quant: &[u16; DCT_BLOCK_SIZE],
+) -> [i32; DCT_BLOCK_SIZE] {
+    let mut result = [0i32; DCT_BLOCK_SIZE];
+    for k in 0..DCT_BLOCK_SIZE {
+        result[k] = quantized[k] as i32 * quant[k] as i32;
+    }
+    result
+}
+
 /// Dequantizes a block of coefficients (SIMD-optimized).
 pub fn dequantize_block(
     quantized: &[i16; DCT_BLOCK_SIZE],
