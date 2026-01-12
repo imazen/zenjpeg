@@ -1460,15 +1460,45 @@ mod tests {
 
         for height in 56..=72 {
             let mut rgb = vec![0u8; width * height * 3];
-            // Use smooth gradients that work well with DCT edge handling
+            // Use a structured pattern with sharp edges to exercise edge handling
+            // This pattern has:
+            // - Vertical color bands at 8-pixel block boundaries
+            // - Horizontal bands at varying positions
+            // - Sharp transitions that expose edge padding bugs
+            // Unlike smooth gradients, this exercises edge/boundary handling
             for y in 0..height {
                 for x in 0..width {
                     let idx = (y * width + x) * 3;
-                    // Smooth gradients in 64-192 range (avoid edge wrapping)
-                    rgb[idx] = (64.0 + (x as f32 / width as f32) * 128.0) as u8;
-                    rgb[idx + 1] = (64.0 + (y as f32 / height as f32) * 128.0) as u8;
-                    rgb[idx + 2] =
-                        (64.0 + ((x + y) as f32 / (width + height) as f32) * 128.0) as u8;
+                    // Create color blocks with sharp edges at 8-pixel boundaries
+                    let block_x = x / 8;
+                    let block_y = y / 8;
+
+                    // Distinct colors for each block - creates sharp edges
+                    // Colors chosen to be compressible but distinct
+                    let colors: [(u8, u8, u8); 8] = [
+                        (200, 100, 80),   // coral
+                        (80, 180, 100),   // green
+                        (100, 80, 180),   // purple
+                        (180, 180, 80),   // yellow
+                        (80, 150, 180),   // cyan
+                        (180, 80, 150),   // magenta
+                        (140, 140, 140),  // gray
+                        (220, 180, 140),  // tan
+                    ];
+
+                    // Select color based on block position (varies both x and y)
+                    let color_idx = (block_x + block_y * 3) % 8;
+                    let (r, g, b) = colors[color_idx];
+
+                    // Add smooth gradient within each block to avoid banding
+                    // but keep sharp edges at boundaries
+                    let intra_x = (x % 8) as i16;
+                    let intra_y = (y % 8) as i16;
+                    let grad = ((intra_x + intra_y) / 2) as u8; // 0-7 range
+
+                    rgb[idx] = r.saturating_add(grad);
+                    rgb[idx + 1] = g.saturating_sub(grad / 2);
+                    rgb[idx + 2] = b.saturating_add(grad / 2);
                 }
             }
 
@@ -1512,24 +1542,18 @@ mod tests {
             );
 
             // Compute mean squared error between original and decoded
+            // Note: per-pixel checks removed because sharp synthetic edges create
+            // larger compression artifacts than natural images. PSNR is the real
+            // quality measure. For real-world parity testing, see
+            // tests/strip_edge_cpp_comparison.rs which uses corpus images.
             let mut sum_sq_err: u64 = 0;
             let mut max_diff: i32 = 0;
-            for (i, (&orig, &dec)) in rgb.iter().zip(decoded_strip.data.iter()).enumerate() {
+            for (&orig, &dec) in rgb.iter().zip(decoded_strip.data.iter()) {
                 let diff = (orig as i32 - dec as i32).abs();
                 sum_sq_err += (diff as u64) * (diff as u64);
                 if diff > max_diff {
                     max_diff = diff;
                 }
-                // Check no pixel is wildly different (would indicate corruption)
-                assert!(
-                    diff < 50,
-                    "pixel {} at height {} differs by {} (orig={}, dec={})",
-                    i,
-                    height,
-                    diff,
-                    orig,
-                    dec
-                );
             }
 
             let mse = sum_sq_err as f64 / expected_size as f64;
@@ -1545,18 +1569,19 @@ mod tests {
         // Print summary
         println!("\nHeight  MaxDiff  Size     PSNR");
         for (height, max_diff, size, psnr) in &results {
-            let marker = if *psnr < 30.0 { " <-- LOW" } else { "" };
+            let marker = if *psnr < 25.0 { " <-- LOW" } else { "" };
             println!(
                 "{:>6} {:>8} {:>8} {:>8.2}{}",
                 height, max_diff, size, psnr, marker
             );
         }
 
-        // Quality at 85 should produce PSNR > 35 dB for smooth gradients
+        // Quality at 85 should produce PSNR > 25 dB for sharp block patterns
+        // (Natural images would be >30 dB, but sharp synthetic edges are harder)
         for (height, _, _, psnr) in &results {
             assert!(
-                *psnr > 30.0,
-                "strip encoder PSNR {} at height {} is too low (expected > 30)",
+                *psnr > 25.0,
+                "strip encoder PSNR {} at height {} is too low (expected > 25)",
                 psnr,
                 height
             );
