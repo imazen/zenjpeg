@@ -44,20 +44,59 @@ impl ColorSpace {
 }
 
 /// Pixel format for input/output data.
+///
+/// # Fast Paths
+///
+/// The following formats have SIMD-optimized conversion to YCbCr:
+/// - [`Rgb`](Self::Rgb) - Most common, best performance
+/// - [`Bgr`](Self::Bgr) - Windows/OpenCV, optimized swap
+/// - [`Bgrx`](Self::Bgrx) - Windows BGRX32, padding ignored (fast path)
+/// - [`Rgb16`](Self::Rgb16) - High precision input
+/// - [`RgbF32`](Self::RgbF32) - Linear HDR input
+///
+/// Other formats are converted to a fast-path format first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum PixelFormat {
+    // === 8-bit formats ===
     /// Grayscale, 1 byte per pixel
     Gray,
-    /// RGB, 3 bytes per pixel
+    /// RGB, 3 bytes per pixel (fast path)
     #[default]
     Rgb,
-    /// RGBA, 4 bytes per pixel (alpha is ignored for encoding)
+    /// RGBA, 4 bytes per pixel (alpha ignored)
     Rgba,
-    /// BGR, 3 bytes per pixel
+    /// BGR, 3 bytes per pixel (fast path)
     Bgr,
-    /// BGRA, 4 bytes per pixel
+    /// BGRA, 4 bytes per pixel (alpha ignored)
     Bgra,
+    /// BGRX, 4 bytes per pixel (padding ignored, fast path)
+    ///
+    /// Common Windows/DirectX format. The X byte is padding (not alpha).
+    /// This is a fast path because we can process 4 pixels at a time
+    /// without alpha handling overhead.
+    Bgrx,
+
+    // === 16-bit formats ===
+    /// Grayscale, 2 bytes per pixel (native endian)
+    Gray16,
+    /// RGB, 6 bytes per pixel (native endian, fast path)
+    Rgb16,
+    /// RGBA, 8 bytes per pixel (native endian, alpha ignored)
+    Rgba16,
+
+    // === 32-bit float formats (linear color space) ===
+    /// Grayscale, 4 bytes per pixel (linear, 0.0-1.0)
+    GrayF32,
+    /// RGB, 12 bytes per pixel (linear, 0.0-1.0, fast path)
+    ///
+    /// Input is assumed to be in **linear** color space (not sRGB).
+    /// Values outside 0.0-1.0 are clamped.
+    RgbF32,
+    /// RGBA, 16 bytes per pixel (linear, alpha ignored)
+    RgbaF32,
+
+    // === Special formats ===
     /// CMYK, 4 bytes per pixel
     Cmyk,
 }
@@ -68,17 +107,23 @@ impl PixelFormat {
     pub const fn bytes_per_pixel(self) -> usize {
         match self {
             Self::Gray => 1,
+            Self::Gray16 => 2,
             Self::Rgb | Self::Bgr => 3,
-            Self::Rgba | Self::Bgra | Self::Cmyk => 4,
+            Self::Rgba | Self::Bgra | Self::Bgrx | Self::Cmyk | Self::GrayF32 => 4,
+            Self::Rgb16 => 6,
+            Self::Rgba16 => 8,
+            Self::RgbF32 => 12,
+            Self::RgbaF32 => 16,
         }
     }
 
-    /// Returns the number of color channels (excluding alpha).
+    /// Returns the number of color channels (excluding alpha/padding).
     #[must_use]
     pub const fn num_channels(self) -> usize {
         match self {
-            Self::Gray => 1,
-            Self::Rgb | Self::Bgr | Self::Rgba | Self::Bgra => 3,
+            Self::Gray | Self::Gray16 | Self::GrayF32 => 1,
+            Self::Rgb | Self::Bgr | Self::Rgba | Self::Bgra | Self::Bgrx
+            | Self::Rgb16 | Self::Rgba16 | Self::RgbF32 | Self::RgbaF32 => 3,
             Self::Cmyk => 4,
         }
     }
@@ -87,10 +132,52 @@ impl PixelFormat {
     #[must_use]
     pub const fn color_space(self) -> ColorSpace {
         match self {
-            Self::Gray => ColorSpace::Grayscale,
-            Self::Rgb | Self::Rgba | Self::Bgr | Self::Bgra => ColorSpace::Rgb,
+            Self::Gray | Self::Gray16 | Self::GrayF32 => ColorSpace::Grayscale,
+            Self::Rgb | Self::Rgba | Self::Bgr | Self::Bgra | Self::Bgrx
+            | Self::Rgb16 | Self::Rgba16 | Self::RgbF32 | Self::RgbaF32 => ColorSpace::Rgb,
             Self::Cmyk => ColorSpace::Cmyk,
         }
+    }
+
+    /// Returns true if this format has a SIMD-optimized fast path.
+    ///
+    /// Fast path formats are converted directly to YCbCr planes without
+    /// intermediate conversion steps.
+    #[must_use]
+    pub const fn is_fast_path(self) -> bool {
+        matches!(
+            self,
+            Self::Rgb | Self::Bgr | Self::Bgrx | Self::Rgb16 | Self::RgbF32
+            | Self::Gray | Self::Gray16 | Self::GrayF32
+        )
+    }
+
+    /// Returns the bit depth per channel.
+    #[must_use]
+    pub const fn bit_depth(self) -> u8 {
+        match self {
+            Self::Gray | Self::Rgb | Self::Rgba | Self::Bgr | Self::Bgra
+            | Self::Bgrx | Self::Cmyk => 8,
+            Self::Gray16 | Self::Rgb16 | Self::Rgba16 => 16,
+            Self::GrayF32 | Self::RgbF32 | Self::RgbaF32 => 32,
+        }
+    }
+
+    /// Returns true if this is a floating-point format.
+    ///
+    /// Float formats are assumed to be in linear color space (not sRGB).
+    #[must_use]
+    pub const fn is_float(self) -> bool {
+        matches!(self, Self::GrayF32 | Self::RgbF32 | Self::RgbaF32)
+    }
+
+    /// Returns true if this format has an alpha or padding channel.
+    #[must_use]
+    pub const fn has_alpha_or_padding(self) -> bool {
+        matches!(
+            self,
+            Self::Rgba | Self::Bgra | Self::Bgrx | Self::Rgba16 | Self::RgbaF32
+        )
     }
 }
 

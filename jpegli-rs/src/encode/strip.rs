@@ -703,6 +703,30 @@ impl StripProcessor {
                     }
                 }
             }
+            PixelFormat::Bgrx => {
+                // BGRX: fast path - 4 bytes per pixel, padding ignored
+                crate::encode_simd::bgr_to_ycbcr_strided_inplace(
+                    rgb_strip,
+                    &mut self.y_strip[..y_size],
+                    &mut self.cb_strip[..num_pixels],
+                    &mut self.cr_strip[..num_pixels],
+                    width,
+                    strip_height,
+                    padded_width,
+                    4, // BGRX is 4 bytes per pixel
+                );
+            }
+            // TODO: Implement these formats
+            PixelFormat::Gray16
+            | PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::GrayF32
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32 => {
+                return Err(crate::error::Error::UnsupportedPixelFormat {
+                    format: self.pixel_format,
+                });
+            }
         }
 
         Ok(())

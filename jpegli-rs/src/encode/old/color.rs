@@ -59,6 +59,14 @@ impl Encoder {
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
                 feature: "CMYK with XYB mode",
             }),
+            // New formats not supported in legacy encoder
+            format @ (PixelFormat::Bgrx
+            | PixelFormat::Gray16
+            | PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::GrayF32
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32) => Err(Error::UnsupportedPixelFormat { format }),
         }
     }
 
@@ -400,6 +408,14 @@ impl Encoder {
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
                 feature: "CMYK encoding",
             }),
+            // New formats not supported in legacy encoder
+            format @ (PixelFormat::Bgrx
+            | PixelFormat::Gray16
+            | PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::GrayF32
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32) => Err(Error::UnsupportedPixelFormat { format }),
         }
     }
 
@@ -438,6 +454,14 @@ impl Encoder {
             PixelFormat::Cmyk => Err(Error::UnsupportedFeature {
                 feature: "CMYK encoding",
             }),
+            // New formats not supported in legacy encoder
+            format @ (PixelFormat::Bgrx
+            | PixelFormat::Gray16
+            | PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::GrayF32
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32) => Err(Error::UnsupportedPixelFormat { format }),
         }
     }
 }
