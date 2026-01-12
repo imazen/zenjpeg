@@ -36,6 +36,12 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
         }
     }
 
+    // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
+    // This happens when fill bits at end of scan don't form a valid Huffman code.
+    if reader.is_exhausted() {
+        return Err(Error::EndOfScanData);
+    }
+
     Err(Error::InvalidHuffmanTable {
         table_idx: 0,
         reason: "invalid code",
@@ -127,6 +133,12 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     return Err(e);
                 }
             }
+        }
+
+        // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
+        // This happens when fill bits at end of scan don't form a valid Huffman code.
+        if self.reader.is_exhausted() {
+            return Err(Error::EndOfScanData);
         }
 
         Err(Error::InvalidHuffmanTable {

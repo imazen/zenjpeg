@@ -438,6 +438,18 @@ impl<'a> BitReader<'a> {
     pub fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.position)
     }
+
+    /// Returns true if we've exhausted real data (hit a marker or past end).
+    #[must_use]
+    pub fn is_exhausted(&self) -> bool {
+        self.marker_found.is_some() || self.position >= self.data.len()
+    }
+
+    /// Returns number of bits currently available in buffer.
+    #[must_use]
+    pub fn bits_available(&self) -> u8 {
+        self.bits_in_buffer
+    }
 }
 
 #[cfg(test)]
