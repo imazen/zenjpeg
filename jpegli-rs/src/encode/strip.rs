@@ -718,9 +718,10 @@ impl StripProcessor {
                 );
             }
             // 16-bit formats (assumed linear, convert through sRGB)
+            // High-precision path: all math in f64, single final cast to f32
             PixelFormat::Gray16 => {
                 // Gray16: 2 bytes per pixel, native endian, linear
-                // Convert: linear -> sRGB -> Y
+                // Convert: linear -> sRGB -> Y (scale to 0-255 range)
                 for row in 0..strip_height {
                     let src_start = row * width * 2;
                     let dst_start = row * padded_width;
@@ -729,8 +730,9 @@ impl StripProcessor {
                         let linear =
                             u16::from_ne_bytes([rgb_strip[idx], rgb_strip[idx + 1]]) as f64
                                 / 65535.0;
-                        let srgb = srgb_encoded_from_display(linear);
-                        self.y_strip[dst_start + x] = (srgb * 255.0) as f32;
+                        // sRGB gamma in f64, scale to 0-255, single cast to f32
+                        let srgb = srgb_encoded_from_display(linear) * 255.0;
+                        self.y_strip[dst_start + x] = srgb as f32;
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -743,13 +745,19 @@ impl StripProcessor {
             }
             PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
                 // RGB16/RGBA16: 6/8 bytes per pixel, native endian, linear
-                // Convert: linear -> sRGB -> YCbCr
-                use crate::consts::{
-                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
-                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
-                };
+                // High-precision: all math in f64 until final f32 output
                 let bpp = self.pixel_format.bytes_per_pixel();
-                let channel_stride = bpp / 2; // 3 for RGB16, 4 for RGBA16
+
+                // YCbCr coefficients as f64 for full precision
+                const R_TO_Y: f64 = 0.299;
+                const G_TO_Y: f64 = 0.587;
+                const B_TO_Y: f64 = 0.114;
+                const R_TO_CB: f64 = -0.168_736;
+                const G_TO_CB: f64 = -0.331_264;
+                const B_TO_CB: f64 = 0.5;
+                const R_TO_CR: f64 = 0.5;
+                const G_TO_CR: f64 = -0.418_688;
+                const B_TO_CR: f64 = -0.081_312;
 
                 for row in 0..strip_height {
                     let y_row_start = row * padded_width;
@@ -757,31 +765,29 @@ impl StripProcessor {
                     for x in 0..width {
                         let base = (row * width + x) * bpp;
 
-                        // Read 16-bit values (native endian)
+                        // Read 16-bit values and convert to linear f64
                         let r_linear =
                             u16::from_ne_bytes([rgb_strip[base], rgb_strip[base + 1]]) as f64
                                 / 65535.0;
                         let g_linear =
                             u16::from_ne_bytes([rgb_strip[base + 2], rgb_strip[base + 3]]) as f64
                                 / 65535.0;
-                        let b_linear = u16::from_ne_bytes([
-                            rgb_strip[base + 4],
-                            rgb_strip[base + 4 + 1],
-                        ]) as f64
-                            / 65535.0;
+                        let b_linear =
+                            u16::from_ne_bytes([rgb_strip[base + 4], rgb_strip[base + 5]]) as f64
+                                / 65535.0;
 
-                        // Convert linear to sRGB (apply gamma)
-                        let r = (srgb_encoded_from_display(r_linear) * 255.0) as f32;
-                        let g = (srgb_encoded_from_display(g_linear) * 255.0) as f32;
-                        let b = (srgb_encoded_from_display(b_linear) * 255.0) as f32;
+                        // Convert linear to sRGB in f64, scale to 0-255
+                        let r = srgb_encoded_from_display(r_linear) * 255.0;
+                        let g = srgb_encoded_from_display(g_linear) * 255.0;
+                        let b = srgb_encoded_from_display(b_linear) * 255.0;
 
-                        // Convert sRGB to YCbCr
+                        // Convert sRGB to YCbCr in f64, single cast to f32 at the end
                         self.y_strip[y_row_start + x] =
-                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
-                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
-                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                            (R_TO_Y * r + G_TO_Y * g + B_TO_Y * b) as f32;
+                        self.cb_strip[cbcr_row_start + x] =
+                            (R_TO_CB * r + G_TO_CB * g + B_TO_CB * b + 128.0) as f32;
+                        self.cr_strip[cbcr_row_start + x] =
+                            (R_TO_CR * r + G_TO_CR * g + B_TO_CR * b + 128.0) as f32;
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -791,13 +797,12 @@ impl StripProcessor {
                         }
                     }
                 }
-                // Suppress unused warning for channel_stride
-                let _ = channel_stride;
             }
             // 32-bit float formats (linear, 0.0-1.0)
+            // High-precision path: all math in f64, single final cast to f32
             PixelFormat::GrayF32 => {
                 // GrayF32: 4 bytes per pixel, linear
-                // Convert: linear -> sRGB -> Y
+                // Convert: linear -> sRGB -> Y (scale to 0-255 range)
                 for row in 0..strip_height {
                     let src_start = row * width * 4;
                     let dst_start = row * padded_width;
@@ -810,8 +815,9 @@ impl StripProcessor {
                             rgb_strip[idx + 3],
                         ])
                         .clamp(0.0, 1.0) as f64;
-                        let srgb = srgb_encoded_from_display(linear);
-                        self.y_strip[dst_start + x] = (srgb * 255.0) as f32;
+                        // sRGB gamma in f64, scale to 0-255, single cast to f32
+                        let srgb = srgb_encoded_from_display(linear) * 255.0;
+                        self.y_strip[dst_start + x] = srgb as f32;
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -824,12 +830,19 @@ impl StripProcessor {
             }
             PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
                 // RgbF32/RgbaF32: 12/16 bytes per pixel, linear
-                // Convert: linear -> sRGB -> YCbCr
-                use crate::consts::{
-                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
-                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
-                };
+                // High-precision: all math in f64 until final f32 output
                 let bpp = self.pixel_format.bytes_per_pixel();
+
+                // YCbCr coefficients as f64 for full precision
+                const R_TO_Y: f64 = 0.299;
+                const G_TO_Y: f64 = 0.587;
+                const B_TO_Y: f64 = 0.114;
+                const R_TO_CB: f64 = -0.168_736;
+                const G_TO_CB: f64 = -0.331_264;
+                const B_TO_CB: f64 = 0.5;
+                const R_TO_CR: f64 = 0.5;
+                const G_TO_CR: f64 = -0.418_688;
+                const B_TO_CR: f64 = -0.081_312;
 
                 for row in 0..strip_height {
                     let y_row_start = row * padded_width;
@@ -837,7 +850,7 @@ impl StripProcessor {
                     for x in 0..width {
                         let base = (row * width + x) * bpp;
 
-                        // Read f32 values (native endian)
+                        // Read f32 values, clamp, convert to f64
                         let r_linear = f32::from_ne_bytes([
                             rgb_strip[base],
                             rgb_strip[base + 1],
@@ -860,18 +873,18 @@ impl StripProcessor {
                         ])
                         .clamp(0.0, 1.0) as f64;
 
-                        // Convert linear to sRGB (apply gamma)
-                        let r = (srgb_encoded_from_display(r_linear) * 255.0) as f32;
-                        let g = (srgb_encoded_from_display(g_linear) * 255.0) as f32;
-                        let b = (srgb_encoded_from_display(b_linear) * 255.0) as f32;
+                        // Convert linear to sRGB in f64, scale to 0-255
+                        let r = srgb_encoded_from_display(r_linear) * 255.0;
+                        let g = srgb_encoded_from_display(g_linear) * 255.0;
+                        let b = srgb_encoded_from_display(b_linear) * 255.0;
 
-                        // Convert sRGB to YCbCr
+                        // Convert sRGB to YCbCr in f64, single cast to f32 at the end
                         self.y_strip[y_row_start + x] =
-                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
-                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
-                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                            (R_TO_Y * r + G_TO_Y * g + B_TO_Y * b) as f32;
+                        self.cb_strip[cbcr_row_start + x] =
+                            (R_TO_CB * r + G_TO_CB * g + B_TO_CB * b + 128.0) as f32;
+                        self.cr_strip[cbcr_row_start + x] =
+                            (R_TO_CR * r + G_TO_CR * g + B_TO_CR * b + 128.0) as f32;
                     }
                     // Edge-pad Y row
                     if width < padded_width {
