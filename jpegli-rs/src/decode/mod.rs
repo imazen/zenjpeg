@@ -14,6 +14,10 @@
 //! let decoded = decoder.decode(&jpeg_data)?;
 //! ```
 
+mod scanline;
+
+pub use scanline::{ScanlineInfo, ScanlineReader};
+
 use crate::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_uninitialized, validate_dimensions,
     DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS,
@@ -220,6 +224,91 @@ impl Decoder {
 
         // Return worst case (non-streaming)
         streaming_total.max(coeff_storage + rgb_size)
+    }
+
+    /// Creates a pull-based scanline reader for streaming decode.
+    ///
+    /// This allows reading the image row by row without loading the entire
+    /// image into memory. Only supports baseline JPEGs with 4:4:4 subsampling.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use jpegli::{Decoder, ImgRefMut};
+    ///
+    /// let mut reader = Decoder::new().scanline_reader(&jpeg_data)?;
+    /// let width = reader.width() as usize;
+    /// let height = reader.height() as usize;
+    ///
+    /// let mut pixels = vec![0u8; width * height * 3];
+    /// let mut rows_read = 0;
+    /// while rows_read < height {
+    ///     let remaining = height - rows_read;
+    ///     let slice = &mut pixels[rows_read * width * 3..];
+    ///     let output = ImgRefMut::new(slice, width * 3, remaining);
+    ///     rows_read += reader.read_rows_rgb8(output)?;
+    /// }
+    /// ```
+    pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
+        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        parser.read_header()?;
+
+        // Only baseline 4:4:4 supported for scanline reading
+        if parser.mode != JpegMode::Baseline {
+            return Err(Error::UnsupportedFeature {
+                feature: "scanline reader only supports baseline JPEG",
+            });
+        }
+
+        if parser.num_components != 3 {
+            return Err(Error::UnsupportedFeature {
+                feature: "scanline reader requires 3-component YCbCr image",
+            });
+        }
+
+        // Check for 4:4:4 (all components same sampling)
+        let h0 = parser.components[0].h_samp_factor;
+        let v0 = parser.components[0].v_samp_factor;
+        for i in 1..3 {
+            if parser.components[i].h_samp_factor != h0 || parser.components[i].v_samp_factor != v0
+            {
+                return Err(Error::UnsupportedFeature {
+                    feature: "scanline reader requires 4:4:4 subsampling",
+                });
+            }
+        }
+        if h0 != 1 || v0 != 1 {
+            return Err(Error::UnsupportedFeature {
+                feature: "scanline reader requires 1x1 sampling factors",
+            });
+        }
+
+        // Extract quant table indices
+        let quant_indices = [
+            parser.components[0].quant_table_idx as usize,
+            parser.components[1].quant_table_idx as usize,
+            parser.components[2].quant_table_idx as usize,
+        ];
+
+        // Find SOS marker to get table mapping and scan data position
+        let scan_info = parser.find_scan_info()?;
+
+        // Get info before moving tables
+        let is_xyb = parser.info().is_xyb;
+
+        ScanlineReader::new(
+            data,
+            parser.width,
+            parser.height,
+            parser.num_components,
+            parser.quant_tables,
+            quant_indices,
+            parser.dc_tables,
+            parser.ac_tables,
+            scan_info.table_mapping,
+            scan_info.data_start,
+            parser.restart_interval,
+            is_xyb,
+        )
     }
 
     /// Decodes a JPEG image.
@@ -643,6 +732,14 @@ impl DecodedYCbCr {
     }
 }
 
+/// Information about a scan needed for scanline reading.
+pub(crate) struct ScanInfo {
+    /// Huffman table mapping: (dc_table_idx, ac_table_idx) per component
+    pub table_mapping: [(usize, usize); 3],
+    /// Position in data where entropy-coded scan data begins
+    pub data_start: usize,
+}
+
 /// Internal JPEG parser state.
 struct JpegParser<'a> {
     data: &'a [u8],
@@ -781,6 +878,67 @@ impl<'a> JpegParser<'a> {
                 MARKER_EOI => {
                     return Err(Error::InvalidJpegData {
                         reason: "unexpected EOI before frame header",
+                    });
+                }
+                _ => self.skip_segment()?,
+            }
+        }
+    }
+
+    /// Finds the SOS marker and extracts scan info without decoding.
+    /// Used by scanline reader to get table mapping and data start position.
+    fn find_scan_info(&mut self) -> Result<ScanInfo> {
+        // Continue from current position to find SOS
+        loop {
+            let marker = self.read_marker()?;
+
+            match marker {
+                MARKER_SOS => {
+                    let _length = self.read_u16()?;
+                    let num_components = self.read_u8()?;
+
+                    if num_components != 3 {
+                        return Err(Error::UnsupportedFeature {
+                            feature: "scanline reader requires 3 components in scan",
+                        });
+                    }
+
+                    let mut table_mapping = [(0usize, 0usize); 3];
+
+                    for i in 0..num_components as usize {
+                        let component_id = self.read_u8()?;
+                        let tables = self.read_u8()?;
+                        let dc_table = (tables >> 4) as usize;
+                        let ac_table = (tables & 0x0F) as usize;
+
+                        // Find component index
+                        let comp_idx = self.components[..self.num_components as usize]
+                            .iter()
+                            .position(|c| c.id == component_id)
+                            .ok_or(Error::InvalidJpegData {
+                                reason: "unknown component in scan",
+                            })?;
+
+                        table_mapping[comp_idx] = (dc_table, ac_table);
+                    }
+
+                    // Skip spectral selection bytes (Ss, Se, Ah/Al)
+                    let _ss = self.read_u8()?;
+                    let _se = self.read_u8()?;
+                    let _ah_al = self.read_u8()?;
+
+                    return Ok(ScanInfo {
+                        table_mapping,
+                        data_start: self.position,
+                    });
+                }
+                MARKER_DQT => self.parse_quant_table()?,
+                MARKER_DHT => self.parse_huffman_table()?,
+                MARKER_DRI => self.parse_restart_interval()?,
+                MARKER_APP0..=0xEF | MARKER_COM => self.skip_segment()?,
+                MARKER_EOI => {
+                    return Err(Error::InvalidJpegData {
+                        reason: "unexpected EOI before SOS",
                     });
                 }
                 _ => self.skip_segment()?,
