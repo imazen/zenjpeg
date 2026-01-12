@@ -32,33 +32,141 @@ const QUALITY_LEVELS: &[u8] = &[50, 75, 90];
 // Updated 2026-01-11: Switched from full-plane to strip-only encoding
 // Note: XYB configs excluded - XYB with larger images has block count mismatch issue
 const EXPECTED_HASHES: &[(&str, u8, &str)] = &[
-    ("baseline_444_opt", 50, "219221a754350fead09b9316ba43d0700cd66bca03e7415389378f6a4e413f50"), // 329838 bytes
-    ("baseline_444_opt", 75, "d9c7e1219a025bcf4ab193a7737f99b28ec0c3738926c009da40c76dfe6a71fe"), // 476772 bytes
-    ("baseline_444_opt", 90, "2a4d16a893513486f3e86dd5af016664af9c33148c00ab6a33bd31d06eb05ea6"), // 717812 bytes
-    ("baseline_444_fixed", 50, "305dcf22142199c84c0c5eaeb9ad3bb18f5e035e0ba587ce66a931e8e4bd9e91"), // 344304 bytes
-    ("baseline_444_fixed", 75, "fb00338fd64fd3f6b2709472882dc4169094fb6f1137380f60e1268edf2880ba"), // 496149 bytes
-    ("baseline_444_fixed", 90, "c1758b66e897183e540e1bb77d6de883b4601878c27eb81ac74645e8bdfeb5c6"), // 766785 bytes
-    ("baseline_420_opt", 50, "5b3e7e3083035c4295a8681c4897e299e6dbf331eba06bbb9126c2ade98c29a3"), // 269724 bytes
-    ("baseline_420_opt", 75, "406c924a2bb28e2885ef87f4f048917f903390610604ac7091f3be838378ec02"), // 397281 bytes
-    ("baseline_420_opt", 90, "76fd92b1fa95d0e9e141a3c199fe4c7dbdb9236b5fc73f1859bb90b321cb5e3a"), // 584347 bytes
-    ("baseline_420_gamma", 50, "5e4dc96bfa441eb9c5d29e89bf6f30ab03c8c9e67e568f93d53001a56a3f4bc9"), // 270643 bytes
-    ("baseline_420_gamma", 75, "34be3b723c3e72aad9c571fa615ced904a7437b91db3b93cd2ad26520559b224"), // 398916 bytes
-    ("baseline_420_gamma", 90, "0885e8f27e55e64c3a6303eaab1a78503cb69788b301194f861b4471d516b77e"), // 586888 bytes
-    ("baseline_420_sharpyuv", 50, "e67b4fc7fa45b19cb11237d6bbb664a2f18e03ae4affd5636413e47fd71a403f"), // 270221 bytes
-    ("baseline_420_sharpyuv", 75, "cf8b0719b0db7e0d1af0109ee7015417f8092f53b9180d3aa2b9cbeeef33f7b3"), // 398174 bytes
-    ("baseline_420_sharpyuv", 90, "0e0e8a0e35ea5d0c71e93fe39ddb271ed1c6c7139e27ae53318e8119fe99a516"), // 585699 bytes
-    ("baseline_422_opt", 50, "0d1b325e5c3f2d18453a9eed2cfa144dca0bfb62409f4775d392e28c7fc0e274"), // 293361 bytes
-    ("baseline_422_opt", 75, "8a318cf5d7f7f1c1ac5505dcb54ae4246c9176aa3012b1a24d16401522c711b2"), // 419126 bytes
-    ("baseline_422_opt", 90, "38b35697d09ba05108dffbfffa8dce616dc933972808dc11c364337415939873"), // 613614 bytes
-    ("baseline_440_opt", 50, "5e0a257a7d6904ef155b55c3a839656ae87fa77fd7a535c61e2a2cef2f4e2bcf"), // 293565 bytes
-    ("baseline_440_opt", 75, "cd154205a35ab8ae5498c7d0d67b3aed973b79816af10cec4a779352cb8bf114"), // 419768 bytes
-    ("baseline_440_opt", 90, "b73f8956872b4328607ef85fdfe505afa400c29db21f9406d45d2f95650fc7e3"), // 615445 bytes
-    ("progressive_444_opt", 50, "f5ef6697f43fcdc06b81b1a7809d70af90cfa6b37fc3ca3f2de45aa2bb1de3f2"), // 320645 bytes
-    ("progressive_444_opt", 75, "3336b2acc9b7bf6cae5fa65002d27bc60fdd479fd4dd8d10e1f61a0806af8602"), // 462529 bytes
-    ("progressive_444_opt", 90, "449120f11d690a67fd3aa7bc4f3fcb2bc7a69db5704672fe1babde07ae396fd4"), // 696599 bytes
-    ("progressive_420_opt", 50, "c3186e84309bb158d989a684153df92117ce3ec6d9104d928ffdb149edff1f03"), // 260961 bytes
-    ("progressive_420_opt", 75, "07af1d94f45cf3fc1430ef383900ab01d1f591bf1efe08f938d9a9202526ae1b"), // 383821 bytes
-    ("progressive_420_opt", 90, "591b020c3e60284880948571230e19ca3a42f9a7d3dd25f16d549c40c8cf13cf"), // 564225 bytes
+    (
+        "baseline_444_opt",
+        50,
+        "219221a754350fead09b9316ba43d0700cd66bca03e7415389378f6a4e413f50",
+    ), // 329838 bytes
+    (
+        "baseline_444_opt",
+        75,
+        "d9c7e1219a025bcf4ab193a7737f99b28ec0c3738926c009da40c76dfe6a71fe",
+    ), // 476772 bytes
+    (
+        "baseline_444_opt",
+        90,
+        "2a4d16a893513486f3e86dd5af016664af9c33148c00ab6a33bd31d06eb05ea6",
+    ), // 717812 bytes
+    (
+        "baseline_444_fixed",
+        50,
+        "305dcf22142199c84c0c5eaeb9ad3bb18f5e035e0ba587ce66a931e8e4bd9e91",
+    ), // 344304 bytes
+    (
+        "baseline_444_fixed",
+        75,
+        "fb00338fd64fd3f6b2709472882dc4169094fb6f1137380f60e1268edf2880ba",
+    ), // 496149 bytes
+    (
+        "baseline_444_fixed",
+        90,
+        "c1758b66e897183e540e1bb77d6de883b4601878c27eb81ac74645e8bdfeb5c6",
+    ), // 766785 bytes
+    (
+        "baseline_420_opt",
+        50,
+        "5b3e7e3083035c4295a8681c4897e299e6dbf331eba06bbb9126c2ade98c29a3",
+    ), // 269724 bytes
+    (
+        "baseline_420_opt",
+        75,
+        "406c924a2bb28e2885ef87f4f048917f903390610604ac7091f3be838378ec02",
+    ), // 397281 bytes
+    (
+        "baseline_420_opt",
+        90,
+        "76fd92b1fa95d0e9e141a3c199fe4c7dbdb9236b5fc73f1859bb90b321cb5e3a",
+    ), // 584347 bytes
+    (
+        "baseline_420_gamma",
+        50,
+        "5e4dc96bfa441eb9c5d29e89bf6f30ab03c8c9e67e568f93d53001a56a3f4bc9",
+    ), // 270643 bytes
+    (
+        "baseline_420_gamma",
+        75,
+        "34be3b723c3e72aad9c571fa615ced904a7437b91db3b93cd2ad26520559b224",
+    ), // 398916 bytes
+    (
+        "baseline_420_gamma",
+        90,
+        "0885e8f27e55e64c3a6303eaab1a78503cb69788b301194f861b4471d516b77e",
+    ), // 586888 bytes
+    (
+        "baseline_420_sharpyuv",
+        50,
+        "e67b4fc7fa45b19cb11237d6bbb664a2f18e03ae4affd5636413e47fd71a403f",
+    ), // 270221 bytes
+    (
+        "baseline_420_sharpyuv",
+        75,
+        "cf8b0719b0db7e0d1af0109ee7015417f8092f53b9180d3aa2b9cbeeef33f7b3",
+    ), // 398174 bytes
+    (
+        "baseline_420_sharpyuv",
+        90,
+        "0e0e8a0e35ea5d0c71e93fe39ddb271ed1c6c7139e27ae53318e8119fe99a516",
+    ), // 585699 bytes
+    (
+        "baseline_422_opt",
+        50,
+        "0d1b325e5c3f2d18453a9eed2cfa144dca0bfb62409f4775d392e28c7fc0e274",
+    ), // 293361 bytes
+    (
+        "baseline_422_opt",
+        75,
+        "8a318cf5d7f7f1c1ac5505dcb54ae4246c9176aa3012b1a24d16401522c711b2",
+    ), // 419126 bytes
+    (
+        "baseline_422_opt",
+        90,
+        "38b35697d09ba05108dffbfffa8dce616dc933972808dc11c364337415939873",
+    ), // 613614 bytes
+    (
+        "baseline_440_opt",
+        50,
+        "5e0a257a7d6904ef155b55c3a839656ae87fa77fd7a535c61e2a2cef2f4e2bcf",
+    ), // 293565 bytes
+    (
+        "baseline_440_opt",
+        75,
+        "cd154205a35ab8ae5498c7d0d67b3aed973b79816af10cec4a779352cb8bf114",
+    ), // 419768 bytes
+    (
+        "baseline_440_opt",
+        90,
+        "b73f8956872b4328607ef85fdfe505afa400c29db21f9406d45d2f95650fc7e3",
+    ), // 615445 bytes
+    (
+        "progressive_444_opt",
+        50,
+        "f5ef6697f43fcdc06b81b1a7809d70af90cfa6b37fc3ca3f2de45aa2bb1de3f2",
+    ), // 320645 bytes
+    (
+        "progressive_444_opt",
+        75,
+        "3336b2acc9b7bf6cae5fa65002d27bc60fdd479fd4dd8d10e1f61a0806af8602",
+    ), // 462529 bytes
+    (
+        "progressive_444_opt",
+        90,
+        "449120f11d690a67fd3aa7bc4f3fcb2bc7a69db5704672fe1babde07ae396fd4",
+    ), // 696599 bytes
+    (
+        "progressive_420_opt",
+        50,
+        "c3186e84309bb158d989a684153df92117ce3ec6d9104d928ffdb149edff1f03",
+    ), // 260961 bytes
+    (
+        "progressive_420_opt",
+        75,
+        "07af1d94f45cf3fc1430ef383900ab01d1f591bf1efe08f938d9a9202526ae1b",
+    ), // 383821 bytes
+    (
+        "progressive_420_opt",
+        90,
+        "591b020c3e60284880948571230e19ca3a42f9a7d3dd25f16d549c40c8cf13cf",
+    ), // 564225 bytes
 ];
 
 // =============================================================================
@@ -115,7 +223,6 @@ impl EncoderTestConfig {
             .optimize_huffman(self.optimize_huffman)
             .chroma_downsampling(self.chroma_downsampling)
             .use_xyb(self.use_xyb)
-            
             .encode(rgb)
             .expect("Encoding failed")
     }
@@ -301,7 +408,6 @@ fn test_frymire_backend_parity() {
                 .optimize_huffman(config.optimize_huffman)
                 .chroma_downsampling(config.chroma_downsampling)
                 .use_xyb(config.use_xyb)
-                
                 .encode(&rgb)
                 .unwrap_or_else(|e| {
                     panic!("{} Q{}: backend mismatch: {}", config.name, quality, e)
@@ -356,7 +462,6 @@ fn print_single_hash() {
         .mode(JpegMode::Baseline)
         .subsampling(Subsampling::S444)
         .optimize_huffman(true)
-        
         .encode(&rgb)
         .expect("Encoding failed");
 
