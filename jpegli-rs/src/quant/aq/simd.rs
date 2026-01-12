@@ -786,7 +786,7 @@ pub fn fuzzy_erosion_simd(
 }
 
 /// Sum 2x2 blocks from tmp buffer to produce aq_map values.
-/// SIMD-optimized: processes 8 blocks at a time by loading 16 consecutive values.
+/// Simple scalar implementation - SIMD shuffle overhead isn't worth it for this pattern.
 #[inline(always)]
 fn sum_2x2_blocks_simd(
     tmp: &[f32],
@@ -796,90 +796,20 @@ fn sum_2x2_blocks_simd(
     block_h: usize,
     aq_map: &mut [f32],
 ) {
-    // Helper to get tmp value with clamped bounds
-    #[inline(always)]
-    fn get_tmp(tmp: &[f32], tmp_w: usize, tmp_h: usize, x: usize, y: usize) -> f32 {
-        let x = x.min(tmp_w.saturating_sub(1));
-        let y = y.min(tmp_h.saturating_sub(1));
-        tmp[y * tmp_w + x]
-    }
+    let max_x = tmp_w.saturating_sub(1);
+    let max_y = tmp_h.saturating_sub(1);
 
     for by in 0..block_h {
-        let py = by * 2;
-        let py1 = (py + 1).min(tmp_h.saturating_sub(1));
-        let row0_start = py * tmp_w;
-        let row1_start = py1 * tmp_w;
-        let chunks = block_w / 8;
+        let py0 = by * 2;
+        let py1 = (py0 + 1).min(max_y);
+        let row0 = &tmp[py0 * tmp_w..];
+        let row1 = &tmp[py1 * tmp_w..];
+        let out_row = &mut aq_map[by * block_w..];
 
-        // SIMD path: process 8 blocks by loading 16 consecutive values per row
-        // For blocks 0-7, we need tmp positions 0-15 from each row
-        for chunk in 0..chunks {
-            let bx_start = chunk * 8;
-            let px_start = bx_start * 2;
-
-            // Check if we can safely load 16 consecutive values
-            if px_start + 16 <= tmp_w {
-                // Load 16 values from row py as two f32x8 vectors
-                let r0_lo = load_f32x8(tmp, row0_start + px_start);
-                let r0_hi = load_f32x8(tmp, row0_start + px_start + 8);
-                // Load 16 values from row py+1
-                let r1_lo = load_f32x8(tmp, row1_start + px_start);
-                let r1_hi = load_f32x8(tmp, row1_start + px_start + 8);
-
-                // For 8 output blocks, we need: sum of positions (0,1), (2,3), (4,5), etc.
-                // r0_lo = [0,1,2,3,4,5,6,7], r0_hi = [8,9,10,11,12,13,14,15]
-                // We want evens: [0,2,4,6,8,10,12,14] and odds: [1,3,5,7,9,11,13,15]
-                let r0_lo_arr: [f32; 8] = r0_lo.into();
-                let r0_hi_arr: [f32; 8] = r0_hi.into();
-                let r1_lo_arr: [f32; 8] = r1_lo.into();
-                let r1_hi_arr: [f32; 8] = r1_hi.into();
-
-                // Build evens and odds for row 0
-                let evens0 = f32x8::from([
-                    r0_lo_arr[0], r0_lo_arr[2], r0_lo_arr[4], r0_lo_arr[6],
-                    r0_hi_arr[0], r0_hi_arr[2], r0_hi_arr[4], r0_hi_arr[6],
-                ]);
-                let odds0 = f32x8::from([
-                    r0_lo_arr[1], r0_lo_arr[3], r0_lo_arr[5], r0_lo_arr[7],
-                    r0_hi_arr[1], r0_hi_arr[3], r0_hi_arr[5], r0_hi_arr[7],
-                ]);
-                // Build evens and odds for row 1
-                let evens1 = f32x8::from([
-                    r1_lo_arr[0], r1_lo_arr[2], r1_lo_arr[4], r1_lo_arr[6],
-                    r1_hi_arr[0], r1_hi_arr[2], r1_hi_arr[4], r1_hi_arr[6],
-                ]);
-                let odds1 = f32x8::from([
-                    r1_lo_arr[1], r1_lo_arr[3], r1_lo_arr[5], r1_lo_arr[7],
-                    r1_hi_arr[1], r1_hi_arr[3], r1_hi_arr[5], r1_hi_arr[7],
-                ]);
-
-                // Sum: (evens0 + odds0) + (evens1 + odds1)
-                let sums = (evens0 + odds0) + (evens1 + odds1);
-                let sums_arr: [f32; 8] = sums.into();
-                aq_map[by * block_w + bx_start..by * block_w + bx_start + 8]
-                    .copy_from_slice(&sums_arr);
-            } else {
-                // Scalar fallback for edge
-                for i in 0..8 {
-                    let bx = bx_start + i;
-                    if bx < block_w {
-                        let px = bx * 2;
-                        aq_map[by * block_w + bx] = get_tmp(tmp, tmp_w, tmp_h, px, py)
-                            + get_tmp(tmp, tmp_w, tmp_h, px + 1, py)
-                            + get_tmp(tmp, tmp_w, tmp_h, px, py + 1)
-                            + get_tmp(tmp, tmp_w, tmp_h, px + 1, py + 1);
-                    }
-                }
-            }
-        }
-
-        // Scalar remainder
-        for bx in (chunks * 8)..block_w {
-            let px = bx * 2;
-            aq_map[by * block_w + bx] = get_tmp(tmp, tmp_w, tmp_h, px, py)
-                + get_tmp(tmp, tmp_w, tmp_h, px + 1, py)
-                + get_tmp(tmp, tmp_w, tmp_h, px, py + 1)
-                + get_tmp(tmp, tmp_w, tmp_h, px + 1, py + 1);
+        for bx in 0..block_w {
+            let px0 = bx * 2;
+            let px1 = (px0 + 1).min(max_x);
+            out_row[bx] = row0[px0] + row0[px1] + row1[px0] + row1[px1];
         }
     }
 }
