@@ -8,12 +8,11 @@ mod test_utils;
 
 use jpegli::{
     decode::{Decoder, DecoderConfig},
-    encode::{Encoder, EncoderConfig},
     types::{
         ColorSpace, Component, Dimensions, HuffmanTable, JpegMode, OutputDataType, PixelFormat,
         QuantTable, RestartInterval, SampleDepth, ScanSpec, Subsampling,
     },
-    Quality,
+    Quality, StreamingEncoder,
 };
 use test_utils::{generate_gradient_d, generate_noise, TestImage};
 
@@ -216,19 +215,15 @@ mod entropy_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Low quality creates larger coefficients
-        let encoder = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(10.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let encoder = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(10.0));
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 100);
 
         // High quality with small coefficients
-        let encoder = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(100.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let encoder = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(100.0));
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 100);
     }
 
@@ -237,13 +232,11 @@ mod entropy_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // Test progressive mode (exercises DC progressive encoding)
-        let encoder = Encoder::new()
-            .width(128)
-            .height(128)
+        let encoder = StreamingEncoder::new(128, 128)
             .mode(JpegMode::Progressive)
-            .jpegli_quality(Quality::from_quality(90.0));
+            .quality(Quality::from_quality(90.0));
         let jpeg = encoder
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("progressive encode failed");
 
         // Verify it's actually progressive
@@ -260,13 +253,11 @@ mod entropy_coverage {
         // Use a noisy image to exercise more AC coefficient paths
         let img = generate_noise(128, 128, 42, 3);
 
-        let encoder = Encoder::new()
-            .width(128)
-            .height(128)
+        let encoder = StreamingEncoder::new(128, 128)
             .mode(JpegMode::Progressive)
-            .jpegli_quality(Quality::from_quality(80.0));
+            .quality(Quality::from_quality(80.0));
         let jpeg = encoder
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("progressive encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -278,12 +269,10 @@ mod entropy_coverage {
         // Solid color image should have many EOB runs
         let img = test_utils::generate_solid(128, 128, 128, 3);
 
-        let encoder = Encoder::new()
-            .width(128)
-            .height(128)
+        let encoder = StreamingEncoder::new(128, 128)
             .mode(JpegMode::Progressive)
-            .jpegli_quality(Quality::from_quality(90.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+            .quality(Quality::from_quality(90.0));
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 128);
@@ -295,8 +284,8 @@ mod entropy_coverage {
 
         // Create encoder with restart interval
         // Note: restart interval support may have decoder compatibility issues
-        let encoder = Encoder::new().width(256).height(256).restart_interval(10);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let encoder = StreamingEncoder::new(256, 256).restart_interval(10);
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         // Check for DRI marker (defines restart interval)
         let has_dri = jpeg.windows(2).any(|w| w == [0xFF, 0xDD]);
@@ -325,11 +314,9 @@ mod color_coverage {
             pixels[i * 3 + 2] = 128; // R
         }
 
-        let encoder = Encoder::new()
-            .width(64)
-            .height(64)
+        let encoder = StreamingEncoder::new(64, 64)
             .pixel_format(PixelFormat::Bgr);
-        let jpeg = encoder.encode(&pixels).expect("BGR encode failed");
+        let jpeg = encoder.encode_all(&pixels).expect("BGR encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
@@ -346,11 +333,9 @@ mod color_coverage {
             pixels[i * 4 + 3] = 255; // A
         }
 
-        let encoder = Encoder::new()
-            .width(64)
-            .height(64)
+        let encoder = StreamingEncoder::new(64, 64)
             .pixel_format(PixelFormat::Bgra);
-        let jpeg = encoder.encode(&pixels).expect("BGRA encode failed");
+        let jpeg = encoder.encode_all(&pixels).expect("BGRA encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
@@ -360,8 +345,8 @@ mod color_coverage {
     fn grayscale_from_rgb() {
         // Encode RGB but with grayscale-like content
         let img = test_utils::generate_gradient_h(64, 64, 3);
-        let encoder = Encoder::new().width(64).height(64);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let encoder = StreamingEncoder::new(64, 64);
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
@@ -380,11 +365,9 @@ mod idct_coverage {
         // Different quality levels exercise different coefficient ranges
         for q in [1.0, 5.0, 20.0, 40.0, 60.0, 80.0, 95.0, 100.0] {
             let img = generate_noise(64, 64, 12345, 3);
-            let jpeg = Encoder::new()
-                .width(64)
-                .height(64)
-                .jpegli_quality(Quality::from_quality(q))
-                .encode(&img.pixels)
+            let jpeg = StreamingEncoder::new(64, 64)
+                .quality(Quality::from_quality(q))
+                .encode_all(&img.pixels)
                 .expect("encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -396,12 +379,10 @@ mod idct_coverage {
     fn decode_progressive_multiple_passes() {
         // Progressive decode exercises IDCT with partial coefficients
         let img = generate_noise(256, 256, 99, 3);
-        let jpeg = Encoder::new()
-            .width(256)
-            .height(256)
+        let jpeg = StreamingEncoder::new(256, 256)
             .mode(JpegMode::Progressive)
-            .jpegli_quality(Quality::from_quality(70.0))
-            .encode(&img.pixels)
+            .quality(Quality::from_quality(70.0))
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -420,10 +401,8 @@ mod decode_coverage {
     #[test]
     fn decode_f32_output() {
         let img = generate_gradient_d(64, 64, 3);
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
-            .encode(&img.pixels)
+        let jpeg = StreamingEncoder::new(64, 64)
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         // Decode to f32
@@ -441,11 +420,9 @@ mod decode_coverage {
     fn decode_grayscale_to_rgb() {
         // Encode grayscale
         let img = test_utils::generate_gradient_h(64, 64, 1);
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
+        let jpeg = StreamingEncoder::new(64, 64)
             .pixel_format(PixelFormat::Gray)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         // Decode to RGB (default)
@@ -458,10 +435,8 @@ mod decode_coverage {
     #[test]
     fn decode_with_memory_limits() {
         let img = generate_gradient_d(128, 128, 3);
-        let jpeg = Encoder::new()
-            .width(128)
-            .height(128)
-            .encode(&img.pixels)
+        let jpeg = StreamingEncoder::new(128, 128)
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         // Test with custom memory limits
@@ -478,11 +453,9 @@ mod decode_coverage {
     #[test]
     fn decode_with_block_smoothing() {
         let img = generate_noise(64, 64, 42, 3);
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(30.0))
-            .encode(&img.pixels)
+        let jpeg = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(30.0))
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         let config = DecoderConfig {
@@ -497,11 +470,9 @@ mod decode_coverage {
     #[test]
     fn decode_with_fancy_upsampling() {
         let img = generate_gradient_d(128, 128, 3);
-        let jpeg = Encoder::new()
-            .width(128)
-            .height(128)
+        let jpeg = StreamingEncoder::new(128, 128)
             .subsampling(Subsampling::S420)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         let config = DecoderConfig {
@@ -516,11 +487,9 @@ mod decode_coverage {
     #[test]
     fn decode_xyb_to_rgb() {
         let img = generate_gradient_d(64, 64, 3);
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
+        let jpeg = StreamingEncoder::new(64, 64)
             .use_xyb(true)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("XYB encode failed");
 
         // Decode with ICC application (requires cms feature)
@@ -547,11 +516,9 @@ mod encode_coverage {
 
         // Test restart interval encoding (decoder may have issues with restart markers)
         for interval in [1, 5, 10, 50, 100] {
-            let encoder = Encoder::new()
-                .width(512)
-                .height(512)
+            let encoder = StreamingEncoder::new(512, 512)
                 .restart_interval(interval);
-            let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+            let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
             // Verify DRI marker is present
             let has_dri = jpeg.windows(2).any(|w| w == [0xFF, 0xDD]);
@@ -570,12 +537,10 @@ mod encode_coverage {
             Subsampling::S420,
             Subsampling::S440,
         ] {
-            let encoder = Encoder::new()
-                .width(128)
-                .height(128)
+            let encoder = StreamingEncoder::new(128, 128)
                 .mode(JpegMode::Progressive)
                 .subsampling(subsampling);
-            let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+            let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
             assert_eq!(decoded.width, 128);
@@ -587,11 +552,9 @@ mod encode_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // XYB with 4:4:4 (default for XYB)
-        let jpeg = Encoder::new()
-            .width(128)
-            .height(128)
+        let jpeg = StreamingEncoder::new(128, 128)
             .use_xyb(true)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("XYB encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -602,10 +565,8 @@ mod encode_coverage {
     fn encode_very_small_images() {
         for size in [1, 2, 3, 4, 5, 6, 7, 8] {
             let img = generate_gradient_d(size, size, 3);
-            let jpeg = Encoder::new()
-                .width(size)
-                .height(size)
-                .encode(&img.pixels)
+            let jpeg = StreamingEncoder::new(size as u32, size as u32)
+                .encode_all(&img.pixels)
                 .expect(&format!("{}x{} encode failed", size, size));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -619,19 +580,15 @@ mod encode_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Very low quality
-        let jpeg_low = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(1.0))
-            .encode(&img.pixels)
+        let jpeg_low = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(1.0))
+            .encode_all(&img.pixels)
             .expect("low Q encode failed");
 
         // Very high quality
-        let jpeg_high = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(100.0))
-            .encode(&img.pixels)
+        let jpeg_high = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(100.0))
+            .encode_all(&img.pixels)
             .expect("high Q encode failed");
 
         // High quality should produce larger file
@@ -642,11 +599,9 @@ mod encode_coverage {
     fn encode_with_fixed_huffman() {
         let img = generate_gradient_d(128, 128, 3);
 
-        let encoder = Encoder::new()
-            .width(128)
-            .height(128)
+        let encoder = StreamingEncoder::new(128, 128)
             .optimize_huffman(false);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 128);
@@ -665,12 +620,10 @@ mod xyb_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Encode with XYB
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
+        let jpeg = StreamingEncoder::new(64, 64)
             .use_xyb(true)
-            .jpegli_quality(Quality::from_quality(90.0))
-            .encode(&img.pixels)
+            .quality(Quality::from_quality(90.0))
+            .encode_all(&img.pixels)
             .expect("XYB encode failed");
 
         // Verify APP14 Adobe marker present
@@ -698,11 +651,9 @@ mod xyb_coverage {
 
         for (r, g, b) in colors {
             let img = test_utils::generate_solid_rgb(32, 32, r, g, b);
-            let jpeg = Encoder::new()
-                .width(32)
-                .height(32)
+            let jpeg = StreamingEncoder::new(32, 32)
                 .use_xyb(true)
-                .encode(&img.pixels)
+                .encode_all(&img.pixels)
                 .expect("XYB encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -714,12 +665,10 @@ mod xyb_coverage {
     fn xyb_progressive() {
         let img = generate_gradient_d(128, 128, 3);
 
-        let jpeg = Encoder::new()
-            .width(128)
-            .height(128)
+        let jpeg = StreamingEncoder::new(128, 128)
             .use_xyb(true)
             .mode(JpegMode::Progressive)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("XYB progressive encode failed");
 
         // Should have SOF2 (progressive)
@@ -760,18 +709,14 @@ mod bitstream_coverage {
 
         // Image with high entropy (random noise)
         let noise = generate_noise(64, 64, 12345, 3);
-        let jpeg_noise = Encoder::new()
-            .width(64)
-            .height(64)
-            .encode(&noise.pixels)
+        let jpeg_noise = StreamingEncoder::new(64, 64)
+            .encode_all(&noise.pixels)
             .expect("noise encode failed");
 
         // Image with low entropy (solid color)
         let solid = test_utils::generate_solid(64, 64, 128, 3);
-        let jpeg_solid = Encoder::new()
-            .width(64)
-            .height(64)
-            .encode(&solid.pixels)
+        let jpeg_solid = StreamingEncoder::new(64, 64)
+            .encode_all(&solid.pixels)
             .expect("solid encode failed");
 
         // Noise should produce larger file
@@ -802,19 +747,15 @@ mod huffman_coverage {
 
         for (name, img) in patterns {
             // With optimization
-            let jpeg_opt = Encoder::new()
-                .width(128)
-                .height(128)
+            let jpeg_opt = StreamingEncoder::new(128, 128)
                 .optimize_huffman(true)
-                .encode(&img.pixels)
+                .encode_all(&img.pixels)
                 .expect(&format!("{} optimized encode failed", name));
 
             // Without optimization
-            let jpeg_fixed = Encoder::new()
-                .width(128)
-                .height(128)
+            let jpeg_fixed = StreamingEncoder::new(128, 128)
                 .optimize_huffman(false)
-                .encode(&img.pixels)
+                .encode_all(&img.pixels)
                 .expect(&format!("{} fixed encode failed", name));
 
             // Both should decode correctly
@@ -845,11 +786,9 @@ mod aq_coverage {
         ];
 
         for (i, img) in patterns.iter().enumerate() {
-            let jpeg = Encoder::new()
-                .width(img.width)
-                .height(img.height)
-                .jpegli_quality(Quality::from_quality(85.0))
-                .encode(&img.pixels)
+            let jpeg = StreamingEncoder::new(img.width, img.height)
+                .quality(Quality::from_quality(85.0))
+                .encode_all(&img.pixels)
                 .expect(&format!("pattern {} encode failed", i));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -863,11 +802,9 @@ mod aq_coverage {
 
         // Test AQ behavior across quality range
         for q in [10.0, 30.0, 50.0, 70.0, 90.0, 100.0] {
-            let jpeg = Encoder::new()
-                .width(64)
-                .height(64)
-                .jpegli_quality(Quality::from_quality(q))
-                .encode(&img.pixels)
+            let jpeg = StreamingEncoder::new(64, 64)
+                .quality(Quality::from_quality(q))
+                .encode_all(&img.pixels)
                 .expect(&format!("Q{} encode failed", q));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -888,12 +825,10 @@ mod scan_script_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // Progressive encoding exercises scan script
-        let jpeg = Encoder::new()
-            .width(128)
-            .height(128)
+        let jpeg = StreamingEncoder::new(128, 128)
             .mode(JpegMode::Progressive)
-            .jpegli_quality(Quality::from_quality(80.0))
-            .encode(&img.pixels)
+            .quality(Quality::from_quality(80.0))
+            .encode_all(&img.pixels)
             .expect("progressive encode failed");
 
         // Count SOS markers (each scan starts with SOS)
@@ -908,12 +843,10 @@ mod scan_script_coverage {
     fn progressive_grayscale() {
         let img = test_utils::generate_gradient_h(64, 64, 1);
 
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
+        let jpeg = StreamingEncoder::new(64, 64)
             .pixel_format(PixelFormat::Gray)
             .mode(JpegMode::Progressive)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("progressive grayscale encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -953,18 +886,14 @@ mod quant_coverage {
         // Different qualities should produce different quant tables
         let img = generate_gradient_d(64, 64, 3);
 
-        let jpeg_q10 = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(10.0))
-            .encode(&img.pixels)
+        let jpeg_q10 = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(10.0))
+            .encode_all(&img.pixels)
             .expect("Q10 encode failed");
 
-        let jpeg_q90 = Encoder::new()
-            .width(64)
-            .height(64)
-            .jpegli_quality(Quality::from_quality(90.0))
-            .encode(&img.pixels)
+        let jpeg_q90 = StreamingEncoder::new(64, 64)
+            .quality(Quality::from_quality(90.0))
+            .encode_all(&img.pixels)
             .expect("Q90 encode failed");
 
         // Higher quality = larger file
@@ -984,10 +913,8 @@ mod alloc_coverage {
         // Test allocation with moderately large images
         let img = generate_gradient_d(1024, 1024, 3);
 
-        let jpeg = Encoder::new()
-            .width(1024)
-            .height(1024)
-            .encode(&img.pixels)
+        let jpeg = StreamingEncoder::new(1024, 1024)
+            .encode_all(&img.pixels)
             .expect("large encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -998,10 +925,8 @@ mod alloc_coverage {
     #[test]
     fn decode_with_strict_limits() {
         let img = generate_gradient_d(64, 64, 3);
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
-            .encode(&img.pixels)
+        let jpeg = StreamingEncoder::new(64, 64)
+            .encode_all(&img.pixels)
             .expect("encode failed");
 
         // Test with very strict limits (but still enough for this image)
@@ -1028,11 +953,9 @@ mod transfer_coverage {
         // XYB encoding exercises transfer functions
         let img = generate_gradient_d(64, 64, 3);
 
-        let jpeg = Encoder::new()
-            .width(64)
-            .height(64)
+        let jpeg = StreamingEncoder::new(64, 64)
             .use_xyb(true)
-            .encode(&img.pixels)
+            .encode_all(&img.pixels)
             .expect("XYB encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");

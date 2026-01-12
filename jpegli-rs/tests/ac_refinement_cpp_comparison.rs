@@ -512,12 +512,10 @@ fn test_progressive_filesize_comparison() {
                 };
 
                 // Note: Rust encoder always uses AQ, so we can only test with-AQ case for comparison
-                let rust_jpeg = jpegli::encode::Encoder::new()
-                    .width(info.width)
-                    .height(info.height)
-                    .jpegli_quality(jpegli::quant::Quality::Traditional(quality as f32))
+                let rust_jpeg = jpegli::StreamingEncoder::new(info.width, info.height)
+                    .quality(jpegli::quant::Quality::Traditional(quality as f32))
                     .mode(mode)
-                    .encode(&rgb)
+                    .encode_all(&rgb)
                     .expect("Rust encoding failed");
 
                 // Verify the JPEG is actually progressive by checking for SOF2 marker

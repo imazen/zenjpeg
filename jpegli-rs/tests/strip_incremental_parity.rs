@@ -24,7 +24,7 @@ fn assert_bytes_eq(a: &[u8], b: &[u8], msg: &str) {
 use jpegli::quant::aq::compute_aq_strength_map;
 use jpegli::quant::{generate_quant_table, quant_vals_to_distance, Quality, ZeroBiasParams};
 use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
-use jpegli::{Encoder, JpegMode};
+use jpegli::{JpegMode, StreamingEncoder};
 
 // =============================================================================
 // Test image generators

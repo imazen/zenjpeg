@@ -17,7 +17,7 @@ use butteraugli::ButteraugliParams;
 use dssim::Dssim;
 use jpegli::decode::Decoder;
 use jpegli::types::Subsampling;
-use jpegli::{Encoder, PixelFormat, Quality};
+use jpegli::{PixelFormat, Quality, StreamingEncoder};
 use rgb::RGBA8;
 use std::fs;
 
@@ -315,14 +315,12 @@ fn encode_jpeg(
     subsampling: Subsampling,
     optimize_huffman: bool,
 ) -> Vec<u8> {
-    Encoder::new()
-        .width(width)
-        .height(height)
+    StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality))
+        .quality(Quality::from_quality(quality))
         .subsampling(subsampling)
         .optimize_huffman(optimize_huffman)
-        .encode(rgb)
+        .encode_all(rgb)
         .expect("Encoding failed")
 }
 

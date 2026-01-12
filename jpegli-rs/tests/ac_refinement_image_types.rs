@@ -309,12 +309,10 @@ fn encode_cpp_progressive(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
 }
 
 fn encode_rust_progressive(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::encode::Encoder::new()
-        .width(width)
-        .height(height)
-        .jpegli_quality(jpegli::quant::Quality::Traditional(quality))
+    jpegli::StreamingEncoder::new(width, height)
+        .quality(jpegli::quant::Quality::Traditional(quality))
         .mode(jpegli::types::JpegMode::Progressive)
-        .encode(rgb)
+        .encode_all(rgb)
         .expect("Rust encoding failed")
 }
 

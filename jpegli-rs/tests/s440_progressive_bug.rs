@@ -11,9 +11,8 @@
 //! uses luma table and Cb/Cr use chroma table, regardless of scan order.
 
 use jpegli::decode::Decoder;
-use jpegli::encode::Encoder;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::Quality;
+use jpegli::{Quality, StreamingEncoder};
 
 /// Regression test for the exact case found by the fuzzer.
 #[test]
@@ -24,15 +23,13 @@ fn test_s440_progressive_roundtrip() {
     // Generate test pixels
     let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
+    let encoder = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S440)
         .mode(JpegMode::Progressive);
 
-    let encoded = encoder.encode(&pixels).expect("encode should succeed");
+    let encoded = encoder.encode_all(&pixels).expect("encode should succeed");
     eprintln!(
         "Encoded {} bytes for {}x{} S440 Progressive",
         encoded.len(),
@@ -63,15 +60,13 @@ fn test_all_subsampling_progressive() {
 
         let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-        let encoder = Encoder::new()
-            .width(width)
-            .height(height)
+        let encoder = StreamingEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0))
+            .quality(Quality::from_quality(90.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive);
 
-        let encoded = match encoder.encode(&pixels) {
+        let encoded = match encoder.encode_all(&pixels) {
             Ok(data) => data,
             Err(e) => panic!("{} encode failed: {:?}", name, e),
         };
@@ -108,16 +103,14 @@ fn test_progressive_subsampling_various_sizes() {
                 .map(|i| ((i * 7) % 256) as u8)
                 .collect();
 
-            let encoder = Encoder::new()
-                .width(width as u32)
-                .height(height as u32)
+            let encoder = StreamingEncoder::new(width as u32, height as u32)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(85.0))
+                .quality(Quality::from_quality(85.0))
                 .subsampling(*subsampling)
                 .mode(JpegMode::Progressive);
 
             let encoded = encoder
-                .encode(&pixels)
+                .encode_all(&pixels)
                 .unwrap_or_else(|e| panic!("{}x{} {} encode failed: {:?}", width, height, name, e));
 
             let decoder = Decoder::new().output_format(PixelFormat::Rgb);

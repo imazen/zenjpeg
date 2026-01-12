@@ -8,7 +8,7 @@ mod test_utils;
 
 use test_utils::{generate_gradient_d, TestImage};
 
-use jpegli::{decode::Decoder, encode::Encoder, types::PixelFormat, Quality};
+use jpegli::{decode::Decoder, types::PixelFormat, Quality, StreamingEncoder};
 
 // ============================================================================
 // Encoder Input Validation Tests
@@ -17,24 +17,24 @@ use jpegli::{decode::Decoder, encode::Encoder, types::PixelFormat, Quality};
 #[test]
 fn test_encode_zero_width() {
     let img = TestImage::new(0, 64, 3);
-    let encoder = Encoder::new().width(0).height(64);
-    let result = encoder.encode(&img.pixels);
+    let encoder = StreamingEncoder::new(0, 64);
+    let result = encoder.encode_all(&img.pixels);
     assert!(result.is_err(), "Should reject zero width");
 }
 
 #[test]
 fn test_encode_zero_height() {
     let img = TestImage::new(64, 0, 3);
-    let encoder = Encoder::new().width(64).height(0);
-    let result = encoder.encode(&img.pixels);
+    let encoder = StreamingEncoder::new(64, 0);
+    let result = encoder.encode_all(&img.pixels);
     assert!(result.is_err(), "Should reject zero height");
 }
 
 #[test]
 fn test_encode_zero_dimensions() {
     let img = TestImage::new(0, 0, 3);
-    let encoder = Encoder::new().width(0).height(0);
-    let result = encoder.encode(&img.pixels);
+    let encoder = StreamingEncoder::new(0, 0);
+    let result = encoder.encode_all(&img.pixels);
     assert!(result.is_err(), "Should reject zero dimensions");
 }
 
@@ -42,15 +42,15 @@ fn test_encode_zero_dimensions() {
 fn test_encode_dimension_mismatch() {
     // Pixels for 64x64 but encoder configured for 128x128
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new().width(128).height(128);
-    let result = encoder.encode(&img.pixels);
+    let encoder = StreamingEncoder::new(128, 128);
+    let result = encoder.encode_all(&img.pixels);
     assert!(result.is_err(), "Should reject mismatched dimensions");
 }
 
 #[test]
 fn test_encode_empty_input() {
-    let encoder = Encoder::new().width(64).height(64);
-    let result = encoder.encode(&[]);
+    let encoder = StreamingEncoder::new(64, 64);
+    let result = encoder.encode_all(&[]);
     assert!(result.is_err(), "Should reject empty input");
 }
 
@@ -58,8 +58,8 @@ fn test_encode_empty_input() {
 fn test_encode_partial_input() {
     // Only half the required pixels
     let partial = vec![128u8; 64 * 64]; // Need 64*64*3
-    let encoder = Encoder::new().width(64).height(64);
-    let result = encoder.encode(&partial);
+    let encoder = StreamingEncoder::new(64, 64);
+    let result = encoder.encode_all(&partial);
     assert!(result.is_err(), "Should reject partial input");
 }
 
@@ -70,22 +70,18 @@ fn test_encode_partial_input() {
 #[test]
 fn test_encode_quality_boundary_low() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(1.0));
-    let result = encoder.encode(&img.pixels);
+    let encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(1.0));
+    let result = encoder.encode_all(&img.pixels);
     assert!(result.is_ok(), "Q1 should be valid");
 }
 
 #[test]
 fn test_encode_quality_boundary_high() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(100.0));
-    let result = encoder.encode(&img.pixels);
+    let encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(100.0));
+    let result = encoder.encode_all(&img.pixels);
     assert!(result.is_ok(), "Q100 should be valid");
 }
 
@@ -156,8 +152,8 @@ fn test_decode_random_data() {
 
 fn create_test_jpeg() -> Vec<u8> {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new().width(64).height(64);
-    encoder.encode(&img.pixels).expect("encode failed")
+    let encoder = StreamingEncoder::new(64, 64);
+    encoder.encode_all(&img.pixels).expect("encode failed")
 }
 
 #[test]
@@ -373,11 +369,9 @@ fn test_decode_missing_stuffing_byte() {
 #[test]
 fn test_decode_progressive_truncated() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
+    let encoder = StreamingEncoder::new(64, 64)
         .mode(jpegli::types::JpegMode::Progressive);
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // Truncate progressive JPEG (missing later scans)
     let truncated = &jpeg[..jpeg.len() / 2];
@@ -417,13 +411,11 @@ fn test_decode_huge_dimensions_in_sof() {
 fn test_encode_wrong_pixel_format_data() {
     // Tell encoder it's grayscale but give RGB data
     let rgb_data = vec![128u8; 64 * 64 * 3];
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
+    let encoder = StreamingEncoder::new(64, 64)
         .pixel_format(PixelFormat::Gray);
 
     // This should either fail or handle the mismatch
-    let result = encoder.encode(&rgb_data);
+    let result = encoder.encode_all(&rgb_data);
     // Behavior is implementation-defined
     let _ = result;
 }
@@ -441,8 +433,8 @@ fn test_encode_decode_concurrent() {
             thread::spawn(move || {
                 let size = 32 + i * 16;
                 let img = generate_gradient_d(size, size, 3);
-                let encoder = Encoder::new().width(size).height(size);
-                let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+                let encoder = StreamingEncoder::new(size, size);
+                let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
                 let decoder = Decoder::new();
                 let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -466,8 +458,8 @@ fn test_encode_many_small_images() {
     for i in 0..100 {
         let size = 8 + (i % 24);
         let img = generate_gradient_d(size, size, 3);
-        let encoder = Encoder::new().width(size).height(size);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let encoder = StreamingEncoder::new(size, size);
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 50, "JPEG {} too small", i);
     }
 }
@@ -479,8 +471,8 @@ fn test_decode_many_images() {
     for i in 0..50 {
         let size = 16 + (i % 48);
         let img = generate_gradient_d(size, size, 3);
-        let encoder = Encoder::new().width(size).height(size);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let encoder = StreamingEncoder::new(size, size);
+        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let decoded = decoder.decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, size, "Width mismatch on iteration {}", i);

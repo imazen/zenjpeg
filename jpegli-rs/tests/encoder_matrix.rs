@@ -11,7 +11,7 @@
 //! cargo test --test encoder_matrix -- --nocapture
 //! ```
 
-use jpegli::{Encoder, JpegMode, PixelFormat, Quality, Subsampling};
+use jpegli::{JpegMode, PixelFormat, Quality, StreamingEncoder, Subsampling};
 
 /// Result of testing one encoder configuration
 #[derive(Debug)]
@@ -86,16 +86,14 @@ fn test_config(
         quality as u32
     );
 
-    let encode_result = Encoder::new()
-        .width(width)
-        .height(height)
+    let encode_result = StreamingEncoder::new(width, height)
         .pixel_format(pixel_format)
         .mode(mode)
         .subsampling(subsampling)
         .optimize_huffman(optimize_huffman)
         .use_xyb(use_xyb)
-        .jpegli_quality(Quality::from_quality(quality))
-        .encode(&data);
+        .quality(Quality::from_quality(quality))
+        .encode_all(&data);
 
     match encode_result {
         Ok(jpeg_data) => {
@@ -325,16 +323,14 @@ fn test_common_configurations() {
     println!("\n=== Common Configuration Smoke Test ===\n");
 
     for (name, mode, subsampling, optimize_huffman, use_xyb) in configs {
-        let result = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let result = StreamingEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .mode(mode)
             .subsampling(subsampling)
             .optimize_huffman(optimize_huffman)
             .use_xyb(use_xyb)
-            .jpegli_quality(Quality::from_quality(85.0))
-            .encode(&data);
+            .quality(Quality::from_quality(85.0))
+            .encode_all(&data);
 
         match result {
             Ok(jpeg) => {
@@ -363,13 +359,11 @@ fn test_common_configurations() {
 fn test_progressive_fixed_huffman_errors() {
     let data = vec![128u8; 64 * 64 * 3];
 
-    let result = Encoder::new()
-        .width(64)
-        .height(64)
+    let result = StreamingEncoder::new(64, 64)
         .pixel_format(PixelFormat::Rgb)
         .mode(JpegMode::Progressive)
         .optimize_huffman(false) // Fixed Huffman
-        .encode(&data);
+        .encode_all(&data);
 
     match result {
         Err(e) => {

@@ -316,14 +316,12 @@ fn test_multi_decoder_compatibility() {
 
     for config in &configs {
         // Encode with jpegli-rs
-        let jpeg_data = jpegli::Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let jpeg_data = jpegli::StreamingEncoder::new(width as u32, height as u32)
             .pixel_format(jpegli::PixelFormat::Rgb)
-            .jpegli_quality(jpegli::Quality::from_quality(config.quality as f32))
+            .quality(jpegli::Quality::from_quality(config.quality as f32))
             .subsampling(config.subsampling)
             .mode(config.mode)
-            .encode(&original)
+            .encode_all(&original)
             .expect("jpegli encode failed");
 
         let results = test_all_decoders(&original, &jpeg_data, width, height, config);
@@ -401,14 +399,12 @@ fn test_multi_decoder_complex_image() {
     ];
 
     for config in &configs {
-        let jpeg_data = jpegli::Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let jpeg_data = jpegli::StreamingEncoder::new(width as u32, height as u32)
             .pixel_format(jpegli::PixelFormat::Rgb)
-            .jpegli_quality(jpegli::Quality::from_quality(config.quality as f32))
+            .quality(jpegli::Quality::from_quality(config.quality as f32))
             .subsampling(config.subsampling)
             .mode(config.mode)
-            .encode(&original)
+            .encode_all(&original)
             .expect("jpegli encode failed");
 
         println!("{}: {} bytes", config.name, jpeg_data.len());
@@ -447,12 +443,10 @@ fn benchmark_decoders() {
     let original = generate_test_image(width, height);
 
     // Encode at Q85
-    let jpeg_data = jpegli::Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg_data = jpegli::StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .jpegli_quality(jpegli::Quality::from_quality(85.0))
-        .encode(&original)
+        .quality(jpegli::Quality::from_quality(85.0))
+        .encode_all(&original)
         .expect("encode failed");
 
     println!(
@@ -503,12 +497,10 @@ fn test_grayscale_compatibility() {
         }
     }
 
-    let jpeg_data = jpegli::Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg_data = jpegli::StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .jpegli_quality(jpegli::Quality::from_quality(90.0))
-        .encode(&original)
+        .quality(jpegli::Quality::from_quality(90.0))
+        .encode_all(&original)
         .expect("encode failed");
 
     println!("\n=== Grayscale Compatibility Test ===\n");

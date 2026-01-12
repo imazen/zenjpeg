@@ -739,6 +739,13 @@ impl StreamingEncoder {
         // Branch based on encoding mode (mirrors encode_strip_based in encode/mod.rs)
         match encoder.config.mode {
             JpegMode::Progressive => {
+                // Progressive mode requires optimized Huffman tables
+                if !encoder.config.optimize_huffman {
+                    return Err(Error::UnsupportedFeature {
+                        feature:
+                            "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                    });
+                }
                 // Use progressive encoding path
                 encoder.encode_progressive_from_blocks(
                     &strip_output.y_blocks,
@@ -770,49 +777,99 @@ impl StreamingEncoder {
 
         let mut output = Vec::with_capacity(width * height / 4);
 
-        // Write JPEG headers
-        encoder.write_header(&mut output)?;
-        encoder.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
-        encoder.write_frame_header(&mut output)?;
+        // Branch based on XYB vs YCbCr mode
+        let scan_data = if encoder.config.use_xyb {
+            // XYB mode: uses different headers, tables, and encoding
+            // strip_output contains: y_blocks = X, cb_blocks = Y, cr_blocks = B (2x2 downsampled)
+            encoder.write_header_xyb(&mut output)?;
+            // Write APP14 Adobe marker for RGB colorspace (required by decoders)
+            encoder.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
+            // Write XYB ICC profile so decoders can interpret the colors correctly
+            encoder.write_icc_profile(&mut output, &crate::consts::XYB_ICC_PROFILE)?;
+            encoder.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
+            encoder.write_frame_header_xyb(&mut output)?;
 
-        // Generate scan data with optimized or standard tables
-        let scan_data = if encoder.config.optimize_huffman {
-            let tables = encoder.build_optimized_tables(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-                is_color,
-            )?;
+            if encoder.config.optimize_huffman {
+                // Use raster-ordered XYB encoding (strip encoder produces raster order)
+                let (dc_table, ac_table) = encoder.build_optimized_tables_xyb_raster(
+                    &strip_output.y_blocks,  // X component
+                    &strip_output.cb_blocks, // Y component
+                    &strip_output.cr_blocks, // B component (2x2 downsampled)
+                )?;
 
-            encoder.write_huffman_tables_optimized(&mut output, &tables)?;
+                encoder.write_huffman_tables_xyb_optimized(&mut output, &dc_table, &ac_table);
 
-            if encoder.config.restart_interval > 0 {
-                encoder.write_restart_interval(&mut output)?;
+                if encoder.config.restart_interval > 0 {
+                    encoder.write_restart_interval(&mut output)?;
+                }
+                encoder.write_scan_header_xyb(&mut output)?;
+
+                encoder.encode_with_tables_xyb_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    &dc_table,
+                    &ac_table,
+                )?
+            } else {
+                encoder.write_huffman_tables(&mut output)?;
+
+                if encoder.config.restart_interval > 0 {
+                    encoder.write_restart_interval(&mut output)?;
+                }
+                encoder.write_scan_header_xyb(&mut output)?;
+
+                // XYB without optimized tables - use raster-ordered standard encoding
+                encoder.encode_with_tables_xyb_standard_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                )?
             }
-            encoder.write_scan_header(&mut output)?;
-
-            encoder.encode_with_tables(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-                is_color,
-                Some(&tables),
-            )?
         } else {
-            encoder.write_huffman_tables(&mut output)?;
+            // YCbCr mode: standard JPEG encoding
+            encoder.write_header(&mut output)?;
+            encoder.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
+            encoder.write_frame_header(&mut output)?;
 
-            if encoder.config.restart_interval > 0 {
-                encoder.write_restart_interval(&mut output)?;
+            if encoder.config.optimize_huffman {
+                let tables = encoder.build_optimized_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
+
+                encoder.write_huffman_tables_optimized(&mut output, &tables)?;
+
+                if encoder.config.restart_interval > 0 {
+                    encoder.write_restart_interval(&mut output)?;
+                }
+                encoder.write_scan_header(&mut output)?;
+
+                encoder.encode_with_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                    Some(&tables),
+                )?
+            } else {
+                encoder.write_huffman_tables(&mut output)?;
+
+                if encoder.config.restart_interval > 0 {
+                    encoder.write_restart_interval(&mut output)?;
+                }
+                encoder.write_scan_header(&mut output)?;
+
+                encoder.encode_with_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                    None,
+                )?
             }
-            encoder.write_scan_header(&mut output)?;
-
-            encoder.encode_with_tables(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-                is_color,
-                None,
-            )?
         };
 
         output.extend_from_slice(&scan_data);

@@ -87,17 +87,14 @@ fn crop_image(rgb: &[u8], orig_width: usize, new_width: usize, new_height: usize
 }
 
 /// Encode with Rust strip encoder - MATCH C++ SETTINGS EXACTLY
-#[allow(deprecated)]
 fn encode_rust(rgb: &[u8], width: u32, height: u32, subsampling: Subsampling, quality: f32) -> Vec<u8> {
-    jpegli::Encoder::new()
-        .width(width)
-        .height(height)
+    jpegli::StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(subsampling)
-        .jpegli_quality(Quality::from_quality(quality))
+        .quality(Quality::from_quality(quality))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
-        .encode(rgb)
+        .encode_all(rgb)
         .expect("Rust encode failed")
 }
 
