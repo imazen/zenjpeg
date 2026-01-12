@@ -292,6 +292,144 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         Ok(coeffs)
     }
 
+    /// Decode a single 8x8 block of DCT coefficients, returning coefficient count.
+    ///
+    /// Returns `(coefficients, coeff_count)` where `coeff_count` is the position
+    /// of the last non-zero coefficient in zigzag order (1-64). This enables
+    /// tiered IDCT optimization:
+    /// - count <= 1: DC-only block
+    /// - count <= 10: Use 4x4 IDCT
+    /// - count > 10: Use full 8x8 IDCT
+    pub fn decode_block_with_count(
+        &mut self,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> Result<([i16; DCT_BLOCK_SIZE], u8)> {
+        // Get table references once (tables are borrowed, no copying)
+        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::InternalError {
+            reason: "DC table not set",
+        })?;
+        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::InternalError {
+            reason: "AC table not set",
+        })?;
+
+        let mut coeffs = [0i16; DCT_BLOCK_SIZE];
+
+        // Decode DC coefficient using standalone function
+        let dc_cat = decode_huffman_symbol(&mut self.reader, dc_table)?;
+
+        let dc_diff = if dc_cat == 0 {
+            0
+        } else {
+            let bits = self.reader.read_bits(dc_cat)? as u16;
+            decode_value(dc_cat, bits)
+        };
+
+        coeffs[0] = self.prev_dc[component] + dc_diff;
+        self.prev_dc[component] = coeffs[0];
+
+        // Track the last non-zero position for tiered IDCT
+        let mut last_nonzero: u8 = 1; // At minimum we have DC
+
+        // Decode AC coefficients with fast path
+        let mut i = 1;
+        while i < DCT_BLOCK_SIZE {
+            // Try fast path first - peek 9 bits with inline refill
+            if let Some(bits9) =
+                self.reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+            {
+                let idx = bits9 as usize;
+
+                // Try fast AC decode first (combined Huffman + sign extend)
+                if let Some((value, run, total_bits)) = ac_table.fast_decode_ac(idx) {
+                    self.reader.skip_bits_fast(total_bits);
+                    i += run as usize;
+                    if i < DCT_BLOCK_SIZE {
+                        coeffs[i] = value;
+                        last_nonzero = (i + 1) as u8;
+                        i += 1;
+                    }
+                    continue;
+                }
+
+                // Try regular fast Huffman lookup
+                let lookup = ac_table.fast_lookup[idx];
+                if lookup >= 0 {
+                    let symbol = (lookup & 0xFF) as u8;
+                    let code_length = (lookup >> 8) as u8;
+                    self.reader.skip_bits_fast(code_length);
+
+                    if symbol == 0 {
+                        // EOB - remaining coefficients are zero
+                        break;
+                    }
+
+                    let run = symbol >> 4;
+                    let ac_cat = symbol & 0x0F;
+
+                    if ac_cat == 0 {
+                        if run == 15 {
+                            // ZRL - skip 16 zeros
+                            i += 16;
+                        } else {
+                            // Invalid symbol
+                            break;
+                        }
+                    } else {
+                        i += run as usize;
+                        if i >= DCT_BLOCK_SIZE {
+                            return Err(Error::InvalidJpegData {
+                                reason: "AC coefficient index out of bounds",
+                            });
+                        }
+
+                        let bits = self.reader.read_bits(ac_cat)? as u16;
+                        coeffs[i] = decode_value(ac_cat, bits);
+                        last_nonzero = (i + 1) as u8;
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Slow path for long codes or when not enough bits
+            let symbol = decode_huffman_symbol(&mut self.reader, ac_table)?;
+
+            if symbol == 0 {
+                // EOB - remaining coefficients are zero
+                break;
+            }
+
+            let run = symbol >> 4;
+            let ac_cat = symbol & 0x0F;
+
+            if ac_cat == 0 {
+                if run == 15 {
+                    // ZRL - skip 16 zeros
+                    i += 16;
+                } else {
+                    // Invalid symbol
+                    break;
+                }
+            } else {
+                i += run as usize;
+                if i >= DCT_BLOCK_SIZE {
+                    return Err(Error::InvalidJpegData {
+                        reason: "AC coefficient index out of bounds",
+                    });
+                }
+
+                let bits = self.reader.read_bits(ac_cat)? as u16;
+                coeffs[i] = decode_value(ac_cat, bits);
+                last_nonzero = (i + 1) as u8;
+                i += 1;
+            }
+        }
+
+        Ok((coeffs, last_nonzero))
+    }
+
     /// Returns the underlying bit reader position.
     pub fn position(&self) -> usize {
         self.reader.position()
