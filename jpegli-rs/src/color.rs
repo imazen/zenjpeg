@@ -500,10 +500,8 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
     let cb_remainder = cb_chunks.remainder();
     let cr_remainder = cr_chunks.remainder();
 
-    for (((y_chunk, cb_chunk), cr_chunk), rgb_chunk) in y_chunks
-        .zip(cb_chunks)
-        .zip(cr_chunks)
-        .zip(rgb_chunks)
+    for (((y_chunk, cb_chunk), cr_chunk), rgb_chunk) in
+        y_chunks.zip(cb_chunks).zip(cr_chunks).zip(rgb_chunks)
     {
         // Load planes - chunks_exact guarantees exactly 8 elements
         let y = f32x8::from(<[f32; 8]>::try_from(y_chunk).unwrap());
@@ -1050,11 +1048,17 @@ unsafe fn ycbcr_to_rgb_i16_x16_avx2(
 
     // R = (y_scaled + cr * CR_TO_R) >> 14
     let r_lo = _mm256_srai_epi32(
-        _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo, _mm256_set1_epi32(CR_TO_R_INT))),
+        _mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cr_lo, _mm256_set1_epi32(CR_TO_R_INT)),
+        ),
         14,
     );
     let r_hi = _mm256_srai_epi32(
-        _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi, _mm256_set1_epi32(CR_TO_R_INT))),
+        _mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cr_hi, _mm256_set1_epi32(CR_TO_R_INT)),
+        ),
         14,
     );
 
@@ -1082,11 +1086,17 @@ unsafe fn ycbcr_to_rgb_i16_x16_avx2(
 
     // B = (y_scaled + cb * CB_TO_B) >> 14
     let b_lo = _mm256_srai_epi32(
-        _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo, _mm256_set1_epi32(CB_TO_B_INT))),
+        _mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_mullo_epi32(cb_lo, _mm256_set1_epi32(CB_TO_B_INT)),
+        ),
         14,
     );
     let b_hi = _mm256_srai_epi32(
-        _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi, _mm256_set1_epi32(CB_TO_B_INT))),
+        _mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_mullo_epi32(cb_hi, _mm256_set1_epi32(CB_TO_B_INT)),
+        ),
         14,
     );
 
@@ -1165,13 +1175,20 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     let chunks = num_pixels / 16;
     let mut offset = 0;
 
-    // Process 16 pixels at a time
+    // Process 16 pixels at a time using slice references to avoid copies
     for i in 0..chunks {
         let base = i * 16;
-        let y: [i16; 16] = y_plane[base..base + 16].try_into().unwrap();
-        let cb: [i16; 16] = cb_plane[base..base + 16].try_into().unwrap();
-        let cr: [i16; 16] = cr_plane[base..base + 16].try_into().unwrap();
-        ycbcr_to_rgb_i16_x16(&y, &cb, &cr, rgb, &mut offset);
+        // SAFETY: We know base + 16 <= num_pixels due to chunks calculation
+        let y: &[i16; 16] = unsafe {
+            &*(y_plane.as_ptr().add(base) as *const [i16; 16])
+        };
+        let cb: &[i16; 16] = unsafe {
+            &*(cb_plane.as_ptr().add(base) as *const [i16; 16])
+        };
+        let cr: &[i16; 16] = unsafe {
+            &*(cr_plane.as_ptr().add(base) as *const [i16; 16])
+        };
+        ycbcr_to_rgb_i16_x16(y, cb, cr, rgb, &mut offset);
     }
 
     // Handle remaining pixels
@@ -1184,7 +1201,8 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
         let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
 
         let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
-        let g = ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
+        let g =
+            ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
         let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
 
         rgb[offset] = r;
