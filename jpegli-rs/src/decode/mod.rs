@@ -15,8 +15,8 @@
 //! ```
 
 use crate::alloc::{
-    checked_size_2d, try_alloc_dct_blocks, validate_dimensions, DEFAULT_MAX_MEMORY,
-    DEFAULT_MAX_PIXELS,
+    checked_size_2d, try_alloc_dct_blocks, try_alloc_uninitialized, validate_dimensions,
+    DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS,
 };
 use crate::color::{
     gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
@@ -37,7 +37,7 @@ use crate::idct::inverse_dct_8x8;
 use crate::idct_int::{idct_int_auto, idct_int_tiered};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias, dequantize_unzigzag_i32,
-    DequantBiasStats,
+    dequantize_unzigzag_i32_into, DequantBiasStats,
 };
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
@@ -172,6 +172,54 @@ impl Decoder {
         let mut parser = JpegParser::new(data, self.config.max_pixels)?;
         parser.read_header()?;
         Ok(parser.info())
+    }
+
+    /// Estimates peak memory usage for decoding an image of given dimensions.
+    ///
+    /// This is useful for checking if an image can be decoded within memory limits
+    /// before attempting to decode it. The estimate includes:
+    /// - Strip buffers for one MCU row (Y, Cb, Cr at 2 bytes per pixel)
+    /// - Output RGB buffer (3 bytes per pixel)
+    ///
+    /// For streaming decode (baseline 4:4:4), no coefficient storage is needed.
+    /// For progressive or subsampled images, add ~128 bytes per DCT block for coefficients.
+    ///
+    /// # Example
+    /// ```
+    /// use jpegli::Decoder;
+    ///
+    /// let decoder = Decoder::new();
+    /// let estimated = decoder.estimate_memory_usage(4096, 4096);
+    /// println!("Estimated peak memory: {} MB", estimated / 1024 / 1024);
+    /// ```
+    #[must_use]
+    pub fn estimate_memory_usage(&self, width: u32, height: u32) -> usize {
+        let w = width as usize;
+        let h = height as usize;
+
+        // MCU width for strip buffers (padded to 8)
+        let mcu_cols = (w + 7) / 8;
+        let strip_width = mcu_cols * 8;
+        let strip_height = 8; // One MCU row
+
+        // Strip buffers: Y, Cb, Cr each at i16 (2 bytes per pixel)
+        let strip_size = strip_width * strip_height;
+        let strip_total = strip_size * 2 * 3; // 3 components, 2 bytes each
+
+        // Output RGB buffer: 3 bytes per pixel
+        let rgb_size = w * h * 3;
+
+        // Total for streaming decode (baseline 4:4:4)
+        let streaming_total = strip_total + rgb_size;
+
+        // For non-streaming paths (progressive, subsampled), coefficient storage is needed
+        // ~130 bytes per block (64 i16 coefficients + u8 coeff count + alignment)
+        // 3 components, (w/8) * (h/8) blocks per component
+        let blocks_per_component = mcu_cols * ((h + 7) / 8);
+        let coeff_storage = blocks_per_component * 130 * 3;
+
+        // Return worst case (non-streaming)
+        streaming_total.max(coeff_storage + rgb_size)
     }
 
     /// Decodes a JPEG image.
@@ -1357,18 +1405,26 @@ impl<'a> JpegParser<'a> {
         }
 
         // Allocate strip buffers for one MCU row (8 rows of pixels)
+        // SAFETY: All elements are written by IDCT before color conversion reads them
         let strip_size = strip_width * 8;
-        let mut y_strip: Vec<i16> = vec![0i16; strip_size];
-        let mut cb_strip: Vec<i16> = vec![0i16; strip_size];
-        let mut cr_strip: Vec<i16> = vec![0i16; strip_size];
+        let mut y_strip: Vec<i16> =
+            unsafe { try_alloc_uninitialized(strip_size, "Y strip buffer")? };
+        let mut cb_strip: Vec<i16> =
+            unsafe { try_alloc_uninitialized(strip_size, "Cb strip buffer")? };
+        let mut cr_strip: Vec<i16> =
+            unsafe { try_alloc_uninitialized(strip_size, "Cr strip buffer")? };
 
         // Allocate output RGB buffer
+        // SAFETY: All pixels are written by color conversion before return
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = vec![0u8; rgb_size];
+        let mut rgb: Vec<u8> = unsafe { try_alloc_uninitialized(rgb_size, "RGB output buffer")? };
 
         let mut mcu_count = 0u32;
         let restart_interval = self.restart_interval as u32;
         let mut next_restart_num = 0u8;
+
+        // Reusable dequantization buffer - avoids allocation per block
+        let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
 
         // Process MCU row by row
         for mcu_y in 0..mcu_rows {
@@ -1401,13 +1457,13 @@ impl<'a> JpegParser<'a> {
                         _ => &mut cr_strip,
                     };
 
-                    // Fused dequantize + unzigzag
-                    let mut dequant_i32 = dequantize_unzigzag_i32(&coeffs, quant);
+                    // Fused dequantize + unzigzag into reusable buffer
+                    dequantize_unzigzag_i32_into(&coeffs, quant, &mut dequant_buf);
 
                     // IDCT directly to strip buffer
                     let dst_offset = mcu_x * 8;
                     idct_int_tiered(
-                        &mut dequant_i32,
+                        &mut dequant_buf,
                         &mut strip[dst_offset..],
                         strip_width,
                         coeff_count,
@@ -2059,24 +2115,18 @@ impl<'a> JpegParser<'a> {
         let strip_size = strip_width * strip_height;
 
         // Allocate strip buffers - values will be fully overwritten by IDCT
-        // SAFETY: We write all pixels before reading them in the MCU row loop
-        let mut y_strip: Vec<i16> = Vec::with_capacity(strip_size);
-        let mut cb_strip: Vec<i16> = Vec::with_capacity(strip_size);
-        let mut cr_strip: Vec<i16> = Vec::with_capacity(strip_size);
         // SAFETY: Strips are fully written by IDCT before color conversion reads them
-        unsafe {
-            y_strip.set_len(strip_size);
-            cb_strip.set_len(strip_size);
-            cr_strip.set_len(strip_size);
-        }
+        let mut y_strip: Vec<i16> =
+            unsafe { try_alloc_uninitialized(strip_size, "Y strip buffer")? };
+        let mut cb_strip: Vec<i16> =
+            unsafe { try_alloc_uninitialized(strip_size, "Cb strip buffer")? };
+        let mut cr_strip: Vec<i16> =
+            unsafe { try_alloc_uninitialized(strip_size, "Cr strip buffer")? };
 
-        // Allocate output RGB buffer - uninitialized since we write all pixels
-        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = Vec::with_capacity(rgb_size);
+        // Allocate output RGB buffer
         // SAFETY: All pixels are written by color conversion before the buffer is returned
-        unsafe {
-            rgb.set_len(rgb_size);
-        }
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> = unsafe { try_alloc_uninitialized(rgb_size, "RGB output buffer")? };
 
         // Process MCU row by row
         for imcu_row in 0..mcu_rows {

@@ -415,6 +415,25 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
     Ok(v)
 }
 
+/// Allocate a Vec with capacity and set length (uninitialized memory).
+/// SAFETY: Caller MUST write to all elements before reading them.
+#[inline]
+pub unsafe fn try_alloc_uninitialized<T>(count: usize, context: &'static str) -> Result<Vec<T>> {
+    let byte_size = count
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(Error::SizeOverflow { context })?;
+
+    let mut v = Vec::new();
+    v.try_reserve_exact(count)
+        .map_err(|_| Error::AllocationFailed {
+            bytes: byte_size,
+            context,
+        })?;
+    // SAFETY: Caller guarantees all elements will be written before read
+    v.set_len(count);
+    Ok(v)
+}
+
 /// Allocate a Vec of DCT blocks (64 i16 values each) with fallible allocation.
 #[inline]
 pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[i16; 64]>> {
