@@ -188,11 +188,16 @@ impl HuffmanEncodeTable {
 #[derive(Debug, Clone)]
 pub struct HuffmanDecodeTable {
     /// Lookup table for short codes (up to FAST_BITS)
+    /// Format: (symbol & 0xFF) | (length << 8), or -1 if too long
     pub fast_lookup: [i16; 1 << Self::FAST_BITS],
-    /// Maximum code value for each bit length
-    pub maxcode: [i32; MAX_CODE_LENGTH + 1],
+    /// Fast AC lookup table for combined decode + sign extend.
+    /// Only used for AC tables. Format: (value << 8) | (run << 4) | total_bits
+    /// where value is sign-extended and fits in i8, or 0 if not applicable.
+    pub fast_ac: Option<Box<[i16; 1 << Self::FAST_BITS]>>,
+    /// Maximum code value for each bit length (pre-shifted for fast comparison)
+    pub maxcode: [i32; MAX_CODE_LENGTH + 2],
     /// Offset for decoding codes of each length
-    pub valoffset: [i32; MAX_CODE_LENGTH + 1],
+    pub valoffset: [i32; MAX_CODE_LENGTH + 2],
     /// Symbol values
     pub values: Vec<u8>,
     /// Whether the table is valid
@@ -208,15 +213,26 @@ impl HuffmanDecodeTable {
     pub fn new() -> Self {
         Self {
             fast_lookup: [-1; 1 << Self::FAST_BITS],
-            maxcode: [-1; MAX_CODE_LENGTH + 1],
-            valoffset: [0; MAX_CODE_LENGTH + 1],
+            fast_ac: None,
+            maxcode: [-1; MAX_CODE_LENGTH + 2],
+            valoffset: [0; MAX_CODE_LENGTH + 2],
             values: Vec::new(),
             valid: false,
         }
     }
 
     /// Creates a decoding table from JPEG-format bits and values.
+    /// For DC tables, pass is_ac = false. For AC tables, pass is_ac = true to build fast_ac.
     pub fn from_bits_values(bits: &[u8; 16], values: &[u8]) -> Result<Self> {
+        Self::from_bits_values_impl(bits, values, false)
+    }
+
+    /// Creates an AC decoding table with fast_ac lookup enabled.
+    pub fn from_bits_values_ac(bits: &[u8; 16], values: &[u8]) -> Result<Self> {
+        Self::from_bits_values_impl(bits, values, true)
+    }
+
+    fn from_bits_values_impl(bits: &[u8; 16], values: &[u8], is_ac: bool) -> Result<Self> {
         let mut table = Self::new();
         table.values = values.to_vec();
 
@@ -233,6 +249,7 @@ impl HuffmanDecodeTable {
             }
         }
         huffsize[k] = 0;
+        let num_symbols = k;
 
         // Generate code table
         let mut code: u32 = 0;
@@ -248,28 +265,33 @@ impl HuffmanDecodeTable {
             si += 1;
         }
 
-        // Build maxcode and valoffset tables
+        // Build maxcode and valoffset tables (standard JPEG format)
         let mut j = 0;
         for i in 1..=MAX_CODE_LENGTH {
             if bits[i - 1] == 0 {
                 table.maxcode[i] = -1;
             } else {
-                table.valoffset[i] = j as i32 - huffcode[j] as i32;
+                table.valoffset[i] = j as i32 - (huffcode[j] as i32);
                 j += bits[i - 1] as usize;
                 table.maxcode[i] = huffcode[j - 1] as i32;
             }
         }
-        table.maxcode[MAX_CODE_LENGTH + 1 - 1] = 0x7FFF_FFFF;
+        // Ensure the last entry is set (for tables that use all 16 code lengths)
+        // Note: maxcode[16] will be set by the loop if there are length-16 codes,
+        // but we also set a sentinel at index 17 for safety
+        table.maxcode[17] = 0x7FFF_FFFF;
 
-        // Build fast lookup table
-        for (k, &code) in huffcode.iter().enumerate() {
+        // Build fast lookup table (9-bit)
+        // Format: (symbol & 0xFF) | (length << 8), -1 means too long
+        table.fast_lookup = [-1; 1 << Self::FAST_BITS];
+
+        for (k, &hcode) in huffcode.iter().enumerate() {
             let length = huffsize[k] as usize;
             if length <= Self::FAST_BITS && length > 0 {
-                let fast_code = (code as usize) << (Self::FAST_BITS - length);
-                let count = 1 << (Self::FAST_BITS - length);
-                for m in 0..count {
+                let fast_code = (hcode as usize) << (Self::FAST_BITS - length);
+                let fill_count = 1 << (Self::FAST_BITS - length);
+                for m in 0..fill_count {
                     let idx = fast_code + m;
-                    // Bounds check for malformed Huffman tables
                     if idx < table.fast_lookup.len() {
                         // Store symbol in lower 8 bits, length in upper 8 bits
                         table.fast_lookup[idx] = (values[k] as i16) | ((length as i16) << 8);
@@ -278,12 +300,76 @@ impl HuffmanDecodeTable {
             }
         }
 
+        // Build fast AC table if this is an AC table
+        if is_ac {
+            table.build_fast_ac_table(&huffsize, &huffcode, num_symbols);
+        }
+
         table.valid = true;
         Ok(table)
     }
 
+    /// Builds the fast AC lookup table for combined decode + sign extend.
+    fn build_fast_ac_table(&mut self, huffsize: &[u8], huffcode: &[u32], num_symbols: usize) {
+        // First, build a fast symbol index table
+        let mut fast_symbol = [255i16; 1 << Self::FAST_BITS];
+        let table_size = 1 << Self::FAST_BITS;
+        for i in 0..num_symbols {
+            let s = huffsize[i] as usize;
+            if s <= Self::FAST_BITS && s > 0 {
+                let c = (huffcode[i] as usize) << (Self::FAST_BITS - s);
+                let m = 1usize << (Self::FAST_BITS - s);
+                for j in 0..m {
+                    let idx = c + j;
+                    // Bounds check for malformed Huffman tables
+                    if idx < table_size {
+                        fast_symbol[idx] = i as i16;
+                    }
+                }
+            }
+        }
+
+        // Build fast AC table that combines decode + receive_extend
+        let mut fast_ac = Box::new([0i16; 1 << Self::FAST_BITS]);
+        for i in 0..(1 << Self::FAST_BITS) {
+            let fast_v = fast_symbol[i];
+            if fast_v < 255 && fast_v >= 0 {
+                // Get symbol value from AC table
+                let rs = self.values[fast_v as usize];
+                // Run length in upper 4 bits
+                let run = i16::from((rs >> 4) & 15);
+                // Magnitude bits in lower 4 bits
+                let mag_bits = i16::from(rs & 15);
+                // Length of huffman code
+                let len = i16::from(huffsize[fast_v as usize]);
+
+                // Only build fast_ac entry if total bits <= FAST_BITS
+                if mag_bits != 0 && (len + mag_bits) <= Self::FAST_BITS as i16 {
+                    // Extract the magnitude value from remaining bits
+                    // The bits after the Huffman code are the magnitude
+                    let mut k = (((i as i16) << len) & ((1 << Self::FAST_BITS) - 1))
+                        >> (Self::FAST_BITS as i16 - mag_bits);
+
+                    // Sign extend: if k < 2^(mag_bits-1), it's negative
+                    let m = 1i16 << (mag_bits - 1);
+                    if k < m {
+                        k += ((-1i16) << mag_bits) + 1;
+                    }
+
+                    // Only use fast_ac if value fits in i8 (-128..127)
+                    if (-128..=127).contains(&k) {
+                        // Format: (value << 8) | (run << 4) | total_bits
+                        fast_ac[i] = (k << 8) | (run << 4) | (len + mag_bits);
+                    }
+                }
+            }
+        }
+        self.fast_ac = Some(fast_ac);
+    }
+
     /// Decodes a symbol from a bit stream using fast lookup.
-    /// Returns (symbol, bits_consumed) or None if not in fast table.
+    /// Input: top-aligned bits (MSB at bit 31 for u32).
+    /// Returns (symbol, bits_consumed) or None if code is longer than FAST_BITS.
     #[inline]
     pub fn fast_decode(&self, bits: u32) -> Option<(u8, u8)> {
         let lookup = self.fast_lookup[(bits >> (32 - Self::FAST_BITS)) as usize];
@@ -294,6 +380,41 @@ impl HuffmanDecodeTable {
         } else {
             None
         }
+    }
+
+    /// Fast AC decode using the combined lookup table.
+    /// Input: 9-bit index from top-aligned bit buffer.
+    /// Returns Some((coefficient_value, run_length, total_bits)) or None.
+    #[inline]
+    pub fn fast_decode_ac(&self, idx: usize) -> Option<(i16, u8, u8)> {
+        if let Some(ref fast_ac) = self.fast_ac {
+            let entry = fast_ac[idx];
+            if entry != 0 {
+                let value = entry >> 8; // Sign-extended coefficient value
+                let run = ((entry >> 4) & 0xF) as u8;
+                let total_bits = (entry & 0xF) as u8;
+                return Some((value, run, total_bits));
+            }
+        }
+        None
+    }
+
+    /// Slow decode path for codes longer than FAST_BITS.
+    /// Input: 16 bits from top of buffer, code_length starts at FAST_BITS + 1.
+    /// Returns (symbol, code_length) or None if invalid.
+    #[inline]
+    pub fn decode_slow(&self, bits16: i32) -> Option<(u8, u8)> {
+        // Start from FAST_BITS + 1 since fast path already checked shorter codes
+        for code_length in (Self::FAST_BITS + 1)..=16 {
+            if bits16 < self.maxcode[code_length] {
+                let symbol_bits = bits16 >> (16 - code_length);
+                let idx = (symbol_bits + self.valoffset[code_length]) as usize;
+                if idx < self.values.len() {
+                    return Some((self.values[idx], code_length as u8));
+                }
+            }
+        }
+        None
     }
 
     /// Returns a reference to the standard DC luminance decode table (lazily initialized).

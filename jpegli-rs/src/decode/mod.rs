@@ -926,11 +926,13 @@ impl<'a> JpegParser<'a> {
                 });
             }
 
-            let table = HuffmanDecodeTable::from_bits_values(&bits, &values)?;
-
             if table_class == 0 {
+                // DC table - use standard lookup
+                let table = HuffmanDecodeTable::from_bits_values(&bits, &values)?;
                 self.dc_tables[table_idx] = Some(table);
             } else {
+                // AC table - use fast AC lookup for combined decode + sign extend
+                let table = HuffmanDecodeTable::from_bits_values_ac(&bits, &values)?;
                 self.ac_tables[table_idx] = Some(table);
             }
         }

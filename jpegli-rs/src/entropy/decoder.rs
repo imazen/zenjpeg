@@ -157,7 +157,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             })
     }
 
-    /// Decodes a block of DCT coefficients.
+    /// Decodes a block of DCT coefficients with fast AC path.
     pub fn decode_block(
         &mut self,
         component: usize,
@@ -187,9 +187,65 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         coeffs[0] = self.prev_dc[component] + dc_diff;
         self.prev_dc[component] = coeffs[0];
 
-        // Decode AC coefficients
+        // Decode AC coefficients with fast path
         let mut i = 1;
         while i < DCT_BLOCK_SIZE {
+            // Try fast path first - peek 9 bits
+            // peek_bits returns right-aligned bits, mask to FAST_BITS to get index
+            if let Ok(bits9) = self.reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
+                let idx = (bits9 as usize) & ((1 << HuffmanDecodeTable::FAST_BITS) - 1);
+
+                // Try fast AC decode first (combined Huffman + sign extend)
+                if let Some((value, run, total_bits)) = ac_table.fast_decode_ac(idx) {
+                    self.reader.skip_bits(total_bits);
+                    i += run as usize;
+                    if i < DCT_BLOCK_SIZE {
+                        coeffs[i] = value;
+                        i += 1;
+                    }
+                    continue;
+                }
+
+                // Try regular fast Huffman lookup
+                let lookup = ac_table.fast_lookup[idx];
+                if lookup >= 0 {
+                    let symbol = (lookup & 0xFF) as u8;
+                    let code_length = (lookup >> 8) as u8;
+                    self.reader.skip_bits(code_length);
+
+                    if symbol == 0 {
+                        // EOB - remaining coefficients are zero
+                        break;
+                    }
+
+                    let run = symbol >> 4;
+                    let ac_cat = symbol & 0x0F;
+
+                    if ac_cat == 0 {
+                        if run == 15 {
+                            // ZRL - skip 16 zeros
+                            i += 16;
+                        } else {
+                            // Invalid symbol
+                            break;
+                        }
+                    } else {
+                        i += run as usize;
+                        if i >= DCT_BLOCK_SIZE {
+                            return Err(Error::InvalidJpegData {
+                                reason: "AC coefficient index out of bounds",
+                            });
+                        }
+
+                        let bits = self.reader.read_bits(ac_cat)? as u16;
+                        coeffs[i] = decode_value(ac_cat, bits);
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Slow path for long codes or when not enough bits
             let symbol = decode_huffman_symbol(&mut self.reader, ac_table)?;
 
             if symbol == 0 {
