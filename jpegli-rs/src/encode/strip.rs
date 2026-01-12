@@ -99,36 +99,6 @@ impl QuantContext {
 use crate::simd_types::Block8x8f;
 use wide::f32x8;
 
-/// Convert linear light to sRGB with HDR handling.
-///
-/// For SDR values (0-1): applies standard sRGB gamma curve
-/// For HDR values (>1): applies simple Reinhard tone mapping first
-/// For negative values: clamps to 0
-///
-/// This allows encoding HDR content without harsh clipping.
-#[inline]
-fn linear_to_srgb_f32(linear: f32) -> f32 {
-    // Handle negative values
-    if linear <= 0.0 {
-        return 0.0;
-    }
-
-    // For HDR values, apply simple Reinhard tone mapping: v / (1 + v)
-    // This smoothly compresses values > 1.0 into the 0-1 range
-    let mapped = if linear > 1.0 {
-        linear / (1.0 + linear)
-    } else {
-        linear
-    };
-
-    // Apply sRGB transfer function (gamma ~2.2)
-    if mapped <= 0.003_130_8 {
-        mapped * 12.92
-    } else {
-        1.055 * mapped.powf(1.0 / 2.4) - 0.055
-    }
-}
-
 /// Wide-native block extraction: returns Block8x8f directly.
 ///
 /// Assumes strip is properly padded (MCU-aligned) so no bounds checking needed.
@@ -747,21 +717,19 @@ impl StripProcessor {
                 );
             }
             // 16-bit and float formats: linear RGB input
-            // Converts linear -> sRGB -> YCbCr
-            // For HDR (values > 1.0), we apply simple Reinhard tone mapping
+            // Uses optimized LUT conversion: linear -> sRGB -> YCbCr
+            // For HDR (values > 1.0), applies Reinhard tone mapping
             PixelFormat::Gray16 => {
+                use super::linear_lut::linear_u16_to_srgb_255;
                 // Gray16: 2 bytes per pixel, native endian, linear
                 for row in 0..strip_height {
                     let src_start = row * width * 2;
                     let dst_start = row * padded_width;
                     for x in 0..width {
                         let idx = src_start + x * 2;
-                        let linear =
-                            u16::from_ne_bytes([rgb_strip[idx], rgb_strip[idx + 1]]) as f32
-                                / 65535.0;
-                        // Linear -> sRGB -> Y (scaled to 0-255)
-                        let srgb = linear_to_srgb_f32(linear) * 255.0;
-                        self.y_strip[dst_start + x] = srgb;
+                        let value = u16::from_ne_bytes([rgb_strip[idx], rgb_strip[idx + 1]]);
+                        // Direct LUT lookup: linear u16 -> sRGB [0-255]
+                        self.y_strip[dst_start + x] = linear_u16_to_srgb_255(value);
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -773,11 +741,9 @@ impl StripProcessor {
                 }
             }
             PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
+                use super::linear_lut::linear_rgb16_to_ycbcr;
                 // RGB16/RGBA16: 6/8 bytes per pixel, native endian, linear
-                use crate::consts::{
-                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
-                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
-                };
+                // Uses optimized LUT: direct u16 -> YCbCr conversion
                 let bpp = self.pixel_format.bytes_per_pixel();
 
                 for row in 0..strip_height {
@@ -786,29 +752,16 @@ impl StripProcessor {
                     for x in 0..width {
                         let base = (row * width + x) * bpp;
 
-                        // Read 16-bit values as linear f32
-                        let r_linear =
-                            u16::from_ne_bytes([rgb_strip[base], rgb_strip[base + 1]]) as f32
-                                / 65535.0;
-                        let g_linear =
-                            u16::from_ne_bytes([rgb_strip[base + 2], rgb_strip[base + 3]]) as f32
-                                / 65535.0;
-                        let b_linear =
-                            u16::from_ne_bytes([rgb_strip[base + 4], rgb_strip[base + 5]]) as f32
-                                / 65535.0;
+                        // Read 16-bit values directly
+                        let r = u16::from_ne_bytes([rgb_strip[base], rgb_strip[base + 1]]);
+                        let g = u16::from_ne_bytes([rgb_strip[base + 2], rgb_strip[base + 3]]);
+                        let b = u16::from_ne_bytes([rgb_strip[base + 4], rgb_strip[base + 5]]);
 
-                        // Linear -> sRGB (scaled to 0-255)
-                        let r = linear_to_srgb_f32(r_linear) * 255.0;
-                        let g = linear_to_srgb_f32(g_linear) * 255.0;
-                        let b = linear_to_srgb_f32(b_linear) * 255.0;
-
-                        // sRGB -> YCbCr
-                        self.y_strip[y_row_start + x] =
-                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
-                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
-                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                        // LUT-optimized: linear RGB16 -> YCbCr in one step
+                        let (y, cb, cr) = linear_rgb16_to_ycbcr(r, g, b);
+                        self.y_strip[y_row_start + x] = y;
+                        self.cb_strip[cbcr_row_start + x] = cb;
+                        self.cr_strip[cbcr_row_start + x] = cr;
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -820,6 +773,7 @@ impl StripProcessor {
                 }
             }
             PixelFormat::GrayF32 => {
+                use super::linear_lut::linear_f32_to_srgb_255_fast;
                 // GrayF32: 4 bytes per pixel, linear
                 for row in 0..strip_height {
                     let src_start = row * width * 4;
@@ -832,9 +786,8 @@ impl StripProcessor {
                             rgb_strip[idx + 2],
                             rgb_strip[idx + 3],
                         ]);
-                        // Linear -> sRGB -> Y (scaled to 0-255)
-                        let srgb = linear_to_srgb_f32(linear) * 255.0;
-                        self.y_strip[dst_start + x] = srgb;
+                        // LUT-optimized: linear f32 -> sRGB [0-255]
+                        self.y_strip[dst_start + x] = linear_f32_to_srgb_255_fast(linear);
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -846,11 +799,9 @@ impl StripProcessor {
                 }
             }
             PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
+                use super::linear_lut::linear_rgbf32_to_ycbcr_fast;
                 // RgbF32/RgbaF32: 12/16 bytes per pixel, linear
-                use crate::consts::{
-                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
-                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
-                };
+                // Uses LUT with interpolation for fast linear -> YCbCr conversion
                 let bpp = self.pixel_format.bytes_per_pixel();
 
                 for row in 0..strip_height {
@@ -859,7 +810,7 @@ impl StripProcessor {
                     for x in 0..width {
                         let base = (row * width + x) * bpp;
 
-                        // Read f32 values (no clamping - handled by linear_to_srgb_f32)
+                        // Read f32 values
                         let r_linear = f32::from_ne_bytes([
                             rgb_strip[base],
                             rgb_strip[base + 1],
@@ -879,18 +830,11 @@ impl StripProcessor {
                             rgb_strip[base + 11],
                         ]);
 
-                        // Linear -> sRGB (scaled to 0-255)
-                        let r = linear_to_srgb_f32(r_linear) * 255.0;
-                        let g = linear_to_srgb_f32(g_linear) * 255.0;
-                        let b = linear_to_srgb_f32(b_linear) * 255.0;
-
-                        // sRGB -> YCbCr
-                        self.y_strip[y_row_start + x] =
-                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
-                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
-                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                        // LUT-optimized: linear RGB -> YCbCr in one step
+                        let (y, cb, cr) = linear_rgbf32_to_ycbcr_fast(r_linear, g_linear, b_linear);
+                        self.y_strip[y_row_start + x] = y;
+                        self.cb_strip[cbcr_row_start + x] = cb;
+                        self.cr_strip[cbcr_row_start + x] = cr;
                     }
                     // Edge-pad Y row
                     if width < padded_width {
