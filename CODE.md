@@ -423,3 +423,155 @@ The YCbCr path is 25% faster by bypassing color conversion (which was 15.8% of d
 - `jpegli-rs/tests/ycbcr_f32_api.rs` - Test coverage
 - `jpegli-rs/examples/ycbcr_benchmark.rs` - Performance benchmark
 
+---
+
+## Performance Analysis: zune-jpeg vs jpegli-rs Decoder
+
+**Date:** 2026-01-12
+**Status:** Analysis complete, optimizations categorized
+
+### Performance Gap
+
+| Decoder | 2048×2048 | MP/s | Relative |
+|---------|-----------|------|----------|
+| zune-jpeg | 3.7ms | 1146 | 18× faster |
+| jpegli-rs YCbCr | 65.5ms | 64 | 1.25× faster than RGB |
+| jpegli-rs RGB | 81.9ms | 51 | baseline |
+
+### zune-jpeg Optimization Techniques
+
+#### 1. IDCT (Inverse DCT)
+
+**Scalar implementation:**
+- Integer-only arithmetic (no floating point)
+- 16-bit intermediate values with 14-bit fixed-point coefficients
+- DC-only shortcut: `if block[1..64] == 0` return `[dc_coeff * 8; 64]`
+- 4×4 IDCT variant for blocks with only top-left 4×4 non-zero
+- AAN algorithm with minimal multiplications
+
+**AVX2 implementation (`idct_avx2`):**
+- In-register 8×8 transpose using `_mm256_unpacklo/hi_epi16` + `_mm256_permute2x128_si256`
+- No memory round-trip during row/column passes
+- `_mm256_madd_epi16` for efficient multiply-accumulate
+- Single function processes entire 8×8 block without function calls
+
+#### 2. Color Conversion (YCbCr → RGB)
+
+**Scalar implementation:**
+- Fixed-point coefficients (14-bit precision)
+- Input/output in i16 (no f32)
+- `>> 14` for final denormalization
+- Direct saturation via `.clamp(0, 255) as u8`
+
+**AVX2 implementation (`ycbcr_to_rgb_avx`):**
+- Processes 16 pixels per iteration (32 bytes RGB output)
+- Uses `_mm256_madd_epi16` for coefficient multiply-add
+- Clever RGB interleaving: `shuffle` → `blend` → `permute4x64`
+- Single loop with no inner branches
+
+#### 3. Entropy Decoding (Huffman)
+
+**Key optimizations:**
+- 9-bit lookahead table (`HUFF_LOOKAHEAD = 9`)
+- Combined AC symbol + magnitude decoding (`ac_lookup` table)
+- Fast 4-byte refill when no 0xFF markers present
+- `has_byte()` bit-hack to detect 0xFF in u32
+- Aligned buffer for faster peek operations
+- MSB-aligned `aligned_buffer` avoids shifting on peek
+- `decode_huff!` macro inlined at call sites
+
+**AC coefficient acceleration:**
+```rust
+// Decodes symbol + magnitude in single lookup (when possible)
+fast_ac[i] = (k << 8) + (run << 4) + (len + mag_bits);
+```
+
+### Categorized Optimization Opportunities
+
+#### XYB-SAFE (Can apply without affecting XYB precision)
+
+| Optimization | Component | Speedup Est. | Notes |
+|--------------|-----------|--------------|-------|
+| DC-only shortcut | IDCT | 5-15% | Already implemented in jpegli-rs |
+| In-register transpose | IDCT | 10-20% | Avoid memory round-trip |
+| Combined AC lookup | Entropy | 5-10% | Decode symbol+magnitude together |
+| 4-byte fast refill | Entropy | 5-10% | Skip marker check for common case |
+| Aligned buffer peek | Entropy | 2-5% | MSB-aligned avoids shifting |
+| SIMD RGB interleave | Color | 10-15% | Pack f32→u8 with shuffle |
+| `wide` reduce_add() | AQ | 3-5% | Replace scalar sum extraction |
+| Buffer reuse | AQ | 2-5% | Avoid allocations in fuzzy_erosion |
+
+#### STANDARD-ONLY (Would compromise XYB precision)
+
+| Optimization | Component | Speedup Est. | Why it breaks XYB |
+|--------------|-----------|--------------|-------------------|
+| Integer IDCT | IDCT | 30-50% | XYB requires f32 for extended gamut |
+| Fixed-point color | Color | 20-40% | XYB color transform needs f32 |
+| i16 coefficients | All | 20-30% | XYB HDR values exceed i16 range |
+| 4×4 IDCT shortcut | IDCT | 5-10% | XYB coefficient distribution differs |
+
+#### WHY XYB NEEDS f32
+
+1. **Extended gamut**: XYB encodes HDR content with values outside [0,255]
+2. **Precision requirements**: XYB → linear RGB transform is lossy with integer math
+3. **Non-standard coefficient patterns**: XYB doesn't have same sparsity as YCbCr
+
+### Recommended Optimizations (Priority Order)
+
+1. **SIMD RGB interleave** (color.rs:465) - 15.8% of decode time
+   - Replace scalar loop with `wide` pack/shuffle operations
+   - Use `i32x8` → `i16x8` → `u8x16` packing chain
+
+2. **In-register IDCT transpose** (idct.rs)
+   - Keep all 8 rows in SIMD registers through both passes
+   - Use `wide::f32x8::transpose()` already available
+
+3. **Combined AC lookup table** (entropy/decoder.rs)
+   - Pre-compute symbol+magnitude for short codes
+   - Fast path when code_len + mag_bits ≤ lookahead_bits
+
+4. **Fast bitstream refill** (bitstream.rs)
+   - 4-byte read when no 0xFF present
+   - Use Stanford bit-hack for 0xFF detection
+
+5. **AQ buffer reuse** (quant/aq/simd.rs)
+   - Pass workspace buffer to fuzzy_erosion
+   - Avoid zeroed allocation per call
+
+### Implementation Notes
+
+**For SIMD RGB interleave with `wide`:**
+```rust
+// Current (slow): extract to arrays, scalar interleave
+let r_arr: [f32; 8] = r.into();
+for j in 0..8 { rgb[idx+j*3] = r_arr[j] as u8; }
+
+// Proposed (fast): pack and shuffle
+// 1. Convert f32x8 → i32x8 (with clamp)
+// 2. Pack pairs: i32x8 + i32x8 → i16x16
+// 3. Pack pairs: i16x16 + i16x16 → u8x32
+// 4. Shuffle to interleave RGB
+```
+
+**For `wide` horizontal sum:**
+```rust
+// Current: extract and sum scalarly
+let arr: [f32; 8] = h_diff.into();
+sum += arr[0] + arr[1] + ... + arr[7];
+
+// Proposed: use wide's reduce
+sum += h_diff.reduce_add();  // Single SIMD reduction
+```
+
+### Files to Modify
+
+| File | Optimization |
+|------|--------------|
+| `src/color.rs:465` | SIMD RGB interleave |
+| `src/idct.rs` | In-register transpose (already mostly done) |
+| `src/entropy/decoder.rs` | Combined AC lookup |
+| `src/bitstream.rs` | Fast 4-byte refill |
+| `src/quant/aq/simd.rs` | wide reduce_add, buffer reuse |
+
+---
+
