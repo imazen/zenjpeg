@@ -29,7 +29,6 @@ fn test_streaming_matches_standard_various_sizes() {
             .height(height)
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
-            
             .encode(&pixels)
             .expect("standard encode failed");
 
@@ -162,7 +161,6 @@ fn test_streaming_progressive_mode() {
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive)
-            
             .encode(&pixels)
             .expect("standard progressive encode failed");
 

@@ -309,10 +309,7 @@ fn test_multi_decoder_compatibility() {
     ];
 
     println!("\n=== Multi-Decoder Compatibility Test ===\n");
-    println!(
-        "{:<25} {:>12} {:>12}",
-        "Config", "jpegli-rs", "zune-jpeg"
-    );
+    println!("{:<25} {:>12} {:>12}", "Config", "jpegli-rs", "zune-jpeg");
     println!("{}", "-".repeat(55));
 
     let mut all_passed = true;

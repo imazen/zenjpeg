@@ -449,7 +449,6 @@ fn validate_jpeg(data: &[u8], path: &str) {
         ),
         Err(e) => println!("ERROR: {}", e),
     }
-
 }
 
 fn validate_directory(dir: &Path) {
