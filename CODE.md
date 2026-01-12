@@ -100,54 +100,16 @@ AFTER FIX (frymire + 1001682):
 
 ---
 
-## Feature: EdgePadding for MCU Edge Handling (IMPLEMENTED)
+## Feature: Edge Handling for MCU Alignment (COMPLETE)
 
-**Files:** `types.rs`, `encode/config.rs`, `encode/mod.rs`, `encode/baseline.rs`, `encode/progressive.rs`, `encode/output.rs`
-**Status:** IMPLEMENTED for full-plane encoder, PENDING for strip encoder
-**Date:** 2026-01-10
+**Status:** COMPLETE - Strip encoder has excellent C++ parity
+**Date:** 2026-01-10 (updated 2026-01-12)
 
 ### Summary
 
-Implemented configurable edge padding for MCU alignment to match C++ jpegli's `RowBuffer` padding behavior. The full-plane encoder now pads YCbCr planes to MCU-aligned dimensions before processing, with the original dimensions stored in the JFIF header so decoders crop correctly.
+The streaming/strip encoder handles non-MCU-aligned dimensions correctly, achieving excellent C++ parity.
 
-### Implementation Details
-
-**New Types (`types.rs`):**
-```rust
-pub enum EdgePadding {
-    Replicate,  // Default - replicate edge pixel outward (matches C++)
-    Mirror,     // Reflect at edge
-    Wrap,       // Tile the image
-}
-
-pub struct EdgePaddingConfig {
-    pub luma: EdgePadding,
-    pub chroma: EdgePadding,
-}
-```
-
-**New Config Fields (`encode/config.rs`):**
-- `edge_padding: EdgePaddingConfig` - Per-channel padding strategy
-- `original_width: Option<u32>` - Original dimensions for JFIF header
-- `original_height: Option<u32>`
-
-**New Functions (`encode/mod.rs`):**
-- `get_padded_coord()` - Calculate source coordinate for padding strategies
-- `pad_plane_f32()` - Pad single f32 plane to MCU-aligned dimensions
-- `pad_ycbcr_planes_subsampled()` - Pad Y, Cb, Cr planes with proper chroma handling
-
-**Integration:**
-- `encode/baseline.rs`: Calls `pad_ycbcr_planes_subsampled()` before DCT
-- `encode/progressive.rs`: Same padding for both optimized and non-optimized paths
-- `encode/output.rs`: Uses `original_width/height` for frame headers
-
-### Why Per-Channel Padding?
-
-Different strategies work better for different channel types:
-- **Luma (Y):** Mirror preserves gradients at edges
-- **Chroma (Cb/Cr):** Replicate is safer since chroma is upsampled by decoders
-
-### Results After Implementation
+### Current Results
 
 **Comprehensive parity test (10 images × 50 quality levels):**
 - Size: +0.26% (Rust slightly larger)
@@ -156,136 +118,14 @@ Different strategies work better for different channel types:
 
 All 50 quality levels within 5% tolerance on both metrics.
 
-### Remaining Work
+**Edge-specific tests (`strip_edge_cpp_comparison`):**
+- All partial MCU widths (1-15) and heights (1-15) tested
+- DSSIM within 0.6% of C++ for all edge cases
 
-The **strip encoder** (`StripProcessor`) doesn't have edge padding yet. The `test_frymire_backend_parity` test skips configurations where dimensions don't align to MCU boundaries. Adding strip encoder padding would require:
-1. Padding horizontal strips as they're processed
-2. Special handling for bottom-most strip with partial rows
-3. Proper chroma plane coordination
+### Historical Note
 
----
-
-## Historical Context: Edge MCU Parity Gap Analysis
-
-**Date:** 2026-01-10
-
-### Original Problem
-
-Edge-tiled test revealed **massive parity differences** for partial MCU handling:
-- Size: +15-21% larger than C++
-- DSSIM: +60-137% worse quality
-
-The HF modulation fix did NOT address this issue.
-
-### Test Results BEFORE Edge Padding (2026-01-10)
-
-Using `edge_mcu_parity` example with frymire.png (1118x1105):
-
-**Right-edge only (--mode=right --edge-width 6):** 518x513
-```
-Quality |  Rust Size   C++ Size  Size Δ% | Rust DSSIM  C++ DSSIM   DSSIM Δ%
-    q50 |      33911      28454  +19.18% |   0.000176   0.000110    +59.56%
-    q75 |      37949      31291  +21.28% |   0.000078   0.000033   +136.75%
-    q90 |      41817      36367  +14.99% |   0.000006   0.000005    +19.38%
-    q95 |      44807      39545  +13.31% |   0.000002   0.000005    -48.61%
-```
-
-**Bottom-edge only (--mode=bottom --edge-height 6):** 518x518
-```
-Quality |  Rust Size   C++ Size  Size Δ% | Rust DSSIM  C++ DSSIM   DSSIM Δ%
-    q50 |      32974      28876  +14.19% |   0.000236   0.000463    -49.06%
-    q75 |      36676      32322  +13.47% |   0.000087   0.000057    +53.94%
-    q90 |      40822      37485   +8.90% |   0.000006   0.000046    -86.55%
-    q95 |      43455      41603   +4.45% |   0.000003   0.000027    -87.98%
-```
-
-**Both edges (--edge-width 6 --edge-height 6):** 518x518
-```
-Quality |  Rust Size   C++ Size  Size Δ% | Rust DSSIM  C++ DSSIM   DSSIM Δ%
-    q50 |      97463      69712  +39.81% |   0.003538   0.004668    -24.20%
-    q75 |     133927      92723  +44.44% |   0.000504   0.002781    -81.88%
-    q90 |     183910     147391  +24.78% |   0.000090   0.001686    -94.67%
-    q95 |     214138     193622  +10.60% |   0.000014   0.000052    -72.08%
-```
-
-### Key Observations
-
-1. **Size:** Rust consistently produces larger files (+10-44%)
-2. **Right edge:** Worse at low quality, converges at high quality
-3. **Bottom edge:** Better DSSIM at high quality, still larger files
-4. **Both edges:** Largest size difference but Rust has BETTER DSSIM (-24 to -94%)
-
-The DSSIM pattern suggests Rust is using MORE bits than necessary (less aggressive
-quantization), resulting in better quality but larger files. This is NOT the same
-bug as the HF modulation wrap - this is a fundamentally different quantization issue.
-
-### Comparison with Normal Images
-
-The comprehensive C++ parity test on non-edge-tiled images shows:
-- **Size: +0.26%** (excellent)
-- **DSSIM: +0.15%** (essentially identical)
-- **Butteraugli: -0.00%** (identical)
-- All 50 quality levels within 5% on both metrics
-
-This proves the general encoding path has excellent parity. The **edge block handling
-specifically** is causing the +10-44% size bloat in edge-tiled tests.
-
-### Root Cause Analysis
-
-The C++ jpegli uses a `RowBuffer<T>` class (`common_internal.h:92-125`) that provides:
-
-1. **Pre-allocated padding**: Extra columns for border access
-2. **Negative indexing**: `row[-1]` returns replicated edge value
-3. **PadRow method**: Replicates `row[0]` to negative indices, `row[width-1]` to `row[width..]`
-
-```cpp
-// C++ RowBuffer allocation - includes offset for negative indexing
-void Allocate(cinfo, num_rows, rowsize) {
-    size_t alignment = max(HWY_ALIGNMENT, vec_size);
-    size_t min_memstride = alignment + rowsize * sizeof(T) + vec_size;
-    stride_ = RoundUpTo(min_memstride, alignment) / sizeof(T);
-    offset_ = alignment / sizeof(T);  // Allows row[-border] access
-}
-
-// C++ PadRow - fills both left and right borders
-void PadRow(size_t y, size_t from, int border) {
-    float* row = Row(y);
-    for (int offset = -border; offset < 0; ++offset)
-        row[offset] = row[0];           // Left border
-    float last_val = row[from - 1];
-    for (size_t x = from; x < xsize_ + border; ++x)
-        row[x] = last_val;              // Right border
-}
-```
-
-**In Rust**, we use regular `Vec<f32>` without this padding infrastructure. When AQ and DCT
-calculations run, C++ has already padded the buffer, so accessing beyond width gives the
-replicated edge value. Rust clamps indices but this affects the computed values differently.
-
-### Proposed Fix
-
-1. Create a `PaddedBuffer` struct that allocates with border space
-2. Implement `PadRow` equivalent that replicates edge values
-3. Use padded buffers for all Y/Cb/Cr strips in `StripProcessor`
-4. Add an `EdgeHandling` enum to configure behavior:
-   - `Clamp` - Current behavior (clamp indices)
-   - `Replicate` - Pad buffers with replicated edge values (match C++)
-   - `Pad8` - Expand to multiple of 8, store crop dimensions
-
-### Files to Modify
-
-1. `jpegli-rs/src/encode/strip.rs` - StripProcessor buffer allocation
-2. `jpegli-rs/src/quant/aq/streaming.rs` - StreamingAQ buffer handling
-3. Create `jpegli-rs/src/buffer.rs` - PaddedBuffer implementation
-
-### How to Reproduce
-
-```bash
-cargo run --release --example edge_mcu_parity
-cargo run --release --example edge_mcu_parity -- --mode=right --edge-width 6
-cargo run --release --example edge_mcu_parity -- --mode=bottom --edge-height 6
-cargo run --release --example edge_mcu_parity -- --edge-width 6 --edge-height 6
-```
+The old full-plane encoder had edge handling issues and was removed in commit `0fd8adc`.
+The `Encoder` type now wraps `StreamingEncoder` exclusively.
 
 ---
 
@@ -444,4 +284,3 @@ Overall: Rust is ~90% slower than C++ across configurations.
 - `jpegli-rs/src/entropy/encoder.rs` - Huffman encoding
 - `jpegli-rs/src/huffman/encode.rs` - Huffman table construction
 
----
