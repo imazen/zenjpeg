@@ -1171,29 +1171,21 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     debug_assert_eq!(y_plane.len(), cr_plane.len());
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
-    let num_pixels = y_plane.len();
-    let chunks = num_pixels / 16;
     let mut offset = 0;
 
-    // Process 16 pixels at a time using slice references to avoid copies
-    for i in 0..chunks {
-        let base = i * 16;
-        // SAFETY: We know base + 16 <= num_pixels due to chunks calculation
-        let y: &[i16; 16] = unsafe {
-            &*(y_plane.as_ptr().add(base) as *const [i16; 16])
-        };
-        let cb: &[i16; 16] = unsafe {
-            &*(cb_plane.as_ptr().add(base) as *const [i16; 16])
-        };
-        let cr: &[i16; 16] = unsafe {
-            &*(cr_plane.as_ptr().add(base) as *const [i16; 16])
-        };
-        ycbcr_to_rgb_i16_x16(y, cb, cr, rgb, &mut offset);
+    // as_chunks gives us (&[[i16; 16]], &[i16]) - safe array refs without bounds checks
+    let (y_chunks, y_remainder) = y_plane.as_chunks::<16>();
+    let (cb_chunks, _) = cb_plane.as_chunks::<16>();
+    let (cr_chunks, _) = cr_plane.as_chunks::<16>();
+
+    // Process 16 pixels at a time - direct indexing avoids zip overhead
+    for i in 0..y_chunks.len() {
+        ycbcr_to_rgb_i16_x16(&y_chunks[i], &cb_chunks[i], &cr_chunks[i], rgb, &mut offset);
     }
 
     // Handle remaining pixels
-    let remaining_start = chunks * 16;
-    for i in remaining_start..num_pixels {
+    let remaining_start = y_plane.len() - y_remainder.len();
+    for i in remaining_start..y_plane.len() {
         let y_val = i32::from(y_plane[i]);
         let cb_val = i32::from(cb_plane[i]) - 128;
         let cr_val = i32::from(cr_plane[i]) - 128;
