@@ -652,6 +652,180 @@ impl StreamingEncoder {
         Ok(())
     }
 
+    /// Pushes a strip of YCbCr f32 planar data.
+    ///
+    /// This bypasses RGB→YCbCr conversion, accepting YCbCr data directly.
+    /// Values should be in centered range [-128, 127].
+    ///
+    /// # Arguments
+    /// * `y` - Y plane data (width × num_rows floats)
+    /// * `cb` - Cb plane data (width × num_rows floats, full resolution)
+    /// * `cr` - Cr plane data (width × num_rows floats, full resolution)
+    /// * `num_rows` - Number of rows in this strip
+    ///
+    /// # Note
+    ///
+    /// Unlike `push_row` which buffers internally, this method processes
+    /// the strip immediately. For optimal performance, push `strip_height()`
+    /// rows at a time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - RGB rows are already buffered (can't mix RGB and YCbCr input)
+    /// - Plane sizes don't match expected dimensions
+    /// - XYB mode is enabled (requires RGB input)
+    pub fn push_ycbcr_strip_f32(
+        &mut self,
+        y: &[f32],
+        cb: &[f32],
+        cr: &[f32],
+        num_rows: usize,
+    ) -> Result<()> {
+        // Can't mix RGB and YCbCr input
+        if self.rows_buffered > 0 {
+            return Err(Error::InternalError {
+                reason: "cannot mix RGB and YCbCr input (RGB rows buffered)",
+            });
+        }
+
+        // Validate we haven't received all rows yet
+        if self.current_y >= self.height {
+            return Err(Error::IoError {
+                reason: format!("already received all {} rows", self.height),
+            });
+        }
+
+        // Clamp to remaining rows
+        let actual_rows = num_rows.min(self.height - self.current_y);
+
+        // Validate plane sizes
+        let expected_size = self.width * actual_rows;
+        if y.len() < expected_size {
+            return Err(Error::InvalidBufferSize {
+                expected: expected_size,
+                actual: y.len(),
+            });
+        }
+        if cb.len() < expected_size || cr.len() < expected_size {
+            return Err(Error::InvalidBufferSize {
+                expected: expected_size,
+                actual: cb.len().min(cr.len()),
+            });
+        }
+
+        // Process in chunks of strip_height rows
+        let mut processed = 0;
+        while processed < actual_rows {
+            let remaining = self.height - self.current_y;
+            let strip_rows = self.strip_height.min(actual_rows - processed).min(remaining);
+
+            let start = processed * self.width;
+            let end = start + strip_rows * self.width;
+
+            self.processor.process_strip_ycbcr_f32(
+                &y[start..end],
+                &cb[start..end],
+                &cr[start..end],
+                self.current_y,
+            )?;
+
+            self.current_y += strip_rows;
+            processed += strip_rows;
+        }
+
+        Ok(())
+    }
+
+    /// Pushes a strip of pre-downsampled YCbCr f32 planar data.
+    ///
+    /// This accepts chroma data that is already downsampled according to the
+    /// subsampling mode. Skips the internal chroma downsampling step.
+    ///
+    /// # Arguments
+    /// * `y` - Y plane data (width × num_rows floats)
+    /// * `cb` - Cb plane data (chroma_width × chroma_rows floats)
+    /// * `cr` - Cr plane data (chroma_width × chroma_rows floats)
+    /// * `num_rows` - Number of Y rows in this strip
+    ///
+    /// # Chroma Dimensions
+    /// - 4:4:4: cb/cr at full width × full height
+    /// - 4:2:2: cb/cr at width/2 × full height
+    /// - 4:2:0: cb/cr at width/2 × height/2
+    pub fn push_ycbcr_strip_f32_subsampled(
+        &mut self,
+        y: &[f32],
+        cb: &[f32],
+        cr: &[f32],
+        num_rows: usize,
+    ) -> Result<()> {
+        // Can't mix RGB and YCbCr input
+        if self.rows_buffered > 0 {
+            return Err(Error::InternalError {
+                reason: "cannot mix RGB and YCbCr input (RGB rows buffered)",
+            });
+        }
+
+        // Validate we haven't received all rows yet
+        if self.current_y >= self.height {
+            return Err(Error::IoError {
+                reason: format!("already received all {} rows", self.height),
+            });
+        }
+
+        // Clamp to remaining rows
+        let actual_rows = num_rows.min(self.height - self.current_y);
+
+        // Validate Y plane size
+        let expected_y_size = self.width * actual_rows;
+        if y.len() < expected_y_size {
+            return Err(Error::InvalidBufferSize {
+                expected: expected_y_size,
+                actual: y.len(),
+            });
+        }
+
+        // Get subsampling info for chroma slicing
+        let subsampling = self.processor.subsampling();
+        let chroma_width = match subsampling {
+            Subsampling::S444 | Subsampling::S440 => self.width,
+            Subsampling::S422 | Subsampling::S420 => (self.width + 1) / 2,
+        };
+        let chroma_h_factor = match subsampling {
+            Subsampling::S444 | Subsampling::S422 => 1,
+            Subsampling::S420 | Subsampling::S440 => 2,
+        };
+
+        // Process in chunks of strip_height rows
+        let mut y_processed = 0;
+        let mut chroma_processed = 0;
+        while y_processed < actual_rows {
+            let remaining = self.height - self.current_y;
+            let strip_rows = self.strip_height.min(actual_rows - y_processed).min(remaining);
+
+            let y_start = y_processed * self.width;
+            let y_end = y_start + strip_rows * self.width;
+
+            // Calculate chroma rows for this strip
+            let chroma_rows = (strip_rows + chroma_h_factor - 1) / chroma_h_factor;
+            let c_start = chroma_processed * chroma_width;
+            let c_end = c_start + chroma_rows * chroma_width;
+
+            self.processor.process_strip_ycbcr_f32_subsampled(
+                &y[y_start..y_end],
+                &cb[c_start..c_end.min(cb.len())],
+                &cr[c_start..c_end.min(cr.len())],
+                self.current_y,
+            )?;
+
+            self.current_y += strip_rows;
+            y_processed += strip_rows;
+            chroma_processed += chroma_rows;
+        }
+
+        Ok(())
+    }
+
     /// Flushes the current strip buffer to the processor.
     fn flush_strip_with_stop(&mut self, stop: &impl Stop) -> Result<()> {
         stop.check()?;

@@ -131,7 +131,7 @@ pub use encode::streaming::{StreamingEncoder, StreamingEncoderBuilder};
 pub use encode::{Encoder, EncoderConfig};
 
 // Decoder API
-pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
+pub use decode::{DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig};
 
 // Quality settings
 pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
