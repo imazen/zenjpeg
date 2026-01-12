@@ -527,6 +527,11 @@ impl StripProcessor {
         self.strip_height
     }
 
+    /// Returns the subsampling mode.
+    pub fn subsampling(&self) -> Subsampling {
+        self.subsampling
+    }
+
     /// Processes one strip of RGB input data.
     ///
     /// # Arguments
@@ -609,6 +614,312 @@ impl StripProcessor {
         // (The swap happens via pending_current tracking in dct_strip_blocks_to_pending)
 
         Ok(blocks_added)
+    }
+
+    /// Processes one strip of YCbCr f32 input data.
+    ///
+    /// This bypasses the RGB→YCbCr conversion, accepting YCbCr data directly.
+    /// Values should be in centered range [-128, 127] (will be level-shifted to [0, 255]).
+    ///
+    /// # Arguments
+    /// * `y_row` - Y plane data for this row (width floats)
+    /// * `cb_row` - Cb plane data for this row (width floats, full resolution)
+    /// * `cr_row` - Cr plane data for this row (width floats, full resolution)
+    /// * `strip_y` - Starting row index of this strip
+    ///
+    /// # Returns
+    /// Number of blocks added during this strip
+    ///
+    /// # Errors
+    /// Returns an error if XYB mode is enabled (use RGB input for XYB).
+    pub fn process_strip_ycbcr_f32(
+        &mut self,
+        y_row: &[f32],
+        cb_row: &[f32],
+        cr_row: &[f32],
+        strip_y: usize,
+    ) -> Result<usize> {
+        // XYB mode requires RGB input for conversion
+        if self.use_xyb {
+            return Err(crate::error::Error::UnsupportedFeature {
+                feature: "YCbCr input not supported for XYB mode",
+            });
+        }
+
+        let actual_strip_height = self.strip_height.min(self.height - strip_y);
+
+        // Step 1: Copy YCbCr data to strip buffers with level shift
+        // Convert from centered [-128, 127] to JPEG range [0, 255]
+        self.copy_ycbcr_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
+
+        // Step 1b: Pad strips vertically if this is a partial bottom strip
+        if actual_strip_height < self.strip_height {
+            self.pad_strips_vertically(actual_strip_height, self.strip_height);
+        }
+
+        // Step 2: Process AQ and check if previous iMCU strengths are ready
+        let aq_strengths = if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
+                .map(|s| s.to_vec())
+        } else {
+            None
+        };
+
+        // Step 3: Downsample chroma if needed
+        let downsample_height = if actual_strip_height < self.strip_height {
+            self.strip_height
+        } else {
+            actual_strip_height
+        };
+        if self.pixel_format != PixelFormat::Gray {
+            self.downsample_chroma_strip(downsample_height)?;
+        }
+
+        // Step 4: If we got AQ strengths, quantize the previous pending iMCU
+        if let Some(strengths) = aq_strengths {
+            let prev_buffer = 1 - self.pending_current;
+            self.quantize_pending_imcu(prev_buffer, &strengths);
+            self.pending_y_blocks[prev_buffer].clear();
+            self.pending_cb_blocks[prev_buffer].clear();
+            self.pending_cr_blocks[prev_buffer].clear();
+        }
+
+        // Step 5: Compute DCT for blocks in this strip into the current pending buffer
+        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
+
+        Ok(blocks_added)
+    }
+
+    /// Processes one strip of pre-downsampled YCbCr f32 input data.
+    ///
+    /// This accepts chroma data that is already downsampled according to the
+    /// subsampling mode. Skips the internal chroma downsampling step.
+    ///
+    /// # Arguments
+    /// * `y_row` - Y plane data for this row (width floats)
+    /// * `cb_row` - Cb plane data (chroma_width floats, already downsampled)
+    /// * `cr_row` - Cr plane data (chroma_width floats, already downsampled)
+    /// * `strip_y` - Starting row index of this strip
+    ///
+    /// # Value Range
+    /// Values should be in centered range [-128, 127].
+    ///
+    /// # Chroma Dimensions
+    /// - 4:4:4: cb/cr at full width
+    /// - 4:2:2: cb/cr at width/2
+    /// - 4:2:0: cb/cr at width/2 (and height/2, but handled row-by-row)
+    pub fn process_strip_ycbcr_f32_subsampled(
+        &mut self,
+        y_row: &[f32],
+        cb_row: &[f32],
+        cr_row: &[f32],
+        strip_y: usize,
+    ) -> Result<usize> {
+        // XYB mode requires RGB input for conversion
+        if self.use_xyb {
+            return Err(crate::error::Error::UnsupportedFeature {
+                feature: "YCbCr input not supported for XYB mode",
+            });
+        }
+
+        let actual_strip_height = self.strip_height.min(self.height - strip_y);
+
+        // Step 1: Copy Y with level shift, copy chroma directly to downsampled buffers
+        self.copy_ycbcr_subsampled_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
+
+        // Step 1b: Pad strips vertically if this is a partial bottom strip
+        if actual_strip_height < self.strip_height {
+            self.pad_strips_vertically(actual_strip_height, self.strip_height);
+            // Also pad chroma downsampled buffers
+            self.pad_chroma_down_vertically(actual_strip_height)?;
+        }
+
+        // Step 2: Process AQ
+        let aq_strengths = if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
+                .map(|s| s.to_vec())
+        } else {
+            None
+        };
+
+        // Step 3: Skip chroma downsampling - already done by caller
+
+        // Step 4: Quantize previous pending iMCU if strengths are ready
+        if let Some(strengths) = aq_strengths {
+            let prev_buffer = 1 - self.pending_current;
+            self.quantize_pending_imcu(prev_buffer, &strengths);
+            self.pending_y_blocks[prev_buffer].clear();
+            self.pending_cb_blocks[prev_buffer].clear();
+            self.pending_cr_blocks[prev_buffer].clear();
+        }
+
+        // Step 5: Compute DCT
+        let downsample_height = if actual_strip_height < self.strip_height {
+            self.strip_height
+        } else {
+            actual_strip_height
+        };
+        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
+
+        Ok(blocks_added)
+    }
+
+    /// Copies YCbCr f32 data to strip buffers with level shift.
+    ///
+    /// Converts from centered [-128, 127] to JPEG range [0, 255].
+    fn copy_ycbcr_to_strips(
+        &mut self,
+        y_row: &[f32],
+        cb_row: &[f32],
+        cr_row: &[f32],
+        strip_height: usize,
+    ) -> Result<()> {
+        let width = self.width;
+        let padded_width = self.padded_width;
+
+        // Validate input sizes
+        let expected_y_size = strip_height * width;
+        if y_row.len() < expected_y_size {
+            return Err(crate::error::Error::InternalError {
+                reason: "Y plane too small for strip",
+            });
+        }
+
+        if self.pixel_format != PixelFormat::Gray {
+            if cb_row.len() < expected_y_size || cr_row.len() < expected_y_size {
+                return Err(crate::error::Error::InternalError {
+                    reason: "Cb/Cr planes too small for strip",
+                });
+            }
+        }
+
+        // Copy Y with level shift and padded stride
+        for row in 0..strip_height {
+            let src_start = row * width;
+            let dst_start = row * padded_width;
+
+            // Copy and level-shift Y values
+            for x in 0..width {
+                self.y_strip[dst_start + x] = y_row[src_start + x] + 128.0;
+            }
+
+            // Edge-pad Y row
+            if width < padded_width {
+                let edge_val = self.y_strip[dst_start + width - 1];
+                for x in width..padded_width {
+                    self.y_strip[dst_start + x] = edge_val;
+                }
+            }
+        }
+
+        // Copy Cb/Cr with level shift (no padding, full resolution)
+        if self.pixel_format != PixelFormat::Gray {
+            let num_pixels = strip_height * width;
+            for i in 0..num_pixels {
+                self.cb_strip[i] = cb_row[i] + 128.0;
+                self.cr_strip[i] = cr_row[i] + 128.0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Copies pre-downsampled YCbCr f32 data to strip buffers.
+    ///
+    /// Y goes to y_strip with level shift.
+    /// Cb/Cr go directly to cb_down/cr_down (already downsampled).
+    fn copy_ycbcr_subsampled_to_strips(
+        &mut self,
+        y_row: &[f32],
+        cb_row: &[f32],
+        cr_row: &[f32],
+        strip_height: usize,
+    ) -> Result<()> {
+        let width = self.width;
+        let padded_width = self.padded_width;
+
+        // Calculate expected chroma dimensions based on subsampling
+        let (chroma_width, chroma_height) = match self.subsampling {
+            Subsampling::S444 => (width, strip_height),
+            Subsampling::S422 => ((width + 1) / 2, strip_height),
+            Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
+            Subsampling::S440 => (width, (strip_height + 1) / 2),
+        };
+
+        // Validate input sizes
+        let expected_y_size = strip_height * width;
+        if y_row.len() < expected_y_size {
+            return Err(crate::error::Error::InternalError {
+                reason: "Y plane too small for strip",
+            });
+        }
+
+        let expected_chroma_size = chroma_width * chroma_height;
+        if self.pixel_format != PixelFormat::Gray {
+            if cb_row.len() < expected_chroma_size || cr_row.len() < expected_chroma_size {
+                return Err(crate::error::Error::InternalError {
+                    reason: "Cb/Cr planes too small for subsampled strip",
+                });
+            }
+        }
+
+        // Copy Y with level shift and padded stride
+        for row in 0..strip_height {
+            let src_start = row * width;
+            let dst_start = row * padded_width;
+
+            for x in 0..width {
+                self.y_strip[dst_start + x] = y_row[src_start + x] + 128.0;
+            }
+
+            if width < padded_width {
+                let edge_val = self.y_strip[dst_start + width - 1];
+                for x in width..padded_width {
+                    self.y_strip[dst_start + x] = edge_val;
+                }
+            }
+        }
+
+        // Copy Cb/Cr directly to downsampled buffers with level shift
+        if self.pixel_format != PixelFormat::Gray {
+            for i in 0..expected_chroma_size {
+                self.cb_down[i] = cb_row[i] + 128.0;
+                self.cr_down[i] = cr_row[i] + 128.0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pads chroma downsampled buffers vertically for partial bottom strips.
+    fn pad_chroma_down_vertically(&mut self, actual_height: usize) -> Result<()> {
+        let (chroma_width, target_height) = match self.subsampling {
+            Subsampling::S444 => (self.width, self.strip_height),
+            Subsampling::S422 => ((self.width + 1) / 2, self.strip_height),
+            Subsampling::S420 => ((self.width + 1) / 2, (self.strip_height + 1) / 2),
+            Subsampling::S440 => (self.width, (self.strip_height + 1) / 2),
+        };
+
+        let actual_chroma_height = match self.subsampling {
+            Subsampling::S444 | Subsampling::S422 => actual_height,
+            Subsampling::S420 | Subsampling::S440 => (actual_height + 1) / 2,
+        };
+
+        if actual_chroma_height >= target_height {
+            return Ok(());
+        }
+
+        // Replicate last row - copy to temp first to avoid borrow conflict
+        let last_row_start = (actual_chroma_height - 1) * chroma_width;
+        let cb_last_row: Vec<f32> = self.cb_down[last_row_start..last_row_start + chroma_width].to_vec();
+        let cr_last_row: Vec<f32> = self.cr_down[last_row_start..last_row_start + chroma_width].to_vec();
+        for row in actual_chroma_height..target_height {
+            let dst_start = row * chroma_width;
+            self.cb_down[dst_start..dst_start + chroma_width].copy_from_slice(&cb_last_row);
+            self.cr_down[dst_start..dst_start + chroma_width].copy_from_slice(&cr_last_row);
+        }
+
+        Ok(())
     }
 
     /// Converts RGB strip data to YCbCr in the strip buffers.

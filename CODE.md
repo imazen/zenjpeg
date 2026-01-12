@@ -359,3 +359,67 @@ for j in 0..8 {
 
 The encoder spends most time on AQ and DCT; the decoder spends most time on color conversion.
 
+---
+
+## Feature: f32 YCbCr Streaming API
+
+**Date:** 2026-01-12
+**Status:** COMPLETE
+
+### Summary
+
+Added streaming APIs for both encoder and decoder that accept/output f32 YCbCr data directly, bypassing the expensive color conversion step.
+
+### API
+
+**Decoder:**
+```rust
+pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr>
+
+pub struct DecodedYCbCr {
+    pub y: Vec<f32>,      // [-128, 127] range
+    pub cb: Vec<f32>,     // [-128, 127] range
+    pub cr: Vec<f32>,     // [-128, 127] range
+    pub width: u32,
+    pub height: u32,
+    pub icc_profile: Option<Vec<u8>>,
+}
+```
+
+**Encoder:**
+```rust
+// Full-resolution chroma (will be downsampled)
+pub fn push_ycbcr_strip_f32(&mut self, y: &[f32], cb: &[f32], cr: &[f32], num_rows: usize)
+
+// Pre-downsampled chroma
+pub fn push_ycbcr_strip_f32_subsampled(&mut self, y: &[f32], cb: &[f32], cr: &[f32], num_rows: usize)
+```
+
+### Performance
+
+Benchmark on 2048x2048 images (10 iterations):
+
+| Path | Time (ms) | MP/s | Speedup |
+|------|-----------|------|---------|
+| RGB decode | 81.9 | 51.2 | baseline |
+| YCbCr decode | 65.5 | 64.1 | **1.25x** |
+| zune-jpeg | 3.7 | 1146 | 22x |
+
+The YCbCr path is 25% faster by bypassing color conversion (which was 15.8% of decode time). zune-jpeg remains much faster due to comprehensive SIMD optimization.
+
+### Use Cases
+
+- Video pipelines that work in YCbCr space
+- Re-encoding without color space round-trip
+- Custom color space transformations
+- Maximum performance when RGB output is not needed
+
+### Files Modified
+
+- `jpegli-rs/src/decode/mod.rs` - Added `DecodedYCbCr`, `decode_to_ycbcr_f32()`, `to_ycbcr_planes_f32()`
+- `jpegli-rs/src/encode/strip.rs` - Added `process_strip_ycbcr_f32()`, `process_strip_ycbcr_f32_subsampled()`
+- `jpegli-rs/src/encode/streaming.rs` - Added `push_ycbcr_strip_f32()`, `push_ycbcr_strip_f32_subsampled()`
+- `jpegli-rs/src/lib.rs` - Exported `DecodedYCbCr`
+- `jpegli-rs/tests/ycbcr_f32_api.rs` - Test coverage
+- `jpegli-rs/examples/ycbcr_benchmark.rs` - Performance benchmark
+
