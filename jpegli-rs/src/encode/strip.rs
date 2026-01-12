@@ -150,6 +150,8 @@ pub struct StripProcessor {
     pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
     chroma_downsampling: ChromaDownsampling,
+    /// Use XYB color space instead of YCbCr
+    use_xyb: bool,
 
     // === Reusable strip buffers (f32) ===
     /// Y channel strip buffer
@@ -243,9 +245,36 @@ impl StripProcessor {
         chroma_downsampling: ChromaDownsampling,
         _restart_interval: u16,
     ) -> Result<Self> {
-        // Strip height is 16 for 4:2:0 (2 MCU rows), 8 otherwise
-        let strip_height = match subsampling {
-            Subsampling::S420 | Subsampling::S440 => 16,
+        Self::with_xyb(
+            width,
+            height,
+            subsampling,
+            pixel_format,
+            chroma_downsampling,
+            _restart_interval,
+            false, // not XYB mode
+        )
+    }
+
+    /// Creates a new strip processor with XYB mode support.
+    ///
+    /// For XYB mode, strip_height is always 16 because the B component is 2x2 downsampled
+    /// and needs 16 rows of input to produce an 8x8 DCT block.
+    pub fn with_xyb(
+        width: usize,
+        height: usize,
+        subsampling: Subsampling,
+        pixel_format: PixelFormat,
+        chroma_downsampling: ChromaDownsampling,
+        _restart_interval: u16,
+        use_xyb: bool,
+    ) -> Result<Self> {
+        // Strip height is 16 for:
+        // - 4:2:0 and 4:4:0 (2 MCU rows of chroma)
+        // - XYB mode (B component is always 2x2 downsampled)
+        let strip_height = match (subsampling, use_xyb) {
+            (Subsampling::S420 | Subsampling::S440, _) => 16,
+            (_, true) => 16, // XYB always needs 16-row strips for B component
             _ => 8,
         };
 
@@ -312,6 +341,7 @@ impl StripProcessor {
             subsampling,
             pixel_format,
             chroma_downsampling,
+            use_xyb,
 
             // Strip buffers (sized for PADDED width for edge handling parity)
             y_strip: try_alloc_zeroed_f32_tracked(
@@ -446,6 +476,21 @@ impl StripProcessor {
         &self.alloc_stats
     }
 
+    /// Enables or disables XYB color space mode.
+    ///
+    /// When enabled, strips are converted to scaled XYB instead of YCbCr.
+    /// In XYB mode, the B channel is always 2x2 downsampled regardless of
+    /// the subsampling setting.
+    pub fn set_xyb_mode(&mut self, enable: bool) {
+        self.use_xyb = enable;
+    }
+
+    /// Returns whether XYB mode is enabled.
+    #[must_use]
+    pub fn is_xyb(&self) -> bool {
+        self.use_xyb
+    }
+
     /// Sets quantization tables and zero-bias parameters.
     ///
     /// Must be called before processing strips.
@@ -494,20 +539,25 @@ impl StripProcessor {
     pub fn process_strip(&mut self, rgb_strip: &[u8], strip_y: usize) -> Result<usize> {
         let actual_strip_height = self.strip_height.min(self.height - strip_y);
 
-        // Step 1: Color convert RGB → YCbCr into strip buffers
-        // Choose the optimal path based on mode and subsampling:
-        // - Gamma-aware + subsampling: fused Y + downsampled CbCr (quality-focused)
-        // - Box: standard convert + separate downsample (for bitexact parity with fullplane)
-        let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
-            && self.pixel_format != PixelFormat::Gray
-            && self.subsampling != Subsampling::S444;
-
-        if uses_gamma_aware_fused {
-            self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+        // Step 1: Color convert RGB → YCbCr or XYB into strip buffers
+        if self.use_xyb {
+            // XYB mode: convert RGB → scaled XYB
+            // X and Y go to y_strip and cb_strip at full res
+            // B goes to cr_strip at full res, then is always 2x2 downsampled
+            self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
         } else {
-            // Standard path: convert to YCbCr, then downsample separately
-            // This matches the fullplane encoder's code path for bitexact output
-            self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+            // YCbCr mode: choose optimal path based on subsampling
+            let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
+                && self.pixel_format != PixelFormat::Gray
+                && self.subsampling != Subsampling::S444;
+
+            if uses_gamma_aware_fused {
+                self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+            } else {
+                // Standard path: convert to YCbCr, then downsample separately
+                // This matches the fullplane encoder's code path for bitexact output
+                self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+            }
         }
 
         // Step 1b: Pad strips vertically if this is a partial bottom strip
@@ -525,6 +575,7 @@ impl StripProcessor {
         };
 
         // Step 3: Downsample chroma if needed
+        // - XYB mode: B channel is always 2x2 downsampled (handled in convert_strip_to_xyb)
         // - Gamma-aware fused path already wrote to cb_down/cr_down
         // - Standard path wrote to cb_strip/cr_strip at full res, needs downsampling
         let downsample_height = if actual_strip_height < self.strip_height {
@@ -532,7 +583,11 @@ impl StripProcessor {
         } else {
             actual_strip_height
         };
-        if self.pixel_format != PixelFormat::Gray && !uses_gamma_aware_fused {
+        let uses_gamma_aware_fused = !self.use_xyb
+            && self.chroma_downsampling.uses_gamma_aware()
+            && self.pixel_format != PixelFormat::Gray
+            && self.subsampling != Subsampling::S444;
+        if self.pixel_format != PixelFormat::Gray && !uses_gamma_aware_fused && !self.use_xyb {
             self.downsample_chroma_strip(downsample_height)?;
         }
 
@@ -648,6 +703,114 @@ impl StripProcessor {
                             self.y_strip[y_row_start + x] = edge_val;
                         }
                     }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Converts RGB strip to scaled XYB color space.
+    ///
+    /// XYB layout in strip buffers:
+    /// - y_strip: scaled X component (full res, padded stride)
+    /// - cb_strip: scaled Y component (full res)
+    /// - cr_strip: scaled B component (full res, before downsampling)
+    /// - cb_down: scaled Y component (copied, full res but in downsampled buffer layout)
+    /// - cr_down: scaled B component (2x2 downsampled)
+    ///
+    /// Note: XYB always uses fixed subsampling: X=1x1, Y=1x1, B=2x2
+    fn convert_strip_to_xyb(&mut self, rgb_strip: &[u8], strip_height: usize) -> Result<()> {
+        use crate::xyb::srgb_to_scaled_xyb;
+
+        let width = self.width;
+        let padded_width = self.padded_width;
+        let bpp = self.pixel_format.bytes_per_pixel();
+
+        // Only support RGB/RGBA for XYB (no grayscale or CMYK)
+        if self.pixel_format == PixelFormat::Gray || self.pixel_format == PixelFormat::Cmyk {
+            return Err(crate::error::Error::UnsupportedFeature {
+                feature: "XYB mode only supports RGB/RGBA pixel formats",
+            });
+        }
+
+        // Convert RGB to scaled XYB (scalar path for now)
+        // XYB values are stored as:
+        // - X in y_strip with padded stride
+        // - Y in cb_strip with packed stride
+        // - B in cr_strip with packed stride
+        for row in 0..strip_height {
+            let y_row_start = row * padded_width;
+            let cbcr_row_start = row * width;
+
+            for x in 0..width {
+                let src_idx = (row * width + x) * bpp;
+                let (r, g, b) = match self.pixel_format {
+                    PixelFormat::Rgb | PixelFormat::Rgba => (
+                        rgb_strip[src_idx],
+                        rgb_strip[src_idx + 1],
+                        rgb_strip[src_idx + 2],
+                    ),
+                    PixelFormat::Bgr | PixelFormat::Bgra => (
+                        rgb_strip[src_idx + 2],
+                        rgb_strip[src_idx + 1],
+                        rgb_strip[src_idx],
+                    ),
+                    _ => unreachable!(),
+                };
+
+                // Convert sRGB to scaled XYB
+                let (scaled_x, scaled_y, scaled_b) = srgb_to_scaled_xyb(r, g, b);
+
+                // Store: X→y_strip, Y→cb_strip, B→cr_strip
+                // Scale to JPEG sample range (multiply by 255) for level shift consistency
+                self.y_strip[y_row_start + x] = scaled_x * 255.0;
+                self.cb_strip[cbcr_row_start + x] = scaled_y * 255.0;
+                self.cr_strip[cbcr_row_start + x] = scaled_b * 255.0;
+            }
+
+            // Edge-pad X (y_strip) row
+            if width < padded_width {
+                let edge_val = self.y_strip[y_row_start + width - 1];
+                for x in width..padded_width {
+                    self.y_strip[y_row_start + x] = edge_val;
+                }
+            }
+        }
+
+        // For XYB mode, we handle the components differently:
+        // - X is in y_strip (full res, already padded)
+        // - Y is in cb_strip (full res, needs to stay there for DCT)
+        // - B needs 2x2 downsampling (cr_strip → cr_down)
+        //
+        // Note: The DCT step will need to handle XYB's component structure specially
+        // since Y (cb_strip) is full resolution unlike standard chroma.
+
+        // Downsample B channel (cr_strip → cr_down) using 2x2 box filter
+        let b_width = (width + 1) / 2;
+        let b_height = (strip_height + 1) / 2;
+        crate::encode_simd::downsample_2x2_simd_inplace(
+            &self.cr_strip[..strip_height * width],
+            width,
+            strip_height,
+            &mut self.cr_down[..b_width * b_height],
+        );
+
+        // Rearrange and pad cr_down (B channel)
+        self.pad_chroma_down_strip(b_height, b_width);
+
+        // For Y component (cb_strip): rearrange to padded layout directly
+        // We'll use cb_strip as the source for DCT in XYB mode
+        if padded_width > width {
+            for row in (0..strip_height).rev() {
+                let src_start = row * width;
+                let dst_start = row * padded_width;
+                for x in (0..width).rev() {
+                    self.cb_strip[dst_start + x] = self.cb_strip[src_start + x];
+                }
+                let edge_val = self.cb_strip[dst_start + width - 1];
+                for x in width..padded_width {
+                    self.cb_strip[dst_start + x] = edge_val;
                 }
             }
         }
@@ -1019,42 +1182,97 @@ impl StripProcessor {
         // Compute DCT for Cb/Cr blocks (if color)
         if self.pixel_format != PixelFormat::Gray {
             let width = self.width;
-            // Use original chroma dimensions for block counts
-            let (c_width, c_strip_height) = match self.subsampling {
-                Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
-                Subsampling::S422 => ((width + 1) / 2, strip_height),
-                Subsampling::S440 => (width, (strip_height + 1) / 2),
-                Subsampling::S444 => (width, strip_height),
-            };
 
-            let c_blocks_w = (c_width + 7) / 8;
-            let c_strip_blocks_h = (c_strip_height + 7) / 8;
+            if self.use_xyb {
+                // XYB mode: Y component is full resolution, B is 2x2 downsampled
+                // - Y (cb_strip): full res, same block dimensions as X (y_strip)
+                // - B (cr_down): 2x2 downsampled
 
-            // cb_down/cr_down are in padded layout (padded_c_width pixels per row)
-            let padded_c_width = self.padded_c_width;
-            let c_size = c_strip_height * padded_c_width;
+                // Process Y component (full res from cb_strip which is now in padded layout)
+                let y_size = strip_height * padded_width;
+                for local_by in 0..strip_blocks_h {
+                    let global_by = start_block_y + local_by;
+                    if global_by >= (height + 7) / 8 {
+                        break;
+                    }
+                    for bx in 0..blocks_w {
+                        let cb_block = extract_block_from_strip_wide(
+                            &self.cb_strip[..y_size],
+                            bx,
+                            local_by,
+                            padded_width,
+                        );
+                        let cb_dct = crate::dct::simd::forward_dct_8x8_wide(&cb_block);
+                        self.pending_cb_blocks[pending_idx].push(cb_dct);
+                    }
+                }
 
-            for local_by in 0..c_strip_blocks_h {
-                for bx in 0..c_blocks_w {
-                    // Cb block - DCT only (wide-native path)
-                    let cb_block = extract_block_from_strip_wide(
-                        &self.cb_down[..c_size],
-                        bx,
-                        local_by,
-                        padded_c_width,
-                    );
-                    let cb_dct = crate::dct::simd::forward_dct_8x8_wide(&cb_block);
-                    self.pending_cb_blocks[pending_idx].push(cb_dct);
+                // Process B component (2x2 downsampled from cr_down)
+                // For XYB, B is always 2x2 downsampled, so use c_width/c_height based on that
+                let b_width = (width + 1) / 2;
+                let b_strip_height = (strip_height + 1) / 2;
+                let b_blocks_w = (b_width + 7) / 8;
+                let b_strip_blocks_h = (b_strip_height + 7) / 8;
+                let padded_c_width = self.padded_c_width;
 
-                    // Cr block - DCT only (wide-native path)
-                    let cr_block = extract_block_from_strip_wide(
-                        &self.cr_down[..c_size],
-                        bx,
-                        local_by,
-                        padded_c_width,
-                    );
-                    let cr_dct = crate::dct::simd::forward_dct_8x8_wide(&cr_block);
-                    self.pending_cr_blocks[pending_idx].push(cr_dct);
+                // cr_down is sized for c_strip_height rows based on the subsampling mode,
+                // but for XYB we compute b_strip_height separately. Use the full cr_down size.
+                let c_strip_height_for_buf = match self.subsampling {
+                    Subsampling::S420 | Subsampling::S440 => strip_height / 2,
+                    _ => strip_height,
+                };
+                let c_size = c_strip_height_for_buf * padded_c_width;
+
+                for local_by in 0..b_strip_blocks_h {
+                    for bx in 0..b_blocks_w {
+                        let cr_block = extract_block_from_strip_wide(
+                            &self.cr_down[..c_size],
+                            bx,
+                            local_by,
+                            padded_c_width,
+                        );
+                        let cr_dct = crate::dct::simd::forward_dct_8x8_wide(&cr_block);
+                        self.pending_cr_blocks[pending_idx].push(cr_dct);
+                    }
+                }
+            } else {
+                // YCbCr mode: standard chroma dimensions based on subsampling
+                let (c_width, c_strip_height) = match self.subsampling {
+                    Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
+                    Subsampling::S422 => ((width + 1) / 2, strip_height),
+                    Subsampling::S440 => (width, (strip_height + 1) / 2),
+                    Subsampling::S444 => (width, strip_height),
+                };
+
+                let c_blocks_w = (c_width + 7) / 8;
+                let c_strip_blocks_h = (c_strip_height + 7) / 8;
+
+                // cb_down/cr_down are in padded layout (padded_c_width pixels per row)
+                let padded_c_width = self.padded_c_width;
+                let c_size = c_strip_height * padded_c_width;
+
+                for local_by in 0..c_strip_blocks_h {
+                    for bx in 0..c_blocks_w {
+                        // Cb block - DCT only (wide-native path)
+                        let cb_block = extract_block_from_strip_wide(
+                            &self.cb_down[..c_size],
+                            bx,
+                            local_by,
+                            padded_c_width,
+                        );
+                        let cb_dct = crate::dct::simd::forward_dct_8x8_wide(&cb_block);
+                        self.pending_cb_blocks[pending_idx].push(cb_dct);
+
+                        // Cr block - DCT only (wide-native path)
+                        let cr_block = extract_block_from_strip_wide(
+                            &self.cr_down[..c_size],
+                            bx,
+                            local_by,
+                            padded_c_width,
+                        );
+                        let cr_dct = crate::dct::simd::forward_dct_8x8_wide(&cr_block);
+                        self.pending_cr_blocks[pending_idx].push(cr_dct);
+                    }
                 }
             }
         }

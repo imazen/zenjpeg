@@ -1428,9 +1428,21 @@ impl Encoder {
             )?;
 
         // ========== WRITE JPEG STRUCTURE ==========
-        self.write_header(&mut output)?;
-        self.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
-        self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
+        if self.config.use_xyb {
+            // XYB mode: use XYB-specific headers
+            self.write_header_xyb(&mut output)?;
+            // Write APP14 Adobe marker for RGB colorspace (required by decoders)
+            self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
+            // Write XYB ICC profile so decoders can interpret the colors correctly
+            self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
+            self.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
+            self.write_frame_header_xyb_progressive(&mut output)?;
+        } else {
+            // YCbCr mode: use standard headers
+            self.write_header(&mut output)?;
+            self.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
+            self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
+        }
 
         // Write initial Huffman tables
         let mut next_dht_index = self.write_huffman_tables_progressive_initial(

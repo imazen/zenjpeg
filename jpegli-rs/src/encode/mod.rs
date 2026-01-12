@@ -58,7 +58,7 @@ use crate::alloc::{
     checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, try_with_capacity, validate_dimensions,
     DEFAULT_MAX_PIXELS,
 };
-use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI};
+use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI, XYB_ICC_PROFILE};
 use crate::error::{Error, Result};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{
@@ -460,16 +460,7 @@ impl Encoder {
             });
         }
 
-        // XYB mode uses legacy full-plane encoder (strip encoder doesn't support XYB yet)
-        if self.config.use_xyb {
-            return match self.config.mode {
-                JpegMode::Baseline => self.encode_baseline_with_stop(data, &stop),
-                JpegMode::Progressive => self.encode_progressive_with_stop(data, &stop),
-                _ => unreachable!(), // Already validated above
-            };
-        }
-
-        // YCbCr uses strip-based encoding (low memory, same output)
+        // Both YCbCr and XYB use strip-based encoding (low memory)
         self.encode_strip_based_with_stop(data, stop)
     }
 
@@ -524,28 +515,22 @@ impl Encoder {
             });
         }
 
-        // Only supports YCbCr color space (not XYB)
-        if self.config.use_xyb {
-            return Err(Error::UnsupportedFeature {
-                feature: "strip-based encoding does not support XYB color space",
-            });
-        }
-
-        // Create strip processor with chroma downsampling and restart interval
-        let mut processor = strip::StripProcessor::with_options(
+        // Create strip processor with chroma downsampling, restart interval, and XYB mode
+        let mut processor = strip::StripProcessor::with_xyb(
             width,
             height,
             self.config.subsampling,
             self.config.pixel_format,
             self.config.chroma_downsampling,
             self.config.restart_interval,
+            self.config.use_xyb,
         )?;
 
         // Generate quantization tables
         let is_420 = self.config.subsampling == Subsampling::S420;
-        let y_quant = self.gen_quant_table(0, false, is_420);
-        let cb_quant = self.gen_quant_table(1, false, is_420);
-        let cr_quant = self.gen_quant_table(2, false, is_420);
+        let y_quant = self.gen_quant_table(0, self.config.use_xyb, is_420);
+        let cb_quant = self.gen_quant_table(1, self.config.use_xyb, is_420);
+        let cr_quant = self.gen_quant_table(2, self.config.use_xyb, is_420);
 
         // Compute zero bias params
         let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
@@ -583,6 +568,12 @@ impl Encoder {
         // Branch based on encoding mode
         match self.config.mode {
             JpegMode::Progressive => {
+                // Progressive mode requires optimized Huffman tables
+                if !self.config.optimize_huffman {
+                    return Err(Error::UnsupportedFeature {
+                        feature: "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                    });
+                }
                 // Use progressive encoding path
                 self.encode_progressive_from_blocks(
                     &strip_output.y_blocks,
@@ -600,53 +591,104 @@ impl Encoder {
                 // Build output JPEG
                 let mut output = try_with_capacity(width * height / 4, "jpeg output")?; // Rough estimate
 
-                // Write JPEG headers
-                self.write_header(&mut output)?;
-                self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
-                self.write_frame_header(&mut output)?;
+                // Branch based on XYB vs YCbCr mode
+                let scan_data = if self.config.use_xyb {
+                    // XYB mode: uses different headers, tables, and encoding
+                    // strip_output contains: y_blocks = X, cb_blocks = Y, cr_blocks = B (2x2 downsampled)
+                    self.write_header_xyb(&mut output)?;
+                    // Write APP14 Adobe marker for RGB colorspace (required by decoders)
+                    self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
+                    // Write XYB ICC profile so decoders can interpret the colors correctly
+                    self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
+                    self.write_quant_tables_xyb(&mut output, &y_quant, &cb_quant, &cr_quant)?;
+                    self.write_frame_header_xyb(&mut output)?;
 
-                // Respect optimize_huffman config (must match full-plane encoder behavior)
-                let scan_data = if self.config.optimize_huffman {
-                    // Build optimized Huffman tables from blocks (uses MCU order)
-                    let tables = self.build_optimized_tables(
-                        &strip_output.y_blocks,
-                        &strip_output.cb_blocks,
-                        &strip_output.cr_blocks,
-                        is_color,
-                    )?;
+                    if self.config.optimize_huffman {
+                        // Use raster-ordered XYB encoding (strip encoder produces raster order)
+                        let (dc_table, ac_table) = self.build_optimized_tables_xyb_raster(
+                            &strip_output.y_blocks,  // X component
+                            &strip_output.cb_blocks, // Y component
+                            &strip_output.cr_blocks, // B component (2x2 downsampled)
+                        )?;
 
-                    self.write_huffman_tables_optimized(&mut output, &tables)?;
+                        self.write_huffman_tables_xyb_optimized(&mut output, &dc_table, &ac_table);
 
-                    if self.config.restart_interval > 0 {
-                        self.write_restart_interval(&mut output)?;
+                        if self.config.restart_interval > 0 {
+                            self.write_restart_interval(&mut output)?;
+                        }
+                        self.write_scan_header_xyb(&mut output)?;
+
+                        self.encode_with_tables_xyb_raster(
+                            &strip_output.y_blocks,
+                            &strip_output.cb_blocks,
+                            &strip_output.cr_blocks,
+                            &dc_table,
+                            &ac_table,
+                        )?
+                    } else {
+                        self.write_huffman_tables(&mut output)?;
+
+                        if self.config.restart_interval > 0 {
+                            self.write_restart_interval(&mut output)?;
+                        }
+                        self.write_scan_header_xyb(&mut output)?;
+
+                        // XYB without optimized tables - use raster-ordered standard encoding
+                        self.encode_with_tables_xyb_standard_raster(
+                            &strip_output.y_blocks,
+                            &strip_output.cb_blocks,
+                            &strip_output.cr_blocks,
+                        )?
                     }
-                    self.write_scan_header(&mut output)?;
-
-                    // Encode blocks with optimized tables
-                    self.encode_with_tables(
-                        &strip_output.y_blocks,
-                        &strip_output.cb_blocks,
-                        &strip_output.cr_blocks,
-                        is_color,
-                        Some(&tables),
-                    )?
                 } else {
-                    // Use standard (fixed) Huffman tables
-                    self.write_huffman_tables(&mut output)?;
+                    // YCbCr mode: standard JPEG encoding
+                    self.write_header(&mut output)?;
+                    self.write_quant_tables(&mut output, &y_quant, &cb_quant, &cr_quant)?;
+                    self.write_frame_header(&mut output)?;
 
-                    if self.config.restart_interval > 0 {
-                        self.write_restart_interval(&mut output)?;
+                    // Respect optimize_huffman config (must match full-plane encoder behavior)
+                    if self.config.optimize_huffman {
+                        // Build optimized Huffman tables from blocks (uses MCU order)
+                        let tables = self.build_optimized_tables(
+                            &strip_output.y_blocks,
+                            &strip_output.cb_blocks,
+                            &strip_output.cr_blocks,
+                            is_color,
+                        )?;
+
+                        self.write_huffman_tables_optimized(&mut output, &tables)?;
+
+                        if self.config.restart_interval > 0 {
+                            self.write_restart_interval(&mut output)?;
+                        }
+                        self.write_scan_header(&mut output)?;
+
+                        // Encode blocks with optimized tables
+                        self.encode_with_tables(
+                            &strip_output.y_blocks,
+                            &strip_output.cb_blocks,
+                            &strip_output.cr_blocks,
+                            is_color,
+                            Some(&tables),
+                        )?
+                    } else {
+                        // Use standard (fixed) Huffman tables
+                        self.write_huffman_tables(&mut output)?;
+
+                        if self.config.restart_interval > 0 {
+                            self.write_restart_interval(&mut output)?;
+                        }
+                        self.write_scan_header(&mut output)?;
+
+                        // Encode blocks with standard tables
+                        self.encode_with_tables(
+                            &strip_output.y_blocks,
+                            &strip_output.cb_blocks,
+                            &strip_output.cr_blocks,
+                            is_color,
+                            None,
+                        )?
                     }
-                    self.write_scan_header(&mut output)?;
-
-                    // Encode blocks with standard tables
-                    self.encode_with_tables(
-                        &strip_output.y_blocks,
-                        &strip_output.cb_blocks,
-                        &strip_output.cr_blocks,
-                        is_color,
-                        None,
-                    )?
                 };
 
                 output.extend_from_slice(&scan_data);
