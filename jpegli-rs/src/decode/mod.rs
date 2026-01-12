@@ -36,7 +36,8 @@ use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
 use crate::idct_int::idct_int_auto;
 use crate::quant::{
-    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, DequantBiasStats,
+    dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
+    dequantize_unzigzag_i32, DequantBiasStats,
 };
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
@@ -1881,11 +1882,12 @@ impl<'a> JpegParser<'a> {
             // IDCT all blocks in this MCU row for all 3 components
             for comp_idx in 0..3 {
                 let info = &comp_infos[comp_idx];
-                let quant = self.quant_tables[info.quant_idx]
-                    .as_ref()
-                    .ok_or(Error::InternalError {
-                        reason: "missing quantization table",
-                    })?;
+                let quant =
+                    self.quant_tables[info.quant_idx]
+                        .as_ref()
+                        .ok_or(Error::InternalError {
+                            reason: "missing quantization table",
+                        })?;
 
                 let strip = match comp_idx {
                     0 => &mut y_strip,
@@ -1908,25 +1910,17 @@ impl<'a> JpegParser<'a> {
                         }
                         let coeffs = &self.coeffs[comp_idx][block_idx];
 
-                        // Zigzag reorder
-                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
-                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
-                            natural_coeffs[zi as usize] = coeffs[i];
-                        }
+                        // Fused dequantize + unzigzag (single pass)
+                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
 
-                        // Integer IDCT
-                        let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
-                        let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
-                        idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
-
-                        // Copy to strip buffer
+                        // IDCT writes directly to strip buffer (no intermediate copy)
                         let base_px = bx * DCT_SIZE;
-                        for y in 0..DCT_SIZE {
-                            let dst_offset = (strip_row + y) * strip_width + base_px;
-                            let src_offset = y * DCT_SIZE;
-                            strip[dst_offset..dst_offset + DCT_SIZE]
-                                .copy_from_slice(&pixels_i16[src_offset..src_offset + DCT_SIZE]);
-                        }
+                        let dst_offset = strip_row * strip_width + base_px;
+                        idct_int_auto(
+                            &mut dequant_i32,
+                            &mut strip[dst_offset..],
+                            strip_width,
+                        );
                     }
                 }
             }
@@ -2113,12 +2107,15 @@ impl<'a> JpegParser<'a> {
                                     let dst_offset = (base_py + y) * info.comp_width + base_px;
                                     let src_offset = y * DCT_SIZE;
                                     comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
-                                        .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+                                        .copy_from_slice(
+                                            &pixels[src_offset..src_offset + DCT_SIZE],
+                                        );
                                 }
                             } else {
                                 for y in 0..rows_to_copy {
                                     for x in 0..cols_to_copy {
-                                        comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
+                                        comp_plane_f32
+                                            [(base_py + y) * info.comp_width + base_px + x] =
                                             pixels[y * DCT_SIZE + x];
                                     }
                                 }
@@ -2142,7 +2139,8 @@ impl<'a> JpegParser<'a> {
                             } else {
                                 for y in 0..rows_to_copy {
                                     for x in 0..cols_to_copy {
-                                        comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
+                                        comp_plane_f32
+                                            [(base_py + y) * info.comp_width + base_px + x] =
                                             pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
                                     }
                                 }
@@ -2511,7 +2509,10 @@ impl<'a> JpegParser<'a> {
     /// Returns (Y, Cb, Cr) planes, each width×height in size.
     /// Values are in centered range [-128, 127] (raw DCT output).
     /// Chroma planes are upsampled to full resolution.
-    fn to_ycbcr_planes_f32(&self, fancy_upsampling: bool) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    fn to_ycbcr_planes_f32(
+        &self,
+        fancy_upsampling: bool,
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         if self.coeffs.is_empty() {
             return Err(Error::InternalError {
                 reason: "no decoded data",
