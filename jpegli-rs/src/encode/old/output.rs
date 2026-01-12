@@ -194,7 +194,7 @@ impl Encoder {
         output.push(0xFF);
         output.push(marker);
 
-        let num_components = if self.config.pixel_format == PixelFormat::Gray {
+        let num_components = if self.config.pixel_format.is_grayscale() {
             1u8
         } else {
             3u8
@@ -561,7 +561,7 @@ impl Encoder {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
-        let num_components = if self.config.pixel_format == PixelFormat::Gray {
+        let num_components = if self.config.pixel_format.is_grayscale() {
             1u8
         } else {
             3u8
