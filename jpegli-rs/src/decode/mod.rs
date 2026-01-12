@@ -34,7 +34,10 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::icc::apply_icc_transform;
 use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
-use crate::quant::{dequantize_block, dequantize_block_with_bias, DequantBiasStats};
+use crate::idct_int::idct_int_auto;
+use crate::quant::{
+    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, DequantBiasStats,
+};
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
 /// Decoder configuration.
@@ -1886,32 +1889,52 @@ impl<'a> JpegParser<'a> {
                             natural_coeffs[zi as usize] = coeffs[i];
                         }
 
-                        // Dequantize and IDCT
-                        let dequant = if is_xyb {
-                            dequantize_block(&natural_coeffs, quant)
-                        } else {
-                            dequantize_block_with_bias(&natural_coeffs, quant, biases)
-                        };
-                        let pixels = inverse_dct_8x8(&dequant);
-
                         // Store pixels - use row-based copy for efficiency
                         let base_px = bx * DCT_SIZE;
                         let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
 
-                        if cols_to_copy == DCT_SIZE {
-                            // Fast path: full 8-pixel row copy
-                            for y in 0..rows_to_copy {
-                                let dst_offset = (base_py + y) * info.comp_width + base_px;
-                                let src_offset = y * DCT_SIZE;
-                                comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
-                                    .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+                        if is_xyb {
+                            // XYB mode: use f32 IDCT for extended gamut precision
+                            let dequant = dequantize_block(&natural_coeffs, quant);
+                            let pixels = inverse_dct_8x8(&dequant);
+
+                            if cols_to_copy == DCT_SIZE {
+                                for y in 0..rows_to_copy {
+                                    let dst_offset = (base_py + y) * info.comp_width + base_px;
+                                    let src_offset = y * DCT_SIZE;
+                                    comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
+                                        .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+                                }
+                            } else {
+                                for y in 0..rows_to_copy {
+                                    for x in 0..cols_to_copy {
+                                        comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
+                                            pixels[y * DCT_SIZE + x];
+                                    }
+                                }
                             }
                         } else {
-                            // Slow path: partial row copy (edge blocks)
-                            for y in 0..rows_to_copy {
-                                for x in 0..cols_to_copy {
-                                    comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
-                                        pixels[y * DCT_SIZE + x];
+                            // Standard JPEG: use fast integer IDCT
+                            let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
+                            let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
+                            idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
+
+                            // Convert i16 [0,255] to f32 centered [-128,127]
+                            if cols_to_copy == DCT_SIZE {
+                                for y in 0..rows_to_copy {
+                                    let dst_offset = (base_py + y) * info.comp_width + base_px;
+                                    let src_offset = y * DCT_SIZE;
+                                    for x in 0..DCT_SIZE {
+                                        comp_plane_f32[dst_offset + x] =
+                                            pixels_i16[src_offset + x] as f32 - 128.0;
+                                    }
+                                }
+                            } else {
+                                for y in 0..rows_to_copy {
+                                    for x in 0..cols_to_copy {
+                                        comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
+                                            pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
+                                    }
                                 }
                             }
                         }
@@ -2155,6 +2178,7 @@ impl<'a> JpegParser<'a> {
                             natural_coeffs[zi as usize] = coeffs[i];
                         }
 
+                        // Always use f32 IDCT for f32 output - preserves fractional precision
                         let dequant = if is_xyb {
                             dequantize_block(&natural_coeffs, quant)
                         } else {
@@ -2416,26 +2440,30 @@ impl<'a> JpegParser<'a> {
                             natural_coeffs[zi as usize] = coeffs[i];
                         }
 
-                        // Dequantize and IDCT (always use bias for non-XYB)
-                        let dequant = dequantize_block_with_bias(&natural_coeffs, quant, biases);
-                        let pixels = inverse_dct_8x8(&dequant);
+                        // Use fast integer IDCT (always non-XYB for YCbCr output)
+                        let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
+                        let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
+                        idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
 
                         // Store pixels
                         let base_px = bx * DCT_SIZE;
                         let cols_to_copy = DCT_SIZE.min(info.comp_width.saturating_sub(base_px));
 
+                        // Convert i16 [0,255] to f32 centered [-128,127]
                         if cols_to_copy == DCT_SIZE {
                             for y in 0..rows_to_copy {
                                 let dst_offset = (base_py + y) * info.comp_width + base_px;
                                 let src_offset = y * DCT_SIZE;
-                                comp_plane_f32[dst_offset..dst_offset + DCT_SIZE]
-                                    .copy_from_slice(&pixels[src_offset..src_offset + DCT_SIZE]);
+                                for x in 0..DCT_SIZE {
+                                    comp_plane_f32[dst_offset + x] =
+                                        pixels_i16[src_offset + x] as f32 - 128.0;
+                                }
                             }
                         } else {
                             for y in 0..rows_to_copy {
                                 for x in 0..cols_to_copy {
                                     comp_plane_f32[(base_py + y) * info.comp_width + base_px + x] =
-                                        pixels[y * DCT_SIZE + x];
+                                        pixels_i16[y * DCT_SIZE + x] as f32 - 128.0;
                                 }
                             }
                         }
@@ -2648,14 +2676,15 @@ mod tests {
         let decoded_u8 = decoder.decode(&jpeg).expect("u8 decoding should succeed");
         let converted_u8 = decoded_f32.to_u8();
 
-        // Values should be very close (within 1 due to rounding)
+        // Values should be close - allow diff of 2 because u8 path uses integer IDCT
+        // while f32 path uses f32 IDCT (standard JPEG precision difference)
         let mut max_diff = 0i32;
         for i in 0..decoded_u8.data.len() {
             let diff = (decoded_u8.data[i] as i32 - converted_u8.data[i] as i32).abs();
             max_diff = max_diff.max(diff);
         }
         assert!(
-            max_diff <= 1,
+            max_diff <= 2,
             "f32→u8 conversion differs by {} from direct u8",
             max_diff
         );
