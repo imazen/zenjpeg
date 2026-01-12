@@ -155,19 +155,25 @@ impl Default for BitWriter {
 /// Bit reader for JPEG decoding.
 ///
 /// Reads bits with byte unstuffing (0xFF 0x00 -> 0xFF).
-/// Uses a 64-bit buffer matching the jpegli C++ implementation for safety.
+/// Uses dual 64-bit buffers for optimized peek/read operations:
+/// - `bit_buffer`: Bottom-aligned (LSB) for building up
+/// - `aligned_buffer`: Top-aligned (MSB at bit 63) for fast peek operations
 #[derive(Debug)]
 pub struct BitReader<'a> {
     /// Input data
     data: &'a [u8],
     /// Current byte position
     position: usize,
-    /// Current bit accumulator (64-bit to match C++ jpegli)
+    /// Bottom-aligned bit buffer (bits in low positions)
     bit_buffer: u64,
-    /// Number of bits in accumulator (0-64)
+    /// Top-aligned bit buffer (MSB at bit 63) for fast peek operations
+    aligned_buffer: u64,
+    /// Number of bits in buffer (0-64)
     bits_in_buffer: u8,
     /// Whether we've hit a marker
     marker_found: Option<u8>,
+    /// Number of bytes we've over-read past end of data
+    overread_by: usize,
 }
 
 /// Saved state of a BitReader for speculative decoding.
@@ -175,8 +181,20 @@ pub struct BitReader<'a> {
 pub struct BitReaderState {
     position: usize,
     bit_buffer: u64,
+    aligned_buffer: u64,
     bits_in_buffer: u8,
     marker_found: Option<u8>,
+    overread_by: usize,
+}
+
+/// Check if a u32 contains a 0xFF byte using SWAR (SIMD Within A Register).
+/// From Stanford Bithacks: https://graphics.stanford.edu/~seander/bithacks.html
+#[inline(always)]
+const fn has_byte_0xff(v: u32) -> bool {
+    // XOR with 0xFFFFFFFF to find bytes that are 0xFF (they become 0x00)
+    let x = v ^ 0xFFFF_FFFF;
+    // Check if any byte is zero using the "has zero byte" trick
+    (((x.wrapping_sub(0x0101_0101)) & !x) & 0x8080_8080) != 0
 }
 
 impl<'a> BitReader<'a> {
@@ -187,24 +205,23 @@ impl<'a> BitReader<'a> {
             data,
             position: 0,
             bit_buffer: 0,
+            aligned_buffer: 0,
             bits_in_buffer: 0,
             marker_found: None,
+            overread_by: 0,
         }
     }
 
-    /// Reads the next byte, handling byte unstuffing.
-    ///
-    /// According to JPEG spec (ITU-T T.81), when we encounter 0xFF:
-    /// - 0xFF 0x00: Byte stuffing, represents the data byte 0xFF
-    /// - 0xFF 0xXX (where XX != 0x00 and XX != 0xFF): A marker
-    /// - 0xFF 0xFF...: Fill bytes, skip until non-0xFF byte found
-    fn read_byte(&mut self) -> Result<u8> {
-        // If we've already found a marker, don't read more data
+    /// Reads a single byte with byte unstuffing (slow path).
+    /// Used when fast 4-byte path can't be used (has 0xFF or not enough bytes).
+    #[inline]
+    fn read_byte_slow(&mut self) -> Result<u8> {
         if self.marker_found.is_some() {
             return Err(Error::EndOfScanData);
         }
 
         if self.position >= self.data.len() {
+            self.overread_by += 1;
             return Err(Error::TruncatedData {
                 context: "reading entropy data",
             });
@@ -220,6 +237,7 @@ impl<'a> BitReader<'a> {
             }
 
             if self.position >= self.data.len() {
+                self.overread_by += 1;
                 return Err(Error::TruncatedData {
                     context: "after 0xFF marker prefix",
                 });
@@ -230,8 +248,7 @@ impl<'a> BitReader<'a> {
                 // Byte stuffing - skip the 0x00
                 self.position += 1;
             } else {
-                // Found a marker (including restart markers 0xD0-0xD7)
-                // Rewind position to before the FF so the parser can read the marker
+                // Found a marker
                 self.position -= 1;
                 self.marker_found = Some(next);
                 return Err(Error::EndOfScanData);
@@ -241,67 +258,130 @@ impl<'a> BitReader<'a> {
         Ok(byte)
     }
 
-    /// Fills the bit buffer to have at least `count` bits.
-    /// Returns Ok(true) if filled, Ok(false) if end of data but some bits available.
-    ///
-    /// Matches C++ jpegli FillBitWindow() logic:
-    /// - Only fill if bits_in_buffer <= 16 (need more bits)
-    /// - Keep filling while bits_in_buffer <= 56 (room for another byte)
-    /// - 64-bit buffer ensures no overflow
-    fn fill_buffer(&mut self, count: u8) -> Result<bool> {
-        // Only refill if we need more bits
-        if self.bits_in_buffer < count {
-            // Fill while we have room for another byte (56 + 8 = 64)
-            while self.bits_in_buffer <= 56 {
-                match self.read_byte() {
-                    Ok(byte) => {
-                        self.bit_buffer = (self.bit_buffer << 8) | (byte as u64);
-                        self.bits_in_buffer += 8;
-                    }
-                    Err(_) => {
-                        // Can't read more bytes, but might have enough bits already
-                        break;
-                    }
-                }
-                // Stop early if we have enough
-                if self.bits_in_buffer >= count {
-                    break;
-                }
+    /// Sync aligned_buffer from bit_buffer.
+    /// Call after modifying bit_buffer to keep both in sync.
+    #[inline(always)]
+    fn sync_aligned(&mut self) {
+        self.aligned_buffer = if self.bits_in_buffer > 0 && self.bits_in_buffer < 64 {
+            self.bit_buffer << (64 - self.bits_in_buffer)
+        } else if self.bits_in_buffer == 64 {
+            self.bit_buffer
+        } else {
+            0
+        };
+    }
+
+    /// Refills the bit buffer to have at least 32 bits.
+    /// Uses fast 4-byte path when no 0xFF bytes are present.
+    #[inline(always)]
+    pub fn refill(&mut self) -> Result<bool> {
+        // Only refill if we have fewer than 32 bits
+        if self.bits_in_buffer >= 32 {
+            return Ok(true);
+        }
+
+        // If we've found a marker or are overreading, extend with zeros
+        if self.marker_found.is_some() || self.overread_by > 0 {
+            // Shift in zeros (important: actually fill with zeros, not just claim more bits)
+            self.bit_buffer <<= 32;
+            self.bits_in_buffer = self.bits_in_buffer.saturating_add(32).min(64);
+            self.sync_aligned();
+            return Ok(true);
+        }
+
+        // Try fast 4-byte path (no 0xFF bytes)
+        if self.position + 4 <= self.data.len() {
+            let bytes = [
+                self.data[self.position],
+                self.data[self.position + 1],
+                self.data[self.position + 2],
+                self.data[self.position + 3],
+            ];
+            let word = u32::from_be_bytes(bytes);
+
+            // Check if any byte is 0xFF using SWAR
+            if !has_byte_0xff(word) {
+                // No 0xFF - fast path
+                self.position += 4;
+                self.bit_buffer = (self.bit_buffer << 32) | (word as u64);
+                self.bits_in_buffer += 32;
+                self.sync_aligned();
+                return Ok(true);
             }
+            // Has 0xFF - fall through to slow path
+        }
+
+        // Slow path: read byte by byte with byte stuffing
+        while self.bits_in_buffer <= 56 {
+            match self.read_byte_slow() {
+                Ok(byte) => {
+                    self.bit_buffer = (self.bit_buffer << 8) | (byte as u64);
+                    self.bits_in_buffer += 8;
+                }
+                Err(_) => break,
+            }
+            if self.bits_in_buffer >= 32 {
+                break;
+            }
+        }
+        self.sync_aligned();
+        Ok(self.bits_in_buffer > 0)
+    }
+
+    /// Fills the bit buffer to have at least `count` bits.
+    #[inline]
+    fn fill_buffer(&mut self, count: u8) -> Result<bool> {
+        if self.bits_in_buffer < count {
+            self.refill()?;
         }
         Ok(self.bits_in_buffer >= count)
     }
 
     /// Peeks at the next `count` bits without consuming them.
-    /// Returns Err if not enough bits available.
+    /// Uses fast top-aligned buffer for O(1) peek.
+    #[inline]
     pub fn peek_bits(&mut self, count: u8) -> Result<u32> {
         debug_assert!(count <= 32);
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
-            // Not enough bits after trying to fill - end of scan data
             return Err(Error::EndOfScanData);
         }
-        Ok(((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32)
+        // Fast peek using top-aligned buffer - just right shift
+        Ok((self.aligned_buffer >> (64 - count)) as u32)
     }
 
     /// Reads `count` bits from the stream.
+    #[inline]
     pub fn read_bits(&mut self, count: u8) -> Result<u32> {
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
-            // Not enough bits after trying to fill - end of scan data
             return Err(Error::EndOfScanData);
         }
-        let bits =
-            ((self.bit_buffer >> (self.bits_in_buffer - count)) & ((1u64 << count) - 1)) as u32;
-        self.bits_in_buffer -= count;
+        // Use aligned buffer for fast read
+        let bits = (self.aligned_buffer >> (64 - count)) as u32;
+        self.drop_bits(count);
         Ok(bits)
     }
 
+    /// Drops `count` bits from the buffer (fast path).
+    /// Updates both buffers to keep them in sync for refill.
+    #[inline(always)]
+    fn drop_bits(&mut self, count: u8) {
+        self.bits_in_buffer = self.bits_in_buffer.saturating_sub(count);
+        self.aligned_buffer <<= count;
+        // Keep bit_buffer in sync: mask off the dropped MSBs
+        let mask = if self.bits_in_buffer >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.bits_in_buffer).wrapping_sub(1)
+        };
+        self.bit_buffer &= mask;
+    }
+
     /// Skips `count` bits.
+    #[inline]
     pub fn skip_bits(&mut self, count: u8) {
-        if count <= self.bits_in_buffer {
-            self.bits_in_buffer -= count;
-        }
+        self.drop_bits(count);
     }
 
     /// Reads a single bit.
@@ -322,7 +402,6 @@ impl<'a> BitReader<'a> {
         let half = 1i16 << (bits - 1);
 
         if value < half {
-            // Negative value
             Ok(value - (2 * half - 1))
         } else {
             Ok(value)
@@ -332,6 +411,7 @@ impl<'a> BitReader<'a> {
     /// Aligns to the next byte boundary.
     pub fn align_to_byte(&mut self) {
         self.bits_in_buffer = 0;
+        self.aligned_buffer = 0;
     }
 
     /// Saves the current reader state for potential rollback.
@@ -340,8 +420,10 @@ impl<'a> BitReader<'a> {
         BitReaderState {
             position: self.position,
             bit_buffer: self.bit_buffer,
+            aligned_buffer: self.aligned_buffer,
             bits_in_buffer: self.bits_in_buffer,
             marker_found: self.marker_found,
+            overread_by: self.overread_by,
         }
     }
 
@@ -349,8 +431,10 @@ impl<'a> BitReader<'a> {
     pub fn restore_state(&mut self, state: BitReaderState) {
         self.position = state.position;
         self.bit_buffer = state.bit_buffer;
+        self.aligned_buffer = state.aligned_buffer;
         self.bits_in_buffer = state.bits_in_buffer;
         self.marker_found = state.marker_found;
+        self.overread_by = state.overread_by;
     }
 
     /// Reads and verifies a restart marker.
