@@ -140,7 +140,7 @@ fn parse_args() -> Config {
     if encoders.is_empty() {
         encoders.push(EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::YCbCr));
         encoders.push(EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::Xyb));
-        encoders.push(EncoderConfig::new(EncoderImpl::CMozjpeg).color(ColorMode::YCbCr));
+        encoders.push(EncoderConfig::new(EncoderImpl::CJpegli).color(ColorMode::YCbCr));
     }
 
     if qualities.is_empty() {
