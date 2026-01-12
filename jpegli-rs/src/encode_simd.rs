@@ -68,7 +68,9 @@ fn try_alloc_f32(len: usize, context: &'static str) -> Result<Vec<f32>> {
 #[inline(always)]
 fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
     // Convert slice to array, then array to f32x8 (cast/transmute)
-    <[f32; 8]>::try_from(&slice[offset..offset + 8]).unwrap().into()
+    <[f32; 8]>::try_from(&slice[offset..offset + 8])
+        .unwrap()
+        .into()
 }
 
 /// Store f32x8 to slice. Panics if slice is too short.
@@ -909,8 +911,10 @@ fn rgb_to_ycbcr_scalar(
         let b = rgb_data[rgb_idx + 2] as f32;
 
         y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-        cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-        cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        cb_plane[i] =
+            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+        cr_plane[i] =
+            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     }
 }
 
@@ -974,8 +978,10 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
                 let b = rgb_data[rgb_idx + 2] as f32;
 
                 y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                cb_plane[i] = YCBCR_R_TO_CB
+                    .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+                cr_plane[i] = YCBCR_R_TO_CR
+                    .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
             }
             return;
         }
@@ -1068,8 +1074,10 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
         let b = rgb_data[rgb_idx + 2] as f32;
 
         y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-        cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-        cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        cb_plane[i] =
+            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+        cr_plane[i] =
+            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     }
 }
 
@@ -1186,8 +1194,10 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
         let b = rgba_data[rgba_idx + 2] as f32;
 
         y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-        cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-        cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        cb_plane[i] =
+            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+        cr_plane[i] =
+            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     }
 }
 
@@ -1277,8 +1287,10 @@ pub fn rgba_to_ycbcr_planes_simd(
         let b = rgba_data[rgba_idx + 2] as f32;
 
         y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-        cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-        cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        cb_plane[i] =
+            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+        cr_plane[i] =
+            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     }
 
     Ok((y_plane, cb_plane, cr_plane))
@@ -1431,8 +1443,10 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
         let r = bgr_data[bgr_idx + 2] as f32;
 
         y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-        cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-        cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        cb_plane[i] =
+            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+        cr_plane[i] =
+            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     }
 }
 
@@ -1539,8 +1553,10 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
         let r = bgra_data[bgra_idx + 2] as f32;
 
         y_plane[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-        cb_plane[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-        cr_plane[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+        cb_plane[i] =
+            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+        cr_plane[i] =
+            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
     }
 }
 
@@ -1603,8 +1619,12 @@ pub fn rgb_to_ycbcr_strided_inplace(
     if y_stride == width {
         let num_pixels = width * height;
         match bpp {
-            3 => rgb_to_ycbcr_planes_simd_inplace(rgb_data, y_plane, cb_plane, cr_plane, num_pixels),
-            4 => rgba_to_ycbcr_planes_simd_inplace(rgb_data, y_plane, cb_plane, cr_plane, num_pixels),
+            3 => {
+                rgb_to_ycbcr_planes_simd_inplace(rgb_data, y_plane, cb_plane, cr_plane, num_pixels)
+            }
+            4 => {
+                rgba_to_ycbcr_planes_simd_inplace(rgb_data, y_plane, cb_plane, cr_plane, num_pixels)
+            }
             _ => return, // Unsupported
         }
         return;
@@ -1722,9 +1742,12 @@ pub fn rgb_to_ycbcr_strided_inplace(
             let g = rgb_data[rgb_idx + 1] as f32;
             let b = rgb_data[rgb_idx + 2] as f32;
 
-            y_plane[y_row_start + px] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-            cb_plane[cbcr_row_start + px] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-            cr_plane[cbcr_row_start + px] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+            y_plane[y_row_start + px] =
+                YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+            cb_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            cr_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
         }
 
         // Edge-pad Y row to stride
@@ -1758,8 +1781,12 @@ pub fn bgr_to_ycbcr_strided_inplace(
     if y_stride == width {
         let num_pixels = width * height;
         match bpp {
-            3 => bgr_to_ycbcr_planes_simd_inplace(bgr_data, y_plane, cb_plane, cr_plane, num_pixels),
-            4 => bgra_to_ycbcr_planes_simd_inplace(bgr_data, y_plane, cb_plane, cr_plane, num_pixels),
+            3 => {
+                bgr_to_ycbcr_planes_simd_inplace(bgr_data, y_plane, cb_plane, cr_plane, num_pixels)
+            }
+            4 => {
+                bgra_to_ycbcr_planes_simd_inplace(bgr_data, y_plane, cb_plane, cr_plane, num_pixels)
+            }
             _ => return,
         }
         return;
@@ -1874,9 +1901,12 @@ pub fn bgr_to_ycbcr_strided_inplace(
             let g = bgr_data[bgr_idx + 1] as f32;
             let r = bgr_data[bgr_idx + 2] as f32;
 
-            y_plane[y_row_start + px] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-            cb_plane[cbcr_row_start + px] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-            cr_plane[cbcr_row_start + px] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+            y_plane[y_row_start + px] =
+                YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+            cb_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            cr_plane[cbcr_row_start + px] =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
         }
 
         if width < y_stride {
@@ -2389,8 +2419,10 @@ mod tests {
             let b = rgb_data[i * 3 + 2] as f32;
 
             y_scalar[i] = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-            cb_scalar[i] = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-            cr_scalar[i] = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+            cb_scalar[i] =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            cr_scalar[i] =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
         }
 
         // Compare
@@ -2640,8 +2672,10 @@ mod tests {
             let b = rgba_data[i * 4 + 2] as f32;
 
             let y_scalar = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-            let cb_scalar = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-            let cr_scalar = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+            let cb_scalar =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            let cr_scalar =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
 
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,
@@ -2683,8 +2717,10 @@ mod tests {
             let r = bgr_data[i * 3 + 2] as f32;
 
             let y_scalar = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-            let cb_scalar = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-            let cr_scalar = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+            let cb_scalar =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            let cr_scalar =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
 
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,
@@ -2726,8 +2762,10 @@ mod tests {
             let r = bgra_data[i * 4 + 2] as f32;
 
             let y_scalar = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-            let cb_scalar = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-            let cr_scalar = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+            let cb_scalar =
+                YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+            let cr_scalar =
+                YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
 
             assert!(
                 (y_simd[i] - y_scalar).abs() < EPSILON,

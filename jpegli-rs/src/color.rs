@@ -34,10 +34,16 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let y = YCBCR_R_TO_Y.mul_add(rf, YCBCR_G_TO_Y.mul_add(gf, YCBCR_B_TO_Y * bf));
 
     // Cb = 128 - 0.168736*R - 0.331264*G + 0.5*B
-    let cb = YCBCR_R_TO_CB.mul_add(rf, YCBCR_G_TO_CB.mul_add(gf, YCBCR_B_TO_CB.mul_add(bf, 128.0)));
+    let cb = YCBCR_R_TO_CB.mul_add(
+        rf,
+        YCBCR_G_TO_CB.mul_add(gf, YCBCR_B_TO_CB.mul_add(bf, 128.0)),
+    );
 
     // Cr = 128 + 0.5*R - 0.418688*G - 0.081312*B
-    let cr = YCBCR_R_TO_CR.mul_add(rf, YCBCR_G_TO_CR.mul_add(gf, YCBCR_B_TO_CR.mul_add(bf, 128.0)));
+    let cr = YCBCR_R_TO_CR.mul_add(
+        rf,
+        YCBCR_G_TO_CR.mul_add(gf, YCBCR_B_TO_CR.mul_add(bf, 128.0)),
+    );
 
     (
         y.round().clamp(0.0, 255.0) as u8,
@@ -493,7 +499,8 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
 
         // YCbCr to RGB (using FMA)
         let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
-        let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset))
+        let g = cb_to_g
+            .mul_add(cb, cr_to_g.mul_add(cr, y + offset))
             .max(zero)
             .min(max_val);
         let b = cb_to_b.mul_add(cb, y + offset).max(zero).min(max_val);

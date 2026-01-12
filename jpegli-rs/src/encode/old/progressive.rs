@@ -884,7 +884,7 @@ impl Encoder {
     }
 
     /// Encodes as progressive JPEG (level 2, matching cjpegli default).
-    fn encode_progressive(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn encode_progressive(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Progressive mode requires Huffman optimization because standard JPEG Huffman tables
         // are designed for baseline/sequential encoding and produce massive bloat (10-100×)
         // when used with progressive AC refinement scans. This matches C++ cjpegli behavior.
@@ -1433,7 +1433,7 @@ impl Encoder {
             self.write_header_xyb(&mut output)?;
             // Write APP14 Adobe marker for RGB colorspace (required by decoders)
             self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
-            // Write XYB ICC profile so decoders can interpret the colors correctly
+                                                     // Write XYB ICC profile so decoders can interpret the colors correctly
             self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
             self.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
             self.write_frame_header_xyb_progressive(&mut output)?;

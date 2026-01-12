@@ -582,8 +582,7 @@ fn test_encode_strip_based_with_stop_cancelled() {
     let encoder = Encoder::new()
         .width(width)
         .height(height)
-        .pixel_format(PixelFormat::Rgb)
-        ;
+        .pixel_format(PixelFormat::Rgb);
 
     // Create a stopper and cancel it immediately
     let stopper = almost_enough::Stopper::new();

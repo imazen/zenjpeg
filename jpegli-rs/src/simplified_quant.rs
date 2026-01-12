@@ -191,7 +191,8 @@ fn compute_block_activity(
 
         for y in 0..8 {
             let row_start = (py_start + y) * width + px_start;
-            let row = f32x8::from(<[f32; 8]>::try_from(&y_plane[row_start..row_start + 8]).unwrap());
+            let row =
+                f32x8::from(<[f32; 8]>::try_from(&y_plane[row_start..row_start + 8]).unwrap());
             sum_vec += row;
             sum_sq_vec += row * row;
         }
