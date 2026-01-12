@@ -461,6 +461,7 @@ pub fn ycbcr_planes_to_rgb(
 /// Applies level shift (+128) and clamps to 0-255.
 ///
 /// This is optimized for the decoder which processes planes separately.
+/// Uses SIMD for YCbCr math with efficient interleaved RGB storage.
 #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
 pub fn ycbcr_planes_f32_to_rgb_u8(
     y_plane: &[f32],
@@ -488,14 +489,26 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
     let zero = f32x8::splat(0.0);
     let max_val = f32x8::splat(255.0);
 
-    let chunks = num_pixels / 8;
-    for chunk in 0..chunks {
-        let base = chunk * 8;
+    // Process chunks of 8 pixels
+    // Use chunks_exact for optimal iteration
+    let y_chunks = y_plane.chunks_exact(8);
+    let cb_chunks = cb_plane.chunks_exact(8);
+    let cr_chunks = cr_plane.chunks_exact(8);
+    let rgb_chunks = rgb.chunks_exact_mut(24);
 
-        // Load planes directly from slices
-        let y = f32x8::from(<[f32; 8]>::try_from(&y_plane[base..base + 8]).unwrap());
-        let cb = f32x8::from(<[f32; 8]>::try_from(&cb_plane[base..base + 8]).unwrap());
-        let cr = f32x8::from(<[f32; 8]>::try_from(&cr_plane[base..base + 8]).unwrap());
+    let y_remainder = y_chunks.remainder();
+    let cb_remainder = cb_chunks.remainder();
+    let cr_remainder = cr_chunks.remainder();
+
+    for (((y_chunk, cb_chunk), cr_chunk), rgb_chunk) in y_chunks
+        .zip(cb_chunks)
+        .zip(cr_chunks)
+        .zip(rgb_chunks)
+    {
+        // Load planes - chunks_exact guarantees exactly 8 elements
+        let y = f32x8::from(<[f32; 8]>::try_from(y_chunk).unwrap());
+        let cb = f32x8::from(<[f32; 8]>::try_from(cb_chunk).unwrap());
+        let cr = f32x8::from(<[f32; 8]>::try_from(cr_chunk).unwrap());
 
         // YCbCr to RGB (using FMA)
         let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
@@ -505,34 +518,56 @@ pub fn ycbcr_planes_f32_to_rgb_u8(
             .min(max_val);
         let b = cb_to_b.mul_add(cb, y + offset).max(zero).min(max_val);
 
+        // Convert to arrays for interleaved store
         let r_arr: [f32; 8] = r.into();
         let g_arr: [f32; 8] = g.into();
         let b_arr: [f32; 8] = b.into();
 
-        // Store interleaved RGB
-        for j in 0..8 {
-            let idx = (base + j) * 3;
-            rgb[idx] = r_arr[j] as u8;
-            rgb[idx + 1] = g_arr[j] as u8;
-            rgb[idx + 2] = b_arr[j] as u8;
-        }
+        // Store interleaved RGB - slice is guaranteed to be exactly 24 bytes
+        rgb_chunk[0] = r_arr[0] as u8;
+        rgb_chunk[1] = g_arr[0] as u8;
+        rgb_chunk[2] = b_arr[0] as u8;
+        rgb_chunk[3] = r_arr[1] as u8;
+        rgb_chunk[4] = g_arr[1] as u8;
+        rgb_chunk[5] = b_arr[1] as u8;
+        rgb_chunk[6] = r_arr[2] as u8;
+        rgb_chunk[7] = g_arr[2] as u8;
+        rgb_chunk[8] = b_arr[2] as u8;
+        rgb_chunk[9] = r_arr[3] as u8;
+        rgb_chunk[10] = g_arr[3] as u8;
+        rgb_chunk[11] = b_arr[3] as u8;
+        rgb_chunk[12] = r_arr[4] as u8;
+        rgb_chunk[13] = g_arr[4] as u8;
+        rgb_chunk[14] = b_arr[4] as u8;
+        rgb_chunk[15] = r_arr[5] as u8;
+        rgb_chunk[16] = g_arr[5] as u8;
+        rgb_chunk[17] = b_arr[5] as u8;
+        rgb_chunk[18] = r_arr[6] as u8;
+        rgb_chunk[19] = g_arr[6] as u8;
+        rgb_chunk[20] = b_arr[6] as u8;
+        rgb_chunk[21] = r_arr[7] as u8;
+        rgb_chunk[22] = g_arr[7] as u8;
+        rgb_chunk[23] = b_arr[7] as u8;
     }
 
     // Handle remaining pixels with scalar code
-    for i in (chunks * 8)..num_pixels {
-        let y = y_plane[i];
-        let cb = cb_plane[i];
-        let cr = cr_plane[i];
-
+    let chunks_processed = (num_pixels / 8) * 8;
+    let rgb_start = chunks_processed * 3;
+    for (i, ((y, cb), cr)) in y_remainder
+        .iter()
+        .zip(cb_remainder.iter())
+        .zip(cr_remainder.iter())
+        .enumerate()
+    {
         // Use FMA for scalar remainder
-        let r = CR_TO_R.mul_add(cr, y);
-        let g = CB_TO_G.mul_add(cb, CR_TO_G.mul_add(cr, y));
-        let b = CB_TO_B.mul_add(cb, y);
+        let r = CR_TO_R.mul_add(*cr, *y);
+        let g = CB_TO_G.mul_add(*cb, CR_TO_G.mul_add(*cr, *y));
+        let b_val = CB_TO_B.mul_add(*cb, *y);
 
-        let idx = i * 3;
+        let idx = rgb_start + i * 3;
         rgb[idx] = (r + 128.0).clamp(0.0, 255.0) as u8;
         rgb[idx + 1] = (g + 128.0).clamp(0.0, 255.0) as u8;
-        rgb[idx + 2] = (b + 128.0).clamp(0.0, 255.0) as u8;
+        rgb[idx + 2] = (b_val + 128.0).clamp(0.0, 255.0) as u8;
     }
 }
 

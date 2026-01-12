@@ -284,3 +284,78 @@ Overall: Rust is ~90% slower than C++ across configurations.
 - `jpegli-rs/src/entropy/encoder.rs` - Huffman encoding
 - `jpegli-rs/src/huffman/encode.rs` - Huffman table construction
 
+---
+
+## Performance Analysis: Decoder
+
+**Date:** 2026-01-12
+**Status:** Analysis complete, optimizations in progress
+
+### Profiling Results
+
+Profiled with `perf record` on 2048x2048 decoding, 10 iterations.
+
+**Throughput:** ~38 MP/s (megapixels per second)
+
+#### CPU Time Breakdown
+
+| Component | CPU % | Notes |
+|-----------|-------|-------|
+| **Color conversion** | 15.83% | `ycbcr_planes_f32_to_rgb_u8` - MAIN BOTTLENECK |
+| **Entropy decoding** | 6.01% | `EntropyDecoder::decode_block` |
+| **Scan processing** | 4.89% | `JpegParser::decode_scan` |
+| **IDCT (scalar)** | 3.07% | `inverse_dct_8x8` |
+| **IDCT (SIMD)** | 0.71% | `inverse_dct_8x8_simd` |
+
+### Color Conversion Bottleneck
+
+The `ycbcr_planes_f32_to_rgb_u8` function does SIMD math but then **extracts to scalar arrays for interleaved RGB storage**:
+
+```rust
+// SIMD compute (fast)
+let r = cr_to_r.mul_add(cr, y + offset).max(zero).min(max_val);
+let g = cb_to_g.mul_add(cb, cr_to_g.mul_add(cr, y + offset)).max(zero).min(max_val);
+let b = cb_to_b.mul_add(cb, y + offset).max(zero).min(max_val);
+
+// Extract to scalar (slow!)
+let r_arr: [f32; 8] = r.into();
+let g_arr: [f32; 8] = g.into();
+let b_arr: [f32; 8] = b.into();
+
+// Scalar interleave loop (very slow!)
+for j in 0..8 {
+    let idx = (base + j) * 3;
+    rgb[idx] = r_arr[j] as u8;
+    rgb[idx + 1] = g_arr[j] as u8;
+    rgb[idx + 2] = b_arr[j] as u8;
+}
+```
+
+### Proposed Optimization: SIMD RGB Interleave
+
+**Strategy 1: Pack and Shuffle**
+1. Convert f32x8 → u8x8 (pack with saturation)
+2. Use SIMD shuffle to interleave RGB
+3. Store 24 bytes at once
+
+**Strategy 2: Process 16 pixels → 48 bytes**
+1. Load 16 pixels (2× f32x8 per channel)
+2. Pack to i16x16, then u8x32
+3. Use AVX2 VPERMD for interleave
+4. Store aligned 48 bytes
+
+### Files to Modify
+
+- `jpegli-rs/src/color.rs:465` - `ycbcr_planes_f32_to_rgb_u8`
+
+### Comparison: Encoder vs Decoder Bottlenecks
+
+| Area | Encoder % | Decoder % |
+|------|-----------|-----------|
+| AQ/Quant | 17.74% | N/A |
+| DCT/IDCT | 14.35% | 3.78% |
+| Huffman | 9.24% | 6.01% |
+| Color | <1% | **15.83%** |
+
+The encoder spends most time on AQ and DCT; the decoder spends most time on color conversion.
+
