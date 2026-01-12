@@ -93,6 +93,8 @@ pub mod icc;
 #[doc(hidden)]
 pub mod idct;
 #[doc(hidden)]
+pub mod idct_int;
+#[doc(hidden)]
 pub mod scan_script;
 #[doc(hidden)]
 pub mod simplified_quant;
