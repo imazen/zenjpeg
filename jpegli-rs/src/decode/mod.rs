@@ -1279,6 +1279,16 @@ impl<'a> JpegParser<'a> {
 
         // Set up entropy decoder
         let scan_data = &self.data[self.position..];
+
+        // Debug: print progressive scan info
+        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
+            let first_bytes: Vec<u8> = scan_data.iter().take(8).copied().collect();
+            eprintln!(
+                "DEBUG prog: ss={} se={} ah={} al={} comps={:?} pos={} data={:02x?}",
+                ss, se, ah, al, scan_components, self.position, first_bytes
+            );
+        }
+
         let mut decoder = EntropyDecoder::new(scan_data);
 
         for (_comp_idx, dc_table, ac_table) in scan_components {
@@ -1514,6 +1524,15 @@ impl<'a> JpegParser<'a> {
 
                 mcu_count += 1;
             }
+        }
+
+        // Debug: print position after scan
+        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
+            eprintln!(
+                "DEBUG prog end: decoder.position()={} new self.position={}",
+                decoder.position(),
+                self.position + decoder.position()
+            );
         }
 
         self.position += decoder.position();
