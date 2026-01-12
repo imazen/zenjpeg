@@ -47,6 +47,9 @@ pub struct EncoderConfig {
     pub use_xyb: bool,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
+    /// Enable parallel encoding (requires `parallel` feature)
+    #[cfg(feature = "parallel")]
+    pub parallel: bool,
     /// Use optimized Huffman tables
     pub optimize_huffman: bool,
     /// Chroma downsampling method for subsampled modes (4:2:0, 4:2:2, 4:4:0).
@@ -104,6 +107,8 @@ impl Default for EncoderConfig {
             subsampling: Subsampling::S444,
             use_xyb: false,
             restart_interval: 0,
+            #[cfg(feature = "parallel")]
+            parallel: false,
             // Huffman optimization enabled by default (pseudo-symbol 256 approach ensures Kraft sum < 2^16)
             optimize_huffman: true,
             // Box filter matches C++ jpegli default

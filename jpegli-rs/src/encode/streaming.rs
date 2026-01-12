@@ -53,6 +53,9 @@ pub struct StreamingEncoderBuilder {
     restart_interval: u16,
     custom_quant_matrices: Option<CustomQuantMatrices>,
     use_xyb: bool,
+    /// Enable parallel encoding (requires `parallel` feature)
+    #[cfg(feature = "parallel")]
+    parallel: bool,
 }
 
 impl StreamingEncoderBuilder {
@@ -70,6 +73,8 @@ impl StreamingEncoderBuilder {
             restart_interval: 0,
             custom_quant_matrices: None,
             use_xyb: false,
+            #[cfg(feature = "parallel")]
+            parallel: false,
         }
     }
 
@@ -122,6 +127,27 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn restart_interval(mut self, interval: u16) -> Self {
         self.restart_interval = interval;
+        self
+    }
+
+    /// Enables parallel encoding for improved throughput on multi-core systems.
+    ///
+    /// When enabled, the encoder will use multiple threads for entropy encoding
+    /// (and optionally DCT). This requires restart markers, so if `restart_interval`
+    /// is 0, it will be automatically set to 64 MCUs.
+    ///
+    /// Performance characteristics (2048x2048 image):
+    /// - 2 threads: 1.2-1.6x speedup, 60-80% efficiency
+    /// - 4 threads: 1.3-1.7x speedup, 30-40% efficiency
+    ///
+    /// Parallel encoding is most beneficial for images >= 512x512.
+    /// For smaller images, the overhead may negate the benefits.
+    ///
+    /// Requires the `parallel` feature to be enabled.
+    #[cfg(feature = "parallel")]
+    #[must_use]
+    pub fn parallel(mut self, enable: bool) -> Self {
+        self.parallel = enable;
         self
     }
 
@@ -521,6 +547,9 @@ impl StreamingEncoder {
             .chroma_downsampling(builder.chroma_downsampling)
             .restart_interval(builder.restart_interval)
             .use_xyb(builder.use_xyb);
+
+        #[cfg(feature = "parallel")]
+        let encoder = encoder.parallel(builder.parallel);
 
         Ok(Self {
             width,

@@ -235,6 +235,17 @@ impl Encoder {
         self
     }
 
+    /// Enables parallel encoding for improved throughput on multi-core systems.
+    ///
+    /// When enabled and `restart_interval > 0`, the encoder will use multiple
+    /// threads for entropy encoding.
+    #[cfg(feature = "parallel")]
+    #[must_use]
+    pub fn parallel(mut self, enable: bool) -> Self {
+        self.config.parallel = enable;
+        self
+    }
+
     /// Enables optimized Huffman tables.
     #[must_use]
     pub fn optimize_huffman(mut self, enable: bool) -> Self {
