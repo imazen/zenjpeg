@@ -583,7 +583,7 @@ impl Encoder {
             "progressive from blocks output",
         )?;
 
-        let is_color = self.config.pixel_format != PixelFormat::Gray;
+        let is_color = !self.config.pixel_format.is_grayscale();
         let num_components = if is_color { 3 } else { 1 };
 
         // Define progressive scan script

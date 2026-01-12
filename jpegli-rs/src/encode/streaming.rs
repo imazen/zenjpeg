@@ -80,11 +80,72 @@ impl StreamingEncoderBuilder {
 
     /// Sets the quality using jpegli's native quality scale.
     ///
-    /// Use `Quality::from_quality(90.0)` for traditional JPEG quality (1-100)
-    /// or `Quality::from_distance(1.0)` for butteraugli distance.
+    /// Accepts either:
+    /// - An integer (1-100) for traditional JPEG quality
+    /// - A `Quality` enum for advanced options including butteraugli distance
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Simple integer quality (most common)
+    /// let enc = JpegEncoder::new(640, 480).quality(85);
+    ///
+    /// // Quality enum for explicit control
+    /// let enc = JpegEncoder::new(640, 480).quality(Quality::from_quality(85.0));
+    ///
+    /// // Butteraugli distance (advanced)
+    /// let enc = JpegEncoder::new(640, 480).quality(Quality::from_distance(1.0));
+    /// ```
     #[must_use]
-    pub fn quality(mut self, quality: Quality) -> Self {
-        self.quality = quality;
+    pub fn quality(mut self, quality: impl Into<Quality>) -> Self {
+        self.quality = quality.into();
+        self
+    }
+
+    /// Sets the quality using butteraugli distance.
+    ///
+    /// Butteraugli distance is a perceptual quality metric where:
+    /// - 0.0 = lossless (not achievable with JPEG)
+    /// - 0.5 = very high quality
+    /// - 1.0 = high quality (default)
+    /// - 2.0 = medium quality
+    /// - 3.0+ = low quality
+    ///
+    /// This is the native quality metric used by jpegli internally.
+    /// For most users, `.quality(85)` with traditional 1-100 scale is easier.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let enc = JpegEncoder::new(640, 480).distance(1.0);
+    /// ```
+    #[must_use]
+    pub fn distance(mut self, distance: f32) -> Self {
+        self.quality = Quality::from_distance(distance);
+        self
+    }
+
+    /// Enables or disables progressive JPEG encoding.
+    ///
+    /// Progressive JPEGs display a low-quality version first, then progressively
+    /// improve as more data loads. They're slightly smaller but require optimized
+    /// Huffman tables.
+    ///
+    /// When enabled, `optimize_huffman` is automatically enabled as well.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let enc = JpegEncoder::new(640, 480).progressive(true);
+    /// ```
+    #[must_use]
+    pub fn progressive(mut self, enable: bool) -> Self {
+        if enable {
+            self.mode = JpegMode::Progressive;
+            self.optimize_huffman = true;
+        } else {
+            self.mode = JpegMode::Baseline;
+        }
         self
     }
 
@@ -181,33 +242,58 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Builds the streaming encoder.
+    /// Starts a streaming encoder for row-by-row input.
+    ///
+    /// Use this when you want to push rows incrementally (e.g., from a decoder
+    /// or generator). For encoding a complete buffer at once, use `.encode()`
+    /// instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::JpegEncoder;
+    ///
+    /// let mut encoder = JpegEncoder::new(640, 480)
+    ///     .quality(85)
+    ///     .start()?;
+    ///
+    /// for row in image_rows {
+    ///     encoder.push_row(row)?;
+    /// }
+    ///
+    /// let jpeg = encoder.finish()?;
+    /// ```
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Dimensions are zero or exceed maximum
     /// - Memory allocation fails
-    pub fn build(self) -> Result<StreamingEncoder> {
+    pub fn start(self) -> Result<StreamingEncoder> {
         StreamingEncoder::from_builder(self)
+    }
+
+    /// Alias for `.start()` (kept for backwards compatibility).
+    #[doc(hidden)]
+    pub fn build(self) -> Result<StreamingEncoder> {
+        self.start()
     }
 
     /// Encodes a complete image buffer in one call.
     ///
-    /// This is a convenience method that builds the encoder, pushes all rows,
-    /// and finishes in a single call. For large images or streaming scenarios,
-    /// use `.build()` and push rows incrementally instead.
+    /// This is the simplest way to encode an image. For streaming scenarios
+    /// where you want to push rows incrementally, use `.start()` instead.
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use jpegli::{StreamingEncoder, Quality, Subsampling};
+    /// use jpegli::{JpegEncoder, Subsampling};
     ///
     /// let pixels: Vec<u8> = vec![128; 640 * 480 * 3];
-    /// let jpeg = StreamingEncoder::new(640, 480)
-    ///     .quality(Quality::from_quality(85.0))
+    /// let jpeg = JpegEncoder::new(640, 480)
+    ///     .quality(85)
     ///     .subsampling(Subsampling::S420)
-    ///     .encode_all(&pixels)?;
+    ///     .encode(&pixels)?;
     /// ```
     ///
     /// # Errors
@@ -215,7 +301,18 @@ impl StreamingEncoderBuilder {
     /// Returns an error if:
     /// - Buffer size doesn't match width × height × bytes_per_pixel
     /// - Encoding fails
+    pub fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
+        // Delegate to encode_all for backwards compatibility
+        self.encode_impl(data)
+    }
+
+    /// Alias for `.encode()` (kept for backwards compatibility).
+    #[doc(hidden)]
     pub fn encode_all(self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_impl(data)
+    }
+
+    fn encode_impl(self, data: &[u8]) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
         let bpp = self.pixel_format.bytes_per_pixel();
@@ -980,7 +1077,7 @@ impl StreamingEncoder {
         cr_quant: &QuantTable,
         strip_output: crate::encode::strip::StripProcessorOutput,
     ) -> Result<Vec<u8>> {
-        let is_color = encoder.config.pixel_format != PixelFormat::Gray;
+        let is_color = !encoder.config.pixel_format.is_grayscale();
         let width = encoder.config.width as usize;
         let height = encoder.config.height as usize;
 

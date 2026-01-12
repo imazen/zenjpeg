@@ -49,7 +49,7 @@ impl Encoder {
         let height = self.config.height as usize;
         let blocks_h = (width + 7) / 8;
         let blocks_v = (height + 7) / 8;
-        let is_color = self.config.pixel_format != PixelFormat::Gray;
+        let is_color = !self.config.pixel_format.is_grayscale();
 
         // Zero-bias parameters for each component
         // Use effective distance inferred from quant tables (like C++ QuantValsToDistance)
@@ -202,7 +202,7 @@ impl Encoder {
         let y_blocks_v = (y_height + 7) / 8;
         let c_blocks_h = (c_width + 7) / 8;
         let c_blocks_v = (c_height + 7) / 8;
-        let is_color = self.config.pixel_format != PixelFormat::Gray;
+        let is_color = !self.config.pixel_format.is_grayscale();
 
         // Zero-bias parameters for each component
         let effective_distance = quant::quant_vals_to_distance(y_quant, cb_quant, cr_quant);

@@ -601,7 +601,7 @@ impl Encoder {
             }
             _ => {
                 // Baseline encoding path
-                let is_color = self.config.pixel_format != PixelFormat::Gray;
+                let is_color = !self.config.pixel_format.is_grayscale();
 
                 // Build output JPEG
                 let mut output = try_with_capacity(width * height / 4, "jpeg output")?; // Rough estimate

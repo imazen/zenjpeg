@@ -328,7 +328,7 @@ impl StripProcessor {
         let padded_c_blocks_h = padded_c_width / 8;
         let pending_c_capacity = padded_c_blocks_h;
 
-        let is_color = pixel_format != PixelFormat::Gray;
+        let is_color = !pixel_format.is_grayscale();
 
         // Track all allocations
         let mut alloc_stats = AllocationStats::new();
@@ -554,7 +554,7 @@ impl StripProcessor {
         } else {
             // YCbCr mode: choose optimal path based on subsampling
             let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
-                && self.pixel_format != PixelFormat::Gray
+                && !self.pixel_format.is_grayscale()
                 && self.subsampling != Subsampling::S444;
 
             if uses_gamma_aware_fused {
@@ -591,9 +591,9 @@ impl StripProcessor {
         };
         let uses_gamma_aware_fused = !self.use_xyb
             && self.chroma_downsampling.uses_gamma_aware()
-            && self.pixel_format != PixelFormat::Gray
+            && !self.pixel_format.is_grayscale()
             && self.subsampling != Subsampling::S444;
-        if self.pixel_format != PixelFormat::Gray && !uses_gamma_aware_fused && !self.use_xyb {
+        if !self.pixel_format.is_grayscale() && !uses_gamma_aware_fused && !self.use_xyb {
             self.downsample_chroma_strip(downsample_height)?;
         }
 
@@ -673,7 +673,7 @@ impl StripProcessor {
         } else {
             actual_strip_height
         };
-        if self.pixel_format != PixelFormat::Gray {
+        if !self.pixel_format.is_grayscale() {
             self.downsample_chroma_strip(downsample_height)?;
         }
 
@@ -787,7 +787,7 @@ impl StripProcessor {
             });
         }
 
-        if self.pixel_format != PixelFormat::Gray {
+        if !self.pixel_format.is_grayscale() {
             if cb_row.len() < expected_y_size || cr_row.len() < expected_y_size {
                 return Err(crate::error::Error::InternalError {
                     reason: "Cb/Cr planes too small for strip",
@@ -815,7 +815,7 @@ impl StripProcessor {
         }
 
         // Copy Cb/Cr with level shift (no padding, full resolution)
-        if self.pixel_format != PixelFormat::Gray {
+        if !self.pixel_format.is_grayscale() {
             let num_pixels = strip_height * width;
             for i in 0..num_pixels {
                 self.cb_strip[i] = cb_row[i] + 128.0;
@@ -857,7 +857,7 @@ impl StripProcessor {
         }
 
         let expected_chroma_size = chroma_width * chroma_height;
-        if self.pixel_format != PixelFormat::Gray {
+        if !self.pixel_format.is_grayscale() {
             if cb_row.len() < expected_chroma_size || cr_row.len() < expected_chroma_size {
                 return Err(crate::error::Error::InternalError {
                     reason: "Cb/Cr planes too small for subsampled strip",
@@ -883,7 +883,7 @@ impl StripProcessor {
         }
 
         // Copy Cb/Cr directly to downsampled buffers with level shift
-        if self.pixel_format != PixelFormat::Gray {
+        if !self.pixel_format.is_grayscale() {
             for i in 0..expected_chroma_size {
                 self.cb_down[i] = cb_row[i] + 128.0;
                 self.cr_down[i] = cr_row[i] + 128.0;
@@ -1523,7 +1523,7 @@ impl StripProcessor {
         }
 
         let padded_width = self.padded_width;
-        let is_color = self.pixel_format != PixelFormat::Gray;
+        let is_color = !self.pixel_format.is_grayscale();
 
         // Get last valid row index
         let last_row = actual_height - 1;
@@ -1713,7 +1713,7 @@ impl StripProcessor {
         }
 
         // Compute DCT for Cb/Cr blocks (if color)
-        if self.pixel_format != PixelFormat::Gray {
+        if !self.pixel_format.is_grayscale() {
             let width = self.width;
 
             if self.use_xyb {

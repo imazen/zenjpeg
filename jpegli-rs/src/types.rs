@@ -153,6 +153,14 @@ impl PixelFormat {
         }
     }
 
+    /// Returns true if this is a grayscale format (1 channel).
+    ///
+    /// Grayscale formats: Gray, Gray16, GrayF32
+    #[must_use]
+    pub const fn is_grayscale(self) -> bool {
+        matches!(self, Self::Gray | Self::Gray16 | Self::GrayF32)
+    }
+
     /// Returns true if this format has a SIMD-optimized fast path.
     ///
     /// Fast path formats are converted directly to YCbCr planes without
