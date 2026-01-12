@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --example streaming_vs_encoder
 
-use jpegli::{Encoder, EncodingBackend, Quality, StreamingEncoder, Subsampling};
+use jpegli::{Encoder, Quality, StreamingEncoder, Subsampling};
 use std::time::{Duration, Instant};
 
 fn format_throughput(bytes: usize, duration: Duration) -> String {
@@ -48,28 +48,14 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
     );
     println!("{}", "-".repeat(60));
 
-    // Encoder with Strip backend (apples-to-apples comparison)
-    let enc_strip_time = benchmark("Encoder (Strip)", iterations, || {
+    // Encoder (deprecated, uses strip backend internally)
+    let enc_time = benchmark("Encoder", iterations, || {
         #[allow(deprecated)]
         let _jpeg = Encoder::new()
             .width(width)
             .height(height)
             .jpegli_quality(quality)
             .subsampling(subsampling)
-            .encoding_backend(EncodingBackend::Strip)
-            .encode(&pixels)
-            .unwrap();
-    });
-
-    // Encoder with FullPlane backend
-    let enc_full_time = benchmark("Encoder (FullPlane)", iterations, || {
-        #[allow(deprecated)]
-        let _jpeg = Encoder::new()
-            .width(width)
-            .height(height)
-            .jpegli_quality(quality)
-            .subsampling(subsampling)
-            .encoding_backend(EncodingBackend::FullPlane)
             .encode(&pixels)
             .unwrap();
     });
@@ -103,12 +89,8 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
     println!();
     println!("  Throughput:");
     println!(
-        "    Encoder (Strip):     {}",
-        format_throughput(input_size, enc_strip_time)
-    );
-    println!(
-        "    Encoder (FullPlane): {}",
-        format_throughput(input_size, enc_full_time)
+        "    Encoder:             {}",
+        format_throughput(input_size, enc_time)
     );
     println!(
         "    StreamingEncoder:    {}",
@@ -120,13 +102,9 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
     );
 
     // Relative performance
-    let baseline = enc_strip_time.as_nanos() as f64;
+    let baseline = enc_time.as_nanos() as f64;
     println!();
-    println!("  Relative to Encoder (Strip):");
-    println!(
-        "    Encoder (FullPlane): {:.1}%",
-        (enc_full_time.as_nanos() as f64 / baseline) * 100.0
-    );
+    println!("  Relative to Encoder:");
     println!(
         "    StreamingEncoder:    {:.1}%",
         (stream_all_time.as_nanos() as f64 / baseline) * 100.0
@@ -143,7 +121,6 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
         .height(height)
         .jpegli_quality(quality)
         .subsampling(subsampling)
-        .encoding_backend(EncodingBackend::Strip)
         .encode(&pixels)
         .unwrap();
 

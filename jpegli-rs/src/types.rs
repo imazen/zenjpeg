@@ -527,66 +527,7 @@ impl Default for ScanSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct RestartInterval(pub u16);
 
-/// Encoding backend selection.
-///
-/// Controls whether to use full-plane or strip-based encoding.
-/// Both backends produce identical output for supported features.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum EncodingBackend {
-    /// Automatically select based on image size and features.
-    ///
-    /// Currently always uses full-plane encoding.
-    /// Future versions may auto-dispatch to strip-based for large images.
-    Auto,
-
-    /// Full-plane encoding (traditional approach).
-    ///
-    /// Processes entire image at once. Supports all features including XYB.
-    /// Higher peak memory usage for large images.
-    FullPlane,
-
-    /// Strip-based encoding (low-memory approach).
-    ///
-    /// Processes image in horizontal strips. Lower peak memory usage.
-    /// Produces bit-identical output to full-plane for YCbCr encoding.
-    ///
-    /// **Limitations:**
-    /// - No XYB color space support (use FullPlane instead)
-    /// - Only baseline and progressive modes
-    Strip,
-
-    /// Run both backends and verify identical output (testing only).
-    ///
-    /// Encodes with both full-plane and strip-based backends, compares the
-    /// outputs, and returns an error if they differ. Useful for catching
-    /// parity regressions in tests.
-    ///
-    /// Falls back to full-plane for unsupported features (XYB, etc.).
-    Both,
-}
-
-impl Default for EncodingBackend {
-    fn default() -> Self {
-        // In test builds, default to Both to catch parity regressions
-        #[cfg(test)]
-        {
-            Self::Both
-        }
-        #[cfg(not(test))]
-        {
-            Self::Auto
-        }
-    }
-}
-
-impl EncodingBackend {
-    /// Returns true if this backend supports the given features.
-    #[must_use]
-    pub const fn supports_xyb(self) -> bool {
-        matches!(self, Self::Auto | Self::FullPlane)
-    }
-}
+// EncodingBackend enum removed - strip-based encoding is now the only backend
 
 #[cfg(test)]
 mod tests {

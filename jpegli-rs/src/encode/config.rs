@@ -3,9 +3,7 @@
 //! This module contains all configuration-related types for the JPEG encoder.
 
 use crate::quant::Quality;
-use crate::types::{
-    ChromaDownsampling, EdgePaddingConfig, EncodingBackend, JpegMode, PixelFormat, Subsampling,
-};
+use crate::types::{ChromaDownsampling, EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 
 // ============================================================================
 // Progressive Scan Configuration
@@ -45,7 +43,7 @@ pub struct EncoderConfig {
     pub mode: JpegMode,
     /// Chroma subsampling
     pub subsampling: Subsampling,
-    /// Use XYB color space
+    /// Use XYB color space (uses legacy encoder path)
     pub use_xyb: bool,
     /// Restart interval (0 = disabled)
     pub restart_interval: u16,
@@ -74,8 +72,7 @@ pub struct EncoderConfig {
     #[doc(hidden)]
     pub(crate) custom_quant_matrices: Option<crate::quant::CustomQuantMatrices>,
 
-    /// Encoding backend selection (full-plane, strip-based, or auto).
-    pub encoding_backend: EncodingBackend,
+    // EncodingBackend removed - strip-based encoding is now the only backend
 
     /// Edge padding strategy for partial MCU blocks.
     ///
@@ -117,7 +114,6 @@ impl Default for EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
             custom_quant_matrices: None,
-            encoding_backend: EncodingBackend::Auto,
             edge_padding: EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,

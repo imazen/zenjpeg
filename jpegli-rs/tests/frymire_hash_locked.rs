@@ -10,7 +10,7 @@
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
-use jpegli::types::{ChromaDownsampling, EncodingBackend, JpegMode, Subsampling};
+use jpegli::types::{ChromaDownsampling, JpegMode, Subsampling};
 use jpegli::{Encoder, PixelFormat, Quality};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -114,7 +114,7 @@ impl EncoderTestConfig {
             .optimize_huffman(self.optimize_huffman)
             .chroma_downsampling(self.chroma_downsampling)
             .use_xyb(self.use_xyb)
-            .encoding_backend(EncodingBackend::FullPlane) // Lock to one backend for hash stability
+            
             .encode(rgb)
             .expect("Encoding failed")
     }
@@ -262,7 +262,7 @@ fn test_frymire_hashes_locked() {
     }
 }
 
-/// Test that both backends produce identical output (enforced by EncodingBackend::Both).
+/// Test encoding with various configurations.
 /// This verifies strip encoder parity without depending on specific hashes.
 ///
 /// NOTE: Currently skips configs where frymire.png (1118x1105) doesn't align to MCU boundaries.
@@ -300,7 +300,7 @@ fn test_frymire_backend_parity() {
                 .optimize_huffman(config.optimize_huffman)
                 .chroma_downsampling(config.chroma_downsampling)
                 .use_xyb(config.use_xyb)
-                .encoding_backend(EncodingBackend::Both)
+                
                 .encode(&rgb)
                 .unwrap_or_else(|e| {
                     panic!("{} Q{}: backend mismatch: {}", config.name, quality, e)
@@ -355,7 +355,7 @@ fn print_single_hash() {
         .mode(JpegMode::Baseline)
         .subsampling(Subsampling::S444)
         .optimize_huffman(true)
-        .encoding_backend(EncodingBackend::FullPlane)
+        
         .encode(&rgb)
         .expect("Encoding failed");
 

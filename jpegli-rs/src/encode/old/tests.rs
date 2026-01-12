@@ -2,7 +2,7 @@
 use super::super::Encoder;
 use crate::consts::{MARKER_EOI, MARKER_SOI};
 use crate::quant::Quality;
-use crate::types::{ChromaDownsampling, EncodingBackend, PixelFormat, Subsampling};
+use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 
 #[test]
 fn test_encoder_creation() {
@@ -583,7 +583,7 @@ fn test_encode_strip_based_with_stop_cancelled() {
         .width(width)
         .height(height)
         .pixel_format(PixelFormat::Rgb)
-        .encoding_backend(EncodingBackend::Strip);
+        ;
 
     // Create a stopper and cancel it immediately
     let stopper = almost_enough::Stopper::new();
