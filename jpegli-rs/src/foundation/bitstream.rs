@@ -61,18 +61,81 @@ impl BitWriter {
         }
     }
 
+    /// Writes Huffman code and extra bits in a single operation.
+    ///
+    /// This is an optimization that combines two write_bits calls into one,
+    /// reducing function call overhead in the entropy coding hot path.
+    ///
+    /// # Arguments
+    /// * `code` - Huffman code (right-aligned)
+    /// * `code_len` - Length of Huffman code in bits
+    /// * `extra` - Extra bits to write after code (right-aligned)
+    /// * `extra_len` - Length of extra bits
+    #[inline]
+    pub fn write_code_and_extra(&mut self, code: u32, code_len: u8, extra: u16, extra_len: u8) {
+        debug_assert!(code_len <= 16);
+        debug_assert!(extra_len <= 16);
+        let total_len = code_len + extra_len;
+        debug_assert!(total_len <= 32);
+
+        // Combine code and extra bits: code in high bits, extra in low bits
+        let combined = ((code as u64) << extra_len) | (extra as u64);
+
+        self.bit_buffer = (self.bit_buffer << total_len) | combined;
+        self.bits_in_buffer += total_len;
+
+        if self.bits_in_buffer >= 32 {
+            self.flush_bytes();
+        }
+    }
+
     /// Flushes complete bytes from the bit buffer.
     /// Marked cold to keep write_bits hot path small.
     #[inline(never)]
     #[cold]
     fn flush_bytes(&mut self) {
-        // Flush all complete bytes (typically 4+ bytes at once)
+        // Optimization: flush 4 bytes at once when possible (common case)
+        // This reduces per-byte branching overhead
+        while self.bits_in_buffer >= 32 {
+            self.bits_in_buffer -= 32;
+            let word = (self.bit_buffer >> self.bits_in_buffer) as u32;
+            let bytes = word.to_be_bytes();
+
+            // Fast path: check if any byte is 0xFF
+            // A byte is 0xFF iff adding 1 makes it 0x00 (overflow).
+            // We detect this by: if all high bits are set (0x80) in v, and adding
+            // 0x01010101 clears them, then we had 0xFF bytes.
+            // Simpler: (v & 0x7F7F7F7F) + 0x01010101 will overflow the 0x80 bit
+            // only if the original byte was >= 0x80. Combined with checking
+            // the original high bits, we can detect 0xFF.
+            //
+            // Actually simplest correct check: XOR with 0x7F7F7F7F, add 0x01010101,
+            // then check if any byte's high bit differs from original.
+            // But let's just use the straightforward approach:
+            let has_ff = (bytes[0] == 0xFF)
+                | (bytes[1] == 0xFF)
+                | (bytes[2] == 0xFF)
+                | (bytes[3] == 0xFF);
+
+            if !has_ff {
+                // Fast path: no 0xFF bytes, write directly
+                self.buffer.extend_from_slice(&bytes);
+            } else {
+                // Slow path: has at least one 0xFF, do byte-by-byte stuffing
+                for &b in &bytes {
+                    self.buffer.push(b);
+                    if b == 0xFF {
+                        self.buffer.push(0x00);
+                    }
+                }
+            }
+        }
+
+        // Handle remaining bytes (0-3)
         while self.bits_in_buffer >= 8 {
             self.bits_in_buffer -= 8;
             let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
             self.buffer.push(byte);
-
-            // Byte stuffing: 0xFF must be followed by 0x00
             if byte == 0xFF {
                 self.buffer.push(0x00);
             }
