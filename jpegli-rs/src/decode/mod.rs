@@ -501,10 +501,28 @@ pub struct DecodedImage {
 }
 
 impl DecodedImage {
+    /// Returns the image width in pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the image height in pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// Returns the image dimensions as a tuple (width, height).
     #[must_use]
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Returns the pixel data.
+    #[must_use]
+    pub fn pixels(&self) -> &[u8] {
+        &self.data
     }
 
     /// Returns the number of bytes per pixel for this image's format.
@@ -544,10 +562,28 @@ pub struct DecodedImageF32 {
 }
 
 impl DecodedImageF32 {
+    /// Returns the image width in pixels.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the image height in pixels.
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// Returns the image dimensions as a tuple (width, height).
     #[must_use]
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Returns the pixel data.
+    #[must_use]
+    pub fn pixels(&self) -> &[f32] {
+        &self.data
     }
 
     /// Returns the number of channels for this image's format.
