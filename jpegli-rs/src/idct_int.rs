@@ -57,10 +57,12 @@ pub fn idct_int_dc_only(dc_coeff: i32, out_vector: &mut [i16], stride: usize) {
     // Level shift: add 1024 (128 << 3)
     let coeff = wa(wa(dc_coeff, 4), 1024).wrapping_shr(3).clamp(0, 255) as i16;
 
+    // Fill first row, then advance 7 times (8 rows total)
     let mut out = out_vector;
-    for _ in 0..8 {
-        out[..8].fill(coeff);
+    out[..8].fill(coeff);
+    for _ in 0..7 {
         out = &mut out[stride..];
+        out[..8].fill(coeff);
     }
 }
 
@@ -582,6 +584,48 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 
     // Scalar fallback
     idct_int(coeffs, output, stride);
+}
+
+/// Tiered IDCT selection based on coefficient count.
+///
+/// Selects the optimal IDCT implementation based on how many non-zero
+/// coefficients are in the block (in zigzag scan order):
+/// - count <= 1: DC-only (just broadcast DC value)
+/// - count <= 10: 4x4 IDCT (upper-left block only)
+/// - count > 10: Full 8x8 IDCT
+///
+/// # Arguments
+/// * `coeffs` - Input dequantized DCT coefficients (modified in place)
+/// * `output` - Output pixel buffer (i16 in range [0, 255])
+/// * `stride` - Stride between output rows
+/// * `coeff_count` - Number of non-zero coefficients (1 = DC only, up to 64)
+#[inline]
+pub fn idct_int_tiered(
+    coeffs: &mut [i32; 64],
+    output: &mut [i16],
+    stride: usize,
+    coeff_count: u8,
+) {
+    if coeff_count <= 1 {
+        // DC-only fast path
+        idct_int_dc_only(coeffs[0], output, stride);
+    } else if coeff_count <= 10 {
+        // 4x4 IDCT - coefficients only in upper-left 4x4 block
+        idct_int_4x4(coeffs, output, stride);
+    } else {
+        // Full 8x8 IDCT with SIMD dispatch
+        #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            if avx2::is_avx2_available() {
+                // Safety: we just checked for AVX2 support
+                unsafe {
+                    avx2::idct_int_avx2(coeffs, output, stride);
+                }
+                return;
+            }
+        }
+        idct_int(coeffs, output, stride);
+    }
 }
 
 /// Convert a block of dequantized i32 coefficients to an [f32; 64] array.

@@ -34,7 +34,7 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::icc::apply_icc_transform;
 use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
-use crate::idct_int::idct_int_auto;
+use crate::idct_int::{idct_int_auto, idct_int_tiered};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
     dequantize_unzigzag_i32, DequantBiasStats,
@@ -616,6 +616,7 @@ struct JpegParser<'a> {
 
     // Decoded coefficient data
     coeffs: Vec<Vec<[i16; DCT_BLOCK_SIZE]>>, // Per component
+    coeff_counts: Vec<Vec<u8>>,              // Coefficient count per block (for tiered IDCT)
 
     // ICC profile (extracted from raw data, not during parsing)
     icc_profile: Option<Vec<u8>>,
@@ -650,6 +651,7 @@ impl<'a> JpegParser<'a> {
             ac_tables: [None, None, None, None],
             restart_interval: 0,
             coeffs: Vec::new(),
+            coeff_counts: Vec::new(),
             icc_profile,
             max_pixels,
         })
@@ -1093,6 +1095,8 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
+                // Allocate parallel storage for coefficient counts (tiered IDCT)
+                self.coeff_counts.push(vec![64u8; num_blocks]);
             }
         }
 
@@ -1186,6 +1190,7 @@ impl<'a> JpegParser<'a> {
                                 // Single-component with oversampling: skip padding blocks
                                 // These encoders typically omit them
                                 self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                self.coeff_counts[*comp_idx][block_idx] = 1; // DC-only (zeros)
                                 continue;
                             }
 
@@ -1193,24 +1198,27 @@ impl<'a> JpegParser<'a> {
                                 // For padding blocks in multi-component images, use speculative decoding
                                 // Most encoders include them, but some might not
                                 let saved_state = decoder.save_state();
-                                match decoder.decode_block(
+                                match decoder.decode_block_with_count(
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
                                 ) {
-                                    Ok(coeffs) => {
+                                    Ok((coeffs, count)) => {
                                         // Encoder included padding block
                                         self.coeffs[*comp_idx][block_idx] = coeffs;
+                                        self.coeff_counts[*comp_idx][block_idx] = count;
                                     }
                                     Err(Error::EndOfScanData) => {
                                         // Encoder omitted padding block - restore state and fill zeros
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                        self.coeff_counts[*comp_idx][block_idx] = 1;
                                     }
                                     Err(_e) => {
                                         // Other error - also restore and skip
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                        self.coeff_counts[*comp_idx][block_idx] = 1;
                                         // Log but don't fail on padding block errors
                                         #[cfg(debug_assertions)]
                                         eprintln!(
@@ -1220,12 +1228,13 @@ impl<'a> JpegParser<'a> {
                                     }
                                 }
                             } else {
-                                let coeffs = decoder.decode_block(
+                                let (coeffs, count) = decoder.decode_block_with_count(
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
                                 )?;
                                 self.coeffs[*comp_idx][block_idx] = coeffs;
+                                self.coeff_counts[*comp_idx][block_idx] = count;
                             }
                         }
                     }
@@ -1275,6 +1284,9 @@ impl<'a> JpegParser<'a> {
                     num_blocks,
                     "allocating DCT coefficients",
                 )?);
+                // For progressive, we don't know coeff counts until all scans are done
+                // Default to 64 (full IDCT) - tiered IDCT is mainly for baseline
+                self.coeff_counts.push(vec![64u8; num_blocks]);
             }
         }
 
@@ -1909,17 +1921,20 @@ impl<'a> JpegParser<'a> {
                             continue;
                         }
                         let coeffs = &self.coeffs[comp_idx][block_idx];
+                        let coeff_count = self.coeff_counts[comp_idx][block_idx];
 
                         // Fused dequantize + unzigzag (single pass)
                         let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
 
                         // IDCT writes directly to strip buffer (no intermediate copy)
+                        // Use tiered IDCT based on coefficient count for speed
                         let base_px = bx * DCT_SIZE;
                         let dst_offset = strip_row * strip_width + base_px;
-                        idct_int_auto(
+                        idct_int_tiered(
                             &mut dequant_i32,
                             &mut strip[dst_offset..],
                             strip_width,
+                            coeff_count,
                         );
                     }
                 }
