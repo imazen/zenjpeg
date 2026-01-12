@@ -24,18 +24,18 @@ use wide::f32x8;
 // Safe SIMD load/store helpers
 // ============================================================================
 
-/// Safely load 8 f32s into f32x8. Panics if slice is too short.
-/// LLVM optimizes this to identical code as unsafe pointer cast.
+/// Load 8 f32s into f32x8. Panics if slice is too short.
+/// Uses array conversion which compiles to a single load instruction.
 #[inline(always)]
 fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
-    f32x8::from(<[f32; 8]>::try_from(&slice[offset..offset + 8]).unwrap())
+    // Convert slice to array, then array to f32x8 (cast/transmute)
+    <[f32; 8]>::try_from(&slice[offset..offset + 8]).unwrap().into()
 }
 
-/// Safely store f32x8 to slice. Panics if slice is too short.
+/// Store f32x8 to slice. Panics if slice is too short.
 #[inline(always)]
 fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
-    let arr: [f32; 8] = value.into();
-    slice[offset..offset + 8].copy_from_slice(&arr);
+    slice[offset..offset + 8].copy_from_slice(&value.to_array())
 }
 
 // ============================================================================
