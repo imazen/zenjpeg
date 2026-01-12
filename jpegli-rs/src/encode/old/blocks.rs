@@ -387,6 +387,10 @@ impl Encoder {
             let mut prev_cb_dc: i16 = 0;
             let mut prev_cr_dc: i16 = 0;
 
+            // Restart interval tracking (must match encoder behavior exactly)
+            let restart_interval = self.config.restart_interval as usize;
+            let total_mcus = y_blocks.len();
+
             for (i, y_block) in y_blocks.iter().enumerate() {
                 Self::collect_block_frequencies(
                     y_block,
@@ -413,6 +417,17 @@ impl Encoder {
                     );
                     prev_cr_dc = cr_blocks[i][0];
                 }
+
+                // Reset DC prediction at restart boundaries (same logic as encoder)
+                // This ensures Huffman tables account for DC differences after resets
+                if restart_interval > 0
+                    && i + 1 < total_mcus
+                    && (i + 1) % restart_interval == 0
+                {
+                    prev_y_dc = 0;
+                    prev_cb_dc = 0;
+                    prev_cr_dc = 0;
+                }
             }
         } else {
             // Subsampled mode - iterate in MCU order with padding
@@ -429,6 +444,11 @@ impl Encoder {
             let mut prev_y_dc: i16 = 0;
             let mut prev_cb_dc: i16 = 0;
             let mut prev_cr_dc: i16 = 0;
+
+            // Restart interval tracking (must match encoder behavior exactly)
+            let restart_interval = self.config.restart_interval as usize;
+            let total_mcus = mcu_h * mcu_v;
+            let mut mcu_idx = 0;
 
             for mcu_y in 0..mcu_v {
                 for mcu_x in 0..mcu_h {
@@ -477,6 +497,17 @@ impl Encoder {
                             &mut ac_chroma_freq,
                         );
                         prev_cr_dc = cr_block[0];
+                    }
+
+                    // Reset DC prediction at restart boundaries (same logic as encoder)
+                    mcu_idx += 1;
+                    if restart_interval > 0
+                        && mcu_idx < total_mcus
+                        && mcu_idx % restart_interval == 0
+                    {
+                        prev_y_dc = 0;
+                        prev_cb_dc = 0;
+                        prev_cr_dc = 0;
                     }
                 }
             }
@@ -568,6 +599,7 @@ impl Encoder {
 
         if h_samp == 1 && v_samp == 1 {
             // 4:4:4 mode - simple 1:1 interleaving
+            let total_mcus = y_blocks.len();
             for (i, y_block) in y_blocks.iter().enumerate() {
                 encoder.encode_block(y_block, 0, 0, 0)?;
 
@@ -576,7 +608,10 @@ impl Encoder {
                     encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
                 }
 
-                encoder.check_restart();
+                // Only check restart if not the last MCU
+                if i + 1 < total_mcus {
+                    encoder.check_restart();
+                }
             }
         } else {
             // Subsampled mode - MCU interleaving
@@ -590,10 +625,12 @@ impl Encoder {
 
             let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
             let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+            let total_mcus = mcu_h * mcu_v;
 
             // Zero block for padding out-of-bounds MCU positions
             const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
+            let mut mcu_idx = 0;
             for mcu_y in 0..mcu_v {
                 for mcu_x in 0..mcu_h {
                     // Encode Y blocks in this MCU (must encode all even if out of bounds)
@@ -624,7 +661,11 @@ impl Encoder {
                         }
                     }
 
-                    encoder.check_restart();
+                    // Only check restart if not the last MCU
+                    mcu_idx += 1;
+                    if mcu_idx < total_mcus {
+                        encoder.check_restart();
+                    }
                 }
             }
         }
