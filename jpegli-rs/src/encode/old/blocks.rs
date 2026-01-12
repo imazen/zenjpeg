@@ -536,6 +536,65 @@ impl Encoder {
         is_color: bool,
         tables: Option<&OptimizedHuffmanTables>,
     ) -> Result<Vec<u8>> {
+        let width = self.config.width as usize;
+        let height = self.config.height as usize;
+        let (h_samp, v_samp) = match self.config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
+
+        // Use parallel encoding when enabled and restart interval is set
+        #[cfg(feature = "parallel")]
+        if self.config.restart_interval > 0 {
+            use super::super::parallel::{
+                parallel_entropy_encode_444, parallel_entropy_encode_subsampled,
+                ParallelEntropyConfig,
+            };
+
+            let config = if let Some(tables) = tables {
+                ParallelEntropyConfig {
+                    dc_luma: tables.dc_luma.table.clone(),
+                    ac_luma: tables.ac_luma.table.clone(),
+                    dc_chroma: tables.dc_chroma.table.clone(),
+                    ac_chroma: tables.ac_chroma.table.clone(),
+                }
+            } else {
+                ParallelEntropyConfig {
+                    dc_luma: HuffmanEncodeTable::std_dc_luminance().clone(),
+                    ac_luma: HuffmanEncodeTable::std_ac_luminance().clone(),
+                    dc_chroma: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                    ac_chroma: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                }
+            };
+
+            return if h_samp == 1 && v_samp == 1 {
+                Ok(parallel_entropy_encode_444(
+                    y_blocks,
+                    cb_blocks,
+                    cr_blocks,
+                    is_color,
+                    self.config.restart_interval,
+                    &config,
+                ))
+            } else {
+                Ok(parallel_entropy_encode_subsampled(
+                    y_blocks,
+                    cb_blocks,
+                    cr_blocks,
+                    width,
+                    height,
+                    h_samp,
+                    v_samp,
+                    is_color,
+                    self.config.restart_interval,
+                    &config,
+                ))
+            };
+        }
+
+        // Sequential encoding path (default, or when parallel feature disabled)
         // Estimate output size: ~100 bytes per block for typical quality
         let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
         let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
@@ -556,15 +615,6 @@ impl Encoder {
         if self.config.restart_interval > 0 {
             encoder.set_restart_interval(self.config.restart_interval);
         }
-
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-        let (h_samp, v_samp) = match self.config.subsampling {
-            Subsampling::S444 => (1, 1),
-            Subsampling::S422 => (2, 1),
-            Subsampling::S420 => (2, 2),
-            Subsampling::S440 => (1, 2),
-        };
 
         if h_samp == 1 && v_samp == 1 {
             // 4:4:4 mode - simple 1:1 interleaving
