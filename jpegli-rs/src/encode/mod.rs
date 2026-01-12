@@ -47,9 +47,9 @@ mod old;
 pub mod config;
 #[cfg(feature = "experimental-hybrid-trellis")]
 mod hybrid;
+pub(crate) mod linear_lut;
 pub mod streaming;
 pub mod strip;
-pub(crate) mod linear_lut;
 
 // Re-export config types
 pub use config::EncoderConfig;

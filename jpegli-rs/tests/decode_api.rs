@@ -20,8 +20,7 @@ use test_case::test_case;
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let img = generate_gradient_d(width, height, 3);
-    let encoder = StreamingEncoder::new(width, height)
-        .quality(Quality::from_quality(quality));
+    let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(quality));
     encoder.encode_all(&img.pixels).expect("encode failed")
 }
 
@@ -45,8 +44,7 @@ fn test_decode_basic() {
 fn test_decode_grayscale() {
     // Create grayscale JPEG
     let img = test_utils::generate_gradient_h(64, 64, 1);
-    let encoder = StreamingEncoder::new(64, 64)
-        .pixel_format(PixelFormat::Gray);
+    let encoder = StreamingEncoder::new(64, 64).pixel_format(PixelFormat::Gray);
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -130,8 +128,7 @@ fn test_decode_various_qualities(quality: f32) {
 #[test]
 fn test_decode_progressive() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .mode(jpegli::types::JpegMode::Progressive);
+    let encoder = StreamingEncoder::new(128, 128).mode(jpegli::types::JpegMode::Progressive);
     let jpeg = encoder
         .encode_all(&img.pixels)
         .expect("encode progressive failed");
@@ -329,8 +326,7 @@ fn test_decode_pixel_range() {
         }
     }
 
-    let encoder = StreamingEncoder::new(64, 64)
-        .quality(Quality::from_quality(100.0));
+    let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(100.0));
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();

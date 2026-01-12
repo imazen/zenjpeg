@@ -21,8 +21,7 @@ fn roundtrip_quality(
 ) -> (f64, u8, usize) {
     let img = generate_test_image(width, height, pattern, 3);
 
-    let encoder = StreamingEncoder::new(width, height)
-        .quality(Quality::from_quality(quality));
+    let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(quality));
 
     let jpeg_data = encoder.encode_all(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();

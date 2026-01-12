@@ -1,4 +1,4 @@
-use jpegli::{JpegMode, StreamingEncoder, Decoder, Quality};
+use jpegli::{Decoder, JpegMode, Quality, StreamingEncoder};
 
 #[test]
 fn test_progressive_xyb_all_quality_levels() {
@@ -8,9 +8,9 @@ fn test_progressive_xyb_all_quality_levels() {
     let mut rgb = Vec::with_capacity((width * height * 3) as usize);
     for y in 0..height {
         for x in 0..width {
-            rgb.push(((x * 255) / width) as u8);  // R gradient
+            rgb.push(((x * 255) / width) as u8); // R gradient
             rgb.push(((y * 255) / height) as u8); // G gradient
-            rgb.push(128u8);                       // B constant
+            rgb.push(128u8); // B constant
         }
     }
 
@@ -26,9 +26,7 @@ fn test_progressive_xyb_all_quality_levels() {
         println!("Q{}: encoded {} bytes", quality, jpeg.len());
 
         // Decode
-        let result = Decoder::new()
-            .apply_icc(true)
-            .decode(&jpeg);
+        let result = Decoder::new().apply_icc(true).decode(&jpeg);
 
         match result {
             Ok(img) => println!("Q{}: decoded {}x{}", quality, img.width, img.height),
@@ -46,15 +44,18 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     let mut rgb = Vec::with_capacity((width * height * 3) as usize);
     for y in 0..height {
         for x in 0..width {
-            rgb.push(((x * 255) / width) as u8);  // R gradient
+            rgb.push(((x * 255) / width) as u8); // R gradient
             rgb.push(((y * 255) / height) as u8); // G gradient
-            rgb.push(((x + y) % 256) as u8);      // B pattern
+            rgb.push(((x + y) % 256) as u8); // B pattern
         }
     }
 
     // Just test one quality level for debugging
     let quality = 10u8;
-    println!("\nTesting Q{} with {}x{} progressive XYB...", quality, width, height);
+    println!(
+        "\nTesting Q{} with {}x{} progressive XYB...",
+        quality, width, height
+    );
 
     // Encode progressive XYB
     let jpeg = StreamingEncoder::new(width, height)
@@ -78,18 +79,23 @@ fn test_progressive_xyb_non_aligned_dimensions() {
         let cursor = ZCursor::new(&jpeg);
         let mut decoder = JpegDecoder::new(cursor);
         match decoder.decode() {
-            Ok(data) => println!("Q{}: zune-jpeg decoded {} bytes (RGB wrong but JPEG valid)", quality, data.len()),
+            Ok(data) => println!(
+                "Q{}: zune-jpeg decoded {} bytes (RGB wrong but JPEG valid)",
+                quality,
+                data.len()
+            ),
             Err(e) => println!("Q{}: zune-jpeg also failed: {:?}", quality, e),
         }
     }
 
     // Decode with jpegli-rs
-    let result = Decoder::new()
-        .apply_icc(true)
-        .decode(&jpeg);
+    let result = Decoder::new().apply_icc(true).decode(&jpeg);
 
     match result {
-        Ok(img) => println!("Q{}: jpegli-rs decoded {}x{}", quality, img.width, img.height),
+        Ok(img) => println!(
+            "Q{}: jpegli-rs decoded {}x{}",
+            quality, img.width, img.height
+        ),
         Err(e) => panic!("Q{}: DECODE ERROR: {:?}", quality, e),
     }
 }
@@ -110,7 +116,10 @@ fn test_progressive_ycbcr_non_aligned_dimensions() {
     }
 
     for &quality in &[10u8, 30, 50, 70, 85, 95] {
-        println!("\nTesting Q{} with {}x{} progressive YCbCr...", quality, width, height);
+        println!(
+            "\nTesting Q{} with {}x{} progressive YCbCr...",
+            quality, width, height
+        );
 
         // Encode progressive YCbCr
         let jpeg = StreamingEncoder::new(width, height)

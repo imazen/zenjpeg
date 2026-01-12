@@ -420,10 +420,7 @@ impl Encoder {
 
                 // Reset DC prediction at restart boundaries (same logic as encoder)
                 // This ensures Huffman tables account for DC differences after resets
-                if restart_interval > 0
-                    && i + 1 < total_mcus
-                    && (i + 1) % restart_interval == 0
-                {
+                if restart_interval > 0 && i + 1 < total_mcus && (i + 1) % restart_interval == 0 {
                     prev_y_dc = 0;
                     prev_cb_dc = 0;
                     prev_cr_dc = 0;

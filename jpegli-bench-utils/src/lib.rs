@@ -540,8 +540,8 @@ pub fn create_edge_test_image(source: &RgbImage, config: EdgeTestConfig) -> Opti
 /// Convenience wrapper around `create_edge_test_image` for right-edge-only testing.
 #[must_use]
 pub fn tile_edge_columns(source: &RgbImage, edge_columns: usize, target_width: usize) -> RgbImage {
-    let config = EdgeTestConfig::right_only(edge_columns)
-        .with_target_size(target_width, source.height());
+    let config =
+        EdgeTestConfig::right_only(edge_columns).with_target_size(target_width, source.height());
     create_edge_test_image(source, config).unwrap_or_else(|| source.clone())
 }
 
@@ -550,8 +550,8 @@ pub fn tile_edge_columns(source: &RgbImage, edge_columns: usize, target_width: u
 /// Convenience wrapper around `create_edge_test_image` for bottom-edge-only testing.
 #[must_use]
 pub fn tile_edge_rows(source: &RgbImage, edge_rows: usize, target_height: usize) -> RgbImage {
-    let config = EdgeTestConfig::bottom_only(edge_rows)
-        .with_target_size(source.width(), target_height);
+    let config =
+        EdgeTestConfig::bottom_only(edge_rows).with_target_size(source.width(), target_height);
     create_edge_test_image(source, config).unwrap_or_else(|| source.clone())
 }
 
@@ -592,11 +592,23 @@ impl McuEdgeInfo {
         let total_blocks = total_mcu_columns * total_mcu_rows;
 
         // Blocks affected by partial width (rightmost column)
-        let width_affected = if partial_mcu_width > 0 { total_mcu_rows } else { 0 };
+        let width_affected = if partial_mcu_width > 0 {
+            total_mcu_rows
+        } else {
+            0
+        };
         // Blocks affected by partial height (bottom row)
-        let height_affected = if partial_mcu_height > 0 { total_mcu_columns } else { 0 };
+        let height_affected = if partial_mcu_height > 0 {
+            total_mcu_columns
+        } else {
+            0
+        };
         // Corner block is counted in both, subtract 1 to avoid double-counting
-        let corner_overlap = if partial_mcu_width > 0 && partial_mcu_height > 0 { 1 } else { 0 };
+        let corner_overlap = if partial_mcu_width > 0 && partial_mcu_height > 0 {
+            1
+        } else {
+            0
+        };
         let total_affected = width_affected + height_affected - corner_overlap;
 
         let width_affected_pct = if total_blocks > 0 {

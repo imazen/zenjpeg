@@ -424,10 +424,7 @@ mod avx2 {
 
             let mut pos = 0;
             for _ in 0..8 {
-                _mm_storeu_si128(
-                    out_vector[pos..pos + 8].as_mut_ptr().cast(),
-                    idct_value,
-                );
+                _mm_storeu_si128(out_vector[pos..pos + 8].as_mut_ptr().cast(), idct_value);
                 pos += stride;
             }
             return;
@@ -503,8 +500,7 @@ mod avx2 {
 
         // Transpose
         transpose_8x8_i32(
-            &mut row0, &mut row1, &mut row2, &mut row3,
-            &mut row4, &mut row5, &mut row6, &mut row7,
+            &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6, &mut row7,
         );
 
         // Second pass (rows)
@@ -512,8 +508,7 @@ mod avx2 {
 
         // Transpose back
         transpose_8x8_i32(
-            &mut row0, &mut row1, &mut row2, &mut row3,
-            &mut row4, &mut row5, &mut row6, &mut row7,
+            &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6, &mut row7,
         );
 
         // Pack and store
@@ -600,12 +595,7 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 /// * `stride` - Stride between output rows
 /// * `coeff_count` - Number of non-zero coefficients (1 = DC only, up to 64)
 #[inline]
-pub fn idct_int_tiered(
-    coeffs: &mut [i32; 64],
-    output: &mut [i16],
-    stride: usize,
-    coeff_count: u8,
-) {
+pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize, coeff_count: u8) {
     if coeff_count <= 1 {
         // DC-only fast path
         idct_int_dc_only(coeffs[0], output, stride);
@@ -671,16 +661,18 @@ mod tests {
 
     #[test]
     fn test_is_dc_only_int() {
-        let dc_only = [100i32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let dc_only = [
+            100i32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert!(is_dc_only_int(&dc_only));
 
-        let not_dc_only = [100i32, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let not_dc_only = [
+            100i32, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert!(!is_dc_only_int(&not_dc_only));
     }
 

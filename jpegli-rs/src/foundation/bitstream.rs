@@ -112,10 +112,8 @@ impl BitWriter {
             // Actually simplest correct check: XOR with 0x7F7F7F7F, add 0x01010101,
             // then check if any byte's high bit differs from original.
             // But let's just use the straightforward approach:
-            let has_ff = (bytes[0] == 0xFF)
-                | (bytes[1] == 0xFF)
-                | (bytes[2] == 0xFF)
-                | (bytes[3] == 0xFF);
+            let has_ff =
+                (bytes[0] == 0xFF) | (bytes[1] == 0xFF) | (bytes[2] == 0xFF) | (bytes[3] == 0xFF);
 
             if !has_ff {
                 // Fast path: no 0xFF bytes, write directly

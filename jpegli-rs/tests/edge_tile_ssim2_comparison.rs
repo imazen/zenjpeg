@@ -16,7 +16,10 @@ use std::process::Command;
 fn find_corpus_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
-        format!("{}/work/codec-eval/codec-corpus/CID22/CID22-512/training", home),
+        format!(
+            "{}/work/codec-eval/codec-corpus/CID22/CID22-512/training",
+            home
+        ),
         format!("{}/work/codec-eval/codec-corpus/kodak", home),
     ];
     for p in candidates {
@@ -94,7 +97,13 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 /// Crop image to specified dimensions (top-left origin)
-fn crop_image(rgb: &[u8], src_width: u32, src_height: u32, new_width: u32, new_height: u32) -> Vec<u8> {
+fn crop_image(
+    rgb: &[u8],
+    src_width: u32,
+    src_height: u32,
+    new_width: u32,
+    new_height: u32,
+) -> Vec<u8> {
     let new_width = new_width.min(src_width) as usize;
     let new_height = new_height.min(src_height) as usize;
     let src_width = src_width as usize;
@@ -162,14 +171,19 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
 
 /// Decode JPEG to RGB
 fn decode_jpeg(jpeg: &[u8]) -> Vec<u8> {
-    let decoded = jpegli::Decoder::new()
-        .decode(jpeg)
-        .expect("decode failed");
+    let decoded = jpegli::Decoder::new().decode(jpeg).expect("decode failed");
     decoded.data
 }
 
 /// Encode with C++ cjpegli, decode with djpegli, return RGB
-fn encode_decode_cpp(rgb: &[u8], width: u32, height: u32, quality: f32, cjpegli: &PathBuf, djpegli: &PathBuf) -> Option<Vec<u8>> {
+fn encode_decode_cpp(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: f32,
+    cjpegli: &PathBuf,
+    djpegli: &PathBuf,
+) -> Option<Vec<u8>> {
     let tmp_dir = std::env::temp_dir();
     let ppm_path = tmp_dir.join("edge_test_input.ppm");
     let jpg_path = tmp_dir.join("edge_test_output.jpg");
@@ -185,8 +199,10 @@ fn encode_decode_cpp(rgb: &[u8], width: u32, height: u32, quality: f32, cjpegli:
         .args([
             ppm_path.to_str()?,
             jpg_path.to_str()?,
-            "-q", &quality.to_string(),
-            "--chroma_subsampling", "444",
+            "-q",
+            &quality.to_string(),
+            "--chroma_subsampling",
+            "444",
             "--progressive_level=2",
         ])
         .output()
@@ -198,10 +214,7 @@ fn encode_decode_cpp(rgb: &[u8], width: u32, height: u32, quality: f32, cjpegli:
 
     // Decode with djpegli
     let status = Command::new(djpegli)
-        .args([
-            jpg_path.to_str()?,
-            out_ppm_path.to_str()?,
-        ])
+        .args([jpg_path.to_str()?, out_ppm_path.to_str()?])
         .output()
         .ok()?;
 
@@ -230,26 +243,31 @@ fn calculate_ssim2(rgb1: &[u8], rgb2: &[u8], width: usize, height: usize) -> f64
     use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
 
     // Convert to linear RGB
-    let src: Vec<[f32; 3]> = rgb1.chunks(3)
-        .map(|c| [
-            srgb_u8_to_linear(c[0]),
-            srgb_u8_to_linear(c[1]),
-            srgb_u8_to_linear(c[2]),
-        ])
+    let src: Vec<[f32; 3]> = rgb1
+        .chunks(3)
+        .map(|c| {
+            [
+                srgb_u8_to_linear(c[0]),
+                srgb_u8_to_linear(c[1]),
+                srgb_u8_to_linear(c[2]),
+            ]
+        })
         .collect();
-    let dst: Vec<[f32; 3]> = rgb2.chunks(3)
-        .map(|c| [
-            srgb_u8_to_linear(c[0]),
-            srgb_u8_to_linear(c[1]),
-            srgb_u8_to_linear(c[2]),
-        ])
+    let dst: Vec<[f32; 3]> = rgb2
+        .chunks(3)
+        .map(|c| {
+            [
+                srgb_u8_to_linear(c[0]),
+                srgb_u8_to_linear(c[1]),
+                srgb_u8_to_linear(c[2]),
+            ]
+        })
         .collect();
 
     let src_img = LinearRgbImage::new(src, width, height);
     let dst_img = LinearRgbImage::new(dst, width, height);
 
-    compute_frame_ssimulacra2(src_img, dst_img)
-        .unwrap_or(-1.0)
+    compute_frame_ssimulacra2(src_img, dst_img).unwrap_or(-1.0)
 }
 
 #[test]
@@ -265,7 +283,7 @@ fn test_edge_tile_ssim2_comparison() {
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().map(|e| e == "png").unwrap_or(false))
-        .take(3)  // Use 3 images for reasonable test time
+        .take(3) // Use 3 images for reasonable test time
         .collect();
     images.sort();
 
@@ -282,20 +300,22 @@ fn test_edge_tile_ssim2_comparison() {
     // edge_width/height is how many pixels are in the partial MCU
     let test_configs = [
         // Width edge tests (1-7 partial pixels)
-        (257, 256, 1, 0),  // 1 pixel partial width
-        (259, 256, 3, 0),  // 3 pixels partial width
-        (262, 256, 6, 0),  // 6 pixels partial width
+        (257, 256, 1, 0), // 1 pixel partial width
+        (259, 256, 3, 0), // 3 pixels partial width
+        (262, 256, 6, 0), // 6 pixels partial width
         // Height edge tests (1-7 partial pixels)
-        (256, 129, 0, 1),  // 1 pixel partial height
-        (256, 131, 0, 3),  // 3 pixels partial height
-        (256, 134, 0, 6),  // 6 pixels partial height
+        (256, 129, 0, 1), // 1 pixel partial height
+        (256, 131, 0, 3), // 3 pixels partial height
+        (256, 134, 0, 6), // 6 pixels partial height
         // Combined tests
-        (257, 129, 1, 1),  // Both edges minimal
-        (262, 134, 6, 6),  // Both edges maximal
+        (257, 129, 1, 1), // Both edges minimal
+        (262, 134, 6, 6), // Both edges maximal
     ];
 
-    println!("{:>20} {:>10} {:>8} {:>8} {:>12} {:>12} {:>10}",
-             "Image", "Dims", "EdgeW", "EdgeH", "Rust SSIM2", "C++ SSIM2", "Diff");
+    println!(
+        "{:>20} {:>10} {:>8} {:>8} {:>12} {:>12} {:>10}",
+        "Image", "Dims", "EdgeW", "EdgeH", "Rust SSIM2", "C++ SSIM2", "Diff"
+    );
     println!("{}", "-".repeat(90));
 
     let mut total_rust_ssim2 = 0.0;
@@ -308,7 +328,8 @@ fn test_edge_tile_ssim2_comparison() {
             None => continue,
         };
 
-        let image_name = image_path.file_stem()
+        let image_name = image_path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
 
@@ -326,13 +347,18 @@ fn test_edge_tile_ssim2_comparison() {
             let rust_jpeg = encode_rust(&cropped, crop_w, crop_h, quality);
             let rust_decoded = decode_jpeg(&rust_jpeg);
 
-            let cpp_decoded = match encode_decode_cpp(&cropped, crop_w, crop_h, quality, &cjpegli, &djpegli) {
-                Some(d) => d,
-                None => {
-                    println!("{:>20} {:>10} - C++ encode/decode failed", image_name, format!("{}x{}", crop_w, crop_h));
-                    continue;
-                }
-            };
+            let cpp_decoded =
+                match encode_decode_cpp(&cropped, crop_w, crop_h, quality, &cjpegli, &djpegli) {
+                    Some(d) => d,
+                    None => {
+                        println!(
+                            "{:>20} {:>10} - C++ encode/decode failed",
+                            image_name,
+                            format!("{}x{}", crop_w, crop_h)
+                        );
+                        continue;
+                    }
+                };
 
             // Calculate SSIM2 based on edge type
             let (rust_ssim2, cpp_ssim2) = if edge_w > 0 && edge_h == 0 {
@@ -373,19 +399,29 @@ fn test_edge_tile_ssim2_comparison() {
             let diff_str = if diff.abs() < 0.01 {
                 format!("{:+.2}", diff)
             } else if diff > 0.0 {
-                format!("{:+.2} ✓", diff)  // Rust better
+                format!("{:+.2} ✓", diff) // Rust better
             } else {
-                format!("{:+.2} ✗", diff)  // C++ better
+                format!("{:+.2} ✗", diff) // C++ better
             };
 
-            println!("{:>20} {:>10} {:>8} {:>8} {:>12.2} {:>12.2} {:>10}",
-                     image_name,
-                     format!("{}x{}", crop_w, crop_h),
-                     if edge_w > 0 { edge_w.to_string() } else { "-".to_string() },
-                     if edge_h > 0 { edge_h.to_string() } else { "-".to_string() },
-                     rust_ssim2,
-                     cpp_ssim2,
-                     diff_str);
+            println!(
+                "{:>20} {:>10} {:>8} {:>8} {:>12.2} {:>12.2} {:>10}",
+                image_name,
+                format!("{}x{}", crop_w, crop_h),
+                if edge_w > 0 {
+                    edge_w.to_string()
+                } else {
+                    "-".to_string()
+                },
+                if edge_h > 0 {
+                    edge_h.to_string()
+                } else {
+                    "-".to_string()
+                },
+                rust_ssim2,
+                cpp_ssim2,
+                diff_str
+            );
 
             total_rust_ssim2 += rust_ssim2;
             total_cpp_ssim2 += cpp_ssim2;
@@ -398,8 +434,16 @@ fn test_edge_tile_ssim2_comparison() {
         let avg_rust = total_rust_ssim2 / count as f64;
         let avg_cpp = total_cpp_ssim2 / count as f64;
         let avg_diff = avg_rust - avg_cpp;
-        println!("{:>20} {:>10} {:>8} {:>8} {:>12.2} {:>12.2} {:>10}",
-                 "AVERAGE", "", "", "", avg_rust, avg_cpp, format!("{:+.2}", avg_diff));
+        println!(
+            "{:>20} {:>10} {:>8} {:>8} {:>12.2} {:>12.2} {:>10}",
+            "AVERAGE",
+            "",
+            "",
+            "",
+            avg_rust,
+            avg_cpp,
+            format!("{:+.2}", avg_diff)
+        );
     }
 
     println!("\nNote: SSIMULACRA2 scores are for TILED EDGE PIXELS ONLY");

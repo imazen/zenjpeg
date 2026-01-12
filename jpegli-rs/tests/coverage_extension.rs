@@ -215,14 +215,12 @@ mod entropy_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Low quality creates larger coefficients
-        let encoder = StreamingEncoder::new(64, 64)
-            .quality(Quality::from_quality(10.0));
+        let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(10.0));
         let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 100);
 
         // High quality with small coefficients
-        let encoder = StreamingEncoder::new(64, 64)
-            .quality(Quality::from_quality(100.0));
+        let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(100.0));
         let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
         assert!(jpeg.len() > 100);
     }
@@ -314,8 +312,7 @@ mod color_coverage {
             pixels[i * 3 + 2] = 128; // R
         }
 
-        let encoder = StreamingEncoder::new(64, 64)
-            .pixel_format(PixelFormat::Bgr);
+        let encoder = StreamingEncoder::new(64, 64).pixel_format(PixelFormat::Bgr);
         let jpeg = encoder.encode_all(&pixels).expect("BGR encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -333,8 +330,7 @@ mod color_coverage {
             pixels[i * 4 + 3] = 255; // A
         }
 
-        let encoder = StreamingEncoder::new(64, 64)
-            .pixel_format(PixelFormat::Bgra);
+        let encoder = StreamingEncoder::new(64, 64).pixel_format(PixelFormat::Bgra);
         let jpeg = encoder.encode_all(&pixels).expect("BGRA encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -516,8 +512,7 @@ mod encode_coverage {
 
         // Test restart interval encoding (decoder may have issues with restart markers)
         for interval in [1, 5, 10, 50, 100] {
-            let encoder = StreamingEncoder::new(512, 512)
-                .restart_interval(interval);
+            let encoder = StreamingEncoder::new(512, 512).restart_interval(interval);
             let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
             // Verify DRI marker is present
@@ -599,8 +594,7 @@ mod encode_coverage {
     fn encode_with_fixed_huffman() {
         let img = generate_gradient_d(128, 128, 3);
 
-        let encoder = StreamingEncoder::new(128, 128)
-            .optimize_huffman(false);
+        let encoder = StreamingEncoder::new(128, 128).optimize_huffman(false);
         let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");

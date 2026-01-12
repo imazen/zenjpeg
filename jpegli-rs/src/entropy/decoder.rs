@@ -104,7 +104,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     #[inline]
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> Result<u8> {
         // Try fast lookup first
-        if let Some(bits) = self.reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
+        if let Some(bits) = self
+            .reader
+            .peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+        {
             let lookup = table.fast_lookup[bits as usize];
             if lookup >= 0 {
                 let symbol = (lookup & 0xFF) as u8;
@@ -201,8 +204,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut i = 1;
         while i < DCT_BLOCK_SIZE {
             // Try fast path first - peek 9 bits with inline refill
-            if let Some(bits9) =
-                self.reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+            if let Some(bits9) = self
+                .reader
+                .peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
             {
                 let idx = bits9 as usize;
 
@@ -336,8 +340,9 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let mut i = 1;
         while i < DCT_BLOCK_SIZE {
             // Try fast path first - peek 9 bits with inline refill
-            if let Some(bits9) =
-                self.reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+            if let Some(bits9) = self
+                .reader
+                .peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
             {
                 let idx = bits9 as usize;
 

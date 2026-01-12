@@ -911,8 +911,10 @@ impl StripProcessor {
 
         // Replicate last row - copy to temp first to avoid borrow conflict
         let last_row_start = (actual_chroma_height - 1) * chroma_width;
-        let cb_last_row: Vec<f32> = self.cb_down[last_row_start..last_row_start + chroma_width].to_vec();
-        let cr_last_row: Vec<f32> = self.cr_down[last_row_start..last_row_start + chroma_width].to_vec();
+        let cb_last_row: Vec<f32> =
+            self.cb_down[last_row_start..last_row_start + chroma_width].to_vec();
+        let cr_last_row: Vec<f32> =
+            self.cr_down[last_row_start..last_row_start + chroma_width].to_vec();
         for row in actual_chroma_height..target_height {
             let dst_start = row * chroma_width;
             self.cb_down[dst_start..dst_start + chroma_width].copy_from_slice(&cb_last_row);
@@ -1190,10 +1192,7 @@ impl StripProcessor {
             | PixelFormat::Rgba16
             | PixelFormat::RgbF32
             | PixelFormat::RgbaF32 => {}
-            PixelFormat::Gray
-            | PixelFormat::Gray16
-            | PixelFormat::GrayF32
-            | PixelFormat::Cmyk => {
+            PixelFormat::Gray | PixelFormat::Gray16 | PixelFormat::GrayF32 | PixelFormat::Cmyk => {
                 return Err(crate::error::Error::UnsupportedFeature {
                     feature: "XYB mode only supports RGB/RGBA pixel formats",
                 });
@@ -1277,8 +1276,11 @@ impl StripProcessor {
 
                 // Convert linear RGB to XYB directly (XYB is defined in linear space)
                 // Scale to match C++ jpegli's expected range (0-255 linear input)
-                let (scaled_x, scaled_y, scaled_b) =
-                    crate::xyb::linear_rgb_to_xyb_255(r_linear * 255.0, g_linear * 255.0, b_linear * 255.0);
+                let (scaled_x, scaled_y, scaled_b) = crate::xyb::linear_rgb_to_xyb_255(
+                    r_linear * 255.0,
+                    g_linear * 255.0,
+                    b_linear * 255.0,
+                );
 
                 // Store: X→y_strip, Y→cb_strip, B→cr_strip
                 // Scale to JPEG sample range for level shift consistency
@@ -1996,14 +1998,14 @@ mod tests {
                     // Distinct colors for each block - creates sharp edges
                     // Colors chosen to be compressible but distinct
                     let colors: [(u8, u8, u8); 8] = [
-                        (200, 100, 80),   // coral
-                        (80, 180, 100),   // green
-                        (100, 80, 180),   // purple
-                        (180, 180, 80),   // yellow
-                        (80, 150, 180),   // cyan
-                        (180, 80, 150),   // magenta
-                        (140, 140, 140),  // gray
-                        (220, 180, 140),  // tan
+                        (200, 100, 80),  // coral
+                        (80, 180, 100),  // green
+                        (100, 80, 180),  // purple
+                        (180, 180, 80),  // yellow
+                        (80, 150, 180),  // cyan
+                        (180, 80, 150),  // magenta
+                        (140, 140, 140), // gray
+                        (220, 180, 140), // tan
                     ];
 
                     // Select color based on block position (varies both x and y)

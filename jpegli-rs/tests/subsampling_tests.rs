@@ -405,8 +405,7 @@ fn count_components_in_sof(jpeg: &[u8]) -> Option<u8> {
 #[test]
 fn test_rgb_has_three_components() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
-        .quality(Quality::from_quality(85.0));
+    let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");
