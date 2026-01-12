@@ -52,6 +52,7 @@ pub struct StreamingEncoderBuilder {
     chroma_downsampling: ChromaDownsampling,
     restart_interval: u16,
     custom_quant_matrices: Option<CustomQuantMatrices>,
+    use_xyb: bool,
 }
 
 impl StreamingEncoderBuilder {
@@ -68,6 +69,7 @@ impl StreamingEncoderBuilder {
             chroma_downsampling: ChromaDownsampling::Box,
             restart_interval: 0,
             custom_quant_matrices: None,
+            use_xyb: false,
         }
     }
 
@@ -133,6 +135,23 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn custom_quant_matrices(mut self, custom: CustomQuantMatrices) -> Self {
         self.custom_quant_matrices = Some(custom);
+        self
+    }
+
+    /// Enables XYB color space encoding.
+    ///
+    /// XYB is a perceptual color space used by JPEG XL that better models human
+    /// vision than YCbCr. When enabled, the output JPEG uses XYB-encoded data
+    /// with an ICC profile that allows compatible decoders to render correctly.
+    ///
+    /// Linear input formats (Rgb16, Rgba16, RgbF32, RgbaF32) are ideal for XYB
+    /// since XYB is defined in linear light space.
+    ///
+    /// Note: Without ICC profile support in the decoder, images will display with
+    /// incorrect colors. Use standard YCbCr mode for maximum compatibility.
+    #[must_use]
+    pub fn use_xyb(mut self, enable: bool) -> Self {
+        self.use_xyb = enable;
         self
     }
 
@@ -420,32 +439,55 @@ impl StreamingEncoder {
             builder.restart_interval,
         )?;
 
+        // Enable XYB mode if requested
+        if builder.use_xyb {
+            processor.set_xyb_mode(true);
+        }
+
         // Generate quantization tables (use custom matrices if provided)
         let is_420 = builder.subsampling == Subsampling::S420;
         let distance = builder.quality.to_distance();
+        let color_space = if builder.use_xyb {
+            ColorSpace::Xyb
+        } else {
+            ColorSpace::YCbCr
+        };
 
         let (y_quant, cb_quant, cr_quant) = if let Some(ref custom) = builder.custom_quant_matrices
         {
             (
-                quant::generate_quant_table_custom(distance, 0, false, custom),
-                quant::generate_quant_table_custom(distance, 1, false, custom),
-                quant::generate_quant_table_custom(distance, 2, false, custom),
+                quant::generate_quant_table_custom(distance, 0, builder.use_xyb, custom),
+                quant::generate_quant_table_custom(distance, 1, builder.use_xyb, custom),
+                quant::generate_quant_table_custom(distance, 2, builder.use_xyb, custom),
             )
         } else {
             (
                 quant::generate_quant_table(
                     builder.quality,
                     0,
-                    ColorSpace::YCbCr,
-                    false, // not XYB
+                    color_space,
+                    builder.use_xyb,
                     is_420,
                 ),
-                quant::generate_quant_table(builder.quality, 1, ColorSpace::YCbCr, false, is_420),
-                quant::generate_quant_table(builder.quality, 2, ColorSpace::YCbCr, false, is_420),
+                quant::generate_quant_table(
+                    builder.quality,
+                    1,
+                    color_space,
+                    builder.use_xyb,
+                    is_420,
+                ),
+                quant::generate_quant_table(
+                    builder.quality,
+                    2,
+                    color_space,
+                    builder.use_xyb,
+                    is_420,
+                ),
             )
         };
 
         // Compute zero bias params
+        // Note: XYB uses YCbCr tables as approximation (see baseline.rs)
         let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
         let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
         let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
@@ -477,7 +519,8 @@ impl StreamingEncoder {
             .mode(builder.mode)
             .optimize_huffman(builder.optimize_huffman)
             .chroma_downsampling(builder.chroma_downsampling)
-            .restart_interval(builder.restart_interval);
+            .restart_interval(builder.restart_interval)
+            .use_xyb(builder.use_xyb);
 
         Ok(Self {
             width,
