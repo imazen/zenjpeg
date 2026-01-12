@@ -96,7 +96,6 @@ impl QuantContext {
     }
 }
 
-
 use crate::simd_types::Block8x8f;
 use wide::f32x8;
 
@@ -669,9 +668,8 @@ impl StripProcessor {
             PixelFormat::Cmyk => {
                 // CMYK: scalar conversion with strided Y output
                 use crate::consts::{
-                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB,
-                    YCBCR_G_TO_CR, YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR,
-                    YCBCR_R_TO_Y,
+                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
+                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
                 };
                 let bpp = self.pixel_format.bytes_per_pixel();
                 for row in 0..strip_height {
@@ -691,10 +689,10 @@ impl StripProcessor {
                         // Use FMA for accuracy (single rounding)
                         self.y_strip[y_row_start + x] =
                             YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-                        self.cb_strip[cbcr_row_start + x] =
-                            YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
-                        self.cr_strip[cbcr_row_start + x] =
-                            YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
+                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
+                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
                     }
                     // Edge-pad Y row
                     if width < padded_width {
@@ -1448,4 +1446,120 @@ mod tests {
     }
 
     // StreamingAQ tests are in quant/aq/streaming.rs
+
+    /// Test that strip encoder produces valid output for partial MCU heights.
+    /// This test checks heights 56-72 which cross the 64-pixel boundary (4 MCU rows).
+    /// Validates that decoded output is close to original (PSNR-based check).
+    #[test]
+    fn test_strip_partial_mcu_heights() {
+        use crate::encode::Encoder;
+        use crate::quant::Quality;
+
+        let width = 64usize;
+        let mut results = Vec::new();
+
+        for height in 56..=72 {
+            let mut rgb = vec![0u8; width * height * 3];
+            // Use smooth gradients that work well with DCT edge handling
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = (y * width + x) * 3;
+                    // Smooth gradients in 64-192 range (avoid edge wrapping)
+                    rgb[idx] = (64.0 + (x as f32 / width as f32) * 128.0) as u8;
+                    rgb[idx + 1] = (64.0 + (y as f32 / height as f32) * 128.0) as u8;
+                    rgb[idx + 2] =
+                        (64.0 + ((x + y) as f32 / (width + height) as f32) * 128.0) as u8;
+                }
+            }
+
+            // Encode with strip encoder (current default)
+            let jpeg_strip = Encoder::new()
+                .width(width as u32)
+                .height(height as u32)
+                .pixel_format(PixelFormat::Rgb)
+                .subsampling(Subsampling::S420)
+                .jpegli_quality(Quality::from_quality(85.0))
+                .optimize_huffman(true)
+                .encode(&rgb)
+                .expect("strip encode failed");
+
+            // Decode and verify
+            let decoded_strip = crate::Decoder::new()
+                .decode(&jpeg_strip)
+                .expect("strip decode failed");
+
+            // Check dimensions match
+            assert_eq!(
+                decoded_strip.width, width as u32,
+                "strip width mismatch at height {}",
+                height
+            );
+            assert_eq!(
+                decoded_strip.height, height as u32,
+                "strip height mismatch at height {}",
+                height
+            );
+
+            // Check decoded data size matches
+            let expected_size = width * height * 3;
+            assert_eq!(
+                decoded_strip.data.len(),
+                expected_size,
+                "strip data size mismatch at height {}: got {} expected {}",
+                height,
+                decoded_strip.data.len(),
+                expected_size
+            );
+
+            // Compute mean squared error between original and decoded
+            let mut sum_sq_err: u64 = 0;
+            let mut max_diff: i32 = 0;
+            for (i, (&orig, &dec)) in rgb.iter().zip(decoded_strip.data.iter()).enumerate() {
+                let diff = (orig as i32 - dec as i32).abs();
+                sum_sq_err += (diff as u64) * (diff as u64);
+                if diff > max_diff {
+                    max_diff = diff;
+                }
+                // Check no pixel is wildly different (would indicate corruption)
+                assert!(
+                    diff < 50,
+                    "pixel {} at height {} differs by {} (orig={}, dec={})",
+                    i,
+                    height,
+                    diff,
+                    orig,
+                    dec
+                );
+            }
+
+            let mse = sum_sq_err as f64 / expected_size as f64;
+            let psnr = if mse > 0.0 {
+                10.0 * (255.0 * 255.0 / mse).log10()
+            } else {
+                100.0
+            };
+
+            results.push((height, max_diff, jpeg_strip.len(), psnr));
+        }
+
+        // Print summary
+        println!("\nHeight  MaxDiff  Size     PSNR");
+        for (height, max_diff, size, psnr) in &results {
+            let marker = if *psnr < 30.0 { " <-- LOW" } else { "" };
+            println!(
+                "{:>6} {:>8} {:>8} {:>8.2}{}",
+                height, max_diff, size, psnr, marker
+            );
+        }
+
+        // Quality at 85 should produce PSNR > 35 dB for smooth gradients
+        for (height, _, _, psnr) in &results {
+            assert!(
+                *psnr > 30.0,
+                "strip encoder PSNR {} at height {} is too low (expected > 30)",
+                psnr,
+                height
+            );
+        }
+    }
 }
