@@ -1671,29 +1671,40 @@ impl StripProcessor {
         // Y strip is now in padded layout (padded_width pixels per row)
         let padded_width = self.padded_width;
 
-        let mut blocks_added = 0;
         // y_strip is in padded layout, so use padded_width for sizing
         let y_size = strip_height * padded_width;
 
+        // Calculate actual block rows to process (may be limited by image height)
+        let max_block_y = (height + 7) / 8;
+        let actual_strip_blocks_h = strip_blocks_h.min(max_block_y.saturating_sub(start_block_y));
+        let blocks_added = actual_strip_blocks_h * blocks_w;
+
         // Compute DCT for Y blocks into pending buffer
-        for local_by in 0..strip_blocks_h {
-            let global_by = start_block_y + local_by;
-            if global_by >= (height + 7) / 8 {
-                break;
-            }
+        #[cfg(feature = "parallel")]
+        {
+            super::parallel::parallel_dct_y_blocks(
+                &self.y_strip[..y_size],
+                blocks_w,
+                actual_strip_blocks_h,
+                padded_width,
+                &mut self.pending_y_blocks[pending_idx],
+            );
+        }
 
-            for bx in 0..blocks_w {
-                // Extract 8×8 block from Y strip and DCT (wide-native path)
-                let block = extract_block_from_strip_wide(
-                    &self.y_strip[..y_size],
-                    bx,
-                    local_by,
-                    padded_width,
-                );
-                let dct = crate::dct::simd::forward_dct_8x8_wide(&block);
-                self.pending_y_blocks[pending_idx].push(dct);
-
-                blocks_added += 1;
+        #[cfg(not(feature = "parallel"))]
+        {
+            for local_by in 0..actual_strip_blocks_h {
+                for bx in 0..blocks_w {
+                    // Extract 8×8 block from Y strip and DCT (wide-native path)
+                    let block = extract_block_from_strip_wide(
+                        &self.y_strip[..y_size],
+                        bx,
+                        local_by,
+                        padded_width,
+                    );
+                    let dct = crate::dct::simd::forward_dct_8x8_wide(&block);
+                    self.pending_y_blocks[pending_idx].push(dct);
+                }
             }
         }
 
