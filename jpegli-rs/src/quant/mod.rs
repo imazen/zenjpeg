@@ -572,7 +572,7 @@ pub fn quantize_block(
         let k = chunk * 8;
 
         // Load coefficients directly from slice
-        let c = f32x8::from(&coeffs[k..k + 8]);
+        let c = f32x8::from(<[f32; 8]>::try_from(&coeffs[k..k + 8]).unwrap());
 
         // Load quant values (must convert u16 to f32)
         let q = f32x8::from([
@@ -664,7 +664,7 @@ pub fn quantize_block_with_zero_bias_simd(
         let k = chunk * 8;
 
         // Load coefficients directly from slice
-        let c = f32x8::from(&coeffs[k..k + 8]);
+        let c = f32x8::from(<[f32; 8]>::try_from(&coeffs[k..k + 8]).unwrap());
 
         // Load quant values (must convert u16 to f32)
         let q = f32x8::from([
@@ -682,8 +682,8 @@ pub fn quantize_block_with_zero_bias_simd(
         let qval = c / q;
 
         // Load zero_bias offset and mul directly from slices
-        let offset = f32x8::from(&zero_bias.offset[k..k + 8]);
-        let mul = f32x8::from(&zero_bias.mul[k..k + 8]);
+        let offset = f32x8::from(<[f32; 8]>::try_from(&zero_bias.offset[k..k + 8]).unwrap());
+        let mul = f32x8::from(<[f32; 8]>::try_from(&zero_bias.mul[k..k + 8]).unwrap());
 
         // threshold = offset + mul * aq_strength
         let threshold = offset + mul * aq;

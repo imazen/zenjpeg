@@ -46,14 +46,14 @@ mod simd {
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load all 8 rows
         let rows = [
-            f32x8::from(&input[0..8]),
-            f32x8::from(&input[8..16]),
-            f32x8::from(&input[16..24]),
-            f32x8::from(&input[24..32]),
-            f32x8::from(&input[32..40]),
-            f32x8::from(&input[40..48]),
-            f32x8::from(&input[48..56]),
-            f32x8::from(&input[56..64]),
+            f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[8..16]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[16..24]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[24..32]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[32..40]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[40..48]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[48..56]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[56..64]).unwrap()),
         ];
 
         // Use wide's built-in transpose (AVX-accelerated)
@@ -252,14 +252,14 @@ mod simd {
     pub fn inverse_dct_8x8_simd(input: &[f32; 64]) -> [f32; 64] {
         // Load input as rows (each f32x8 is one row of the 8x8 block)
         let rows = [
-            f32x8::from(&input[0..8]),
-            f32x8::from(&input[8..16]),
-            f32x8::from(&input[16..24]),
-            f32x8::from(&input[24..32]),
-            f32x8::from(&input[32..40]),
-            f32x8::from(&input[40..48]),
-            f32x8::from(&input[48..56]),
-            f32x8::from(&input[56..64]),
+            f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[8..16]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[16..24]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[24..32]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[32..40]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[40..48]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[48..56]).unwrap()),
+            f32x8::from(<[f32; 8]>::try_from(&input[56..64]).unwrap()),
         ];
 
         // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
@@ -522,7 +522,7 @@ pub fn inverse_dct_8x8_u8(input: &[f32; DCT_BLOCK_SIZE]) -> [u8; DCT_BLOCK_SIZE]
         let k = chunk * 8;
 
         // Load contiguous values directly from slice
-        let vals = f32x8::from(&output[k..k + 8]);
+        let vals = f32x8::from(<[f32; 8]>::try_from(&output[k..k + 8]).unwrap());
 
         // Add level shift, round, and clamp
         let shifted = vals + level_shift;
