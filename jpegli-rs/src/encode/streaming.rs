@@ -33,7 +33,7 @@
 use crate::encode::strip::StripProcessor;
 use crate::encode::Encoder;
 use crate::error::{Error, Result};
-use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
+use crate::quant::{self, CustomQuantMatrices, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
 use enough::{Never, Stop};
 
@@ -51,6 +51,7 @@ pub struct StreamingEncoderBuilder {
     optimize_huffman: bool,
     chroma_downsampling: ChromaDownsampling,
     restart_interval: u16,
+    custom_quant_matrices: Option<CustomQuantMatrices>,
 }
 
 impl StreamingEncoderBuilder {
@@ -66,6 +67,7 @@ impl StreamingEncoderBuilder {
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
             restart_interval: 0,
+            custom_quant_matrices: None,
         }
     }
 
@@ -118,6 +120,19 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn restart_interval(mut self, interval: u16) -> Self {
         self.restart_interval = interval;
+        self
+    }
+
+    /// Sets custom quantization matrices for experimentation.
+    ///
+    /// This is an escape hatch for research purposes. The default jpegli matrices
+    /// were optimized against the Butteraugli perceptual metric and generally
+    /// produce better results than custom matrices.
+    ///
+    /// See [`CustomQuantMatrices`] for documentation on the matrix format.
+    #[must_use]
+    pub fn custom_quant_matrices(mut self, custom: CustomQuantMatrices) -> Self {
+        self.custom_quant_matrices = Some(custom);
         self
     }
 
@@ -405,19 +420,30 @@ impl StreamingEncoder {
             builder.restart_interval,
         )?;
 
-        // Generate quantization tables
+        // Generate quantization tables (use custom matrices if provided)
         let is_420 = builder.subsampling == Subsampling::S420;
-        let y_quant = quant::generate_quant_table(
-            builder.quality,
-            0,
-            ColorSpace::YCbCr,
-            false, // not XYB
-            is_420,
-        );
-        let cb_quant =
-            quant::generate_quant_table(builder.quality, 1, ColorSpace::YCbCr, false, is_420);
-        let cr_quant =
-            quant::generate_quant_table(builder.quality, 2, ColorSpace::YCbCr, false, is_420);
+        let distance = builder.quality.to_distance();
+
+        let (y_quant, cb_quant, cr_quant) = if let Some(ref custom) = builder.custom_quant_matrices
+        {
+            (
+                quant::generate_quant_table_custom(distance, 0, false, custom),
+                quant::generate_quant_table_custom(distance, 1, false, custom),
+                quant::generate_quant_table_custom(distance, 2, false, custom),
+            )
+        } else {
+            (
+                quant::generate_quant_table(
+                    builder.quality,
+                    0,
+                    ColorSpace::YCbCr,
+                    false, // not XYB
+                    is_420,
+                ),
+                quant::generate_quant_table(builder.quality, 1, ColorSpace::YCbCr, false, is_420),
+                quant::generate_quant_table(builder.quality, 2, ColorSpace::YCbCr, false, is_420),
+            )
+        };
 
         // Compute zero bias params
         let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);

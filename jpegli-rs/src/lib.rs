@@ -135,7 +135,7 @@ pub use decode::{DecodedImage, DecodedImageF32, Decoder, DecoderConfig};
 
 // Quality settings
 pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
-pub use quant::{Quality, QuantTable};
+pub use quant::{CustomQuantMatrices, Quality, QuantTable};
 
 // Allocation tracking
 pub use foundation::AllocationStats;
