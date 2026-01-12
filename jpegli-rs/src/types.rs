@@ -122,8 +122,15 @@ impl PixelFormat {
     pub const fn num_channels(self) -> usize {
         match self {
             Self::Gray | Self::Gray16 | Self::GrayF32 => 1,
-            Self::Rgb | Self::Bgr | Self::Rgba | Self::Bgra | Self::Bgrx
-            | Self::Rgb16 | Self::Rgba16 | Self::RgbF32 | Self::RgbaF32 => 3,
+            Self::Rgb
+            | Self::Bgr
+            | Self::Rgba
+            | Self::Bgra
+            | Self::Bgrx
+            | Self::Rgb16
+            | Self::Rgba16
+            | Self::RgbF32
+            | Self::RgbaF32 => 3,
             Self::Cmyk => 4,
         }
     }
@@ -133,8 +140,15 @@ impl PixelFormat {
     pub const fn color_space(self) -> ColorSpace {
         match self {
             Self::Gray | Self::Gray16 | Self::GrayF32 => ColorSpace::Grayscale,
-            Self::Rgb | Self::Rgba | Self::Bgr | Self::Bgra | Self::Bgrx
-            | Self::Rgb16 | Self::Rgba16 | Self::RgbF32 | Self::RgbaF32 => ColorSpace::Rgb,
+            Self::Rgb
+            | Self::Rgba
+            | Self::Bgr
+            | Self::Bgra
+            | Self::Bgrx
+            | Self::Rgb16
+            | Self::Rgba16
+            | Self::RgbF32
+            | Self::RgbaF32 => ColorSpace::Rgb,
             Self::Cmyk => ColorSpace::Cmyk,
         }
     }
@@ -147,8 +161,14 @@ impl PixelFormat {
     pub const fn is_fast_path(self) -> bool {
         matches!(
             self,
-            Self::Rgb | Self::Bgr | Self::Bgrx | Self::Rgb16 | Self::RgbF32
-            | Self::Gray | Self::Gray16 | Self::GrayF32
+            Self::Rgb
+                | Self::Bgr
+                | Self::Bgrx
+                | Self::Rgb16
+                | Self::RgbF32
+                | Self::Gray
+                | Self::Gray16
+                | Self::GrayF32
         )
     }
 
@@ -156,8 +176,13 @@ impl PixelFormat {
     #[must_use]
     pub const fn bit_depth(self) -> u8 {
         match self {
-            Self::Gray | Self::Rgb | Self::Rgba | Self::Bgr | Self::Bgra
-            | Self::Bgrx | Self::Cmyk => 8,
+            Self::Gray
+            | Self::Rgb
+            | Self::Rgba
+            | Self::Bgr
+            | Self::Bgra
+            | Self::Bgrx
+            | Self::Cmyk => 8,
             Self::Gray16 | Self::Rgb16 | Self::Rgba16 => 16,
             Self::GrayF32 | Self::RgbF32 | Self::RgbaF32 => 32,
         }

@@ -122,7 +122,12 @@ fn test_encode_ycbcr_parity_with_rgb() {
         let end = start + strip_rows * width;
 
         encoder_ycbcr
-            .push_ycbcr_strip_f32(&y_plane[start..end], &cb_plane[start..end], &cr_plane[start..end], strip_rows)
+            .push_ycbcr_strip_f32(
+                &y_plane[start..end],
+                &cb_plane[start..end],
+                &cr_plane[start..end],
+                strip_rows,
+            )
             .unwrap();
     }
 
@@ -253,14 +258,22 @@ fn test_ycbcr_f32_roundtrip() {
         let end = start + strip_rows * width;
 
         encoder
-            .push_ycbcr_strip_f32(&ycbcr.y[start..end], &ycbcr.cb[start..end], &ycbcr.cr[start..end], strip_rows)
+            .push_ycbcr_strip_f32(
+                &ycbcr.y[start..end],
+                &ycbcr.cb[start..end],
+                &ycbcr.cr[start..end],
+                strip_rows,
+            )
             .unwrap();
     }
 
     let jpeg2 = encoder.finish().unwrap();
 
     // Decode final result
-    let final_decoded = decoder.output_format(PixelFormat::Rgb).decode(&jpeg2).unwrap();
+    let final_decoded = decoder
+        .output_format(PixelFormat::Rgb)
+        .decode(&jpeg2)
+        .unwrap();
 
     // Should be visually similar to original (compression is lossy)
     let mut max_diff = 0u8;

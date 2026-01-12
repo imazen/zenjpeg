@@ -70,8 +70,7 @@ fn test_encode_partial_input() {
 #[test]
 fn test_encode_quality_boundary_low() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
-        .quality(Quality::from_quality(1.0));
+    let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(1.0));
     let result = encoder.encode_all(&img.pixels);
     assert!(result.is_ok(), "Q1 should be valid");
 }
@@ -79,8 +78,7 @@ fn test_encode_quality_boundary_low() {
 #[test]
 fn test_encode_quality_boundary_high() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
-        .quality(Quality::from_quality(100.0));
+    let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(100.0));
     let result = encoder.encode_all(&img.pixels);
     assert!(result.is_ok(), "Q100 should be valid");
 }
@@ -369,8 +367,7 @@ fn test_decode_missing_stuffing_byte() {
 #[test]
 fn test_decode_progressive_truncated() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
-        .mode(jpegli::types::JpegMode::Progressive);
+    let encoder = StreamingEncoder::new(64, 64).mode(jpegli::types::JpegMode::Progressive);
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // Truncate progressive JPEG (missing later scans)
@@ -411,8 +408,7 @@ fn test_decode_huge_dimensions_in_sof() {
 fn test_encode_wrong_pixel_format_data() {
     // Tell encoder it's grayscale but give RGB data
     let rgb_data = vec![128u8; 64 * 64 * 3];
-    let encoder = StreamingEncoder::new(64, 64)
-        .pixel_format(PixelFormat::Gray);
+    let encoder = StreamingEncoder::new(64, 64).pixel_format(PixelFormat::Gray);
 
     // This should either fail or handle the mismatch
     let result = encoder.encode_all(&rgb_data);

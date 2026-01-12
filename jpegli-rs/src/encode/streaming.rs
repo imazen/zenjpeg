@@ -718,7 +718,10 @@ impl StreamingEncoder {
         let mut processed = 0;
         while processed < actual_rows {
             let remaining = self.height - self.current_y;
-            let strip_rows = self.strip_height.min(actual_rows - processed).min(remaining);
+            let strip_rows = self
+                .strip_height
+                .min(actual_rows - processed)
+                .min(remaining);
 
             let start = processed * self.width;
             let end = start + strip_rows * self.width;
@@ -801,7 +804,10 @@ impl StreamingEncoder {
         let mut chroma_processed = 0;
         while y_processed < actual_rows {
             let remaining = self.height - self.current_y;
-            let strip_rows = self.strip_height.min(actual_rows - y_processed).min(remaining);
+            let strip_rows = self
+                .strip_height
+                .min(actual_rows - y_processed)
+                .min(remaining);
 
             let y_start = y_processed * self.width;
             let y_end = y_start + strip_rows * self.width;
@@ -958,7 +964,7 @@ impl StreamingEncoder {
             encoder.write_header_xyb(&mut output)?;
             // Write APP14 Adobe marker for RGB colorspace (required by decoders)
             encoder.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
-            // Write XYB ICC profile so decoders can interpret the colors correctly
+                                                        // Write XYB ICC profile so decoders can interpret the colors correctly
             encoder.write_icc_profile(&mut output, &crate::consts::XYB_ICC_PROFILE)?;
             encoder.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
             encoder.write_frame_header_xyb(&mut output)?;

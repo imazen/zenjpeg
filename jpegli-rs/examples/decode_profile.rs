@@ -81,7 +81,10 @@ fn main() {
     let jpeg_data = create_test_jpeg(2048, 2048);
     eprintln!("JPEG size: {} bytes\n", jpeg_data.len());
 
-    println!("Benchmarking 2048x2048 decode ({} iterations)...\n", iterations);
+    println!(
+        "Benchmarking 2048x2048 decode ({} iterations)...\n",
+        iterations
+    );
 
     let jpegli_mpps = bench_jpegli(&jpeg_data, iterations);
     println!("jpegli-rs: {:.1} MP/s", jpegli_mpps);

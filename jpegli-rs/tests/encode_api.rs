@@ -37,8 +37,7 @@ fn test_encode_basic_rgb() {
 #[test]
 fn test_encode_basic_grayscale() {
     let img = generate_gradient_h(64, 64, 1);
-    let encoder = StreamingEncoder::new(64, 64)
-        .pixel_format(PixelFormat::Gray);
+    let encoder = StreamingEncoder::new(64, 64).pixel_format(PixelFormat::Gray);
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     assert!(jpeg.len() > 50, "JPEG too small");
@@ -58,8 +57,7 @@ fn test_encode_rgba_input() {
         }
     }
 
-    let encoder = StreamingEncoder::new(32, 32)
-        .pixel_format(PixelFormat::Rgba);
+    let encoder = StreamingEncoder::new(32, 32).pixel_format(PixelFormat::Rgba);
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "JPEG too small");
 }
@@ -78,8 +76,7 @@ fn test_encode_rgba_input() {
 #[test_case(100.0 ; "Q100")]
 fn test_encode_quality_levels(quality: f32) {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .quality(Quality::from_quality(quality));
+    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_quality(quality));
 
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "Q{} JPEG too small", quality);
@@ -98,8 +95,7 @@ fn test_encode_quality_affects_size() {
     let sizes: Vec<usize> = [30.0, 50.0, 70.0, 90.0]
         .iter()
         .map(|&q| {
-            let encoder = StreamingEncoder::new(256, 256)
-                .quality(Quality::from_quality(q));
+            let encoder = StreamingEncoder::new(256, 256).quality(Quality::from_quality(q));
             encoder.encode_all(&img.pixels).unwrap().len()
         })
         .collect();
@@ -127,8 +123,7 @@ fn test_encode_quality_affects_size() {
 #[test_case(4.0 ; "distance_4_0")]
 fn test_encode_distance_quality(distance: f32) {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .quality(Quality::from_distance(distance));
+    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_distance(distance));
 
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "Distance {} JPEG too small", distance);
@@ -166,7 +161,9 @@ fn test_encode_non_square() {
     // Wide image
     let wide = generate_gradient_h(256, 64, 3);
     let encoder = StreamingEncoder::new(256, 64);
-    let jpeg = encoder.encode_all(&wide.pixels).expect("encode wide failed");
+    let jpeg = encoder
+        .encode_all(&wide.pixels)
+        .expect("encode wide failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode wide failed");
@@ -176,7 +173,9 @@ fn test_encode_non_square() {
     // Tall image
     let tall = generate_gradient_h(64, 256, 3);
     let encoder = StreamingEncoder::new(64, 256);
-    let jpeg = encoder.encode_all(&tall.pixels).expect("encode tall failed");
+    let jpeg = encoder
+        .encode_all(&tall.pixels)
+        .expect("encode tall failed");
 
     let decoded = decoder.decode(&jpeg).expect("decode tall failed");
     assert_eq!(decoded.width, 64);
@@ -190,8 +189,7 @@ fn test_encode_non_square() {
 #[test]
 fn test_encode_baseline_mode() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .mode(JpegMode::Baseline);
+    let encoder = StreamingEncoder::new(128, 128).mode(JpegMode::Baseline);
 
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
@@ -206,8 +204,7 @@ fn test_encode_baseline_mode() {
 #[test]
 fn test_encode_progressive_mode() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .mode(JpegMode::Progressive);
+    let encoder = StreamingEncoder::new(128, 128).mode(JpegMode::Progressive);
 
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
@@ -252,10 +249,11 @@ fn test_encode_optimized_huffman() {
     let img = generate_gradient_d(256, 256, 3);
 
     let encoder_opt = StreamingEncoder::new(256, 256).optimize_huffman(true);
-    let jpeg_opt = encoder_opt.encode_all(&img.pixels).expect("optimized failed");
+    let jpeg_opt = encoder_opt
+        .encode_all(&img.pixels)
+        .expect("optimized failed");
 
-    let encoder_fixed = StreamingEncoder::new(256, 256)
-        .optimize_huffman(false);
+    let encoder_fixed = StreamingEncoder::new(256, 256).optimize_huffman(false);
     let jpeg_fixed = encoder_fixed.encode_all(&img.pixels).expect("fixed failed");
 
     // Optimized should be smaller or equal
@@ -288,7 +286,10 @@ fn test_encode_reuse_encoder() {
         }
 
         // Clone the config for each encode (StreamingEncoder consumes self)
-        let jpeg = encoder_config.clone().encode_all(&pixels).expect("encode failed");
+        let jpeg = encoder_config
+            .clone()
+            .encode_all(&pixels)
+            .expect("encode failed");
         assert!(jpeg.len() > 100, "Iteration {} JPEG too small", i);
 
         // Verify decodes correctly
@@ -317,8 +318,7 @@ fn test_encode_solid_color() {
 
     for (r, g, b) in colors {
         let img = generate_solid_rgb(64, 64, r, g, b);
-        let encoder = StreamingEncoder::new(64, 64)
-            .quality(Quality::from_quality(95.0));
+        let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(95.0));
         let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -333,8 +333,7 @@ fn test_encode_solid_color() {
 #[test]
 fn test_encode_checkerboard() {
     let img = generate_checkerboard(128, 128, 8, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .quality(Quality::from_quality(95.0));
+    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_quality(95.0));
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -351,8 +350,7 @@ fn test_encode_checkerboard() {
 #[test]
 fn test_encode_color_bars() {
     let img = generate_color_bars(128, 64);
-    let encoder = StreamingEncoder::new(128, 64)
-        .quality(Quality::from_quality(90.0));
+    let encoder = StreamingEncoder::new(128, 64).quality(Quality::from_quality(90.0));
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -387,10 +385,11 @@ fn test_encode_minimum_dimensions() {
 fn test_encode_large_image() {
     // Test larger image (but not too large for CI)
     let img = generate_gradient_d(1024, 768, 3);
-    let encoder = StreamingEncoder::new(1024, 768)
-        .quality(Quality::from_quality(85.0));
+    let encoder = StreamingEncoder::new(1024, 768).quality(Quality::from_quality(85.0));
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode large failed");
+    let jpeg = encoder
+        .encode_all(&img.pixels)
+        .expect("encode large failed");
     assert!(jpeg.len() > 10000, "Large JPEG suspiciously small");
 
     let decoder = Decoder::new();

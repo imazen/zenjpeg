@@ -316,11 +316,15 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
 #[test]
 fn test_encode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder_config = StreamingEncoder::new(128, 128)
-        .quality(Quality::from_quality(85.0));
+    let encoder_config = StreamingEncoder::new(128, 128).quality(Quality::from_quality(85.0));
 
-    let jpeg1 = encoder_config.clone().encode_all(&img.pixels).expect("encode 1 failed");
-    let jpeg2 = encoder_config.encode_all(&img.pixels).expect("encode 2 failed");
+    let jpeg1 = encoder_config
+        .clone()
+        .encode_all(&img.pixels)
+        .expect("encode 1 failed");
+    let jpeg2 = encoder_config
+        .encode_all(&img.pixels)
+        .expect("encode 2 failed");
 
     assert_eq!(jpeg1, jpeg2, "Encoding should be deterministic");
 }
@@ -328,8 +332,7 @@ fn test_encode_deterministic() {
 #[test]
 fn test_decode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128)
-        .quality(Quality::from_quality(85.0));
+    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_quality(85.0));
     let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -360,8 +363,8 @@ fn test_compression_ratio() {
 
     for (name, img) in &test_cases {
         let raw_size = img.pixels.len();
-        let encoder = StreamingEncoder::new(img.width, img.height)
-            .quality(Quality::from_quality(85.0));
+        let encoder =
+            StreamingEncoder::new(img.width, img.height).quality(Quality::from_quality(85.0));
         let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
         let ratio = raw_size as f64 / jpeg.len() as f64;

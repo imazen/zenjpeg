@@ -215,7 +215,8 @@ impl<'a> EntropyEncoder<'a> {
         // Combined write: Huffman code + extra bits in one operation
         if dc_cat > 0 {
             let additional = additional_bits_with_cat(dc_diff, dc_cat);
-            self.writer.write_code_and_extra(code, len, additional, dc_cat);
+            self.writer
+                .write_code_and_extra(code, len, additional, dc_cat);
         } else {
             self.writer.write_bits(code, len);
         }
@@ -281,7 +282,8 @@ impl<'a> EntropyEncoder<'a> {
             let symbol = (r << 4) | ac_cat;
             let (code, len) = ac_table.encode(symbol);
             let additional = additional_bits_with_cat(ac, ac_cat);
-            self.writer.write_code_and_extra(code, len, additional, ac_cat);
+            self.writer
+                .write_code_and_extra(code, len, additional, ac_cat);
 
             prev_idx = idx;
             remaining &= remaining - 1; // Clear lowest set bit

@@ -16,7 +16,10 @@ use std::process::Command;
 fn find_corpus_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
-        format!("{}/work/codec-eval/codec-corpus/CID22/CID22-512/training", home),
+        format!(
+            "{}/work/codec-eval/codec-corpus/CID22/CID22-512/training",
+            home
+        ),
         format!("{}/work/codec-eval/codec-corpus/kodak", home),
         "../corpus/CID22-512".to_string(),
     ];
@@ -87,7 +90,13 @@ fn crop_image(rgb: &[u8], orig_width: usize, new_width: usize, new_height: usize
 }
 
 /// Encode with Rust strip encoder - MATCH C++ SETTINGS EXACTLY
-fn encode_rust(rgb: &[u8], width: u32, height: u32, subsampling: Subsampling, quality: f32) -> Vec<u8> {
+fn encode_rust(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    subsampling: Subsampling,
+    quality: f32,
+) -> Vec<u8> {
     jpegli::StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(subsampling)
@@ -108,8 +117,18 @@ fn encode_cpp(
     cjpegli: &Path,
 ) -> Option<Vec<u8>> {
     // Write PPM to temp file
-    let ppm_path = format!("/tmp/edge_test_{}x{}_{}.ppm", width, height, std::process::id());
-    let jpg_path = format!("/tmp/edge_test_{}x{}_{}_cpp.jpg", width, height, std::process::id());
+    let ppm_path = format!(
+        "/tmp/edge_test_{}x{}_{}.ppm",
+        width,
+        height,
+        std::process::id()
+    );
+    let jpg_path = format!(
+        "/tmp/edge_test_{}x{}_{}_cpp.jpg",
+        width,
+        height,
+        std::process::id()
+    );
 
     let mut ppm = format!("P6\n{} {}\n255\n", width, height).into_bytes();
     ppm.extend_from_slice(rgb);
@@ -128,15 +147,20 @@ fn encode_cpp(
         .args([
             &ppm_path,
             &jpg_path,
-            "-q", &quality.to_string(),
-            "--chroma_subsampling", sample_arg,
+            "-q",
+            &quality.to_string(),
+            "--chroma_subsampling",
+            sample_arg,
             "--progressive_level=2",
         ])
         .output()
         .ok()?;
 
     if !output.status.success() {
-        eprintln!("cjpegli failed: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "cjpegli failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return None;
     }
 
@@ -158,8 +182,14 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 /// Compute DSSIM between original and decoded
 fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     let attr = Dssim::new();
-    let orig_rgba: Vec<RGBA8> = orig.chunks(3).map(|c| RGBA8::new(c[0], c[1], c[2], 255)).collect();
-    let dec_rgba: Vec<RGBA8> = decoded.chunks(3).map(|c| RGBA8::new(c[0], c[1], c[2], 255)).collect();
+    let orig_rgba: Vec<RGBA8> = orig
+        .chunks(3)
+        .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
+        .collect();
+    let dec_rgba: Vec<RGBA8> = decoded
+        .chunks(3)
+        .map(|c| RGBA8::new(c[0], c[1], c[2], 255))
+        .collect();
     let orig_img = attr.create_image_rgba(&orig_rgba, width, height).unwrap();
     let dec_img = attr.create_image_rgba(&dec_rgba, width, height).unwrap();
     let (dssim, _) = attr.compare(&orig_img, dec_img);
@@ -191,8 +221,21 @@ fn test_cropped_image(
     // Crop to target dimensions
     let cropped = crop_image(rgb, orig_width, target_width, target_height);
 
-    let rust_jpeg = encode_rust(&cropped, target_width as u32, target_height as u32, subsampling, quality as f32);
-    let cpp_jpeg = encode_cpp(&cropped, target_width, target_height, subsampling, quality, cjpegli)?;
+    let rust_jpeg = encode_rust(
+        &cropped,
+        target_width as u32,
+        target_height as u32,
+        subsampling,
+        quality as f32,
+    );
+    let cpp_jpeg = encode_cpp(
+        &cropped,
+        target_width,
+        target_height,
+        subsampling,
+        quality,
+        cjpegli,
+    )?;
 
     let rust_decoded = decode_jpeg(&rust_jpeg);
     let cpp_decoded = decode_jpeg(&cpp_jpeg);
@@ -200,7 +243,8 @@ fn test_cropped_image(
     let rust_dssim = compute_dssim(&cropped, &rust_decoded, target_width, target_height);
     let cpp_dssim = compute_dssim(&cropped, &cpp_decoded, target_width, target_height);
 
-    let size_diff_pct = (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
+    let size_diff_pct =
+        (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
     let dssim_diff_pct = if cpp_dssim > 0.0 {
         (rust_dssim - cpp_dssim) / cpp_dssim * 100.0
     } else {
@@ -270,8 +314,10 @@ fn test_strip_edge_real_images() {
     let mut max_dssim_diff = 0.0f64;
     let mut failures = Vec::new();
 
-    println!("{:>20} {:>10} {:>8} {:>8} {:>8} {:>10} {:>10} {:>8}",
-             "Image", "WxH", "Rust", "C++", "Size%", "RustDSSIM", "C++DSSIM", "DSSIM%");
+    println!(
+        "{:>20} {:>10} {:>8} {:>8} {:>8} {:>10} {:>10} {:>8}",
+        "Image", "WxH", "Rust", "C++", "Size%", "RustDSSIM", "C++DSSIM", "DSSIM%"
+    );
     println!("{}", "-".repeat(95));
 
     for entry in &images {
@@ -292,25 +338,42 @@ fn test_strip_edge_real_images() {
             }
 
             if let Some(result) = test_cropped_image(
-                &rgb, orig_width as usize, &name,
-                target_width, base_height,
-                subsampling, quality, &cjpegli,
+                &rgb,
+                orig_width as usize,
+                &name,
+                target_width,
+                base_height,
+                subsampling,
+                quality,
+                &cjpegli,
             ) {
                 max_size_diff = max_size_diff.max(result.size_diff_pct.abs());
                 max_dssim_diff = max_dssim_diff.max(result.dssim_diff_pct.abs());
 
-                let status = if result.size_diff_pct.abs() > 1.0 { "!" } else { "" };
+                let status = if result.size_diff_pct.abs() > 1.0 {
+                    "!"
+                } else {
+                    ""
+                };
                 if result.size_diff_pct.abs() > 1.0 {
-                    failures.push(format!("{}@{}x{}: {:.2}%", name, result.width, result.height, result.size_diff_pct));
+                    failures.push(format!(
+                        "{}@{}x{}: {:.2}%",
+                        name, result.width, result.height, result.size_diff_pct
+                    ));
                 }
 
-                println!("{:>20} {:>10} {:>8} {:>8} {:>+7.2}% {:>10.6} {:>10.6} {:>+7.2}%{}",
-                         format!("{}(W)", name.chars().take(15).collect::<String>()),
-                         format!("{}x{}", result.width, result.height),
-                         result.rust_size, result.cpp_size,
-                         result.size_diff_pct,
-                         result.rust_dssim, result.cpp_dssim,
-                         result.dssim_diff_pct, status);
+                println!(
+                    "{:>20} {:>10} {:>8} {:>8} {:>+7.2}% {:>10.6} {:>10.6} {:>+7.2}%{}",
+                    format!("{}(W)", name.chars().take(15).collect::<String>()),
+                    format!("{}x{}", result.width, result.height),
+                    result.rust_size,
+                    result.cpp_size,
+                    result.size_diff_pct,
+                    result.rust_dssim,
+                    result.cpp_dssim,
+                    result.dssim_diff_pct,
+                    status
+                );
 
                 all_results.push(result);
             }
@@ -325,25 +388,42 @@ fn test_strip_edge_real_images() {
             }
 
             if let Some(result) = test_cropped_image(
-                &rgb, orig_width as usize, &name,
-                base_width, target_height,
-                subsampling, quality, &cjpegli,
+                &rgb,
+                orig_width as usize,
+                &name,
+                base_width,
+                target_height,
+                subsampling,
+                quality,
+                &cjpegli,
             ) {
                 max_size_diff = max_size_diff.max(result.size_diff_pct.abs());
                 max_dssim_diff = max_dssim_diff.max(result.dssim_diff_pct.abs());
 
-                let status = if result.size_diff_pct.abs() > 1.0 { "!" } else { "" };
+                let status = if result.size_diff_pct.abs() > 1.0 {
+                    "!"
+                } else {
+                    ""
+                };
                 if result.size_diff_pct.abs() > 1.0 {
-                    failures.push(format!("{}@{}x{}: {:.2}%", name, result.width, result.height, result.size_diff_pct));
+                    failures.push(format!(
+                        "{}@{}x{}: {:.2}%",
+                        name, result.width, result.height, result.size_diff_pct
+                    ));
                 }
 
-                println!("{:>20} {:>10} {:>8} {:>8} {:>+7.2}% {:>10.6} {:>10.6} {:>+7.2}%{}",
-                         format!("{}(H)", name.chars().take(15).collect::<String>()),
-                         format!("{}x{}", result.width, result.height),
-                         result.rust_size, result.cpp_size,
-                         result.size_diff_pct,
-                         result.rust_dssim, result.cpp_dssim,
-                         result.dssim_diff_pct, status);
+                println!(
+                    "{:>20} {:>10} {:>8} {:>8} {:>+7.2}% {:>10.6} {:>10.6} {:>+7.2}%{}",
+                    format!("{}(H)", name.chars().take(15).collect::<String>()),
+                    format!("{}x{}", result.width, result.height),
+                    result.rust_size,
+                    result.cpp_size,
+                    result.size_diff_pct,
+                    result.rust_dssim,
+                    result.cpp_dssim,
+                    result.dssim_diff_pct,
+                    status
+                );
 
                 all_results.push(result);
             }
@@ -359,25 +439,42 @@ fn test_strip_edge_real_images() {
                 }
 
                 if let Some(result) = test_cropped_image(
-                    &rgb, orig_width as usize, &name,
-                    target_width, target_height,
-                    subsampling, quality, &cjpegli,
+                    &rgb,
+                    orig_width as usize,
+                    &name,
+                    target_width,
+                    target_height,
+                    subsampling,
+                    quality,
+                    &cjpegli,
                 ) {
                     max_size_diff = max_size_diff.max(result.size_diff_pct.abs());
                     max_dssim_diff = max_dssim_diff.max(result.dssim_diff_pct.abs());
 
-                    let status = if result.size_diff_pct.abs() > 1.0 { "!" } else { "" };
+                    let status = if result.size_diff_pct.abs() > 1.0 {
+                        "!"
+                    } else {
+                        ""
+                    };
                     if result.size_diff_pct.abs() > 1.0 {
-                        failures.push(format!("{}@{}x{}: {:.2}%", name, result.width, result.height, result.size_diff_pct));
+                        failures.push(format!(
+                            "{}@{}x{}: {:.2}%",
+                            name, result.width, result.height, result.size_diff_pct
+                        ));
                     }
 
-                    println!("{:>20} {:>10} {:>8} {:>8} {:>+7.2}% {:>10.6} {:>10.6} {:>+7.2}%{}",
-                             format!("{}(WH)", name.chars().take(14).collect::<String>()),
-                             format!("{}x{}", result.width, result.height),
-                             result.rust_size, result.cpp_size,
-                             result.size_diff_pct,
-                             result.rust_dssim, result.cpp_dssim,
-                             result.dssim_diff_pct, status);
+                    println!(
+                        "{:>20} {:>10} {:>8} {:>8} {:>+7.2}% {:>10.6} {:>10.6} {:>+7.2}%{}",
+                        format!("{}(WH)", name.chars().take(14).collect::<String>()),
+                        format!("{}x{}", result.width, result.height),
+                        result.rust_size,
+                        result.cpp_size,
+                        result.size_diff_pct,
+                        result.rust_dssim,
+                        result.cpp_dssim,
+                        result.dssim_diff_pct,
+                        status
+                    );
 
                     all_results.push(result);
                 }
@@ -399,8 +496,10 @@ fn test_strip_edge_real_images() {
 
     // Compute averages
     if !all_results.is_empty() {
-        let avg_size_diff: f64 = all_results.iter().map(|r| r.size_diff_pct).sum::<f64>() / all_results.len() as f64;
-        let avg_dssim_diff: f64 = all_results.iter().map(|r| r.dssim_diff_pct).sum::<f64>() / all_results.len() as f64;
+        let avg_size_diff: f64 =
+            all_results.iter().map(|r| r.size_diff_pct).sum::<f64>() / all_results.len() as f64;
+        let avg_dssim_diff: f64 =
+            all_results.iter().map(|r| r.dssim_diff_pct).sum::<f64>() / all_results.len() as f64;
         println!("\nAverage size diff: {:+.2}%", avg_size_diff);
         println!("Average DSSIM diff: {:+.2}%", avg_dssim_diff);
     }
@@ -418,7 +517,8 @@ fn test_strip_edge_real_images() {
     assert!(
         max_size_diff <= 1.5,
         "Size difference too large: {:.2}% (max allowed: 1.5%)\nFailures: {:?}",
-        max_size_diff, failures
+        max_size_diff,
+        failures
     );
     assert!(
         max_dssim_diff <= 5.0,
@@ -469,13 +569,26 @@ fn test_strip_edge_synthetic_quick() {
         let width = base_width + remainder;
         let rgb = create_gradient(width, height);
 
-        let rust_jpeg = encode_rust(&rgb, width as u32, height as u32, subsampling, quality as f32);
+        let rust_jpeg = encode_rust(
+            &rgb,
+            width as u32,
+            height as u32,
+            subsampling,
+            quality as f32,
+        );
         let cpp_jpeg = match encode_cpp(&rgb, width, height, subsampling, quality, &cjpegli) {
             Some(j) => j,
             None => continue,
         };
 
-        let size_diff = (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
-        println!("{:>8} {:>8} {:>8} {:>+7.2}%", width, rust_jpeg.len(), cpp_jpeg.len(), size_diff);
+        let size_diff =
+            (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64 * 100.0;
+        println!(
+            "{:>8} {:>8} {:>8} {:>+7.2}%",
+            width,
+            rust_jpeg.len(),
+            cpp_jpeg.len(),
+            size_diff
+        );
     }
 }
