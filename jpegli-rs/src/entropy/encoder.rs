@@ -211,11 +211,13 @@ impl<'a> EntropyEncoder<'a> {
 
         let dc_cat = category(dc_diff);
         let (code, len) = dc_table.encode(dc_cat);
-        self.writer.write_bits(code, len);
 
+        // Combined write: Huffman code + extra bits in one operation
         if dc_cat > 0 {
             let additional = additional_bits_with_cat(dc_diff, dc_cat);
-            self.writer.write_bits(additional as u32, dc_cat);
+            self.writer.write_code_and_extra(code, len, additional, dc_cat);
+        } else {
+            self.writer.write_bits(code, len);
         }
 
         // Build 64-bit mask of non-zero coefficients using SIMD
@@ -273,15 +275,13 @@ impl<'a> EntropyEncoder<'a> {
                 r -= 16;
             }
 
-            // Encode the coefficient
+            // Encode the coefficient with combined write
             let ac = coeffs[idx];
             let ac_cat = category(ac);
             let symbol = (r << 4) | ac_cat;
             let (code, len) = ac_table.encode(symbol);
-            self.writer.write_bits(code, len);
-
             let additional = additional_bits_with_cat(ac, ac_cat);
-            self.writer.write_bits(additional as u32, ac_cat);
+            self.writer.write_code_and_extra(code, len, additional, ac_cat);
 
             prev_idx = idx;
             remaining &= remaining - 1; // Clear lowest set bit
