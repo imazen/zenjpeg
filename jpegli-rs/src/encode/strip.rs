@@ -44,6 +44,7 @@ use crate::error::Result;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
+use crate::transfer_functions::srgb_encoded_from_display;
 use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 
 /// Quantization context: groups all quantization tables and bias parameters.
@@ -716,16 +717,170 @@ impl StripProcessor {
                     4, // BGRX is 4 bytes per pixel
                 );
             }
-            // TODO: Implement these formats
-            PixelFormat::Gray16
-            | PixelFormat::Rgb16
-            | PixelFormat::Rgba16
-            | PixelFormat::GrayF32
-            | PixelFormat::RgbF32
-            | PixelFormat::RgbaF32 => {
-                return Err(crate::error::Error::UnsupportedPixelFormat {
-                    format: self.pixel_format,
-                });
+            // 16-bit formats (assumed linear, convert through sRGB)
+            PixelFormat::Gray16 => {
+                // Gray16: 2 bytes per pixel, native endian, linear
+                // Convert: linear -> sRGB -> Y
+                for row in 0..strip_height {
+                    let src_start = row * width * 2;
+                    let dst_start = row * padded_width;
+                    for x in 0..width {
+                        let idx = src_start + x * 2;
+                        let linear =
+                            u16::from_ne_bytes([rgb_strip[idx], rgb_strip[idx + 1]]) as f64
+                                / 65535.0;
+                        let srgb = srgb_encoded_from_display(linear);
+                        self.y_strip[dst_start + x] = (srgb * 255.0) as f32;
+                    }
+                    // Edge-pad Y row
+                    if width < padded_width {
+                        let edge_val = self.y_strip[dst_start + width - 1];
+                        for x in width..padded_width {
+                            self.y_strip[dst_start + x] = edge_val;
+                        }
+                    }
+                }
+            }
+            PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
+                // RGB16/RGBA16: 6/8 bytes per pixel, native endian, linear
+                // Convert: linear -> sRGB -> YCbCr
+                use crate::consts::{
+                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
+                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
+                };
+                let bpp = self.pixel_format.bytes_per_pixel();
+                let channel_stride = bpp / 2; // 3 for RGB16, 4 for RGBA16
+
+                for row in 0..strip_height {
+                    let y_row_start = row * padded_width;
+                    let cbcr_row_start = row * width;
+                    for x in 0..width {
+                        let base = (row * width + x) * bpp;
+
+                        // Read 16-bit values (native endian)
+                        let r_linear =
+                            u16::from_ne_bytes([rgb_strip[base], rgb_strip[base + 1]]) as f64
+                                / 65535.0;
+                        let g_linear =
+                            u16::from_ne_bytes([rgb_strip[base + 2], rgb_strip[base + 3]]) as f64
+                                / 65535.0;
+                        let b_linear = u16::from_ne_bytes([
+                            rgb_strip[base + 4],
+                            rgb_strip[base + 4 + 1],
+                        ]) as f64
+                            / 65535.0;
+
+                        // Convert linear to sRGB (apply gamma)
+                        let r = (srgb_encoded_from_display(r_linear) * 255.0) as f32;
+                        let g = (srgb_encoded_from_display(g_linear) * 255.0) as f32;
+                        let b = (srgb_encoded_from_display(b_linear) * 255.0) as f32;
+
+                        // Convert sRGB to YCbCr
+                        self.y_strip[y_row_start + x] =
+                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
+                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
+                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                    }
+                    // Edge-pad Y row
+                    if width < padded_width {
+                        let edge_val = self.y_strip[y_row_start + width - 1];
+                        for x in width..padded_width {
+                            self.y_strip[y_row_start + x] = edge_val;
+                        }
+                    }
+                }
+                // Suppress unused warning for channel_stride
+                let _ = channel_stride;
+            }
+            // 32-bit float formats (linear, 0.0-1.0)
+            PixelFormat::GrayF32 => {
+                // GrayF32: 4 bytes per pixel, linear
+                // Convert: linear -> sRGB -> Y
+                for row in 0..strip_height {
+                    let src_start = row * width * 4;
+                    let dst_start = row * padded_width;
+                    for x in 0..width {
+                        let idx = src_start + x * 4;
+                        let linear = f32::from_ne_bytes([
+                            rgb_strip[idx],
+                            rgb_strip[idx + 1],
+                            rgb_strip[idx + 2],
+                            rgb_strip[idx + 3],
+                        ])
+                        .clamp(0.0, 1.0) as f64;
+                        let srgb = srgb_encoded_from_display(linear);
+                        self.y_strip[dst_start + x] = (srgb * 255.0) as f32;
+                    }
+                    // Edge-pad Y row
+                    if width < padded_width {
+                        let edge_val = self.y_strip[dst_start + width - 1];
+                        for x in width..padded_width {
+                            self.y_strip[dst_start + x] = edge_val;
+                        }
+                    }
+                }
+            }
+            PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
+                // RgbF32/RgbaF32: 12/16 bytes per pixel, linear
+                // Convert: linear -> sRGB -> YCbCr
+                use crate::consts::{
+                    YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
+                    YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
+                };
+                let bpp = self.pixel_format.bytes_per_pixel();
+
+                for row in 0..strip_height {
+                    let y_row_start = row * padded_width;
+                    let cbcr_row_start = row * width;
+                    for x in 0..width {
+                        let base = (row * width + x) * bpp;
+
+                        // Read f32 values (native endian)
+                        let r_linear = f32::from_ne_bytes([
+                            rgb_strip[base],
+                            rgb_strip[base + 1],
+                            rgb_strip[base + 2],
+                            rgb_strip[base + 3],
+                        ])
+                        .clamp(0.0, 1.0) as f64;
+                        let g_linear = f32::from_ne_bytes([
+                            rgb_strip[base + 4],
+                            rgb_strip[base + 5],
+                            rgb_strip[base + 6],
+                            rgb_strip[base + 7],
+                        ])
+                        .clamp(0.0, 1.0) as f64;
+                        let b_linear = f32::from_ne_bytes([
+                            rgb_strip[base + 8],
+                            rgb_strip[base + 9],
+                            rgb_strip[base + 10],
+                            rgb_strip[base + 11],
+                        ])
+                        .clamp(0.0, 1.0) as f64;
+
+                        // Convert linear to sRGB (apply gamma)
+                        let r = (srgb_encoded_from_display(r_linear) * 255.0) as f32;
+                        let g = (srgb_encoded_from_display(g_linear) * 255.0) as f32;
+                        let b = (srgb_encoded_from_display(b_linear) * 255.0) as f32;
+
+                        // Convert sRGB to YCbCr
+                        self.y_strip[y_row_start + x] =
+                            YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
+                        self.cb_strip[cbcr_row_start + x] = YCBCR_R_TO_CB
+                            .mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB.mul_add(b, 128.0)));
+                        self.cr_strip[cbcr_row_start + x] = YCBCR_R_TO_CR
+                            .mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR.mul_add(b, 128.0)));
+                    }
+                    // Edge-pad Y row
+                    if width < padded_width {
+                        let edge_val = self.y_strip[y_row_start + width - 1];
+                        for x in width..padded_width {
+                            self.y_strip[y_row_start + x] = edge_val;
+                        }
+                    }
+                }
             }
         }
 
@@ -749,11 +904,28 @@ impl StripProcessor {
         let padded_width = self.padded_width;
         let bpp = self.pixel_format.bytes_per_pixel();
 
-        // Only support RGB/RGBA for XYB (no grayscale or CMYK)
-        if self.pixel_format == PixelFormat::Gray || self.pixel_format == PixelFormat::Cmyk {
-            return Err(crate::error::Error::UnsupportedFeature {
-                feature: "XYB mode only supports RGB/RGBA pixel formats",
-            });
+        // Only support 8-bit RGB/RGBA/BGR/BGRA/BGRX for XYB (no grayscale, CMYK, or HDR formats)
+        match self.pixel_format {
+            PixelFormat::Rgb
+            | PixelFormat::Rgba
+            | PixelFormat::Bgr
+            | PixelFormat::Bgra
+            | PixelFormat::Bgrx => {}
+            PixelFormat::Gray | PixelFormat::Cmyk => {
+                return Err(crate::error::Error::UnsupportedFeature {
+                    feature: "XYB mode only supports RGB/RGBA pixel formats",
+                });
+            }
+            PixelFormat::Gray16
+            | PixelFormat::Rgb16
+            | PixelFormat::Rgba16
+            | PixelFormat::GrayF32
+            | PixelFormat::RgbF32
+            | PixelFormat::RgbaF32 => {
+                return Err(crate::error::Error::UnsupportedFeature {
+                    feature: "XYB mode with 16-bit/float formats not yet supported (use YCbCr mode)",
+                });
+            }
         }
 
         // Convert RGB to scaled XYB (scalar path for now)
@@ -773,7 +945,7 @@ impl StripProcessor {
                         rgb_strip[src_idx + 1],
                         rgb_strip[src_idx + 2],
                     ),
-                    PixelFormat::Bgr | PixelFormat::Bgra => (
+                    PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => (
                         rgb_strip[src_idx + 2],
                         rgb_strip[src_idx + 1],
                         rgb_strip[src_idx],
