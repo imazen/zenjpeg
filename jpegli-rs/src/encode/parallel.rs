@@ -1,11 +1,14 @@
 //! Parallel encoding support.
 //!
-//! This module provides parallel implementations of DCT and quantization
-//! for improved throughput on multi-core systems.
+//! This module provides parallel implementations of DCT, quantization,
+//! and entropy encoding for improved throughput on multi-core systems.
 //!
 //! Enable with the `parallel` feature flag.
 
+use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::simd::forward_dct_8x8_wide;
+use crate::entropy::encoder::EntropyEncoder;
+use crate::huffman::HuffmanEncodeTable;
 use crate::simd_types::Block8x8f;
 use rayon::prelude::*;
 
@@ -185,6 +188,252 @@ fn extract_block_from_strip_wide(
     }
 
     block
+}
+
+/// Parallel entropy encoding configuration.
+#[derive(Clone)]
+pub struct ParallelEntropyConfig {
+    /// DC luminance Huffman table
+    pub dc_luma: HuffmanEncodeTable,
+    /// AC luminance Huffman table
+    pub ac_luma: HuffmanEncodeTable,
+    /// DC chrominance Huffman table
+    pub dc_chroma: HuffmanEncodeTable,
+    /// AC chrominance Huffman table
+    pub ac_chroma: HuffmanEncodeTable,
+}
+
+/// Result from encoding one restart segment.
+struct SegmentResult {
+    /// Encoded bitstream data
+    data: Vec<u8>,
+    /// Restart marker number (0-7)
+    restart_num: u8,
+}
+
+/// Encodes a single restart segment (range of MCUs).
+///
+/// Each segment starts with DC predictions reset to 0.
+fn encode_segment_444(
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    mcu_start: usize,
+    mcu_count: usize,
+    is_color: bool,
+    config: &ParallelEntropyConfig,
+    restart_num: u8,
+) -> SegmentResult {
+    let mut encoder = EntropyEncoder::with_capacity(mcu_count * 100);
+
+    // Set up Huffman tables
+    encoder.set_dc_table(0, &config.dc_luma);
+    encoder.set_ac_table(0, &config.ac_luma);
+    encoder.set_dc_table(1, &config.dc_chroma);
+    encoder.set_ac_table(1, &config.ac_chroma);
+
+    // Encode MCUs in this segment
+    let mcu_end = (mcu_start + mcu_count).min(y_blocks.len());
+    for i in mcu_start..mcu_end {
+        let _ = encoder.encode_block(&y_blocks[i], 0, 0, 0);
+
+        if is_color {
+            let _ = encoder.encode_block(&cb_blocks[i], 1, 1, 1);
+            let _ = encoder.encode_block(&cr_blocks[i], 2, 1, 1);
+        }
+    }
+
+    SegmentResult {
+        data: encoder.finish(),
+        restart_num,
+    }
+}
+
+/// Encodes a single restart segment for subsampled (4:2:0, 4:2:2, 4:4:0) images.
+fn encode_segment_subsampled(
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    mcu_start: usize,
+    mcu_count: usize,
+    mcu_h: usize,
+    y_blocks_h: usize,
+    y_blocks_v: usize,
+    c_blocks_h: usize,
+    c_blocks_v: usize,
+    h_samp: usize,
+    v_samp: usize,
+    is_color: bool,
+    config: &ParallelEntropyConfig,
+    restart_num: u8,
+) -> SegmentResult {
+    let mut encoder = EntropyEncoder::with_capacity(mcu_count * 100 * h_samp * v_samp);
+
+    // Set up Huffman tables
+    encoder.set_dc_table(0, &config.dc_luma);
+    encoder.set_ac_table(0, &config.ac_luma);
+    encoder.set_dc_table(1, &config.dc_chroma);
+    encoder.set_ac_table(1, &config.ac_chroma);
+
+    const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+    for mcu_idx in mcu_start..(mcu_start + mcu_count) {
+        let mcu_x = mcu_idx % mcu_h;
+        let mcu_y = mcu_idx / mcu_h;
+
+        // Encode Y blocks in this MCU
+        for dy in 0..v_samp {
+            for dx in 0..h_samp {
+                let y_bx = mcu_x * h_samp + dx;
+                let y_by = mcu_y * v_samp + dy;
+                if y_bx < y_blocks_h && y_by < y_blocks_v {
+                    let y_idx = y_by * y_blocks_h + y_bx;
+                    let _ = encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
+                } else {
+                    let _ = encoder.encode_block(&ZERO_BLOCK, 0, 0, 0);
+                }
+            }
+        }
+
+        // Encode Cb and Cr blocks
+        if is_color {
+            if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
+                let c_idx = mcu_y * c_blocks_h + mcu_x;
+                let _ = encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
+                let _ = encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
+            } else {
+                let _ = encoder.encode_block(&ZERO_BLOCK, 1, 1, 1);
+                let _ = encoder.encode_block(&ZERO_BLOCK, 2, 1, 1);
+            }
+        }
+    }
+
+    SegmentResult {
+        data: encoder.finish(),
+        restart_num,
+    }
+}
+
+/// Parallel entropy encoding for 4:4:4 images.
+///
+/// Splits MCUs into restart intervals and encodes in parallel.
+/// Returns the combined bitstream with RST markers.
+pub fn parallel_entropy_encode_444(
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    is_color: bool,
+    restart_interval: u16,
+    config: &ParallelEntropyConfig,
+) -> Vec<u8> {
+    let total_mcus = y_blocks.len();
+    let interval = restart_interval as usize;
+
+    // Calculate number of segments
+    let num_segments = (total_mcus + interval - 1) / interval;
+
+    if num_segments <= 1 {
+        // Single segment - no parallelism benefit
+        let result = encode_segment_444(
+            y_blocks, cb_blocks, cr_blocks,
+            0, total_mcus, is_color, config, 0,
+        );
+        return result.data;
+    }
+
+    // Encode segments in parallel
+    let segments: Vec<SegmentResult> = (0..num_segments)
+        .into_par_iter()
+        .map(|seg_idx| {
+            let mcu_start = seg_idx * interval;
+            let mcu_count = interval.min(total_mcus - mcu_start);
+            let restart_num = (seg_idx % 8) as u8;
+
+            encode_segment_444(
+                y_blocks, cb_blocks, cr_blocks,
+                mcu_start, mcu_count, is_color, config, restart_num,
+            )
+        })
+        .collect();
+
+    // Combine segments with RST markers
+    combine_segments(&segments)
+}
+
+/// Parallel entropy encoding for subsampled images (4:2:0, 4:2:2, 4:4:0).
+pub fn parallel_entropy_encode_subsampled(
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    width: usize,
+    height: usize,
+    h_samp: usize,
+    v_samp: usize,
+    is_color: bool,
+    restart_interval: u16,
+    config: &ParallelEntropyConfig,
+) -> Vec<u8> {
+    let y_blocks_h = (width + 7) / 8;
+    let y_blocks_v = (height + 7) / 8;
+    let c_width = (width + h_samp - 1) / h_samp;
+    let c_height = (height + v_samp - 1) / v_samp;
+    let c_blocks_h = (c_width + 7) / 8;
+    let c_blocks_v = (c_height + 7) / 8;
+
+    let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+    let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+    let total_mcus = mcu_h * mcu_v;
+
+    let interval = restart_interval as usize;
+    let num_segments = (total_mcus + interval - 1) / interval;
+
+    if num_segments <= 1 {
+        let result = encode_segment_subsampled(
+            y_blocks, cb_blocks, cr_blocks,
+            0, total_mcus, mcu_h,
+            y_blocks_h, y_blocks_v, c_blocks_h, c_blocks_v,
+            h_samp, v_samp, is_color, config, 0,
+        );
+        return result.data;
+    }
+
+    // Encode segments in parallel
+    let segments: Vec<SegmentResult> = (0..num_segments)
+        .into_par_iter()
+        .map(|seg_idx| {
+            let mcu_start = seg_idx * interval;
+            let mcu_count = interval.min(total_mcus - mcu_start);
+            let restart_num = (seg_idx % 8) as u8;
+
+            encode_segment_subsampled(
+                y_blocks, cb_blocks, cr_blocks,
+                mcu_start, mcu_count, mcu_h,
+                y_blocks_h, y_blocks_v, c_blocks_h, c_blocks_v,
+                h_samp, v_samp, is_color, config, restart_num,
+            )
+        })
+        .collect();
+
+    combine_segments(&segments)
+}
+
+/// Combines encoded segments with RST markers between them.
+fn combine_segments(segments: &[SegmentResult]) -> Vec<u8> {
+    // Estimate total size
+    let total_size: usize = segments.iter().map(|s| s.data.len() + 2).sum();
+    let mut output = Vec::with_capacity(total_size);
+
+    for (i, segment) in segments.iter().enumerate() {
+        output.extend_from_slice(&segment.data);
+
+        // Add RST marker between segments (not after the last one)
+        if i < segments.len() - 1 {
+            output.push(0xFF);
+            output.push(0xD0 + segment.restart_num);
+        }
+    }
+
+    output
 }
 
 #[cfg(test)]
