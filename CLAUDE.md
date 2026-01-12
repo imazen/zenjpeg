@@ -154,26 +154,7 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    - Affects images where `width % 8 != 0`
    - See `CODE.md` for full analysis
 
-4. **Major edge MCU parity gap (UNFIXED)** - Unknown location
-   Edge-tiled test reveals +10-44% size for partial MCU images. Normal images: +0.26%.
-   - NOT fixed by #3 above
-   - Run `cargo run --release --example edge_mcu_parity` to reproduce
-   - See `CODE.md` for details
-
-   **Proposed Fix Strategy:**
-   - Consider replicating rightmost/bottom column/row and/or tiling it outwards
-     (including bottom-right corner) to calculate a more easily compressible block
-   - Create an enum for edge handling strategies (clamp vs replicate vs pad)
-   - Expand all internal buffers to multiples of 8 pixels
-   - Store crop dimensions and apply at the end
-
-   **How C++ handles it:** C++ uses `PadInputBuffer()` which:
-   - Pads rows to MCU-aligned width with edge replication: `row[len0...len1] = row[len0-1]`
-   - Creates a 1-pixel border: `row[-1] = row[0]`
-   - Uses `RowBuffer` class with proper stride/padding so accesses stay within row bounds
-   - See `internal/jpegli-cpp/lib/jpegli/encode.cc:571-627`
-
-5. **FFI benchmark symbol conflict (UNFIXED)** - mozjpeg and jpegli both provide libjpeg-62 API
+4. **FFI benchmark symbol conflict (UNFIXED)** - mozjpeg and jpegli both provide libjpeg-62 API
    When both mozjpeg and jpegli-internals-sys are linked, the linker picks mozjpeg's symbols.
    This means "cjpegli FFI" benchmarks actually call mozjpeg with trellis quantization!
 
@@ -189,23 +170,6 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    - Build jpegli with symbol prefixing (e.g., `jpegli_` prefix)
    - Use separate binary without mozjpeg in dep tree
    - Link jpegli with +whole-archive before mozjpeg
-
-6. **Fullplane encoder stride mismatch (DEPRECATED)** - `encode/old/blocks.rs:531`
-   The fullplane encoder produces corrupted output for images with non-MCU-aligned widths.
-   **STATUS: DEPRECATED** - The fullplane encoder is being dropped. Use strip encoder (default).
-
-   **Strip encoder edge handling: VERIFIED**
-   - All partial MCU widths (1-15) and heights (1-15) tested
-   - C++ parity: DSSIM within 0.6% for all edge cases
-   - Tests: `strip_edge_cpp_comparison.rs`, `comprehensive_edge_ssim2.rs`
-
-   **Verification:**
-   ```bash
-   # Strip encoder vs C++ edge comparison
-   cargo test --release --test strip_edge_cpp_comparison -- --ignored --nocapture
-   # Comprehensive edge test (strip vs fullplane shows fullplane is broken)
-   cargo run --release --example comprehensive_edge_ssim2 -- --subsampling=420
-   ```
 
 ## Running Tests
 
