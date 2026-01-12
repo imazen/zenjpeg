@@ -927,6 +927,273 @@ pub fn extract_channel(data: &[u8], format: PixelFormat, channel: usize) -> Resu
     Ok(result)
 }
 
+// =============================================================================
+// Integer color conversion for fast decode path
+// =============================================================================
+
+// Fixed-point coefficients (14-bit precision), matching zune-jpeg
+// These are the BT.601 coefficients scaled by 16384 (1 << 14)
+const Y_CF_INT: i32 = 16384; // 1.0 << 14
+const CR_TO_R_INT: i32 = 22970; // 1.402 << 14
+const CB_TO_B_INT: i32 = 29032; // 1.772 << 14
+const CR_TO_G_INT: i32 = -11700; // -0.714136 << 14
+const CB_TO_G_INT: i32 = -5638; // -0.344136 << 14
+const YUV_ROUND: i32 = 8192; // 0.5 << 14 for rounding
+
+/// Fast integer YCbCr to RGB conversion for 16 pixels.
+///
+/// This is the core conversion function for the fast decode path.
+/// Takes i16 inputs (IDCT output with level shift already applied, range [0,255])
+/// and writes interleaved RGB u8 output.
+///
+/// The conversion uses 14-bit fixed-point arithmetic for speed.
+#[inline]
+pub fn ycbcr_to_rgb_i16_x16(
+    y: &[i16; 16],
+    cb: &[i16; 16],
+    cr: &[i16; 16],
+    rgb: &mut [u8],
+    offset: &mut usize,
+) {
+    #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        if is_x86_feature_detected!("avx2") {
+            // Safety: we just checked for AVX2 support
+            unsafe {
+                ycbcr_to_rgb_i16_x16_avx2(y, cb, cr, rgb, offset);
+            }
+            return;
+        }
+    }
+    // Scalar fallback
+    ycbcr_to_rgb_i16_x16_scalar(y, cb, cr, rgb, offset);
+}
+
+/// Scalar implementation of integer YCbCr to RGB for 16 pixels.
+#[inline]
+fn ycbcr_to_rgb_i16_x16_scalar(
+    y: &[i16; 16],
+    cb: &[i16; 16],
+    cr: &[i16; 16],
+    rgb: &mut [u8],
+    offset: &mut usize,
+) {
+    for i in 0..16 {
+        let y_val = i32::from(y[i]);
+        let cb_val = i32::from(cb[i]) - 128;
+        let cr_val = i32::from(cr[i]) - 128;
+
+        // Fixed-point conversion with 14-bit precision
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+
+        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+
+        let idx = *offset + i * 3;
+        rgb[idx] = r.clamp(0, 255) as u8;
+        rgb[idx + 1] = g.clamp(0, 255) as u8;
+        rgb[idx + 2] = b.clamp(0, 255) as u8;
+    }
+    *offset += 48;
+}
+
+/// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
+#[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[target_feature(enable = "avx2")]
+unsafe fn ycbcr_to_rgb_i16_x16_avx2(
+    y: &[i16; 16],
+    cb: &[i16; 16],
+    cr: &[i16; 16],
+    rgb: &mut [u8],
+    offset: &mut usize,
+) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    // Load Y, Cb, Cr (16 i16 values each)
+    let y_vec = _mm256_loadu_si256(y.as_ptr().cast());
+    let cb_vec = _mm256_loadu_si256(cb.as_ptr().cast());
+    let cr_vec = _mm256_loadu_si256(cr.as_ptr().cast());
+
+    // Subtract 128 from Cb and Cr (bias removal)
+    let bias = _mm256_set1_epi16(128);
+    let cb_centered = _mm256_sub_epi16(cb_vec, bias);
+    let cr_centered = _mm256_sub_epi16(cr_vec, bias);
+
+    // Y coefficient and rounding
+    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
+    let rounding = _mm256_set1_epi32(YUV_ROUND);
+
+    // Zero-extend Y to 32-bit (Y is unsigned [0,255]).
+    // unpacklo/hi gives lane ordering that works correctly with packs_epi32:
+    // lo = [0,1,2,3 | 8,9,10,11], hi = [4,5,6,7 | 12,13,14,15]
+    let zero = _mm256_setzero_si256();
+    let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
+    let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
+
+    // y_scaled = y * Y_CF + rounding
+    let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
+    let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
+
+    // Sign-extend Cb/Cr to 32-bit (they are signed [-128,127]).
+    // Use arithmetic shift to get sign bits, then unpack with those for proper sign extension.
+    // This maintains the same lane ordering as Y for correct packing.
+    let cb_sign = _mm256_srai_epi16(cb_centered, 15); // All 1s for negative, all 0s for positive
+    let cr_sign = _mm256_srai_epi16(cr_centered, 15);
+    let cb_lo = _mm256_unpacklo_epi16(cb_centered, cb_sign);
+    let cb_hi = _mm256_unpackhi_epi16(cb_centered, cb_sign);
+    let cr_lo = _mm256_unpacklo_epi16(cr_centered, cr_sign);
+    let cr_hi = _mm256_unpackhi_epi16(cr_centered, cr_sign);
+
+    // R = (y_scaled + cr * CR_TO_R) >> 14
+    let r_lo = _mm256_srai_epi32(
+        _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo, _mm256_set1_epi32(CR_TO_R_INT))),
+        14,
+    );
+    let r_hi = _mm256_srai_epi32(
+        _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi, _mm256_set1_epi32(CR_TO_R_INT))),
+        14,
+    );
+
+    // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
+    let g_lo = _mm256_srai_epi32(
+        _mm256_add_epi32(
+            y_scaled_lo,
+            _mm256_add_epi32(
+                _mm256_mullo_epi32(cr_lo, _mm256_set1_epi32(CR_TO_G_INT)),
+                _mm256_mullo_epi32(cb_lo, _mm256_set1_epi32(CB_TO_G_INT)),
+            ),
+        ),
+        14,
+    );
+    let g_hi = _mm256_srai_epi32(
+        _mm256_add_epi32(
+            y_scaled_hi,
+            _mm256_add_epi32(
+                _mm256_mullo_epi32(cr_hi, _mm256_set1_epi32(CR_TO_G_INT)),
+                _mm256_mullo_epi32(cb_hi, _mm256_set1_epi32(CB_TO_G_INT)),
+            ),
+        ),
+        14,
+    );
+
+    // B = (y_scaled + cb * CB_TO_B) >> 14
+    let b_lo = _mm256_srai_epi32(
+        _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo, _mm256_set1_epi32(CB_TO_B_INT))),
+        14,
+    );
+    let b_hi = _mm256_srai_epi32(
+        _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi, _mm256_set1_epi32(CB_TO_B_INT))),
+        14,
+    );
+
+    // Pack i32 -> i16 with saturation, then i16 -> u8 with unsigned saturation
+    let r_16 = _mm256_packs_epi32(r_lo, r_hi);
+    let g_16 = _mm256_packs_epi32(g_lo, g_hi);
+    let b_16 = _mm256_packs_epi32(b_lo, b_hi);
+
+    // packus saturates to 0-255
+    let r_8 = _mm256_packus_epi16(r_16, _mm256_setzero_si256());
+    let g_8 = _mm256_packus_epi16(g_16, _mm256_setzero_si256());
+    let b_8 = _mm256_packus_epi16(b_16, _mm256_setzero_si256());
+
+    // Reorder lanes for correct order after packing
+    let r_8 = _mm256_permute4x64_epi64(r_8, 0b11_01_10_00);
+    let g_8 = _mm256_permute4x64_epi64(g_8, 0b11_01_10_00);
+    let b_8 = _mm256_permute4x64_epi64(b_8, 0b11_01_10_00);
+
+    // Interleave RGB using shuffle and blend (from zune-jpeg)
+    let sh_r = _mm256_setr_epi8(
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14,
+        9, 4, 15, 10, 5,
+    );
+    let sh_g = _mm256_setr_epi8(
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
+        14, 9, 4, 15, 10,
+    );
+    let sh_b = _mm256_setr_epi8(
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
+        3, 14, 9, 4, 15,
+    );
+
+    let r0 = _mm256_shuffle_epi8(r_8, sh_r);
+    let g0 = _mm256_shuffle_epi8(g_8, sh_g);
+    let b0 = _mm256_shuffle_epi8(b_8, sh_b);
+
+    let m0 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, -1, 0, 0,
+    );
+    let m1 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0,
+    );
+
+    let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
+    let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
+    let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
+
+    let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
+    let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
+
+    // Store 48 bytes (16 pixels * 3 channels)
+    let out_ptr = rgb.as_mut_ptr().add(*offset);
+    _mm256_storeu_si256(out_ptr.cast(), rgb0);
+    _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
+
+    *offset += 48;
+}
+
+/// Batch convert i16 YCbCr planes to interleaved RGB u8.
+///
+/// This is the fast path for standard JPEG decoding, avoiding f32 entirely.
+/// Input planes should be i16 with values in [0, 255] range (level-shifted IDCT output).
+pub fn ycbcr_planes_i16_to_rgb_u8(
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgb: &mut [u8],
+) {
+    debug_assert_eq!(y_plane.len(), cb_plane.len());
+    debug_assert_eq!(y_plane.len(), cr_plane.len());
+    debug_assert_eq!(rgb.len(), y_plane.len() * 3);
+
+    let num_pixels = y_plane.len();
+    let chunks = num_pixels / 16;
+    let mut offset = 0;
+
+    // Process 16 pixels at a time
+    for i in 0..chunks {
+        let base = i * 16;
+        let y: [i16; 16] = y_plane[base..base + 16].try_into().unwrap();
+        let cb: [i16; 16] = cb_plane[base..base + 16].try_into().unwrap();
+        let cr: [i16; 16] = cr_plane[base..base + 16].try_into().unwrap();
+        ycbcr_to_rgb_i16_x16(&y, &cb, &cr, rgb, &mut offset);
+    }
+
+    // Handle remaining pixels
+    let remaining_start = chunks * 16;
+    for i in remaining_start..num_pixels {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
+
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+
+        let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
+        let g = ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
+        let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
+
+        rgb[offset] = r;
+        rgb[offset + 1] = g;
+        rgb[offset + 2] = b;
+        offset += 3;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1236,5 +1503,97 @@ mod tests {
         let data = vec![10, 20, 30, 255, 40, 50, 60, 128]; // 2 RGBA pixels
         let alpha = extract_channel(&data, PixelFormat::Rgba, 3).unwrap();
         assert_eq!(alpha, vec![255, 128]);
+    }
+
+    #[test]
+    fn test_ycbcr_to_rgb_i16_scalar() {
+        // Test that integer path matches f32 path (within tolerance)
+        let test_cases = [
+            (128i16, 128i16, 128i16), // Gray
+            (76i16, 85i16, 255i16),   // Red
+            (150i16, 44i16, 21i16),   // Green
+            (29i16, 255i16, 107i16),  // Blue
+        ];
+
+        for (y, cb, cr) in test_cases {
+            let (r_f32, g_f32, b_f32) = ycbcr_to_rgb(y as u8, cb as u8, cr as u8);
+
+            // Test scalar integer path
+            let y_arr = [y; 16];
+            let cb_arr = [cb; 16];
+            let cr_arr = [cr; 16];
+            let mut rgb = vec![0u8; 48];
+            let mut offset = 0;
+            ycbcr_to_rgb_i16_x16_scalar(&y_arr, &cb_arr, &cr_arr, &mut rgb, &mut offset);
+
+            // Allow ±2 difference due to rounding
+            assert!(
+                (rgb[0] as i16 - r_f32 as i16).abs() <= 2,
+                "R mismatch: {} vs {} for Y={}, Cb={}, Cr={}",
+                rgb[0],
+                r_f32,
+                y,
+                cb,
+                cr
+            );
+            assert!(
+                (rgb[1] as i16 - g_f32 as i16).abs() <= 2,
+                "G mismatch: {} vs {} for Y={}, Cb={}, Cr={}",
+                rgb[1],
+                g_f32,
+                y,
+                cb,
+                cr
+            );
+            assert!(
+                (rgb[2] as i16 - b_f32 as i16).abs() <= 2,
+                "B mismatch: {} vs {} for Y={}, Cb={}, Cr={}",
+                rgb[2],
+                b_f32,
+                y,
+                cb,
+                cr
+            );
+        }
+    }
+
+    #[test]
+    fn test_ycbcr_planes_i16_to_rgb_u8() {
+        // Test batch conversion matches scalar
+        let y_plane: Vec<i16> = (0..32).map(|i| 128 + (i % 5) as i16).collect();
+        let cb_plane: Vec<i16> = (0..32).map(|i| 128 + (i % 3) as i16).collect();
+        let cr_plane: Vec<i16> = (0..32).map(|i| 128 + (i % 7) as i16).collect();
+
+        let mut rgb = vec![0u8; 96];
+        ycbcr_planes_i16_to_rgb_u8(&y_plane, &cb_plane, &cr_plane, &mut rgb);
+
+        // Verify against scalar f32 conversion
+        for i in 0..32 {
+            let (r_ref, g_ref, b_ref) =
+                ycbcr_to_rgb(y_plane[i] as u8, cb_plane[i] as u8, cr_plane[i] as u8);
+
+            // Allow ±2 difference
+            assert!(
+                (rgb[i * 3] as i16 - r_ref as i16).abs() <= 2,
+                "R mismatch at {}: {} vs {}",
+                i,
+                rgb[i * 3],
+                r_ref
+            );
+            assert!(
+                (rgb[i * 3 + 1] as i16 - g_ref as i16).abs() <= 2,
+                "G mismatch at {}: {} vs {}",
+                i,
+                rgb[i * 3 + 1],
+                g_ref
+            );
+            assert!(
+                (rgb[i * 3 + 2] as i16 - b_ref as i16).abs() <= 2,
+                "B mismatch at {}: {} vs {}",
+                i,
+                rgb[i * 3 + 2],
+                b_ref
+            );
+        }
     }
 }

@@ -20,7 +20,7 @@ use crate::alloc::{
 };
 use crate::color::{
     gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
-    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8,
+    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
 };
 use crate::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
@@ -1748,6 +1748,190 @@ impl<'a> JpegParser<'a> {
         Self::upsample_h1v2(&h_upsampled, out_width, in_height, out_width, out_height)
     }
 
+    /// Check if we can use the fast integer decode path.
+    ///
+    /// Fast path requirements:
+    /// - Non-XYB (standard JPEG)
+    /// - 4:4:4 subsampling (no chroma downsampling to avoid f32 upsampling)
+    /// - RGB output format
+    fn can_use_fast_i16_path(&self, format: PixelFormat, is_xyb: bool) -> bool {
+        if is_xyb {
+            return false;
+        }
+        if format != PixelFormat::Rgb {
+            return false;
+        }
+        if self.num_components != 3 {
+            return false;
+        }
+
+        // Check for 4:4:4 (all components have same sampling factors)
+        let h_samp_0 = self.components[0].h_samp_factor;
+        let v_samp_0 = self.components[0].v_samp_factor;
+        for i in 1..3 {
+            if self.components[i].h_samp_factor != h_samp_0
+                || self.components[i].v_samp_factor != v_samp_0
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Fast decode path using integer arithmetic throughout.
+    ///
+    /// This path avoids f32 entirely by using:
+    /// - Integer IDCT (outputs i16 [0, 255])
+    /// - Integer color conversion (i16 YCbCr → u8 RGB)
+    ///
+    /// Streams MCU row by row to keep data in L2 cache.
+    /// Only works for non-XYB 4:4:4 RGB output.
+    fn to_pixels_fast_i16(&self, _fancy_upsampling: bool) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Calculate max sampling factors (should all be the same for 4:4:4)
+        let max_h_samp = self.components[0].h_samp_factor as usize;
+        let max_v_samp = self.components[0].v_samp_factor as usize;
+
+        // MCU dimensions
+        let mcu_height = max_v_samp * 8;
+        let mcu_cols = (width + max_h_samp * 8 - 1) / (max_h_samp * 8);
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Component info
+        struct CompInfo {
+            quant_idx: usize,
+            h_samp: usize,
+            v_samp: usize,
+            comp_blocks_h: usize,
+            comp_blocks_v: usize,
+            strip_width: usize,
+        }
+
+        let mut comp_infos: Vec<CompInfo> = Vec::new();
+        for comp_idx in 0..3 {
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+            let comp_blocks_h = mcu_cols * h_samp;
+            let comp_blocks_v = mcu_rows * v_samp;
+            let strip_width = comp_blocks_h * 8;
+            comp_infos.push(CompInfo {
+                quant_idx: self.components[comp_idx].quant_table_idx as usize,
+                h_samp,
+                v_samp,
+                comp_blocks_h,
+                comp_blocks_v,
+                strip_width,
+            });
+        }
+
+        // Allocate strip buffers for one MCU row (reused each iteration)
+        // Strip height = max_v_samp * 8 pixels
+        let strip_height = mcu_height;
+        let strip_width = comp_infos[0].strip_width;
+        let strip_size = strip_width * strip_height;
+
+        // Allocate strip buffers - values will be fully overwritten by IDCT
+        // SAFETY: We write all pixels before reading them in the MCU row loop
+        let mut y_strip: Vec<i16> = Vec::with_capacity(strip_size);
+        let mut cb_strip: Vec<i16> = Vec::with_capacity(strip_size);
+        let mut cr_strip: Vec<i16> = Vec::with_capacity(strip_size);
+        // SAFETY: Strips are fully written by IDCT before color conversion reads them
+        unsafe {
+            y_strip.set_len(strip_size);
+            cb_strip.set_len(strip_size);
+            cr_strip.set_len(strip_size);
+        }
+
+        // Allocate output RGB buffer - uninitialized since we write all pixels
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> = Vec::with_capacity(rgb_size);
+        // SAFETY: All pixels are written by color conversion before the buffer is returned
+        unsafe {
+            rgb.set_len(rgb_size);
+        }
+
+        // Process MCU row by row
+        for imcu_row in 0..mcu_rows {
+            // No need to clear strips - we write all pixels we'll read
+
+            // IDCT all blocks in this MCU row for all 3 components
+            for comp_idx in 0..3 {
+                let info = &comp_infos[comp_idx];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::InternalError {
+                        reason: "missing quantization table",
+                    })?;
+
+                let strip = match comp_idx {
+                    0 => &mut y_strip,
+                    1 => &mut cb_strip,
+                    _ => &mut cr_strip,
+                };
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+
+                    let strip_row = iy * DCT_SIZE; // Row within the strip
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[comp_idx].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[comp_idx][block_idx];
+
+                        // Zigzag reorder
+                        let mut natural_coeffs = [0i16; DCT_BLOCK_SIZE];
+                        for (i, &zi) in JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE].iter().enumerate() {
+                            natural_coeffs[zi as usize] = coeffs[i];
+                        }
+
+                        // Integer IDCT
+                        let mut dequant_i32 = dequantize_block_i32(&natural_coeffs, quant);
+                        let mut pixels_i16 = [0i16; DCT_BLOCK_SIZE];
+                        idct_int_auto(&mut dequant_i32, &mut pixels_i16, 8);
+
+                        // Copy to strip buffer
+                        let base_px = bx * DCT_SIZE;
+                        for y in 0..DCT_SIZE {
+                            let dst_offset = (strip_row + y) * strip_width + base_px;
+                            let src_offset = y * DCT_SIZE;
+                            strip[dst_offset..dst_offset + DCT_SIZE]
+                                .copy_from_slice(&pixels_i16[src_offset..src_offset + DCT_SIZE]);
+                        }
+                    }
+                }
+            }
+
+            // Color convert this MCU row's strips directly to RGB output
+            let y_start = imcu_row * mcu_height;
+            let rows_this_mcu = mcu_height.min(height.saturating_sub(y_start));
+            let cols_this_mcu = width.min(strip_width);
+
+            for row in 0..rows_this_mcu {
+                let strip_offset = row * strip_width;
+                let rgb_offset = (y_start + row) * width * 3;
+
+                // Convert one row at a time for cache efficiency
+                ycbcr_planes_i16_to_rgb_u8(
+                    &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                    &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                    &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                    &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                );
+            }
+        }
+
+        Ok(rgb)
+    }
+
     fn to_pixels(
         &self,
         format: PixelFormat,
@@ -1758,6 +1942,11 @@ impl<'a> JpegParser<'a> {
             return Err(Error::InternalError {
                 reason: "no decoded data",
             });
+        }
+
+        // Try fast integer path for non-XYB 4:4:4 RGB images
+        if self.can_use_fast_i16_path(format, is_xyb) {
+            return self.to_pixels_fast_i16(fancy_upsampling);
         }
 
         let width = self.width as usize;
