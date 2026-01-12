@@ -14,11 +14,12 @@ use super::decode_value;
 #[inline]
 fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> Result<u8> {
     // Try fast lookup first (most common path)
-    if let Ok(bits) = reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
-        // fast_decode expects bits in MSB position
-        let shifted = bits << (32 - HuffmanDecodeTable::FAST_BITS);
-        if let Some((symbol, len)) = table.fast_decode(shifted) {
-            reader.skip_bits(len);
+    if let Some(bits) = reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
+        let lookup = table.fast_lookup[bits as usize];
+        if lookup >= 0 {
+            let symbol = (lookup & 0xFF) as u8;
+            let len = (lookup >> 8) as u8;
+            reader.skip_bits_fast(len);
             return Ok(symbol);
         }
     }
@@ -100,19 +101,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     }
 
     /// Decodes a Huffman symbol.
+    #[inline]
     fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> Result<u8> {
         // Try fast lookup first
-        match self.reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
-            Ok(bits) => {
-                // fast_decode expects bits in MSB position (shifted left by 32 - FAST_BITS)
-                let shifted = bits << (32 - HuffmanDecodeTable::FAST_BITS);
-                if let Some((symbol, len)) = table.fast_decode(shifted) {
-                    self.reader.skip_bits(len);
-                    return Ok(symbol);
-                }
-            }
-            Err(_) => {
-                // Not enough bits for fast lookup, try slow path
+        if let Some(bits) = self.reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
+            let lookup = table.fast_lookup[bits as usize];
+            if lookup >= 0 {
+                let symbol = (lookup & 0xFF) as u8;
+                let len = (lookup >> 8) as u8;
+                self.reader.skip_bits_fast(len);
+                return Ok(symbol);
             }
         }
 
@@ -202,14 +200,15 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // Decode AC coefficients with fast path
         let mut i = 1;
         while i < DCT_BLOCK_SIZE {
-            // Try fast path first - peek 9 bits
-            // peek_bits returns right-aligned bits, mask to FAST_BITS to get index
-            if let Ok(bits9) = self.reader.peek_bits(HuffmanDecodeTable::FAST_BITS as u8) {
-                let idx = (bits9 as usize) & ((1 << HuffmanDecodeTable::FAST_BITS) - 1);
+            // Try fast path first - peek 9 bits with inline refill
+            if let Some(bits9) =
+                self.reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8)
+            {
+                let idx = bits9 as usize;
 
                 // Try fast AC decode first (combined Huffman + sign extend)
                 if let Some((value, run, total_bits)) = ac_table.fast_decode_ac(idx) {
-                    self.reader.skip_bits(total_bits);
+                    self.reader.skip_bits_fast(total_bits);
                     i += run as usize;
                     if i < DCT_BLOCK_SIZE {
                         coeffs[i] = value;
@@ -223,7 +222,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 if lookup >= 0 {
                     let symbol = (lookup & 0xFF) as u8;
                     let code_length = (lookup >> 8) as u8;
-                    self.reader.skip_bits(code_length);
+                    self.reader.skip_bits_fast(code_length);
 
                     if symbol == 0 {
                         // EOB - remaining coefficients are zero

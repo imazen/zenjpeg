@@ -350,6 +350,36 @@ impl<'a> BitReader<'a> {
         Ok((self.aligned_buffer >> (64 - count)) as u32)
     }
 
+    /// Fast peek that refills first. Returns None if not enough bits after refill.
+    /// Optimized for Huffman decode hot path.
+    #[inline(always)]
+    pub fn peek_bits_refill(&mut self, count: u8) -> Option<u32> {
+        if self.bits_in_buffer < count {
+            let _ = self.refill();
+            if self.bits_in_buffer < count {
+                return None;
+            }
+        }
+        Some((self.aligned_buffer >> (64 - count)) as u32)
+    }
+
+    /// Skip bits without any checks. Only call after successful peek.
+    #[inline(always)]
+    pub fn skip_bits_fast(&mut self, count: u8) {
+        self.bits_in_buffer -= count;
+        self.aligned_buffer <<= count;
+    }
+
+    /// Read bits without refill. Only call when you know enough bits are available.
+    /// Returns the bits and consumes them.
+    #[inline(always)]
+    pub fn read_bits_fast(&mut self, count: u8) -> u32 {
+        let bits = (self.aligned_buffer >> (64 - count)) as u32;
+        self.bits_in_buffer -= count;
+        self.aligned_buffer <<= count;
+        bits
+    }
+
     /// Reads `count` bits from the stream.
     #[inline]
     pub fn read_bits(&mut self, count: u8) -> Result<u32> {
