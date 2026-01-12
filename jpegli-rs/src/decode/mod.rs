@@ -36,8 +36,8 @@ use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::idct::inverse_dct_8x8;
 use crate::idct_int::{idct_int_auto, idct_int_tiered};
 use crate::quant::{
-    dequantize_block, dequantize_block_i32, dequantize_block_with_bias,
-    dequantize_unzigzag_i32, DequantBiasStats,
+    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, dequantize_unzigzag_i32,
+    DequantBiasStats,
 };
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
 
@@ -239,6 +239,8 @@ impl Decoder {
     /// If you need ICC profile transformation, decode to u8 first.
     pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
         let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        // Disable streaming - f32 decode needs coefficients for precision
+        parser.prefer_streaming = false;
         parser.decode()?;
 
         let info = parser.info();
@@ -298,6 +300,8 @@ impl Decoder {
     /// - Parsing or decoding fails
     pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        // Disable streaming - f32 YCbCr decode needs coefficients
+        parser.prefer_streaming = false;
         parser.decode()?;
 
         let info = parser.info();
@@ -614,9 +618,14 @@ struct JpegParser<'a> {
     // Restart
     restart_interval: u16,
 
-    // Decoded coefficient data
+    // Decoded coefficient data (used for progressive and non-streaming baseline)
     coeffs: Vec<Vec<[i16; DCT_BLOCK_SIZE]>>, // Per component
     coeff_counts: Vec<Vec<u8>>,              // Coefficient count per block (for tiered IDCT)
+
+    // Streaming decode result (used for baseline 4:4:4 JPEGs)
+    streaming_rgb: Option<Vec<u8>>,
+    // Whether to prefer streaming decode (set false for f32 output which needs coefficients)
+    prefer_streaming: bool,
 
     // ICC profile (extracted from raw data, not during parsing)
     icc_profile: Option<Vec<u8>>,
@@ -652,6 +661,8 @@ impl<'a> JpegParser<'a> {
             restart_interval: 0,
             coeffs: Vec::new(),
             coeff_counts: Vec::new(),
+            streaming_rgb: None,
+            prefer_streaming: true, // Default to streaming for RGB decode
             icc_profile,
             max_pixels,
         })
@@ -1059,6 +1070,11 @@ impl<'a> JpegParser<'a> {
         // Decode entropy-coded segment based on mode
         if self.mode == JpegMode::Progressive {
             self.decode_progressive_scan(&scan_components, ss, se, ah, al)?;
+        } else if self.prefer_streaming && self.can_use_streaming() && self.streaming_rgb.is_none()
+        {
+            // Use streaming decode for baseline 4:4:4 - fuses decode + IDCT + color
+            let rgb = self.decode_baseline_streaming_rgb(&scan_components)?;
+            self.streaming_rgb = Some(rgb);
         } else {
             self.decode_scan(&scan_components)?;
         }
@@ -1246,6 +1262,181 @@ impl<'a> JpegParser<'a> {
 
         self.position += decoder.position();
         Ok(())
+    }
+
+    /// Check if streaming decode can be used.
+    /// Streaming is only possible for baseline 4:4:4 YCbCr images.
+    fn can_use_streaming(&self) -> bool {
+        // Must be baseline (not progressive)
+        if self.mode != JpegMode::Baseline {
+            return false;
+        }
+        // Must have 3 components (YCbCr)
+        if self.num_components != 3 {
+            return false;
+        }
+        // Must be 4:4:4 (all components have same sampling factors)
+        let h0 = self.components[0].h_samp_factor;
+        let v0 = self.components[0].v_samp_factor;
+        for i in 1..3 {
+            if self.components[i].h_samp_factor != h0 || self.components[i].v_samp_factor != v0 {
+                return false;
+            }
+        }
+        // Must have 1x1 sampling (no subsampling)
+        if h0 != 1 || v0 != 1 {
+            return false;
+        }
+        true
+    }
+
+    /// Streaming decode for baseline 4:4:4 YCbCr images.
+    /// Combines Huffman decode + dequantize + IDCT + color convert in one pass.
+    /// No coefficient storage - processes MCU row by row directly to RGB output.
+    fn decode_baseline_streaming_rgb(
+        &mut self,
+        scan_components: &[(usize, u8, u8)],
+    ) -> Result<Vec<u8>> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // For 4:4:4, MCU = 8x8 pixels (single block per component)
+        let mcu_cols = (width + 7) / 8;
+        let mcu_rows = (height + 7) / 8;
+        let strip_width = mcu_cols * 8;
+
+        // Get quantization tables
+        let quant_y = self.quant_tables[self.components[0].quant_table_idx as usize]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "missing Y quantization table",
+            })?;
+        let quant_cb = self.quant_tables[self.components[1].quant_table_idx as usize]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "missing Cb quantization table",
+            })?;
+        let quant_cr = self.quant_tables[self.components[2].quant_table_idx as usize]
+            .as_ref()
+            .ok_or(Error::InternalError {
+                reason: "missing Cr quantization table",
+            })?;
+
+        // Set up entropy decoder
+        let scan_data = &self.data[self.position..];
+        let mut decoder = EntropyDecoder::new(scan_data);
+
+        // Set up Huffman tables
+        for (comp_idx, dc_table, ac_table) in scan_components {
+            let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+            let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+
+            let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
+                Some(table) => table,
+                None => {
+                    if dc_idx == 0 {
+                        HuffmanDecodeTable::std_dc_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_dc_chrominance()
+                    }
+                }
+            };
+            decoder.set_dc_table(*comp_idx, dc_table_ref);
+
+            let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
+                Some(table) => table,
+                None => {
+                    if ac_idx == 0 {
+                        HuffmanDecodeTable::std_ac_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_ac_chrominance()
+                    }
+                }
+            };
+            decoder.set_ac_table(*comp_idx, ac_table_ref);
+        }
+
+        // Allocate strip buffers for one MCU row (8 rows of pixels)
+        let strip_size = strip_width * 8;
+        let mut y_strip: Vec<i16> = vec![0i16; strip_size];
+        let mut cb_strip: Vec<i16> = vec![0i16; strip_size];
+        let mut cr_strip: Vec<i16> = vec![0i16; strip_size];
+
+        // Allocate output RGB buffer
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> = vec![0u8; rgb_size];
+
+        let mut mcu_count = 0u32;
+        let restart_interval = self.restart_interval as u32;
+        let mut next_restart_num = 0u8;
+
+        // Process MCU row by row
+        for mcu_y in 0..mcu_rows {
+            // Decode one MCU row's worth of blocks
+            for mcu_x in 0..mcu_cols {
+                // Check for restart marker
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    decoder.align_to_byte();
+                    decoder.read_restart_marker(next_restart_num)?;
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    decoder.reset_dc();
+                }
+
+                // Decode, dequantize, and IDCT each component's block directly to strip
+                for (comp_idx, dc_table, ac_table) in scan_components {
+                    let (coeffs, coeff_count) = decoder.decode_block_with_count(
+                        *comp_idx,
+                        *dc_table as usize,
+                        *ac_table as usize,
+                    )?;
+
+                    let quant = match *comp_idx {
+                        0 => quant_y,
+                        1 => quant_cb,
+                        _ => quant_cr,
+                    };
+                    let strip = match *comp_idx {
+                        0 => &mut y_strip,
+                        1 => &mut cb_strip,
+                        _ => &mut cr_strip,
+                    };
+
+                    // Fused dequantize + unzigzag
+                    let mut dequant_i32 = dequantize_unzigzag_i32(&coeffs, quant);
+
+                    // IDCT directly to strip buffer
+                    let dst_offset = mcu_x * 8;
+                    idct_int_tiered(
+                        &mut dequant_i32,
+                        &mut strip[dst_offset..],
+                        strip_width,
+                        coeff_count,
+                    );
+                }
+
+                mcu_count += 1;
+            }
+
+            // Color convert this MCU row directly to RGB output
+            let y_start = mcu_y * 8;
+            let rows_this_mcu = 8.min(height.saturating_sub(y_start));
+            let cols_this_mcu = width.min(strip_width);
+
+            for row in 0..rows_this_mcu {
+                let strip_offset = row * strip_width;
+                let rgb_offset = (y_start + row) * width * 3;
+
+                ycbcr_planes_i16_to_rgb_u8(
+                    &y_strip[strip_offset..strip_offset + cols_this_mcu],
+                    &cb_strip[strip_offset..strip_offset + cols_this_mcu],
+                    &cr_strip[strip_offset..strip_offset + cols_this_mcu],
+                    &mut rgb[rgb_offset..rgb_offset + cols_this_mcu * 3],
+                );
+            }
+        }
+
+        self.position += decoder.position();
+        Ok(rgb)
     }
 
     fn decode_progressive_scan(
@@ -1963,11 +2154,18 @@ impl<'a> JpegParser<'a> {
     }
 
     fn to_pixels(
-        &self,
+        &mut self,
         format: PixelFormat,
         is_xyb: bool,
         fancy_upsampling: bool,
     ) -> Result<Vec<u8>> {
+        // If streaming decode was used, return its result directly (zero-copy)
+        if format == PixelFormat::Rgb && !is_xyb {
+            if let Some(rgb) = self.streaming_rgb.take() {
+                return Ok(rgb);
+            }
+        }
+
         if self.coeffs.is_empty() {
             return Err(Error::InternalError {
                 reason: "no decoded data",
