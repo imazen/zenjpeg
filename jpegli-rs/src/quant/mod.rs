@@ -768,11 +768,26 @@ pub fn dequantize_unzigzag_i32(
     // For each natural position, look up the corresponding zigzag position
     for natural_idx in 0..DCT_BLOCK_SIZE {
         let zigzag_idx = JPEG_ZIGZAG_ORDER[natural_idx] as usize;
-        result[natural_idx] =
-            zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
     }
 
     result
+}
+
+/// Dequantize and unzigzag into an existing buffer.
+/// This allows buffer reuse across multiple blocks.
+#[inline(always)]
+pub fn dequantize_unzigzag_i32_into(
+    zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
+    quant_natural: &[u16; DCT_BLOCK_SIZE],
+    result: &mut [i32; DCT_BLOCK_SIZE],
+) {
+    use crate::consts::JPEG_ZIGZAG_ORDER;
+
+    for natural_idx in 0..DCT_BLOCK_SIZE {
+        let zigzag_idx = JPEG_ZIGZAG_ORDER[natural_idx] as usize;
+        result[natural_idx] = zigzag_coeffs[zigzag_idx] as i32 * quant_natural[natural_idx] as i32;
+    }
 }
 
 /// Dequantizes a block of coefficients (SIMD-optimized).
