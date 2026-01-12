@@ -34,9 +34,9 @@ cargo test --release -p jpegli-rs --test comprehensive_cpp_comparison -- --nocap
 ```
 
 Expected results:
-- **Size**: +0.04% (Rust slightly larger)
-- **DSSIM**: +0.14% (essentially identical quality)
-- **Butteraugli**: -0.01% (Rust slightly better)
+- **Size**: +0.26% (Rust slightly larger)
+- **DSSIM**: +0.15% (essentially identical quality)
+- **Butteraugli**: -0.00% (identical)
 
 ### All C++ Comparison Tests
 ```bash
@@ -56,10 +56,11 @@ cargo run --release --example ssim2_comparison
 ### Key Parity Tests
 | Test | Command | Expected |
 |------|---------|----------|
-| comprehensive | `--test comprehensive_cpp_comparison` | Size +0.04%, DSSIM +0.14% |
+| comprehensive | `--test comprehensive_cpp_comparison` | Size +0.26%, DSSIM +0.15% |
 | corpus | `--test corpus_cpp_comparison` | Size -0.1% |
 | xyb | `--example xyb_parity_test` | Size 0.2-3% |
 | locked | `--test cpp_parity_locked` | Hash-locked values |
+| strip edges | `--test strip_edge_cpp_comparison` | DSSIM <0.6% diff |
 
 ## Tools
 
@@ -188,6 +189,23 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    - Build jpegli with symbol prefixing (e.g., `jpegli_` prefix)
    - Use separate binary without mozjpeg in dep tree
    - Link jpegli with +whole-archive before mozjpeg
+
+6. **Fullplane encoder stride mismatch (DEPRECATED)** - `encode/old/blocks.rs:531`
+   The fullplane encoder produces corrupted output for images with non-MCU-aligned widths.
+   **STATUS: DEPRECATED** - The fullplane encoder is being dropped. Use strip encoder (default).
+
+   **Strip encoder edge handling: VERIFIED**
+   - All partial MCU widths (1-15) and heights (1-15) tested
+   - C++ parity: DSSIM within 0.6% for all edge cases
+   - Tests: `strip_edge_cpp_comparison.rs`, `comprehensive_edge_ssim2.rs`
+
+   **Verification:**
+   ```bash
+   # Strip encoder vs C++ edge comparison
+   cargo test --release --test strip_edge_cpp_comparison -- --ignored --nocapture
+   # Comprehensive edge test (strip vs fullplane shows fullplane is broken)
+   cargo run --release --example comprehensive_edge_ssim2 -- --subsampling=420
+   ```
 
 ## Running Tests
 
