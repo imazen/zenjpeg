@@ -9,9 +9,8 @@ use test_utils::{generate_gradient_d, get_test_data_path, read_test_data, TestIm
 
 use jpegli::{
     decode::{Decoder, DecoderConfig},
-    encode::Encoder,
     types::PixelFormat,
-    Quality,
+    Quality, StreamingEncoder,
 };
 use test_case::test_case;
 
@@ -21,11 +20,9 @@ use test_case::test_case;
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let img = generate_gradient_d(width, height, 3);
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .jpegli_quality(Quality::from_quality(quality));
-    encoder.encode(&img.pixels).expect("encode failed")
+    let encoder = StreamingEncoder::new(width, height)
+        .quality(Quality::from_quality(quality));
+    encoder.encode_all(&img.pixels).expect("encode failed")
 }
 
 // ============================================================================
@@ -48,11 +45,9 @@ fn test_decode_basic() {
 fn test_decode_grayscale() {
     // Create grayscale JPEG
     let img = test_utils::generate_gradient_h(64, 64, 1);
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
+    let encoder = StreamingEncoder::new(64, 64)
         .pixel_format(PixelFormat::Gray);
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -135,12 +130,10 @@ fn test_decode_various_qualities(quality: f32) {
 #[test]
 fn test_decode_progressive() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = Encoder::new()
-        .width(128)
-        .height(128)
+    let encoder = StreamingEncoder::new(128, 128)
         .mode(jpegli::types::JpegMode::Progressive);
     let jpeg = encoder
-        .encode(&img.pixels)
+        .encode_all(&img.pixels)
         .expect("encode progressive failed");
 
     let decoder = Decoder::new();
@@ -336,11 +329,9 @@ fn test_decode_pixel_range() {
         }
     }
 
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(100.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(100.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -390,8 +381,8 @@ fn test_decode_deterministic() {
 #[test]
 fn test_decode_1x1_pixel() {
     let img = TestImage::from_pixels(1, 1, 3, vec![100, 150, 200]);
-    let encoder = Encoder::new().width(1).height(1);
-    let jpeg = encoder.encode(&img.pixels).expect("encode 1x1 failed");
+    let encoder = StreamingEncoder::new(1, 1);
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode 1x1 failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode 1x1 failed");

@@ -3,7 +3,7 @@
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
 
 use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{Encoder, Quality};
+use jpegli::{Quality, StreamingEncoder};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -84,14 +84,12 @@ fn test_q100_rust_vs_cpp() {
 
     // Rust Q100 encoding - BASELINE (sequential) mode
     let rust_start = Instant::now();
-    let rust_jpeg = Encoder::new()
-        .width(width)
-        .height(height)
+    let rust_jpeg = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(100.0))
+        .quality(Quality::from_quality(100.0))
         .optimize_huffman(true)
         .mode(JpegMode::Baseline)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode");
     let rust_time = rust_start.elapsed();
 

@@ -13,9 +13,8 @@ use test_utils::{
 
 use jpegli::{
     decode::Decoder,
-    encode::Encoder,
     types::{JpegMode, PixelFormat},
-    Quality,
+    Quality, StreamingEncoder,
 };
 use std::path::Path;
 use test_case::test_case;
@@ -76,12 +75,10 @@ fn decode_test_jpeg(filename: &str) -> Option<(u32, u32, Vec<u8>)> {
 fn test_file_size_parity_synthetic() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let encoder = Encoder::new()
-        .width(256)
-        .height(256)
-        .jpegli_quality(Quality::from_quality(85.0));
+    let encoder = StreamingEncoder::new(256, 256)
+        .quality(Quality::from_quality(85.0));
 
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // A 256x256 gradient is simple content - file size varies with implementation
     // Just verify it's reasonable (not too small to be valid, not too large)
@@ -106,11 +103,9 @@ fn test_file_size_scaling() {
     let sizes: Vec<(f32, usize)> = [50.0, 70.0, 85.0, 95.0]
         .iter()
         .map(|&q| {
-            let encoder = Encoder::new()
-                .width(256)
-                .height(256)
-                .jpegli_quality(Quality::from_quality(q));
-            (q, encoder.encode(&img.pixels).unwrap().len())
+            let encoder = StreamingEncoder::new(256, 256)
+                .quality(Quality::from_quality(q));
+            (q, encoder.encode_all(&img.pixels).unwrap().len())
         })
         .collect();
 
@@ -199,11 +194,9 @@ fn test_quality_vs_cpp_decoded() {
     let (_, _, cpp_pixels) = cpp_decoded.unwrap();
 
     // Encode with Rust and decode
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .jpegli_quality(Quality::from_quality(85.0));
-    let rust_jpeg = encoder.encode(&original).expect("Rust encode failed");
+    let encoder = StreamingEncoder::new(width, height)
+        .quality(Quality::from_quality(85.0));
+    let rust_jpeg = encoder.encode_all(&original).expect("Rust encode failed");
 
     let decoder = Decoder::new();
     let rust_decoded = decoder.decode(&rust_jpeg).expect("Rust decode failed");
@@ -236,11 +229,9 @@ fn count_markers(jpeg: &[u8], marker: u8) -> usize {
 #[test]
 fn test_marker_structure() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = Encoder::new()
-        .width(128)
-        .height(128)
-        .jpegli_quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(128, 128)
+        .quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // Check required markers
     assert!(jpeg.starts_with(&[0xFF, 0xD8]), "Missing SOI");
@@ -274,12 +265,10 @@ fn test_marker_structure() {
 #[test]
 fn test_progressive_marker_structure() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = Encoder::new()
-        .width(128)
-        .height(128)
+    let encoder = StreamingEncoder::new(128, 128)
         .mode(JpegMode::Progressive)
-        .jpegli_quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        .quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let sof2_count = count_markers(&jpeg, 0xC2);
     let sos_count = count_markers(&jpeg, 0xDA);
@@ -330,11 +319,9 @@ fn extract_dqt_table(jpeg: &[u8], table_id: u8) -> Option<Vec<u8>> {
 #[test]
 fn test_quant_tables_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // RGB JPEG should have 2 quant tables (luma and chroma)
     let table0 = extract_dqt_table(&jpeg, 0);
@@ -352,17 +339,13 @@ fn test_quant_tables_present() {
 fn test_quant_tables_vary_with_quality() {
     let img = generate_gradient_d(64, 64, 3);
 
-    let q50_encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(50.0));
-    let q50_jpeg = q50_encoder.encode(&img.pixels).expect("encode Q50 failed");
+    let q50_encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(50.0));
+    let q50_jpeg = q50_encoder.encode_all(&img.pixels).expect("encode Q50 failed");
 
-    let q95_encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(95.0));
-    let q95_jpeg = q95_encoder.encode(&img.pixels).expect("encode Q95 failed");
+    let q95_encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(95.0));
+    let q95_jpeg = q95_encoder.encode_all(&img.pixels).expect("encode Q95 failed");
 
     let q50_table = extract_dqt_table(&q50_jpeg, 0).unwrap();
     let q95_table = extract_dqt_table(&q95_jpeg, 0).unwrap();
@@ -387,11 +370,9 @@ fn test_quant_tables_vary_with_quality() {
 #[test]
 fn test_jpeg_decoder_compatibility() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = Encoder::new()
-        .width(128)
-        .height(128)
-        .jpegli_quality(Quality::from_quality(90.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(128, 128)
+        .quality(Quality::from_quality(90.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // Decode with jpeg-decoder crate
     let mut decoder =
@@ -407,11 +388,9 @@ fn test_jpeg_decoder_compatibility() {
 #[test]
 fn test_zune_jpeg_compatibility() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = Encoder::new()
-        .width(128)
-        .height(128)
-        .jpegli_quality(Quality::from_quality(90.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(128, 128)
+        .quality(Quality::from_quality(90.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     // Decode with zune-jpeg
     use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -471,11 +450,9 @@ fn count_dht_tables(jpeg: &[u8]) -> (usize, usize) {
 #[test]
 fn test_huffman_tables_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = Encoder::new()
-        .width(64)
-        .height(64)
-        .jpegli_quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(64, 64)
+        .quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let (dc_count, ac_count) = count_dht_tables(&jpeg);
 
@@ -506,11 +483,9 @@ fn extract_sof_params(jpeg: &[u8]) -> Option<(u8, u16, u16, u8)> {
 #[test]
 fn test_sof_parameters() {
     let img = generate_gradient_d(320, 240, 3);
-    let encoder = Encoder::new()
-        .width(320)
-        .height(240)
-        .jpegli_quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let encoder = StreamingEncoder::new(320, 240)
+        .quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
 
     let (precision, height, width, components) = extract_sof_params(&jpeg).expect("SOF not found");
 

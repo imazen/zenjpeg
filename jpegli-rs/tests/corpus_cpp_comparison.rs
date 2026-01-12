@@ -94,15 +94,13 @@ fn register_rust_jpegli(session: &mut EvalSession) {
 
             let quality = request.quality as f32;
 
-            let encoder = jpegli::Encoder::new()
-                .width(width as u32)
-                .height(height as u32)
+            let encoder = jpegli::StreamingEncoder::new(width as u32, height as u32)
                 .pixel_format(jpegli::PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(quality))
+                .quality(Quality::from_quality(quality))
                 .optimize_huffman(false); // Match C++ --fixed_code
 
             let encoded = encoder
-                .encode(&rgb_data)
+                .encode_all(&rgb_data)
                 .map_err(|e| codec_eval::Error::Codec {
                     codec: "jpegli-rs".to_string(),
                     message: format!("{}", e),

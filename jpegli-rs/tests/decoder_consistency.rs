@@ -3,7 +3,7 @@
 //! Verifies that the decoder produces consistent output across multiple roundtrips
 //! and that encode→decode→encode→decode produces stable results.
 
-use jpegli::{Decoder, Encoder, JpegMode, PixelFormat, Quality};
+use jpegli::{Decoder, JpegMode, PixelFormat, Quality, StreamingEncoder};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -35,26 +35,22 @@ fn test_baseline_roundtrip_consistency() {
     let rgb = generate_gradient(width as usize, height as usize);
 
     // First encode
-    let jpeg1 = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg1 = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 1 failed");
 
     // Decode
     let decoded1 = Decoder::new().decode(&jpeg1).expect("decode 1 failed");
 
     // Re-encode from decoded
-    let jpeg2 = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg2 = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline)
-        .encode(&decoded1.data)
+        .encode_all(&decoded1.data)
         .expect("encode 2 failed");
 
     // Decode again
@@ -87,26 +83,22 @@ fn test_progressive_roundtrip_consistency() {
     let rgb = generate_gradient(width as usize, height as usize);
 
     // First encode
-    let jpeg1 = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg1 = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Progressive)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 1 failed");
 
     // Decode
     let decoded1 = Decoder::new().decode(&jpeg1).expect("decode 1 failed");
 
     // Re-encode from decoded
-    let jpeg2 = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg2 = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Progressive)
-        .encode(&decoded1.data)
+        .encode_all(&decoded1.data)
         .expect("encode 2 failed");
 
     // Decode again
@@ -126,12 +118,10 @@ fn test_decoder_produces_correct_dimensions() {
     for (width, height) in [(64, 64), (100, 75), (256, 128), (17, 33)] {
         let rgb = generate_gradient(width, height);
 
-        let jpeg = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(85.0))
-            .encode(&rgb)
+            .quality(Quality::from_quality(85.0))
+            .encode_all(&rgb)
             .expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -165,12 +155,10 @@ fn test_multiple_roundtrips_converge() {
 
     // Do 5 roundtrips - error should stabilize/decrease
     for i in 0..5 {
-        let jpeg = Encoder::new()
-            .width(width)
-            .height(height)
+        let jpeg = StreamingEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0))
-            .encode(&current_pixels)
+            .quality(Quality::from_quality(90.0))
+            .encode_all(&current_pixels)
             .expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -198,13 +186,11 @@ fn test_high_quality_roundtrip_low_error() {
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
-    let jpeg = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(100.0))
+        .quality(Quality::from_quality(100.0))
         .mode(JpegMode::Baseline)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode failed");
 
     let decoded = Decoder::new().decode(&jpeg).expect("decode failed");

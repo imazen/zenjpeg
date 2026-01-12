@@ -17,7 +17,7 @@
 //! - Encoding time: Performance
 
 use dssim::Dssim;
-use jpegli::{ChromaDownsampling, Decoder, Encoder, Error, PixelFormat, Quality, Subsampling};
+use jpegli::{ChromaDownsampling, Decoder, Error, PixelFormat, Quality, StreamingEncoder, Subsampling};
 use std::time::Instant;
 
 // ============================================================================
@@ -188,18 +188,16 @@ fn encode_with_method(
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
-    let mut encoder = Encoder::new()
-        .width(width)
-        .height(height)
+    let mut encoder = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(subsampling)
-        .jpegli_quality(Quality::from_quality(90.0));
+        .quality(Quality::from_quality(90.0));
 
     if let Some(m) = method {
         encoder = encoder.chroma_downsampling(m);
     }
 
-    let jpeg_data = encoder.encode(data)?;
+    let jpeg_data = encoder.encode_all(data)?;
     let encode_time = start.elapsed().as_micros();
 
     Ok(EncodingResult {

@@ -9,9 +9,9 @@
 //! and all subsampled progressive modes produce the same file size as 4:4:4.
 
 use jpegli::decode::Decoder;
-use jpegli::encode::Encoder;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::Quality;
+
+use jpegli::{Quality, StreamingEncoder};
 
 /// Test that progressive + subsampling produces files that can be decoded
 /// by multiple external decoders without corruption errors.
@@ -38,15 +38,13 @@ fn test_progressive_subsampling_external_decoder_compat() {
     ];
 
     for (subsampling, name) in configs {
-        let jpeg = Encoder::new()
-            .width(width)
-            .height(height)
+        let jpeg = StreamingEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .mode(JpegMode::Progressive)
             .subsampling(subsampling)
             .optimize_huffman(true)
-            .jpegli_quality(Quality::from_quality(85.0))
-            .encode(&rgb)
+            .quality(Quality::from_quality(85.0))
+            .encode_all(&rgb)
             .unwrap_or_else(|e| panic!("Progressive {} encode failed: {:?}", name, e));
 
         // Test with zune-jpeg decoder
@@ -91,15 +89,13 @@ fn test_progressive_subsampling_file_sizes() {
     }
 
     let encode = |sub: Subsampling| -> usize {
-        Encoder::new()
-            .width(width)
-            .height(height)
+        StreamingEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .mode(JpegMode::Progressive)
             .subsampling(sub)
             .optimize_huffman(true)
-            .jpegli_quality(Quality::from_quality(85.0))
-            .encode(&rgb)
+            .quality(Quality::from_quality(85.0))
+            .encode_all(&rgb)
             .expect("encode failed")
             .len()
     };
@@ -171,15 +167,13 @@ fn test_baseline_subsampling_works() {
     }
 
     let encode = |sub: Subsampling| -> usize {
-        Encoder::new()
-            .width(width)
-            .height(height)
+        StreamingEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .mode(JpegMode::Baseline)
             .subsampling(sub)
             .optimize_huffman(true)
-            .jpegli_quality(Quality::from_quality(85.0))
-            .encode(&rgb)
+            .quality(Quality::from_quality(85.0))
+            .encode_all(&rgb)
             .expect("encode failed")
             .len()
     };

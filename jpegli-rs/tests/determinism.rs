@@ -3,7 +3,7 @@
 //! Verifies that encoding the same input multiple times produces identical output bytes.
 //! This is critical for caching, reproducible builds, and debugging.
 
-use jpegli::{Decoder, Encoder, JpegMode, PixelFormat, Quality};
+use jpegli::{Decoder, JpegMode, PixelFormat, Quality, StreamingEncoder};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -25,31 +25,25 @@ fn test_baseline_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg1 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 1 failed");
 
-    let jpeg2 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg2 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 2 failed");
 
-    let jpeg3 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg3 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 3 failed");
 
     assert_eq!(jpeg1.len(), jpeg2.len(), "JPEG sizes differ");
@@ -64,22 +58,18 @@ fn test_progressive_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg1 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Progressive)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 1 failed");
 
-    let jpeg2 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg2 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Progressive)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 2 failed");
 
     assert_eq!(jpeg1.len(), jpeg2.len(), "JPEG sizes differ");
@@ -92,22 +82,18 @@ fn test_optimized_huffman_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg1 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(85.0))
+        .quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 1 failed");
 
-    let jpeg2 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg2 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(85.0))
+        .quality(Quality::from_quality(85.0))
         .optimize_huffman(true)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 2 failed");
 
     assert_eq!(
@@ -122,22 +108,18 @@ fn test_xyb_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg1 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .use_xyb(true)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 1 failed");
 
-    let jpeg2 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg2 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .use_xyb(true)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("encode 2 failed");
 
     assert_eq!(jpeg1, jpeg2, "XYB encoder is non-deterministic");
@@ -149,20 +131,16 @@ fn test_grayscale_encoder_determinism() {
     let height = 64;
     let gray: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
 
-    let jpeg1 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg1 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Gray)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&gray)
+        .quality(Quality::from_quality(90.0))
+        .encode_all(&gray)
         .expect("encode 1 failed");
 
-    let jpeg2 = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg2 = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Gray)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&gray)
+        .quality(Quality::from_quality(90.0))
+        .encode_all(&gray)
         .expect("encode 2 failed");
 
     assert_eq!(jpeg1, jpeg2, "Grayscale encoder is non-deterministic");
@@ -175,12 +153,10 @@ fn test_decoder_determinism() {
     let rgb = generate_gradient(width, height);
 
     // First encode
-    let jpeg = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let jpeg = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .encode(&rgb)
+        .quality(Quality::from_quality(90.0))
+        .encode_all(&rgb)
         .expect("encode failed");
 
     // Decode multiple times

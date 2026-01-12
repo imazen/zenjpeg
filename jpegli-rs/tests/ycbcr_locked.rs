@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use jpegli::types::Subsampling;
-use jpegli::{Encoder, JpegMode, PixelFormat, Quality};
+use jpegli::{JpegMode, PixelFormat, Quality, StreamingEncoder};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
@@ -166,15 +166,13 @@ fn encode_jpeg(
     mode: JpegMode,
     subsampling: Subsampling,
 ) -> Vec<u8> {
-    Encoder::new()
-        .width(width)
-        .height(height)
+    StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality as f32))
+        .quality(Quality::from_quality(quality as f32))
         .subsampling(subsampling)
         .optimize_huffman(true)
         .mode(mode)
-        .encode(rgb)
+        .encode_all(rgb)
         .expect("Encoding failed")
 }
 

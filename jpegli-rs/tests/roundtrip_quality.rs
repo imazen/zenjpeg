@@ -66,12 +66,10 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
 }
 
 fn encode_with_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    jpegli::Encoder::new()
-        .width(width)
-        .height(height)
+    jpegli::StreamingEncoder::new(width, height)
         .pixel_format(jpegli::PixelFormat::Rgb)
-        .jpegli_quality(jpegli::quant::Quality::from_quality(quality.into()))
-        .encode(rgb)
+        .quality(jpegli::quant::Quality::from_quality(quality.into()))
+        .encode_all(rgb)
         .expect("jpegli encode failed")
 }
 

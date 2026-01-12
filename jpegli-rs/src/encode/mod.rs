@@ -421,20 +421,6 @@ impl Encoder {
         self.encode_with_stop(data, Never)
     }
 
-    /// Encodes using the fullplane encoder (for testing/comparison).
-    ///
-    /// This uses the original full-plane encoding path which allocates
-    /// complete f32 planes. Useful for comparing against strip-based encoding.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn encode_fullplane(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.validate()?;
-        if self.config.mode == JpegMode::Progressive {
-            self.encode_progressive(data)
-        } else {
-            self.encode_baseline(data)
-        }
-    }
-
     /// Encodes the image data with cooperative cancellation support.
     ///
     /// The encoding can be cancelled at MCU row boundaries by signalling the `stop` source.

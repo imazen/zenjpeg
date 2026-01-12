@@ -7,9 +7,8 @@
 //! Thresholds are intentionally tight to catch regressions.
 
 use jpegli::decode::Decoder;
-use jpegli::encode::Encoder;
 use jpegli::types::PixelFormat;
-use jpegli::Quality;
+use jpegli::{Quality, StreamingEncoder};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -196,13 +195,11 @@ fn test_file_size_parity() {
         };
 
         for point in &img_ref.points {
-            let encoder = Encoder::new()
-                .width(width)
-                .height(height)
+            let encoder = StreamingEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(point.quality as f32));
+                .quality(Quality::from_quality(point.quality as f32));
 
-            let rust_jpeg = match encoder.encode(&pixels) {
+            let rust_jpeg = match encoder.encode_all(&pixels) {
                 Ok(data) => data,
                 Err(e) => {
                     failures.push(format!(
@@ -284,13 +281,11 @@ fn test_dssim_parity() {
         };
 
         for point in &img_ref.points {
-            let encoder = Encoder::new()
-                .width(width)
-                .height(height)
+            let encoder = StreamingEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(point.quality as f32));
+                .quality(Quality::from_quality(point.quality as f32));
 
-            let rust_jpeg = match encoder.encode(&pixels) {
+            let rust_jpeg = match encoder.encode_all(&pixels) {
                 Ok(data) => data,
                 Err(_) => continue,
             };

@@ -1,8 +1,7 @@
 use jpegli::{
     decode::Decoder,
-    encode::{Encoder, EncoderConfig},
     types::Subsampling,
-    Quality,
+    Quality, StreamingEncoder,
 };
 
 fn create_gradient(size: u32) -> Vec<u8> {
@@ -22,12 +21,10 @@ fn create_gradient(size: u32) -> Vec<u8> {
 fn test_size(size: u32) {
     let pixels = create_gradient(size);
 
-    let encoder = Encoder::new()
-        .width(size)
-        .height(size)
+    let encoder = StreamingEncoder::new(size, size)
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S420);
-    let jpeg = match encoder.encode(&pixels) {
+    let jpeg = match encoder.encode_all(&pixels) {
         Ok(j) => j,
         Err(e) => {
             println!("  {}x{}: ENCODE FAILED: {:?}", size, size, e);

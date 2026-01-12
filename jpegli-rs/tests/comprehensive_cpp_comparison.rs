@@ -3,7 +3,7 @@
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
 
 use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{Encoder, Quality};
+use jpegli::{Quality, StreamingEncoder};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -85,14 +85,12 @@ fn compare_image(
 ) -> Option<ComparisonResult> {
     // Rust encoding with timing
     let rust_start = Instant::now();
-    let rust_jpeg = Encoder::new()
-        .width(width)
-        .height(height)
+    let rust_jpeg = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality as f32))
+        .quality(Quality::from_quality(quality as f32))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
-        .encode(rgb)
+        .encode_all(rgb)
         .ok()?;
     let rust_time_ms = rust_start.elapsed().as_secs_f64() * 1000.0;
     let rust_size = rust_jpeg.len();

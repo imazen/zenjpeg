@@ -11,7 +11,7 @@
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
 use jpegli::types::{ChromaDownsampling, JpegMode, Subsampling};
-use jpegli::{Encoder, PixelFormat, Quality};
+use jpegli::{PixelFormat, Quality, StreamingEncoder};
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -213,17 +213,15 @@ struct EncoderTestConfig {
 
 impl EncoderTestConfig {
     fn encode(&self, rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-        Encoder::new()
-            .width(width)
-            .height(height)
+        StreamingEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(quality))
+            .quality(Quality::from_quality(quality))
             .mode(self.mode)
             .subsampling(self.subsampling)
             .optimize_huffman(self.optimize_huffman)
             .chroma_downsampling(self.chroma_downsampling)
             .use_xyb(self.use_xyb)
-            .encode(rgb)
+            .encode_all(rgb)
             .expect("Encoding failed")
     }
 }
@@ -398,17 +396,15 @@ fn test_frymire_backend_parity() {
 
         for &quality in &[50u8, 90] {
             // Use Both backend - will error if outputs differ
-            let _jpeg = Encoder::new()
-                .width(width)
-                .height(height)
+            let _jpeg = StreamingEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(quality as f32))
+                .quality(Quality::from_quality(quality as f32))
                 .mode(config.mode)
                 .subsampling(config.subsampling)
                 .optimize_huffman(config.optimize_huffman)
                 .chroma_downsampling(config.chroma_downsampling)
                 .use_xyb(config.use_xyb)
-                .encode(&rgb)
+                .encode_all(&rgb)
                 .unwrap_or_else(|e| {
                     panic!("{} Q{}: backend mismatch: {}", config.name, quality, e)
                 });
@@ -454,15 +450,13 @@ fn print_all_hashes() {
 fn print_single_hash() {
     let (rgb, width, height) = load_frymire();
 
-    let jpeg = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg = StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .mode(JpegMode::Baseline)
         .subsampling(Subsampling::S444)
         .optimize_huffman(true)
-        .encode(&rgb)
+        .encode_all(&rgb)
         .expect("Encoding failed");
 
     println!("Size: {} bytes", jpeg.len());

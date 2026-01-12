@@ -10,7 +10,7 @@
 //!
 //! To regenerate values: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 
-use jpegli::{types::Subsampling, Encoder, PixelFormat, Quality};
+use jpegli::{types::Subsampling, PixelFormat, Quality, StreamingEncoder};
 use std::collections::HashMap;
 use std::process::Command;
 
@@ -210,14 +210,12 @@ fn encode_rust(
     subsampling: Subsampling,
     optimize_huffman: bool,
 ) -> Vec<u8> {
-    Encoder::new()
-        .width(width)
-        .height(height)
+    StreamingEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality as f32))
+        .quality(Quality::from_quality(quality as f32))
         .subsampling(subsampling)
         .optimize_huffman(optimize_huffman)
-        .encode(rgb)
+        .encode_all(rgb)
         .expect("Rust encode failed")
 }
 
