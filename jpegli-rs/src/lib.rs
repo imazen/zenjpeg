@@ -118,8 +118,8 @@ pub mod test_utils;
 
 pub use error::{Error, Result};
 pub use types::{
-    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, EncodingBackend, HuffmanMethod,
-    JpegMode, OutputDataType, PixelFormat, SampleDepth, Subsampling,
+    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, HuffmanMethod, JpegMode,
+    OutputDataType, PixelFormat, SampleDepth, Subsampling,
 };
 
 // Backward compatibility alias

@@ -1,6 +1,6 @@
 //! Test that streaming encoder produces identical output to standard encoder.
 
-use jpegli::{Encoder, EncodingBackend, JpegMode, Quality, StreamingEncoder, Subsampling};
+use jpegli::{Encoder, JpegMode, Quality, StreamingEncoder, Subsampling};
 
 #[test]
 fn test_streaming_matches_standard_various_sizes() {
@@ -29,7 +29,7 @@ fn test_streaming_matches_standard_various_sizes() {
             .height(height)
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
-            .encoding_backend(EncodingBackend::Strip)
+            
             .encode(&pixels)
             .expect("standard encode failed");
 
@@ -162,7 +162,7 @@ fn test_streaming_progressive_mode() {
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive)
-            .encoding_backend(EncodingBackend::Strip)
+            
             .encode(&pixels)
             .expect("standard progressive encode failed");
 

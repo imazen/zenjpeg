@@ -62,8 +62,8 @@ use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER, MARKER_EOI};
 use crate::error::{Error, Result};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{
-    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, EncodingBackend, JpegMode,
-    PixelFormat, Subsampling,
+    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, JpegMode, PixelFormat,
+    Subsampling,
 };
 use enough::{Never, Stop};
 
@@ -299,20 +299,7 @@ impl Encoder {
         self
     }
 
-    /// Sets the encoding backend.
-    ///
-    /// Controls whether to use full-plane or strip-based encoding:
-    /// - [`EncodingBackend::Auto`]: Automatically selects based on image size (default)
-    /// - [`EncodingBackend::FullPlane`]: Traditional full-image encoding
-    /// - [`EncodingBackend::Strip`]: Low-memory strip-based encoding
-    ///
-    /// Both backends produce identical output for YCbCr encoding.
-    /// Strip backend does not support XYB color space.
-    #[must_use]
-    pub fn encoding_backend(mut self, backend: EncodingBackend) -> Self {
-        self.config.encoding_backend = backend;
-        self
-    }
+    // encoding_backend method removed - strip-based encoding is now the only backend
 
     /// Sets the edge padding strategy for partial MCU blocks.
     ///
@@ -423,14 +410,6 @@ impl Encoder {
     fn validate(&self) -> Result<()> {
         // Use validate_dimensions for comprehensive checks (zero, max dimension, max pixels)
         validate_dimensions(self.config.width, self.config.height, DEFAULT_MAX_PIXELS)?;
-
-        // Validate backend/feature compatibility
-        if self.config.use_xyb && self.config.encoding_backend == EncodingBackend::Strip {
-            return Err(Error::UnsupportedFeature {
-                feature: "XYB color space is not supported with the Strip encoding backend. Use FullPlane or Auto.",
-            });
-        }
-
         Ok(())
     }
 
@@ -474,77 +453,24 @@ impl Encoder {
             });
         }
 
-        // Check if strip backend is supported for this config
-        let strip_supported = !self.config.use_xyb
-            && (self.config.mode == JpegMode::Baseline
-                || self.config.mode == JpegMode::Progressive);
-
-        // Dispatch based on encoding backend
-        match self.config.encoding_backend {
-            EncodingBackend::Strip => {
-                if !strip_supported {
-                    if self.config.use_xyb {
-                        return Err(Error::UnsupportedFeature {
-                            feature: "strip-based encoding does not support XYB color space",
-                        });
-                    }
-                    return Err(Error::UnsupportedFeature {
-                        feature:
-                            "strip-based encoding only supports baseline and progressive modes",
-                    });
-                }
-                self.encode_strip_based_with_stop(data, stop)
-            }
-            EncodingBackend::FullPlane | EncodingBackend::Auto => {
-                // Full-plane encoding
-                match self.config.mode {
-                    JpegMode::Baseline => self.encode_baseline_with_stop(data, &stop),
-                    JpegMode::Progressive => self.encode_progressive_with_stop(data, &stop),
-                    _ => Err(Error::UnsupportedFeature {
-                        feature: "extended/lossless encoding",
-                    }),
-                }
-            }
-            EncodingBackend::Both => {
-                // Run full-plane first
-                let full_result = match self.config.mode {
-                    JpegMode::Baseline => self.encode_baseline_with_stop(data, &stop),
-                    JpegMode::Progressive => self.encode_progressive_with_stop(data, &stop),
-                    _ => {
-                        return Err(Error::UnsupportedFeature {
-                            feature: "extended/lossless encoding",
-                        })
-                    }
-                }?;
-
-                // If strip is supported, run it and compare
-                if strip_supported {
-                    let strip_result = self.encode_strip_based_with_stop(data, &stop)?;
-
-                    if full_result != strip_result {
-                        // Find first difference for debugging
-                        let first_diff = full_result
-                            .iter()
-                            .zip(strip_result.iter())
-                            .position(|(a, b)| a != b);
-                        let diff_info = match first_diff {
-                            Some(pos) => format!(
-                                "first difference at byte {}: full=0x{:02x}, strip=0x{:02x}",
-                                pos, full_result[pos], strip_result[pos]
-                            ),
-                            None => format!(
-                                "length mismatch: full={}, strip={}",
-                                full_result.len(),
-                                strip_result.len()
-                            ),
-                        };
-                        return Err(Error::EncodingBackendMismatch { details: diff_info });
-                    }
-                }
-
-                Ok(full_result)
-            }
+        // Validate mode is supported
+        if self.config.mode != JpegMode::Baseline && self.config.mode != JpegMode::Progressive {
+            return Err(Error::UnsupportedFeature {
+                feature: "only baseline and progressive modes are supported",
+            });
         }
+
+        // XYB mode uses legacy full-plane encoder (strip encoder doesn't support XYB yet)
+        if self.config.use_xyb {
+            return match self.config.mode {
+                JpegMode::Baseline => self.encode_baseline_with_stop(data, &stop),
+                JpegMode::Progressive => self.encode_progressive_with_stop(data, &stop),
+                _ => unreachable!(), // Already validated above
+            };
+        }
+
+        // YCbCr uses strip-based encoding (low memory, same output)
+        self.encode_strip_based_with_stop(data, stop)
     }
 
     /// Encodes the image using strip-based processing for reduced memory usage.

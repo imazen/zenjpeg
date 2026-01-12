@@ -941,9 +941,6 @@ mod error_coverage {
                 count: 200,
                 limit: 100,
             },
-            Error::EncodingBackendMismatch {
-                details: "strip vs fullplane mismatch".to_string(),
-            },
         ];
 
         for err in errors {

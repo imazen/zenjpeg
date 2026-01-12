@@ -34,9 +34,7 @@ use crate::encode::strip::StripProcessor;
 use crate::encode::Encoder;
 use crate::error::{Error, Result};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
-use crate::types::{
-    ChromaDownsampling, ColorSpace, EncodingBackend, JpegMode, PixelFormat, Subsampling,
-};
+use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
 use enough::{Never, Stop};
 
 /// Builder for creating a streaming encoder.
@@ -453,8 +451,7 @@ impl StreamingEncoder {
             .mode(builder.mode)
             .optimize_huffman(builder.optimize_huffman)
             .chroma_downsampling(builder.chroma_downsampling)
-            .restart_interval(builder.restart_interval)
-            .encoding_backend(EncodingBackend::Strip);
+            .restart_interval(builder.restart_interval);
 
         Ok(Self {
             width,
@@ -854,7 +851,6 @@ mod tests {
             .height(height)
             .quality(Quality::from_quality(85.0))
             .subsampling(Subsampling::S444)
-            .encoding_backend(EncodingBackend::Strip) // Use same backend for comparison
             .encode(&pixels)
             .unwrap();
 
