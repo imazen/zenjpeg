@@ -387,6 +387,38 @@ impl Quality {
     }
 }
 
+// ============================================================================
+// From implementations for ergonomic quality setting
+// ============================================================================
+
+impl From<u8> for Quality {
+    /// Converts a `u8` quality value (1-100) to `Quality::Traditional`.
+    fn from(q: u8) -> Self {
+        Self::Traditional(f32::from(q.clamp(1, 100)))
+    }
+}
+
+impl From<i32> for Quality {
+    /// Converts an `i32` quality value (1-100) to `Quality::Traditional`.
+    fn from(q: i32) -> Self {
+        Self::Traditional((q.clamp(1, 100)) as f32)
+    }
+}
+
+impl From<f32> for Quality {
+    /// Converts an `f32` quality value (1.0-100.0) to `Quality::Traditional`.
+    fn from(q: f32) -> Self {
+        Self::Traditional(q.clamp(1.0, 100.0))
+    }
+}
+
+impl From<f64> for Quality {
+    /// Converts an `f64` quality value (1.0-100.0) to `Quality::Traditional`.
+    fn from(q: f64) -> Self {
+        Self::Traditional((q.clamp(1.0, 100.0)) as f32)
+    }
+}
+
 /// Converts butteraugli distance to approximate traditional quality.
 fn distance_to_quality(distance: f32) -> f32 {
     // Approximate inverse of quality_to_distance
