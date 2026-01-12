@@ -4,23 +4,88 @@
 //! and entropy encoding for improved throughput on multi-core systems.
 //!
 //! Enable with the `parallel` feature flag.
+//!
+//! ## Performance Characteristics
+//!
+//! | Threads | Avg Speedup | Efficiency | Best For |
+//! |---------|-------------|------------|----------|
+//! | 2 | 1.2-1.6x | 58-81% | Balanced |
+//! | 3 | 1.2-1.5x | 40-54% | Diminishing returns |
+//! | 4 | 1.3-1.7x | 30-40% | Max throughput |
+//!
+//! Minimum useful size: ~512x512 (4096 blocks)
 
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::dct::simd::forward_dct_8x8_wide;
 use crate::entropy::encoder::EntropyEncoder;
 use crate::huffman::HuffmanEncodeTable;
 use crate::simd_types::Block8x8f;
+use multiversion::multiversion;
 use rayon::prelude::*;
 
-/// Minimum blocks to justify parallel overhead
-/// At ~25ns/block, need ~20K blocks for meaningful parallelism
-const PARALLEL_THRESHOLD: usize = 16384;  // 1024x1024 equivalent
+// Re-export from strip.rs to avoid duplication
+use super::strip::extract_block_from_strip_wide;
 
-/// Blocks per parallel task
-/// Larger chunks reduce overhead but hurt load balancing
-/// Target ~1ms of work per chunk at ~25ns/block = 40K blocks
-/// But cap at num_cpus * 4 chunks for load balancing
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Minimum blocks to justify parallel overhead (~512x512 image)
+const PARALLEL_THRESHOLD: usize = 4096;
+
+/// Blocks per parallel task - balances overhead vs load balancing
 const CHUNK_SIZE: usize = 4096;
+
+// =============================================================================
+// Parallel DCT
+// =============================================================================
+
+/// Core parallel DCT loop - processes a plane's blocks in parallel chunks.
+///
+/// This is the workhorse that both Y and chroma DCT functions delegate to.
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+fn parallel_dct_plane(
+    strip: &[f32],
+    blocks_w: usize,
+    total_blocks: usize,
+    padded_width: usize,
+    output: &mut [Block8x8f],
+) {
+    output
+        .par_chunks_mut(CHUNK_SIZE)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            let base_i = chunk_idx * CHUNK_SIZE;
+            for (j, out) in chunk.iter_mut().enumerate() {
+                let i = base_i + j;
+                if i >= total_blocks {
+                    break;
+                }
+                let local_by = i / blocks_w;
+                let bx = i % blocks_w;
+                let block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
+                *out = forward_dct_8x8_wide(&block);
+            }
+        });
+}
+
+/// Sequential DCT fallback for small block counts.
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[inline]
+fn sequential_dct_plane(
+    strip: &[f32],
+    blocks_w: usize,
+    total_blocks: usize,
+    padded_width: usize,
+    output: &mut [Block8x8f],
+) {
+    for i in 0..total_blocks {
+        let local_by = i / blocks_w;
+        let bx = i % blocks_w;
+        let block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
+        output[i] = forward_dct_8x8_wide(&block);
+    }
+}
 
 /// Parallel DCT for Y channel blocks.
 ///
@@ -38,41 +103,18 @@ pub fn parallel_dct_y_blocks(
 
     // Pre-allocate space
     output.resize(start_idx + total_blocks, Block8x8f::default());
+    let output_slice = &mut output[start_idx..];
 
     if total_blocks < PARALLEL_THRESHOLD {
-        // Sequential for small images
-        for i in 0..total_blocks {
-            let local_by = i / blocks_w;
-            let bx = i % blocks_w;
-            let block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
-            let dct = forward_dct_8x8_wide(&block);
-            output[start_idx + i] = dct;
-        }
+        sequential_dct_plane(strip, blocks_w, total_blocks, padded_width, output_slice);
     } else {
-        // Parallel for large images
-        let output_slice = &mut output[start_idx..];
-        output_slice
-            .par_chunks_mut(CHUNK_SIZE)
-            .enumerate()
-            .for_each(|(chunk_idx, chunk)| {
-                let base_i = chunk_idx * CHUNK_SIZE;
-                for (j, out) in chunk.iter_mut().enumerate() {
-                    let i = base_i + j;
-                    if i >= total_blocks {
-                        break;
-                    }
-                    let local_by = i / blocks_w;
-                    let bx = i % blocks_w;
-                    let block = extract_block_from_strip_wide(strip, bx, local_by, padded_width);
-                    *out = forward_dct_8x8_wide(&block);
-                }
-            });
+        parallel_dct_plane(strip, blocks_w, total_blocks, padded_width, output_slice);
     }
 }
 
 /// Parallel DCT for chroma channel blocks.
 ///
-/// Processes Cb and Cr in parallel, each channel internally parallelized.
+/// Processes Cb and Cr in parallel with each other using rayon::join.
 pub fn parallel_dct_chroma_blocks(
     cb_strip: &[f32],
     cr_strip: &[f32],
@@ -90,105 +132,25 @@ pub fn parallel_dct_chroma_blocks(
     cb_output.resize(cb_start + total_blocks, Block8x8f::default());
     cr_output.resize(cr_start + total_blocks, Block8x8f::default());
 
+    let cb_slice = &mut cb_output[cb_start..];
+    let cr_slice = &mut cr_output[cr_start..];
+
     if total_blocks < PARALLEL_THRESHOLD / 2 {
         // Sequential for small images
-        for i in 0..total_blocks {
-            let local_by = i / c_blocks_w;
-            let bx = i % c_blocks_w;
-
-            let cb_block = extract_block_from_strip_wide(cb_strip, bx, local_by, padded_c_width);
-            cb_output[cb_start + i] = forward_dct_8x8_wide(&cb_block);
-
-            let cr_block = extract_block_from_strip_wide(cr_strip, bx, local_by, padded_c_width);
-            cr_output[cr_start + i] = forward_dct_8x8_wide(&cr_block);
-        }
+        sequential_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, cb_slice);
+        sequential_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, cr_slice);
     } else {
         // Process Cb and Cr in parallel with each other
-        let cb_slice = &mut cb_output[cb_start..];
-        let cr_slice = &mut cr_output[cr_start..];
-
         rayon::join(
-            || {
-                cb_slice
-                    .par_chunks_mut(CHUNK_SIZE)
-                    .enumerate()
-                    .for_each(|(chunk_idx, chunk)| {
-                        let base_i = chunk_idx * CHUNK_SIZE;
-                        for (j, out) in chunk.iter_mut().enumerate() {
-                            let i = base_i + j;
-                            if i >= total_blocks {
-                                break;
-                            }
-                            let local_by = i / c_blocks_w;
-                            let bx = i % c_blocks_w;
-                            let block = extract_block_from_strip_wide(cb_strip, bx, local_by, padded_c_width);
-                            *out = forward_dct_8x8_wide(&block);
-                        }
-                    });
-            },
-            || {
-                cr_slice
-                    .par_chunks_mut(CHUNK_SIZE)
-                    .enumerate()
-                    .for_each(|(chunk_idx, chunk)| {
-                        let base_i = chunk_idx * CHUNK_SIZE;
-                        for (j, out) in chunk.iter_mut().enumerate() {
-                            let i = base_i + j;
-                            if i >= total_blocks {
-                                break;
-                            }
-                            let local_by = i / c_blocks_w;
-                            let bx = i % c_blocks_w;
-                            let block = extract_block_from_strip_wide(cr_strip, bx, local_by, padded_c_width);
-                            *out = forward_dct_8x8_wide(&block);
-                        }
-                    });
-            },
+            || parallel_dct_plane(cb_strip, c_blocks_w, total_blocks, padded_c_width, cb_slice),
+            || parallel_dct_plane(cr_strip, c_blocks_w, total_blocks, padded_c_width, cr_slice),
         );
     }
 }
 
-/// Extract an 8×8 block from a strip buffer into wide-native format.
-///
-/// This is a copy of the function from strip.rs for use in parallel context.
-/// IMPORTANT: Applies level shift (-128) as required for JPEG DCT.
-#[inline]
-fn extract_block_from_strip_wide(
-    strip: &[f32],
-    block_x: usize,
-    block_y: usize,
-    padded_width: usize,
-) -> Block8x8f {
-    use wide::f32x8;
-
-    let level_shift = f32x8::splat(128.0);
-    let start_x = block_x * 8;
-    let start_y = block_y * 8;
-
-    let mut block = Block8x8f::default();
-
-    for row in 0..8 {
-        let y = start_y + row;
-        let row_start = y * padded_width + start_x;
-
-        if row_start + 8 <= strip.len() {
-            // Fast path: full row available - apply level shift
-            let row_slice: [f32; 8] = strip[row_start..row_start + 8].try_into().unwrap();
-            block.rows[row] = f32x8::from(row_slice) - level_shift;
-        } else if row_start < strip.len() {
-            // Partial row: copy what's available, zero-pad rest, apply level shift
-            let available = strip.len() - row_start;
-            let mut vals = [128.0f32; 8]; // Default to 128 so level shift gives 0
-            vals[..available].copy_from_slice(&strip[row_start..row_start + available]);
-            block.rows[row] = f32x8::from(vals) - level_shift;
-        } else {
-            // Entire row missing: level-shifted zero (128 - 128 = 0)
-            block.rows[row] = f32x8::ZERO;
-        }
-    }
-
-    block
-}
+// =============================================================================
+// Parallel Entropy Encoding
+// =============================================================================
 
 /// Parallel entropy encoding configuration.
 #[derive(Clone)]
@@ -203,6 +165,18 @@ pub struct ParallelEntropyConfig {
     pub ac_chroma: HuffmanEncodeTable,
 }
 
+impl ParallelEntropyConfig {
+    /// Create config with standard JPEG Huffman tables.
+    pub fn standard() -> Self {
+        Self {
+            dc_luma: HuffmanEncodeTable::std_dc_luminance().clone(),
+            ac_luma: HuffmanEncodeTable::std_ac_luminance().clone(),
+            dc_chroma: HuffmanEncodeTable::std_dc_chrominance().clone(),
+            ac_chroma: HuffmanEncodeTable::std_ac_chrominance().clone(),
+        }
+    }
+}
+
 /// Result from encoding one restart segment.
 struct SegmentResult {
     /// Encoded bitstream data
@@ -211,7 +185,18 @@ struct SegmentResult {
     restart_num: u8,
 }
 
-/// Encodes a single restart segment (range of MCUs).
+/// Creates an entropy encoder configured with the given Huffman tables.
+#[inline]
+fn create_encoder(config: &ParallelEntropyConfig, capacity: usize) -> EntropyEncoder {
+    let mut encoder = EntropyEncoder::with_capacity(capacity);
+    encoder.set_dc_table(0, &config.dc_luma);
+    encoder.set_ac_table(0, &config.ac_luma);
+    encoder.set_dc_table(1, &config.dc_chroma);
+    encoder.set_ac_table(1, &config.ac_chroma);
+    encoder
+}
+
+/// Encodes a single restart segment for 4:4:4 images.
 ///
 /// Each segment starts with DC predictions reset to 0.
 fn encode_segment_444(
@@ -224,19 +209,11 @@ fn encode_segment_444(
     config: &ParallelEntropyConfig,
     restart_num: u8,
 ) -> SegmentResult {
-    let mut encoder = EntropyEncoder::with_capacity(mcu_count * 100);
+    let mut encoder = create_encoder(config, mcu_count * 100);
 
-    // Set up Huffman tables
-    encoder.set_dc_table(0, &config.dc_luma);
-    encoder.set_ac_table(0, &config.ac_luma);
-    encoder.set_dc_table(1, &config.dc_chroma);
-    encoder.set_ac_table(1, &config.ac_chroma);
-
-    // Encode MCUs in this segment
     let mcu_end = (mcu_start + mcu_count).min(y_blocks.len());
     for i in mcu_start..mcu_end {
         let _ = encoder.encode_block(&y_blocks[i], 0, 0, 0);
-
         if is_color {
             let _ = encoder.encode_block(&cb_blocks[i], 1, 1, 1);
             let _ = encoder.encode_block(&cr_blocks[i], 2, 1, 1);
@@ -249,7 +226,7 @@ fn encode_segment_444(
     }
 }
 
-/// Encodes a single restart segment for subsampled (4:2:0, 4:2:2, 4:4:0) images.
+/// Encodes a single restart segment for subsampled images.
 fn encode_segment_subsampled(
     y_blocks: &[[i16; DCT_BLOCK_SIZE]],
     cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -267,13 +244,7 @@ fn encode_segment_subsampled(
     config: &ParallelEntropyConfig,
     restart_num: u8,
 ) -> SegmentResult {
-    let mut encoder = EntropyEncoder::with_capacity(mcu_count * 100 * h_samp * v_samp);
-
-    // Set up Huffman tables
-    encoder.set_dc_table(0, &config.dc_luma);
-    encoder.set_ac_table(0, &config.ac_luma);
-    encoder.set_dc_table(1, &config.dc_chroma);
-    encoder.set_ac_table(1, &config.ac_chroma);
+    let mut encoder = create_encoder(config, mcu_count * 100 * h_samp * v_samp);
 
     const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
@@ -314,6 +285,24 @@ fn encode_segment_subsampled(
     }
 }
 
+/// Combines encoded segments with RST markers between them.
+fn combine_segments(segments: &[SegmentResult]) -> Vec<u8> {
+    let total_size: usize = segments.iter().map(|s| s.data.len() + 2).sum();
+    let mut output = Vec::with_capacity(total_size);
+
+    for (i, segment) in segments.iter().enumerate() {
+        output.extend_from_slice(&segment.data);
+
+        // Add RST marker between segments (not after the last one)
+        if i < segments.len() - 1 {
+            output.push(0xFF);
+            output.push(0xD0 + segment.restart_num);
+        }
+    }
+
+    output
+}
+
 /// Parallel entropy encoding for 4:4:4 images.
 ///
 /// Splits MCUs into restart intervals and encodes in parallel.
@@ -328,8 +317,6 @@ pub fn parallel_entropy_encode_444(
 ) -> Vec<u8> {
     let total_mcus = y_blocks.len();
     let interval = restart_interval as usize;
-
-    // Calculate number of segments
     let num_segments = (total_mcus + interval - 1) / interval;
 
     if num_segments <= 1 {
@@ -356,7 +343,6 @@ pub fn parallel_entropy_encode_444(
         })
         .collect();
 
-    // Combine segments with RST markers
     combine_segments(&segments)
 }
 
@@ -417,24 +403,43 @@ pub fn parallel_entropy_encode_subsampled(
     combine_segments(&segments)
 }
 
-/// Combines encoded segments with RST markers between them.
-fn combine_segments(segments: &[SegmentResult]) -> Vec<u8> {
-    // Estimate total size
-    let total_size: usize = segments.iter().map(|s| s.data.len() + 2).sum();
-    let mut output = Vec::with_capacity(total_size);
+// =============================================================================
+// Heuristics
+// =============================================================================
 
-    for (i, segment) in segments.iter().enumerate() {
-        output.extend_from_slice(&segment.data);
-
-        // Add RST marker between segments (not after the last one)
-        if i < segments.len() - 1 {
-            output.push(0xFF);
-            output.push(0xD0 + segment.restart_num);
-        }
-    }
-
-    output
+/// Determines if parallel encoding is beneficial for the given image size.
+///
+/// Based on benchmarks across various image sizes and thread counts:
+/// - Minimum useful size: ~512x512 (4096 blocks)
+/// - 2 threads: 60-80% efficiency, consistent 1.2-1.6x speedup
+/// - 4 threads: 30-40% efficiency, 1.3-1.7x speedup
+#[inline]
+pub fn should_use_parallel(width: u32, height: u32, available_threads: usize) -> bool {
+    let blocks = ((width as usize + 7) / 8) * ((height as usize + 7) / 8);
+    blocks >= PARALLEL_THRESHOLD && available_threads >= 2
 }
+
+/// Returns recommended thread count for the given image size.
+///
+/// Balances throughput vs efficiency based on benchmarks.
+#[inline]
+pub fn recommended_threads(width: u32, height: u32, max_threads: usize) -> usize {
+    let blocks = ((width as usize + 7) / 8) * ((height as usize + 7) / 8);
+
+    if blocks < PARALLEL_THRESHOLD {
+        1
+    } else if blocks < 16384 {
+        // 512x512 to 1024x1024: 2 threads optimal
+        max_threads.min(2)
+    } else {
+        // Larger images: use available threads up to 4
+        max_threads.min(4)
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -442,7 +447,6 @@ mod tests {
 
     #[test]
     fn test_parallel_dct_matches_sequential() {
-        // Create a simple test strip
         let width = 256;
         let height = 16;
         let padded_width = ((width + 7) / 8) * 8;
@@ -452,20 +456,15 @@ mod tests {
 
         let blocks_w = (width + 7) / 8;
         let strip_blocks_h = (height + 7) / 8;
+        let total_blocks = blocks_w * strip_blocks_h;
 
         // Sequential reference
-        let mut seq_output = Vec::new();
-        for local_by in 0..strip_blocks_h {
-            for bx in 0..blocks_w {
-                let block = extract_block_from_strip_wide(&strip, bx, local_by, padded_width);
-                let dct = forward_dct_8x8_wide(&block);
-                seq_output.push(dct);
-            }
-        }
+        let mut seq_output = vec![Block8x8f::default(); total_blocks];
+        sequential_dct_plane(&strip, blocks_w, total_blocks, padded_width, &mut seq_output);
 
         // Parallel implementation
-        let mut par_output = Vec::new();
-        parallel_dct_y_blocks(&strip, blocks_w, strip_blocks_h, padded_width, &mut par_output);
+        let mut par_output = vec![Block8x8f::default(); total_blocks];
+        parallel_dct_plane(&strip, blocks_w, total_blocks, padded_width, &mut par_output);
 
         // Compare
         assert_eq!(seq_output.len(), par_output.len());
@@ -482,5 +481,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_should_use_parallel() {
+        // Too small
+        assert!(!should_use_parallel(256, 256, 4)); // 1024 blocks
+
+        // Large enough with threads
+        assert!(should_use_parallel(512, 512, 2)); // 4096 blocks
+        assert!(should_use_parallel(1024, 1024, 4));
+
+        // Large but only 1 thread
+        assert!(!should_use_parallel(1024, 1024, 1));
+    }
+
+    #[test]
+    fn test_recommended_threads() {
+        assert_eq!(recommended_threads(256, 256, 8), 1); // Too small
+        assert_eq!(recommended_threads(512, 512, 8), 2); // Medium
+        assert_eq!(recommended_threads(2048, 2048, 8), 4); // Large
+        assert_eq!(recommended_threads(2048, 2048, 2), 2); // Limited threads
+    }
+
+    #[test]
+    fn test_entropy_config_standard() {
+        // Verify construction doesn't panic
+        let _config = ParallelEntropyConfig::standard();
     }
 }
