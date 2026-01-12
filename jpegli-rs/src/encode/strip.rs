@@ -103,8 +103,10 @@ use wide::f32x8;
 ///
 /// Assumes strip is properly padded (MCU-aligned) so no bounds checking needed.
 /// This is the fast path for the hot encoding loop.
+///
+/// IMPORTANT: Applies level shift (-128) as required for JPEG DCT.
 #[inline]
-fn extract_block_from_strip_wide(
+pub(crate) fn extract_block_from_strip_wide(
     strip: &[f32],
     bx: usize,
     local_by: usize,
