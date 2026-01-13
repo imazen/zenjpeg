@@ -3,300 +3,225 @@
 [![Crates.io](https://img.shields.io/crates/v/jpegli-rs.svg)](https://crates.io/crates/jpegli-rs)
 [![Documentation](https://docs.rs/jpegli-rs/badge.svg)](https://docs.rs/jpegli-rs)
 [![CI](https://github.com/imazen/jpegli-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jpegli-rs/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/imazen/jpegli-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jpegli-rs)
 [![License: AGPL-3.0-or-later](https://img.shields.io/crates/l/jpegli-rs.svg)](LICENSE)
 
-Pure Rust implementation of **jpegli** - Google's improved JPEG encoder/decoder from the JPEG XL project.
+A pure Rust JPEG encoder and decoder with perceptual optimizations.
+
+## Heritage and Divergence
+
+This project was originally inspired by [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. The initial implementation aimed for bit-exact parity with the C++ reference.
+
+However, jpegli-rs has been **rewritten from scratch multiple times** and is now **diverging significantly** from the original. While it retains the core concepts (adaptive quantization, XYB color space support, smart zero-biasing), the implementation details, API design, and optimizations are increasingly our own.
+
+**What we kept from jpegli:**
+- Adaptive quantization philosophy (content-aware bit allocation)
+- XYB color space support with ICC profiles
+- Perceptually-tuned quantization tables
+- Zero-bias strategies for coefficient rounding
+
+**Where we're diverging:**
+- Pure Rust implementation with no C/C++ dependencies
+- New streaming encoder API optimized for memory efficiency
+- Different SIMD strategy (portable `wide` crate vs platform intrinsics)
+- Parallel encoding support
+- Ongoing encoder optimizations independent of upstream
 
 ## Features
 
-- **Pure Rust** - No C/C++ dependencies required
-- **Perceptual optimization** - Uses adaptive quantization for better visual quality
+- **Pure Rust** - No C/C++ dependencies, builds anywhere Rust does
+- **Perceptual optimization** - Adaptive quantization for better visual quality at smaller sizes
 - **Backward compatible** - Produces standard JPEG files readable by any decoder
-- **SIMD accelerated** - Uses `wide` crate for portable SIMD
-- **Color management** - Optional ICC profile support via lcms2 or moxcms
+- **SIMD accelerated** - Portable SIMD via `wide` crate
+- **Streaming API** - Memory-efficient row-by-row encoding
+- **Parallel encoding** - Multi-threaded for large images (1024x1024+)
+- **Color management** - Optional ICC profile support
 
-## What is jpegli?
-
-jpegli is Google's improved JPEG encoder that produces smaller files at the same visual quality,
-or better quality at the same file size. It achieves this through:
-
-- **Adaptive quantization** - Content-aware bit allocation
-- **Improved quantization tables** - Better than standard IJG libjpeg tables
-- **XYB color space** (optional) - Perceptually optimized color representation
-- **Smart zero-biasing** - Intelligent coefficient rounding
-
-## Usage
+## Quick Start
 
 ```rust
-use jpegli::{Encoder, Quality, PixelFormat};
+use jpegli::{JpegEncoder, Quality};
 
-// Encode RGB image data to JPEG
-let jpeg_data = Encoder::new()
-    .width(800)
-    .height(600)
-    .pixel_format(PixelFormat::Rgb)
-    .jpegli_quality(Quality::default())  // Q90
-    .encode(&rgb_pixels)?;
+// Simple encoding (one-shot)
+let jpeg_data = jpegli::encode_rgb(800, 600, &rgb_pixels, 85)?;
+
+// Builder API for more control
+let jpeg_data = JpegEncoder::new(800, 600)
+    .quality(85)                      // 1-100 scale
+    .progressive(true)                // Progressive JPEG (~3% smaller)
+    .encode_all(&rgb_pixels)?;
 
 // Decode JPEG to RGB
-let decoded = jpegli::Decoder::new().decode(&jpeg_data)?;
-println!("{}x{}", decoded.width, decoded.height);
-let rgb_pixels: &[u8] = &decoded.data;
+let image = jpegli::decode(&jpeg_data)?;
+let rgb_pixels: &[u8] = image.pixels();
 ```
 
-### Matching mozjpeg Quality
+### Streaming Encoder (Memory Efficient)
+
+For large images or when reading from a stream:
 
 ```rust
-use jpegli::{Encoder, QualityConversion, QualityComparisonMetric, Subsampling};
+use jpegli::JpegEncoder;
 
-// Convert mozjpeg Q85 to equivalent jpegli quality
-let conversion = QualityConversion::mozjpeg_equivalent(
-    85,
-    Subsampling::S444,
-    QualityComparisonMetric::Dssim,
-);
+let mut encoder = JpegEncoder::new(4096, 4096)
+    .quality(85)
+    .start()?;
 
-let jpeg_data = Encoder::new()
-    .width(800)
-    .height(600)
-    .equivalent_quality(conversion)
-    .encode(&rgb_pixels)?;
+// Push rows incrementally
+for row in image_rows {
+    encoder.push_row(row)?;
+}
+
+let jpeg_data = encoder.finish()?;
 ```
 
-## C++ Parity Verification
+### Quality Settings
 
-For development, verify Rust matches C++ jpegli output:
+```rust
+use jpegli::{JpegEncoder, Quality};
+
+// Traditional 1-100 quality scale
+JpegEncoder::new(w, h).quality(85)
+
+// Butteraugli distance (advanced - lower = better quality)
+// 1.0 = high quality, 2.0 = medium, 3.0+ = low
+JpegEncoder::new(w, h).distance(1.0)
+
+// Quality enum for explicit control
+JpegEncoder::new(w, h).quality(Quality::from_distance(1.0))
+```
+
+## Performance
+
+### Encoding Speed
+
+| Image Size | Sequential | Progressive | Notes |
+|------------|------------|-------------|-------|
+| 512x512 | 118 MP/s | 58 MP/s | Small images |
+| 1024x1024 | 92 MP/s | 36 MP/s | Medium images |
+| 2048x2048 | 87 MP/s | 46 MP/s | Large images |
+
+### Sequential vs Progressive
+
+| Quality | Seq Size | Prog Size | Prog Δ | Prog Slowdown |
+|---------|----------|-----------|--------|---------------|
+| Q50 | 322 KB | 313 KB | **-2.8%** | 2.5x |
+| Q70 | 429 KB | 416 KB | **-3.0%** | 2.0x |
+| Q85 | 586 KB | 568 KB | **-3.1%** | 2.1x |
+| Q95 | 915 KB | 887 KB | **-3.1%** | 2.2x |
+
+**Progressive produces ~3% smaller files** at the same quality, but takes ~2x longer.
+
+**Recommendation:**
+- Use **Sequential** for: real-time encoding, high throughput
+- Use **Progressive** for: web delivery, storage optimization
+
+### Parallel Encoding
+
+```rust
+// Enable parallel encoding (requires `parallel` feature)
+JpegEncoder::new(2048, 2048)
+    .quality(85)
+    .parallel(true)  // 1.4x speedup on large images
+    .encode_all(&pixels)?;
+```
+
+| Image Size | Parallel Speedup | Notes |
+|------------|------------------|-------|
+| 512x512 | 0.69x (slower!) | Overhead exceeds benefit |
+| 1024x1024 | 1.11x | Marginal benefit |
+| 2048x2048 | **1.40x** | Significant benefit |
+
+**Only use parallel for images 1024x1024 or larger.**
+
+### Decoding Speed
+
+| Decoder | Speed | Notes |
+|---------|-------|-------|
+| zune-jpeg | 392 MP/s | Integer IDCT, AVX2 |
+| jpeg-decoder | 120 MP/s | Integer IDCT |
+| **jpegli-rs** | **47 MP/s** | f32 IDCT, 12-bit precision |
+
+The decoder prioritizes precision over speed, matching C++ jpegli's 12-bit pipeline.
+
+## C++ Parity Status
+
+Tested against C++ jpegli on frymire.png (1118x1105):
+
+| Metric | Rust | C++ | Difference |
+|--------|------|-----|------------|
+| File size (Q85 seq) | 586.3 KB | 586.7 KB | **-0.1%** |
+| File size (Q85 prog) | 568.2 KB | 565.1 KB | **+0.5%** |
+| SSIM2 (Q85) | 69.0 | 69.0 | **identical** |
+
+Quality is identical; file sizes within 0.5%.
+
+## Feature Flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `simd` | Yes | Portable SIMD via `wide` crate |
+| `parallel` | No | Multi-threaded encoding (rayon) |
+| `cms-lcms2` | Yes | Color management via lcms2 |
+| `cms-moxcms` | No | Pure Rust color management |
+| `test-utils` | Yes | Testing utilities |
+
+```toml
+[dependencies]
+jpegli-rs = "0.4"
+
+# Or with parallel encoding:
+jpegli-rs = { version = "0.4", features = ["parallel"] }
+
+# Minimal (no CMS):
+jpegli-rs = { version = "0.4", default-features = false, features = ["simd"] }
+```
+
+## Encoder Status
+
+| Feature | Status |
+|---------|--------|
+| Baseline JPEG | Working |
+| Progressive JPEG | Working |
+| Adaptive quantization | Working |
+| Huffman optimization | Working |
+| 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 | Working |
+| XYB color space | Working |
+| Grayscale | Working |
+| Parallel encoding | Working (1024x1024+) |
+| Custom quant tables | Working |
+
+## Decoder Status
+
+| Feature | Status |
+|---------|--------|
+| Baseline JPEG | Working |
+| Progressive JPEG | Working |
+| All subsampling modes | Working |
+| Restart markers | Working |
+| ICC profile extraction | Working |
+| XYB decoding | Working (with CMS) |
+| f32 output | Working |
+
+## Development
+
+### Verify C++ Parity
 
 ```bash
-# Build C++ jpegli first (one-time setup)
+# Quick parity test (no C++ build needed)
+cargo test --release --test cpp_parity_locked
+
+# Full comparison (requires C++ jpegli built)
+cargo test --release --test comprehensive_cpp_comparison -- --nocapture --ignored
+```
+
+### Building C++ Reference (Optional)
+
+```bash
 git submodule update --init --recursive
 cd internal/jpegli-cpp && mkdir -p build && cd build
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_TOOLS=ON ..
 ninja cjpegli djpegli
-
-# Run comprehensive comparison matrix (10 images × 50 quality levels)
-cargo test --release -p jpegli-rs --features ffi-tests --test comprehensive_cpp_comparison -- --nocapture --ignored
 ```
-
-Expected results:
-- **Size**: ~0.1% difference (Rust slightly larger)
-- **DSSIM**: 0.00% difference (exact quality match)
-- **Butteraugli**: 0.00% difference (exact perceptual match)
-
-Quick parity tests (no C++ rebuild needed):
-```bash
-cargo test --release -p jpegli-rs --test cpp_parity_locked
-```
-
-## Feature Flags
-
-| Feature | Description |
-|---------|-------------|
-| `simd` (default) | Enable SIMD acceleration via `wide` crate |
-| `cms-lcms2` | Color management via lcms2 (C dependency) |
-| `cms-moxcms` | Color management via moxcms (pure Rust) |
-| `experimental-hybrid-trellis` | Hybrid quantization: jpegli AQ + mozjpeg trellis (experimental, unvalidated) |
-
-## Encoder Status
-
-The encoder is feature-complete and production-ready:
-
-| Feature | Status |
-|---------|--------|
-| Baseline JPEG | ✅ Working |
-| Progressive JPEG | ✅ Working (levels 0-2) |
-| Adaptive quantization | ✅ Matches C++ jpegli |
-| Huffman optimization | ✅ Working |
-| 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 subsampling | ✅ Working |
-| XYB color space | ✅ Working (with ICC) |
-| Restart markers | ✅ Working (encode & decode) |
-| Grayscale | ✅ Working |
-
-**Encoder Performance**: 30-55 MP/s (varies by image complexity and quality setting)
-
-## Decoder Status
-
-The decoder is functional with 12-bit internal precision (matching C++ jpegli):
-
-| Feature | Status |
-|---------|--------|
-| Baseline JPEG | ✅ Working |
-| Progressive JPEG | ✅ Working |
-| All subsampling modes | ✅ Working |
-| Restart markers | ✅ Working (RST0-RST7 validation) |
-| ICC profile extraction | ✅ Working |
-| XYB decoding (with CMS) | ✅ Working |
-| f32 output format | ✅ Working |
-
-**Decoder Performance** (1024x768 image):
-
-| Decoder | Speed | Notes |
-|---------|-------|-------|
-| zune-jpeg | 392 MP/s | Integer IDCT, AVX2/NEON |
-| jpeg-decoder | 120 MP/s | Integer IDCT |
-| **jpegli-rs** | **47 MP/s** | f32 IDCT (12-bit precision) |
-
-The decoder is slower than alternatives because it uses a float pipeline for 12-bit precision,
-matching C++ jpegli's design. See [Future Goals](#future-goals) for planned optimizations.
-
-**Note on decoder output:** The jpegli-rs decoder uses Laplacian dequantization biases
-(matching C++ djpegli), which produces slightly different output than standard decoders
-like jpeg-decoder or zune-jpeg. This is intentional and improves reconstruction accuracy
-for typical photographic content. For synthetic test images, this may result in higher
-(worse) butteraugli/DSSIM scores when compared against the original.
-
-## Encoder Parity with C++ jpegli
-
-Tested on CLIC2025 + Kodak datasets (56 images × 20 quality levels = 1,120 encodings per encoder):
-
-### Overall Results
-
-| Metric | jpegli-rs | C++ cjpegli | Difference |
-|--------|-----------|-------------|------------|
-| Avg file size | 247,434 bytes | 247,388 bytes | **+0.02%** |
-| Avg DSSIM | 0.00234 | 0.00234 | identical |
-| Avg SSIMULACRA2 | 73.44 | 73.44 | identical |
-| Avg encode time | 37.1 ms | 42.9 ms | **1.15x faster** |
-
-### Performance by Corpus
-
-| Corpus | Images | Avg Size | Encoder | Bytes | Time | Speed |
-|--------|--------|----------|---------|-------|------|-------|
-| Kodak | 24 | 0.4 MP | jpegli-rs | 74,791 | 8.7 ms | **45.2 MP/s** |
-| Kodak | 24 | 0.4 MP | cjpegli | 74,783 | 13.2 ms | 29.8 MP/s |
-| CLIC2025 | 32 | 2.8 MP | jpegli-rs | 376,916 | 58.5 ms | **47.4 MP/s** |
-| CLIC2025 | 32 | 2.8 MP | cjpegli | 376,842 | 65.2 ms | 42.5 MP/s |
-
-jpegli-rs produces **byte-for-byte nearly identical** output to C++ jpegli with **15-50% faster** encoding.
-
-### Quality by Quality Level
-
-| Quality | Avg DSSIM | Avg SSIMULACRA2 | Avg BPP |
-|---------|-----------|-----------------|---------|
-| Q30 | 0.0055 | 56.2 | 0.91 |
-| Q50 | 0.0039 | 63.7 | 1.11 |
-| Q70 | 0.0023 | 72.3 | 1.51 |
-| Q80 | 0.0015 | 77.3 | 1.91 |
-| Q90 | 0.0007 | 84.3 | 2.94 |
-| Q95 | 0.0003 | 88.7 | 4.37 |
-
-Lower DSSIM is better. Higher SSIMULACRA2 is better.
-
-### Comprehensive Matrix: YCbCr vs XYB (commit a80225e)
-
-Tested across image sizes (64×64, 512×512, 2048×2048) and encoding modes:
-
-#### YCbCr Mode - Excellent Parity ✅
-
-| Size | Mode | Huffman | Q70 Δ% | Q90 Δ% |
-|------|------|---------|--------|--------|
-| 64×64 | Baseline | Fixed | **0.0%** | **0.0%** |
-| 64×64 | Baseline | Optimized | +2.9% | +2.8% |
-| 64×64 | Progressive | Optimized | **0.0%** | **0.0%** |
-| 512×512 | Baseline | Fixed | **0.0%** | **0.0%** |
-| 512×512 | Baseline | Optimized | +1.9% | +2.0% |
-| 512×512 | Progressive | Optimized | **0.0%** | **0.0%** |
-| 2048×2048 | Baseline | Fixed | **0.0%** | **0.0%** |
-| 2048×2048 | Baseline | Optimized | +0.1% | +2.5% |
-| 2048×2048 | Progressive | Optimized | **0.0%** | **0.0%** |
-
-#### XYB Mode - Good Parity
-
-| Size | Mode | Huffman | Q70 Δ% | Q90 Δ% |
-|------|------|---------|--------|--------|
-| 64×64 | Baseline | Fixed | +15.0% | +14.0% |
-| 64×64 | Baseline | Optimized | +1.0% | +0.8% |
-| 64×64 | Progressive | Optimized | +4.7% | +5.7% |
-| 512×512 | Baseline | Fixed | +2.6% | +1.8% |
-| 512×512 | Baseline | Optimized | -0.8% | +1.1% |
-| 512×512 | Progressive | Optimized | -0.4% | +4.8% |
-| 2048×2048 | Baseline | Fixed | +0.2% | +1.2% |
-| 2048×2048 | Baseline | Optimized | **0.0%** | +0.9% |
-| 2048×2048 | Progressive | Optimized | +0.2% | +2.5% |
-
-**Key findings:**
-- YCbCr progressive with Huffman optimization matches C++ exactly (0% diff)
-- XYB has larger gaps on small images but converges for large images
-- Quality (SSIMULACRA2) is identical between Rust and C++ in all configurations
-
-Run `cargo run --release --example comprehensive_matrix` to reproduce.
-
-## Development
-
-### Running FFI Comparison Tests
-
-To verify the Rust implementation matches the C++ original:
-
-```bash
-# Linux/macOS
-./internal/setup-ffi-tests.sh
-
-# Windows
-.\internal\setup-ffi-tests.ps1
-```
-
-This requires CMake, a C++ compiler, and ~10 minutes for the initial C++ build.
-See [internal/README.md](../internal/README.md) for details.
-
-### Running Benchmarks
-
-```bash
-# Decoder performance comparison
-cargo run --release --example decode_benchmark
-
-# Encoder benchmark vs C++ cjpegli (requires cjpegli in PATH)
-cargo run --release --example encode_benchmark
-
-# Multi-decoder compatibility test
-cargo test --test multi_decoder_compatibility -- --nocapture
-```
-
-### Criterion Benchmarks (Rust vs C++ Timing)
-
-Statistically valid performance comparison with noise detection:
-
-```bash
-# Run full benchmark suite (requires cjpegli built)
-cargo bench --bench cpp_comparison
-
-# Save baseline for tracking performance over time
-cargo bench --bench cpp_comparison -- --save-baseline main
-
-# Compare against saved baseline (detects regressions)
-cargo bench --bench cpp_comparison -- --baseline main
-```
-
-The benchmark tests all encoding mode combinations:
-- **Scan modes**: Baseline, Progressive
-- **Huffman**: Fixed, Optimized
-- **Subsampling**: 4:4:4, 4:2:0
-- **Color space**: YCbCr, XYB
-
-Results are saved in `target/criterion/` with HTML reports.
-
-**Quick ad-hoc comparison** (non-statistical):
-```bash
-cargo run --release --example cpp_timing_matrix
-cargo run --release --example cpp_timing_matrix -- --csv results.csv  # track over time
-```
-
-## Future Goals
-
-### Decoder Optimization (Target: 100+ MP/s)
-
-The current decoder uses f32 arithmetic for 12-bit precision. To reach competitive speeds:
-
-- [ ] Optional integer IDCT path for u8 output
-- [ ] Platform-specific SIMD (AVX2, NEON) for hot paths
-- [ ] Optimized bit reader with bulk byte loading
-- [ ] Multi-threaded decoding for large images
-
-### Encoder Improvements
-
-- [ ] Parallel block processing
-- [ ] Memory-efficient streaming API
-- [ ] Further entropy coding optimizations
 
 ## License
 
@@ -304,21 +229,14 @@ The current decoder uses f32 arithmetic for 12-bit precision. To reach competiti
 
 A commercial license is available from https://imageresizing.net/pricing
 
-The original jpegli from libjxl is BSD-3-Clause licensed.
-This Rust implementation is an independent port, not a derivative work.
-
 ## Acknowledgments
 
-This is a Rust port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
-from the JPEG XL project by Google.
+Originally inspired by [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
+from the JPEG XL project by Google (BSD-3-Clause). This Rust implementation has
+been rewritten multiple times and is now an independent project with its own
+development trajectory.
 
-## AI-Generated Code Notice
+## AI Disclosure
 
-This crate was developed with significant assistance from Claude (Anthropic).
-While extensively tested against the C++ reference implementation with 220+ tests,
-not all code paths have been manually reviewed.
-
-Before production use in critical applications:
-- Review code paths relevant to your use case
-- Run your own validation tests
-- Report any issues at https://github.com/imazen/jpegli-rs/issues
+Developed with assistance from Claude (Anthropic). Extensively tested against
+C++ reference with 340+ tests. Report issues at https://github.com/imazen/jpegli-rs/issues
