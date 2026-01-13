@@ -2,6 +2,10 @@
 //!
 //! Internal parser for reading and decoding JPEG data.
 
+use super::idct::inverse_dct_8x8;
+use super::idct_int::{idct_int_auto, idct_int_tiered};
+use super::upsample::upsample_fancy;
+use super::{JpegInfo, ScanInfo};
 use crate::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_uninitialized, validate_dimensions,
 };
@@ -23,10 +27,23 @@ use crate::quant::{
     dequantize_unzigzag_i32_into, DequantBiasStats,
 };
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
-use super::idct::inverse_dct_8x8;
-use super::idct_int::{idct_int_auto, idct_int_tiered};
-use super::upsample::upsample_fancy;
-use super::{JpegInfo, ScanInfo};
+
+/// Pre-computed component info for decoding efficiency.
+///
+/// Computed once per decode, reused across multiple methods.
+struct CompInfo {
+    quant_idx: usize,
+    h_samp: usize,
+    v_samp: usize,
+    comp_blocks_h: usize,
+    comp_blocks_v: usize,
+    /// Component width in pixels (comp_blocks_h * 8)
+    comp_width: usize,
+    /// Component height in pixels (comp_blocks_v * 8)
+    comp_height: usize,
+    /// True if this component has full resolution (no subsampling)
+    is_full_res: bool,
+}
 
 /// Internal JPEG parser state.
 pub(super) struct JpegParser<'a> {
@@ -99,6 +116,39 @@ impl<'a> JpegParser<'a> {
             icc_profile,
             max_pixels,
         })
+    }
+
+    /// Build component info for all components.
+    ///
+    /// `num_comps` allows overriding for XYB which always uses 3 components.
+    fn build_comp_infos(
+        &self,
+        mcu_cols: usize,
+        mcu_rows: usize,
+        max_h_samp: usize,
+        max_v_samp: usize,
+        num_comps: usize,
+    ) -> Result<Vec<CompInfo>> {
+        let mut comp_infos = Vec::with_capacity(num_comps);
+        for comp_idx in 0..num_comps {
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+            let comp_blocks_h = mcu_cols * h_samp;
+            let comp_blocks_v = mcu_rows * v_samp;
+            let comp_width = checked_size_2d(comp_blocks_h, 8)?;
+            let comp_height = checked_size_2d(comp_blocks_v, 8)?;
+            comp_infos.push(CompInfo {
+                quant_idx: self.components[comp_idx].quant_table_idx as usize,
+                h_samp,
+                v_samp,
+                comp_blocks_h,
+                comp_blocks_v,
+                comp_width,
+                comp_height,
+                is_full_res: h_samp == max_h_samp && v_samp == max_v_samp,
+            });
+        }
+        Ok(comp_infos)
     }
 
     fn read_u8(&mut self) -> Result<u8> {
@@ -1272,7 +1322,6 @@ impl<'a> JpegParser<'a> {
         }
     }
 
-
     /// Check if we can use the fast integer decode path.
     ///
     /// Fast path requirements:
@@ -1326,37 +1375,12 @@ impl<'a> JpegParser<'a> {
         let mcu_rows = (height + mcu_height - 1) / mcu_height;
 
         // Component info
-        struct CompInfo {
-            quant_idx: usize,
-            #[allow(dead_code)]
-            h_samp: usize,
-            v_samp: usize,
-            comp_blocks_h: usize,
-            comp_blocks_v: usize,
-            strip_width: usize,
-        }
-
-        let mut comp_infos: Vec<CompInfo> = Vec::new();
-        for comp_idx in 0..3 {
-            let h_samp = self.components[comp_idx].h_samp_factor as usize;
-            let v_samp = self.components[comp_idx].v_samp_factor as usize;
-            let comp_blocks_h = mcu_cols * h_samp;
-            let comp_blocks_v = mcu_rows * v_samp;
-            let strip_width = comp_blocks_h * 8;
-            comp_infos.push(CompInfo {
-                quant_idx: self.components[comp_idx].quant_table_idx as usize,
-                h_samp,
-                v_samp,
-                comp_blocks_h,
-                comp_blocks_v,
-                strip_width,
-            });
-        }
+        let comp_infos = self.build_comp_infos(mcu_cols, mcu_rows, max_h_samp, max_v_samp, 3)?;
 
         // Allocate strip buffers for one MCU row (reused each iteration)
         // Strip height = max_v_samp * 8 pixels
         let strip_height = mcu_height;
-        let strip_width = comp_infos[0].strip_width;
+        let strip_width = comp_infos[0].comp_width;
         let strip_size = strip_width * strip_height;
 
         // Allocate strip buffers - values will be fully overwritten by IDCT
@@ -1491,36 +1515,13 @@ impl<'a> JpegParser<'a> {
         let mcu_rows = (height + mcu_height - 1) / mcu_height;
 
         // Pre-compute component info for efficiency
-        struct CompInfo {
-            quant_idx: usize,
-            h_samp: usize,
-            v_samp: usize,
-            comp_blocks_h: usize,
-            comp_blocks_v: usize,
-            comp_width: usize,
-            comp_height: usize,
-            is_full_res: bool,
-        }
-
-        let mut comp_infos: Vec<CompInfo> = Vec::new();
-        for comp_idx in 0..self.num_components as usize {
-            let h_samp = self.components[comp_idx].h_samp_factor as usize;
-            let v_samp = self.components[comp_idx].v_samp_factor as usize;
-            let comp_blocks_h = mcu_cols * h_samp;
-            let comp_blocks_v = mcu_rows * v_samp;
-            let comp_width = checked_size_2d(comp_blocks_h, 8)?;
-            let comp_height = checked_size_2d(comp_blocks_v, 8)?;
-            comp_infos.push(CompInfo {
-                quant_idx: self.components[comp_idx].quant_table_idx as usize,
-                h_samp,
-                v_samp,
-                comp_blocks_h,
-                comp_blocks_v,
-                comp_width,
-                comp_height,
-                is_full_res: h_samp == max_h_samp as usize && v_samp == max_v_samp as usize,
-            });
-        }
+        let comp_infos = self.build_comp_infos(
+            mcu_cols,
+            mcu_rows,
+            max_h_samp as usize,
+            max_v_samp as usize,
+            self.num_components as usize,
+        )?;
 
         // Initialize bias stats and biases (C++ initializes to 0 via memset)
         let mut bias_stats = DequantBiasStats::new(self.num_components as usize);
@@ -1791,36 +1792,13 @@ impl<'a> JpegParser<'a> {
         let mcu_rows = (height + mcu_height - 1) / mcu_height;
 
         // Pre-compute component info
-        struct CompInfo {
-            quant_idx: usize,
-            h_samp: usize,
-            v_samp: usize,
-            comp_blocks_h: usize,
-            comp_blocks_v: usize,
-            comp_width: usize,
-            comp_height: usize,
-            is_full_res: bool,
-        }
-
-        let mut comp_infos: Vec<CompInfo> = Vec::new();
-        for comp_idx in 0..self.num_components as usize {
-            let h_samp = self.components[comp_idx].h_samp_factor as usize;
-            let v_samp = self.components[comp_idx].v_samp_factor as usize;
-            let comp_blocks_h = mcu_cols * h_samp;
-            let comp_blocks_v = mcu_rows * v_samp;
-            let comp_width = checked_size_2d(comp_blocks_h, 8)?;
-            let comp_height = checked_size_2d(comp_blocks_v, 8)?;
-            comp_infos.push(CompInfo {
-                quant_idx: self.components[comp_idx].quant_table_idx as usize,
-                h_samp,
-                v_samp,
-                comp_blocks_h,
-                comp_blocks_v,
-                comp_width,
-                comp_height,
-                is_full_res: h_samp == max_h_samp as usize && v_samp == max_v_samp as usize,
-            });
-        }
+        let comp_infos = self.build_comp_infos(
+            mcu_cols,
+            mcu_rows,
+            max_h_samp as usize,
+            max_v_samp as usize,
+            self.num_components as usize,
+        )?;
 
         // Initialize bias stats and biases
         let mut bias_stats = DequantBiasStats::new(self.num_components as usize);
@@ -2052,36 +2030,13 @@ impl<'a> JpegParser<'a> {
         let mcu_rows = (height + mcu_height - 1) / mcu_height;
 
         // Pre-compute component info
-        struct CompInfo {
-            quant_idx: usize,
-            h_samp: usize,
-            v_samp: usize,
-            comp_blocks_h: usize,
-            comp_blocks_v: usize,
-            comp_width: usize,
-            comp_height: usize,
-            is_full_res: bool,
-        }
-
-        let mut comp_infos: Vec<CompInfo> = Vec::new();
-        for comp_idx in 0..self.num_components as usize {
-            let h_samp = self.components[comp_idx].h_samp_factor as usize;
-            let v_samp = self.components[comp_idx].v_samp_factor as usize;
-            let comp_blocks_h = mcu_cols * h_samp;
-            let comp_blocks_v = mcu_rows * v_samp;
-            let comp_width = checked_size_2d(comp_blocks_h, 8)?;
-            let comp_height = checked_size_2d(comp_blocks_v, 8)?;
-            comp_infos.push(CompInfo {
-                quant_idx: self.components[comp_idx].quant_table_idx as usize,
-                h_samp,
-                v_samp,
-                comp_blocks_h,
-                comp_blocks_v,
-                comp_width,
-                comp_height,
-                is_full_res: h_samp == max_h_samp as usize && v_samp == max_v_samp as usize,
-            });
-        }
+        let comp_infos = self.build_comp_infos(
+            mcu_cols,
+            mcu_rows,
+            max_h_samp as usize,
+            max_v_samp as usize,
+            self.num_components as usize,
+        )?;
 
         // Initialize bias stats and biases
         let mut bias_stats = DequantBiasStats::new(self.num_components as usize);
