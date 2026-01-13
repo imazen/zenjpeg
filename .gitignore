@@ -11,3 +11,4 @@ perf.data.old
 *.svg
 *.json.gz
 *_profile.json
+.cache/
