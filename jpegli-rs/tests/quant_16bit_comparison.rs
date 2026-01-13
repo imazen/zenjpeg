@@ -1,0 +1,438 @@
+//! Tests for 16-bit quantization table support.
+//!
+//! At very low quality settings, quantization values can exceed 255,
+//! requiring 16-bit precision in DQT markers. This test verifies that
+//! our encoder produces 16-bit tables when needed, matching C++ jpegli.
+//!
+//! ## Behavior
+//!
+//! Controlled by `EncoderConfig::allow_16bit_quant_tables` (default: true):
+//!
+//! - `allow_16bit_quant_tables=true`: Values up to 32767, 16-bit DQT when >255 (SOF1 extended)
+//! - `allow_16bit_quant_tables=false`: Clamp to 255, 8-bit DQT (SOF0 baseline)
+//!
+//! The 32767 limit (not 65535) is because quant values are used in signed
+//! arithmetic during DCT coefficient division.
+//!
+//! Note: DQT extraction also exists in examples/jpeg_inspect.rs. Consider
+//! moving to a shared location if more tests need this functionality.
+
+#[path = "../src/test_utils.rs"]
+mod test_utils;
+
+use jpegli::{JpegEncoder, Quality};
+use test_utils::generate_gradient_d;
+
+/// Maximum quant value for baseline JPEG (8-bit DQT)
+const QUANT_MAX_BASELINE: u16 = 255;
+
+/// Maximum quant value for extended JPEG (16-bit DQT)
+/// Uses 32767 (not 65535) because values are used in signed arithmetic.
+#[allow(dead_code)]
+const QUANT_MAX_EXTENDED: u16 = 32767;
+
+/// DQT table info extracted from a JPEG file.
+/// See also: examples/jpeg_inspect.rs::QuantTable
+#[derive(Debug, Clone)]
+struct DqtTable {
+    /// Table index (0-3)
+    table_idx: u8,
+    /// Precision: 0 = 8-bit, 1 = 16-bit
+    precision: u8,
+    /// Quantization values (in zigzag order as stored)
+    values: [u16; 64],
+}
+
+/// Extract all DQT tables from JPEG data.
+/// See also: examples/jpeg_inspect.rs::parse_dqt
+fn extract_dqt_tables(jpeg_data: &[u8]) -> Vec<DqtTable> {
+    let mut tables = Vec::new();
+    let mut pos = 0;
+
+    while pos + 1 < jpeg_data.len() {
+        // Look for marker
+        if jpeg_data[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+
+        let marker = jpeg_data[pos + 1];
+        pos += 2;
+
+        // Skip padding bytes
+        if marker == 0xFF || marker == 0x00 {
+            continue;
+        }
+
+        // DQT marker
+        if marker == 0xDB {
+            if pos + 2 > jpeg_data.len() {
+                break;
+            }
+            let length = ((jpeg_data[pos] as usize) << 8) | (jpeg_data[pos + 1] as usize);
+            pos += 2;
+
+            let segment_end = pos + length - 2;
+            while pos < segment_end && pos < jpeg_data.len() {
+                let info = jpeg_data[pos];
+                let precision = info >> 4;
+                let table_idx = info & 0x0F;
+                pos += 1;
+
+                let mut values = [0u16; 64];
+                if precision == 0 {
+                    // 8-bit values
+                    for i in 0..64 {
+                        if pos >= jpeg_data.len() {
+                            break;
+                        }
+                        values[i] = jpeg_data[pos] as u16;
+                        pos += 1;
+                    }
+                } else {
+                    // 16-bit values
+                    for i in 0..64 {
+                        if pos + 1 >= jpeg_data.len() {
+                            break;
+                        }
+                        values[i] = ((jpeg_data[pos] as u16) << 8) | (jpeg_data[pos + 1] as u16);
+                        pos += 2;
+                    }
+                }
+
+                tables.push(DqtTable {
+                    table_idx,
+                    precision,
+                    values,
+                });
+            }
+        } else if marker == 0xD8 || marker == 0xD9 {
+            // SOI or EOI - no length
+            continue;
+        } else if marker >= 0xD0 && marker <= 0xD7 {
+            // RST markers - no length
+            continue;
+        } else {
+            // Other markers with length
+            if pos + 2 > jpeg_data.len() {
+                break;
+            }
+            let length = ((jpeg_data[pos] as usize) << 8) | (jpeg_data[pos + 1] as usize);
+            pos += length;
+        }
+    }
+
+    tables
+}
+
+/// Calculate what quant values WOULD be at a given quality using standard JPEG scaling.
+/// This helps us understand when 16-bit tables are needed.
+fn calculate_standard_quant_values(quality: f32) -> (u16, u16) {
+    // Standard JPEG luminance table max value is 121 (at position [6,5])
+    // Standard JPEG chrominance table has many 99s
+    const STD_LUMA_MAX: u16 = 121;
+    const STD_CHROMA_MAX: u16 = 99;
+
+    let scale = if quality < 50.0 {
+        5000.0 / quality
+    } else {
+        200.0 - quality * 2.0
+    };
+
+    let luma_max = ((STD_LUMA_MAX as f32 * scale + 50.0) / 100.0).round() as u16;
+    let chroma_max = ((STD_CHROMA_MAX as f32 * scale + 50.0) / 100.0).round() as u16;
+
+    (luma_max, chroma_max)
+}
+
+/// Test that verifies we can detect when 16-bit quant tables are needed.
+#[test]
+fn test_16bit_quant_threshold_calculation() {
+    // At quality 5: scale = 5000/5 = 1000%
+    // Max luma quant = (121 * 1000 + 50) / 100 = 1211
+    let (luma_q5, chroma_q5) = calculate_standard_quant_values(5.0);
+    println!("Quality 5: luma_max={}, chroma_max={}", luma_q5, chroma_q5);
+    assert!(luma_q5 > 255, "Quality 5 should need 16-bit tables for luma");
+
+    // At quality 10: scale = 5000/10 = 500%
+    // Max luma quant = (121 * 500 + 50) / 100 = 606
+    let (luma_q10, chroma_q10) = calculate_standard_quant_values(10.0);
+    println!("Quality 10: luma_max={}, chroma_max={}", luma_q10, chroma_q10);
+    assert!(
+        luma_q10 > 255,
+        "Quality 10 should need 16-bit tables for luma"
+    );
+
+    // At quality 20: scale = 5000/20 = 250%
+    // Max luma quant = (121 * 250 + 50) / 100 = 303
+    let (luma_q20, chroma_q20) = calculate_standard_quant_values(20.0);
+    println!("Quality 20: luma_max={}, chroma_max={}", luma_q20, chroma_q20);
+    assert!(
+        luma_q20 > 255,
+        "Quality 20 should need 16-bit tables for luma"
+    );
+
+    // At quality 25: scale = 5000/25 = 200%
+    // Max luma quant = (121 * 200 + 50) / 100 = 243
+    let (luma_q25, _) = calculate_standard_quant_values(25.0);
+    println!("Quality 25: luma_max={}", luma_q25);
+    assert!(
+        luma_q25 <= 255,
+        "Quality 25 should fit in 8-bit tables for luma"
+    );
+}
+
+/// Test that the DQT parser can extract tables correctly.
+#[test]
+fn test_dqt_extraction_basic() {
+    let img = generate_gradient_d(64, 64, 3);
+    let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(90.0));
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+    let tables = extract_dqt_tables(&jpeg);
+    assert!(!tables.is_empty(), "Should extract at least one DQT table");
+
+    for table in &tables {
+        println!(
+            "Table {}: precision={}, max_val={}",
+            table.table_idx,
+            table.precision,
+            table.values.iter().max().unwrap()
+        );
+        // At Q90, all values should be small and 8-bit
+        assert_eq!(table.precision, 0, "Q90 should use 8-bit precision");
+        assert!(
+            *table.values.iter().max().unwrap() <= 255,
+            "Q90 values should fit in 8 bits"
+        );
+    }
+}
+
+/// FAILING TEST: Verify Rust produces 16-bit quant tables at very low quality.
+///
+/// This test is expected to FAIL until we implement 16-bit table support.
+/// C++ jpegli automatically uses 16-bit tables when any value exceeds 255.
+#[test]
+fn test_rust_produces_16bit_tables_when_needed() {
+    // Use a quality level that definitely needs 16-bit tables
+    // At low quality, jpegli produces quant values >255 which require 16-bit tables
+    let img = generate_gradient_d(64, 64, 3);
+
+    let mut found_16bit = false;
+    let mut found_values_over_255 = false;
+
+    for quality in [1, 5, 10, 15, 20] {
+        let encoder =
+            JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
+        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+
+        let tables = extract_dqt_tables(&jpeg);
+
+        // Count values that would have been clamped in old buggy code
+        let values_at_255: usize = tables
+            .iter()
+            .flat_map(|t| t.values.iter())
+            .filter(|&&v| v == 255)
+            .count();
+
+        let max_value: u16 = tables
+            .iter()
+            .flat_map(|t| t.values.iter())
+            .copied()
+            .max()
+            .unwrap_or(0);
+
+        println!(
+            "Quality {}: {} tables, max_value={}, values_at_255={}, precisions={:?}",
+            quality,
+            tables.len(),
+            max_value,
+            values_at_255,
+            tables.iter().map(|t| t.precision).collect::<Vec<_>>()
+        );
+
+        // Check if any table uses 16-bit precision
+        let has_16bit = tables.iter().any(|t| t.precision == 1);
+
+        if max_value > QUANT_MAX_BASELINE {
+            found_values_over_255 = true;
+            // When we have values >255, we MUST use 16-bit precision
+            assert!(
+                has_16bit,
+                "Quality {}: max_value={} > 255 but no 16-bit tables!",
+                quality, max_value
+            );
+        }
+
+        if has_16bit {
+            found_16bit = true;
+            // If using 16-bit, verify no artificial clamping to 255 occurred
+            // (Some values at 255 is fine if that's the natural value, but
+            // having many is suspicious)
+            println!(
+                "  -> Quality {} uses 16-bit tables, max_value={}",
+                quality, max_value
+            );
+        }
+    }
+
+    // Verify we actually tested the 16-bit scenario
+    assert!(
+        found_values_over_255,
+        "Test should have found quality levels with quant values > 255"
+    );
+    assert!(
+        found_16bit,
+        "Test should have found quality levels using 16-bit tables"
+    );
+}
+
+/// Test comparing computed quant values (unclamped) against what we actually write.
+#[test]
+fn test_quant_value_clamping_detection() {
+    use jpegli::quant::{generate_standard_jpeg_table, STD_LUMINANCE_QUANT};
+
+    // Calculate what the UNCLAMPED values would be at quality 5
+    let quality = 5.0_f32;
+    let scale = 5000.0 / quality; // = 1000%
+
+    let mut expected_unclamped = [0u16; 64];
+    for (i, &base) in STD_LUMINANCE_QUANT.iter().enumerate() {
+        let q = ((base as f32 * scale + 50.0) / 100.0).round();
+        expected_unclamped[i] = q as u16;
+    }
+
+    let max_unclamped = *expected_unclamped.iter().max().unwrap();
+    println!(
+        "Quality 5 unclamped max value: {} (needs 16-bit: {})",
+        max_unclamped,
+        max_unclamped > 255
+    );
+
+    // Now generate the actual table (which clamps)
+    let actual_table = generate_standard_jpeg_table(quality, false);
+    let max_actual = *actual_table.values.iter().max().unwrap();
+    println!("Quality 5 actual max value: {} (clamped)", max_actual);
+
+    // Document the bug: we're clamping values that should use 16-bit precision
+    if max_unclamped > 255 {
+        assert!(
+            max_actual > 255 || actual_table.precision == 1,
+            "Quality 5 needs 16-bit tables (unclamped max={}), but we clamped to {} with precision={}",
+            max_unclamped,
+            max_actual,
+            actual_table.precision
+        );
+    }
+}
+
+// ============================================================================
+// C++ Comparison Tests (require cjpegli binary)
+// ============================================================================
+
+#[cfg(feature = "ffi-tests")]
+mod cpp_comparison {
+    use super::*;
+    use std::process::Command;
+
+    fn get_cjpegli_path() -> Option<std::path::PathBuf> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../internal/jpegli-cpp/build/tools/cjpegli");
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
+    }
+
+    /// Compare DQT tables between Rust and C++ at very low quality.
+    #[test]
+    #[ignore] // Requires cjpegli binary
+    fn test_16bit_quant_cpp_comparison() {
+        let cjpegli = match get_cjpegli_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("cjpegli not found, skipping test");
+                return;
+            }
+        };
+
+        let img = generate_gradient_d(64, 64, 3);
+
+        // Write test image to temp file
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join("test_16bit_input.ppm");
+        let cpp_output_path = temp_dir.join("test_16bit_cpp.jpg");
+
+        // Write PPM file
+        let mut ppm = Vec::new();
+        ppm.extend_from_slice(format!("P6\n64 64\n255\n").as_bytes());
+        ppm.extend_from_slice(&img.pixels);
+        std::fs::write(&input_path, &ppm).expect("write ppm");
+
+        // Test at quality 5 (should need 16-bit tables)
+        let quality = 5;
+
+        // Encode with cjpegli
+        let output = Command::new(&cjpegli)
+            .args([
+                input_path.to_str().unwrap(),
+                cpp_output_path.to_str().unwrap(),
+                "-q",
+                &quality.to_string(),
+            ])
+            .output()
+            .expect("cjpegli failed");
+
+        if !output.status.success() {
+            eprintln!("cjpegli stderr: {}", String::from_utf8_lossy(&output.stderr));
+            panic!("cjpegli failed");
+        }
+
+        // Read C++ output and extract DQT
+        let cpp_jpeg = std::fs::read(&cpp_output_path).expect("read cpp jpeg");
+        let cpp_tables = extract_dqt_tables(&cpp_jpeg);
+
+        // Encode with Rust
+        let encoder =
+            JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
+        let rust_jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let rust_tables = extract_dqt_tables(&rust_jpeg);
+
+        println!("\n=== Quality {} Comparison ===", quality);
+        println!("C++ tables:");
+        for t in &cpp_tables {
+            println!(
+                "  Table {}: precision={}, max={}",
+                t.table_idx,
+                t.precision,
+                t.values.iter().max().unwrap()
+            );
+        }
+        println!("Rust tables:");
+        for t in &rust_tables {
+            println!(
+                "  Table {}: precision={}, max={}",
+                t.table_idx,
+                t.precision,
+                t.values.iter().max().unwrap()
+            );
+        }
+
+        // Compare precisions
+        let cpp_has_16bit = cpp_tables.iter().any(|t| t.precision == 1);
+        let rust_has_16bit = rust_tables.iter().any(|t| t.precision == 1);
+
+        if cpp_has_16bit {
+            assert!(
+                rust_has_16bit,
+                "C++ uses 16-bit tables at quality {}, but Rust uses 8-bit (clamping bug)",
+                quality
+            );
+        }
+
+        // Cleanup
+        let _ = std::fs::remove_file(&input_path);
+        let _ = std::fs::remove_file(&cpp_output_path);
+    }
+}

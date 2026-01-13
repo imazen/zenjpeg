@@ -10,8 +10,8 @@
 
 use crate::consts::{
     DCT_BLOCK_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, MARKER_APP14, MARKER_APP2,
-    MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_SOF0, MARKER_SOF2, MARKER_SOI, MARKER_SOS,
-    MAX_ICC_BYTES_PER_MARKER,
+    MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI,
+    MARKER_SOS, MAX_ICC_BYTES_PER_MARKER,
 };
 use crate::error::Result;
 use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
@@ -112,6 +112,9 @@ impl Encoder {
 
     /// Writes quantization tables (3 separate tables for Y, Cb, Cr).
     /// This matches C++ jpegli behavior with add_two_chroma_tables=true.
+    ///
+    /// Supports both 8-bit (baseline) and 16-bit (extended) precision based on
+    /// the `precision` field of each QuantTable.
     pub(crate) fn write_quant_tables(
         &self,
         output: &mut Vec<u8>,
@@ -119,35 +122,18 @@ impl Encoder {
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
     ) -> Result<()> {
-        // Write all 3 tables in one DQT segment
-        // Length = 2 + 3 * (1 + 64) = 197 bytes
-        output.push(0xFF);
-        output.push(MARKER_DQT);
-        output.push(0x00);
-        output.push(0xC5); // Length: 197 bytes
-
-        // Table 0 (Y) - values must be written in zigzag order
-        output.push(0x00); // 8-bit precision, table 0
-        for i in 0..DCT_BLOCK_SIZE {
-            output.push(y_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
-        }
-
-        // Table 1 (Cb)
-        output.push(0x01); // 8-bit precision, table 1
-        for i in 0..DCT_BLOCK_SIZE {
-            output.push(cb_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
-        }
-
-        // Table 2 (Cr)
-        output.push(0x02); // 8-bit precision, table 2
-        for i in 0..DCT_BLOCK_SIZE {
-            output.push(cr_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
-        }
-
-        Ok(())
+        let tables = [
+            (0u8, y_quant),
+            (1u8, cb_quant),
+            (2u8, cr_quant),
+        ];
+        Self::write_dqt_segment(output, &tables)
     }
 
     /// Writes quantization tables for XYB mode (3 separate tables).
+    ///
+    /// Supports both 8-bit (baseline) and 16-bit (extended) precision based on
+    /// the `precision` field of each QuantTable.
     pub(crate) fn write_quant_tables_xyb(
         &self,
         output: &mut Vec<u8>,
@@ -155,42 +141,89 @@ impl Encoder {
         g_quant: &QuantTable,
         b_quant: &QuantTable,
     ) -> Result<()> {
-        // Write all 3 tables in one DQT segment
-        // Length = 2 + 3 * (1 + 64) = 197 bytes
+        let tables = [
+            (0u8, r_quant),
+            (1u8, g_quant),
+            (2u8, b_quant),
+        ];
+        Self::write_dqt_segment(output, &tables)
+    }
+
+    /// Writes a DQT segment containing one or more quantization tables.
+    ///
+    /// Each table can independently use 8-bit (precision=0) or 16-bit (precision=1)
+    /// values based on its `precision` field.
+    fn write_dqt_segment(output: &mut Vec<u8>, tables: &[(u8, &QuantTable)]) -> Result<()> {
+        // Calculate total segment length
+        // Length field = 2 bytes
+        // Per table: 1 byte (precision + table_id) + 64 or 128 bytes (values)
+        let mut length: usize = 2;
+        for (_, qt) in tables {
+            length += 1 + if qt.precision == 0 { 64 } else { 128 };
+        }
+
+        // Write marker
         output.push(0xFF);
         output.push(MARKER_DQT);
-        output.push(0x00);
-        output.push(0xC5); // Length: 197 bytes
 
-        // Table 0 (Red)
-        output.push(0x00); // 8-bit precision, table 0
-        for i in 0..DCT_BLOCK_SIZE {
-            output.push(r_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
-        }
+        // Write length (big-endian)
+        output.push((length >> 8) as u8);
+        output.push((length & 0xFF) as u8);
 
-        // Table 1 (Green)
-        output.push(0x01); // 8-bit precision, table 1
-        for i in 0..DCT_BLOCK_SIZE {
-            output.push(g_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
-        }
+        // Write each table
+        for &(table_id, qt) in tables {
+            // Precision in high nibble, table ID in low nibble
+            let info_byte = (qt.precision << 4) | (table_id & 0x0F);
+            output.push(info_byte);
 
-        // Table 2 (Blue)
-        output.push(0x02); // 8-bit precision, table 2
-        for i in 0..DCT_BLOCK_SIZE {
-            output.push(b_quant.values[JPEG_NATURAL_ORDER[i] as usize] as u8);
+            // Write values in zigzag order
+            if qt.precision == 0 {
+                // 8-bit values
+                for i in 0..DCT_BLOCK_SIZE {
+                    let val = qt.values[JPEG_NATURAL_ORDER[i] as usize];
+                    output.push(val as u8);
+                }
+            } else {
+                // 16-bit values (big-endian)
+                for i in 0..DCT_BLOCK_SIZE {
+                    let val = qt.values[JPEG_NATURAL_ORDER[i] as usize];
+                    output.push((val >> 8) as u8);
+                    output.push((val & 0xFF) as u8);
+                }
+            }
         }
 
         Ok(())
     }
 
-    /// Writes the frame header (SOF0 or SOF2).
+    /// Writes the frame header (SOF0, SOF1, or SOF2).
     ///
     /// Uses original dimensions (before MCU padding) so decoders can crop correctly.
+    ///
+    /// Marker selection:
+    /// - SOF0 (0xC0): Baseline DCT - 8-bit quant tables only
+    /// - SOF1 (0xC1): Extended sequential DCT - allows 16-bit quant tables
+    /// - SOF2 (0xC2): Progressive DCT
     pub(crate) fn write_frame_header(&self, output: &mut Vec<u8>) -> Result<()> {
+        self.write_frame_header_ex(output, false)
+    }
+
+    /// Writes the frame header with explicit extended mode control.
+    ///
+    /// # Arguments
+    /// * `is_extended` - If true and mode is not progressive, use SOF1 instead of SOF0.
+    ///   This is needed when any quantization table uses 16-bit precision.
+    pub(crate) fn write_frame_header_ex(
+        &self,
+        output: &mut Vec<u8>,
+        is_extended: bool,
+    ) -> Result<()> {
         let marker = if self.config.mode == JpegMode::Progressive {
             MARKER_SOF2
+        } else if is_extended {
+            MARKER_SOF1 // Extended sequential DCT (allows 16-bit quant tables)
         } else {
-            MARKER_SOF0
+            MARKER_SOF0 // Baseline DCT
         };
 
         output.push(0xFF);
@@ -249,9 +282,30 @@ impl Encoder {
     }
 
     /// Writes the frame header for XYB mode (RGB with B subsampling).
+    #[allow(dead_code)] // Wrapper for callers that don't need extended mode
     pub(crate) fn write_frame_header_xyb(&self, output: &mut Vec<u8>) -> Result<()> {
+        self.write_frame_header_xyb_ex(output, false)
+    }
+
+    /// Writes the frame header for XYB mode with explicit extended mode control.
+    ///
+    /// # Arguments
+    /// * `is_extended` - If true and mode is not progressive, use SOF1 instead of SOF0.
+    pub(crate) fn write_frame_header_xyb_ex(
+        &self,
+        output: &mut Vec<u8>,
+        is_extended: bool,
+    ) -> Result<()> {
+        let marker = if self.config.mode == JpegMode::Progressive {
+            MARKER_SOF2
+        } else if is_extended {
+            MARKER_SOF1 // Extended sequential DCT (allows 16-bit quant tables)
+        } else {
+            MARKER_SOF0 // Baseline DCT
+        };
+
         output.push(0xFF);
-        output.push(MARKER_SOF0); // Baseline DCT
+        output.push(marker);
 
         // 3 components: R, G, B
         let length = 8u16 + 3 * 3; // 17 bytes
@@ -287,40 +341,10 @@ impl Encoder {
     }
 
     /// Writes the frame header for XYB progressive mode.
+    #[allow(dead_code)] // May be used in future progressive XYB support
     pub(crate) fn write_frame_header_xyb_progressive(&self, output: &mut Vec<u8>) -> Result<()> {
-        output.push(0xFF);
-        output.push(MARKER_SOF2); // Progressive DCT
-
-        // 3 components: R, G, B
-        let length = 8u16 + 3 * 3; // 17 bytes
-        output.push((length >> 8) as u8);
-        output.push(length as u8);
-
-        // Use original dimensions (before MCU padding) for the header
-        let header_width = self.config.original_width.unwrap_or(self.config.width);
-        let header_height = self.config.original_height.unwrap_or(self.config.height);
-
-        output.push(8); // Sample precision
-        output.push((header_height >> 8) as u8);
-        output.push(header_height as u8);
-        output.push((header_width >> 8) as u8);
-        output.push(header_width as u8);
-        output.push(3); // Number of components
-
-        // XYB sampling: R:2×2, G:2×2, B:1×1
-        output.push(b'R'); // Component ID = 'R' (82)
-        output.push(0x22); // 2x2 sampling
-        output.push(0); // Quant table 0
-
-        output.push(b'G'); // Component ID = 'G' (71)
-        output.push(0x22); // 2x2 sampling
-        output.push(1); // Quant table 1
-
-        output.push(b'B'); // Component ID = 'B' (66)
-        output.push(0x11); // 1x1 sampling (subsampled)
-        output.push(2); // Quant table 2
-
-        Ok(())
+        // Progressive mode always uses SOF2, no need for is_extended
+        self.write_frame_header_xyb_ex(output, false)
     }
 
     /// Writes standard Huffman tables in a single DHT segment.

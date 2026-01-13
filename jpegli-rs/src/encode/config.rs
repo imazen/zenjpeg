@@ -93,6 +93,20 @@ pub struct EncoderConfig {
 
     /// Original image height before MCU padding (for JFIF header).
     pub(crate) original_height: Option<u32>,
+
+    /// Allow 16-bit quantization tables for better low-quality precision.
+    ///
+    /// When `true` (default), quantization values can go up to 32767, using
+    /// 16-bit DQT tables and extended sequential JPEGs (SOF1) when needed.
+    /// This provides better precision at very low quality settings.
+    ///
+    /// When `false`, quantization values are clamped to 255 (8-bit DQT),
+    /// producing baseline-compatible JPEGs (SOF0) that work with all decoders,
+    /// but may lose precision at very low quality settings.
+    ///
+    /// Note: Most modern decoders support 16-bit quant tables. Only disable
+    /// this for compatibility with very old or limited JPEG decoders.
+    pub allow_16bit_quant_tables: bool,
 }
 
 impl Default for EncoderConfig {
@@ -121,6 +135,9 @@ impl Default for EncoderConfig {
             edge_padding: EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,
+            // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
+            // Set to false only for compatibility with very old decoders
+            allow_16bit_quant_tables: true,
         }
     }
 }

@@ -1176,7 +1176,10 @@ impl StreamingEncoder {
             encoder.write_app14_adobe(&mut output, 0)?;
             encoder.write_icc_profile(&mut output, &crate::consts::XYB_ICC_PROFILE)?;
             encoder.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
-            encoder.write_frame_header_xyb(&mut output)?;
+            // Use SOF1 if any quant table needs 16-bit precision
+            let is_extended =
+                y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+            encoder.write_frame_header_xyb_ex(&mut output, is_extended)?;
 
             if encoder.config.optimize_huffman {
                 let (dc_table, ac_table) = encoder.build_optimized_tables_xyb_raster(
@@ -1217,7 +1220,10 @@ impl StreamingEncoder {
             // YCbCr mode: standard JPEG encoding
             encoder.write_header(&mut output)?;
             encoder.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
-            encoder.write_frame_header(&mut output)?;
+            // Use SOF1 if any quant table needs 16-bit precision
+            let is_extended =
+                y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+            encoder.write_frame_header_ex(&mut output, is_extended)?;
 
             if encoder.config.optimize_huffman {
                 let tables = encoder.build_optimized_tables(
