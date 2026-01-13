@@ -239,6 +239,24 @@ impl Encoder {
         self
     }
 
+    /// Allow 16-bit quantization tables for better low-quality precision.
+    ///
+    /// When `true` (default), quantization values can go up to 32767,
+    /// using 16-bit DQT tables and extended sequential JPEGs (SOF1) when
+    /// values exceed 255. This provides better precision at low quality.
+    ///
+    /// When `false`, quantization values are clamped to 255, producing
+    /// baseline-compatible JPEGs (SOF0) that work with all decoders.
+    ///
+    /// Most images at quality >= 20 will have all quant values <= 255 anyway,
+    /// so this only matters for very low quality settings. Most modern
+    /// decoders support 16-bit quant tables without issue.
+    #[must_use]
+    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+        self.config.allow_16bit_quant_tables = enable;
+        self
+    }
+
     /// Enables parallel encoding for improved throughput on multi-core systems.
     ///
     /// When enabled and `restart_interval > 0`, the encoder will use multiple

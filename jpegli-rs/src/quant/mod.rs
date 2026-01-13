@@ -32,6 +32,48 @@ pub const FREQUENCY_EXPONENT: [f32; DCT_BLOCK_SIZE] = [
 /// Distance threshold where non-linear scaling kicks in.
 pub const DIST_THRESHOLD: f32 = 1.5;
 
+/// Maximum quantization value for baseline JPEG (8-bit DQT tables).
+pub const QUANT_MAX_BASELINE: u16 = 255;
+
+/// Maximum quantization value for extended JPEG (16-bit DQT tables).
+/// Uses 32767 (not 65535) because values are used in signed arithmetic during
+/// DCT coefficient division.
+pub const QUANT_MAX_EXTENDED: u16 = 32767;
+
+/// Creates a QuantTable from raw values, clamping and setting precision appropriately.
+///
+/// If `allow_16bit` is true, values are clamped to 32767 and precision is set to
+/// 16-bit if any value > 255. If false, values are clamped to 255 (8-bit precision).
+#[must_use]
+pub fn create_quant_table(values: [u16; DCT_BLOCK_SIZE], allow_16bit: bool) -> QuantTable {
+    let quant_max = if allow_16bit {
+        QUANT_MAX_EXTENDED
+    } else {
+        QUANT_MAX_BASELINE
+    };
+
+    let mut clamped = [0u16; DCT_BLOCK_SIZE];
+    let mut max_value = 0u16;
+
+    for (i, &v) in values.iter().enumerate() {
+        let val = v.clamp(1, quant_max);
+        clamped[i] = val;
+        max_value = max_value.max(val);
+    }
+
+    // Use 16-bit precision if any value exceeds 255 and 16-bit is allowed
+    let precision = if max_value > QUANT_MAX_BASELINE && allow_16bit {
+        1
+    } else {
+        0
+    };
+
+    QuantTable {
+        values: clamped,
+        precision,
+    }
+}
+
 /// Distance thresholds for zero-bias blending between HQ and LQ tables.
 const DIST_HQ: f32 = 1.0;
 const DIST_LQ: f32 = 3.0;
@@ -448,12 +490,30 @@ pub fn generate_quant_table(
     use_xyb: bool,
     is_420: bool,
 ) -> QuantTable {
+    generate_quant_table_ex(quality, component, color_space, use_xyb, is_420, true)
+}
+
+/// Generates a quantization table with 16-bit control.
+///
+/// Like `generate_quant_table` but with explicit control over 16-bit table support.
+///
+/// # Arguments
+/// * `allow_16bit` - If true, allow values up to 32767 (16-bit). If false, clamp to 255 (8-bit).
+#[must_use]
+pub fn generate_quant_table_ex(
+    quality: Quality,
+    component: usize,
+    color_space: ColorSpace,
+    use_xyb: bool,
+    is_420: bool,
+    allow_16bit: bool,
+) -> QuantTable {
     let distance = quality.to_distance();
 
     if use_xyb {
-        generate_xyb_quant_table(distance, component)
+        generate_xyb_quant_table(distance, component, allow_16bit)
     } else {
-        generate_standard_quant_table(distance, component, color_space, is_420)
+        generate_standard_quant_table(distance, component, color_space, is_420, allow_16bit)
     }
 }
 
@@ -461,7 +521,7 @@ pub fn generate_quant_table(
 ///
 /// Uses per-frequency non-linear scaling via `distance_to_scale()` for
 /// better quality at the same file size compared to linear scaling.
-fn generate_xyb_quant_table(distance: f32, component: usize) -> QuantTable {
+fn generate_xyb_quant_table(distance: f32, component: usize, allow_16bit: bool) -> QuantTable {
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
     // Select the appropriate base matrix row
@@ -472,14 +532,11 @@ fn generate_xyb_quant_table(distance: f32, component: usize) -> QuantTable {
         // Apply per-frequency non-linear scaling
         let scale = distance_to_scale(distance, i) * GLOBAL_SCALE_XYB;
         let q = (base_val * scale).round();
-        // Clamp to valid quantization values (1-255 for baseline)
-        values[i] = (q as u16).clamp(1, 255);
+        // Store unclamped value - create_quant_table will handle clamping and precision
+        values[i] = q as u16;
     }
 
-    QuantTable {
-        values,
-        precision: 0, // 8-bit for baseline
-    }
+    create_quant_table(values, allow_16bit)
 }
 
 /// Generates a quantization table using standard or YCbCr matrices.
@@ -491,6 +548,7 @@ fn generate_standard_quant_table(
     component: usize,
     color_space: ColorSpace,
     is_420: bool,
+    allow_16bit: bool,
 ) -> QuantTable {
     use crate::consts::{GLOBAL_SCALE_420, K420_RESCALE};
 
@@ -532,13 +590,11 @@ fn generate_standard_quant_table(
         }
 
         let q = (base_val * scale).round();
-        values[i] = (q as u16).clamp(1, 255);
+        // Store unclamped value - create_quant_table will handle clamping and precision
+        values[i] = q as u16;
     }
 
-    QuantTable {
-        values,
-        precision: 0,
-    }
+    create_quant_table(values, allow_16bit)
 }
 
 /// Generates a standard JPEG quantization table scaled by quality factor.
@@ -548,6 +604,23 @@ fn generate_standard_quant_table(
 /// * `is_chrominance` - True for Cb/Cr tables, false for Y
 #[must_use]
 pub fn generate_standard_jpeg_table(quality: f32, is_chrominance: bool) -> QuantTable {
+    generate_standard_jpeg_table_ex(quality, is_chrominance, true)
+}
+
+/// Generates a standard JPEG quantization table with 16-bit control.
+///
+/// Like `generate_standard_jpeg_table` but with explicit control over 16-bit table support.
+///
+/// # Arguments
+/// * `quality` - Quality 1-100 (100 = best)
+/// * `is_chrominance` - True for Cb/Cr tables, false for Y
+/// * `allow_16bit` - If true, allow values up to 32767 (16-bit). If false, clamp to 255 (8-bit).
+#[must_use]
+pub fn generate_standard_jpeg_table_ex(
+    quality: f32,
+    is_chrominance: bool,
+    allow_16bit: bool,
+) -> QuantTable {
     let base_table = if is_chrominance {
         &STD_CHROMINANCE_QUANT
     } else {
@@ -565,13 +638,11 @@ pub fn generate_standard_jpeg_table(quality: f32, is_chrominance: bool) -> Quant
     let mut values = [0u16; DCT_BLOCK_SIZE];
     for (i, &base) in base_table.iter().enumerate() {
         let q = ((base as f32 * scale + 50.0) / 100.0).round();
-        values[i] = (q as u16).clamp(1, 255);
+        // Store unclamped value - create_quant_table will handle clamping and precision
+        values[i] = q as u16;
     }
 
-    QuantTable {
-        values,
-        precision: 0,
-    }
+    create_quant_table(values, allow_16bit)
 }
 
 /// Quantizes a DCT coefficient using the given quantization value.
@@ -1219,11 +1290,32 @@ pub fn generate_quant_table_custom(
     use_xyb: bool,
     custom: &CustomQuantMatrices,
 ) -> QuantTable {
+    generate_quant_table_custom_ex(distance, component, use_xyb, custom, true)
+}
+
+/// Generate a quantization table using custom matrices with 16-bit control.
+///
+/// Like `generate_quant_table_custom` but with explicit control over 16-bit table support.
+#[must_use]
+pub fn generate_quant_table_custom_ex(
+    distance: f32,
+    component: usize,
+    use_xyb: bool,
+    custom: &CustomQuantMatrices,
+    allow_16bit: bool,
+) -> QuantTable {
     // If direct tables are set, use them as-is (no scaling)
+    // Direct tables are assumed to be already properly clamped by the user
     if let Some(direct) = custom.get_direct_table(component) {
+        let max_val = *direct.iter().max().unwrap_or(&0);
+        let precision = if max_val > QUANT_MAX_BASELINE && allow_16bit {
+            1
+        } else {
+            0
+        };
         return QuantTable {
             values: direct,
-            precision: 0,
+            precision,
         };
     }
 
@@ -1236,7 +1328,8 @@ pub fn generate_quant_table_custom(
             let base_val = custom.get_xyb_base(component, i);
             let scale = custom.distance_to_scale(distance, i) * global_scale;
             let q = (base_val * scale).round();
-            values[i] = (q as u16).clamp(1, 255);
+            // Store unclamped value - create_quant_table will handle clamping and precision
+            values[i] = q as u16;
         }
     } else {
         let global_scale = custom.get_global_scale_ycbcr();
@@ -1244,14 +1337,12 @@ pub fn generate_quant_table_custom(
             let base_val = custom.get_ycbcr_base(component, i);
             let scale = custom.distance_to_scale(distance, i) * global_scale;
             let q = (base_val * scale).round();
-            values[i] = (q as u16).clamp(1, 255);
+            // Store unclamped value - create_quant_table will handle clamping and precision
+            values[i] = q as u16;
         }
     }
 
-    QuantTable {
-        values,
-        precision: 0,
-    }
+    create_quant_table(values, allow_16bit)
 }
 
 #[cfg(test)]
@@ -1296,23 +1387,58 @@ mod tests {
 
     #[test]
     fn test_quant_values_in_range() {
-        // All generated tables should have values in [1, 255] for baseline
+        // Test 8-bit mode (allow_16bit = false): values should be in [1, 255]
         for q in [10.0, 50.0, 90.0, 100.0] {
-            let table = generate_standard_jpeg_table(q, false);
+            let table = generate_standard_jpeg_table_ex(q, false, false); // allow_16bit = false
             for &v in &table.values {
-                assert!(v >= 1 && v <= 255);
+                assert!(
+                    v >= 1 && v <= QUANT_MAX_BASELINE,
+                    "8-bit table value {} out of range [1, {}]",
+                    v,
+                    QUANT_MAX_BASELINE
+                );
+            }
+        }
+
+        // Test 16-bit mode (allow_16bit = true): values should be in [1, 32767]
+        for q in [1.0, 5.0, 10.0] {
+            // Low quality can produce values > 255
+            let table = generate_standard_jpeg_table_ex(q, false, true); // allow_16bit = true
+            for &v in &table.values {
+                assert!(
+                    v >= 1 && v <= QUANT_MAX_EXTENDED,
+                    "16-bit table value {} out of range [1, {}]",
+                    v,
+                    QUANT_MAX_EXTENDED
+                );
             }
         }
     }
 
     #[test]
     fn test_xyb_table_generation() {
+        // XYB tables with allow_16bit = false should be clamped to 255
         let table =
-            generate_quant_table(Quality::from_distance(1.0), 0, ColorSpace::Xyb, true, false);
+            generate_quant_table_ex(Quality::from_distance(1.0), 0, ColorSpace::Xyb, true, false, false);
 
-        // All values should be valid
         for &v in &table.values {
-            assert!(v >= 1 && v <= 255);
+            assert!(
+                v >= 1 && v <= QUANT_MAX_BASELINE,
+                "8-bit XYB table value {} out of range",
+                v
+            );
+        }
+
+        // XYB tables with allow_16bit = true can use extended range
+        let table_ex =
+            generate_quant_table_ex(Quality::from_distance(10.0), 0, ColorSpace::Xyb, true, false, true);
+
+        for &v in &table_ex.values {
+            assert!(
+                v >= 1 && v <= QUANT_MAX_EXTENDED,
+                "16-bit XYB table value {} out of range",
+                v
+            );
         }
     }
 
