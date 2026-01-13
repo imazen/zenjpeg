@@ -464,6 +464,13 @@ impl From<f64> for Quality {
     }
 }
 
+impl From<crate::encode::v2::Quality> for Quality {
+    /// Converts v2 API Quality to internal Quality.
+    fn from(q: crate::encode::v2::Quality) -> Self {
+        Self::Traditional(q.to_internal().clamp(1.0, 100.0))
+    }
+}
+
 /// Converts butteraugli distance to approximate traditional quality.
 fn distance_to_quality(distance: f32) -> f32 {
     // Approximate inverse of quality_to_distance

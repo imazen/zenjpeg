@@ -1,67 +1,65 @@
 //! JPEG encoder implementation.
 //!
-//! This module provides JPEG encoding capabilities with two APIs:
-//!
-//! ## Recommended: StreamingEncoder (new)
-//!
-//! The streaming encoder accepts rows incrementally, reducing peak memory
-//! and providing better performance:
+//! # Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::{StreamingEncoder, Quality, Subsampling};
+//! use jpegli::{EncoderConfig, PixelLayout};
 //!
-//! // Simple all-at-once encoding
-//! let jpeg = StreamingEncoder::new(640, 480)
-//!     .quality(Quality::from_quality(85.0))
-//!     .subsampling(Subsampling::S420)
-//!     .encode(&pixels)?;
+//! // Create reusable config
+//! let config = EncoderConfig::new()
+//!     .quality(85)
+//!     .progressive(true);
 //!
-//! // Or stream rows for large images
-//! let mut enc = StreamingEncoder::new(640, 480)
-//!     .quality(Quality::from_quality(85.0))
-//!     .start()?;
-//! for row in image_rows {
-//!     enc.push_row(row)?;
-//! }
+//! // Encode from raw bytes
+//! let jpeg = config.encode_one(1920, 1080, PixelLayout::Rgb8Srgb, &rgb_bytes)?;
+//! ```
+//!
+//! # Streaming Encoding
+//!
+//! For large images or when you want to process rows incrementally:
+//!
+//! ```rust,ignore
+//! use jpegli::{EncoderConfig, PixelLayout};
+//! use enough::Never;
+//!
+//! let config = EncoderConfig::new().quality(85);
+//! let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
+//!
+//! // Push rows (or use push_packed for all at once)
+//! enc.push_packed(&rgb_bytes, Never)?;
 //! let jpeg = enc.finish()?;
 //! ```
-//!
-//! ## Legacy: Encoder (deprecated)
-//!
-//! The original encoder API is still available but deprecated. It requires
-//! the full image in memory and has higher peak memory usage.
-//!
-//! ```rust,ignore
-//! use jpegli::Encoder;
-//!
-//! #[allow(deprecated)]
-//! let jpeg = Encoder::new()
-//!     .width(640)
-//!     .height(480)
-//!     .encode(&pixels)?;
-//! ```
 
-#![allow(deprecated)] // This module defines and implements the deprecated Encoder struct
+#![allow(deprecated)]
 
-// Encoder implementation modules
+// Internal implementation modules (pub for internal crate re-exports)
 mod blocks;
+#[doc(hidden)]
 pub mod chroma;
+#[doc(hidden)]
 pub mod dct;
 mod progressive;
+#[doc(hidden)]
 pub mod scan_script;
 mod serialize;
 
+#[doc(hidden)]
 pub mod config;
 #[cfg(feature = "experimental-hybrid-trellis")]
 mod hybrid;
 pub(crate) mod linear_lut;
 #[cfg(feature = "parallel")]
-pub mod parallel;
+pub(crate) mod parallel;
+#[doc(hidden)]
 pub mod streaming;
+#[doc(hidden)]
 pub mod strip;
+
+// v2 is the primary public API - re-exported at crate root
+#[doc(hidden)]
 pub mod v2;
 
-// Re-export config types
+// Internal config types
 pub use config::EncoderConfig;
 pub(crate) use config::ProgressiveScan;
 
@@ -71,10 +69,10 @@ use crate::alloc::{
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
 use crate::error::{Error, Result};
-use crate::quant::{self, Quality, QuantTable};
+use crate::quant::{self, Quality as LegacyQuality, QuantTable};
 use crate::types::{
-    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, JpegMode, PixelFormat,
-    Subsampling,
+    ChromaDownsampling as LegacyChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig,
+    JpegMode, PixelFormat as LegacyPixelFormat, Subsampling as LegacySubsampling,
 };
 use enough::{Never, Stop};
 
@@ -138,7 +136,7 @@ impl Encoder {
 
     /// Sets the pixel format.
     #[must_use]
-    pub fn pixel_format(mut self, format: PixelFormat) -> Self {
+    pub fn pixel_format(mut self, format: LegacyPixelFormat) -> Self {
         self.config.pixel_format = format;
         self
     }
@@ -148,7 +146,7 @@ impl Encoder {
     /// Use `Quality::from_quality(90.0)` for traditional JPEG quality (1-100)
     /// or `Quality::from_distance(1.0)` for butteraugli distance.
     #[must_use]
-    pub fn jpegli_quality(mut self, quality: Quality) -> Self {
+    pub fn jpegli_quality(mut self, quality: LegacyQuality) -> Self {
         self.config.quality = quality;
         self
     }
@@ -193,7 +191,7 @@ impl Encoder {
         since = "0.4.0",
         note = "Use jpegli_quality() or equivalent_quality() instead"
     )]
-    pub fn quality(mut self, quality: Quality) -> Self {
+    pub fn quality(mut self, quality: LegacyQuality) -> Self {
         self.config.quality = quality;
         self
     }
@@ -207,7 +205,7 @@ impl Encoder {
 
     /// Sets chroma subsampling.
     #[must_use]
-    pub fn subsampling(mut self, subsampling: Subsampling) -> Self {
+    pub fn subsampling(mut self, subsampling: LegacySubsampling) -> Self {
         self.config.subsampling = subsampling;
         self
     }
@@ -282,27 +280,27 @@ impl Encoder {
     /// Set chroma downsampling method for subsampled modes.
     ///
     /// Controls how chroma planes are downsampled:
-    /// - [`ChromaDownsampling::Box`]: Simple box filter (default, matches C++ jpegli)
-    /// - [`ChromaDownsampling::GammaAware`]: Gamma-aware averaging (better edges)
-    /// - [`ChromaDownsampling::GammaAwareIterative`]: Sharp YUV-style optimization (best quality)
+    /// - [`LegacyChromaDownsampling::Box`]: Simple box filter (default, matches C++ jpegli)
+    /// - [`LegacyChromaDownsampling::GammaAware`]: Gamma-aware averaging (better edges)
+    /// - [`LegacyChromaDownsampling::GammaAwareIterative`]: Sharp YUV-style optimization (best quality)
     ///
     /// Has no effect for 4:4:4 subsampling (no downsampling needed).
     #[must_use]
-    pub fn chroma_downsampling(mut self, method: ChromaDownsampling) -> Self {
+    pub fn chroma_downsampling(mut self, method: LegacyChromaDownsampling) -> Self {
         self.config.chroma_downsampling = method;
         self
     }
 
     /// Convenience method: enable Sharp YUV-style chroma downsampling.
     ///
-    /// - `enable = true` → `ChromaDownsampling::GammaAwareIterative`
-    /// - `enable = false` → `ChromaDownsampling::Box`
+    /// - `enable = true` → `LegacyChromaDownsampling::GammaAwareIterative`
+    /// - `enable = false` → `LegacyChromaDownsampling::Box`
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.config.chroma_downsampling = if enable {
-            ChromaDownsampling::GammaAwareIterative
+            LegacyChromaDownsampling::GammaAwareIterative
         } else {
-            ChromaDownsampling::Box
+            LegacyChromaDownsampling::Box
         };
         self
     }

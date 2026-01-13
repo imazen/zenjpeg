@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgb8() {
-        use crate::{Decoder, JpegEncoder, Quality};
+        use crate::{Decoder, JpegEncoder};
 
         // Create test image - 64x48 for multiple MCU rows
         let width = 64u32;
@@ -818,7 +818,7 @@ mod tests {
         }
 
         // Encode as baseline 4:4:4 (default)
-        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(95.0));
+        let encoder = JpegEncoder::new(width, height).quality(95.0);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         // Decode normally for comparison
@@ -864,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_partial_reads() {
-        use crate::{Decoder, JpegEncoder, Quality};
+        use crate::{Decoder, JpegEncoder};
 
         // Create test image - 32x32
         let width = 32u32;
@@ -879,7 +879,7 @@ mod tests {
             }
         }
 
-        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let encoder = JpegEncoder::new(width, height).quality(90.0);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgbx8() {
-        use crate::{Decoder, JpegEncoder, Quality};
+        use crate::{Decoder, JpegEncoder};
 
         let width = 24u32;
         let height = 24u32;
@@ -919,7 +919,7 @@ mod tests {
             pixels[i] = ((i * 7) % 256) as u8;
         }
 
-        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(85.0));
+        let encoder = JpegEncoder::new(width, height).quality(85.0);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgba_f32() {
-        use crate::{Decoder, JpegEncoder, Quality};
+        use crate::{Decoder, JpegEncoder};
 
         let width = 16u32;
         let height = 16u32;
@@ -972,7 +972,7 @@ mod tests {
             pixels[i] = ((i * 11) % 256) as u8;
         }
 
-        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let encoder = JpegEncoder::new(width, height).quality(90.0);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_ycbcr_planes() {
-        use crate::{Decoder, JpegEncoder, Quality};
+        use crate::{Decoder, JpegEncoder};
 
         let width = 32u32;
         let height = 24u32;
@@ -1049,7 +1049,7 @@ mod tests {
             pixels[i] = ((i * 13) % 256) as u8;
         }
 
-        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let encoder = JpegEncoder::new(width, height).quality(90.0);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_non_mcu_aligned() {
-        use crate::{Decoder, JpegEncoder, Quality};
+        use crate::{Decoder, JpegEncoder};
 
         // Non-MCU-aligned dimensions (not multiples of 8)
         let width = 37u32;
@@ -1118,7 +1118,7 @@ mod tests {
             }
         }
 
-        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let encoder = JpegEncoder::new(width, height).quality(90.0);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -1146,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_420() {
-        use crate::{Decoder, JpegEncoder, Quality, Subsampling};
+        use crate::{Decoder, JpegEncoder, Subsampling};
 
         // Create test image - 64x48 for multiple MCU rows
         // 4:2:0 has 16x16 MCUs, so this is 4x3 MCUs
@@ -1164,7 +1164,7 @@ mod tests {
 
         // Encode as 4:2:0
         let encoder = JpegEncoder::new(width, height)
-            .quality(Quality::from_quality(95.0))
+            .quality(95.0)
             .subsampling(Subsampling::S420);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
@@ -1228,7 +1228,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_420_non_mcu_aligned() {
-        use crate::{Decoder, JpegEncoder, Quality, Subsampling};
+        use crate::{Decoder, JpegEncoder, Subsampling};
 
         // Non-MCU-aligned dimensions (not multiples of 16 for 4:2:0)
         let width = 37u32;
@@ -1245,7 +1245,7 @@ mod tests {
 
         // Encode as 4:2:0
         let encoder = JpegEncoder::new(width, height)
-            .quality(Quality::from_quality(90.0))
+            .quality(90.0)
             .subsampling(Subsampling::S420);
         let jpeg = encoder.encode(&pixels).expect("encode failed");
 
