@@ -1,4 +1,5 @@
-use jpegli::{JpegEncoder, Quality};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn benchmark(
@@ -22,24 +23,28 @@ fn benchmark(
         }
     }
 
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .restart_interval(restart_interval);
+
     // Warmup
     for _ in 0..3 {
-        let _ = JpegEncoder::new(width as u32, height as u32)
-            .quality(Quality::from_quality(85.0))
-            .restart_interval(restart_interval)
-            .encode(&pixels)
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(&pixels, Never).unwrap();
+        let _ = enc.finish().unwrap();
     }
 
     // Timed runs
     let start = Instant::now();
     let mut result_size = 0;
     for _ in 0..iterations {
-        let result = JpegEncoder::new(width as u32, height as u32)
-            .quality(Quality::from_quality(85.0))
-            .restart_interval(restart_interval)
-            .encode(&pixels)
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(&pixels, Never).unwrap();
+        let result = enc.finish().unwrap();
         result_size = result.len();
         std::hint::black_box(&result);
     }
