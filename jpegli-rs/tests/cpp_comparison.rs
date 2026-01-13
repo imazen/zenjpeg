@@ -11,13 +11,19 @@ use test_utils::{
     TestImage,
 };
 
+use enough::Never;
 use jpegli::{
     decode::Decoder,
-    types::{JpegMode, PixelFormat},
-    JpegEncoder, Quality,
+    EncoderConfig, PixelLayout,
 };
 use std::path::Path;
 use test_case::test_case;
+
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 // ============================================================================
 // Helper Functions
@@ -75,9 +81,8 @@ fn decode_test_jpeg(filename: &str) -> Option<(u32, u32, Vec<u8>)> {
 fn test_file_size_parity_synthetic() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let encoder = JpegEncoder::new(256, 256).quality(Quality::from_quality(85.0));
-
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let jpeg = encode_rgb(256, 256, &img.pixels, &config).expect("encode failed");
 
     // A 256x256 gradient is simple content - file size varies with implementation
     // Just verify it's reasonable (not too small to be valid, not too large)
@@ -102,8 +107,8 @@ fn test_file_size_scaling() {
     let sizes: Vec<(f32, usize)> = [50.0, 70.0, 85.0, 95.0]
         .iter()
         .map(|&q| {
-            let encoder = JpegEncoder::new(256, 256).quality(Quality::from_quality(q));
-            (q, encoder.encode(&img.pixels).unwrap().len())
+            let config = EncoderConfig::new().quality(q);
+            (q, encode_rgb(256, 256, &img.pixels, &config).unwrap().len())
         })
         .collect();
 
@@ -192,8 +197,8 @@ fn test_quality_vs_cpp_decoded() {
     let (_, _, cpp_pixels) = cpp_decoded.unwrap();
 
     // Encode with Rust and decode
-    let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(85.0));
-    let rust_jpeg = encoder.encode(&original).expect("Rust encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let rust_jpeg = encode_rgb(width, height, &original, &config).expect("Rust encode failed");
 
     let decoder = Decoder::new();
     let rust_decoded = decoder.decode(&rust_jpeg).expect("Rust decode failed");
@@ -226,8 +231,8 @@ fn count_markers(jpeg: &[u8], marker: u8) -> usize {
 #[test]
 fn test_marker_structure() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     // Check required markers
     assert!(jpeg.starts_with(&[0xFF, 0xD8]), "Missing SOI");
@@ -270,10 +275,10 @@ fn test_marker_structure() {
 #[test]
 fn test_progressive_marker_structure() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = JpegEncoder::new(128, 128)
-        .mode(JpegMode::Progressive)
-        .quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true);
+    let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     let sof2_count = count_markers(&jpeg, 0xC2);
     let sos_count = count_markers(&jpeg, 0xDA);
@@ -324,8 +329,8 @@ fn extract_dqt_table(jpeg: &[u8], table_id: u8) -> Option<Vec<u8>> {
 #[test]
 fn test_quant_tables_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // RGB JPEG should have 2 quant tables (luma and chroma)
     let table0 = extract_dqt_table(&jpeg, 0);
@@ -354,11 +359,11 @@ fn test_quant_tables_present() {
 fn test_quant_tables_vary_with_quality() {
     let img = generate_gradient_d(64, 64, 3);
 
-    let q50_encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(50.0));
-    let q50_jpeg = q50_encoder.encode(&img.pixels).expect("encode Q50 failed");
+    let config50 = EncoderConfig::new().quality(50.0);
+    let q50_jpeg = encode_rgb(64, 64, &img.pixels, &config50).expect("encode Q50 failed");
 
-    let q95_encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(95.0));
-    let q95_jpeg = q95_encoder.encode(&img.pixels).expect("encode Q95 failed");
+    let config95 = EncoderConfig::new().quality(95.0);
+    let q95_jpeg = encode_rgb(64, 64, &img.pixels, &config95).expect("encode Q95 failed");
 
     let q50_table = extract_dqt_table(&q50_jpeg, 0).unwrap();
     let q95_table = extract_dqt_table(&q95_jpeg, 0).unwrap();
@@ -383,8 +388,8 @@ fn test_quant_tables_vary_with_quality() {
 #[test]
 fn test_jpeg_decoder_compatibility() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(90.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(90.0);
+    let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     // Decode with jpeg-decoder crate
     let mut decoder =
@@ -400,8 +405,8 @@ fn test_jpeg_decoder_compatibility() {
 #[test]
 fn test_zune_jpeg_compatibility() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(90.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(90.0);
+    let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     // Decode with zune-jpeg
     use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -461,8 +466,8 @@ fn count_dht_tables(jpeg: &[u8]) -> (usize, usize) {
 #[test]
 fn test_huffman_tables_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     let (dc_count, ac_count) = count_dht_tables(&jpeg);
 
@@ -494,8 +499,8 @@ fn extract_sof_params(jpeg: &[u8]) -> Option<(u8, u16, u16, u8)> {
 #[test]
 fn test_sof_parameters() {
     let img = generate_gradient_d(320, 240, 3);
-    let encoder = JpegEncoder::new(320, 240).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let jpeg = encode_rgb(320, 240, &img.pixels, &config).expect("encode failed");
 
     let (precision, height, width, components) = extract_sof_params(&jpeg).expect("SOF not found");
 

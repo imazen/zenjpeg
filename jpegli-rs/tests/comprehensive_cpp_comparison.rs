@@ -2,12 +2,22 @@
 //!
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
 
-use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{JpegEncoder, Quality};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
+
+fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::Result<Vec<u8>> {
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .progressive(true)
+        .optimize_huffman(true);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
@@ -85,13 +95,7 @@ fn compare_image(
 ) -> Option<ComparisonResult> {
     // Rust encoding with timing
     let rust_start = Instant::now();
-    let rust_jpeg = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(rgb)
-        .ok()?;
+    let rust_jpeg = encode_rgb_progressive(width, height, rgb, quality as f32).ok()?;
     let rust_time_ms = rust_start.elapsed().as_secs_f64() * 1000.0;
     let rust_size = rust_jpeg.len();
 

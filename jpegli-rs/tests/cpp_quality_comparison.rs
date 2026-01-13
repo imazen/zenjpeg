@@ -1,9 +1,20 @@
 //! Compare Rust vs C++ progressive encoding quality and size.
 
-use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{JpegEncoder, Quality};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;
+
+fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .progressive(true)
+        .optimize_huffman(true);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("create encoder");
+    enc.push_packed(data, Never).expect("push data");
+    enc.finish().expect("finish")
+}
 
 /// Compare Rust vs C++ at various quality levels.
 #[test]
@@ -64,13 +75,7 @@ fn test_cpp_quality_comparison() {
 
     for q in [3, 10, 30, 50, 70, 80, 85, 95] {
         // Rust encoding (progressive + optimized)
-        let rust_jpeg = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q as f32))
-            .optimize_huffman(true)
-            .mode(JpegMode::Progressive)
-            .encode(&data)
-            .unwrap();
+        let rust_jpeg = encode_rgb_progressive(width, height, &data, q as f32);
         let rust_size = rust_jpeg.len();
 
         // Decode Rust JPEG for DSSIM
