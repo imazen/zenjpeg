@@ -3,7 +3,8 @@
 //! Verifies that encoding the same input multiple times produces identical output bytes.
 //! This is critical for caching, reproducible builds, and debugging.
 
-use jpegli::{Decoder, JpegEncoder, JpegMode, PixelFormat, Quality};
+use enough::Never;
+use jpegli::{Decoder, EncoderConfig, PixelLayout};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -19,32 +20,33 @@ fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
     rgb
 }
 
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> Vec<u8> {
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder creation failed");
+    enc.push_packed(data, Never).expect("push failed");
+    enc.finish().expect("finish failed")
+}
+
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> Vec<u8> {
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+        .expect("encoder creation failed");
+    enc.push_packed(data, Never).expect("push failed");
+    enc.finish().expect("finish failed")
+}
+
 #[test]
 fn test_baseline_encoder_determinism() {
     let width = 128;
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Baseline)
-        .encode(&rgb)
-        .expect("encode 1 failed");
+    let config = EncoderConfig::new().quality(90.0);
 
-    let jpeg2 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Baseline)
-        .encode(&rgb)
-        .expect("encode 2 failed");
-
-    let jpeg3 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Baseline)
-        .encode(&rgb)
-        .expect("encode 3 failed");
+    let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
+    let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
+    let jpeg3 = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     assert_eq!(jpeg1.len(), jpeg2.len(), "JPEG sizes differ");
     assert_eq!(jpeg2.len(), jpeg3.len(), "JPEG sizes differ");
@@ -58,19 +60,10 @@ fn test_progressive_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Progressive)
-        .encode(&rgb)
-        .expect("encode 1 failed");
+    let config = EncoderConfig::new().quality(90.0).progressive(true);
 
-    let jpeg2 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Progressive)
-        .encode(&rgb)
-        .expect("encode 2 failed");
+    let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
+    let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     assert_eq!(jpeg1.len(), jpeg2.len(), "JPEG sizes differ");
     assert_eq!(jpeg1, jpeg2, "Progressive encoder is non-deterministic");
@@ -82,19 +75,10 @@ fn test_optimized_huffman_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .encode(&rgb)
-        .expect("encode 1 failed");
+    let config = EncoderConfig::new().quality(85.0).optimize_huffman(true);
 
-    let jpeg2 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .encode(&rgb)
-        .expect("encode 2 failed");
+    let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
+    let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     assert_eq!(
         jpeg1, jpeg2,
@@ -108,19 +92,10 @@ fn test_xyb_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .use_xyb(true)
-        .encode(&rgb)
-        .expect("encode 1 failed");
+    let config = EncoderConfig::new().quality(90.0).xyb();
 
-    let jpeg2 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .use_xyb(true)
-        .encode(&rgb)
-        .expect("encode 2 failed");
+    let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
+    let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     assert_eq!(jpeg1, jpeg2, "XYB encoder is non-deterministic");
 }
@@ -131,17 +106,10 @@ fn test_grayscale_encoder_determinism() {
     let height = 64;
     let gray: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
 
-    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .encode(&gray)
-        .expect("encode 1 failed");
+    let config = EncoderConfig::new().quality(90.0).grayscale();
 
-    let jpeg2 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .encode(&gray)
-        .expect("encode 2 failed");
+    let jpeg1 = encode_gray(width as u32, height as u32, &gray, &config);
+    let jpeg2 = encode_gray(width as u32, height as u32, &gray, &config);
 
     assert_eq!(jpeg1, jpeg2, "Grayscale encoder is non-deterministic");
 }
@@ -152,12 +120,8 @@ fn test_decoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    // First encode
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .encode(&rgb)
-        .expect("encode failed");
+    let config = EncoderConfig::new().quality(90.0);
+    let jpeg = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     // Decode multiple times
     let decoded1 = Decoder::new().decode(&jpeg).expect("decode 1 failed");
