@@ -5,30 +5,39 @@
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::encoder::{JpegEncoder, Quality, PixelFormat};
+//! use jpegli::encoder::{JpegEncoder, Quality, PixelFormat, Result};
 //!
-//! let jpeg = JpegEncoder::new(640, 480)
-//!     .quality(Quality::from_quality(85.0))
-//!     .pixel_format(PixelFormat::Rgb)
-//!     .encode(&rgb_pixels)?;
+//! fn encode_image(pixels: &[u8]) -> Result<Vec<u8>> {
+//!     JpegEncoder::new(640, 480)
+//!         .quality(Quality::from_quality(85.0))
+//!         .pixel_format(PixelFormat::Rgb)
+//!         .encode(pixels)
+//! }
 //! ```
 //!
 //! # Streaming Encoding
 //!
 //! ```rust,ignore
-//! use jpegli::encoder::{JpegEncoder, Quality};
+//! use jpegli::encoder::{JpegEncoder, Quality, Result};
 //!
-//! let mut enc = JpegEncoder::new(640, 480)
-//!     .quality(Quality::from_quality(85.0))
-//!     .start()?;
+//! fn encode_streaming(rows: impl Iterator<Item = Vec<u8>>) -> Result<Vec<u8>> {
+//!     let mut enc = JpegEncoder::new(640, 480)
+//!         .quality(Quality::from_quality(85.0))
+//!         .start()?;
 //!
-//! for row in image_rows {
-//!     enc.push_row(row)?;
+//!     for row in rows {
+//!         enc.push_row(&row)?;
+//!     }
+//!     enc.finish()
 //! }
-//! let jpeg = enc.finish()?;
 //! ```
 
-// === Main encoder types ===
+mod error;
+
+// === Error types ===
+pub use error::{Error, Result};
+
+// === Main encoder type ===
 pub use crate::encode::streaming::StreamingEncoder as JpegEncoder;
 
 // v2 config (dimension-independent, reusable)
@@ -55,6 +64,3 @@ pub use crate::types::ChromaDownsampling;
 
 // === JPEG modes ===
 pub use crate::types::JpegMode;
-
-// === Error types ===
-pub use crate::error::{Error, Result};
