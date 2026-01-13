@@ -13,12 +13,7 @@ fn main() {
     );
     println!("{}", "-".repeat(56));
 
-    for &(width, height) in &[
-        (512, 512),
-        (1024, 1024),
-        (2048, 2048),
-        (4096, 4096),
-    ] {
+    for &(width, height) in &[(512, 512), (1024, 1024), (2048, 2048), (4096, 4096)] {
         let result = benchmark_encode(width, height);
         let megapixels = (width * height) as f64 / 1_000_000.0;
         let mp_per_sec = megapixels / (result.time_ms / 1000.0);

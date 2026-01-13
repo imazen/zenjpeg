@@ -42,7 +42,11 @@ fn debug_gray_linear_encoding() {
 
     println!("=== INPUT ANALYSIS ===");
     println!("Gray8 (sRGB) input:");
-    println!("  Range: {} to {}", gray8.iter().min().unwrap(), gray8.iter().max().unwrap());
+    println!(
+        "  Range: {} to {}",
+        gray8.iter().min().unwrap(),
+        gray8.iter().max().unwrap()
+    );
     println!("  Unique values: {}", unique_input_8.len());
 
     println!("\nGray16 (linear) input:");
@@ -57,7 +61,12 @@ fn debug_gray_linear_encoding() {
     println!("\n  sRGB → Linear mapping examples:");
     for srgb in [0, 64, 128, 192, 255] {
         let linear = srgb_to_linear(srgb as f64 / 255.0);
-        println!("    sRGB {} → linear {:.4} → u16 {}", srgb, linear, (linear * 65535.0) as u16);
+        println!(
+            "    sRGB {} → linear {:.4} → u16 {}",
+            srgb,
+            linear,
+            (linear * 65535.0) as u16
+        );
     }
 
     // Encode Gray8
@@ -126,10 +135,7 @@ fn debug_gray_linear_encoding() {
         if let Some(idx) = gray8.iter().position(|&v| v == target_srgb) {
             let out8 = vals8[idx];
             let out16 = vals16[idx];
-            println!(
-                "{:>8} {:>12.4} {:>12.4}",
-                target_srgb, out8, out16
-            );
+            println!("{:>8} {:>12.4} {:>12.4}", target_srgb, out8, out16);
         }
     }
 

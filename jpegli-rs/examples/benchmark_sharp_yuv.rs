@@ -1,12 +1,12 @@
 //! Benchmark comparing Sharp YUV vs standard chroma downsampling.
 //!
 //! Run with:
-//!   cargo run --release --features sharp-yuv --example benchmark_sharp_yuv
+//!   cargo run --release --example benchmark_sharp_yuv
 //!
 //! This measures encode time and file size for both methods to quantify the
 //! performance/quality tradeoff of Sharp YUV.
 
-use jpegli::{Encoder, Quality, Subsampling};
+use jpegli::{JpegEncoder, Subsampling};
 use std::time::Instant;
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -34,22 +34,20 @@ fn benchmark_encode_std(
     iterations: u32,
 ) -> (f64, usize) {
     // Warmup
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .jpegli_quality(Quality::from_quality(90.0))
-        .subsampling(subsampling);
-    let _ = encoder.encode(data).unwrap();
+    let _ = JpegEncoder::new(width, height)
+        .quality(90)
+        .subsampling(subsampling)
+        .encode(data)
+        .unwrap();
 
     let start = Instant::now();
     let mut output_size = 0;
     for _ in 0..iterations {
-        let encoder = Encoder::new()
-            .width(width)
-            .height(height)
-            .jpegli_quality(Quality::from_quality(90.0))
-            .subsampling(subsampling);
-        let output = encoder.encode(data).unwrap();
+        let output = JpegEncoder::new(width, height)
+            .quality(90)
+            .subsampling(subsampling)
+            .encode(data)
+            .unwrap();
         output_size = output.len();
     }
     let elapsed = start.elapsed();
@@ -62,7 +60,6 @@ fn benchmark_encode_std(
     (ms_per_encode, output_size)
 }
 
-#[cfg(feature = "sharp-yuv")]
 fn benchmark_encode_sharp(
     name: &str,
     width: u32,
@@ -72,24 +69,22 @@ fn benchmark_encode_sharp(
     iterations: u32,
 ) -> (f64, usize) {
     // Warmup
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .jpegli_quality(Quality::from_quality(90.0))
+    let _ = JpegEncoder::new(width, height)
+        .quality(90)
         .subsampling(subsampling)
-        .sharp_yuv(true);
-    let _ = encoder.encode(data).unwrap();
+        .sharp_yuv(true)
+        .encode(data)
+        .unwrap();
 
     let start = Instant::now();
     let mut output_size = 0;
     for _ in 0..iterations {
-        let encoder = Encoder::new()
-            .width(width)
-            .height(height)
-            .jpegli_quality(Quality::from_quality(90.0))
+        let output = JpegEncoder::new(width, height)
+            .quality(90)
             .subsampling(subsampling)
-            .sharp_yuv(true);
-        let output = encoder.encode(data).unwrap();
+            .sharp_yuv(true)
+            .encode(data)
+            .unwrap();
         output_size = output.len();
     }
     let elapsed = start.elapsed();
@@ -132,7 +127,6 @@ fn main() {
             iterations,
         );
 
-        #[cfg(feature = "sharp-yuv")]
         let (sharp_420_ms, sharp_420_size) = benchmark_encode_sharp(
             "Sharp    4:2:0",
             width as u32,
@@ -142,15 +136,12 @@ fn main() {
             iterations,
         );
 
-        #[cfg(feature = "sharp-yuv")]
-        {
-            let slowdown_420 = ((sharp_420_ms / std_420_ms) - 1.0) * 100.0;
-            let size_diff_420 = ((sharp_420_size as f64 / std_420_size as f64) - 1.0) * 100.0;
-            println!(
-                "  -> Sharp YUV is {:.1}% slower, {:.1}% size diff\n",
-                slowdown_420, size_diff_420
-            );
-        }
+        let slowdown_420 = ((sharp_420_ms / std_420_ms) - 1.0) * 100.0;
+        let size_diff_420 = ((sharp_420_size as f64 / std_420_size as f64) - 1.0) * 100.0;
+        println!(
+            "  -> Sharp YUV is {:.1}% slower, {:.1}% size diff\n",
+            slowdown_420, size_diff_420
+        );
 
         // 4:2:2 comparison
         let (std_422_ms, std_422_size) = benchmark_encode_std(
@@ -162,7 +153,6 @@ fn main() {
             iterations,
         );
 
-        #[cfg(feature = "sharp-yuv")]
         let (sharp_422_ms, sharp_422_size) = benchmark_encode_sharp(
             "Sharp    4:2:2",
             width as u32,
@@ -172,15 +162,12 @@ fn main() {
             iterations,
         );
 
-        #[cfg(feature = "sharp-yuv")]
-        {
-            let slowdown_422 = ((sharp_422_ms / std_422_ms) - 1.0) * 100.0;
-            let size_diff_422 = ((sharp_422_size as f64 / std_422_size as f64) - 1.0) * 100.0;
-            println!(
-                "  -> Sharp YUV is {:.1}% slower, {:.1}% size diff\n",
-                slowdown_422, size_diff_422
-            );
-        }
+        let slowdown_422 = ((sharp_422_ms / std_422_ms) - 1.0) * 100.0;
+        let size_diff_422 = ((sharp_422_size as f64 / std_422_size as f64) - 1.0) * 100.0;
+        println!(
+            "  -> Sharp YUV is {:.1}% slower, {:.1}% size diff\n",
+            slowdown_422, size_diff_422
+        );
 
         println!();
     }
@@ -192,18 +179,14 @@ fn main() {
     let megapixels = 4096.0 * 2160.0 / 1_000_000.0;
 
     let (std_ms, _) = benchmark_encode_std("Standard", 4096, 2160, Subsampling::S420, &data, 10);
-    #[cfg(feature = "sharp-yuv")]
     let (sharp_ms, _) =
         benchmark_encode_sharp("Sharp   ", 4096, 2160, Subsampling::S420, &data, 10);
 
     let std_mpps = megapixels / (std_ms / 1000.0);
     println!("\nStandard throughput: {:.1} MP/s", std_mpps);
 
-    #[cfg(feature = "sharp-yuv")]
-    {
-        let sharp_mpps = megapixels / (sharp_ms / 1000.0);
-        let slowdown = ((sharp_ms / std_ms) - 1.0) * 100.0;
-        println!("Sharp YUV throughput: {:.1} MP/s", sharp_mpps);
-        println!("\nSharp YUV overhead: {:.1}% slower encoding", slowdown);
-    }
+    let sharp_mpps = megapixels / (sharp_ms / 1000.0);
+    let slowdown = ((sharp_ms / std_ms) - 1.0) * 100.0;
+    println!("Sharp YUV throughput: {:.1} MP/s", sharp_mpps);
+    println!("\nSharp YUV overhead: {:.1}% slower encoding", slowdown);
 }

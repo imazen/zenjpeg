@@ -178,10 +178,7 @@ fn create_test_pattern_grayf32() -> Vec<u8> {
 
 /// Count unique RGB colors in u8 data
 fn count_unique_rgb_u8(data: &[u8]) -> usize {
-    let colors: HashSet<(u8, u8, u8)> = data
-        .chunks(3)
-        .map(|c| (c[0], c[1], c[2]))
-        .collect();
+    let colors: HashSet<(u8, u8, u8)> = data.chunks(3).map(|c| (c[0], c[1], c[2])).collect();
     colors.len()
 }
 
@@ -252,7 +249,14 @@ fn test_combination(
     if let Ok(decoded_u8) = decoder.decode(&jpeg) {
         let unique = if is_gray {
             // For grayscale, the decoder outputs RGB, so take just R channel
-            count_unique_gray_u8(&decoded_u8.data.iter().step_by(3).cloned().collect::<Vec<_>>())
+            count_unique_gray_u8(
+                &decoded_u8
+                    .data
+                    .iter()
+                    .step_by(3)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
         } else {
             count_unique_rgb_u8(&decoded_u8.data)
         };
@@ -270,7 +274,12 @@ fn test_combination(
         // f32 at 8-bit precision (for comparison with u8)
         let unique_8bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32.data.iter().step_by(3).cloned().collect::<Vec<_>>(),
+                &decoded_f32
+                    .data
+                    .iter()
+                    .step_by(3)
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 8,
             )
         } else {
@@ -287,7 +296,12 @@ fn test_combination(
         // f32 at 10-bit precision
         let unique_10bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32.data.iter().step_by(3).cloned().collect::<Vec<_>>(),
+                &decoded_f32
+                    .data
+                    .iter()
+                    .step_by(3)
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 10,
             )
         } else {
@@ -304,7 +318,12 @@ fn test_combination(
         // f32 at 12-bit precision
         let unique_12bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32.data.iter().step_by(3).cloned().collect::<Vec<_>>(),
+                &decoded_f32
+                    .data
+                    .iter()
+                    .step_by(3)
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 12,
             )
         } else {
@@ -321,7 +340,12 @@ fn test_combination(
         // f32 at 16-bit precision
         let unique_16bit = if is_gray {
             count_unique_gray_f32(
-                &decoded_f32.data.iter().step_by(3).cloned().collect::<Vec<_>>(),
+                &decoded_f32
+                    .data
+                    .iter()
+                    .step_by(3)
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 16,
             )
         } else {
@@ -341,10 +365,8 @@ fn test_combination(
             let gray: HashSet<u16> = data_u16.iter().step_by(3).cloned().collect();
             gray.len()
         } else {
-            let colors: HashSet<(u16, u16, u16)> = data_u16
-                .chunks(3)
-                .map(|c| (c[0], c[1], c[2]))
-                .collect();
+            let colors: HashSet<(u16, u16, u16)> =
+                data_u16.chunks(3).map(|c| (c[0], c[1], c[2])).collect();
             colors.len()
         };
         results.push(PrecisionResult {
@@ -364,7 +386,10 @@ fn test_precision_matrix() {
     println!("\n{}", "=".repeat(80));
     println!("PRECISION MATRIX: Unique Colors by Encode Format × Decode Format");
     println!("{}", "=".repeat(80));
-    println!("Test image: {}×{} with diverse color pattern", WIDTH, HEIGHT);
+    println!(
+        "Test image: {}×{} with diverse color pattern",
+        WIDTH, HEIGHT
+    );
     println!("Quality: {}", QUALITY);
     println!("Subsampling: 4:4:4 (no chroma loss)");
     println!();
@@ -375,18 +400,54 @@ fn test_precision_matrix() {
     // 8-bit formats
     let test_cases: Vec<(PixelFormat, Vec<u8>, &'static str)> = vec![
         (PixelFormat::Rgb, create_test_pattern_rgb8(), "Rgb (sRGB)"),
-        (PixelFormat::Rgba, create_test_pattern_rgba8(), "Rgba (sRGB)"),
+        (
+            PixelFormat::Rgba,
+            create_test_pattern_rgba8(),
+            "Rgba (sRGB)",
+        ),
         (PixelFormat::Bgr, create_test_pattern_bgr8(), "Bgr (sRGB)"),
-        (PixelFormat::Bgra, create_test_pattern_bgra8(), "Bgra (sRGB)"),
-        (PixelFormat::Gray, create_test_pattern_gray8(), "Gray (sRGB)"),
+        (
+            PixelFormat::Bgra,
+            create_test_pattern_bgra8(),
+            "Bgra (sRGB)",
+        ),
+        (
+            PixelFormat::Gray,
+            create_test_pattern_gray8(),
+            "Gray (sRGB)",
+        ),
         // 16-bit formats (linear)
-        (PixelFormat::Rgb16, create_test_pattern_rgb16(), "Rgb16 (linear)"),
-        (PixelFormat::Rgba16, create_test_pattern_rgba16(), "Rgba16 (linear)"),
-        (PixelFormat::Gray16, create_test_pattern_gray16(), "Gray16 (linear)"),
+        (
+            PixelFormat::Rgb16,
+            create_test_pattern_rgb16(),
+            "Rgb16 (linear)",
+        ),
+        (
+            PixelFormat::Rgba16,
+            create_test_pattern_rgba16(),
+            "Rgba16 (linear)",
+        ),
+        (
+            PixelFormat::Gray16,
+            create_test_pattern_gray16(),
+            "Gray16 (linear)",
+        ),
         // Float formats (linear)
-        (PixelFormat::RgbF32, create_test_pattern_rgbf32(), "RgbF32 (linear)"),
-        (PixelFormat::RgbaF32, create_test_pattern_rgbaf32(), "RgbaF32 (linear)"),
-        (PixelFormat::GrayF32, create_test_pattern_grayf32(), "GrayF32 (linear)"),
+        (
+            PixelFormat::RgbF32,
+            create_test_pattern_rgbf32(),
+            "RgbF32 (linear)",
+        ),
+        (
+            PixelFormat::RgbaF32,
+            create_test_pattern_rgbaf32(),
+            "RgbaF32 (linear)",
+        ),
+        (
+            PixelFormat::GrayF32,
+            create_test_pattern_grayf32(),
+            "GrayF32 (linear)",
+        ),
     ];
 
     for (format, data, name) in test_cases {
@@ -403,25 +464,43 @@ fn test_precision_matrix() {
         .into_iter()
         .collect();
 
-    let decode_formats = ["u8", "f32→8bit", "f32→10bit", "f32→12bit", "f32→16bit", "to_u16()"];
+    let decode_formats = [
+        "u8",
+        "f32→8bit",
+        "f32→10bit",
+        "f32→12bit",
+        "f32→16bit",
+        "to_u16()",
+    ];
 
     // Print header
-    println!("┌{:─<20}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┐",
-        "", "", "", "", "", "", "", "");
+    println!(
+        "┌{:─<20}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┬{:─<8}┐",
+        "", "", "", "", "", "", "", ""
+    );
     print!("│{:^20}│{:^8}│", "Encode Format", "Size");
     for df in &decode_formats {
         print!("{:^8}│", df);
     }
     println!();
-    println!("├{:─<20}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┤",
-        "", "", "", "", "", "", "", "");
+    println!(
+        "├{:─<20}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┼{:─<8}┤",
+        "", "", "", "", "", "", "", ""
+    );
 
     // Sort encode formats: 8-bit first, then 16-bit, then float, grays at end
     let mut sorted_formats: Vec<&str> = vec![
-        "Rgb (sRGB)", "Rgba (sRGB)", "Bgr (sRGB)", "Bgra (sRGB)",
-        "Rgb16 (linear)", "Rgba16 (linear)",
-        "RgbF32 (linear)", "RgbaF32 (linear)",
-        "Gray (sRGB)", "Gray16 (linear)", "GrayF32 (linear)",
+        "Rgb (sRGB)",
+        "Rgba (sRGB)",
+        "Bgr (sRGB)",
+        "Bgra (sRGB)",
+        "Rgb16 (linear)",
+        "Rgba16 (linear)",
+        "RgbF32 (linear)",
+        "RgbaF32 (linear)",
+        "Gray (sRGB)",
+        "Gray16 (linear)",
+        "GrayF32 (linear)",
     ];
     sorted_formats.retain(|f| encode_formats.contains(f));
 
@@ -440,7 +519,10 @@ fn test_precision_matrix() {
         print!("│{:^20}│{:>7} │", encode_fmt, jpeg_size);
 
         for decode_fmt in &decode_formats {
-            if let Some(result) = results_for_format.iter().find(|r| r.decode_format == *decode_fmt) {
+            if let Some(result) = results_for_format
+                .iter()
+                .find(|r| r.decode_format == *decode_fmt)
+            {
                 print!("{:>7} │", result.unique_colors);
             } else {
                 print!("{:>7} │", "-");
@@ -449,8 +531,10 @@ fn test_precision_matrix() {
         println!();
     }
 
-    println!("└{:─<20}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┘",
-        "", "", "", "", "", "", "", "");
+    println!(
+        "└{:─<20}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┴{:─<8}┘",
+        "", "", "", "", "", "", "", ""
+    );
 
     println!();
     println!("Legend:");
@@ -566,8 +650,10 @@ fn test_precision_improvement_summary() {
         unique_u8
     );
 
-    println!("\n✓ f32 decode preserves {:.1}% more colors than u8",
-        (f32_advantage - 1.0) * 100.0);
+    println!(
+        "\n✓ f32 decode preserves {:.1}% more colors than u8",
+        (f32_advantage - 1.0) * 100.0
+    );
 }
 
 /// Test that demonstrates the 10+ bit feature specifically using grayscale.
@@ -643,7 +729,10 @@ fn test_10plus_bit_demonstration() {
     // Calculate improvement ratio
     let improvement_ratio = unique_f32_16 as f64 / unique_u8 as f64;
     println!();
-    println!("Precision improvement (f32→16bit / u8): {:.1}x", improvement_ratio);
+    println!(
+        "Precision improvement (f32→16bit / u8): {:.1}x",
+        improvement_ratio
+    );
 
     // The key assertions for 10+ bit precision:
     // 1. f32 at 10-bit should show more values than u8 8-bit
@@ -662,6 +751,12 @@ fn test_10plus_bit_demonstration() {
     );
 
     println!();
-    println!("✓ Confirmed: f32 decode reveals {:.1} bits of precision", effective_bits_16);
-    println!("✓ f32→16bit has {:.1}x more unique values than u8!", improvement_ratio);
+    println!(
+        "✓ Confirmed: f32 decode reveals {:.1} bits of precision",
+        effective_bits_16
+    );
+    println!(
+        "✓ f32→16bit has {:.1}x more unique values than u8!",
+        improvement_ratio
+    );
 }

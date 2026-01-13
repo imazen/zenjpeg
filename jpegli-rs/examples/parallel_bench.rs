@@ -22,7 +22,10 @@ fn main() {
 
 #[cfg(feature = "parallel")]
 fn run_benchmark() {
-    println!("{:>12} {:>12} {:>12} {:>12} {:>8}", "Size", "Blocks", "Sequential", "Parallel", "Speedup");
+    println!(
+        "{:>12} {:>12} {:>12} {:>12} {:>8}",
+        "Size", "Blocks", "Sequential", "Parallel", "Speedup"
+    );
     println!("{}", "-".repeat(60));
 
     for &(width, height) in &[
@@ -35,11 +38,7 @@ fn run_benchmark() {
         let result = benchmark_dct(width, height);
         println!(
             "{:>5}x{:<5} {:>12} {:>10.2}ms {:>10.2}ms {:>7.2}x",
-            width, height,
-            result.blocks,
-            result.sequential_ms,
-            result.parallel_ms,
-            result.speedup
+            width, height, result.blocks, result.sequential_ms, result.parallel_ms, result.speedup
         );
     }
 
