@@ -477,6 +477,7 @@ impl<P: Pixel> RgbEncoder<P> {
 ///
 /// Only valid with `ColorMode::YCbCr`. XYB mode requires RGB input.
 pub struct YCbCrPlanarEncoder {
+    #[allow(dead_code)] // Will be used when finish() is implemented
     config: EncoderConfig,
     width: u32,
     height: u32,
