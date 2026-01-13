@@ -30,7 +30,6 @@ use crate::error::{Error, Result};
 use crate::types::PixelFormat;
 use crate::xyb::{linear_to_srgb_fast, srgb_u8_to_linear};
 
-#[cfg(feature = "simd")]
 use wide::f32x8;
 
 // ============================================================================
@@ -52,7 +51,6 @@ const CONVERGENCE_THRESHOLD: f32 = 0.1;
 /// Compute Y (luminance) plane from interleaved RGB u8 data using SIMD.
 ///
 /// Processes 8 pixels at a time using f32x8 vectors.
-#[cfg(feature = "simd")]
 fn compute_y_plane_from_rgb(
     data: &[u8],
     width: usize,
@@ -111,25 +109,6 @@ fn compute_y_plane_from_rgb(
 
     // Handle remainder with scalar code
     for i in (chunks * 8)..num_pixels {
-        let idx = i * bpp;
-        let r = data[idx] as f32;
-        let g = data[idx + 1] as f32;
-        let b = data[idx + 2] as f32;
-        y_plane[i] = color::rgb_to_ycbcr_f32(r, g, b).0;
-    }
-}
-
-/// Scalar version of Y plane computation.
-#[cfg(not(feature = "simd"))]
-fn compute_y_plane_from_rgb(
-    data: &[u8],
-    width: usize,
-    height: usize,
-    bpp: usize,
-    y_plane: &mut [f32],
-) {
-    let num_pixels = width * height;
-    for i in 0..num_pixels {
         let idx = i * bpp;
         let r = data[idx] as f32;
         let g = data[idx + 1] as f32;

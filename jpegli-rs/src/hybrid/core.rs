@@ -103,38 +103,27 @@ pub fn scale_quant_by_aq(
     // strength=0.5 → multiplier=1.5 (50% coarser)
     let multiplier = 1.0 + aq_strength;
 
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x8;
-        let mul = f32x8::splat(multiplier);
-        let one = f32x8::splat(1.0);
-        let max_val = f32x8::splat(255.0);
+    use wide::f32x8;
+    let mul = f32x8::splat(multiplier);
+    let one = f32x8::splat(1.0);
+    let max_val = f32x8::splat(255.0);
 
-        for chunk in 0..8 {
-            let k = chunk * 8;
-            let base_f = f32x8::from([
-                base_quant[k] as f32,
-                base_quant[k + 1] as f32,
-                base_quant[k + 2] as f32,
-                base_quant[k + 3] as f32,
-                base_quant[k + 4] as f32,
-                base_quant[k + 5] as f32,
-                base_quant[k + 6] as f32,
-                base_quant[k + 7] as f32,
-            ]);
-            let val = (base_f * mul).round().max(one).min(max_val);
-            let arr: [f32; 8] = val.into();
-            for j in 0..8 {
-                scaled[k + j] = arr[j] as u16;
-            }
-        }
-    }
-
-    #[cfg(not(feature = "simd"))]
-    {
-        for i in 0..DCT_BLOCK_SIZE {
-            let val = (base_quant[i] as f32 * multiplier).round() as u16;
-            scaled[i] = val.clamp(1, 255);
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let base_f = f32x8::from([
+            base_quant[k] as f32,
+            base_quant[k + 1] as f32,
+            base_quant[k + 2] as f32,
+            base_quant[k + 3] as f32,
+            base_quant[k + 4] as f32,
+            base_quant[k + 5] as f32,
+            base_quant[k + 6] as f32,
+            base_quant[k + 7] as f32,
+        ]);
+        let val = (base_f * mul).round().max(one).min(max_val);
+        let arr: [f32; 8] = val.into();
+        for j in 0..8 {
+            scaled[k + j] = arr[j] as u16;
         }
     }
 
@@ -153,36 +142,25 @@ pub fn scale_quant_by_aq(
 pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
     let mut result = [0i32; DCT_BLOCK_SIZE];
 
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x8;
-        let scale = f32x8::splat(8.0);
+    use wide::f32x8;
+    let scale = f32x8::splat(8.0);
 
-        for chunk in 0..8 {
-            let k = chunk * 8;
-            let v = f32x8::from([
-                coeffs[k],
-                coeffs[k + 1],
-                coeffs[k + 2],
-                coeffs[k + 3],
-                coeffs[k + 4],
-                coeffs[k + 5],
-                coeffs[k + 6],
-                coeffs[k + 7],
-            ]);
-            let scaled = (v * scale).round();
-            let arr: [f32; 8] = scaled.into();
-            for j in 0..8 {
-                result[k + j] = arr[j] as i32;
-            }
-        }
-    }
-
-    #[cfg(not(feature = "simd"))]
-    {
-        for i in 0..DCT_BLOCK_SIZE {
-            // Multiply by 8 to compensate for trellis's internal 8x quant scaling
-            result[i] = (coeffs[i] * 8.0).round() as i32;
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let v = f32x8::from([
+            coeffs[k],
+            coeffs[k + 1],
+            coeffs[k + 2],
+            coeffs[k + 3],
+            coeffs[k + 4],
+            coeffs[k + 5],
+            coeffs[k + 6],
+            coeffs[k + 7],
+        ]);
+        let scaled = (v * scale).round();
+        let arr: [f32; 8] = scaled.into();
+        for j in 0..8 {
+            result[k + j] = arr[j] as i32;
         }
     }
 
@@ -255,45 +233,33 @@ pub fn hybrid_quantize_block_simple(
     // 2. Simple quantization (divide and round)
     let mut quantized = [0i16; DCT_BLOCK_SIZE];
 
-    #[cfg(feature = "simd")]
-    {
-        use wide::f32x8;
-        for chunk in 0..8 {
-            let k = chunk * 8;
-            let dct = f32x8::from([
-                dct_coeffs[k],
-                dct_coeffs[k + 1],
-                dct_coeffs[k + 2],
-                dct_coeffs[k + 3],
-                dct_coeffs[k + 4],
-                dct_coeffs[k + 5],
-                dct_coeffs[k + 6],
-                dct_coeffs[k + 7],
-            ]);
-            let q = f32x8::from([
-                scaled_quant[k] as f32,
-                scaled_quant[k + 1] as f32,
-                scaled_quant[k + 2] as f32,
-                scaled_quant[k + 3] as f32,
-                scaled_quant[k + 4] as f32,
-                scaled_quant[k + 5] as f32,
-                scaled_quant[k + 6] as f32,
-                scaled_quant[k + 7] as f32,
-            ]);
-            let val = (dct / q).round();
-            let arr: [f32; 8] = val.into();
-            for j in 0..8 {
-                quantized[k + j] = arr[j] as i16;
-            }
-        }
-    }
-
-    #[cfg(not(feature = "simd"))]
-    {
-        for i in 0..DCT_BLOCK_SIZE {
-            let q = scaled_quant[i] as f32;
-            let val = dct_coeffs[i] / q;
-            quantized[i] = val.round() as i16;
+    use wide::f32x8;
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let dct = f32x8::from([
+            dct_coeffs[k],
+            dct_coeffs[k + 1],
+            dct_coeffs[k + 2],
+            dct_coeffs[k + 3],
+            dct_coeffs[k + 4],
+            dct_coeffs[k + 5],
+            dct_coeffs[k + 6],
+            dct_coeffs[k + 7],
+        ]);
+        let q = f32x8::from([
+            scaled_quant[k] as f32,
+            scaled_quant[k + 1] as f32,
+            scaled_quant[k + 2] as f32,
+            scaled_quant[k + 3] as f32,
+            scaled_quant[k + 4] as f32,
+            scaled_quant[k + 5] as f32,
+            scaled_quant[k + 6] as f32,
+            scaled_quant[k + 7] as f32,
+        ]);
+        let val = (dct / q).round();
+        let arr: [f32; 8] = val.into();
+        for j in 0..8 {
+            quantized[k + j] = arr[j] as i16;
         }
     }
 

@@ -3,11 +3,10 @@
 //! This module provides 8x8 IDCT-III transform used for JPEG decoding.
 //! Uses the recursive splitting algorithm from jpegli for exact compatibility.
 //!
-//! SIMD optimization is available via the `simd` feature (enabled by default).
+//! SIMD optimization via the `wide` crate is always enabled.
 
 use crate::consts::DCT_BLOCK_SIZE;
 
-#[cfg(feature = "simd")]
 use wide::f32x8;
 
 /// WcMultipliers constants for IDCT (same as DCT).
@@ -23,8 +22,8 @@ const WC8: [f32; 4] = [
 
 const SQRT2: f32 = 1.41421356237;
 
-/// Transpose an 8x8 block (scalar version).
-#[cfg(any(not(feature = "simd"), test))]
+/// Transpose an 8x8 block (scalar version, used in tests).
+#[cfg(test)]
 #[inline]
 fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
@@ -34,8 +33,7 @@ fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     }
 }
 
-// SIMD-optimized implementations
-#[cfg(feature = "simd")]
+// SIMD-optimized implementations (always available via `wide` crate)
 mod simd {
     use super::*;
     use multiversion::multiversion;
@@ -300,7 +298,7 @@ mod simd {
 /// ForwardEvenOdd: De-interleave even/odd parts (opposite of InverseEvenOdd)
 /// out[i] = in[2*i] for i in 0..N/2
 /// out[N/2+i] = in[2*i+1] for i in 0..N/2
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 #[inline]
 fn forward_even_odd<const N: usize>(input: &[f32], output: &mut [f32]) {
     let half = N / 2;
@@ -312,7 +310,7 @@ fn forward_even_odd<const N: usize>(input: &[f32], output: &mut [f32]) {
 
 /// BTranspose: Reverse of B transform
 /// First cumulative sum from end to start, then coeff[0] *= sqrt2
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 #[inline]
 fn b_transpose<const N: usize>(coeff: &mut [f32]) {
     // Cumulative sum from end to start
@@ -325,7 +323,7 @@ fn b_transpose<const N: usize>(coeff: &mut [f32]) {
 /// MultiplyAndAdd: Combine even and odd parts with Wc multipliers
 /// out[i] = in[i] + Wc[i] * in[N/2+i]
 /// out[N-1-i] = in[i] - Wc[i] * in[N/2+i]
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 #[inline]
 fn multiply_and_add_8(input: &[f32], output: &mut [f32]) {
     for i in 0..4 {
@@ -337,7 +335,7 @@ fn multiply_and_add_8(input: &[f32], output: &mut [f32]) {
     }
 }
 
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 #[inline]
 fn multiply_and_add_4(input: &[f32], output: &mut [f32]) {
     for i in 0..2 {
@@ -350,7 +348,7 @@ fn multiply_and_add_4(input: &[f32], output: &mut [f32]) {
 }
 
 /// IDCT base case for N=2
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 #[inline]
 fn idct1d_2(input: &[f32], output: &mut [f32]) {
     let in1 = input[0];
@@ -360,7 +358,7 @@ fn idct1d_2(input: &[f32], output: &mut [f32]) {
 }
 
 /// IDCT for N=4 (recursive)
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 fn idct1d_4(input: &[f32], output: &mut [f32]) {
     let mut tmp = [0.0f32; 4];
 
@@ -392,7 +390,7 @@ fn idct1d_4(input: &[f32], output: &mut [f32]) {
 }
 
 /// IDCT for N=8 (recursive)
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 fn idct1d_8(input: &[f32], output: &mut [f32]) {
     let mut tmp = [0.0f32; 8];
 
@@ -423,7 +421,7 @@ fn idct1d_8(input: &[f32], output: &mut [f32]) {
 }
 
 /// 1D IDCT on all 8 rows (no scaling - scaling handled in main function)
-#[cfg(any(not(feature = "simd"), test))]
+#[cfg(test)]
 fn idct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
         let in_slice = &input[row * 8..(row + 1) * 8];
@@ -464,39 +462,8 @@ pub fn inverse_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
         return [dc_value; DCT_BLOCK_SIZE];
     }
 
-    // Use SIMD-optimized version when available
-    #[cfg(feature = "simd")]
-    {
-        simd::inverse_dct_8x8_simd(input)
-    }
-
-    #[cfg(not(feature = "simd"))]
-    {
-        let mut block0 = *input;
-        let mut block1 = [0.0f32; 64];
-
-        // Transpose
-        transpose_8x8(&block0, &mut block1);
-
-        // Column IDCT (on transposed = rows of transposed)
-        idct_rows(&block1, &mut block0);
-
-        // Transpose
-        transpose_8x8(&block0, &mut block1);
-
-        // Row IDCT
-        let mut output = [0.0f32; 64];
-        idct_rows(&block1, &mut output);
-
-        // Apply 1/8 scaling to match forward DCT
-        // Forward DCT uses 1/8 for decoder compatibility, IDCT needs matching 1/8
-        let scale = 1.0 / 8.0;
-        for v in &mut output {
-            *v *= scale;
-        }
-
-        output
-    }
+    // Use SIMD-optimized version (always available via wide crate)
+    simd::inverse_dct_8x8_simd(input)
 }
 
 /// Performs inverse DCT with level shift and clamping to u8.
@@ -822,7 +789,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_simd_transpose_matches_scalar() {
         let mut input = [0.0f32; 64];
@@ -847,7 +813,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_simd_idct_matches_scalar() {
         // Test with random input
