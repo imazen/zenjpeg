@@ -56,6 +56,12 @@ pub struct StreamingEncoderBuilder {
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     parallel: bool,
+    /// Hybrid quantization configuration (requires `experimental-hybrid-trellis` feature)
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    hybrid_config: crate::hybrid::config::HybridConfig,
+    /// Custom AQ map (requires `experimental-hybrid-trellis` feature)
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
 }
 
 impl StreamingEncoderBuilder {
@@ -75,6 +81,10 @@ impl StreamingEncoderBuilder {
             use_xyb: false,
             #[cfg(feature = "parallel")]
             parallel: false,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            custom_aq_map: None,
         }
     }
 
@@ -184,6 +194,35 @@ impl StreamingEncoderBuilder {
         self
     }
 
+    /// Enables Sharp YUV chroma downsampling for better edge quality.
+    ///
+    /// Sharp YUV uses iterative optimization to preserve edges during chroma
+    /// subsampling (4:2:0, 4:2:2). This produces noticeably better quality
+    /// on images with sharp color transitions at the cost of slower encoding.
+    ///
+    /// Equivalent to `.chroma_downsampling(ChromaDownsampling::GammaAwareIterative)`.
+    ///
+    /// Has no effect for 4:4:4 subsampling (no downsampling needed).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let jpeg = JpegEncoder::new(640, 480)
+    ///     .quality(85)
+    ///     .subsampling(Subsampling::S420)
+    ///     .sharp_yuv(true)
+    ///     .encode(&pixels)?;
+    /// ```
+    #[must_use]
+    pub fn sharp_yuv(mut self, enable: bool) -> Self {
+        self.chroma_downsampling = if enable {
+            ChromaDownsampling::GammaAwareIterative
+        } else {
+            ChromaDownsampling::Box
+        };
+        self
+    }
+
     /// Sets the restart interval (MCUs between restart markers).
     #[must_use]
     pub fn restart_interval(mut self, interval: u16) -> Self {
@@ -239,6 +278,53 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn use_xyb(mut self, enable: bool) -> Self {
         self.use_xyb = enable;
+        self
+    }
+
+    /// Enables hybrid quantization (jpegli AQ + mozjpeg trellis).
+    ///
+    /// This combines jpegli's adaptive quantization (which determines WHERE
+    /// to spend bits based on image content) with mozjpeg's trellis quantization
+    /// (which optimizes HOW to spend bits via rate-distortion optimization).
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn hybrid_trellis(mut self, enable: bool) -> Self {
+        self.hybrid_config = if enable {
+            crate::hybrid::config::HybridConfig::default()
+        } else {
+            crate::hybrid::config::HybridConfig::disabled()
+        };
+        self
+    }
+
+    /// Sets custom hybrid quantization configuration.
+    ///
+    /// Allows fine-tuning all hybrid AQ+trellis parameters.
+    /// See `HybridConfig` for available options.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
+        self.hybrid_config = config;
+        self
+    }
+
+    /// Sets a custom AQ (adaptive quantization) strength map.
+    ///
+    /// This allows pre-scaling the AQ map to control file size. When the AQ map
+    /// is scaled up, more bits are allocated to complex regions (larger files).
+    /// When scaled down, fewer bits are allocated (smaller files).
+    ///
+    /// If not provided, the AQ map is computed automatically from the image.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn aq_map(mut self, map: crate::adaptive_quant::AQStrengthMap) -> Self {
+        self.custom_aq_map = Some(map);
         self
     }
 
@@ -647,6 +733,16 @@ impl StreamingEncoder {
 
         #[cfg(feature = "parallel")]
         let encoder = encoder.parallel(builder.parallel);
+
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        let encoder = encoder.hybrid_config(builder.hybrid_config);
+
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        let encoder = if let Some(map) = builder.custom_aq_map {
+            encoder.aq_map(map)
+        } else {
+            encoder
+        };
 
         Ok(Self {
             width,
@@ -1063,7 +1159,7 @@ impl StreamingEncoder {
                 )
             }
             _ => {
-                // Baseline encoding path
+                // Baseline encoding
                 Self::build_jpeg_baseline(encoder, y_quant, cb_quant, cr_quant, strip_output)
             }
         }
@@ -1086,21 +1182,17 @@ impl StreamingEncoder {
         // Branch based on XYB vs YCbCr mode
         let scan_data = if encoder.config.use_xyb {
             // XYB mode: uses different headers, tables, and encoding
-            // strip_output contains: y_blocks = X, cb_blocks = Y, cr_blocks = B (2x2 downsampled)
             encoder.write_header_xyb(&mut output)?;
-            // Write APP14 Adobe marker for RGB colorspace (required by decoders)
-            encoder.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
-                                                        // Write XYB ICC profile so decoders can interpret the colors correctly
+            encoder.write_app14_adobe(&mut output, 0)?;
             encoder.write_icc_profile(&mut output, &crate::consts::XYB_ICC_PROFILE)?;
             encoder.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
             encoder.write_frame_header_xyb(&mut output)?;
 
             if encoder.config.optimize_huffman {
-                // Use raster-ordered XYB encoding (strip encoder produces raster order)
                 let (dc_table, ac_table) = encoder.build_optimized_tables_xyb_raster(
-                    &strip_output.y_blocks,  // X component
-                    &strip_output.cb_blocks, // Y component
-                    &strip_output.cr_blocks, // B component (2x2 downsampled)
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
                 )?;
 
                 encoder.write_huffman_tables_xyb_optimized(&mut output, &dc_table, &ac_table);
@@ -1125,7 +1217,6 @@ impl StreamingEncoder {
                 }
                 encoder.write_scan_header_xyb(&mut output)?;
 
-                // XYB without optimized tables - use raster-ordered standard encoding
                 encoder.encode_with_tables_xyb_standard_raster(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
