@@ -6,12 +6,41 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
+use enough::Never;
 use jpegli::{
     decode::{Decoder, DecoderConfig},
-    types::{ColorSpace, Component, Dimensions, HuffmanTable, JpegMode, PixelFormat, Subsampling},
-    JpegEncoder, Quality, QuantTable,
+    types::{ColorSpace, Component, Dimensions, HuffmanTable},
+    ChromaSubsampling, EncoderConfig, PixelLayout, Quality, QuantTable,
 };
 use test_utils::{generate_gradient_d, generate_noise};
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
+fn encode_bgr(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Bgr8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
+fn encode_bgra(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Bgrx8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 // ============================================================================
 // TYPES MODULE COVERAGE
@@ -45,55 +74,12 @@ mod types_coverage {
     }
 
     #[test]
-    fn pixel_format_coverage() {
-        // Test all PixelFormat variants for bytes_per_pixel
-        assert_eq!(PixelFormat::Gray.bytes_per_pixel(), 1);
-        assert_eq!(PixelFormat::Rgb.bytes_per_pixel(), 3);
-        assert_eq!(PixelFormat::Rgba.bytes_per_pixel(), 4);
-        assert_eq!(PixelFormat::Bgr.bytes_per_pixel(), 3);
-        assert_eq!(PixelFormat::Bgra.bytes_per_pixel(), 4);
-        assert_eq!(PixelFormat::Cmyk.bytes_per_pixel(), 4);
-
-        // Test num_channels
-        assert_eq!(PixelFormat::Gray.num_channels(), 1);
-        assert_eq!(PixelFormat::Rgb.num_channels(), 3);
-        assert_eq!(PixelFormat::Rgba.num_channels(), 3);
-        assert_eq!(PixelFormat::Bgr.num_channels(), 3);
-        assert_eq!(PixelFormat::Bgra.num_channels(), 3);
-        assert_eq!(PixelFormat::Cmyk.num_channels(), 4);
-
-        // Test color_space
-        assert_eq!(PixelFormat::Gray.color_space(), ColorSpace::Grayscale);
-        assert_eq!(PixelFormat::Rgb.color_space(), ColorSpace::Rgb);
-        assert_eq!(PixelFormat::Rgba.color_space(), ColorSpace::Rgb);
-        assert_eq!(PixelFormat::Bgr.color_space(), ColorSpace::Rgb);
-        assert_eq!(PixelFormat::Bgra.color_space(), ColorSpace::Rgb);
-        assert_eq!(PixelFormat::Cmyk.color_space(), ColorSpace::Cmyk);
-
-        // Test Default trait
-        assert_eq!(PixelFormat::default(), PixelFormat::Rgb);
-    }
-
-    #[test]
-    fn subsampling_coverage() {
-        // Test all subsampling modes
-        assert_eq!(Subsampling::S444.h_samp_factor_luma(), 1);
-        assert_eq!(Subsampling::S444.v_samp_factor_luma(), 1);
-        assert_eq!(Subsampling::S422.h_samp_factor_luma(), 2);
-        assert_eq!(Subsampling::S422.v_samp_factor_luma(), 1);
-        assert_eq!(Subsampling::S420.h_samp_factor_luma(), 2);
-        assert_eq!(Subsampling::S420.v_samp_factor_luma(), 2);
-        assert_eq!(Subsampling::S440.h_samp_factor_luma(), 1);
-        assert_eq!(Subsampling::S440.v_samp_factor_luma(), 2);
-        assert_eq!(Subsampling::default(), Subsampling::S444);
-    }
-
-    #[test]
-    fn jpeg_mode_coverage() {
-        assert_eq!(JpegMode::default(), JpegMode::Baseline);
-        let _ = JpegMode::Extended;
-        let _ = JpegMode::Progressive;
-        let _ = JpegMode::Lossless;
+    fn chroma_subsampling_coverage() {
+        // Test all ChromaSubsampling modes
+        let _full = ChromaSubsampling::Full;
+        let _half_h = ChromaSubsampling::HalfHorizontal;
+        let _quarter = ChromaSubsampling::Quarter;
+        let _half_v = ChromaSubsampling::HalfVertical;
     }
 
     #[test]
@@ -175,13 +161,13 @@ mod entropy_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Low quality creates larger coefficients
-        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(10.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let config = EncoderConfig::new().quality(10.0);
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
         assert!(jpeg.len() > 100);
 
         // High quality with small coefficients
-        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(100.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let config = EncoderConfig::new().quality(100.0);
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
         assert!(jpeg.len() > 100);
     }
 
@@ -190,11 +176,10 @@ mod entropy_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // Test progressive mode (exercises DC progressive encoding)
-        let encoder = JpegEncoder::new(128, 128)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(90.0));
-        let jpeg = encoder
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .progressive(true)
+            .quality(90.0);
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("progressive encode failed");
 
         // Verify it's actually progressive
@@ -211,11 +196,10 @@ mod entropy_coverage {
         // Use a noisy image to exercise more AC coefficient paths
         let img = generate_noise(128, 128, 42, 3);
 
-        let encoder = JpegEncoder::new(128, 128)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(80.0));
-        let jpeg = encoder
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .progressive(true)
+            .quality(80.0);
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("progressive encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -227,31 +211,13 @@ mod entropy_coverage {
         // Solid color image should have many EOB runs
         let img = test_utils::generate_solid(128, 128, 128, 3);
 
-        let encoder = JpegEncoder::new(128, 128)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(90.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let config = EncoderConfig::new()
+            .progressive(true)
+            .quality(90.0);
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 128);
-    }
-
-    #[test]
-    fn restart_markers() {
-        let img = generate_gradient_d(256, 256, 3);
-
-        // Create encoder with restart interval
-        // Note: restart interval support may have decoder compatibility issues
-        let encoder = JpegEncoder::new(256, 256).restart_interval(10);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
-
-        // Check for DRI marker (defines restart interval)
-        let has_dri = jpeg.windows(2).any(|w| w == [0xFF, 0xDD]);
-        assert!(has_dri, "Should have DRI marker");
-
-        // Note: Full decode may fail due to restart marker handling
-        // Just verify the JPEG structure is valid
-        assert!(jpeg.len() > 1000, "JPEG should be reasonable size");
     }
 }
 
@@ -272,8 +238,8 @@ mod color_coverage {
             pixels[i * 3 + 2] = 128; // R
         }
 
-        let encoder = JpegEncoder::new(64, 64).pixel_format(PixelFormat::Bgr);
-        let jpeg = encoder.encode(&pixels).expect("BGR encode failed");
+        let config = EncoderConfig::new();
+        let jpeg = encode_bgr(64, 64, &pixels, &config).expect("BGR encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
@@ -290,8 +256,8 @@ mod color_coverage {
             pixels[i * 4 + 3] = 255; // A
         }
 
-        let encoder = JpegEncoder::new(64, 64).pixel_format(PixelFormat::Bgra);
-        let jpeg = encoder.encode(&pixels).expect("BGRA encode failed");
+        let config = EncoderConfig::new();
+        let jpeg = encode_bgra(64, 64, &pixels, &config).expect("BGRA encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
@@ -301,8 +267,8 @@ mod color_coverage {
     fn grayscale_from_rgb() {
         // Encode RGB but with grayscale-like content
         let img = test_utils::generate_gradient_h(64, 64, 3);
-        let encoder = JpegEncoder::new(64, 64);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let config = EncoderConfig::new();
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
@@ -321,9 +287,8 @@ mod idct_coverage {
         // Different quality levels exercise different coefficient ranges
         for q in [1.0, 5.0, 20.0, 40.0, 60.0, 80.0, 95.0, 100.0] {
             let img = generate_noise(64, 64, 12345, 3);
-            let jpeg = JpegEncoder::new(64, 64)
-                .quality(Quality::from_quality(q))
-                .encode(&img.pixels)
+            let config = EncoderConfig::new().quality(q);
+            let jpeg = encode_rgb(64, 64, &img.pixels, &config)
                 .expect("encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -335,10 +300,10 @@ mod idct_coverage {
     fn decode_progressive_multiple_passes() {
         // Progressive decode exercises IDCT with partial coefficients
         let img = generate_noise(256, 256, 99, 3);
-        let jpeg = JpegEncoder::new(256, 256)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(70.0))
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .progressive(true)
+            .quality(70.0);
+        let jpeg = encode_rgb(256, 256, &img.pixels, &config)
             .expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -357,8 +322,8 @@ mod decode_coverage {
     #[test]
     fn decode_f32_output() {
         let img = generate_gradient_d(64, 64, 3);
-        let jpeg = JpegEncoder::new(64, 64)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new();
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config)
             .expect("encode failed");
 
         // Decode to f32
@@ -376,9 +341,8 @@ mod decode_coverage {
     fn decode_grayscale_to_rgb() {
         // Encode grayscale
         let img = test_utils::generate_gradient_h(64, 64, 1);
-        let jpeg = JpegEncoder::new(64, 64)
-            .pixel_format(PixelFormat::Gray)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new().grayscale();
+        let jpeg = encode_gray(64, 64, &img.pixels, &config)
             .expect("encode failed");
 
         // Decode to RGB (default)
@@ -391,17 +355,17 @@ mod decode_coverage {
     #[test]
     fn decode_with_memory_limits() {
         let img = generate_gradient_d(128, 128, 3);
-        let jpeg = JpegEncoder::new(128, 128)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new();
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("encode failed");
 
         // Test with custom memory limits
-        let config = DecoderConfig {
+        let decode_config = DecoderConfig {
             max_pixels: 10_000_000,
             max_memory: 500 * 1024 * 1024,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(config);
+        let decoder = Decoder::from_config(decode_config);
         let decoded = decoder.decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 128);
     }
@@ -409,16 +373,15 @@ mod decode_coverage {
     #[test]
     fn decode_with_block_smoothing() {
         let img = generate_noise(64, 64, 42, 3);
-        let jpeg = JpegEncoder::new(64, 64)
-            .quality(Quality::from_quality(30.0))
-            .encode(&img.pixels)
+        let config = EncoderConfig::new().quality(30.0);
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config)
             .expect("encode failed");
 
-        let config = DecoderConfig {
+        let decode_config = DecoderConfig {
             block_smoothing: true,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(config);
+        let decoder = Decoder::from_config(decode_config);
         let decoded = decoder.decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
     }
@@ -426,16 +389,15 @@ mod decode_coverage {
     #[test]
     fn decode_with_fancy_upsampling() {
         let img = generate_gradient_d(128, 128, 3);
-        let jpeg = JpegEncoder::new(128, 128)
-            .subsampling(Subsampling::S420)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new().ycbcr(ChromaSubsampling::Quarter);
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("encode failed");
 
-        let config = DecoderConfig {
+        let decode_config = DecoderConfig {
             fancy_upsampling: true,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(config);
+        let decoder = Decoder::from_config(decode_config);
         let decoded = decoder.decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 128);
     }
@@ -443,17 +405,16 @@ mod decode_coverage {
     #[test]
     fn decode_xyb_to_rgb() {
         let img = generate_gradient_d(64, 64, 3);
-        let jpeg = JpegEncoder::new(64, 64)
-            .use_xyb(true)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new().xyb();
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config)
             .expect("XYB encode failed");
 
         // Decode with ICC application (requires cms feature)
-        let config = DecoderConfig {
+        let decode_config = DecoderConfig {
             apply_icc: true,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(config);
+        let decoder = Decoder::from_config(decode_config);
         let decoded = decoder.decode(&jpeg).expect("XYB decode failed");
         assert_eq!(decoded.width, 64);
     }
@@ -467,35 +428,19 @@ mod encode_coverage {
     use super::*;
 
     #[test]
-    fn encode_with_restart_interval() {
-        let img = generate_gradient_d(512, 512, 3);
-
-        // Test restart interval encoding (decoder may have issues with restart markers)
-        for interval in [1, 5, 10, 50, 100] {
-            let encoder = JpegEncoder::new(512, 512).restart_interval(interval);
-            let jpeg = encoder.encode(&img.pixels).expect("encode failed");
-
-            // Verify DRI marker is present
-            let has_dri = jpeg.windows(2).any(|w| w == [0xFF, 0xDD]);
-            assert!(has_dri, "Should have DRI marker for interval {}", interval);
-            assert!(jpeg.len() > 1000, "JPEG should be reasonable size");
-        }
-    }
-
-    #[test]
     fn encode_progressive_with_subsampling() {
         let img = generate_gradient_d(128, 128, 3);
 
         for subsampling in [
-            Subsampling::S444,
-            Subsampling::S422,
-            Subsampling::S420,
-            Subsampling::S440,
+            ChromaSubsampling::Full,
+            ChromaSubsampling::HalfHorizontal,
+            ChromaSubsampling::Quarter,
+            ChromaSubsampling::HalfVertical,
         ] {
-            let encoder = JpegEncoder::new(128, 128)
-                .mode(JpegMode::Progressive)
-                .subsampling(subsampling);
-            let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+            let config = EncoderConfig::new()
+                .progressive(true)
+                .ycbcr(subsampling);
+            let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
             assert_eq!(decoded.width, 128);
@@ -507,9 +452,8 @@ mod encode_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // XYB with 4:4:4 (default for XYB)
-        let jpeg = JpegEncoder::new(128, 128)
-            .use_xyb(true)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new().xyb();
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("XYB encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -520,13 +464,13 @@ mod encode_coverage {
     fn encode_very_small_images() {
         for size in [1, 2, 3, 4, 5, 6, 7, 8] {
             let img = generate_gradient_d(size, size, 3);
-            let jpeg = JpegEncoder::new(size as u32, size as u32)
-                .encode(&img.pixels)
+            let config = EncoderConfig::new();
+            let jpeg = encode_rgb(size as u32, size as u32, &img.pixels, &config)
                 .expect(&format!("{}x{} encode failed", size, size));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
-            assert_eq!(decoded.width, size);
-            assert_eq!(decoded.height, size);
+            assert_eq!(decoded.width, size as u32);
+            assert_eq!(decoded.height, size as u32);
         }
     }
 
@@ -535,30 +479,17 @@ mod encode_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Very low quality
-        let jpeg_low = JpegEncoder::new(64, 64)
-            .quality(Quality::from_quality(1.0))
-            .encode(&img.pixels)
+        let config_low = EncoderConfig::new().quality(1.0);
+        let jpeg_low = encode_rgb(64, 64, &img.pixels, &config_low)
             .expect("low Q encode failed");
 
         // Very high quality
-        let jpeg_high = JpegEncoder::new(64, 64)
-            .quality(Quality::from_quality(100.0))
-            .encode(&img.pixels)
+        let config_high = EncoderConfig::new().quality(100.0);
+        let jpeg_high = encode_rgb(64, 64, &img.pixels, &config_high)
             .expect("high Q encode failed");
 
         // High quality should produce larger file
         assert!(jpeg_high.len() > jpeg_low.len());
-    }
-
-    #[test]
-    fn encode_with_fixed_huffman() {
-        let img = generate_gradient_d(128, 128, 3);
-
-        let encoder = JpegEncoder::new(128, 128).optimize_huffman(false);
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
-
-        let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
-        assert_eq!(decoded.width, 128);
     }
 }
 
@@ -574,10 +505,10 @@ mod xyb_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Encode with XYB
-        let jpeg = JpegEncoder::new(64, 64)
-            .use_xyb(true)
-            .quality(Quality::from_quality(90.0))
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .xyb()
+            .quality(90.0);
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config)
             .expect("XYB encode failed");
 
         // Verify APP14 Adobe marker present
@@ -605,9 +536,8 @@ mod xyb_coverage {
 
         for (r, g, b) in colors {
             let img = test_utils::generate_solid_rgb(32, 32, r, g, b);
-            let jpeg = JpegEncoder::new(32, 32)
-                .use_xyb(true)
-                .encode(&img.pixels)
+            let config = EncoderConfig::new().xyb();
+            let jpeg = encode_rgb(32, 32, &img.pixels, &config)
                 .expect("XYB encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -619,10 +549,10 @@ mod xyb_coverage {
     fn xyb_progressive() {
         let img = generate_gradient_d(128, 128, 3);
 
-        let jpeg = JpegEncoder::new(128, 128)
-            .use_xyb(true)
-            .mode(JpegMode::Progressive)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .xyb()
+            .progressive(true);
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("XYB progressive encode failed");
 
         // Should have SOF2 (progressive)
@@ -663,14 +593,13 @@ mod bitstream_coverage {
 
         // Image with high entropy (random noise)
         let noise = generate_noise(64, 64, 12345, 3);
-        let jpeg_noise = JpegEncoder::new(64, 64)
-            .encode(&noise.pixels)
+        let config = EncoderConfig::new();
+        let jpeg_noise = encode_rgb(64, 64, &noise.pixels, &config)
             .expect("noise encode failed");
 
         // Image with low entropy (solid color)
         let solid = test_utils::generate_solid(64, 64, 128, 3);
-        let jpeg_solid = JpegEncoder::new(64, 64)
-            .encode(&solid.pixels)
+        let jpeg_solid = encode_rgb(64, 64, &solid.pixels, &config)
             .expect("solid encode failed");
 
         // Noise should produce larger file
@@ -699,24 +628,15 @@ mod huffman_coverage {
             ),
         ];
 
-        for (name, img) in patterns {
-            // With optimization
-            let jpeg_opt = JpegEncoder::new(128, 128)
-                .optimize_huffman(true)
-                .encode(&img.pixels)
-                .expect(&format!("{} optimized encode failed", name));
+        let config = EncoderConfig::new();
 
-            // Without optimization
-            let jpeg_fixed = JpegEncoder::new(128, 128)
-                .optimize_huffman(false)
-                .encode(&img.pixels)
-                .expect(&format!("{} fixed encode failed", name));
+        for (name, img) in patterns {
+            let jpeg = encode_rgb(128, 128, &img.pixels, &config)
+                .expect(&format!("{} encode failed", name));
 
             // Both should decode correctly
-            let decoded_opt = Decoder::new().decode(&jpeg_opt).expect("decode failed");
-            let decoded_fixed = Decoder::new().decode(&jpeg_fixed).expect("decode failed");
-            assert_eq!(decoded_opt.width, 128);
-            assert_eq!(decoded_fixed.width, 128);
+            let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
+            assert_eq!(decoded.width, 128);
         }
     }
 }
@@ -740,9 +660,8 @@ mod aq_coverage {
         ];
 
         for (i, img) in patterns.iter().enumerate() {
-            let jpeg = JpegEncoder::new(img.width, img.height)
-                .quality(Quality::from_quality(85.0))
-                .encode(&img.pixels)
+            let config = EncoderConfig::new().quality(85.0);
+            let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config)
                 .expect(&format!("pattern {} encode failed", i));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -756,9 +675,8 @@ mod aq_coverage {
 
         // Test AQ behavior across quality range
         for q in [10.0, 30.0, 50.0, 70.0, 90.0, 100.0] {
-            let jpeg = JpegEncoder::new(64, 64)
-                .quality(Quality::from_quality(q))
-                .encode(&img.pixels)
+            let config = EncoderConfig::new().quality(q);
+            let jpeg = encode_rgb(64, 64, &img.pixels, &config)
                 .expect(&format!("Q{} encode failed", q));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -779,10 +697,10 @@ mod scan_script_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // Progressive encoding exercises scan script
-        let jpeg = JpegEncoder::new(128, 128)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::from_quality(80.0))
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .progressive(true)
+            .quality(80.0);
+        let jpeg = encode_rgb(128, 128, &img.pixels, &config)
             .expect("progressive encode failed");
 
         // Count SOS markers (each scan starts with SOS)
@@ -797,10 +715,10 @@ mod scan_script_coverage {
     fn progressive_grayscale() {
         let img = test_utils::generate_gradient_h(64, 64, 1);
 
-        let jpeg = JpegEncoder::new(64, 64)
-            .pixel_format(PixelFormat::Gray)
-            .mode(JpegMode::Progressive)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new()
+            .grayscale()
+            .progressive(true);
+        let jpeg = encode_gray(64, 64, &img.pixels, &config)
             .expect("progressive grayscale encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -819,14 +737,14 @@ mod quant_coverage {
     fn quality_distance_conversion() {
         // Test quality to distance and back
         for q in [10.0, 30.0, 50.0, 70.0, 90.0, 95.0, 99.0] {
-            let quality = Quality::from_quality(q);
+            let quality = Quality::Traditional(q);
             let distance = quality.to_distance();
             assert!(distance > 0.0, "Distance should be positive for Q{}", q);
         }
 
         // Test distance-based quality
         for d in [0.1, 0.5, 1.0, 2.0, 5.0, 10.0] {
-            let quality = Quality::from_distance(d);
+            let quality = Quality::ApproxButteraugli(d);
             let distance_back = quality.to_distance();
             assert!(
                 (distance_back - d).abs() < 0.01,
@@ -840,14 +758,12 @@ mod quant_coverage {
         // Different qualities should produce different quant tables
         let img = generate_gradient_d(64, 64, 3);
 
-        let jpeg_q10 = JpegEncoder::new(64, 64)
-            .quality(Quality::from_quality(10.0))
-            .encode(&img.pixels)
+        let config_q10 = EncoderConfig::new().quality(10.0);
+        let jpeg_q10 = encode_rgb(64, 64, &img.pixels, &config_q10)
             .expect("Q10 encode failed");
 
-        let jpeg_q90 = JpegEncoder::new(64, 64)
-            .quality(Quality::from_quality(90.0))
-            .encode(&img.pixels)
+        let config_q90 = EncoderConfig::new().quality(90.0);
+        let jpeg_q90 = encode_rgb(64, 64, &img.pixels, &config_q90)
             .expect("Q90 encode failed");
 
         // Higher quality = larger file
@@ -867,8 +783,8 @@ mod alloc_coverage {
         // Test allocation with moderately large images
         let img = generate_gradient_d(1024, 1024, 3);
 
-        let jpeg = JpegEncoder::new(1024, 1024)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new();
+        let jpeg = encode_rgb(1024, 1024, &img.pixels, &config)
             .expect("large encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -879,17 +795,17 @@ mod alloc_coverage {
     #[test]
     fn decode_with_strict_limits() {
         let img = generate_gradient_d(64, 64, 3);
-        let jpeg = JpegEncoder::new(64, 64)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new();
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config)
             .expect("encode failed");
 
         // Test with very strict limits (but still enough for this image)
-        let config = DecoderConfig {
+        let decode_config = DecoderConfig {
             max_pixels: 100_000,
             max_memory: 10 * 1024 * 1024,
             ..Default::default()
         };
-        let decoder = Decoder::from_config(config);
+        let decoder = Decoder::from_config(decode_config);
         let decoded = decoder.decode(&jpeg).expect("decode failed");
         assert_eq!(decoded.width, 64);
     }
@@ -907,9 +823,8 @@ mod transfer_coverage {
         // XYB encoding exercises transfer functions
         let img = generate_gradient_d(64, 64, 3);
 
-        let jpeg = JpegEncoder::new(64, 64)
-            .use_xyb(true)
-            .encode(&img.pixels)
+        let config = EncoderConfig::new().xyb();
+        let jpeg = encode_rgb(64, 64, &img.pixels, &config)
             .expect("XYB encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
