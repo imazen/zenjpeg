@@ -236,13 +236,17 @@ fn test_marker_structure() {
     let app0_count = count_markers(&jpeg, 0xE0);
     let dqt_count = count_markers(&jpeg, 0xDB);
     let sof0_count = count_markers(&jpeg, 0xC0);
+    let sof1_count = count_markers(&jpeg, 0xC1);
+    let sof2_count = count_markers(&jpeg, 0xC2);
     let dht_count = count_markers(&jpeg, 0xC4);
     let sos_count = count_markers(&jpeg, 0xDA);
 
     println!("Marker counts:");
     println!("  APP0 (JFIF): {}", app0_count);
     println!("  DQT: {}", dqt_count);
-    println!("  SOF0: {}", sof0_count);
+    println!("  SOF0 (baseline): {}", sof0_count);
+    println!("  SOF1 (extended): {}", sof1_count);
+    println!("  SOF2 (progressive): {}", sof2_count);
     println!("  DHT: {}", dht_count);
     println!("  SOS: {}", sos_count);
 
@@ -253,7 +257,12 @@ fn test_marker_structure() {
         "Should NOT have JFIF marker (matches C++ jpegli)"
     );
     assert!(dqt_count >= 1, "Should have DQT marker");
-    assert!(sof0_count >= 1, "Should have SOF0 marker");
+    // Accept either SOF0 (baseline) or SOF1 (extended sequential)
+    // SOF1 is used when quant tables have values > 255, which can happen with jpegli's scaling
+    assert!(
+        sof0_count >= 1 || sof1_count >= 1,
+        "Should have SOF0 or SOF1 marker (sequential encoding)"
+    );
     assert!(dht_count >= 1, "Should have DHT marker");
     assert_eq!(sos_count, 1, "Baseline should have exactly 1 SOS");
 }
@@ -325,9 +334,20 @@ fn test_quant_tables_present() {
     assert!(table0.is_some(), "Should have quant table 0 (luma)");
     assert!(table1.is_some(), "Should have quant table 1 (chroma)");
 
-    // Tables should be 64 bytes each (8-bit precision)
-    assert_eq!(table0.unwrap().len(), 64, "Luma table should be 64 bytes");
-    assert_eq!(table1.unwrap().len(), 64, "Chroma table should be 64 bytes");
+    // Tables should be 64 bytes (8-bit precision) or 128 bytes (16-bit precision)
+    // jpegli uses 16-bit precision when quant values exceed 255
+    let len0 = table0.unwrap().len();
+    let len1 = table1.unwrap().len();
+    assert!(
+        len0 == 64 || len0 == 128,
+        "Luma table should be 64 or 128 bytes, got {}",
+        len0
+    );
+    assert!(
+        len1 == 64 || len1 == 128,
+        "Chroma table should be 64 or 128 bytes, got {}",
+        len1
+    );
 }
 
 #[test]
@@ -459,7 +479,8 @@ fn test_huffman_tables_present() {
 
 fn extract_sof_params(jpeg: &[u8]) -> Option<(u8, u16, u16, u8)> {
     for pos in 0..jpeg.len() - 10 {
-        if jpeg[pos] == 0xFF && (jpeg[pos + 1] == 0xC0 || jpeg[pos + 1] == 0xC2) {
+        // SOF0 (baseline), SOF1 (extended sequential), SOF2 (progressive)
+        if jpeg[pos] == 0xFF && (jpeg[pos + 1] == 0xC0 || jpeg[pos + 1] == 0xC1 || jpeg[pos + 1] == 0xC2) {
             let precision = jpeg[pos + 4];
             let height = ((jpeg[pos + 5] as u16) << 8) | (jpeg[pos + 6] as u16);
             let width = ((jpeg[pos + 7] as u16) << 8) | (jpeg[pos + 8] as u16);

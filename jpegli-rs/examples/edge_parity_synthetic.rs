@@ -81,7 +81,7 @@ fn main() {
     println!("{}", "-".repeat(35));
 
     for quality in [50, 75, 90, 95] {
-        let jpeg = JpegEncoder::new(width, height)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .quality(Quality::from_quality(quality as f32))
             .mode(JpegMode::Baseline)
@@ -118,7 +118,7 @@ fn main() {
     println!("{}", "-".repeat(35));
 
     for quality in [50, 75, 90, 95] {
-        let jpeg = JpegEncoder::new(width, height)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .quality(Quality::from_quality(quality as f32))
             .mode(JpegMode::Baseline)
@@ -140,7 +140,7 @@ fn main() {
 
     println!("\n=== Progressive Mode ===");
     for quality in [50, 75, 90, 95] {
-        let jpeg = JpegEncoder::new(width, height)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .quality(Quality::from_quality(quality as f32))
             .mode(JpegMode::Progressive)

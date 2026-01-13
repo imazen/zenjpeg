@@ -3,7 +3,7 @@
 //! Usage: cargo run --release --example decode_profile
 //!        cargo run --release --example decode_profile -- --jpegli-only
 
-use jpegli::{Decoder, Encoder, PixelFormat, Quality};
+use jpegli::{Decoder, JpegEncoder, PixelFormat, Quality};
 use std::env;
 use std::time::Instant;
 use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -21,7 +21,6 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    #[allow(deprecated)]
     JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))

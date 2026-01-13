@@ -22,7 +22,7 @@ fn main() {
 
     println!("Warming up...");
     for _ in 0..2 {
-        let encoder = JpegEncoder::new(width, height)
+        let encoder = JpegEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .quality(Quality::from_quality(90.0));
         let _ = encoder.encode(&data).unwrap();
@@ -35,7 +35,7 @@ fn main() {
         let iterations = 5;
 
         for _ in 0..iterations {
-            let encoder = JpegEncoder::new(width, height)
+            let encoder = JpegEncoder::new(width as u32, height as u32)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::from_quality(quality));
 

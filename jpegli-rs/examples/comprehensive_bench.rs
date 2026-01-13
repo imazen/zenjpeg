@@ -62,7 +62,7 @@ fn bench_encode(
 
     // Warmup
     for _ in 0..2 {
-        let enc = JpegEncoder::new(width, height)
+        let enc = JpegEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .subsampling(subsampling)
             .mode(mode)
@@ -74,7 +74,7 @@ fn bench_encode(
     let mut size = 0;
 
     for _ in 0..iterations {
-        let enc = JpegEncoder::new(width, height)
+        let enc = JpegEncoder::new(width as u32, height as u32)
             .pixel_format(PixelFormat::Rgb)
             .subsampling(subsampling)
             .mode(mode)

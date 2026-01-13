@@ -108,7 +108,7 @@ fn main() {
         .flat_map(|y| (0..64).map(move |x| ((x * 17 ^ y * 31) % 256) as u8))
         .collect();
 
-    let gray_jpeg = JpegEncoder::new(width, height)
+    let gray_jpeg = JpegEncoder::new(64, 64)
         .pixel_format(PixelFormat::Gray)
         .quality(Quality::from_quality(50.0))
         .optimize_huffman(true)

@@ -85,7 +85,7 @@ fn encode_standard(rgb_data: &[u8], width: usize, height: usize) -> (usize, std:
     reset_stats();
     let start = Instant::now();
 
-    let encoder = JpegEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
@@ -111,15 +111,15 @@ fn encode_strip_jpeg(
     reset_stats();
     let start = Instant::now();
 
-    let encoder = JpegEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true);
 
     let output = encoder
-        .encode_strip_based(rgb_data)
-        .expect("strip encoding failed");
+        .encode(rgb_data)
+        .expect("encoding failed");
     let elapsed = start.elapsed();
 
     let output_size = output.len();

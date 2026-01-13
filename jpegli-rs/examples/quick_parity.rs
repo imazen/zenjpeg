@@ -20,8 +20,7 @@ fn main() {
     }
 
     // Encode
-    #[allow(deprecated)]
-    let jpeg = JpegEncoder::new(width, height)
+    let jpeg = JpegEncoder::new(w as u32, h as u32)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .quality(Quality::from_quality(90.0))

@@ -34,7 +34,7 @@ fn encode_rust(
     } else {
         JpegMode::Baseline
     };
-    JpegEncoder::new(width, height)
+    JpegEncoder::new(image.width as u32, image.height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality as f32))
         .mode(mode)
