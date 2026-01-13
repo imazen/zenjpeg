@@ -4,9 +4,21 @@
 //! output to C++ djpegli for various JPEG configurations.
 
 use dssim::Dssim;
-use jpegli::{decode::Decoder, types::Subsampling, JpegEncoder, PixelFormat, Quality};
+use enough::Never;
+use jpegli::{decode::Decoder, ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::process::Command;
+
+// Map from test subsampling names to ChromaSubsampling
+fn subsampling_from_name(name: &str) -> ChromaSubsampling {
+    match name {
+        "444" => ChromaSubsampling::Full,
+        "420" => ChromaSubsampling::Quarter,
+        "422" => ChromaSubsampling::HalfHorizontal,
+        "440" => ChromaSubsampling::HalfVertical,
+        _ => ChromaSubsampling::Full,
+    }
+}
 
 /// Compute DSSIM between two RGB images
 fn compute_dssim(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
@@ -56,19 +68,20 @@ fn encode_rust(
     width: u32,
     height: u32,
     quality: u8,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
-        .subsampling(subsampling)
-        .encode(pixels)
-        .expect("Rust encode failed")
+    let config = EncoderConfig::new()
+        .quality(quality as f32)
+        .ycbcr(subsampling);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("create encoder");
+    enc.push_packed(pixels, Never).expect("push data");
+    enc.finish().expect("finish")
 }
 
 /// Decode with Rust decoder
 fn decode_rust(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let decoder = Decoder::new().output_format(PixelFormat::Rgb);
+    let decoder = Decoder::new();
     match decoder.decode(jpeg) {
         Ok(img) => Some((img.data, img.width, img.height)),
         Err(_) => None,
@@ -134,11 +147,11 @@ fn decode_cpp(jpeg_path: &str) -> Option<(Vec<u8>, u32, u32)> {
 const QUALITY_LEVELS: &[u8] = &[50, 75, 90, 100];
 
 /// Subsampling modes to test
-const SUBSAMPLING_MODES: &[(Subsampling, &str)] = &[
-    (Subsampling::S444, "444"),
-    (Subsampling::S420, "420"),
-    (Subsampling::S422, "422"),
-    (Subsampling::S440, "440"),
+const SUBSAMPLING_MODES: &[(ChromaSubsampling, &str)] = &[
+    (ChromaSubsampling::Full, "444"),
+    (ChromaSubsampling::Quarter, "420"),
+    (ChromaSubsampling::HalfHorizontal, "422"),
+    (ChromaSubsampling::HalfVertical, "440"),
 ];
 
 /// Test dimensions
@@ -167,7 +180,7 @@ fn test_decoder_vs_reference_444() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, Subsampling::S444);
+            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::Full);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, refW, refH) =
@@ -208,7 +221,7 @@ fn test_decoder_vs_reference_420() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, Subsampling::S420);
+            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::Quarter);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, refW, refH) =
@@ -249,7 +262,7 @@ fn test_decoder_vs_reference_422() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, Subsampling::S422);
+            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::HalfHorizontal);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, refW, refH) =
@@ -290,7 +303,7 @@ fn test_decoder_vs_reference_440() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, Subsampling::S440);
+            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::HalfVertical);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, refW, refH) =

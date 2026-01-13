@@ -8,8 +8,8 @@
 //!
 //! Run with: cargo test --release -p jpegli-rs --test edge_tile_ssim2_comparison -- --nocapture --ignored
 
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::Quality;
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -159,14 +159,15 @@ fn tile_bottom_edge(rgb: &[u8], width: usize, height: usize, edge_height: usize)
 
 /// Encode with Rust jpegli
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444)
-        .quality(Quality::from_quality(quality))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(rgb)
-        .expect("Rust encode failed")
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(ChromaSubsampling::Full)
+        .progressive(true)
+        .optimize_huffman(true);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("create encoder");
+    enc.push_packed(rgb, Never).expect("push data");
+    enc.finish().expect("finish")
 }
 
 /// Decode JPEG to RGB
