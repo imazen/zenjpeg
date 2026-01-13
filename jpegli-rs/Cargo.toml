@@ -62,11 +62,10 @@ sha2 = "0.10"
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["simd", "cms", "test-utils"]
-simd = []  # Safe portable SIMD via `wide` crate (always recommended)
+default = ["cms", "test-utils"]
 parallel = ["dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
 # Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
-# Without this, all SIMD uses auto-vectorizable fallbacks that work on all platforms.
+# Without this, all SIMD uses safe `wide` crate which auto-vectorizes on all platforms.
 unsafe_simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)

@@ -6,7 +6,7 @@
 //! - **Recursive (jpegli)**: Uses recursive splitting for exact C++ jpegli compatibility
 //! - **AAN (libjpeg)**: Arai-Agui-Nakajima algorithm with only 5 multiplies per 1D DCT
 //!
-//! SIMD optimization is available via the `simd` feature (enabled by default).
+//! SIMD optimization via the `wide` crate is always enabled.
 //!
 //! # Safe/Unsafe Architecture
 //!
@@ -19,7 +19,6 @@
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::simd_types::Block8x8f;
 
-#[cfg(feature = "simd")]
 use wide::f32x8;
 
 use multiversion::multiversion;
@@ -90,8 +89,8 @@ mod aan {
     ];
 }
 
-/// Transpose an 8x8 block (scalar version).
-#[cfg(any(not(feature = "simd"), test))]
+/// Transpose an 8x8 block (scalar version, used in tests).
+#[cfg(test)]
 #[inline]
 fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
@@ -234,26 +233,7 @@ fn dct1d_8(mem: &mut [f32]) {
     inverse_even_odd::<8>(&tmp, mem);
 }
 
-/// 1D DCT on all 8 rows (no per-row scaling, scaling handled in main function)
-/// (Scalar fallback when SIMD is disabled)
-#[cfg(not(feature = "simd"))]
-#[allow(dead_code)]
-#[inline]
-fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
-    for row in 0..8 {
-        let mut tmp = [0.0f32; 8];
-        for i in 0..8 {
-            tmp[i] = input[row * 8 + i];
-        }
-        dct1d_8(&mut tmp);
-        for i in 0..8 {
-            output[row * 8 + i] = tmp[i];
-        }
-    }
-}
-
-// SIMD-optimized implementations
-#[cfg(feature = "simd")]
+// SIMD-optimized implementations (always available via `wide` crate)
 pub(crate) mod simd {
     use super::*;
 
@@ -1008,7 +988,6 @@ pub(crate) mod simd {
 
 /// 1D DCT on all 8 rows (scalar, but faster than SIMD due to cache locality)
 /// Kept as reference; forward_dct_8x8 uses SIMD chained approach instead.
-#[cfg(feature = "simd")]
 #[allow(dead_code)]
 #[inline]
 fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {

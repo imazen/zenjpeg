@@ -107,10 +107,11 @@ pub use huffman::classic as huffman_classic;
 pub use huffman::types as huffman_types;
 #[doc(hidden)]
 pub mod icc;
+// Re-export IDCT modules from decode for backward compatibility
 #[doc(hidden)]
-pub mod idct;
+pub use decode::idct;
 #[doc(hidden)]
-pub mod idct_int;
+pub use decode::idct_int;
 #[doc(hidden)]
 pub use encode::scan_script;
 #[doc(hidden)]
