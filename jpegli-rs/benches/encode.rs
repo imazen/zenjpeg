@@ -27,9 +27,9 @@ fn bench_encode(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let encoder = JpegEncoder::new(width, height)
+                    let encoder = JpegEncoder::new(size as u32, size as u32)
                         .pixel_format(PixelFormat::Rgb)
-                        .quality(Quality::from_quality(90.0));
+                        .quality(Quality::from(90.0));
                     encoder.encode(black_box(data))
                 });
             },
@@ -47,9 +47,9 @@ fn bench_quality_levels(c: &mut Criterion) {
     for quality in [50, 75, 90, 95] {
         group.bench_with_input(BenchmarkId::new("q", quality), &data, |b, data| {
             b.iter(|| {
-                let encoder = JpegEncoder::new(width, height)
+                let encoder = JpegEncoder::new(512, 512)
                     .pixel_format(PixelFormat::Rgb)
-                    .quality(Quality::from_quality(quality as f32));
+                    .quality(Quality::from(quality as f32));
                 encoder.encode(black_box(data))
             });
         });

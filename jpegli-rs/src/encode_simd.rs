@@ -605,8 +605,18 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
     rgb_to_ycbcr_planes_simd_inplace_fallback(rgb_data, y_plane, cb_plane, cr_plane, num_pixels);
 }
 
-/// Fallback implementation using wide crate's f32x8 (for non-AVX2+FMA CPUs)
-#[inline]
+/// Fallback implementation using wide crate's f32x8 (portable SIMD)
+///
+/// Uses multiversion for load-time dispatch to optimal SIMD path.
+#[multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
 fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -696,7 +706,15 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
 }
 
 /// SIMD-optimized RGBA to YCbCr conversion, writing to pre-allocated buffers.
-#[inline]
+#[multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
 pub fn rgba_to_ycbcr_planes_simd_inplace(
     rgba_data: &[u8],
     y_plane: &mut [f32],
@@ -786,7 +804,15 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
 }
 
 /// SIMD-optimized BGR to YCbCr conversion, writing to pre-allocated buffers.
-#[inline]
+#[multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
 pub fn bgr_to_ycbcr_planes_simd_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -876,7 +902,15 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
 }
 
 /// SIMD-optimized BGRA to YCbCr conversion, writing to pre-allocated buffers.
-#[inline]
+#[multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
 pub fn bgra_to_ycbcr_planes_simd_inplace(
     bgra_data: &[u8],
     y_plane: &mut [f32],
@@ -984,7 +1018,15 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
 /// * `height` - Number of rows to process
 /// * `y_stride` - Y output stride (typically padded_width)
 /// * `bpp` - Bytes per pixel (3 for RGB)
-#[inline]
+#[multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
 pub fn rgb_to_ycbcr_strided_inplace(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -1146,7 +1188,15 @@ pub fn rgb_to_ycbcr_strided_inplace(
 }
 
 /// BGR variant of strided conversion (for BGR/BGRA input).
-#[inline]
+#[multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
 pub fn bgr_to_ycbcr_strided_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],

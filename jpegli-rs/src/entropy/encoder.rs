@@ -7,9 +7,49 @@ use crate::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
 use crate::huffman::optimize::{ScanTokenInfo, Token};
 use crate::huffman::HuffmanEncodeTable;
+use multiversion::multiversion;
 use wide::{i16x8, CmpEq};
 
 use super::{additional_bits_with_cat, category};
+
+/// Build a 64-bit mask of non-zero coefficients using SIMD.
+/// Each bit i is set if coeffs[i] != 0.
+#[multiversion(targets(
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+    "arm+neon",
+))]
+#[inline]
+fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
+    let zero = i16x8::ZERO;
+    let mut nonzero_mask: u64 = 0;
+
+    // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
+    for chunk in 0..8 {
+        let start = chunk * 8;
+        let v = i16x8::new([
+            coeffs[start],
+            coeffs[start + 1],
+            coeffs[start + 2],
+            coeffs[start + 3],
+            coeffs[start + 4],
+            coeffs[start + 5],
+            coeffs[start + 6],
+            coeffs[start + 7],
+        ]);
+        // simd_eq returns all 1s (-1) for equal, 0 for not equal
+        let is_zero = v.simd_eq(zero);
+        // to_bitmask extracts the high bit of each lane
+        let zero_bits = is_zero.to_bitmask() as u8;
+        let nonzero_bits = !zero_bits;
+        nonzero_mask |= (nonzero_bits as u64) << start;
+    }
+
+    nonzero_mask
+}
 
 /// Entropy encoder for a single scan.
 ///
@@ -221,31 +261,8 @@ impl<'a> EntropyEncoder<'a> {
             self.writer.write_bits(code, len);
         }
 
-        // Build 64-bit mask of non-zero coefficients using SIMD
-        // Each bit i is set if coeffs[i] != 0
-        let zero = i16x8::ZERO;
-        let mut nonzero_mask: u64 = 0;
-
-        // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
-        for chunk in 0..8 {
-            let start = chunk * 8;
-            let v = i16x8::new([
-                coeffs[start],
-                coeffs[start + 1],
-                coeffs[start + 2],
-                coeffs[start + 3],
-                coeffs[start + 4],
-                coeffs[start + 5],
-                coeffs[start + 6],
-                coeffs[start + 7],
-            ]);
-            // simd_eq returns all 1s (-1) for equal, 0 for not equal
-            let is_zero = v.simd_eq(zero);
-            // move_mask extracts the high bit of each lane
-            let zero_bits = is_zero.to_bitmask() as u8;
-            let nonzero_bits = !zero_bits;
-            nonzero_mask |= (nonzero_bits as u64) << start;
-        }
+        // Build 64-bit mask of non-zero coefficients using SIMD helper
+        let nonzero_mask = build_nonzero_mask(coeffs);
 
         // Clear DC bit (bit 0), keep only AC bits (1-63)
         let ac_mask = nonzero_mask & !1u64;
