@@ -4,6 +4,8 @@
 //! then verify quality using DSSIM.
 
 use dssim::Dssim;
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::Path;
@@ -11,6 +13,14 @@ use std::path::Path;
 /// Maximum acceptable DSSIM for quality 90 encoding.
 /// Lower is better; 0 = identical, typical good JPEG is < 0.01
 const MAX_DSSIM_Q90: f64 = 0.005;
+
+/// Helper function to encode RGB data with given config
+fn encode_rgb(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::Result<Vec<u8>> {
+    let config = EncoderConfig::new().quality(quality);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, usize, usize)> {
     let file = fs::File::open(path).ok()?;
@@ -65,14 +75,6 @@ fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -
     dssim.into()
 }
 
-fn encode_with_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    jpegli::JpegEncoder::new(width, height)
-        .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(quality.into()))
-        .encode(rgb)
-        .expect("jpegli encode failed")
-}
-
 fn decode_with_jpeg_decoder(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
     let mut decoder =
         zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(jpeg));
@@ -93,7 +95,8 @@ fn test_roundtrip_flower_small() {
     let (original_rgb, width, height) = load_png(&path).expect("Failed to load test image");
 
     // Encode with jpegli at quality 90
-    let jpeg_data = encode_with_jpegli(&original_rgb, width as u32, height as u32, 90);
+    let jpeg_data = encode_rgb(width as u32, height as u32, &original_rgb, 90.0)
+        .expect("jpegli encode failed");
 
     // Decode with reference decoder (jpeg-decoder)
     let (decoded_rgb, dec_width, dec_height) = decode_with_jpeg_decoder(&jpeg_data);
@@ -137,7 +140,8 @@ fn test_roundtrip_gradient() {
     }
 
     // Encode with jpegli at quality 90
-    let jpeg_data = encode_with_jpegli(&rgb, width as u32, height as u32, 90);
+    let jpeg_data = encode_rgb(width as u32, height as u32, &rgb, 90.0)
+        .expect("jpegli encode failed");
 
     // Decode with reference decoder
     let (decoded_rgb, dec_width, dec_height) = decode_with_jpeg_decoder(&jpeg_data);
@@ -168,7 +172,8 @@ fn test_roundtrip_solid_color() {
     // Solid magenta
     let rgb: Vec<u8> = (0..width * height).flat_map(|_| [200u8, 50, 180]).collect();
 
-    let jpeg_data = encode_with_jpegli(&rgb, width as u32, height as u32, 90);
+    let jpeg_data = encode_rgb(width as u32, height as u32, &rgb, 90.0)
+        .expect("jpegli encode failed");
     let (decoded_rgb, _, _) = decode_with_jpeg_decoder(&jpeg_data);
 
     let dssim = compute_dssim(&rgb, &decoded_rgb, width, height);
@@ -209,7 +214,8 @@ fn test_quality_levels() {
     let mut prev_dssim = f64::MAX;
 
     for quality in [60, 75, 85, 95] {
-        let jpeg_data = encode_with_jpegli(&rgb, width as u32, height as u32, quality);
+        let jpeg_data = encode_rgb(width as u32, height as u32, &rgb, quality as f32)
+            .expect("jpegli encode failed");
         let (decoded_rgb, _, _) = decode_with_jpeg_decoder(&jpeg_data);
         let dssim = compute_dssim(&rgb, &decoded_rgb, width, height);
 

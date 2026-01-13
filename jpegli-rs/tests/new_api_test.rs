@@ -1,8 +1,9 @@
 //! Test the new simplified API.
 
+use enough::Never;
 use jpegli::{
-    decode, decode_f32, decode_to_format, encode_gray, encode_rgb, JpegDecoder, JpegEncoder,
-    PixelFormat, Subsampling,
+    decode, decode_f32, decode_to_format, encode_gray, encode_rgb, ChromaSubsampling, Decoder,
+    EncoderConfig, PixelFormat, PixelLayout, Quality,
 };
 
 #[test]
@@ -42,57 +43,49 @@ fn test_decode_convenience() {
     assert_eq!(decoded.height(), height);
 }
 
+/// Helper function to encode RGB data
+fn encode_rgb_config(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
 #[test]
-fn test_jpeg_encoder_integer_quality() {
+fn test_encoder_config_integer_quality() {
     let width = 32u32;
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
-    // Test with u8 quality
-    let jpeg = JpegEncoder::new(width, height)
-        .quality(85u8)
-        .encode(&pixels)
-        .expect("encode failed");
-    assert!(jpeg.starts_with(&[0xFF, 0xD8]));
-
-    // Test with i32 quality
-    let jpeg = JpegEncoder::new(width, height)
-        .quality(85i32)
-        .encode(&pixels)
-        .expect("encode failed");
-    assert!(jpeg.starts_with(&[0xFF, 0xD8]));
-
-    // Test with f32 quality
-    let jpeg = JpegEncoder::new(width, height)
-        .quality(85.0f32)
-        .encode(&pixels)
+    // Test with various quality values
+    let config = EncoderConfig::new().quality(85.0);
+    let jpeg = encode_rgb_config(width, height, &pixels, &config)
         .expect("encode failed");
     assert!(jpeg.starts_with(&[0xFF, 0xD8]));
 }
 
 #[test]
-fn test_jpeg_encoder_distance() {
+fn test_encoder_config_distance() {
     let width = 32u32;
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
-    let jpeg = JpegEncoder::new(width, height)
-        .distance(1.0)
-        .encode(&pixels)
+    // Use butteraugli distance (1.0 ~ quality 85)
+    let config = EncoderConfig::new().quality(Quality::ApproxButteraugli(1.0));
+    let jpeg = encode_rgb_config(width, height, &pixels, &config)
         .expect("encode failed");
     assert!(jpeg.starts_with(&[0xFF, 0xD8]));
 }
 
 #[test]
-fn test_jpeg_encoder_progressive() {
+fn test_encoder_config_progressive() {
     let width = 32u32;
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
-    let jpeg = JpegEncoder::new(width, height)
-        .quality(85)
-        .progressive(true)
-        .encode(&pixels)
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true);
+    let jpeg = encode_rgb_config(width, height, &pixels, &config)
         .expect("encode failed");
 
     // Progressive JPEGs have SOF2 marker (0xFF 0xC2) instead of SOF0
@@ -104,23 +97,23 @@ fn test_jpeg_encoder_progressive() {
 }
 
 #[test]
-fn test_jpeg_encoder_subsampling() {
+fn test_encoder_config_subsampling() {
     let width = 64u32;
     let height = 64u32;
     let pixels: Vec<u8> = (0..width * height * 3)
         .map(|i| ((i * 17) % 256) as u8)
         .collect();
 
-    let jpeg_444 = JpegEncoder::new(width, height)
-        .quality(85)
-        .subsampling(Subsampling::S444)
-        .encode(&pixels)
+    let config_444 = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg_444 = encode_rgb_config(width, height, &pixels, &config_444)
         .expect("encode failed");
 
-    let jpeg_420 = JpegEncoder::new(width, height)
-        .quality(85)
-        .subsampling(Subsampling::S420)
-        .encode(&pixels)
+    let config_420 = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Quarter);
+    let jpeg_420 = encode_rgb_config(width, height, &pixels, &config_420)
         .expect("encode failed");
 
     // 4:2:0 should be smaller due to chroma subsampling
@@ -133,22 +126,21 @@ fn test_jpeg_encoder_subsampling() {
 }
 
 #[test]
-fn test_jpeg_encoder_streaming_start() {
+fn test_encoder_config_streaming() {
     let width = 32u32;
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
-    let mut encoder = JpegEncoder::new(width, height)
-        .quality(85)
-        .start()
+    let config = EncoderConfig::new().quality(85.0);
+    let mut encoder = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("start failed");
 
     let row_size = width as usize * 3;
     for y in 0..height as usize {
         let start = y * row_size;
         encoder
-            .push_row(&pixels[start..start + row_size])
-            .expect("push_row failed");
+            .push_packed(&pixels[start..start + row_size], Never)
+            .expect("push_packed failed");
     }
 
     let jpeg = encoder.finish().expect("finish failed");
@@ -162,16 +154,14 @@ fn test_quality_clamping() {
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
     // Quality 0 should be clamped to 1
-    let jpeg_low = JpegEncoder::new(width, height)
-        .quality(0u8)
-        .encode(&pixels)
+    let config_low = EncoderConfig::new().quality(0.0);
+    let jpeg_low = encode_rgb_config(width, height, &pixels, &config_low)
         .expect("encode failed");
     assert!(jpeg_low.starts_with(&[0xFF, 0xD8]));
 
     // Quality > 100 should be clamped to 100
-    let jpeg_high = JpegEncoder::new(width, height)
-        .quality(200i32)
-        .encode(&pixels)
+    let config_high = EncoderConfig::new().quality(200.0);
+    let jpeg_high = encode_rgb_config(width, height, &pixels, &config_high)
         .expect("encode failed");
     assert!(jpeg_high.starts_with(&[0xFF, 0xD8]));
 }
@@ -216,21 +206,21 @@ fn test_decode_to_format_rgb() {
 }
 
 #[test]
-fn test_jpeg_decoder_alias() {
+fn test_decoder_new() {
     let width = 32u32;
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
     let jpeg = encode_rgb(width, height, &pixels, 85).expect("encode failed");
 
-    // Test JpegDecoder (alias for Decoder)
-    let decoded = JpegDecoder::new().decode(&jpeg).expect("decode failed");
+    // Test Decoder::new()
+    let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
     assert_eq!(decoded.width(), width);
     assert_eq!(decoded.height(), height);
 }
 
 #[test]
-fn test_jpeg_decoder_builder() {
+fn test_decoder_builder() {
     let width = 32u32;
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
@@ -238,7 +228,7 @@ fn test_jpeg_decoder_builder() {
     let jpeg = encode_rgb(width, height, &pixels, 85).expect("encode failed");
 
     // Test builder pattern
-    let decoded = JpegDecoder::new()
+    let decoded = Decoder::new()
         .output_format(PixelFormat::Rgb)
         .fancy_upsampling(true)
         .decode(&jpeg)

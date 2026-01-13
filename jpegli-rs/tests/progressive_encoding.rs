@@ -6,11 +6,24 @@
 //! NOTE: We use zune-jpeg for decoder verification as it handles
 //! our progressive output correctly.
 
-use jpegli::quant::Quality;
-use jpegli::types::JpegMode;
-use jpegli::{JpegEncoder, PixelFormat};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::io::Cursor;
 use std::process::Command;
+
+/// Helper function to encode RGB data with given config
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
+/// Helper function to encode grayscale data with given config
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 /// Helper function to decode JPEG using zune-jpeg
 fn decode_with_zune(jpeg_data: &[u8]) -> Result<Vec<u8>, String> {
@@ -33,14 +46,12 @@ fn test_progressive_grayscale_gradient() {
         }
     }
 
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive);
+    let config = EncoderConfig::new()
+        .grayscale()
+        .quality(90.0)
+        .progressive(true);
 
-    let jpeg_data = encoder
-        .encode(&data)
+    let jpeg_data = encode_gray(width, height, &data, &config)
         .expect("Progressive encoding should succeed");
 
     // Verify the file is a valid JPEG by checking markers
@@ -82,14 +93,12 @@ fn test_progressive_solid_gray() {
     let height = 16u32;
     let data = vec![128u8; (width * height) as usize];
 
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive);
+    let config = EncoderConfig::new()
+        .grayscale()
+        .quality(90.0)
+        .progressive(true);
 
-    let jpeg_data = encoder
-        .encode(&data)
+    let jpeg_data = encode_gray(width, height, &data, &config)
         .expect("Progressive encoding should succeed");
 
     // Basic validation
@@ -114,14 +123,11 @@ fn test_progressive_rgb() {
         }
     }
 
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive);
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .progressive(true);
 
-    let jpeg_data = encoder
-        .encode(&data)
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Progressive RGB encoding should succeed");
 
     // Verify SOF2 marker for progressive
@@ -148,12 +154,12 @@ fn test_progressive_has_multiple_scans() {
         }
     }
 
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(85.0))
-        .mode(JpegMode::Progressive);
+    let config = EncoderConfig::new()
+        .grayscale()
+        .quality(85.0)
+        .progressive(true);
 
-    let jpeg_data = encoder.encode(&data).expect("Encoding should succeed");
+    let jpeg_data = encode_gray(width, height, &data, &config).expect("Encoding should succeed");
 
     // Count SOS markers (Start Of Scan)
     let mut sos_count = 0;
@@ -190,38 +196,33 @@ fn test_progressive_optimized_smaller() {
     }
 
     // Progressive + fixed Huffman should fail (not supported)
-    let encoder_no_opt = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(false)
-        .mode(JpegMode::Progressive);
+    let config_no_opt = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(false);
 
-    let result = encoder_no_opt.encode(&data);
+    let result = encode_rgb(width, height, &data, &config_no_opt);
     assert!(result.is_err(), "Progressive + fixed Huffman should fail");
 
     // Progressive + optimized Huffman should succeed
-    let encoder_opt = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive);
+    let config_opt = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(true);
 
-    let opt_data = encoder_opt
-        .encode(&data)
+    let opt_data = encode_rgb(width, height, &data, &config_opt)
         .expect("Progressive with optimized Huffman should succeed");
 
     // Should be valid JPEG
     assert_eq!(&opt_data[0..2], &[0xFF, 0xD8]);
 
     // Compare with baseline + optimized to verify progressive is smaller
-    let encoder_baseline = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Baseline);
+    let config_baseline = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(false)
+        .optimize_huffman(true);
 
-    let baseline_data = encoder_baseline
-        .encode(&data)
+    let baseline_data = encode_rgb(width, height, &data, &config_baseline)
         .expect("Baseline should succeed");
 
     // Progressive should be smaller than baseline (or close)
@@ -248,13 +249,12 @@ fn test_progressive_optimized_external_decode() {
         }
     }
 
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive);
+    let config = EncoderConfig::new()
+        .grayscale()
+        .quality(90.0)
+        .progressive(true);
 
-    let jpeg_data = encoder.encode(&data).expect("Encoding should succeed");
+    let jpeg_data = encode_gray(width, height, &data, &config).expect("Encoding should succeed");
 
     // Verify it's a valid JPEG structure
     assert_eq!(&jpeg_data[0..2], &[0xFF, 0xD8]); // SOI
@@ -302,21 +302,19 @@ fn test_progressive_optimized_larger_image() {
     }
 
     // Progressive with optimized Huffman
-    let prog_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config_prog = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let prog_data = encode_rgb(width, height, &data, &config_prog)
         .expect("Progressive encoding should succeed");
 
     // Baseline with optimized Huffman for comparison
-    let baseline_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Baseline)
-        .encode(&data)
+    let config_baseline = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(false)
+        .optimize_huffman(true);
+    let baseline_data = encode_rgb(width, height, &data, &config_baseline)
         .expect("Baseline encoding should succeed");
 
     // Compare sizes - progressive may be larger due to scan overhead
@@ -351,12 +349,11 @@ fn test_progressive_optimized_solid_color() {
     // Solid red
     let data: Vec<u8> = (0..(width * height)).flat_map(|_| [255u8, 0, 0]).collect();
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Encoding should succeed");
 
     // Solid colors should compress very well
@@ -384,12 +381,11 @@ fn test_progressive_optimized_high_frequency() {
         }
     }
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Encoding should succeed");
 
     // Verify decode with zune-jpeg
@@ -417,12 +413,11 @@ fn test_progressive_optimized_quality_levels() {
     let mut prev_size = 0usize;
 
     for quality in [70.0, 85.0, 95.0] {
-        let jpeg_data = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(quality))
-            .optimize_huffman(true)
-            .mode(JpegMode::Progressive)
-            .encode(&data)
+        let config = EncoderConfig::new()
+            .quality(quality)
+            .progressive(true)
+            .optimize_huffman(true);
+        let jpeg_data = encode_rgb(width, height, &data, &config)
             .expect(&format!("Q{} encoding should succeed", quality));
 
         // Higher quality should generally produce larger files
@@ -449,12 +444,11 @@ fn test_progressive_optimized_single_block() {
     let height = 8u32;
     let data: Vec<u8> = (0..64).flat_map(|i| [i as u8 * 4, 128, 64]).collect();
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Single block should encode");
 
     // Should still be valid
@@ -475,12 +469,12 @@ fn test_progressive_optimized_grayscale_sizes() {
             }
         }
 
-        let jpeg_data = JpegEncoder::new(size, size)
-            .pixel_format(PixelFormat::Gray)
-            .quality(Quality::from_quality(85.0))
-            .optimize_huffman(true)
-            .mode(JpegMode::Progressive)
-            .encode(&data)
+        let config = EncoderConfig::new()
+            .grayscale()
+            .quality(85.0)
+            .progressive(true)
+            .optimize_huffman(true);
+        let jpeg_data = encode_gray(size, size, &data, &config)
             .expect(&format!("{}x{} gray should encode", size, size));
 
         let decoded =
@@ -498,12 +492,11 @@ fn test_progressive_optimized_scan_structure() {
     let height = 32u32;
     let data: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Encoding should succeed");
 
     // Count markers
@@ -550,12 +543,11 @@ fn test_progressive_optimized_non_square() {
         }
     }
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Wide image should encode");
 
     let decoded = decode_with_zune(&jpeg_data).expect("Wide image should decode");
@@ -573,12 +565,7 @@ fn test_progressive_optimized_non_square() {
         }
     }
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(85.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Tall image should encode");
 
     let decoded = decode_with_zune(&jpeg_data).expect("Tall image should decode");
@@ -588,6 +575,11 @@ fn test_progressive_optimized_non_square() {
 /// Test non-multiple-of-8 dimensions (requires padding).
 #[test]
 fn test_progressive_optimized_odd_dimensions() {
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(true);
+
     for (width, height) in [(17u32, 23u32), (33, 41), (65, 70), (100, 99)] {
         let mut data = Vec::with_capacity((width * height * 3) as usize);
         for y in 0..height {
@@ -598,12 +590,7 @@ fn test_progressive_optimized_odd_dimensions() {
             }
         }
 
-        let jpeg_data = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(85.0))
-            .optimize_huffman(true)
-            .mode(JpegMode::Progressive)
-            .encode(&data)
+        let jpeg_data = encode_rgb(width, height, &data, &config)
             .expect(&format!("{}x{} should encode", width, height));
 
         // Verify full decode works and size is correct using zune-jpeg
@@ -632,13 +619,12 @@ fn test_baseline_still_works() {
         }
     }
 
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Baseline);
+    let config = EncoderConfig::new()
+        .grayscale()
+        .quality(90.0)
+        .progressive(false);
 
-    let jpeg_data = encoder
-        .encode(&data)
+    let jpeg_data = encode_gray(width, height, &data, &config)
         .expect("Baseline encoding should succeed");
 
     // Verify SOF0 marker for baseline (not SOF2)
@@ -679,12 +665,11 @@ fn test_progressive_all_quality_levels() {
 
     // Test quality levels from 10 to 100 in steps of 5
     for q in (10..=100).step_by(5) {
-        let jpeg_data = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q as f32))
-            .optimize_huffman(true)
-            .mode(JpegMode::Progressive)
-            .encode(&data)
+        let config = EncoderConfig::new()
+            .quality(q as f32)
+            .progressive(true)
+            .optimize_huffman(true);
+        let jpeg_data = encode_rgb(width, height, &data, &config)
             .expect(&format!("Q{} encoding should succeed", q));
 
         let size = jpeg_data.len();
@@ -795,12 +780,11 @@ fn test_progressive_quality_various_content() {
         let data = (tc.generator)(tc.width, tc.height);
 
         for &q in &quality_levels {
-            let jpeg_data = JpegEncoder::new(tc.width, tc.height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(q))
-                .optimize_huffman(true)
-                .mode(JpegMode::Progressive)
-                .encode(&data)
+            let config = EncoderConfig::new()
+                .quality(q)
+                .progressive(true)
+                .optimize_huffman(true);
+            let jpeg_data = encode_rgb(tc.width, tc.height, &data, &config)
                 .expect(&format!("{} Q{} encoding should succeed", tc.name, q));
 
             decode_with_zune(&jpeg_data).expect(&format!("{} Q{} should decode", tc.name, q));
@@ -836,12 +820,11 @@ fn test_progressive_extreme_low_quality() {
         .collect();
 
     for q in [1.0, 2.0, 3.0, 5.0, 7.0, 10.0] {
-        let jpeg_data = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q))
-            .optimize_huffman(true)
-            .mode(JpegMode::Progressive)
-            .encode(&data)
+        let config = EncoderConfig::new()
+            .quality(q)
+            .progressive(true)
+            .optimize_huffman(true);
+        let jpeg_data = encode_rgb(width, height, &data, &config)
             .expect(&format!("Q{} encoding should succeed", q));
 
         decode_with_zune(&jpeg_data).expect(&format!("Q{} should decode", q));
@@ -876,12 +859,11 @@ fn test_libjpeg_compatibility_noise() {
         })
         .collect();
 
-    let jpeg_data = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(50.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(50.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let jpeg_data = encode_rgb(width, height, &data, &config)
         .expect("Encoding should succeed");
 
     // Verify the file decodes with our test decoders
@@ -953,12 +935,11 @@ fn test_cpp_pixel_parity() {
         .collect();
 
     // Encode with Rust
-    let rust_jpeg = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(50.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(50.0)
+        .progressive(true)
+        .optimize_huffman(true);
+    let rust_jpeg = encode_rgb(width, height, &data, &config)
         .expect("Encoding should succeed");
 
     // Decode with zune-jpeg
