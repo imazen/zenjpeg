@@ -15,16 +15,25 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::collections::HashMap;
 
 /// Test configuration for a single encoding
 #[derive(Clone, Debug)]
-struct EncodingConfig {
+struct TestEncodingConfig {
     quality: u8,
-    subsampling: jpegli::Subsampling,
-    mode: jpegli::JpegMode,
+    subsampling: ChromaSubsampling,
+    progressive: bool,
     name: String,
+}
+
+/// Helper to encode RGB data with v2 encoder API
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
 }
 
 /// Result from decoding with a specific decoder
@@ -178,7 +187,7 @@ fn test_all_decoders(
     jpeg_data: &[u8],
     width: usize,
     height: usize,
-    config: &EncodingConfig,
+    config: &TestEncodingConfig,
 ) -> HashMap<String, (f64, f64, u64)> {
     // (butteraugli, inter_decoder_dssim, decode_time_us)
     let mut results: HashMap<String, (f64, f64, u64)> = HashMap::new();
@@ -258,52 +267,52 @@ fn test_multi_decoder_compatibility() {
     let original = generate_test_image(width, height);
 
     let configs = vec![
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 95,
-            subsampling: jpegli::Subsampling::S444,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Full,
+            progressive: false,
             name: "Q95_444_baseline".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 90,
-            subsampling: jpegli::Subsampling::S444,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Full,
+            progressive: false,
             name: "Q90_444_baseline".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 80,
-            subsampling: jpegli::Subsampling::S444,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Full,
+            progressive: false,
             name: "Q80_444_baseline".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 70,
-            subsampling: jpegli::Subsampling::S420,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: false,
             name: "Q70_420_baseline".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 50,
-            subsampling: jpegli::Subsampling::S420,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: false,
             name: "Q50_420_baseline".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 90,
-            subsampling: jpegli::Subsampling::S444,
-            mode: jpegli::JpegMode::Progressive,
+            subsampling: ChromaSubsampling::Full,
+            progressive: true,
             name: "Q90_444_progressive".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 80,
-            subsampling: jpegli::Subsampling::S422,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::HalfHorizontal,
+            progressive: false,
             name: "Q80_422_baseline".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 80,
-            subsampling: jpegli::Subsampling::S440,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::HalfVertical,
+            progressive: false,
             name: "Q80_440_baseline".to_string(),
         },
     ];
@@ -316,12 +325,11 @@ fn test_multi_decoder_compatibility() {
 
     for config in &configs {
         // Encode with jpegli-rs
-        let jpeg_data = jpegli::JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(jpegli::Quality::from_quality(config.quality as f32))
-            .subsampling(config.subsampling)
-            .mode(config.mode)
-            .encode(&original)
+        let encoder_config = EncoderConfig::new()
+            .quality(config.quality as f32)
+            .ycbcr(config.subsampling)
+            .progressive(config.progressive);
+        let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
             .expect("jpegli encode failed");
 
         let results = test_all_decoders(&original, &jpeg_data, width, height, config);
@@ -384,27 +392,26 @@ fn test_multi_decoder_complex_image() {
     println!("\n=== Complex Image Decoder Test ===\n");
 
     let configs = vec![
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 90,
-            subsampling: jpegli::Subsampling::S444,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Full,
+            progressive: false,
             name: "complex_Q90_444".to_string(),
         },
-        EncodingConfig {
+        TestEncodingConfig {
             quality: 75,
-            subsampling: jpegli::Subsampling::S420,
-            mode: jpegli::JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: false,
             name: "complex_Q75_420".to_string(),
         },
     ];
 
     for config in &configs {
-        let jpeg_data = jpegli::JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(jpegli::Quality::from_quality(config.quality as f32))
-            .subsampling(config.subsampling)
-            .mode(config.mode)
-            .encode(&original)
+        let encoder_config = EncoderConfig::new()
+            .quality(config.quality as f32)
+            .ycbcr(config.subsampling)
+            .progressive(config.progressive);
+        let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
             .expect("jpegli encode failed");
 
         println!("{}: {} bytes", config.name, jpeg_data.len());
@@ -443,10 +450,8 @@ fn benchmark_decoders() {
     let original = generate_test_image(width, height);
 
     // Encode at Q85
-    let jpeg_data = jpegli::JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::Quality::from_quality(85.0))
-        .encode(&original)
+    let encoder_config = EncoderConfig::new().quality(85.0);
+    let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
         .expect("encode failed");
 
     println!(
@@ -497,10 +502,8 @@ fn test_grayscale_compatibility() {
         }
     }
 
-    let jpeg_data = jpegli::JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(jpegli::Quality::from_quality(90.0))
-        .encode(&original)
+    let encoder_config = EncoderConfig::new().quality(90.0);
+    let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
         .expect("encode failed");
 
     println!("\n=== Grayscale Compatibility Test ===\n");

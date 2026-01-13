@@ -9,6 +9,8 @@
 //! 3. Fail loudly when parity regresses
 //! 4. Document expected gaps until they're fixed
 
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;
 
@@ -154,10 +156,12 @@ fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
 
 /// Encode with Rust jpegli
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::JpegEncoder::new(width, height)
-        .quality(jpegli::quant::Quality::Traditional(quality))
-        .encode(rgb)
-        .expect("Rust encoding failed")
+    let config = EncoderConfig::new().quality(quality);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb, Never).expect("push data");
+    enc.finish().expect("Rust encoding failed")
 }
 
 /// Load PNG image

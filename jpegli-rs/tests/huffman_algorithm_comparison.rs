@@ -9,9 +9,10 @@
 //!
 //! Run with: cargo test --test huffman_algorithm_comparison -- --nocapture
 
+use enough::Never;
 use jpegli::huffman_types::{compare_algorithms, SymbolFrequencies};
 use jpegli::types::HuffmanMethod;
-use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -73,6 +74,18 @@ fn verify_decodable(jpeg_data: &[u8], expected_width: usize, expected_height: us
     jpegli_ok && jpeg_decoder_ok && zune_ok
 }
 
+/// Helper to encode RGB data with v2 encoder API
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
 /// Helper to encode with a specific Huffman method
 fn encode_with_method(
     data: &[u8],
@@ -80,18 +93,17 @@ fn encode_with_method(
     height: u32,
     quality: f32,
     _method: HuffmanMethod, // TODO: Wire through internal pipeline when API is ready
-    mode: JpegMode,
+    progressive: bool,
 ) -> Result<Vec<u8>, jpegli::error::Error> {
     // We need to use internal pipeline to set huffman method
     // For now, just use the public API with optimize_huffman (uses JpegliCreateTree)
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality))
-        .subsampling(Subsampling::S444)
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(ChromaSubsampling::Full)
         .optimize_huffman(true)
-        .mode(mode);
+        .progressive(progressive);
 
-    encoder.encode(data)
+    encode_rgb(width, height, data, &config)
 }
 
 /// Test: Both algorithms produce decodable baseline JPEGs
@@ -108,7 +120,7 @@ fn test_baseline_both_algorithms_decodable() {
             height as u32,
             quality,
             HuffmanMethod::JpegliCreateTree,
-            JpegMode::Baseline,
+            false, // baseline
         )
         .expect("Encoding should succeed");
 
@@ -134,7 +146,7 @@ fn test_progressive_both_algorithms_decodable() {
             height as u32,
             quality,
             HuffmanMethod::JpegliCreateTree,
-            JpegMode::Progressive,
+            true, // progressive
         )
         .expect("Encoding should succeed");
 
@@ -166,7 +178,7 @@ fn test_progressive_vs_baseline_sizes() {
             height as u32,
             quality,
             HuffmanMethod::JpegliCreateTree,
-            JpegMode::Baseline,
+            false, // baseline
         )
         .expect("Baseline encoding should succeed");
 
@@ -176,7 +188,7 @@ fn test_progressive_vs_baseline_sizes() {
             height as u32,
             quality,
             HuffmanMethod::JpegliCreateTree,
-            JpegMode::Progressive,
+            true, // progressive
         )
         .expect("Progressive encoding should succeed");
 
@@ -409,6 +421,18 @@ fn test_edge_cases() {
     }
 }
 
+/// Helper to encode grayscale data with v2 encoder API
+fn encode_gray(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
 /// Test: Grayscale encoding with optimized Huffman
 #[test]
 fn test_grayscale_huffman_optimization() {
@@ -416,14 +440,12 @@ fn test_grayscale_huffman_optimization() {
     let height = 64;
     let data: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
 
-    let encoder = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .optimize_huffman(true)
-        .mode(JpegMode::Baseline);
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .grayscale()
+        .optimize_huffman(true);
 
-    let jpeg = encoder
-        .encode(&data)
+    let jpeg = encode_gray(width as u32, height as u32, &data, &config)
         .expect("Grayscale encoding should work");
 
     assert!(
