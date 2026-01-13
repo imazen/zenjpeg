@@ -48,7 +48,7 @@
 
 use std::f32::consts::PI;
 
-use crate::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
+use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
 
 // SIMD implementations for hot paths
 pub mod simd;

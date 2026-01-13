@@ -43,9 +43,9 @@ use crate::alloc::{
 };
 use crate::consts::DCT_BLOCK_SIZE;
 use crate::error::Result;
+use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
-use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 
 /// Quantization context: groups all quantization tables and bias parameters.
@@ -98,7 +98,7 @@ impl QuantContext {
     }
 }
 
-use crate::simd_types::Block8x8f;
+use crate::foundation::simd_types::Block8x8f;
 use wide::f32x8;
 
 /// Wide-native block extraction: returns Block8x8f directly.

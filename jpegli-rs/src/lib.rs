@@ -57,23 +57,12 @@ pub use api::encoder;
 pub mod decode;
 pub mod encode;
 pub mod error;
-pub mod pixel;
 pub mod quant;
 pub mod types;
-
-// Internal modules (accessible but hidden from docs)
-#[doc(hidden)]
-pub mod aligned_alloc;
-#[doc(hidden)]
-pub mod quality_conversion;
-#[doc(hidden)]
-pub mod simd_types;
 
 // Internal modules - NOT part of the stable public API.
 // These are hidden from documentation and may change without notice.
 // Use at your own risk.
-#[doc(hidden)]
-pub mod adaptive_quant;
 #[doc(hidden)]
 pub mod color;
 
@@ -89,11 +78,15 @@ pub mod foundation;
 
 // Backward-compatible re-exports from foundation
 #[doc(hidden)]
+pub use foundation::aligned_alloc;
+#[doc(hidden)]
 pub use foundation::alloc;
 #[doc(hidden)]
 pub use foundation::bitstream;
 #[doc(hidden)]
 pub use foundation::consts;
+#[doc(hidden)]
+pub use foundation::simd_types;
 #[doc(hidden)]
 pub mod encode_simd;
 #[doc(hidden)]
@@ -108,8 +101,6 @@ pub mod huffman;
 pub use huffman::classic as huffman_classic;
 #[doc(hidden)]
 pub use huffman::types as huffman_types;
-#[doc(hidden)]
-pub mod icc;
 // Re-export IDCT modules from decode for backward compatibility
 #[doc(hidden)]
 pub use decode::idct;
@@ -117,12 +108,10 @@ pub use decode::idct;
 pub use decode::idct_int;
 #[doc(hidden)]
 pub use encode::scan_script;
-#[doc(hidden)]
-pub mod tone_mapping;
-#[doc(hidden)]
-pub mod transfer_functions;
 
-// Re-export xyb from color module for backward compatibility
+// Re-export from color module for backward compatibility
+#[doc(hidden)]
+pub use color::icc;
 #[doc(hidden)]
 pub use color::xyb;
 
@@ -164,16 +153,13 @@ pub use quant::Quality;
 
 // Quality settings (advanced/internal)
 #[doc(hidden)]
-pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
+pub use quant::quality_conversion::{QualityComparisonMetric, QualityConversion};
 #[doc(hidden)]
 pub use quant::{CustomQuantMatrices, QuantTable};
 
 // Allocation tracking (advanced)
 #[doc(hidden)]
 pub use foundation::AllocationStats;
-
-// Pixel types for typed encode/decode API
-pub use pixel::{Gray16, Gray8, Pixel, RGB16, RGB8, RGBA16, RGBA8};
 
 // Re-export imgref (used internally, hidden from docs)
 #[doc(hidden)]

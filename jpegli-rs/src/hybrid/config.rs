@@ -51,7 +51,7 @@ pub const AQ_MEAN_THRESHOLD: f32 = 0.25;
 /// generalize. Consider running your own benchmarks on representative images.
 ///
 /// # Arguments
-/// * `aq_mean` - Mean AQ strength across all blocks (from [`crate::adaptive_quant::AQStrengthMap`])
+/// * `aq_mean` - Mean AQ strength across all blocks (from [`crate::quant::aq::AQStrengthMap`])
 pub fn should_use_hybrid(aq_mean: f32) -> bool {
     aq_mean > AQ_MEAN_THRESHOLD
 }

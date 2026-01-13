@@ -24,8 +24,8 @@
 //!
 //! This adds ~4 rows of latency but produces results matching the full-plane algorithm.
 
-use crate::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 use crate::error::Result;
+use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 
 use super::quant_field_to_aq_strength;
 use super::simd::{per_block_modulations_row, pre_erosion_row};

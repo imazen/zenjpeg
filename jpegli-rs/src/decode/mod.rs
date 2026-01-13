@@ -31,9 +31,9 @@ use parser::JpegParser;
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
 use crate::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
-use crate::error::{Error, Result};
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
-use crate::icc::apply_icc_transform;
+use crate::color::icc::apply_icc_transform;
+use crate::error::{Error, Result};
 use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 
 /// Decoder configuration.

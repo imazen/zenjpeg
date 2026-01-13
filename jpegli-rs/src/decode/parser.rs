@@ -9,6 +9,7 @@ use super::{JpegInfo, ScanInfo};
 use crate::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_uninitialized, validate_dimensions,
 };
+use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::color::{
     gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
     ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
@@ -21,7 +22,6 @@ use crate::consts::{
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
-use crate::icc::{extract_icc_profile, is_xyb_profile};
 use crate::quant::{
     dequantize_block, dequantize_block_i32, dequantize_block_with_bias, dequantize_unzigzag_i32,
     dequantize_unzigzag_i32_into, DequantBiasStats,

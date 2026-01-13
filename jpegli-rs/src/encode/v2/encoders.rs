@@ -826,7 +826,7 @@ mod tests {
         let jpeg = enc.finish().unwrap();
 
         // Extract ICC profile using the existing extraction function
-        let extracted = crate::icc::extract_icc_profile(&jpeg);
+        let extracted = crate::color::icc::extract_icc_profile(&jpeg);
         assert!(extracted.is_some(), "Failed to extract ICC profile");
         assert_eq!(
             extracted.unwrap(),
