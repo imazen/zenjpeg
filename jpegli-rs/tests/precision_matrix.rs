@@ -5,7 +5,7 @@
 //! through jpegli for each input/output format combination?"
 
 use jpegli::decode::Decoder;
-use jpegli::{PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
 use std::collections::HashSet;
 
 /// Test image dimensions

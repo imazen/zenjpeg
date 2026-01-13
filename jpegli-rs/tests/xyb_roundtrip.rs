@@ -133,7 +133,7 @@ fn test_xyb_buffer_roundtrip() {
 #[test]
 fn test_xyb_encode_decode() {
     use jpegli::quant::Quality;
-    use jpegli::{PixelFormat, JpegEncoder};
+    use jpegli::{JpegEncoder, PixelFormat};
 
     let width = 64u32;
     let height = 64u32;

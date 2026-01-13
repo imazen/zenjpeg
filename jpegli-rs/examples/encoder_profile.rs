@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --example encoder_profile
 
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 use std::time::Instant;
 
 fn main() {

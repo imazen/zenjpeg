@@ -1,4 +1,4 @@
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 use std::time::Instant;
 
 fn benchmark(

@@ -8,7 +8,7 @@
 
 use jpegli::decode::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;

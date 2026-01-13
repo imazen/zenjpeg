@@ -1,6 +1,6 @@
 //! Test that streaming encoder produces identical output to standard encoder.
 
-use jpegli::{JpegMode, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, JpegMode, Quality, Subsampling};
 
 #[test]
 fn test_streaming_matches_standard_various_sizes() {

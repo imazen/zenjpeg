@@ -10,7 +10,7 @@ use test_utils::{generate_gradient_d, get_test_data_path, read_test_data, TestIm
 use jpegli::{
     decode::{Decoder, DecoderConfig},
     types::PixelFormat,
-    Quality, JpegEncoder,
+    JpegEncoder, Quality,
 };
 use test_case::test_case;
 

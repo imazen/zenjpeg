@@ -122,11 +122,7 @@ impl Encoder {
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
     ) -> Result<()> {
-        let tables = [
-            (0u8, y_quant),
-            (1u8, cb_quant),
-            (2u8, cr_quant),
-        ];
+        let tables = [(0u8, y_quant), (1u8, cb_quant), (2u8, cr_quant)];
         Self::write_dqt_segment(output, &tables)
     }
 
@@ -141,11 +137,7 @@ impl Encoder {
         g_quant: &QuantTable,
         b_quant: &QuantTable,
     ) -> Result<()> {
-        let tables = [
-            (0u8, r_quant),
-            (1u8, g_quant),
-            (2u8, b_quant),
-        ];
+        let tables = [(0u8, r_quant), (1u8, g_quant), (2u8, b_quant)];
         Self::write_dqt_segment(output, &tables)
     }
 

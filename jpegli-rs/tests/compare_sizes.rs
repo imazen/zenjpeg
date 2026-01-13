@@ -1,4 +1,4 @@
-use jpegli::{decode::Decoder, types::Subsampling, Quality, JpegEncoder};
+use jpegli::{decode::Decoder, types::Subsampling, JpegEncoder, Quality};
 
 fn create_gradient(size: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (size * size * 3) as usize];

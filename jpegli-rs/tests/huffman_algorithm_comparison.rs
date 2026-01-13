@@ -11,7 +11,7 @@
 
 use jpegli::huffman_types::{compare_algorithms, SymbolFrequencies};
 use jpegli::types::HuffmanMethod;
-use jpegli::{JpegMode, PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {

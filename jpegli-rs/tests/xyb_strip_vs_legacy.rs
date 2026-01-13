@@ -3,7 +3,7 @@
 //! Verifies that the strip-based XYB encoder produces valid, high-quality output.
 
 use jpegli::quant::Quality;
-use jpegli::{PixelFormat, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, PixelFormat, Subsampling};
 
 /// Encode with strip-based XYB encoder
 fn encode_xyb(

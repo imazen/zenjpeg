@@ -3,7 +3,7 @@
 //! Verifies that encoding the same input multiple times produces identical output bytes.
 //! This is critical for caching, reproducible builds, and debugging.
 
-use jpegli::{Decoder, JpegMode, PixelFormat, Quality, JpegEncoder};
+use jpegli::{Decoder, JpegEncoder, JpegMode, PixelFormat, Quality};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {

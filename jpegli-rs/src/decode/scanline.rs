@@ -24,13 +24,13 @@
 //! }
 //! ```
 
+use super::idct_int::idct_int_tiered;
 use crate::alloc::try_alloc_uninitialized;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
-use super::idct_int::idct_int_tiered;
 use crate::quant::dequantize_unzigzag_i32_into;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;
@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgb8() {
-        use crate::{Decoder, Quality, JpegEncoder};
+        use crate::{Decoder, JpegEncoder, Quality};
 
         // Create test image - 64x48 for multiple MCU rows
         let width = 64u32;
@@ -864,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_partial_reads() {
-        use crate::{Decoder, Quality, JpegEncoder};
+        use crate::{Decoder, JpegEncoder, Quality};
 
         // Create test image - 32x32
         let width = 32u32;
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgbx8() {
-        use crate::{Decoder, Quality, JpegEncoder};
+        use crate::{Decoder, JpegEncoder, Quality};
 
         let width = 24u32;
         let height = 24u32;
@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgba_f32() {
-        use crate::{Decoder, Quality, JpegEncoder};
+        use crate::{Decoder, JpegEncoder, Quality};
 
         let width = 16u32;
         let height = 16u32;
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_ycbcr_planes() {
-        use crate::{Decoder, Quality, JpegEncoder};
+        use crate::{Decoder, JpegEncoder, Quality};
 
         let width = 32u32;
         let height = 24u32;
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_non_mcu_aligned() {
-        use crate::{Decoder, Quality, JpegEncoder};
+        use crate::{Decoder, JpegEncoder, Quality};
 
         // Non-MCU-aligned dimensions (not multiples of 8)
         let width = 37u32;
@@ -1146,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_420() {
-        use crate::{Decoder, Quality, JpegEncoder, Subsampling};
+        use crate::{Decoder, JpegEncoder, Quality, Subsampling};
 
         // Create test image - 64x48 for multiple MCU rows
         // 4:2:0 has 16x16 MCUs, so this is 4x3 MCUs
@@ -1228,7 +1228,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_420_non_mcu_aligned() {
-        use crate::{Decoder, Quality, JpegEncoder, Subsampling};
+        use crate::{Decoder, JpegEncoder, Quality, Subsampling};
 
         // Non-MCU-aligned dimensions (not multiples of 16 for 4:2:0)
         let width = 37u32;

@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo flamegraph --release --example profile_encode -o encode.svg
 
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 
 fn main() {
     let (width, height) = (2048, 2048);

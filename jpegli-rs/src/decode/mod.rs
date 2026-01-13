@@ -485,7 +485,6 @@ pub(crate) struct ScanInfo {
     pub data_start: usize,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

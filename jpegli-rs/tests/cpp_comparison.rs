@@ -14,7 +14,7 @@ use test_utils::{
 use jpegli::{
     decode::Decoder,
     types::{JpegMode, PixelFormat},
-    Quality, JpegEncoder,
+    JpegEncoder, Quality,
 };
 use std::path::Path;
 use test_case::test_case;
@@ -335,14 +335,10 @@ fn test_quant_tables_vary_with_quality() {
     let img = generate_gradient_d(64, 64, 3);
 
     let q50_encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(50.0));
-    let q50_jpeg = q50_encoder
-        .encode(&img.pixels)
-        .expect("encode Q50 failed");
+    let q50_jpeg = q50_encoder.encode(&img.pixels).expect("encode Q50 failed");
 
     let q95_encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(95.0));
-    let q95_jpeg = q95_encoder
-        .encode(&img.pixels)
-        .expect("encode Q95 failed");
+    let q95_jpeg = q95_encoder.encode(&img.pixels).expect("encode Q95 failed");
 
     let q50_table = extract_dqt_table(&q50_jpeg, 0).unwrap();
     let q95_table = extract_dqt_table(&q95_jpeg, 0).unwrap();

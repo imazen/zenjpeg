@@ -1,7 +1,7 @@
 //! Debug test for Gray16 linear encoding issue
 
 use jpegli::decode::Decoder;
-use jpegli::{PixelFormat, Quality, JpegEncoder};
+use jpegli::{JpegEncoder, PixelFormat, Quality};
 use std::collections::HashSet;
 
 fn srgb_to_linear(s: f64) -> f64 {

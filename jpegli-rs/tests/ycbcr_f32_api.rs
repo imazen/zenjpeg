@@ -3,7 +3,7 @@
 //! These tests verify the decoder's `decode_to_ycbcr_f32()` method and
 //! the encoder's `push_ycbcr_strip_f32()` methods.
 
-use jpegli::{Decoder, PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{Decoder, JpegEncoder, PixelFormat, Quality, Subsampling};
 
 /// Helper to create a test RGB image with a gradient pattern.
 fn create_test_rgb(width: usize, height: usize) -> Vec<u8> {
