@@ -70,11 +70,13 @@ pub mod simd_types;
 #[doc(hidden)]
 pub mod adaptive_quant;
 #[doc(hidden)]
-pub mod chroma;
-#[doc(hidden)]
 pub mod color;
+
+// Re-export encoder modules for backward compatibility
 #[doc(hidden)]
-pub mod dct;
+pub use encode::chroma;
+#[doc(hidden)]
+pub use encode::dct;
 
 // Foundation module (low-level utilities)
 #[doc(hidden)]
@@ -110,7 +112,7 @@ pub mod idct;
 #[doc(hidden)]
 pub mod idct_int;
 #[doc(hidden)]
-pub mod scan_script;
+pub use encode::scan_script;
 #[doc(hidden)]
 pub mod simplified_quant;
 #[doc(hidden)]
