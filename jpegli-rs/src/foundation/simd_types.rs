@@ -396,7 +396,7 @@ impl Default for Block8x8i32 {
 
 /// Standalone multiversion quantize function with zigzag output.
 /// Uses runtime CPU feature detection for AVX2/FMA optimization.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 #[inline]
 fn quantize_block_zigzag(
     mul_rows: &[f32x8; 8],
@@ -452,7 +452,7 @@ fn quantize_block_zigzag(
 
 /// Standalone multiversion quantize function (natural order output).
 /// Uses runtime CPU feature detection for AVX2/FMA optimization.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 #[inline]
 fn quantize_block(
     mul_rows: &[f32x8; 8],

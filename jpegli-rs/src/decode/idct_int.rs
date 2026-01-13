@@ -601,6 +601,7 @@ mod wide_simd {
         "x86+sse4.1",
         "aarch64+neon",
         "arm+neon",
+        "wasm32+simd128",
     ))]
     pub fn idct_int_wide(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load 8 rows as i32x8 vectors

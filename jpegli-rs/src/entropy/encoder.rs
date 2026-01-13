@@ -21,6 +21,7 @@ use super::{additional_bits_with_cat, category};
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 #[inline]
 fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {

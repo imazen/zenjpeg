@@ -43,7 +43,7 @@ const CHUNK_SIZE: usize = 4096;
 /// Core parallel DCT loop - processes a plane's blocks in parallel chunks.
 ///
 /// This is the workhorse that both Y and chroma DCT functions delegate to.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 fn parallel_dct_plane(
     strip: &[f32],
     blocks_w: usize,
@@ -70,7 +70,7 @@ fn parallel_dct_plane(
 }
 
 /// Sequential DCT fallback for small block counts.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 #[inline]
 fn sequential_dct_plane(
     strip: &[f32],
