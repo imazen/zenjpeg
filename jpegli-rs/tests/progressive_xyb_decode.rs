@@ -130,7 +130,7 @@ fn jpegli_decodes_baseline_xyb() {
     let height = 8u32;
     let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    let config = jpegli::EncoderConfig::new().use_xyb(true);
+    let config = jpegli::EncoderConfig::new().xyb();
     let mut enc = config
         .encode_from_bytes(width, height, jpegli::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
