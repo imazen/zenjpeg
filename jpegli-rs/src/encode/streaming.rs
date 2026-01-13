@@ -63,7 +63,7 @@ pub struct StreamingEncoderBuilder {
     hybrid_config: crate::hybrid::config::HybridConfig,
     /// Custom AQ map (requires `experimental-hybrid-trellis` feature)
     #[cfg(feature = "experimental-hybrid-trellis")]
-    custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
+    custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
 }
 
 impl StreamingEncoderBuilder {
@@ -329,7 +329,7 @@ impl StreamingEncoderBuilder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn aq_map(mut self, map: crate::adaptive_quant::AQStrengthMap) -> Self {
+    pub fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);
         self
     }

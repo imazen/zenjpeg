@@ -17,7 +17,7 @@
 //! (`_mm256_unpacklo/hi_ps`, `_mm256_permute2f128_ps`) which have no `wide` equivalent.
 
 use crate::consts::DCT_BLOCK_SIZE;
-use crate::simd_types::Block8x8f;
+use crate::foundation::simd_types::Block8x8f;
 
 use wide::f32x8;
 
@@ -1588,7 +1588,7 @@ mod tests {
 
     #[test]
     fn test_wide_dct_matches_array_dct() {
-        use crate::simd_types::Block8x8f;
+        use crate::foundation::simd_types::Block8x8f;
 
         // Test with various patterns
         let patterns: [[f32; 64]; 4] = [

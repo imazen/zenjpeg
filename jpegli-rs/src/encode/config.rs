@@ -68,7 +68,7 @@ pub struct EncoderConfig {
     /// Custom AQ map (optional). If None, computed automatically.
     /// Allows pre-scaling the AQ map for size control.
     #[cfg(feature = "experimental-hybrid-trellis")]
-    pub custom_aq_map: Option<crate::adaptive_quant::AQStrengthMap>,
+    pub custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
 
     /// Custom quantization matrices (escape hatch for experimentation).
     /// Not part of public API - use Encoder::custom_quant_matrices() method.

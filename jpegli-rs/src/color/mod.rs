@@ -6,6 +6,7 @@
 //! - Grayscale handling
 //! - CMYK support
 
+pub mod icc;
 pub mod xyb;
 pub mod ycbcr;
 

@@ -178,7 +178,7 @@ impl Encoder {
     #[must_use]
     pub fn equivalent_quality(
         mut self,
-        conversion: crate::quality_conversion::QualityConversion,
+        conversion: crate::quant::quality_conversion::QualityConversion,
     ) -> Self {
         self.config.quality = conversion.to_jpegli_quality();
         self
@@ -420,7 +420,7 @@ impl Encoder {
     ///
     /// # Example
     /// ```ignore
-    /// use jpegli::adaptive_quant::compute_aq_strength_map;
+    /// use jpegli::quant::aq::compute_aq_strength_map;
     ///
     /// // Compute AQ map from Y plane
     /// let mut aq_map = compute_aq_strength_map(&y_plane, width, height, 8)?;
@@ -441,7 +441,7 @@ impl Encoder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn aq_map(mut self, map: crate::adaptive_quant::AQStrengthMap) -> Self {
+    pub fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.config.custom_aq_map = Some(map);
         self
     }
