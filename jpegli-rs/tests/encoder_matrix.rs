@@ -11,7 +11,8 @@
 //! cargo test --test encoder_matrix -- --nocapture
 //! ```
 
-use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
+use enough::Never;
+use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
 
 /// Result of testing one encoder configuration
 #[derive(Debug)]
@@ -48,9 +49,21 @@ fn generate_test_image(width: usize, height: usize, channels: usize) -> Vec<u8> 
     data
 }
 
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
 /// Decode with jpegli-rs
 fn decode_jpegli(data: &[u8]) -> bool {
-    jpegli::Decoder::new().decode(data).is_ok()
+    Decoder::new().decode(data).is_ok()
 }
 
 /// Decode with zune-jpeg
@@ -66,34 +79,54 @@ fn decode_zune_jpeg(data: &[u8]) -> bool {
 fn test_config(
     width: u32,
     height: u32,
-    pixel_format: PixelFormat,
-    mode: JpegMode,
-    subsampling: Subsampling,
+    is_grayscale: bool,
+    progressive: bool,
+    subsampling: ChromaSubsampling,
     optimize_huffman: bool,
     use_xyb: bool,
     quality: f32,
 ) -> MatrixResult {
-    let channels = pixel_format.bytes_per_pixel();
+    let channels = if is_grayscale { 1 } else { 3 };
     let data = generate_test_image(width as usize, height as usize, channels);
 
+    let pixel_format_name = if is_grayscale { "Gray" } else { "Rgb" };
+    let mode_name = if progressive { "Progressive" } else { "Baseline" };
+    let sub_name = match subsampling {
+        ChromaSubsampling::Full => "444",
+        ChromaSubsampling::HalfHorizontal => "422",
+        ChromaSubsampling::Quarter => "420",
+        ChromaSubsampling::HalfVertical => "440",
+        _ => "unknown",
+    };
+
     let config_name = format!(
-        "{:?}/{:?}/{:?}/huff={}/xyb={}/Q{}",
-        pixel_format,
-        mode,
-        subsampling,
+        "{}/{}/{}/huff={}/xyb={}/Q{}",
+        pixel_format_name,
+        mode_name,
+        sub_name,
         if optimize_huffman { "opt" } else { "fix" },
         use_xyb,
         quality as u32
     );
 
-    let encode_result = JpegEncoder::new(width, height)
-        .pixel_format(pixel_format)
-        .mode(mode)
-        .subsampling(subsampling)
-        .optimize_huffman(optimize_huffman)
-        .use_xyb(use_xyb)
-        .quality(Quality::from_quality(quality))
-        .encode(&data);
+    let mut config = EncoderConfig::new()
+        .quality(quality)
+        .progressive(progressive)
+        .optimize_huffman(optimize_huffman);
+
+    if is_grayscale {
+        config = config.grayscale();
+    } else if use_xyb {
+        config = config.xyb();
+    } else {
+        config = config.ycbcr(subsampling);
+    }
+
+    let encode_result = if is_grayscale {
+        encode_gray(width, height, &data, &config)
+    } else {
+        encode_rgb(width, height, &data, &config)
+    };
 
     match encode_result {
         Ok(jpeg_data) => {
@@ -144,37 +177,36 @@ fn test_encoder_matrix() {
     let mut fail_count = 0;
 
     // Define test matrix
-    let _pixel_formats = [PixelFormat::Rgb, PixelFormat::Gray];
-    let modes = [JpegMode::Baseline, JpegMode::Progressive];
+    let progressives = [false, true];
     let subsamplings = [
-        Subsampling::S444,
-        Subsampling::S422,
-        Subsampling::S420,
-        Subsampling::S440,
+        ChromaSubsampling::Full,
+        ChromaSubsampling::HalfHorizontal,
+        ChromaSubsampling::Quarter,
+        ChromaSubsampling::HalfVertical,
     ];
     let huffman_opts = [false, true]; // false = fixed, true = optimized
     let xyb_opts = [false, true];
 
     // Test RGB combinations
-    for &mode in &modes {
+    for &progressive in &progressives {
         for &subsampling in &subsamplings {
             for &optimize_huffman in &huffman_opts {
                 // Skip progressive + fixed Huffman (invalid combination, not supported)
-                if mode == JpegMode::Progressive && !optimize_huffman {
+                if progressive && !optimize_huffman {
                     continue;
                 }
 
                 for &use_xyb in &xyb_opts {
                     // Skip XYB with subsampling (XYB should use 4:4:4)
-                    if use_xyb && subsampling != Subsampling::S444 {
+                    if use_xyb && subsampling != ChromaSubsampling::Full {
                         continue;
                     }
 
                     let result = test_config(
                         width,
                         height,
-                        PixelFormat::Rgb,
-                        mode,
+                        false, // not grayscale
+                        progressive,
                         subsampling,
                         optimize_huffman,
                         use_xyb,
@@ -187,19 +219,19 @@ fn test_encoder_matrix() {
     }
 
     // Test Grayscale combinations (no subsampling, no XYB)
-    for &mode in &modes {
+    for &progressive in &progressives {
         for &optimize_huffman in &huffman_opts {
             // Skip progressive + fixed Huffman (invalid combination, not supported)
-            if mode == JpegMode::Progressive && !optimize_huffman {
+            if progressive && !optimize_huffman {
                 continue;
             }
 
             let result = test_config(
                 width,
                 height,
-                PixelFormat::Gray,
-                mode,
-                Subsampling::S444, // Grayscale ignores subsampling
+                true, // grayscale
+                progressive,
+                ChromaSubsampling::Full, // Grayscale ignores subsampling
                 optimize_huffman,
                 false, // No XYB for grayscale
                 quality,
@@ -267,70 +299,32 @@ fn test_common_configurations() {
     let height = 64;
     let data = generate_test_image(width, height, 3);
 
-    let configs: Vec<(&str, JpegMode, Subsampling, bool, bool)> = vec![
-        // (name, mode, subsampling, optimize_huffman, use_xyb)
-        (
-            "baseline_444_fixed",
-            JpegMode::Baseline,
-            Subsampling::S444,
-            false,
-            false,
-        ),
-        (
-            "baseline_444_opt",
-            JpegMode::Baseline,
-            Subsampling::S444,
-            true,
-            false,
-        ),
-        (
-            "baseline_420_opt",
-            JpegMode::Baseline,
-            Subsampling::S420,
-            true,
-            false,
-        ),
-        (
-            "progressive_444_opt",
-            JpegMode::Progressive,
-            Subsampling::S444,
-            true,
-            false,
-        ),
-        (
-            "progressive_420_opt",
-            JpegMode::Progressive,
-            Subsampling::S420,
-            true,
-            false,
-        ),
-        (
-            "xyb_baseline_opt",
-            JpegMode::Baseline,
-            Subsampling::S444,
-            true,
-            true,
-        ),
-        (
-            "xyb_progressive_opt",
-            JpegMode::Progressive,
-            Subsampling::S444,
-            true,
-            true,
-        ),
+    let configs: Vec<(&str, bool, ChromaSubsampling, bool, bool)> = vec![
+        // (name, progressive, subsampling, optimize_huffman, use_xyb)
+        ("baseline_444_fixed", false, ChromaSubsampling::Full, false, false),
+        ("baseline_444_opt", false, ChromaSubsampling::Full, true, false),
+        ("baseline_420_opt", false, ChromaSubsampling::Quarter, true, false),
+        ("progressive_444_opt", true, ChromaSubsampling::Full, true, false),
+        ("progressive_420_opt", true, ChromaSubsampling::Quarter, true, false),
+        ("xyb_baseline_opt", false, ChromaSubsampling::Full, true, true),
+        ("xyb_progressive_opt", true, ChromaSubsampling::Full, true, true),
     ];
 
     println!("\n=== Common Configuration Smoke Test ===\n");
 
-    for (name, mode, subsampling, optimize_huffman, use_xyb) in configs {
-        let result = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .mode(mode)
-            .subsampling(subsampling)
-            .optimize_huffman(optimize_huffman)
-            .use_xyb(use_xyb)
-            .quality(Quality::from_quality(85.0))
-            .encode(&data);
+    for (name, progressive, subsampling, optimize_huffman, use_xyb) in configs {
+        let mut config = EncoderConfig::new()
+            .quality(85.0)
+            .progressive(progressive)
+            .optimize_huffman(optimize_huffman);
+
+        if use_xyb {
+            config = config.xyb();
+        } else {
+            config = config.ycbcr(subsampling);
+        }
+
+        let result = encode_rgb(width as u32, height as u32, &data, &config);
 
         match result {
             Ok(jpeg) => {
@@ -359,11 +353,12 @@ fn test_common_configurations() {
 fn test_progressive_fixed_huffman_errors() {
     let data = vec![128u8; 64 * 64 * 3];
 
-    let result = JpegEncoder::new(64, 64)
-        .pixel_format(PixelFormat::Rgb)
-        .mode(JpegMode::Progressive)
-        .optimize_huffman(false) // Fixed Huffman
-        .encode(&data);
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .progressive(true)
+        .optimize_huffman(false); // Fixed Huffman
+
+    let result = encode_rgb(64, 64, &data, &config);
 
     match result {
         Err(e) => {
