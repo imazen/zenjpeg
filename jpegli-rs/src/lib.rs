@@ -135,7 +135,7 @@ pub use types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampli
 
 // Internal types (accessible but not primary API)
 #[doc(hidden)]
-pub use types::{EdgePadding, EdgePaddingConfig, HuffmanMethod, OutputDataType, SampleDepth};
+pub use types::{EdgePadding, EdgePaddingConfig, HuffmanMethod};
 
 // Encoder API
 pub use encode::streaming::StreamingEncoder as JpegEncoder;
