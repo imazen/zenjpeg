@@ -1,4 +1,5 @@
-use jpegli::{decode::Decoder, types::Subsampling, JpegEncoder, Quality};
+use enough::Never;
+use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
 
 fn create_gradient(size: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (size * size * 3) as usize];
@@ -14,13 +15,19 @@ fn create_gradient(size: u32) -> Vec<u8> {
     pixels
 }
 
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
 fn test_size(size: u32) {
     let pixels = create_gradient(size);
 
-    let encoder = JpegEncoder::new(size, size)
-        .quality(Quality::from_quality(90.0))
-        .subsampling(Subsampling::S420);
-    let jpeg = match encoder.encode(&pixels) {
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .ycbcr(ChromaSubsampling::Quarter);
+    let jpeg = match encode_rgb(size, size, &pixels, &config) {
         Ok(j) => j,
         Err(e) => {
             println!("  {}x{}: ENCODE FAILED: {:?}", size, size, e);
