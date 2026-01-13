@@ -3,8 +3,8 @@
 //! Tests that XYB conversion matches C++ implementation and roundtrips correctly.
 
 use jpegli::xyb::{
-    linear_rgb_to_xyb, linear_to_srgb_u8, rgb_buffer_to_xyb_planes, srgb_to_xyb, srgb_u8_to_linear,
-    xyb_planes_to_rgb_buffer, xyb_to_linear_rgb, xyb_to_srgb,
+    linear_to_srgb_u8, rgb_buffer_to_xyb_planes, srgb_to_xyb, srgb_u8_to_linear,
+    xyb_planes_to_rgb_buffer, xyb_to_srgb,
 };
 
 /// Test XYB roundtrip for all 8-bit colors at key points.
@@ -132,8 +132,14 @@ fn test_xyb_buffer_roundtrip() {
 /// Test XYB with image encoding (if encoder supports XYB).
 #[test]
 fn test_xyb_encode_decode() {
-    use jpegli::quant::Quality;
-    use jpegli::{JpegEncoder, PixelFormat};
+    use enough::Never;
+    use jpegli::{EncoderConfig, PixelLayout};
+
+    fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+        enc.push_packed(data, Never)?;
+        enc.finish()
+    }
 
     let width = 64u32;
     let height = 64u32;
@@ -150,13 +156,12 @@ fn test_xyb_encode_decode() {
     }
 
     // Encode with XYB (note: actual XYB encoding may not be fully implemented)
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .use_xyb(true);
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .xyb();
 
     // Try encoding - this tests that the XYB flag doesn't break encoding
-    match encoder.encode(&rgb) {
+    match encode_rgb_xyb(width, height, &rgb, &config) {
         Ok(jpeg_data) => {
             println!("XYB encoded JPEG: {} bytes", jpeg_data.len());
             assert!(!jpeg_data.is_empty());
@@ -203,10 +208,18 @@ fn test_srgb_linear_precision() {
 #[ignore = "requires C++ cjpegli build"]
 fn test_xyb_roundtrip_loss_vs_cpp() {
     use dssim::Dssim;
+    use enough::Never;
+    use jpegli::{EncoderConfig, PixelLayout};
     use rgb::RGBA8;
     use std::fs;
     use std::io::Write;
     use std::process::Command;
+
+    fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+        enc.push_packed(data, Never)?;
+        enc.finish()
+    }
 
     fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
         data.chunks(3)
@@ -261,11 +274,11 @@ fn test_xyb_roundtrip_loss_vs_cpp() {
     let cpp_jpeg = fs::read(cpp_jpeg_path).expect("Failed to read C++ JPEG");
 
     // Encode with Rust in XYB mode
-    let rust_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(jpegli::types::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(90.0))
-        .use_xyb(true)
-        .encode(&rgb_data)
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .xyb();
+
+    let rust_jpeg = encode_rgb_xyb(width as u32, height as u32, &rgb_data, &config)
         .expect("Rust encoding failed");
 
     println!("C++ JPEG size: {} bytes", cpp_jpeg.len());
