@@ -2,8 +2,12 @@
 //!
 //! These tests verify the decoder's `decode_to_ycbcr_f32()` method and
 //! the encoder's `push_ycbcr_strip_f32()` methods.
+//!
+//! Note: Planar YCbCr encoding tests use the old streaming API because v2's
+//! YCbCrPlanarEncoder::finish() is not yet implemented.
 
-use jpegli::{Decoder, JpegEncoder, PixelFormat, Quality, Subsampling};
+use enough::Never;
+use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelFormat, PixelLayout};
 
 /// Helper to create a test RGB image with a gradient pattern.
 fn create_test_rgb(width: usize, height: usize) -> Vec<u8> {
@@ -34,6 +38,28 @@ fn rgb_to_ycbcr_centered(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     (y - 128.0, cb - 128.0, cr - 128.0)
 }
 
+/// Helper to encode RGB with v2 API.
+fn encode_rgb_v2(width: u32, height: u32, data: &[u8], quality: f32, subsampling: ChromaSubsampling) -> Vec<u8> {
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(subsampling);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(data, Never).expect("push");
+    enc.finish().expect("encode")
+}
+
+/// Helper to encode grayscale with v2 API.
+fn encode_gray_v2(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
+    let config = EncoderConfig::new().quality(quality);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(data, Never).expect("push");
+    enc.finish().expect("encode")
+}
+
 /// Test that decode_to_ycbcr_f32 returns valid YCbCr planes.
 #[test]
 fn test_decode_to_ycbcr_f32_basic() {
@@ -42,12 +68,7 @@ fn test_decode_to_ycbcr_f32_basic() {
 
     // Create and encode a test image
     let rgb = create_test_rgb(width, height);
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .subsampling(Subsampling::S444)
-        .encode(&rgb)
-        .unwrap();
+    let jpeg = encode_rgb_v2(width as u32, height as u32, &rgb, 90.0, ChromaSubsampling::Full);
 
     // Decode to YCbCr f32
     let decoder = Decoder::new();
@@ -73,8 +94,14 @@ fn test_decode_to_ycbcr_f32_basic() {
 }
 
 /// Test that encoding from YCbCr produces the same result as encoding from RGB.
+/// Note: Uses StreamingEncoder for planar YCbCr (v2 planar encoder not yet implemented).
 #[test]
+#[allow(deprecated)] // StreamingEncoder is deprecated but v2 planar encoder not implemented yet
 fn test_encode_ycbcr_parity_with_rgb() {
+    use jpegli::encode::streaming::StreamingEncoder;
+    use jpegli::quant::Quality;
+    use jpegli::Subsampling;
+
     let width = 64;
     let height = 64;
 
@@ -98,17 +125,12 @@ fn test_encode_ycbcr_parity_with_rgb() {
         }
     }
 
-    // Encode from RGB
-    let jpeg_rgb = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .subsampling(Subsampling::S444)
-        .encode(&rgb)
-        .unwrap();
+    // Encode from RGB (v2 API)
+    let jpeg_rgb = encode_rgb_v2(width as u32, height as u32, &rgb, 90.0, ChromaSubsampling::Full);
 
-    // Encode from YCbCr
+    // Encode from YCbCr (StreamingEncoder for planar data)
     let strip_height = 16; // Typical strip height
-    let mut encoder_ycbcr = JpegEncoder::new(width as u32, height as u32)
+    let mut encoder_ycbcr = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb) // Still need to specify format for other params
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S444)
@@ -161,12 +183,7 @@ fn test_decode_to_ycbcr_f32_420() {
 
     // Create and encode a test image with 4:2:0
     let rgb = create_test_rgb(width, height);
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .subsampling(Subsampling::S420)
-        .encode(&rgb)
-        .unwrap();
+    let jpeg = encode_rgb_v2(width as u32, height as u32, &rgb, 90.0, ChromaSubsampling::Quarter);
 
     // Decode to YCbCr f32
     let decoder = Decoder::new();
@@ -186,11 +203,7 @@ fn test_decode_to_ycbcr_f32_icc_passthrough() {
 
     // Create and encode a test image
     let rgb = create_test_rgb(width, height);
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .encode(&rgb)
-        .unwrap();
+    let jpeg = encode_rgb_v2(width as u32, height as u32, &rgb, 90.0, ChromaSubsampling::Full);
 
     // Decode to YCbCr f32
     let decoder = Decoder::new();
@@ -210,11 +223,7 @@ fn test_decode_to_ycbcr_f32_grayscale_error() {
 
     // Create and encode a grayscale image
     let gray: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0))
-        .encode(&gray)
-        .unwrap();
+    let jpeg = encode_gray_v2(width as u32, height as u32, &gray, 90.0);
 
     // Decode to YCbCr f32 should fail for grayscale
     let decoder = Decoder::new();
@@ -223,29 +232,30 @@ fn test_decode_to_ycbcr_f32_grayscale_error() {
 }
 
 /// Test roundtrip: encode RGB -> decode YCbCr -> re-encode YCbCr -> decode RGB.
+/// Note: Uses StreamingEncoder for planar YCbCr (v2 planar encoder not yet implemented).
 #[test]
+#[allow(deprecated)] // StreamingEncoder is deprecated but v2 planar encoder not implemented yet
 fn test_ycbcr_f32_roundtrip() {
+    use jpegli::encode::streaming::StreamingEncoder;
+    use jpegli::quant::Quality;
+    use jpegli::Subsampling;
+
     let width = 64;
     let height = 64;
 
     // Create original RGB
     let original_rgb = create_test_rgb(width, height);
 
-    // Encode at high quality
-    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(95.0))
-        .subsampling(Subsampling::S444)
-        .encode(&original_rgb)
-        .unwrap();
+    // Encode at high quality (v2 API)
+    let jpeg1 = encode_rgb_v2(width as u32, height as u32, &original_rgb, 95.0, ChromaSubsampling::Full);
 
     // Decode to YCbCr
     let decoder = Decoder::new();
     let ycbcr = decoder.decode_to_ycbcr_f32(&jpeg1).unwrap();
 
-    // Re-encode from YCbCr
+    // Re-encode from YCbCr (StreamingEncoder for planar data)
     let strip_height = 16;
-    let mut encoder = JpegEncoder::new(width as u32, height as u32)
+    let mut encoder = StreamingEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(95.0))
         .subsampling(Subsampling::S444)
