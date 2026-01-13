@@ -11,7 +11,7 @@ use std::time::Instant;
 use jpegli::encode::strip::{StripProcessor, StripProcessorOutput};
 use jpegli::quant::{generate_quant_table, Quality, ZeroBiasParams};
 use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
-use jpegli::Encoder;
+use jpegli::JpegEncoder;
 
 /// Tracking allocator that wraps System allocator
 struct TrackingAllocator;
@@ -85,10 +85,8 @@ fn encode_standard(rgb_data: &[u8], width: usize, height: usize) -> (usize, std:
     reset_stats();
     let start = Instant::now();
 
-    let encoder = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
-        .jpegli_quality(Quality::Traditional(85.0))
+    let encoder = JpegEncoder::new(width, height)
+        .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true);
@@ -113,10 +111,8 @@ fn encode_strip_jpeg(
     reset_stats();
     let start = Instant::now();
 
-    let encoder = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
-        .jpegli_quality(Quality::Traditional(85.0))
+    let encoder = JpegEncoder::new(width, height)
+        .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true);

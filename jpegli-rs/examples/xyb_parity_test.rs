@@ -54,20 +54,16 @@ fn main() {
             #[cfg(feature = "experimental-hybrid-trellis")]
             let rust_jpeg = {
                 use jpegli::hybrid_config::HybridConfig;
-                jpegli::Encoder::new()
-                    .width(width)
-                    .height(height)
-                    .jpegli_quality(jpegli::quant::Quality::from_quality(q as f32))
+                jpegli::JpegEncoder::new(width, height)
+                    .quality(jpegli::quant::Quality::from_quality(q as f32))
                     .use_xyb(true)
                     .hybrid_config(HybridConfig::default())
                     .encode(pixels)
                     .expect("encode")
             };
             #[cfg(not(feature = "experimental-hybrid-trellis"))]
-            let rust_jpeg = jpegli::Encoder::new()
-                .width(width)
-                .height(height)
-                .jpegli_quality(jpegli::quant::Quality::from_quality(q as f32))
+            let rust_jpeg = jpegli::JpegEncoder::new(width, height)
+                .quality(jpegli::quant::Quality::from_quality(q as f32))
                 .use_xyb(true)
                 .encode(pixels)
                 .expect("encode");

@@ -1,6 +1,6 @@
 //! Benchmark 4:4:4 baseline encoding path
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -39,11 +39,9 @@ fn main() {
 
     // Warmup
     for _ in 0..3 {
-        let _ = Encoder::new()
-            .width(width)
-            .height(height)
+        let _ = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0))
+            .quality(Quality::from_quality(90.0))
             .mode(JpegMode::Baseline)
             .optimize_huffman(false) // Fixed tables for consistency
             .subsampling(Subsampling::S444)
@@ -54,11 +52,9 @@ fn main() {
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let result = Encoder::new()
-            .width(width)
-            .height(height)
+        let result = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0))
+            .quality(Quality::from_quality(90.0))
             .mode(JpegMode::Baseline)
             .optimize_huffman(false)
             .subsampling(Subsampling::S444)

@@ -1,5 +1,5 @@
 //! Benchmark showing auto-dispatch behavior for large images
-use jpegli::{Encoder, PixelFormat, Quality};
+use jpegli::{JpegEncoder, PixelFormat, Quality};
 use std::time::Instant;
 
 fn bench(width: usize, height: usize, use_strip: bool) -> (f64, usize) {
@@ -15,11 +15,9 @@ fn bench(width: usize, height: usize, use_strip: bool) -> (f64, usize) {
 
     // Warmup
     for _ in 0..3 {
-        let enc = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let enc = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0));
+            .quality(Quality::from_quality(90.0));
         if use_strip {
             let _ = enc.encode_strip_based(&data);
         } else {
@@ -31,11 +29,9 @@ fn bench(width: usize, height: usize, use_strip: bool) -> (f64, usize) {
     let mut size = 0;
     for _ in 0..5 {
         let start = Instant::now();
-        let enc = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let enc = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0));
+            .quality(Quality::from_quality(90.0));
         let result = if use_strip {
             enc.encode_strip_based(&data).unwrap()
         } else {

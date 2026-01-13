@@ -1,8 +1,8 @@
-//! Benchmark comparing Encoder vs StreamingEncoder performance.
+//! Benchmark comparing JpegEncoder.encode() vs row-by-row performance.
 //!
 //! Run with: cargo run --release --example streaming_vs_encoder
 
-use jpegli::{Encoder, Quality, StreamingEncoder, Subsampling};
+use jpegli::{JpegEncoder, Quality, Subsampling};
 use std::time::{Duration, Instant};
 
 fn format_throughput(bytes: usize, duration: Duration) -> String {
@@ -51,30 +51,28 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
     // Encoder (deprecated, uses strip backend internally)
     let enc_time = benchmark("Encoder", iterations, || {
         #[allow(deprecated)]
-        let _jpeg = Encoder::new()
-            .width(width)
-            .height(height)
-            .jpegli_quality(quality)
+        let _jpeg = JpegEncoder::new(width, height)
+            .quality(quality)
             .subsampling(subsampling)
             .encode(&pixels)
             .unwrap();
     });
 
-    // StreamingEncoder.encode_all()
-    let stream_all_time = benchmark("StreamingEncoder.encode_all()", iterations, || {
-        let _jpeg = StreamingEncoder::new(width, height)
+    // JpegEncoder.encode()
+    let stream_all_time = benchmark("JpegEncoder.encode()", iterations, || {
+        let _jpeg = JpegEncoder::new(width, height)
             .quality(quality)
             .subsampling(subsampling)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .unwrap();
     });
 
-    // StreamingEncoder row-by-row
-    let stream_rows_time = benchmark("StreamingEncoder (row-by-row)", iterations, || {
-        let mut encoder = StreamingEncoder::new(width, height)
+    // JpegEncoder row-by-row
+    let stream_rows_time = benchmark("JpegEncoder (row-by-row)", iterations, || {
+        let mut encoder = JpegEncoder::new(width, height)
             .quality(quality)
             .subsampling(subsampling)
-            .build()
+            .start()
             .unwrap();
 
         let row_size = width as usize * 3;
@@ -93,7 +91,7 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
         format_throughput(input_size, enc_time)
     );
     println!(
-        "    StreamingEncoder:    {}",
+        "    JpegEncoder:    {}",
         format_throughput(input_size, stream_all_time)
     );
     println!(
@@ -106,7 +104,7 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
     println!();
     println!("  Relative to Encoder:");
     println!(
-        "    StreamingEncoder:    {:.1}%",
+        "    JpegEncoder:    {:.1}%",
         (stream_all_time.as_nanos() as f64 / baseline) * 100.0
     );
     println!(
@@ -116,18 +114,16 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
 
     // Verify outputs match
     #[allow(deprecated)]
-    let enc_jpeg = Encoder::new()
-        .width(width)
-        .height(height)
-        .jpegli_quality(quality)
+    let enc_jpeg = JpegEncoder::new(width, height)
+        .quality(quality)
         .subsampling(subsampling)
         .encode(&pixels)
         .unwrap();
 
-    let stream_jpeg = StreamingEncoder::new(width, height)
+    let stream_jpeg = JpegEncoder::new(width, height)
         .quality(quality)
         .subsampling(subsampling)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .unwrap();
 
     if enc_jpeg == stream_jpeg {
@@ -142,7 +138,7 @@ fn run_comparison(width: u32, height: u32, subsampling: Subsampling, iterations:
 }
 
 fn main() {
-    println!("Encoder vs StreamingEncoder Performance Comparison");
+    println!("Encoder vs JpegEncoder Performance Comparison");
     println!("==================================================");
 
     // Test various sizes
@@ -160,7 +156,7 @@ fn main() {
     }
 
     // Memory estimate comparison
-    println!("\n\nMemory Estimates (StreamingEncoder)");
+    println!("\n\nMemory Estimates (JpegEncoder)");
     println!("====================================");
     for (name, w, h, sub) in [
         ("VGA", 640, 480, Subsampling::S420),
@@ -168,7 +164,7 @@ fn main() {
         ("4K", 3840, 2160, Subsampling::S420),
         ("8K", 7680, 4320, Subsampling::S420),
     ] {
-        let estimate = StreamingEncoder::new(w, h)
+        let estimate = JpegEncoder::new(w, h)
             .subsampling(sub)
             .estimate_memory_usage();
         let input_size = w as usize * h as usize * 3;

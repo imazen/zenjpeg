@@ -1,4 +1,4 @@
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 use std::time::Instant;
 
 fn benchmark(
@@ -24,10 +24,10 @@ fn benchmark(
 
     // Warmup
     for _ in 0..3 {
-        let _ = StreamingEncoder::new(width as u32, height as u32)
+        let _ = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(85.0))
             .restart_interval(restart_interval)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .unwrap();
     }
 
@@ -35,10 +35,10 @@ fn benchmark(
     let start = Instant::now();
     let mut result_size = 0;
     for _ in 0..iterations {
-        let result = StreamingEncoder::new(width as u32, height as u32)
+        let result = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(85.0))
             .restart_interval(restart_interval)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .unwrap();
         result_size = result.len();
         std::hint::black_box(&result);

@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --example encoder_profile
 
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 use std::time::Instant;
 
 fn main() {
@@ -23,9 +23,9 @@ fn main() {
     let iterations = 10;
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = StreamingEncoder::new(width as u32, height as u32)
+        let _ = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(85.0))
-            .encode_all(&pixels)
+            .encode(&pixels)
             .unwrap();
     }
     let total_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;

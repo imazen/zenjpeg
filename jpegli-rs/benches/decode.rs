@@ -14,11 +14,9 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
         }
     }
 
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
+    let encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality));
+        .quality(Quality::from_quality(quality));
 
     encoder.encode(&data).expect("encoding should succeed")
 }

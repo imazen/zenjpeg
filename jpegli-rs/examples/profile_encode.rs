@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo flamegraph --release --example profile_encode -o encode.svg
 
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 
 fn main() {
     let (width, height) = (2048, 2048);
@@ -17,9 +17,9 @@ fn main() {
 
     // Run enough iterations for good sampling
     for _ in 0..50 {
-        let result = StreamingEncoder::new(width as u32, height as u32)
+        let result = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(85.0))
-            .encode_all(&pixels)
+            .encode(&pixels)
             .unwrap();
         std::hint::black_box(&result);
     }

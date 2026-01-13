@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --features parallel --example parallel_encoder_bench
 
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 use std::time::Instant;
 
 fn main() {
@@ -50,9 +50,9 @@ fn benchmark_encode(width: usize, height: usize) -> BenchResult {
     }
 
     // Warm up
-    let _ = StreamingEncoder::new(width as u32, height as u32)
+    let _ = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
-        .encode_all(&pixels)
+        .encode(&pixels)
         .unwrap();
 
     // Benchmark
@@ -61,9 +61,9 @@ fn benchmark_encode(width: usize, height: usize) -> BenchResult {
     let start = Instant::now();
     let mut output = Vec::new();
     for _ in 0..iterations {
-        output = StreamingEncoder::new(width as u32, height as u32)
+        output = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(85.0))
-            .encode_all(&pixels)
+            .encode(&pixels)
             .unwrap();
     }
     let elapsed = start.elapsed();

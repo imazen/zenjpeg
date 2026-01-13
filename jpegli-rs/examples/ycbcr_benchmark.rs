@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --example ycbcr_benchmark
 
-use jpegli::{Decoder, PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{Decoder, PixelFormat, Quality, JpegEncoder, Subsampling};
 use std::time::{Duration, Instant};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
@@ -15,11 +15,11 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    StreamingEncoder::new(width, height)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality))
         .subsampling(Subsampling::S420)
-        .encode_all(&data)
+        .encode(&data)
         .unwrap()
 }
 

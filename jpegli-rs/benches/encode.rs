@@ -1,7 +1,7 @@
 //! Encoding benchmarks for jpegli.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jpegli::{Encoder, PixelFormat, Quality};
+use jpegli::{JpegEncoder, PixelFormat, Quality};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
@@ -27,11 +27,9 @@ fn bench_encode(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let encoder = Encoder::new()
-                        .width(size as u32)
-                        .height(size as u32)
+                    let encoder = JpegEncoder::new(width, height)
                         .pixel_format(PixelFormat::Rgb)
-                        .jpegli_quality(Quality::from_quality(90.0));
+                        .quality(Quality::from_quality(90.0));
                     encoder.encode(black_box(data))
                 });
             },
@@ -49,11 +47,9 @@ fn bench_quality_levels(c: &mut Criterion) {
     for quality in [50, 75, 90, 95] {
         group.bench_with_input(BenchmarkId::new("q", quality), &data, |b, data| {
             b.iter(|| {
-                let encoder = Encoder::new()
-                    .width(512)
-                    .height(512)
+                let encoder = JpegEncoder::new(width, height)
                     .pixel_format(PixelFormat::Rgb)
-                    .jpegli_quality(Quality::from_quality(quality as f32));
+                    .quality(Quality::from_quality(quality as f32));
                 encoder.encode(black_box(data))
             });
         });
