@@ -12,11 +12,8 @@ use test_utils::{
     max_pixel_diff, thresholds, TestImage, TestPattern,
 };
 
-use jpegli::{
-    decode::Decoder,
-    types::{JpegMode, PixelFormat},
-    JpegEncoder, Quality,
-};
+use enough::Never;
+use jpegli::{decode::Decoder, EncoderConfig, PixelLayout};
 use test_case::test_case;
 
 // ============================================================================
@@ -24,12 +21,16 @@ use test_case::test_case;
 // ============================================================================
 
 /// Encode and decode an image, returning quality metrics.
-fn roundtrip_metrics(img: &TestImage, quality: f32, mode: JpegMode) -> (f64, u8, usize, usize) {
-    let encoder = JpegEncoder::new(img.width, img.height)
-        .quality(Quality::from_quality(quality))
-        .mode(mode);
+fn roundtrip_metrics(img: &TestImage, quality: f32, progressive: bool) -> (f64, u8, usize, usize) {
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .progressive(progressive);
+    let mut enc = config
+        .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&img.pixels, Never).expect("push");
+    let jpeg = enc.finish().expect("encode");
 
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
 
@@ -56,7 +57,7 @@ fn calculate_bpp(jpeg_size: usize, width: u32, height: u32) -> f64 {
 #[test_case(256, 256, 95.0, thresholds::Q95_MAX_RMS ; "256x256_Q95")]
 fn test_gradient_quality(width: u32, height: u32, quality: f32, max_rms: f64) {
     let img = generate_gradient_d(width, height, 3);
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, quality, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, quality, false);
     let bpp = calculate_bpp(jpeg_size, width, height);
 
     println!(
@@ -85,7 +86,7 @@ fn test_gradient_quality(width: u32, height: u32, quality: f32, max_rms: f64) {
 #[test_case(255, 0, 255, "magenta")]
 fn test_solid_color_roundtrip(r: u8, g: u8, b: u8, name: &str) {
     let img = generate_solid_rgb(128, 128, r, g, b);
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, false);
 
     println!(
         "Solid {} ({},{},{}): RMS={:.2}, max_diff={}, size={}",
@@ -109,7 +110,7 @@ fn test_solid_color_roundtrip(r: u8, g: u8, b: u8, name: &str) {
 #[test_case(32, "32x32_blocks")]
 fn test_checkerboard_roundtrip(block_size: u32, name: &str) {
     let img = generate_checkerboard(256, 256, block_size, 3);
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, false);
 
     println!(
         "Checkerboard {}: RMS={:.2}, max_diff={}, size={}",
@@ -131,7 +132,7 @@ fn test_checkerboard_roundtrip(block_size: u32, name: &str) {
 #[test]
 fn test_color_bars_roundtrip() {
     let img = generate_color_bars(256, 128);
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 90.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 90.0, false);
 
     println!(
         "Color bars: RMS={:.2}, max_diff={}, size={}",
@@ -162,7 +163,7 @@ fn test_color_bars_roundtrip() {
 #[test_case(640, 480 ; "640x480_vga")]
 fn test_size_corpus(width: u32, height: u32) {
     let img = generate_gradient_d(width, height, 3);
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 90.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 90.0, false);
 
     println!(
         "Size {}x{}: RMS={:.2}, max_diff={}, size={}",
@@ -186,7 +187,7 @@ fn test_size_corpus(width: u32, height: u32) {
 #[test_case(400, 100, "4:1_banner")]
 fn test_aspect_ratios(width: u32, height: u32, name: &str) {
     let img = generate_gradient_d(width, height, 3);
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 90.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 90.0, false);
 
     println!(
         "Aspect {} ({}x{}): RMS={:.2}, max_diff={}, size={}",
@@ -218,7 +219,7 @@ fn test_quality_size_tradeoff() {
     println!("Q\tRMS\tSize\tBPP");
 
     for &q in &qualities {
-        let (rms, _max_diff, jpeg_size, _) = roundtrip_metrics(&img, q, JpegMode::Baseline);
+        let (rms, _max_diff, jpeg_size, _) = roundtrip_metrics(&img, q, false);
         let bpp = calculate_bpp(jpeg_size, 256, 256);
 
         println!("{}\t{:.2}\t{}\t{:.2}", q, rms, jpeg_size, bpp);
@@ -258,9 +259,9 @@ fn test_quality_size_tradeoff() {
 fn test_progressive_vs_baseline_quality() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let (baseline_rms, _, baseline_size, _) = roundtrip_metrics(&img, 85.0, JpegMode::Baseline);
+    let (baseline_rms, _, baseline_size, _) = roundtrip_metrics(&img, 85.0, false);
     let (progressive_rms, _, progressive_size, _) =
-        roundtrip_metrics(&img, 85.0, JpegMode::Progressive);
+        roundtrip_metrics(&img, 85.0, true);
 
     println!(
         "Baseline:    RMS={:.2}, size={}",
@@ -287,11 +288,13 @@ fn test_progressive_vs_baseline_quality() {
 #[test_case(256, 256 ; "256x256")]
 fn test_grayscale_roundtrip(width: u32, height: u32) {
     let img = generate_gradient_h(width, height, 1);
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Gray)
-        .quality(Quality::from_quality(90.0));
+    let config = EncoderConfig::new().quality(90.0);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&img.pixels, Never).expect("push");
+    let jpeg = enc.finish().expect("encode");
 
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
 
@@ -316,13 +319,20 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
 #[test]
 fn test_encode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder_config = JpegEncoder::new(128, 128).quality(Quality::from_quality(85.0));
+    let config = EncoderConfig::new().quality(85.0);
 
-    let jpeg1 = encoder_config
+    let mut enc1 = config
         .clone()
-        .encode(&img.pixels)
-        .expect("encode 1 failed");
-    let jpeg2 = encoder_config.encode(&img.pixels).expect("encode 2 failed");
+        .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup 1");
+    enc1.push_packed(&img.pixels, Never).expect("push 1");
+    let jpeg1 = enc1.finish().expect("encode 1");
+
+    let mut enc2 = config
+        .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup 2");
+    enc2.push_packed(&img.pixels, Never).expect("push 2");
+    let jpeg2 = enc2.finish().expect("encode 2");
 
     assert_eq!(jpeg1, jpeg2, "Encoding should be deterministic");
 }
@@ -330,8 +340,12 @@ fn test_encode_deterministic() {
 #[test]
 fn test_decode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let config = EncoderConfig::new().quality(85.0);
+    let mut enc = config
+        .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&img.pixels, Never).expect("push");
+    let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
     let decoded1 = decoder.decode(&jpeg).expect("decode 1 failed");
@@ -361,8 +375,12 @@ fn test_compression_ratio() {
 
     for (name, img) in &test_cases {
         let raw_size = img.pixels.len();
-        let encoder = JpegEncoder::new(img.width, img.height).quality(Quality::from_quality(85.0));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let config = EncoderConfig::new().quality(85.0);
+        let mut enc = config
+            .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&img.pixels, Never).expect("push");
+        let jpeg = enc.finish().expect("encode");
 
         let ratio = raw_size as f64 / jpeg.len() as f64;
         println!(
@@ -408,7 +426,7 @@ fn test_single_color_blocks() {
         }
     }
 
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, false);
     println!(
         "Block colors: RMS={:.2}, max_diff={}, size={}",
         rms, max_diff, jpeg_size
@@ -431,7 +449,7 @@ fn test_alternating_pixels() {
         }
     }
 
-    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, JpegMode::Baseline);
+    let (rms, max_diff, jpeg_size, _) = roundtrip_metrics(&img, 95.0, false);
     println!(
         "Alternating: RMS={:.2}, max_diff={}, size={}",
         rms, max_diff, jpeg_size

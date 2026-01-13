@@ -20,7 +20,8 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use jpegli::{JpegEncoder, Quality};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use test_utils::generate_gradient_d;
 
 /// Maximum quant value for baseline JPEG (8-bit DQT)
@@ -191,12 +192,21 @@ fn test_16bit_quant_threshold_calculation() {
     );
 }
 
+/// Helper to encode with v2 API
+fn encode_test_image(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
+    let config = EncoderConfig::new().quality(quality);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(pixels, Never).expect("push");
+    enc.finish().expect("encode")
+}
+
 /// Test that the DQT parser can extract tables correctly.
 #[test]
 fn test_dqt_extraction_basic() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(90.0));
-    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+    let jpeg = encode_test_image(&img.pixels, 64, 64, 90.0);
 
     let tables = extract_dqt_tables(&jpeg);
     assert!(!tables.is_empty(), "Should extract at least one DQT table");
@@ -231,8 +241,7 @@ fn test_rust_produces_16bit_tables_when_needed() {
     let mut found_values_over_255 = false;
 
     for quality in [1, 5, 10, 15, 20] {
-        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
-        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let jpeg = encode_test_image(&img.pixels, 64, 64, quality as f32);
 
         let tables = extract_dqt_tables(&jpeg);
 
@@ -405,8 +414,7 @@ mod cpp_comparison {
         let cpp_tables = extract_dqt_tables(&cpp_jpeg);
 
         // Encode with Rust
-        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
-        let rust_jpeg = encoder.encode(&img.pixels).expect("encode failed");
+        let rust_jpeg = encode_test_image(&img.pixels, 64, 64, quality as f32);
         let rust_tables = extract_dqt_tables(&rust_jpeg);
 
         println!("\n=== Quality {} Comparison ===", quality);
