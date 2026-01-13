@@ -947,7 +947,7 @@ impl<'a> JpegParser<'a> {
 
                     let mut table_mapping = [(0usize, 0usize); 3];
 
-                    for i in 0..num_components as usize {
+                    for _i in 0..num_components as usize {
                         let component_id = self.read_u8()?;
                         let tables = self.read_u8()?;
                         let dc_table = (tables >> 4) as usize;
@@ -2284,6 +2284,7 @@ impl<'a> JpegParser<'a> {
         // Component info
         struct CompInfo {
             quant_idx: usize,
+            #[allow(dead_code)]
             h_samp: usize,
             v_samp: usize,
             comp_blocks_h: usize,
@@ -2403,6 +2404,7 @@ impl<'a> JpegParser<'a> {
         Ok(rgb)
     }
 
+    #[allow(clippy::wrong_self_convention)] // Takes &mut self to take() internal buffer
     fn to_pixels(
         &mut self,
         format: PixelFormat,
@@ -2530,7 +2532,7 @@ impl<'a> JpegParser<'a> {
 
                 // Phase 3: IDCT for this component in this MCU row
                 // Store as f32 (C++ jpegli keeps f32 until final output for precision)
-                let biases = &component_biases[comp_idx];
+                let _biases = &component_biases[comp_idx];
                 let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
 
                 for iy in 0..info.v_samp {
@@ -3089,7 +3091,7 @@ impl<'a> JpegParser<'a> {
                 }
 
                 // Phase 2: IDCT
-                let biases = &component_biases[comp_idx];
+                let _biases = &component_biases[comp_idx];
                 let comp_plane_f32 = &mut comp_planes_f32[comp_idx];
 
                 for iy in 0..info.v_samp {

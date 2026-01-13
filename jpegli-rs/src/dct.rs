@@ -364,8 +364,8 @@ pub(crate) mod simd {
 
         // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
         second[0] = second[0] * SQRT2_VEC + second[1];
-        second[1] = second[1] + second[2];
-        second[2] = second[2] + second[3];
+        second[1] += second[2];
+        second[2] += second[3];
         // second[3] stays the same
 
         // InverseEvenOdd<8>: interleave
@@ -668,8 +668,8 @@ pub(crate) mod simd {
 
         // B<4>: coeff[0] = coeff[0] * sqrt2 + coeff[1]; then cumulative sum
         second[0] = second[0] * SQRT2_VEC + second[1];
-        second[1] = second[1] + second[2];
-        second[2] = second[2] + second[3];
+        second[1] += second[2];
+        second[2] += second[3];
         // second[3] stays the same
 
         // InverseEvenOdd<8>: interleave

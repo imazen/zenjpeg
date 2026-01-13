@@ -11,7 +11,7 @@
 //! - `butteraugli`: Links with jxl_extras-internal for butteraugli FFI
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -61,9 +61,9 @@ fn main() {
 
 /// Build the butteraugli C wrapper using cc crate
 fn build_butteraugli_wrapper(
-    manifest_dir: &PathBuf,
-    jpegli_root: &PathBuf,
-    build_dir: &PathBuf,
+    manifest_dir: &Path,
+    jpegli_root: &Path,
+    build_dir: &Path,
     target: &str,
 ) {
     println!("cargo:rerun-if-changed=cpp/butteraugli_c.cc");
@@ -100,7 +100,7 @@ fn build_butteraugli_wrapper(
 }
 
 /// Build the jpegli test FFI wrapper (fast math, AQ functions)
-fn build_jpegli_test_ffi(jpegli_root: &PathBuf, build_dir: &PathBuf, target: &str) {
+fn build_jpegli_test_ffi(jpegli_root: &Path, build_dir: &Path, target: &str) {
     let ffi_source = jpegli_root.join("lib/extras/jpegli_test_ffi.cc");
 
     // The FFI source MUST exist - it's required for parity testing.
@@ -172,7 +172,7 @@ fn build_jpegli_test_ffi(jpegli_root: &PathBuf, build_dir: &PathBuf, target: &st
 }
 
 /// Find a pre-built library in common locations
-fn find_prebuilt_library(jpegli_root: &PathBuf, butteraugli_enabled: bool) -> Option<PathBuf> {
+fn find_prebuilt_library(jpegli_root: &Path, butteraugli_enabled: bool) -> Option<PathBuf> {
     // Check standard build directories
     let candidates = [
         "build",
@@ -216,8 +216,8 @@ fn find_prebuilt_library(jpegli_root: &PathBuf, butteraugli_enabled: bool) -> Op
 
 /// Build jpegli using cmake
 fn build_with_cmake(
-    jpegli_root: &PathBuf,
-    out_dir: &PathBuf,
+    jpegli_root: &Path,
+    out_dir: &Path,
     target: &str,
     _host: &str,
     butteraugli_enabled: bool,
@@ -252,11 +252,9 @@ fn build_with_cmake(
     config.profile("Release");
 
     // Platform-specific settings
-    if target.contains("windows") {
-        if target.contains("msvc") {
-            // MSVC-specific settings
-            config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
-        }
+    if target.contains("windows") && target.contains("msvc") {
+        // MSVC-specific settings
+        config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
     }
 
     // Disable unnecessary components to speed up build
@@ -285,7 +283,7 @@ fn build_with_cmake(
 }
 
 /// Link the built libraries
-fn link_libraries(build_dir: &PathBuf, target: &str, butteraugli_enabled: bool) {
+fn link_libraries(build_dir: &Path, target: &str, butteraugli_enabled: bool) {
     let lib_dir = build_dir.join("lib");
     let hwy_dir = build_dir.join("third_party").join("highway");
     let brotli_dir = build_dir.join("third_party").join("brotli");

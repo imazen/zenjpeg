@@ -493,7 +493,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     ) -> Result<i16> {
         let dc_table = self.get_dc_table(dc_table_idx)?;
 
-        let dc_cat = self.decode_huffman(&dc_table)?;
+        let dc_cat = self.decode_huffman(dc_table)?;
         let dc_diff = if dc_cat == 0 {
             0
         } else {
@@ -537,7 +537,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
         let mut k = ss as usize;
         while k <= se as usize {
-            let symbol = self.decode_huffman(&ac_table)?;
+            let symbol = self.decode_huffman(ac_table)?;
             let run = symbol >> 4;
             let size = symbol & 0x0F;
 
@@ -612,7 +612,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
         let mut k = ss as usize;
         while k <= se as usize {
-            let symbol = self.decode_huffman(&ac_table)?;
+            let symbol = self.decode_huffman(ac_table)?;
             let run = symbol >> 4;
             let size = symbol & 0x0F;
 

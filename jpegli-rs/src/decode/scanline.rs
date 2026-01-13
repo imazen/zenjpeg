@@ -62,6 +62,7 @@ pub struct ScanlineReader<'a> {
     num_components: u8,
 
     // MCU structure
+    #[allow(dead_code)]
     mcu_rows: usize,
     mcu_cols: usize,
     strip_width: usize,
@@ -71,6 +72,7 @@ pub struct ScanlineReader<'a> {
     h_samp: [u8; 3],
     v_samp: [u8; 3],
     max_h_samp: u8,
+    #[allow(dead_code)]
     max_v_samp: u8,
     subsampling: Subsampling,
 
@@ -294,7 +296,7 @@ impl<'a> ScanlineReader<'a> {
 
         // Restore full decoder state if we have one (includes bit buffer position)
         if let Some(ref state) = self.decoder_state {
-            decoder.restore_state(state.clone());
+            decoder.restore_state(*state);
         }
 
         // Decode one MCU row

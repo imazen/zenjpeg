@@ -5,6 +5,8 @@
 //! - Successive approximation (refinement scans)
 //! - Scan script generation
 
+#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
+
 use super::{Encoder, ProgressiveScan};
 use crate::consts::{DCT_BLOCK_SIZE, MARKER_EOI, XYB_ICC_PROFILE};
 use crate::entropy::EntropyEncoder;

@@ -396,6 +396,7 @@ mod avx2 {
     /// # Safety
     /// Requires AVX2 support.
     #[target_feature(enable = "avx2")]
+    #[allow(unused_assignments)] // pos is incremented in macro but last value is unused
     pub unsafe fn idct_int_avx2(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load all 8 rows
         let mut row0 = _mm256_loadu_si256(in_vector[0..].as_ptr().cast());

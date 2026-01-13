@@ -1173,18 +1173,20 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 
     let mut offset = 0;
 
-    // as_chunks gives us (&[[i16; 16]], &[i16]) - safe array refs without bounds checks
-    let (y_chunks, y_remainder) = y_plane.as_chunks::<16>();
-    let (cb_chunks, _) = cb_plane.as_chunks::<16>();
-    let (cr_chunks, _) = cr_plane.as_chunks::<16>();
+    // Process 16 pixels at a time using chunks
+    let chunk_count = y_plane.len() / 16;
 
-    // Process 16 pixels at a time - direct indexing avoids zip overhead
-    for i in 0..y_chunks.len() {
-        ycbcr_to_rgb_i16_x16(&y_chunks[i], &cb_chunks[i], &cr_chunks[i], rgb, &mut offset);
+    for chunk_idx in 0..chunk_count {
+        let start = chunk_idx * 16;
+        // SAFETY: We know start..start+16 is in bounds since chunk_idx < chunk_count
+        let y_chunk: &[i16; 16] = y_plane[start..start + 16].try_into().unwrap();
+        let cb_chunk: &[i16; 16] = cb_plane[start..start + 16].try_into().unwrap();
+        let cr_chunk: &[i16; 16] = cr_plane[start..start + 16].try_into().unwrap();
+        ycbcr_to_rgb_i16_x16(y_chunk, cb_chunk, cr_chunk, rgb, &mut offset);
     }
 
     // Handle remaining pixels
-    let remaining_start = y_plane.len() - y_remainder.len();
+    let remaining_start = chunk_count * 16;
     for i in remaining_start..y_plane.len() {
         let y_val = i32::from(y_plane[i]);
         let cb_val = i32::from(cb_plane[i]) - 128;
