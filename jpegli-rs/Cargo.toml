@@ -29,18 +29,16 @@ zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
 # Hybrid trellis quantization from mozjpeg
 mozjpeg-rs = { workspace = true, optional = true }
-# For FFI comparison testing against C++ jpegli (internal development only)
-# This dependency is NOT published to crates.io - it requires building the C++ jpegli
-# from source via cmake. Only works in a local checkout with the C++ submodule:
-#   git submodule update --init --recursive internal/jpegli-cpp
-jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"], optional = true }
-# For corpus comparison testing
-#codec-eval = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # NOTE: default-features = false to avoid complex FFI linking requirements
 # cjpegli-ffi requires libjpeg-compatible symbols which aren't in jpegli-static
 jpegli-bench-utils = { path = "../jpegli-bench-utils", default-features = false }
+# For FFI comparison testing against C++ jpegli (internal development only)
+# This dependency is NOT published to crates.io - it requires building the C++ jpegli
+# from source via cmake. Only works in a local checkout with the C++ submodule.
+# Tests using this are gated by #[cfg(feature = "ffi-tests")]
+jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
 almost-enough = { workspace = true }
 butteraugli = { workspace = true }
 chrono = "0.4"
@@ -73,7 +71,8 @@ unsafe_simd = []
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
-ffi-tests = ["dep:jpegli-internals-sys"]
+# Tests check for this feature with #[cfg(feature = "ffi-tests")]
+ffi-tests = []
 # Enable corpus comparison tests (requires codec-eval)
 #corpus-tests = ["dep:codec-eval"]
 cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
