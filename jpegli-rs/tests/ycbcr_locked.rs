@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use jpegli::types::Subsampling;
-use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
@@ -38,27 +38,29 @@ use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality};
 // =============================================================================
 
 /// Sequential S444 optimized Huffman - frymire.png
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
-    (50, 329838),
-    (70, 438814),
-    (85, 600382),
+    (50, 329966),
+    (70, 438942),
+    (85, 600510),
     (90, 717812),
     (95, 937285),
 ];
 
 /// Sequential S422 optimized Huffman - frymire.png
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
-    (50, 293361),
-    (70, 386676),
-    (85, 520353),
+    (50, 293489),
+    (70, 386804),
+    (85, 520481),
     (90, 613614),
     (95, 783905),
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
-/// Updated 2026-01-11: Strip encoder now default.
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269724),
+    (50, 269852),
     (70, 362495),
     (85, 494934),
     (90, 584347),
@@ -66,11 +68,11 @@ const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
-/// Updated 2026-01-11: Strip encoder now default.
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 293565),
-    (70, 387207),
-    (85, 521670),
+    (50, 293693),
+    (70, 387335),
+    (85, 521798),
     (90, 615445),
     (95, 785234),
 ];
@@ -80,27 +82,29 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 // =============================================================================
 
 /// Progressive S444 optimized Huffman - frymire.png
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 320645),
-    (70, 425670),
-    (85, 581882),
+    (50, 320773),
+    (70, 425798),
+    (85, 582010),
     (90, 696599),
     (95, 908011),
 ];
 
 /// Progressive S422 optimized Huffman - frymire.png
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 285904),
-    (70, 375694),
-    (85, 505401),
+    (50, 286032),
+    (70, 375822),
+    (85, 505529),
     (90, 595625),
     (95, 760319),
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
-/// Updated 2026-01-11: Strip encoder now default.
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 260961),
+    (50, 261089),
     (70, 350463),
     (85, 478048),
     (90, 564225),
@@ -108,11 +112,11 @@ const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
-/// Updated 2026-01-11: Strip encoder now default.
+/// Regenerated 2026-01-13 after API cleanup
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 284083),
-    (70, 374127),
-    (85, 504689),
+    (50, 284211),
+    (70, 374255),
+    (85, 504817),
     (90, 595055),
     (95, 759332),
 ];
@@ -121,15 +125,15 @@ const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-// Updated 2026-01-11: Strip encoder now default
-const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x37395b82bdad1672;
-const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x09b9fbe2b95253b9;
-const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0xf35ab94474d1c609;
-const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x17f4f5100a48569f;
+// Regenerated 2026-01-13 after API cleanup
+const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x388e7b1a6777de58;
+const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x979f7c080ce24b0f;
+const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x67793e9a1ec07f6e;
+const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xe1d28667900cb6eb;
 const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x8cd0dde2c892dccf;
 const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x37a97faeb510feba;
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0xe65869ed6ce9e3df;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x68c1a2dcd0a00a6e;
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x8f52016b6174dbf4;
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x13160a47c10f39f4;
 
 // =============================================================================
 // Helper functions
@@ -168,7 +172,7 @@ fn encode_jpeg(
 ) -> Vec<u8> {
     JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
+        .quality(quality as f32)
         .subsampling(subsampling)
         .optimize_huffman(true)
         .mode(mode)
