@@ -364,7 +364,7 @@ fn test_progressive_fixed_huffman_errors() {
         Err(e) => {
             let err_str = format!("{}", e);
             assert!(
-                err_str.contains("Progressive mode with fixed Huffman"),
+                err_str.contains("progressive mode requires optimized Huffman"),
                 "Expected error about Progressive + fixed Huffman, got: {}",
                 err_str
             );

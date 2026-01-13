@@ -17,8 +17,20 @@
 //! - Encoding time: Performance
 
 use dssim::Dssim;
-use jpegli::{ChromaDownsampling, Decoder, Error, JpegEncoder, PixelFormat, Quality, Subsampling};
+use enough::Never;
+use jpegli::{
+    ChromaSubsampling, Decoder, DownsamplingMethod, EncoderConfig, Error, PixelLayout,
+};
 use std::time::Instant;
+
+// Type aliases for backward compatibility with old names used in this file
+type ChromaDownsampling = DownsamplingMethod;
+
+// Subsampling constants for old-style S* names
+const S444: ChromaSubsampling = ChromaSubsampling::Full;
+const S420: ChromaSubsampling = ChromaSubsampling::Quarter;
+const S422: ChromaSubsampling = ChromaSubsampling::HalfHorizontal;
+const S440: ChromaSubsampling = ChromaSubsampling::HalfVertical;
 
 // ============================================================================
 // Test Image Generators
@@ -183,21 +195,22 @@ fn encode_with_method(
     data: &[u8],
     width: u32,
     height: u32,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     method: Option<ChromaDownsampling>,
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
-    let mut encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(subsampling)
-        .quality(Quality::from_quality(90.0));
+    let mut config = EncoderConfig::new()
+        .quality(90.0)
+        .ycbcr(subsampling);
 
     if let Some(m) = method {
-        encoder = encoder.chroma_downsampling(m);
+        config = config.downsampling_method(m);
     }
 
-    let jpeg_data = encoder.encode(data)?;
+    let mut encoder = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    encoder.push_packed(data, Never)?;
+    let jpeg_data = encoder.finish()?;
     let encode_time = start.elapsed().as_micros();
 
     Ok(EncodingResult {
@@ -238,7 +251,7 @@ fn measure_quality(
     data: &[u8],
     width: u32,
     height: u32,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     method: Option<ChromaDownsampling>,
 ) -> Result<QualityResult, Error> {
     let result = encode_with_method(data, width, height, subsampling, method)?;
@@ -353,10 +366,10 @@ fn benchmark_image(
     height: u32,
 ) -> Vec<TestCaseResults> {
     let subsampling_modes = [
-        (Subsampling::S444, "4:4:4"),
-        (Subsampling::S420, "4:2:0"),
-        (Subsampling::S422, "4:2:2"),
-        (Subsampling::S440, "4:4:0"),
+        (S444, "4:4:4"),
+        (S420, "4:2:0"),
+        (S422, "4:2:2"),
+        (S440, "4:4:0"),
     ];
 
     let mut all_results = Vec::new();
@@ -375,7 +388,7 @@ fn benchmark_image(
         }
 
         // For 4:4:4, no downsampling is needed - all methods are equivalent
-        if *subsampling != Subsampling::S444 {
+        if *subsampling != S444 {
             // Box filter (explicit)
             if let Ok(r) = measure_quality(
                 data,
@@ -691,7 +704,7 @@ fn test_all_methods_valid() {
             &data,
             width as u32,
             height as u32,
-            Subsampling::S420,
+            S420,
             *method,
         );
         assert!(result.is_ok(), "{} should work with 4:2:0", name);
@@ -710,7 +723,7 @@ fn test_all_methods_valid() {
             &data,
             width as u32,
             height as u32,
-            Subsampling::S422,
+            S422,
             *method,
         );
         assert!(result.is_ok(), "{} should work with 4:2:2", name);
@@ -722,7 +735,7 @@ fn test_all_methods_valid() {
             &data,
             width as u32,
             height as u32,
-            Subsampling::S440,
+            S440,
             *method,
         );
         assert!(result.is_ok(), "{} should work with 4:4:0", name);
@@ -734,7 +747,7 @@ fn test_all_methods_valid() {
             &data,
             width as u32,
             height as u32,
-            Subsampling::S444,
+            S444,
             *method,
         );
         assert!(result.is_ok(), "{} should work with 4:4:4", name);
@@ -756,20 +769,20 @@ fn test_performance_comparison() {
     println!("{:-<60}", "");
 
     let methods = [
-        ("Box (default)", Subsampling::S420, None),
+        ("Box (default)", S420, None),
         (
             "Box (explicit)",
-            Subsampling::S420,
+            S420,
             Some(ChromaDownsampling::Box),
         ),
         (
             "GammaAware",
-            Subsampling::S420,
+            S420,
             Some(ChromaDownsampling::GammaAware),
         ),
         (
             "GammaAwareIterative",
-            Subsampling::S420,
+            S420,
             Some(ChromaDownsampling::GammaAwareIterative),
         ),
     ];
@@ -812,7 +825,7 @@ fn test_gamma_aware_vs_box_differs() {
         &data,
         width as u32,
         height as u32,
-        Subsampling::S420,
+        S420,
         Some(ChromaDownsampling::Box),
     )
     .unwrap();
@@ -822,7 +835,7 @@ fn test_gamma_aware_vs_box_differs() {
         &data,
         width as u32,
         height as u32,
-        Subsampling::S420,
+        S420,
         Some(ChromaDownsampling::GammaAware),
     )
     .unwrap();
@@ -832,7 +845,7 @@ fn test_gamma_aware_vs_box_differs() {
         &data,
         width as u32,
         height as u32,
-        Subsampling::S420,
+        S420,
         Some(ChromaDownsampling::GammaAwareIterative),
     )
     .unwrap();

@@ -6,6 +6,7 @@ use super::types::{
 };
 use super::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use crate::error::Result;
+use crate::types::{EdgePadding, EdgePaddingConfig};
 
 /// JPEG encoder configuration. Dimension-independent, reusable across images.
 #[derive(Clone, Debug)]
@@ -18,6 +19,7 @@ pub struct EncoderConfig {
     pub(crate) downsampling_method: DownsamplingMethod,
     pub(crate) restart_interval: u16,
     pub(crate) icc_profile: Option<Vec<u8>>,
+    pub(crate) edge_padding: EdgePaddingConfig,
 }
 
 impl Default for EncoderConfig {
@@ -31,6 +33,7 @@ impl Default for EncoderConfig {
             downsampling_method: DownsamplingMethod::default(),
             restart_interval: 0,
             icc_profile: None,
+            edge_padding: EdgePaddingConfig::default(),
         }
     }
 }
@@ -150,6 +153,36 @@ impl EncoderConfig {
     #[must_use]
     pub fn downsampling_method(mut self, method: DownsamplingMethod) -> Self {
         self.downsampling_method = method;
+        self
+    }
+
+    /// Set the edge padding strategy for partial MCU blocks.
+    ///
+    /// When image dimensions are not multiples of the MCU size (8 or 16 pixels),
+    /// the encoder must pad edge blocks. Different strategies produce different
+    /// compression and visual characteristics.
+    ///
+    /// # Presets
+    /// - `EdgePaddingConfig::default()` - Replicate for all channels (C++ jpegli behavior)
+    /// - `EdgePaddingConfig::recommended()` - Mirror for luma, Replicate for chroma
+    ///
+    /// # Example
+    /// ```ignore
+    /// let config = EncoderConfig::new()
+    ///     .edge_padding(EdgePaddingConfig::recommended());
+    /// ```
+    #[must_use]
+    pub fn edge_padding(mut self, config: EdgePaddingConfig) -> Self {
+        self.edge_padding = config;
+        self
+    }
+
+    /// Set uniform edge padding strategy for all channels.
+    ///
+    /// Convenience method for `edge_padding(EdgePaddingConfig::uniform(strategy))`.
+    #[must_use]
+    pub fn edge_padding_uniform(mut self, strategy: EdgePadding) -> Self {
+        self.edge_padding = EdgePaddingConfig::uniform(strategy);
         self
     }
 
@@ -369,6 +402,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_icc_profile(&self) -> Option<&[u8]> {
         self.icc_profile.as_deref()
+    }
+
+    /// Get the configured edge padding.
+    #[must_use]
+    pub fn get_edge_padding(&self) -> EdgePaddingConfig {
+        self.edge_padding
     }
 }
 
