@@ -324,6 +324,7 @@ The `unsafe_simd` feature enables raw AVX2/SSE intrinsics for ~10-20% speedup on
 
 ## Detailed Documentation
 
+- **`jpegli-rs/README.md` - API Reference** (encoder/decoder usage with examples)
 - `jpegli-rs/examples/README.md` - Examples and debugging tools
 - `jpegli-rs/docs/ADAPTIVE_QUANTIZATION.md` - AQ algorithm details
 - `jpegli-rs/docs/API_DESIGN.md` - Full API surface and proposed enhancements
