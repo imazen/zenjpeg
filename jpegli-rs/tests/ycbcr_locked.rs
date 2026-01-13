@@ -222,13 +222,13 @@ fn test_exact_hash(
     width: u32,
     height: u32,
     quality: u8,
-    mode: JpegMode,
-    subsampling: Subsampling,
+    progressive: bool,
+    subsampling: ChromaSubsampling,
     expected_hash: u64,
     mode_name: &str,
     sub_name: &str,
 ) {
-    let jpeg = encode_jpeg(rgb, width, height, quality, mode, subsampling);
+    let jpeg = encode_jpeg(rgb, width, height, quality, progressive, subsampling);
     let actual_hash = hash_bytes(&jpeg);
 
     assert_eq!(
@@ -249,8 +249,8 @@ fn test_frymire_s444_sequential_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Baseline,
-        Subsampling::S444,
+        false,
+        ChromaSubsampling::Full,
         FRYMIRE_S444_SEQ,
         "Seq",
         "4:4:4",
@@ -264,8 +264,8 @@ fn test_frymire_s422_sequential_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Baseline,
-        Subsampling::S422,
+        false,
+        ChromaSubsampling::HalfHorizontal,
         FRYMIRE_S422_SEQ,
         "Seq",
         "4:2:2",
@@ -279,8 +279,8 @@ fn test_frymire_s420_sequential_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Baseline,
-        Subsampling::S420,
+        false,
+        ChromaSubsampling::Quarter,
         FRYMIRE_S420_SEQ,
         "Seq",
         "4:2:0",
@@ -294,8 +294,8 @@ fn test_frymire_s440_sequential_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Baseline,
-        Subsampling::S440,
+        false,
+        ChromaSubsampling::HalfVertical,
         FRYMIRE_S440_SEQ,
         "Seq",
         "4:4:0",
@@ -310,8 +310,8 @@ fn test_frymire_s444_sequential_hash() {
         w,
         h,
         85,
-        JpegMode::Baseline,
-        Subsampling::S444,
+        false,
+        ChromaSubsampling::Full,
         FRYMIRE_S444_SEQ_Q85_HASH,
         "Seq",
         "4:4:4",
@@ -326,8 +326,8 @@ fn test_frymire_s422_sequential_hash() {
         w,
         h,
         85,
-        JpegMode::Baseline,
-        Subsampling::S422,
+        false,
+        ChromaSubsampling::HalfHorizontal,
         FRYMIRE_S422_SEQ_Q85_HASH,
         "Seq",
         "4:2:2",
@@ -342,8 +342,8 @@ fn test_frymire_s420_sequential_hash() {
         w,
         h,
         85,
-        JpegMode::Baseline,
-        Subsampling::S420,
+        false,
+        ChromaSubsampling::Quarter,
         FRYMIRE_S420_SEQ_Q85_HASH,
         "Seq",
         "4:2:0",
@@ -358,8 +358,8 @@ fn test_frymire_s440_sequential_hash() {
         w,
         h,
         85,
-        JpegMode::Baseline,
-        Subsampling::S440,
+        false,
+        ChromaSubsampling::HalfVertical,
         FRYMIRE_S440_SEQ_Q85_HASH,
         "Seq",
         "4:4:0",
@@ -377,8 +377,8 @@ fn test_frymire_s444_progressive_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Progressive,
-        Subsampling::S444,
+        true,
+        ChromaSubsampling::Full,
         FRYMIRE_S444_PROG,
         "Prog",
         "4:4:4",
@@ -392,8 +392,8 @@ fn test_frymire_s422_progressive_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Progressive,
-        Subsampling::S422,
+        true,
+        ChromaSubsampling::HalfHorizontal,
         FRYMIRE_S422_PROG,
         "Prog",
         "4:2:2",
@@ -407,8 +407,8 @@ fn test_frymire_s420_progressive_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Progressive,
-        Subsampling::S420,
+        true,
+        ChromaSubsampling::Quarter,
         FRYMIRE_S420_PROG,
         "Prog",
         "4:2:0",
@@ -422,8 +422,8 @@ fn test_frymire_s440_progressive_sizes() {
         &rgb,
         w,
         h,
-        JpegMode::Progressive,
-        Subsampling::S440,
+        true,
+        ChromaSubsampling::HalfVertical,
         FRYMIRE_S440_PROG,
         "Prog",
         "4:4:0",
@@ -438,8 +438,8 @@ fn test_frymire_s444_progressive_hash() {
         w,
         h,
         85,
-        JpegMode::Progressive,
-        Subsampling::S444,
+        true,
+        ChromaSubsampling::Full,
         FRYMIRE_S444_PROG_Q85_HASH,
         "Prog",
         "4:4:4",
@@ -454,8 +454,8 @@ fn test_frymire_s422_progressive_hash() {
         w,
         h,
         85,
-        JpegMode::Progressive,
-        Subsampling::S422,
+        true,
+        ChromaSubsampling::HalfHorizontal,
         FRYMIRE_S422_PROG_Q85_HASH,
         "Prog",
         "4:2:2",
@@ -470,8 +470,8 @@ fn test_frymire_s420_progressive_hash() {
         w,
         h,
         85,
-        JpegMode::Progressive,
-        Subsampling::S420,
+        true,
+        ChromaSubsampling::Quarter,
         FRYMIRE_S420_PROG_Q85_HASH,
         "Prog",
         "4:2:0",
@@ -486,8 +486,8 @@ fn test_frymire_s440_progressive_hash() {
         w,
         h,
         85,
-        JpegMode::Progressive,
-        Subsampling::S440,
+        true,
+        ChromaSubsampling::HalfVertical,
         FRYMIRE_S440_PROG_Q85_HASH,
         "Prog",
         "4:4:0",
@@ -508,17 +508,17 @@ fn print_current_values() {
 
     let quality_levels = [50, 70, 85, 90, 95];
     let subsampling_modes = [
-        (Subsampling::S444, "S444"),
-        (Subsampling::S422, "S422"),
-        (Subsampling::S420, "S420"),
-        (Subsampling::S440, "S440"),
+        (ChromaSubsampling::Full, "S444"),
+        (ChromaSubsampling::HalfHorizontal, "S422"),
+        (ChromaSubsampling::Quarter, "S420"),
+        (ChromaSubsampling::HalfVertical, "S440"),
     ];
 
     println!("\n// SEQUENTIAL MODE\n");
     for (sub, name) in &subsampling_modes {
         println!("const FRYMIRE_{}_SEQ: &[(u8, usize)] = &[", name);
         for q in quality_levels {
-            let jpeg = encode_jpeg(&rgb, width, height, q, JpegMode::Baseline, *sub);
+            let jpeg = encode_jpeg(&rgb, width, height, q, false, *sub);
             println!("    ({}, {}),", q, jpeg.len());
         }
         println!("];\n");
@@ -528,7 +528,7 @@ fn print_current_values() {
     for (sub, name) in &subsampling_modes {
         println!("const FRYMIRE_{}_PROG: &[(u8, usize)] = &[", name);
         for q in quality_levels {
-            let jpeg = encode_jpeg(&rgb, width, height, q, JpegMode::Progressive, *sub);
+            let jpeg = encode_jpeg(&rgb, width, height, q, true, *sub);
             println!("    ({}, {}),", q, jpeg.len());
         }
         println!("];\n");
@@ -536,8 +536,8 @@ fn print_current_values() {
 
     println!("// HASHES\n");
     for (sub, name) in &subsampling_modes {
-        let seq = encode_jpeg(&rgb, width, height, 85, JpegMode::Baseline, *sub);
-        let prog = encode_jpeg(&rgb, width, height, 85, JpegMode::Progressive, *sub);
+        let seq = encode_jpeg(&rgb, width, height, 85, false, *sub);
+        let prog = encode_jpeg(&rgb, width, height, 85, true, *sub);
         println!(
             "const FRYMIRE_{}_SEQ_Q85_HASH: u64 = {:#018x};",
             name,
