@@ -117,8 +117,10 @@ pub mod simplified_quant;
 pub mod tone_mapping;
 #[doc(hidden)]
 pub mod transfer_functions;
+
+// Re-export xyb from color module for backward compatibility
 #[doc(hidden)]
-pub mod xyb;
+pub use color::xyb;
 
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
 #[cfg(feature = "experimental-hybrid-trellis")]
