@@ -48,10 +48,12 @@
 // Module structure
 // ============================================================================
 
-// Clean public API (preferred)
-pub mod api;
+// Clean public API - use jpegli::encoder::* and jpegli::decoder::*
+mod api;
+pub use api::decoder;
+pub use api::encoder;
 
-// Implementation modules (stable but verbose paths)
+// Implementation modules (internal, may become pub(crate) later)
 pub mod decode;
 pub mod encode;
 pub mod error;
