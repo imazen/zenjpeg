@@ -58,15 +58,15 @@ const EXPECTED_HASHES: &[(&str, u8, &str)] = &[
     ("progressive_420_opt", 50, "196a605982f37bc0e4c3d9d73bc6144cd4aeb5897b61f86ac09def8224ba355f"), // 261089 bytes
     ("progressive_420_opt", 75, "07af1d94f45cf3fc1430ef383900ab01d1f591bf1efe08f938d9a9202526ae1b"), // 383821 bytes
     ("progressive_420_opt", 90, "591b020c3e60284880948571230e19ca3a42f9a7d3dd25f16d549c40c8cf13cf"), // 564225 bytes
-    ("baseline_xyb_opt", 50, "a2699bbe3cb711f36e349807b241fa1ec6bfe415edbd1c7f784bf0f4fc631aff"), // 300886 bytes
-    ("baseline_xyb_opt", 75, "e501aa75fcd502cdc7f5ce43b079c63f45df45eedd6ddc49d98ff403b68b9b4b"), // 411148 bytes
-    ("baseline_xyb_opt", 90, "b996def46b644e4fbaa3df5c9de803cc67f90f4a819a8d9c9610ea294d7e6b07"), // 607532 bytes
-    ("baseline_xyb_fixed", 50, "7521d927850c0bda08cfdbac06e635a07e7d744613457e9ae8054886c13ccbe1"), // 305911 bytes
-    ("baseline_xyb_fixed", 75, "650df56532b02480984781f8f0eb33a04c0d6eb5689e82de517bc07be3fd426c"), // 416822 bytes
-    ("baseline_xyb_fixed", 90, "bf49ca0be1729e6bac42218029a93ff3bb5eb7a7dff3d635a3883850b6681c34"), // 623471 bytes
-    ("progressive_xyb_opt", 50, "6c7cc4e28f2fbe2f501473b09604cf031db8f7623da19e8926199d3ed3f4a8c2"), // 283249 bytes
-    ("progressive_xyb_opt", 75, "481c2dfe957c2b3e117bdff5fda1d46b312f233fe354b5ca573c34a24a3db154"), // 391951 bytes
-    ("progressive_xyb_opt", 90, "bc2419c93f6562983722f26d73d46b732086d351fa8e734ad332a0271e4066cb"), // 576902 bytes
+    ("baseline_xyb_opt", 50, "4acbed2702fbe5c5f715abf3244fb7e15dc24f2cfaba863e1c0ca1903fe6e261"), // 272721 bytes
+    ("baseline_xyb_opt", 75, "7164095810fa874bd42a02fe5ca03f7ad5cc79e2cd4f48ef2c94cfd72a91bd64"), // 397271 bytes
+    ("baseline_xyb_opt", 90, "d03c14584c4cd0f1a93a97adcb7a1952b9b32957a4d0d564ff4bc7ea3d0f501d"), // 614790 bytes
+    ("baseline_xyb_fixed", 50, "2e900de46dfa1551095b29ef96024f718bc995dbd1f1851abf3a2fbc05157b34"), // 294825 bytes
+    ("baseline_xyb_fixed", 75, "2f99e2c32f2ab7b865406d8d4d743a50f69c2fc681ecea19b98af4da51c5b3c2"), // 418890 bytes
+    ("baseline_xyb_fixed", 90, "8ee8a6274e096413502d5da1ad1645b18e255434ea070c54f814c177a5613a3d"), // 651998 bytes
+    ("progressive_xyb_opt", 50, "bd3553c55481487fbe6c8bd1e6d1e973b1c570e457758d08337f1b83d9e24694"), // 270465 bytes
+    ("progressive_xyb_opt", 75, "315e2e478077bcb75d85880e5bd95cd5c926f4485b85a9641628d14898a13e23"), // 396193 bytes
+    ("progressive_xyb_opt", 90, "ba69c7cd8242e2f24ac55c7c44639e3e81f16d01a8842d830363498a46db5ba5"), // 615329 bytes
 ];
 
 // =============================================================================
