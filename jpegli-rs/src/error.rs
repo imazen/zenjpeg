@@ -130,6 +130,29 @@ pub enum Error {
         /// The pixel format that was attempted
         format: crate::types::PixelFormat,
     },
+    /// Invalid encoder configuration.
+    InvalidConfig(String),
+    /// Stride too small for image width.
+    StrideTooSmall {
+        /// Image width
+        width: u32,
+        /// Stride provided
+        stride: usize,
+    },
+    /// Pushed more rows than image height.
+    TooManyRows {
+        /// Image height
+        height: u32,
+        /// Rows already pushed
+        pushed: u32,
+    },
+    /// Encoding finished without all rows pushed.
+    IncompleteImage {
+        /// Image height
+        height: u32,
+        /// Rows actually pushed
+        pushed: u32,
+    },
 }
 
 impl fmt::Display for Error {
@@ -219,6 +242,30 @@ impl fmt::Display for Error {
             }
             Self::UnsupportedPixelFormat { format } => {
                 write!(f, "pixel format {:?} not yet supported", format)
+            }
+            Self::InvalidConfig(reason) => {
+                write!(f, "invalid encoder configuration: {}", reason)
+            }
+            Self::StrideTooSmall { width, stride } => {
+                write!(
+                    f,
+                    "stride {} is too small for width {} pixels",
+                    stride, width
+                )
+            }
+            Self::TooManyRows { height, pushed } => {
+                write!(
+                    f,
+                    "pushed {} rows but image height is only {}",
+                    pushed, height
+                )
+            }
+            Self::IncompleteImage { height, pushed } => {
+                write!(
+                    f,
+                    "encoding finished after {} rows but image height is {}",
+                    pushed, height
+                )
             }
         }
     }
