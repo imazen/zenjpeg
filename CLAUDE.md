@@ -171,6 +171,35 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    - Use separate binary without mozjpeg in dep tree
    - Link jpegli with +whole-archive before mozjpeg
 
+## Planned Features / TODO
+
+### Resource Estimation API (docs/API_DESIGN.md)
+
+For proxy server efficiency: accurate memory and compute cost estimation before encoding.
+
+**Design:**
+- `EncoderConfig` - dimension-independent config, reusable across images
+- `ResourceEstimate` - returns `peak_bytes` (public), tracks internal metrics
+- `InputMethod` enum - OneShot, Streaming, YCbCrDirect, YCbCrSubsampled
+- `compute_cost_ms()` - approximate encoding time for current architecture
+- `EncodeMetrics` - actual values returned from `finish_with_metrics()`
+
+**Implementation TODO:**
+- [ ] Extract `EncoderConfig` from `JpegEncoder` (dimension-independent)
+- [ ] Add `InputMethod` enum for different input paths
+- [ ] Implement `estimate_resources(width, height, input_method)` with accurate modeling
+- [ ] Add allocation tracking (behind feature flag for zero overhead in production)
+- [ ] Add `compute_cost_ms()` with CPU detection and calibration
+- [ ] Add `EncodeMetrics` struct with actual peak_bytes, alloc_count, total_alloc_bytes, elapsed_ms
+- [ ] Add `finish_with_metrics()` to return EncodeMetrics
+- [ ] Add `finish_into(buffer)` for zero-copy output to pre-allocated buffer
+- [ ] Benchmark to calibrate `compute_cost_ms()` estimates across architectures
+
+**Internal tracking (not public API):**
+- Total allocation count
+- Total allocated bytes
+- Max single allocation size
+
 ## Running Tests
 
 ### Default Tests (no external dependencies)
@@ -295,5 +324,6 @@ Note: All development features enabled by default for local testing.
 
 - `jpegli-rs/examples/README.md` - Examples and debugging tools
 - `jpegli-rs/docs/ADAPTIVE_QUANTIZATION.md` - AQ algorithm details
+- `jpegli-rs/docs/API_DESIGN.md` - Full API surface and proposed enhancements
 - `internal/jpegli-cpp/jpegli-rs/CLAUDE.md` - Detailed handoff document
 - `docs/SECURITY.md` - Security considerations
