@@ -3,9 +3,17 @@
 //! This test encodes jpegli/tests/images/1.png at various quality levels
 //! and writes the results to jpegli/tests/outputs/ for visual inspection.
 
-use jpegli::{JpegEncoder, PixelFormat, Quality};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::PathBuf;
+
+/// Helper function to encode RGB data
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 fn get_test_image_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -80,11 +88,9 @@ fn test_visual_encoding_quality_levels() {
     let quality_levels = [30, 50, 70, 85, 95];
 
     for &q in &quality_levels {
-        let encoder = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(q as f32));
+        let config = EncoderConfig::new().quality(q as f32);
 
-        match encoder.encode(&rgb_data) {
+        match encode_rgb(width, height, &rgb_data, &config) {
             Ok(jpeg_data) => {
                 let output_path = output_dir.join(format!("1_q{}.jpg", q));
                 fs::write(&output_path, &jpeg_data).expect("Failed to write JPEG");
@@ -125,11 +131,9 @@ fn test_visual_encoding_with_aq() {
     let output_dir = get_output_dir();
 
     // Encode at Q70 (good balance of quality and size)
-    let encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(70.0));
+    let config = EncoderConfig::new().quality(70.0);
 
-    match encoder.encode(&rgb_data) {
+    match encode_rgb(width, height, &rgb_data, &config) {
         Ok(jpeg_data) => {
             let output_path = output_dir.join("1_q70_default.jpg");
             fs::write(&output_path, &jpeg_data).expect("Failed to write JPEG");
