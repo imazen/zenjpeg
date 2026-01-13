@@ -74,7 +74,7 @@ fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
 /// * `width` - Input width
 /// * `height` - Input height
 /// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
@@ -616,6 +616,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     rgb_data: &[u8],
@@ -714,6 +715,7 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 pub fn rgba_to_ycbcr_planes_simd_inplace(
     rgba_data: &[u8],
@@ -812,6 +814,7 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 pub fn bgr_to_ycbcr_planes_simd_inplace(
     bgr_data: &[u8],
@@ -910,6 +913,7 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 pub fn bgra_to_ycbcr_planes_simd_inplace(
     bgra_data: &[u8],
@@ -1026,6 +1030,7 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 pub fn rgb_to_ycbcr_strided_inplace(
     rgb_data: &[u8],
@@ -1196,6 +1201,7 @@ pub fn rgb_to_ycbcr_strided_inplace(
     "x86+sse4.1",
     "aarch64+neon",
     "arm+neon",
+    "wasm32+simd128",
 ))]
 pub fn bgr_to_ycbcr_strided_inplace(
     bgr_data: &[u8],

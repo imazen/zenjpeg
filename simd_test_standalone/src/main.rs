@@ -142,7 +142,7 @@ mod scalar {
 
 const SCALE_BITS: i32 = 512 + 65536 + (128 << 17);
 
-#[multiversion(targets("x86_64+avx2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2", "aarch64+neon", "wasm32+simd128"))]
 pub fn idct_wide(input: &[i32; 64], output: &mut [i16; 64]) {
     // Load 8 rows
     let mut rows: [i32x8; 8] = std::array::from_fn(|i| {

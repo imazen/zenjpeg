@@ -281,7 +281,7 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
 ///
 /// # Returns
 /// Pre-erosion buffer at 1/4 resolution
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 pub fn compute_pre_erosion_simd(
     input: &[f32],
     width: usize,
@@ -583,7 +583,7 @@ pub fn hf_modulation_sum_8x8(
 /// Full per_block_modulations with SIMD acceleration.
 ///
 /// Replaces per_block_modulations_scalar with SIMD-optimized inner loops.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 pub fn per_block_modulations_simd(
     y_quant_01: f32,
     input: &[f32],
@@ -741,7 +741,7 @@ fn weighted_min4_of_9(v: [f32; 9]) -> f32 {
 /// 3. Write to tmp buffer
 ///
 /// Then sum 2x2 blocks from tmp to get final aq_map values.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 pub fn fuzzy_erosion_simd(
     pre_erosion: &[f32],
     pre_erosion_w: usize,

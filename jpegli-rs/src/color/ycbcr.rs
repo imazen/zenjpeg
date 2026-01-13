@@ -399,7 +399,7 @@ pub fn ycbcr_planes_to_rgb(
 ///
 /// This is optimized for the decoder which processes planes separately.
 /// Uses SIMD for YCbCr math with efficient interleaved RGB storage.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
 pub fn ycbcr_planes_f32_to_rgb_u8(
     y_plane: &[f32],
     cb_plane: &[f32],
