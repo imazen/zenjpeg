@@ -1,0 +1,409 @@
+//! Core types for the v2 encoder API.
+
+/// Quality/compression setting.
+///
+/// All variants map to internal quality through empirical lookup tables.
+/// Results vary by image - these are rough approximations, not guarantees.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Quality {
+    /// Approximate jpegli quality scale (this is a fork, not exact jpegli).
+    /// Range: 0.0–100.0, where ~90 is visually lossless for most images.
+    ApproxJpegli(f32),
+
+    /// Approximate mozjpeg quality behavior.
+    /// Range: 0–100. Maps to quality producing similar file sizes.
+    ApproxMozjpeg(u8),
+
+    /// Approximate SSIMULACRA2 score target.
+    /// Range: 0–100 (higher = better). 90+ is roughly visually lossless.
+    ApproxSsim2(f32),
+
+    /// Approximate Butteraugli distance target.
+    /// Range: 0.0+ (lower = better). <1.0 excellent, <3.0 good.
+    ApproxButteraugli(f32),
+}
+
+impl Default for Quality {
+    fn default() -> Self {
+        Quality::ApproxJpegli(90.0)
+    }
+}
+
+impl From<f32> for Quality {
+    fn from(q: f32) -> Self {
+        Quality::ApproxJpegli(q)
+    }
+}
+
+impl From<u8> for Quality {
+    fn from(q: u8) -> Self {
+        Quality::ApproxJpegli(q as f32)
+    }
+}
+
+impl From<i32> for Quality {
+    fn from(q: i32) -> Self {
+        Quality::ApproxJpegli(q as f32)
+    }
+}
+
+impl Quality {
+    /// Convert to internal quality value (0.0-100.0 scale).
+    #[must_use]
+    pub fn to_internal(&self) -> f32 {
+        match self {
+            Quality::ApproxJpegli(q) => *q,
+            Quality::ApproxMozjpeg(q) => mozjpeg_to_internal(*q),
+            Quality::ApproxSsim2(score) => ssim2_to_internal(*score),
+            Quality::ApproxButteraugli(dist) => butteraugli_to_internal(*dist),
+        }
+    }
+}
+
+// Empirical mapping functions - TODO: calibrate from test data
+fn mozjpeg_to_internal(q: u8) -> f32 {
+    // Placeholder: linear mapping, needs calibration
+    q as f32
+}
+
+fn ssim2_to_internal(score: f32) -> f32 {
+    // Placeholder: rough approximation, needs calibration
+    // SSIM2 90 ~ quality 90, SSIM2 80 ~ quality 75, etc.
+    score
+}
+
+fn butteraugli_to_internal(dist: f32) -> f32 {
+    // Placeholder: rough approximation, needs calibration
+    // butteraugli 1.0 ~ quality 90, butteraugli 3.0 ~ quality 75
+    if dist <= 0.5 {
+        95.0
+    } else if dist <= 1.0 {
+        90.0
+    } else if dist <= 2.0 {
+        82.0
+    } else if dist <= 3.0 {
+        75.0
+    } else {
+        65.0
+    }
+}
+
+/// Quantization table configuration.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum QuantTableConfig {
+    /// Jpegli's perceptual tables, scaled by Quality. (default)
+    Perceptual,
+
+    /// Custom base matrices, scaled by Quality.
+    /// Provide f32 matrices (typically 1.0–255.0 range).
+    CustomBase {
+        luma: [f32; 64],
+        chroma: [f32; 64],
+    },
+
+    /// Exact quantization tables. **Quality is ignored.**
+    Exact { luma: [u16; 64], chroma: [u16; 64] },
+}
+
+impl Default for QuantTableConfig {
+    fn default() -> Self {
+        QuantTableConfig::Perceptual
+    }
+}
+
+/// Output color space with bundled subsampling options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ColorMode {
+    /// Standard YCbCr with configurable chroma subsampling.
+    YCbCr { subsampling: ChromaSubsampling },
+
+    /// XYB perceptual color space (jpegli-specific).
+    /// Computed internally from linear RGB input.
+    Xyb { subsampling: XybSubsampling },
+
+    /// Single-channel grayscale.
+    Grayscale,
+}
+
+impl Default for ColorMode {
+    fn default() -> Self {
+        ColorMode::YCbCr {
+            subsampling: ChromaSubsampling::default(),
+        }
+    }
+}
+
+/// YCbCr chroma subsampling (spatial resolution).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ChromaSubsampling {
+    /// 4:4:4 - Full chroma resolution
+    Full,
+    /// 4:2:2 - Half horizontal resolution
+    HalfHorizontal,
+    /// 4:2:0 - Quarter resolution (half each direction)
+    #[default]
+    Quarter,
+    /// 4:4:0 - Half vertical resolution
+    HalfVertical,
+}
+
+impl ChromaSubsampling {
+    /// Convert to the legacy Subsampling enum.
+    #[must_use]
+    pub fn to_legacy(&self) -> crate::types::Subsampling {
+        match self {
+            ChromaSubsampling::Full => crate::types::Subsampling::S444,
+            ChromaSubsampling::HalfHorizontal => crate::types::Subsampling::S422,
+            ChromaSubsampling::Quarter => crate::types::Subsampling::S420,
+            ChromaSubsampling::HalfVertical => crate::types::Subsampling::S440,
+        }
+    }
+
+    /// Horizontal subsampling factor (1 or 2).
+    #[must_use]
+    pub const fn h_factor(&self) -> u8 {
+        match self {
+            ChromaSubsampling::Full | ChromaSubsampling::HalfVertical => 1,
+            ChromaSubsampling::HalfHorizontal | ChromaSubsampling::Quarter => 2,
+        }
+    }
+
+    /// Vertical subsampling factor (1 or 2).
+    #[must_use]
+    pub const fn v_factor(&self) -> u8 {
+        match self {
+            ChromaSubsampling::Full | ChromaSubsampling::HalfHorizontal => 1,
+            ChromaSubsampling::HalfVertical | ChromaSubsampling::Quarter => 2,
+        }
+    }
+}
+
+/// XYB component subsampling.
+///
+/// Unlike YCbCr where only luma is full, XYB keeps X and Y full
+/// even in subsampled mode - only B is reduced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum XybSubsampling {
+    /// X, Y, B all at full resolution (1x1, 1x1, 1x1)
+    Full,
+    /// X, Y full, B at quarter resolution (1x1, 1x1, 2x2)
+    #[default]
+    BQuarter,
+}
+
+/// Chroma downsampling algorithm for RGB->YCbCr conversion.
+///
+/// **Only applies to RGB/RGBX input.** Ignored for grayscale, YCbCr, and planar input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum DownsamplingMethod {
+    /// Simple box filter averaging (fast, matches C++ jpegli default)
+    #[default]
+    Box,
+    /// Gamma-aware averaging (better color accuracy at edges)
+    GammaAware,
+    /// Iterative optimization (SharpYUV-style, best quality, ~3x slower)
+    GammaAwareIterative,
+}
+
+impl DownsamplingMethod {
+    /// Convert to the legacy ChromaDownsampling enum.
+    #[must_use]
+    pub fn to_legacy(&self) -> crate::types::ChromaDownsampling {
+        match self {
+            DownsamplingMethod::Box => crate::types::ChromaDownsampling::Box,
+            DownsamplingMethod::GammaAware => crate::types::ChromaDownsampling::GammaAware,
+            DownsamplingMethod::GammaAwareIterative => {
+                crate::types::ChromaDownsampling::GammaAwareIterative
+            }
+        }
+    }
+}
+
+/// Pixel data layout for raw byte input.
+///
+/// Describes channel order, bit depth, and color space interpretation.
+/// Use with `encode_from_bytes()` when working with raw buffers.
+///
+/// For rgb crate types, use `encode_from_rgb()` which infers layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PixelLayout {
+    // === 8-bit sRGB (gamma-encoded) ===
+    /// RGB, 3 bytes/pixel, sRGB gamma
+    Rgb8Srgb,
+    /// BGR, 3 bytes/pixel, sRGB gamma (Windows/GDI order)
+    Bgr8Srgb,
+    /// RGBX, 4 bytes/pixel, sRGB gamma (4th byte ignored)
+    Rgbx8Srgb,
+    /// BGRX, 4 bytes/pixel, sRGB gamma (4th byte ignored)
+    Bgrx8Srgb,
+    /// Grayscale, 1 byte/pixel, sRGB gamma
+    Gray8Srgb,
+
+    // === 16-bit linear ===
+    /// RGB, 6 bytes/pixel, linear light (0-65535)
+    Rgb16Linear,
+    /// RGBX, 8 bytes/pixel, linear light (4th channel ignored)
+    Rgbx16Linear,
+    /// Grayscale, 2 bytes/pixel, linear light
+    Gray16Linear,
+
+    // === 32-bit float linear ===
+    /// RGB, 12 bytes/pixel, linear light (0.0-1.0)
+    RgbF32Linear,
+    /// RGBX, 16 bytes/pixel, linear light (4th channel ignored)
+    RgbxF32Linear,
+    /// Grayscale, 4 bytes/pixel, linear light
+    GrayF32Linear,
+
+    // === Pre-converted YCbCr (skip RGB->YCbCr conversion) ===
+    /// YCbCr interleaved, 3 bytes/pixel, u8
+    YCbCr8,
+    /// YCbCr interleaved, 12 bytes/pixel, f32
+    YCbCrF32,
+}
+
+impl PixelLayout {
+    /// Bytes per pixel for this layout.
+    #[must_use]
+    pub const fn bytes_per_pixel(&self) -> usize {
+        match self {
+            Self::Gray8Srgb => 1,
+            Self::Gray16Linear => 2,
+            Self::Rgb8Srgb | Self::Bgr8Srgb | Self::YCbCr8 => 3,
+            Self::Rgbx8Srgb | Self::Bgrx8Srgb | Self::GrayF32Linear => 4,
+            Self::Rgb16Linear => 6,
+            Self::Rgbx16Linear => 8,
+            Self::RgbF32Linear | Self::YCbCrF32 => 12,
+            Self::RgbxF32Linear => 16,
+        }
+    }
+
+    /// Number of channels (including ignored channels).
+    #[must_use]
+    pub const fn channels(&self) -> usize {
+        match self {
+            Self::Gray8Srgb | Self::Gray16Linear | Self::GrayF32Linear => 1,
+            Self::Rgb8Srgb
+            | Self::Bgr8Srgb
+            | Self::Rgb16Linear
+            | Self::RgbF32Linear
+            | Self::YCbCr8
+            | Self::YCbCrF32 => 3,
+            Self::Rgbx8Srgb | Self::Bgrx8Srgb | Self::Rgbx16Linear | Self::RgbxF32Linear => 4,
+        }
+    }
+
+    /// Whether this is a grayscale format.
+    #[must_use]
+    pub const fn is_grayscale(&self) -> bool {
+        matches!(
+            self,
+            Self::Gray8Srgb | Self::Gray16Linear | Self::GrayF32Linear
+        )
+    }
+
+    /// Whether this is pre-converted YCbCr.
+    #[must_use]
+    pub const fn is_ycbcr(&self) -> bool {
+        matches!(self, Self::YCbCr8 | Self::YCbCrF32)
+    }
+
+    /// Whether this uses BGR channel order.
+    #[must_use]
+    pub const fn is_bgr(&self) -> bool {
+        matches!(self, Self::Bgr8Srgb | Self::Bgrx8Srgb)
+    }
+
+    /// Whether this is a float format (linear color space).
+    #[must_use]
+    pub const fn is_float(&self) -> bool {
+        matches!(
+            self,
+            Self::RgbF32Linear | Self::RgbxF32Linear | Self::GrayF32Linear | Self::YCbCrF32
+        )
+    }
+
+    /// Whether this is a 16-bit format (linear color space).
+    #[must_use]
+    pub const fn is_16bit(&self) -> bool {
+        matches!(self, Self::Rgb16Linear | Self::Rgbx16Linear | Self::Gray16Linear)
+    }
+
+    /// Convert to legacy PixelFormat (best effort).
+    #[must_use]
+    pub fn to_legacy(&self) -> crate::types::PixelFormat {
+        match self {
+            Self::Rgb8Srgb => crate::types::PixelFormat::Rgb,
+            Self::Bgr8Srgb => crate::types::PixelFormat::Bgr,
+            Self::Rgbx8Srgb => crate::types::PixelFormat::Rgba,
+            Self::Bgrx8Srgb => crate::types::PixelFormat::Bgrx,
+            Self::Gray8Srgb => crate::types::PixelFormat::Gray,
+            Self::Rgb16Linear => crate::types::PixelFormat::Rgb16,
+            Self::Rgbx16Linear => crate::types::PixelFormat::Rgba16,
+            Self::Gray16Linear => crate::types::PixelFormat::Gray16,
+            Self::RgbF32Linear => crate::types::PixelFormat::RgbF32,
+            Self::RgbxF32Linear => crate::types::PixelFormat::RgbaF32,
+            Self::GrayF32Linear => crate::types::PixelFormat::GrayF32,
+            // YCbCr layouts don't have direct legacy equivalents
+            Self::YCbCr8 | Self::YCbCrF32 => crate::types::PixelFormat::Rgb,
+        }
+    }
+}
+
+/// Planar YCbCr data for a strip of rows.
+///
+/// Each plane has its own stride. All planes are f32.
+#[derive(Clone, Copy, Debug)]
+pub struct YCbCrPlanes<'a> {
+    pub y: &'a [f32],
+    pub y_stride: usize,
+    pub cb: &'a [f32],
+    pub cb_stride: usize,
+    pub cr: &'a [f32],
+    pub cr_stride: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quality_default() {
+        let q = Quality::default();
+        assert!(matches!(q, Quality::ApproxJpegli(90.0)));
+    }
+
+    #[test]
+    fn test_quality_from() {
+        let q: Quality = 85.0.into();
+        assert!(matches!(q, Quality::ApproxJpegli(85.0)));
+
+        let q: Quality = 75u8.into();
+        assert!(matches!(q, Quality::ApproxJpegli(75.0)));
+    }
+
+    #[test]
+    fn test_pixel_layout_bytes() {
+        assert_eq!(PixelLayout::Rgb8Srgb.bytes_per_pixel(), 3);
+        assert_eq!(PixelLayout::Rgbx8Srgb.bytes_per_pixel(), 4);
+        assert_eq!(PixelLayout::RgbF32Linear.bytes_per_pixel(), 12);
+        assert_eq!(PixelLayout::Gray8Srgb.bytes_per_pixel(), 1);
+    }
+
+    #[test]
+    fn test_chroma_subsampling_factors() {
+        assert_eq!(ChromaSubsampling::Full.h_factor(), 1);
+        assert_eq!(ChromaSubsampling::Full.v_factor(), 1);
+        assert_eq!(ChromaSubsampling::Quarter.h_factor(), 2);
+        assert_eq!(ChromaSubsampling::Quarter.v_factor(), 2);
+        assert_eq!(ChromaSubsampling::HalfHorizontal.h_factor(), 2);
+        assert_eq!(ChromaSubsampling::HalfHorizontal.v_factor(), 1);
+    }
+}

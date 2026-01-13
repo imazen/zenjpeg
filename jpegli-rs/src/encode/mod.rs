@@ -56,6 +56,7 @@ pub(crate) mod linear_lut;
 pub mod parallel;
 pub mod streaming;
 pub mod strip;
+pub mod v2;
 
 // Re-export config types
 pub use config::EncoderConfig;
