@@ -15,9 +15,10 @@
 
 use butteraugli::ButteraugliParams;
 use dssim::Dssim;
+use enough::Never;
 use jpegli::decode::Decoder;
-use jpegli::types::Subsampling;
-use jpegli::{JpegEncoder, PixelFormat};
+use jpegli::types::PixelFormat;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 
@@ -313,16 +314,18 @@ fn encode_jpeg(
     width: u32,
     height: u32,
     quality: f32,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     optimize_huffman: bool,
 ) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
+    let config = EncoderConfig::new()
         .quality(quality)
-        .subsampling(subsampling)
-        .optimize_huffman(optimize_huffman)
-        .encode(rgb)
-        .expect("Encoding failed")
+        .ycbcr(subsampling)
+        .optimize_huffman(optimize_huffman);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb, Never).expect("push data");
+    enc.finish().expect("Encoding failed")
 }
 
 // =============================================================================
@@ -335,7 +338,7 @@ fn test_cpp_parity_s444_optimized() {
     let (rgb, width, height) = load_test_image();
 
     for &(quality, cpp_size) in CPP_S444_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, Subsampling::S444, true);
+        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, ChromaSubsampling::Full, true);
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
 
         assert!(
@@ -361,7 +364,7 @@ fn test_cpp_parity_s444_fixed() {
             width,
             height,
             quality as f32,
-            Subsampling::S444,
+            ChromaSubsampling::Full,
             false,
         );
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
@@ -384,7 +387,7 @@ fn test_cpp_parity_s420() {
     let (rgb, width, height) = load_test_image();
 
     for &(quality, cpp_size) in CPP_S420_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, Subsampling::S420, true);
+        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, ChromaSubsampling::Quarter, true);
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
 
         // Note: Rust typically produces ~3% smaller files for 4:2:0
@@ -406,7 +409,7 @@ fn test_cpp_parity_s422() {
     let (rgb, width, height) = load_test_image();
 
     for &(quality, cpp_size) in CPP_S422_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, Subsampling::S422, true);
+        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, ChromaSubsampling::HalfHorizontal, true);
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
 
         assert!(
@@ -431,7 +434,7 @@ fn test_regression_s444_optimized() {
     let (rgb, width, height) = load_test_image();
 
     for &(quality, expected_size, expected_dssim, expected_bfly) in RUST_S444_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, Subsampling::S444, true);
+        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, ChromaSubsampling::Full, true);
 
         // Check size regression
         let size_diff_pct =
@@ -485,7 +488,7 @@ fn test_regression_s444_fixed() {
             width,
             height,
             quality as f32,
-            Subsampling::S444,
+            ChromaSubsampling::Full,
             false,
         );
 
@@ -534,7 +537,7 @@ fn test_regression_s420() {
     let (rgb, width, height) = load_test_image();
 
     for &(quality, expected_size, expected_dssim, expected_bfly) in RUST_S420_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, Subsampling::S420, true);
+        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, ChromaSubsampling::Quarter, true);
 
         let size_diff_pct =
             100.0 * (jpeg.len() as f64 - expected_size as f64) / expected_size as f64;
@@ -581,7 +584,7 @@ fn test_regression_s422() {
     let (rgb, width, height) = load_test_image();
 
     for &(quality, expected_size, expected_dssim, expected_bfly) in RUST_S422_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, Subsampling::S422, true);
+        let jpeg = encode_jpeg(&rgb, width, height, quality as f32, ChromaSubsampling::HalfHorizontal, true);
 
         let size_diff_pct =
             100.0 * (jpeg.len() as f64 - expected_size as f64) / expected_size as f64;
@@ -635,10 +638,10 @@ fn print_current_values() {
     println!("Image: {}x{}", width, height);
 
     let configs = [
-        (Subsampling::S444, true, "S444_OPT"),
-        (Subsampling::S444, false, "S444_FIXED"),
-        (Subsampling::S420, true, "S420_OPT"),
-        (Subsampling::S422, true, "S422_OPT"),
+        (ChromaSubsampling::Full, true, "S444_OPT"),
+        (ChromaSubsampling::Full, false, "S444_FIXED"),
+        (ChromaSubsampling::Quarter, true, "S420_OPT"),
+        (ChromaSubsampling::HalfHorizontal, true, "S422_OPT"),
     ];
 
     let dssim = Dssim::new();
@@ -700,7 +703,7 @@ fn print_summary() {
     println!("4:4:4 Optimized Huffman:");
     println!("{:>5} {:>10} {:>10} {:>10}", "Q", "C++", "Rust", "Diff");
     for &(q, cpp_size) in CPP_S444_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, q as f32, Subsampling::S444, true);
+        let jpeg = encode_jpeg(&rgb, width, height, q as f32, ChromaSubsampling::Full, true);
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
         println!(
             "{:>5} {:>10} {:>10} {:>+9.2}%",
@@ -714,7 +717,7 @@ fn print_summary() {
     println!("\n4:2:0 Optimized Huffman:");
     println!("{:>5} {:>10} {:>10} {:>10}", "Q", "C++", "Rust", "Diff");
     for &(q, cpp_size) in CPP_S420_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, q as f32, Subsampling::S420, true);
+        let jpeg = encode_jpeg(&rgb, width, height, q as f32, ChromaSubsampling::Quarter, true);
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
         println!(
             "{:>5} {:>10} {:>10} {:>+9.2}%",
