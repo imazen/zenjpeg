@@ -48,7 +48,10 @@
 // Module structure
 // ============================================================================
 
-// Public modules (stable API)
+// Clean public API (preferred)
+pub mod api;
+
+// Implementation modules (stable but verbose paths)
 pub mod decode;
 pub mod encode;
 pub mod error;
