@@ -3,7 +3,8 @@
 //! Verifies that the decoder produces consistent output across multiple roundtrips
 //! and that encode→decode→encode→decode produces stable results.
 
-use jpegli::{Decoder, JpegEncoder, JpegMode, PixelFormat, Quality};
+use enough::Never;
+use jpegli::{Decoder, EncoderConfig, PixelLayout};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -28,30 +29,30 @@ fn max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {
         .unwrap_or(0)
 }
 
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> Vec<u8> {
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder creation failed");
+    enc.push_packed(data, Never).expect("push failed");
+    enc.finish().expect("finish failed")
+}
+
 #[test]
 fn test_baseline_roundtrip_consistency() {
     let width = 128u32;
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
+    let config = EncoderConfig::new().quality(90.0);
+
     // First encode
-    let jpeg1 = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Baseline)
-        .encode(&rgb)
-        .expect("encode 1 failed");
+    let jpeg1 = encode_rgb(width, height, &rgb, &config);
 
     // Decode
     let decoded1 = Decoder::new().decode(&jpeg1).expect("decode 1 failed");
 
     // Re-encode from decoded
-    let jpeg2 = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Baseline)
-        .encode(&decoded1.data)
-        .expect("encode 2 failed");
+    let jpeg2 = encode_rgb(width, height, &decoded1.data, &config);
 
     // Decode again
     let decoded2 = Decoder::new().decode(&jpeg2).expect("decode 2 failed");
@@ -82,24 +83,16 @@ fn test_progressive_roundtrip_consistency() {
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
+    let config = EncoderConfig::new().quality(90.0).progressive(true);
+
     // First encode
-    let jpeg1 = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Progressive)
-        .encode(&rgb)
-        .expect("encode 1 failed");
+    let jpeg1 = encode_rgb(width, height, &rgb, &config);
 
     // Decode
     let decoded1 = Decoder::new().decode(&jpeg1).expect("decode 1 failed");
 
     // Re-encode from decoded
-    let jpeg2 = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .mode(JpegMode::Progressive)
-        .encode(&decoded1.data)
-        .expect("encode 2 failed");
+    let jpeg2 = encode_rgb(width, height, &decoded1.data, &config);
 
     // Decode again
     let decoded2 = Decoder::new().decode(&jpeg2).expect("decode 2 failed");
@@ -115,14 +108,12 @@ fn test_progressive_roundtrip_consistency() {
 
 #[test]
 fn test_decoder_produces_correct_dimensions() {
+    let config = EncoderConfig::new().quality(85.0);
+
     for (width, height) in [(64, 64), (100, 75), (256, 128), (17, 33)] {
         let rgb = generate_gradient(width, height);
 
-        let jpeg = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(85.0))
-            .encode(&rgb)
-            .expect("encode failed");
+        let jpeg = encode_rgb(width as u32, height as u32, &rgb, &config);
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
 
@@ -150,16 +141,14 @@ fn test_multiple_roundtrips_converge() {
     let height = 64u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
+    let config = EncoderConfig::new().quality(90.0);
+
     let mut current_pixels = rgb.clone();
     let mut previous_diff = u8::MAX;
 
     // Do 5 roundtrips - error should stabilize/decrease
     for i in 0..5 {
-        let jpeg = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0))
-            .encode(&current_pixels)
-            .expect("encode failed");
+        let jpeg = encode_rgb(width, height, &current_pixels, &config);
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
         let max_diff = max_pixel_diff(&current_pixels, &decoded.data);
@@ -186,12 +175,8 @@ fn test_high_quality_roundtrip_low_error() {
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
-    let jpeg = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(100.0))
-        .mode(JpegMode::Baseline)
-        .encode(&rgb)
-        .expect("encode failed");
+    let config = EncoderConfig::new().quality(100.0);
+    let jpeg = encode_rgb(width, height, &rgb, &config);
 
     let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
 
