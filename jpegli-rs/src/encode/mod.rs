@@ -41,6 +41,8 @@
 //!     .encode(&pixels)?;
 //! ```
 
+#![allow(deprecated)] // This module defines and implements the deprecated Encoder struct
+
 // Encoder implementation modules
 mod blocks;
 mod progressive;
@@ -62,9 +64,10 @@ pub(crate) use config::ProgressiveScan;
 use crate::alloc::{
     checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, validate_dimensions, DEFAULT_MAX_PIXELS,
 };
+#[cfg(feature = "experimental-hybrid-trellis")]
 use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
 use crate::error::{Error, Result};
-use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
+use crate::quant::{self, Quality, QuantTable};
 use crate::types::{
     ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, JpegMode, PixelFormat,
     Subsampling,
@@ -508,7 +511,7 @@ impl Encoder {
     fn encode_strip_based_with_stop(&self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
         // Build a StreamingEncoderBuilder with our config
         let mut builder = streaming::StreamingEncoder::new(self.config.width, self.config.height)
-            .quality(self.config.quality.clone())
+            .quality(self.config.quality)
             .subsampling(self.config.subsampling)
             .pixel_format(self.config.pixel_format)
             .mode(self.config.mode)
@@ -528,6 +531,7 @@ impl Encoder {
     ///
     /// This helper method respects the `custom_quant_matrices` config option.
     #[inline]
+    #[allow(dead_code)]
     fn gen_quant_table(&self, component: usize, use_xyb: bool, is_420: bool) -> QuantTable {
         let distance = self.config.quality.to_distance();
 
@@ -551,18 +555,9 @@ impl Default for Encoder {
     }
 }
 
-/// Converts coefficients from natural order to zigzag order for JPEG encoding.
-#[inline]
-fn natural_to_zigzag(natural: &[i16; DCT_BLOCK_SIZE]) -> [i16; DCT_BLOCK_SIZE] {
-    let mut zigzag = [0i16; DCT_BLOCK_SIZE];
-    for i in 0..DCT_BLOCK_SIZE {
-        zigzag[JPEG_ZIGZAG_ORDER[i] as usize] = natural[i];
-    }
-    zigzag
-}
-
 /// Converts coefficients from natural order to zigzag order, writing directly to destination.
 /// Avoids allocation when writing to pre-allocated block arrays.
+#[cfg(feature = "experimental-hybrid-trellis")]
 #[inline]
 fn natural_to_zigzag_into(natural: &[i16; DCT_BLOCK_SIZE], dest: &mut [i16; DCT_BLOCK_SIZE]) {
     for i in 0..DCT_BLOCK_SIZE {
@@ -639,6 +634,7 @@ pub(crate) fn pad_plane_f32(
 ///
 /// Returns ((y, cb, cr), padded_luma_w, padded_luma_h, padded_chroma_w, padded_chroma_h).
 #[allow(clippy::type_complexity)]
+#[allow(dead_code)]
 pub(crate) fn pad_ycbcr_planes_subsampled(
     y: &[f32],
     width: usize,

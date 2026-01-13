@@ -6,20 +6,17 @@
 //! - Huffman table optimization
 //! - Scan encoding
 
-use super::{natural_to_zigzag, natural_to_zigzag_into, Encoder};
-use crate::consts::{DCT_BLOCK_SIZE, DCT_SIZE};
-use crate::dct::forward_dct_8x8;
+#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
+
+use super::Encoder;
+use crate::consts::DCT_BLOCK_SIZE;
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::encode::hybrid;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;
 use crate::huffman::optimize::{FrequencyCounter, OptimizedHuffmanTables};
 use crate::huffman::HuffmanEncodeTable;
-use crate::quant::aq::compute_aq_strength_map;
-use crate::quant::{self, QuantTable, ZeroBiasParams};
-use crate::simd_types::{QuantTableSimd, ZeroBiasSimd};
-use crate::types::{PixelFormat, Subsampling};
-use enough::Stop;
+use crate::types::Subsampling;
 
 impl Encoder {
     pub(crate) fn build_optimized_tables(

@@ -30,6 +30,8 @@
 //! let jpeg = encoder.finish()?;
 //! ```
 
+#![allow(deprecated)] // Uses deprecated Encoder internally for progressive mode
+
 use crate::encode::strip::StripProcessor;
 use crate::encode::Encoder;
 use crate::error::{Error, Result};
@@ -621,6 +623,7 @@ impl StreamingEncoder {
     ///     .build()?;
     /// ```
     #[must_use]
+    #[allow(clippy::new_ret_no_self)] // Builder pattern: new() returns builder
     pub fn new(width: u32, height: u32) -> StreamingEncoderBuilder {
         StreamingEncoderBuilder::new(width, height)
     }

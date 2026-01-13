@@ -333,7 +333,7 @@ impl HuffmanDecodeTable {
         let mut fast_ac = Box::new([0i16; 1 << Self::FAST_BITS]);
         for i in 0..(1 << Self::FAST_BITS) {
             let fast_v = fast_symbol[i];
-            if fast_v < 255 && fast_v >= 0 {
+            if (0..255).contains(&fast_v) {
                 // Get symbol value from AC table
                 let rs = self.values[fast_v as usize];
                 // Run length in upper 4 bits

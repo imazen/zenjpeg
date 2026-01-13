@@ -68,7 +68,9 @@ mozjpeg-rs = "0.2.5"
 debug = true
 
 [workspace.lints.rust]
-unsafe_code = "warn"
+# unsafe_code is allowed - we have intentional unsafe for performance-critical
+# allocation (try_alloc_uninitialized) and SIMD operations
+unsafe_code = "allow"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

@@ -6,6 +6,8 @@
 //! - Huffman tables
 //! - Frame and scan headers
 
+#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
+
 use crate::consts::{
     DCT_BLOCK_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, MARKER_APP14, MARKER_APP2,
     MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_SOF0, MARKER_SOF2, MARKER_SOI, MARKER_SOS,
@@ -14,7 +16,7 @@ use crate::consts::{
 use crate::error::Result;
 use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
 use crate::quant::QuantTable;
-use crate::types::{JpegMode, PixelFormat, Subsampling};
+use crate::types::{JpegMode, Subsampling};
 
 use super::{Encoder, ProgressiveScan};
 

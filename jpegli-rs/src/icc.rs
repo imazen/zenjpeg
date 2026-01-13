@@ -191,8 +191,6 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
     let (width, height) = decoder
         .dimensions()
         .ok_or_else(|| Error::DecodeError("no image dimensions".to_string()))?;
-    let width = width as usize;
-    let height = height as usize;
 
     // Apply ICC if present
     let output = if let Some(ref profile) = icc_profile {

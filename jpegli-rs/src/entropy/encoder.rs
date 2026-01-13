@@ -745,7 +745,7 @@ impl<'a> EntropyEncoder<'a> {
             if len == 0 && is_eob_run {
                 // Compute actual run: base (1 << log2) + offset (extra_bits)
                 let base = 1u16 << (token.symbol >> 4);
-                let run = base + token.extra_bits as u16;
+                let run = base + token.extra_bits;
                 let (eob_code, eob_len) = ac_table.encode(0x00);
                 for _ in 0..run {
                     self.writer.write_bits(eob_code, eob_len);

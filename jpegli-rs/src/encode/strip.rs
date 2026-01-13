@@ -505,7 +505,7 @@ impl StripProcessor {
         cr_zero_bias: ZeroBiasParams,
     ) -> Result<()> {
         // Initialize streaming AQ with y_quant_01 for damping calculation
-        let y_quant_01 = y_quant.values[1] as u16; // Position [0,1] in zigzag
+        let y_quant_01 = y_quant.values[1]; // Position [0,1] in zigzag
         let v_samp = self.subsampling.v_samp_factor_luma() as usize;
         let mut aq = StreamingAQ::new(self.width, self.height, y_quant_01, v_samp)?;
         // Y strip is laid out with padded_width stride for edge handling parity
@@ -787,12 +787,12 @@ impl StripProcessor {
             });
         }
 
-        if !self.pixel_format.is_grayscale() {
-            if cb_row.len() < expected_y_size || cr_row.len() < expected_y_size {
-                return Err(crate::error::Error::InternalError {
-                    reason: "Cb/Cr planes too small for strip",
-                });
-            }
+        if !self.pixel_format.is_grayscale()
+            && (cb_row.len() < expected_y_size || cr_row.len() < expected_y_size)
+        {
+            return Err(crate::error::Error::InternalError {
+                reason: "Cb/Cr planes too small for strip",
+            });
         }
 
         // Copy Y with level shift and padded stride
@@ -857,12 +857,12 @@ impl StripProcessor {
         }
 
         let expected_chroma_size = chroma_width * chroma_height;
-        if !self.pixel_format.is_grayscale() {
-            if cb_row.len() < expected_chroma_size || cr_row.len() < expected_chroma_size {
-                return Err(crate::error::Error::InternalError {
-                    reason: "Cb/Cr planes too small for subsampled strip",
-                });
-            }
+        if !self.pixel_format.is_grayscale()
+            && (cb_row.len() < expected_chroma_size || cr_row.len() < expected_chroma_size)
+        {
+            return Err(crate::error::Error::InternalError {
+                reason: "Cb/Cr planes too small for subsampled strip",
+            });
         }
 
         // Copy Y with level shift and padded stride
@@ -1424,6 +1424,7 @@ impl StripProcessor {
     /// This computes Y at full resolution and Cb/Cr directly at the downsampled
     /// resolution using simple box averaging (no gamma correction).
     /// Faster than separate convert + downsample steps.
+    #[allow(dead_code)]
     fn convert_strip_box_fused(&mut self, rgb_strip: &[u8], strip_height: usize) -> Result<()> {
         let width = self.width;
         let bpp = self.pixel_format.bytes_per_pixel();

@@ -69,6 +69,7 @@ pub fn linear_rgb16_to_ycbcr(r: u16, g: u16, b: u16) -> (f32, f32, f32) {
 /// For cases where you need maximum speed and can tolerate ~1% error, see
 /// `linear_to_srgb_approx` (experimental).
 #[inline]
+#[allow(dead_code)]
 pub fn linear_to_srgb_fast(x: f32) -> f32 {
     // Delegate to the accurate LUT-based implementation
     linear_f32_to_srgb_255_lut(x) / 255.0
@@ -139,6 +140,7 @@ pub fn linear_f32_to_srgb_255_lut(x: f32) -> f32 {
 
 /// Convert linear RGB f32 pixel to YCbCr f32 using LUT interpolation.
 #[inline]
+#[allow(dead_code)]
 pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let r = linear_f32_to_srgb_255_lut(r);
     let g = linear_f32_to_srgb_255_lut(g);
@@ -157,6 +159,7 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 
 /// Reference sRGB conversion using standard formula with powf.
 #[inline]
+#[allow(dead_code)]
 pub fn linear_to_srgb_reference(x: f32) -> f32 {
     if x <= 0.0 {
         return 0.0;
@@ -173,6 +176,7 @@ pub fn linear_to_srgb_reference(x: f32) -> f32 {
 
 /// Reference: convert linear f32 to sRGB [0, 255].
 #[inline]
+#[allow(dead_code)]
 pub fn linear_f32_to_srgb_255_reference(x: f32) -> f32 {
     linear_to_srgb_reference(x) * 255.0
 }

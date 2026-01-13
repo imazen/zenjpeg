@@ -7,6 +7,10 @@
 //! - Encoder comparison helpers
 //!
 //! All functions use `imgref` and `rgb` types for type-safe, zero-copy interfaces.
+
+// Allow patterns that newer Rust versions handle differently
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::unnecessary_lazy_evaluations)]
 //!
 //! # Usage
 //!
@@ -1512,6 +1516,7 @@ impl EncoderConfig {
         }
     }
 
+    #[allow(deprecated)] // Uses legacy Encoder for benchmark compatibility
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         #[cfg_attr(not(feature = "experimental-hybrid-trellis"), allow(unused_mut))]
         let mut encoder = jpegli::Encoder::new()

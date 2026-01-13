@@ -1139,6 +1139,7 @@ impl CustomQuantMatrices {
 
     /// Check if direct tables are set
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn has_direct_tables(&self) -> bool {
         self.direct_tables.is_some()
     }
