@@ -230,8 +230,105 @@ impl BytesEncoder {
             encoder = encoder.use_xyb(true);
         }
 
-        encoder.encode(&self.pixel_buffer)
+        let mut jpeg = encoder.encode(&self.pixel_buffer)?;
+
+        // Inject ICC profile if present
+        if let Some(ref icc_data) = self.config.icc_profile {
+            jpeg = inject_icc_profile(jpeg, icc_data);
+        }
+
+        Ok(jpeg)
     }
+}
+
+/// ICC profile signature for APP2 marker.
+const ICC_PROFILE_SIGNATURE: &[u8; 12] = b"ICC_PROFILE\0";
+
+/// Maximum ICC profile bytes per APP2 marker segment.
+/// APP2 max length is 65535, minus 2 (length) - 12 (signature) - 2 (chunk info) = 65519.
+const MAX_ICC_BYTES_PER_MARKER: usize = 65519;
+
+/// Inject an ICC profile into a JPEG, writing proper APP2 marker chunks.
+///
+/// Inserts APP2 markers right after SOI (and any existing APP0/APP1 markers).
+/// Large profiles are automatically chunked per ICC spec.
+fn inject_icc_profile(jpeg: Vec<u8>, icc_data: &[u8]) -> Vec<u8> {
+    if icc_data.is_empty() {
+        return jpeg;
+    }
+
+    // Find insertion point: after SOI and any APP0/APP1 markers
+    let insert_pos = find_icc_insert_position(&jpeg);
+
+    // Build ICC APP2 marker segments
+    let icc_markers = build_icc_markers(icc_data);
+
+    // Construct new JPEG with ICC markers inserted
+    let mut result = Vec::with_capacity(jpeg.len() + icc_markers.len());
+    result.extend_from_slice(&jpeg[..insert_pos]);
+    result.extend_from_slice(&icc_markers);
+    result.extend_from_slice(&jpeg[insert_pos..]);
+
+    result
+}
+
+/// Find the position to insert ICC markers (after SOI and APP0/APP1).
+fn find_icc_insert_position(jpeg: &[u8]) -> usize {
+    // Start after SOI marker (2 bytes)
+    let mut pos = 2;
+
+    // Skip any existing APP0 (JFIF) and APP1 (EXIF) markers
+    while pos + 4 <= jpeg.len() {
+        if jpeg[pos] != 0xFF {
+            break;
+        }
+
+        let marker = jpeg[pos + 1];
+        // APP0 = 0xE0, APP1 = 0xE1
+        if marker == 0xE0 || marker == 0xE1 {
+            // Get segment length (big-endian, includes length bytes)
+            let length = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+            pos += 2 + length;
+        } else {
+            break;
+        }
+    }
+
+    pos
+}
+
+/// Build ICC profile APP2 marker segments with proper chunking.
+fn build_icc_markers(icc_data: &[u8]) -> Vec<u8> {
+    let num_chunks = (icc_data.len() + MAX_ICC_BYTES_PER_MARKER - 1) / MAX_ICC_BYTES_PER_MARKER;
+    let mut markers = Vec::new();
+
+    let mut offset = 0;
+    for chunk_num in 0..num_chunks {
+        let chunk_size = (icc_data.len() - offset).min(MAX_ICC_BYTES_PER_MARKER);
+
+        // APP2 marker
+        markers.push(0xFF);
+        markers.push(0xE2); // APP2
+
+        // Length: 2 (length field) + 12 (signature) + 2 (chunk info) + data
+        let segment_length = 2 + 12 + 2 + chunk_size;
+        markers.push((segment_length >> 8) as u8);
+        markers.push(segment_length as u8);
+
+        // ICC_PROFILE signature
+        markers.extend_from_slice(ICC_PROFILE_SIGNATURE);
+
+        // Chunk number (1-based) and total chunks
+        markers.push((chunk_num + 1) as u8);
+        markers.push(num_chunks as u8);
+
+        // ICC data chunk
+        markers.extend_from_slice(&icc_data[offset..offset + chunk_size]);
+
+        offset += chunk_size;
+    }
+
+    markers
 }
 
 /// Marker trait for supported rgb crate pixel types.
@@ -613,5 +710,112 @@ mod tests {
         // Try to finish
         let result = enc.finish();
         assert!(matches!(result, Err(Error::IncompleteImage { .. })));
+    }
+
+    #[test]
+    fn test_icc_profile_injection() {
+        // Small fake ICC profile (just for testing structure)
+        let fake_icc = vec![0u8; 1000];
+
+        let config = EncoderConfig::new().quality(85).icc_profile(fake_icc.clone());
+        let mut enc = config
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+
+        let pixels = vec![128u8; 8 * 8 * 3];
+        enc.push_packed(&pixels, Never).unwrap();
+
+        let jpeg = enc.finish().unwrap();
+
+        // Verify JPEG structure
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]); // SOI
+
+        // Find APP2 ICC profile marker
+        let mut found_icc = false;
+        let mut pos = 2;
+        while pos + 4 < jpeg.len() {
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xE2 {
+                // APP2 marker - check for ICC signature
+                if jpeg.len() > pos + 16 && &jpeg[pos + 4..pos + 16] == b"ICC_PROFILE\0" {
+                    found_icc = true;
+                    // Verify chunk numbers
+                    assert_eq!(jpeg[pos + 16], 1); // chunk 1
+                    assert_eq!(jpeg[pos + 17], 1); // of 1 total
+                    break;
+                }
+            }
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + len;
+            } else {
+                pos += 1;
+            }
+        }
+        assert!(found_icc, "ICC profile APP2 marker not found");
+    }
+
+    #[test]
+    fn test_icc_profile_chunking() {
+        // Large ICC profile that requires multiple chunks
+        let large_icc = vec![0xABu8; 100_000]; // > 65519 bytes
+
+        let config = EncoderConfig::new().quality(85).icc_profile(large_icc);
+        let mut enc = config
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+
+        let pixels = vec![128u8; 8 * 8 * 3];
+        enc.push_packed(&pixels, Never).unwrap();
+
+        let jpeg = enc.finish().unwrap();
+
+        // Count APP2 ICC chunks
+        let mut chunk_count = 0;
+        let mut pos = 2;
+        while pos + 4 < jpeg.len() {
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xE2 {
+                if jpeg.len() > pos + 16 && &jpeg[pos + 4..pos + 16] == b"ICC_PROFILE\0" {
+                    chunk_count += 1;
+                    let chunk_num = jpeg[pos + 16];
+                    let total_chunks = jpeg[pos + 17];
+                    assert_eq!(chunk_num as usize, chunk_count);
+                    assert_eq!(total_chunks, 2); // 100000 / 65519 = 2 chunks
+                }
+            }
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + len;
+            } else {
+                pos += 1;
+            }
+        }
+        assert_eq!(chunk_count, 2, "Expected 2 ICC chunks for 100KB profile");
+    }
+
+    #[test]
+    fn test_icc_roundtrip_extraction() {
+        // Test that we can extract the same ICC profile we injected
+        let original_icc: Vec<u8> = (0..=255).cycle().take(3000).collect();
+
+        let config = EncoderConfig::new()
+            .quality(85)
+            .icc_profile(original_icc.clone());
+        let mut enc = config
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+
+        let pixels = vec![100u8; 8 * 8 * 3];
+        enc.push_packed(&pixels, Never).unwrap();
+
+        let jpeg = enc.finish().unwrap();
+
+        // Extract ICC profile using the existing extraction function
+        let extracted = crate::icc::extract_icc_profile(&jpeg);
+        assert!(extracted.is_some(), "Failed to extract ICC profile");
+        assert_eq!(
+            extracted.unwrap(),
+            original_icc,
+            "Extracted ICC doesn't match original"
+        );
     }
 }

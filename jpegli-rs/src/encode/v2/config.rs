@@ -17,6 +17,7 @@ pub struct EncoderConfig {
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
     pub(crate) restart_interval: u16,
+    pub(crate) icc_profile: Option<Vec<u8>>,
 }
 
 impl Default for EncoderConfig {
@@ -29,6 +30,7 @@ impl Default for EncoderConfig {
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
             restart_interval: 0,
+            icc_profile: None,
         }
     }
 }
@@ -103,6 +105,32 @@ impl EncoderConfig {
     #[must_use]
     pub fn restart_interval(mut self, interval: u16) -> Self {
         self.restart_interval = interval;
+        self
+    }
+
+    // === ICC Profile ===
+
+    /// Attach an ICC color profile to the output JPEG.
+    ///
+    /// The profile will be written as APP2 marker segments with the standard
+    /// "ICC_PROFILE" signature. Large profiles are automatically chunked
+    /// (max 65519 bytes per segment) as required by the ICC profile embedding spec.
+    ///
+    /// Common profiles:
+    /// - sRGB IEC61966-2.1 (~3KB)
+    /// - Display P3 (~0.5KB)
+    /// - Adobe RGB 1998 (~0.5KB)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let srgb_profile = std::fs::read("sRGB.icc")?;
+    /// let config = EncoderConfig::new()
+    ///     .quality(85)
+    ///     .icc_profile(srgb_profile);
+    /// ```
+    #[must_use]
+    pub fn icc_profile(mut self, profile: impl Into<Vec<u8>>) -> Self {
+        self.icc_profile = Some(profile.into());
         self
     }
 
@@ -331,6 +359,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn is_optimize_huffman(&self) -> bool {
         self.optimize_huffman
+    }
+
+    /// Get the ICC profile, if set.
+    #[must_use]
+    pub fn get_icc_profile(&self) -> Option<&[u8]> {
+        self.icc_profile.as_deref()
     }
 }
 
