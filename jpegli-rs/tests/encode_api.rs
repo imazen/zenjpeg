@@ -14,7 +14,7 @@ use test_utils::{
 use jpegli::{
     decode::Decoder,
     types::{JpegMode, PixelFormat, Subsampling},
-    Quality, JpegEncoder,
+    JpegEncoder, Quality,
 };
 use test_case::test_case;
 
@@ -161,9 +161,7 @@ fn test_encode_non_square() {
     // Wide image
     let wide = generate_gradient_h(256, 64, 3);
     let encoder = JpegEncoder::new(256, 64);
-    let jpeg = encoder
-        .encode(&wide.pixels)
-        .expect("encode wide failed");
+    let jpeg = encoder.encode(&wide.pixels).expect("encode wide failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode wide failed");
@@ -173,9 +171,7 @@ fn test_encode_non_square() {
     // Tall image
     let tall = generate_gradient_h(64, 256, 3);
     let encoder = JpegEncoder::new(64, 256);
-    let jpeg = encoder
-        .encode(&tall.pixels)
-        .expect("encode tall failed");
+    let jpeg = encoder.encode(&tall.pixels).expect("encode tall failed");
 
     let decoded = decoder.decode(&jpeg).expect("decode tall failed");
     assert_eq!(decoded.width, 64);
@@ -249,9 +245,7 @@ fn test_encode_optimized_huffman() {
     let img = generate_gradient_d(256, 256, 3);
 
     let encoder_opt = JpegEncoder::new(256, 256).optimize_huffman(true);
-    let jpeg_opt = encoder_opt
-        .encode(&img.pixels)
-        .expect("optimized failed");
+    let jpeg_opt = encoder_opt.encode(&img.pixels).expect("optimized failed");
 
     let encoder_fixed = JpegEncoder::new(256, 256).optimize_huffman(false);
     let jpeg_fixed = encoder_fixed.encode(&img.pixels).expect("fixed failed");
@@ -387,9 +381,7 @@ fn test_encode_large_image() {
     let img = generate_gradient_d(1024, 768, 3);
     let encoder = JpegEncoder::new(1024, 768).quality(Quality::from_quality(85.0));
 
-    let jpeg = encoder
-        .encode(&img.pixels)
-        .expect("encode large failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode large failed");
     assert!(jpeg.len() > 10000, "Large JPEG suspiciously small");
 
     let decoder = Decoder::new();

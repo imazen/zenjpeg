@@ -15,7 +15,7 @@
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
 
 use jpegli::decode::Decoder;
-use jpegli::{PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
 
 /// Convert sRGB value [0,1] to linear [0,1].
 fn srgb_to_linear(s: f64) -> f64 {

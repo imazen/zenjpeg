@@ -16,7 +16,7 @@ use jpegli::{
     decode::{Decoder, DecoderConfig},
     error::Error,
     types::{JpegMode, PixelFormat, Subsampling},
-    Quality, JpegEncoder,
+    JpegEncoder, Quality,
 };
 use test_utils::{
     generate_checkerboard, generate_color_bars, generate_gradient_d, generate_gradient_h,

@@ -3,7 +3,7 @@
 //! Verifies that the decoder produces consistent output across multiple roundtrips
 //! and that encode→decode→encode→decode produces stable results.
 
-use jpegli::{Decoder, JpegMode, PixelFormat, Quality, JpegEncoder};
+use jpegli::{Decoder, JpegEncoder, JpegMode, PixelFormat, Quality};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {

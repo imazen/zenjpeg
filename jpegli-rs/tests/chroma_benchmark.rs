@@ -17,9 +17,7 @@
 //! - Encoding time: Performance
 
 use dssim::Dssim;
-use jpegli::{
-    ChromaDownsampling, Decoder, Error, PixelFormat, Quality, JpegEncoder, Subsampling,
-};
+use jpegli::{ChromaDownsampling, Decoder, Error, JpegEncoder, PixelFormat, Quality, Subsampling};
 use std::time::Instant;
 
 // ============================================================================

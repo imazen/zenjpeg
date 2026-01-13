@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --features parallel --example parallel_encoder_bench
 
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 use std::time::Instant;
 
 fn main() {

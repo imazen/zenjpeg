@@ -98,10 +98,7 @@ pub enum QuantTableConfig {
 
     /// Custom base matrices, scaled by Quality.
     /// Provide f32 matrices (typically 1.0–255.0 range).
-    CustomBase {
-        luma: [f32; 64],
-        chroma: [f32; 64],
-    },
+    CustomBase { luma: [f32; 64], chroma: [f32; 64] },
 
     /// Exact quantization tables. **Quality is ignored.**
     Exact { luma: [u16; 64], chroma: [u16; 64] },
@@ -333,7 +330,10 @@ impl PixelLayout {
     /// Whether this is a 16-bit format (linear color space).
     #[must_use]
     pub const fn is_16bit(&self) -> bool {
-        matches!(self, Self::Rgb16Linear | Self::Rgbx16Linear | Self::Gray16Linear)
+        matches!(
+            self,
+            Self::Rgb16Linear | Self::Rgbx16Linear | Self::Gray16Linear
+        )
     }
 
     /// Convert to legacy PixelFormat (best effort).

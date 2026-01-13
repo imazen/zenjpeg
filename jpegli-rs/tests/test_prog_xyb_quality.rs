@@ -1,4 +1,4 @@
-use jpegli::{Decoder, JpegMode, Quality, JpegEncoder};
+use jpegli::{Decoder, JpegEncoder, JpegMode, Quality};
 
 #[test]
 fn test_progressive_xyb_all_quality_levels() {

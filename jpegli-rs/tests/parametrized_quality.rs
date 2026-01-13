@@ -9,7 +9,7 @@ mod test_utils;
 
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
-use jpegli::{Decoder, Quality, JpegEncoder};
+use jpegli::{Decoder, JpegEncoder, Quality};
 use test_case::test_case;
 
 /// Helper to encode and decode an image, returning RMS and max diff.

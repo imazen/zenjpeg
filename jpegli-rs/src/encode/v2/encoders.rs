@@ -113,7 +113,8 @@ impl BytesEncoder {
 
             let src_start = row * stride_bytes;
             let src_end = src_start + min_stride;
-            self.pixel_buffer.extend_from_slice(&data[src_start..src_end]);
+            self.pixel_buffer
+                .extend_from_slice(&data[src_start..src_end]);
         }
 
         self.rows_pushed = new_total;
@@ -204,8 +205,8 @@ impl BytesEncoder {
 
     /// Internal: encode using legacy encoder
     fn encode_with_legacy(self) -> Result<Vec<u8>> {
-        use crate::JpegEncoder;
         use crate::quant::Quality as LegacyQuality;
+        use crate::JpegEncoder;
 
         let quality = LegacyQuality::from_quality(self.config.quality.to_internal());
         let pixel_format = self.layout.to_legacy();
@@ -398,13 +399,7 @@ impl<P: Pixel> RgbEncoder<P> {
     /// - `rows`: Number of scanlines to push
     /// - `stride`: Pixels per row in buffer (>= width)
     /// - `stop`: Cancellation token
-    pub fn push(
-        &mut self,
-        data: &[P],
-        rows: usize,
-        stride: usize,
-        stop: impl Stop,
-    ) -> Result<()> {
+    pub fn push(&mut self, data: &[P], rows: usize, stride: usize, stop: impl Stop) -> Result<()> {
         let stride_bytes = stride * std::mem::size_of::<P>();
         let bytes = bytemuck::cast_slice(data);
         self.inner.push(bytes, rows, stride_bytes, stop)
@@ -527,7 +522,8 @@ impl YCbCrPlanarEncoder {
                     actual: planes.y.len(),
                 });
             }
-            self.y_plane.extend_from_slice(&planes.y[src_start..src_end]);
+            self.y_plane
+                .extend_from_slice(&planes.y[src_start..src_end]);
         }
 
         // Copy Cb plane (full resolution, will be subsampled later)
@@ -717,7 +713,9 @@ mod tests {
         // Small fake ICC profile (just for testing structure)
         let fake_icc = vec![0u8; 1000];
 
-        let config = EncoderConfig::new().quality(85).icc_profile(fake_icc.clone());
+        let config = EncoderConfig::new()
+            .quality(85)
+            .icc_profile(fake_icc.clone());
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();

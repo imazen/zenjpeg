@@ -11,7 +11,7 @@
 use jpegli::decode::Decoder;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 
 /// Test that progressive + subsampling produces files that can be decoded
 /// by multiple external decoders without corruption errors.

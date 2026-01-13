@@ -12,7 +12,7 @@
 
 use jpegli::decode::Decoder;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 
 /// Regression test for the exact case found by the fuzzer.
 #[test]

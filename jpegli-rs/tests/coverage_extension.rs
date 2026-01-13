@@ -12,7 +12,7 @@ use jpegli::{
         ColorSpace, Component, Dimensions, HuffmanTable, JpegMode, OutputDataType, PixelFormat,
         QuantTable, RestartInterval, SampleDepth, ScanSpec, Subsampling,
     },
-    Quality, JpegEncoder,
+    JpegEncoder, Quality,
 };
 use test_utils::{generate_gradient_d, generate_noise, TestImage};
 

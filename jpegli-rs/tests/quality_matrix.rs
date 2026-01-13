@@ -15,7 +15,7 @@
 //! ```
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{JpegMode, PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
 use std::path::PathBuf;
 
 // ============================================================================

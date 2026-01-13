@@ -11,7 +11,7 @@
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
 use jpegli::types::{ChromaDownsampling, JpegMode, Subsampling};
-use jpegli::{PixelFormat, Quality, JpegEncoder};
+use jpegli::{JpegEncoder, PixelFormat, Quality};
 use sha2::{Digest, Sha256};
 use std::fs;
 

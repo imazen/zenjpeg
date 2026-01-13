@@ -3,7 +3,7 @@
 //! These formats are treated as linear RGB and converted through sRGB
 //! gamma correction before YCbCr encoding.
 
-use jpegli::{PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
 
 /// Create a simple gradient test image in the specified format.
 fn create_gradient_rgb16(width: usize, height: usize) -> Vec<u8> {

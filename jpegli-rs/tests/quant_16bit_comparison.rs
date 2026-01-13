@@ -152,12 +152,18 @@ fn test_16bit_quant_threshold_calculation() {
     // Max luma quant = (121 * 1000 + 50) / 100 = 1211
     let (luma_q5, chroma_q5) = calculate_standard_quant_values(5.0);
     println!("Quality 5: luma_max={}, chroma_max={}", luma_q5, chroma_q5);
-    assert!(luma_q5 > 255, "Quality 5 should need 16-bit tables for luma");
+    assert!(
+        luma_q5 > 255,
+        "Quality 5 should need 16-bit tables for luma"
+    );
 
     // At quality 10: scale = 5000/10 = 500%
     // Max luma quant = (121 * 500 + 50) / 100 = 606
     let (luma_q10, chroma_q10) = calculate_standard_quant_values(10.0);
-    println!("Quality 10: luma_max={}, chroma_max={}", luma_q10, chroma_q10);
+    println!(
+        "Quality 10: luma_max={}, chroma_max={}",
+        luma_q10, chroma_q10
+    );
     assert!(
         luma_q10 > 255,
         "Quality 10 should need 16-bit tables for luma"
@@ -166,7 +172,10 @@ fn test_16bit_quant_threshold_calculation() {
     // At quality 20: scale = 5000/20 = 250%
     // Max luma quant = (121 * 250 + 50) / 100 = 303
     let (luma_q20, chroma_q20) = calculate_standard_quant_values(20.0);
-    println!("Quality 20: luma_max={}, chroma_max={}", luma_q20, chroma_q20);
+    println!(
+        "Quality 20: luma_max={}, chroma_max={}",
+        luma_q20, chroma_q20
+    );
     assert!(
         luma_q20 > 255,
         "Quality 20 should need 16-bit tables for luma"
@@ -222,8 +231,7 @@ fn test_rust_produces_16bit_tables_when_needed() {
     let mut found_values_over_255 = false;
 
     for quality in [1, 5, 10, 15, 20] {
-        let encoder =
-            JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
+        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
         let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let tables = extract_dqt_tables(&jpeg);
@@ -385,7 +393,10 @@ mod cpp_comparison {
             .expect("cjpegli failed");
 
         if !output.status.success() {
-            eprintln!("cjpegli stderr: {}", String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "cjpegli stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             panic!("cjpegli failed");
         }
 
@@ -394,8 +405,7 @@ mod cpp_comparison {
         let cpp_tables = extract_dqt_tables(&cpp_jpeg);
 
         // Encode with Rust
-        let encoder =
-            JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
+        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(quality as f32));
         let rust_jpeg = encoder.encode(&img.pixels).expect("encode failed");
         let rust_tables = extract_dqt_tables(&rust_jpeg);
 

@@ -3,7 +3,7 @@
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
 
 use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 use std::fs;
 use std::path::Path;
 use std::process::Command;

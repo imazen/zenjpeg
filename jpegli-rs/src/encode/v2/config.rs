@@ -266,7 +266,11 @@ impl EncoderConfig {
     /// enc.push_packed(&pixels, Never)?;
     /// let jpeg = enc.finish()?;
     /// ```
-    pub fn encode_from_rgb<P: super::Pixel>(&self, width: u32, height: u32) -> Result<RgbEncoder<P>> {
+    pub fn encode_from_rgb<P: super::Pixel>(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<RgbEncoder<P>> {
         self.validate()?;
         RgbEncoder::new(self.clone(), width, height)
     }
@@ -411,7 +415,9 @@ mod tests {
 
     #[test]
     fn test_progressive_enables_huffman() {
-        let config = EncoderConfig::new().optimize_huffman(false).progressive(true);
+        let config = EncoderConfig::new()
+            .optimize_huffman(false)
+            .progressive(true);
 
         assert!(config.optimize_huffman);
     }

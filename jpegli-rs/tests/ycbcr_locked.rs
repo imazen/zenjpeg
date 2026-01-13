@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use jpegli::types::Subsampling;
-use jpegli::{JpegMode, PixelFormat, Quality, JpegEncoder};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)

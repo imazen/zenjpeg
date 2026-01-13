@@ -1418,8 +1418,14 @@ mod tests {
     #[test]
     fn test_xyb_table_generation() {
         // XYB tables with allow_16bit = false should be clamped to 255
-        let table =
-            generate_quant_table_ex(Quality::from_distance(1.0), 0, ColorSpace::Xyb, true, false, false);
+        let table = generate_quant_table_ex(
+            Quality::from_distance(1.0),
+            0,
+            ColorSpace::Xyb,
+            true,
+            false,
+            false,
+        );
 
         for &v in &table.values {
             assert!(
@@ -1430,8 +1436,14 @@ mod tests {
         }
 
         // XYB tables with allow_16bit = true can use extended range
-        let table_ex =
-            generate_quant_table_ex(Quality::from_distance(10.0), 0, ColorSpace::Xyb, true, false, true);
+        let table_ex = generate_quant_table_ex(
+            Quality::from_distance(10.0),
+            0,
+            ColorSpace::Xyb,
+            true,
+            false,
+            true,
+        );
 
         for &v in &table_ex.values {
             assert!(

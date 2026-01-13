@@ -14,7 +14,7 @@ use test_utils::{
 use jpegli::{
     decode::Decoder,
     types::{JpegMode, PixelFormat, Subsampling},
-    Quality, JpegEncoder,
+    JpegEncoder, Quality,
 };
 use test_case::test_case;
 

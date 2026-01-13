@@ -4,7 +4,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 
 fn main() {
     let width = 2048u32;

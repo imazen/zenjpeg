@@ -11,7 +11,7 @@
 //! cargo test --test encoder_matrix -- --nocapture
 //! ```
 
-use jpegli::{JpegMode, PixelFormat, Quality, JpegEncoder, Subsampling};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
 
 /// Result of testing one encoder configuration
 #[derive(Debug)]

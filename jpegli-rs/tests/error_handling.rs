@@ -8,7 +8,7 @@ mod test_utils;
 
 use test_utils::{generate_gradient_d, TestImage};
 
-use jpegli::{decode::Decoder, types::PixelFormat, Quality, JpegEncoder};
+use jpegli::{decode::Decoder, types::PixelFormat, JpegEncoder, Quality};
 
 // ============================================================================
 // Encoder Input Validation Tests

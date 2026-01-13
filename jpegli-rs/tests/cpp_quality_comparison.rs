@@ -1,7 +1,7 @@
 //! Compare Rust vs C++ progressive encoding quality and size.
 
 use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{Quality, JpegEncoder};
+use jpegli::{JpegEncoder, Quality};
 use std::fs;
 use std::process::Command;
 
