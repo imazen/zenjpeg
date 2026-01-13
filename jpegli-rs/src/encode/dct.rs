@@ -1022,7 +1022,6 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// Uses multiversion for one-time dispatch at load (not per-call).
 /// Inside each version, `cfg(target_feature)` provides zero-cost branching.
-#[cfg(feature = "simd")]
 #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon"))]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
@@ -1042,7 +1041,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
         return output;
     }
 
-    // Safe fallback using scalar implementation (portable to all platforms)
+    // Safe fallback using wide crate SIMD (portable to all platforms)
     #[cfg(not(all(
         feature = "unsafe_simd",
         target_arch = "x86_64",
@@ -1054,48 +1053,11 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     }
 }
 
-/// Non-SIMD fallback version
-#[cfg(not(feature = "simd"))]
-#[must_use]
-pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    forward_dct_8x8_scalar(input)
-}
-
-/// Scalar fallback for forward DCT (also used on non-AVX2 x86_64 and other platforms)
+/// Fallback for forward DCT using wide crate SIMD (portable to all platforms).
 /// Public so multiversion blocks can call it directly via cfg(target_feature).
 #[inline]
 pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    // Use SIMD chained version when available (portable, no raw intrinsics)
-    #[cfg(feature = "simd")]
-    {
-        simd::forward_dct_8x8_simd_chained(input)
-    }
-
-    #[cfg(not(feature = "simd"))]
-    {
-        let mut scratch = [0.0f32; 64];
-        let mut coefficients = [0.0f32; 64];
-
-        // Row transform
-        dct_rows(input, &mut scratch);
-
-        // Transpose
-        transpose_8x8(&scratch, &mut coefficients);
-
-        // Column transform (on transposed data)
-        dct_rows(&coefficients, &mut scratch);
-
-        // Transpose back
-        transpose_8x8(&scratch, &mut coefficients);
-
-        // Apply 1/8 scaling
-        let scale = 1.0 / 8.0;
-        for v in &mut coefficients {
-            *v *= scale;
-        }
-
-        coefficients
-    }
+    simd::forward_dct_8x8_simd_chained(input)
 }
 
 /// Performs forward DCT on a block with level shift.
@@ -1108,40 +1070,28 @@ pub fn forward_dct_8x8_scalar(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_
 #[must_use]
 pub fn forward_dct_8x8_u8(input: &[u8; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Convert to f32 with level shift (-128)
-    #[cfg(feature = "simd")]
-    {
-        let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
-        let level_shift = f32x8::splat(128.0);
+    let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
+    let level_shift = f32x8::splat(128.0);
 
-        // Process 8 values at a time
-        for chunk in 0..8 {
-            let k = chunk * 8;
-            let v = f32x8::from([
-                input[k] as f32,
-                input[k + 1] as f32,
-                input[k + 2] as f32,
-                input[k + 3] as f32,
-                input[k + 4] as f32,
-                input[k + 5] as f32,
-                input[k + 6] as f32,
-                input[k + 7] as f32,
-            ]);
-            let result = v - level_shift;
-            let arr: [f32; 8] = result.into();
-            shifted[k..k + 8].copy_from_slice(&arr);
-        }
-
-        forward_dct_8x8(&shifted)
+    // Process 8 values at a time
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let v = f32x8::from([
+            input[k] as f32,
+            input[k + 1] as f32,
+            input[k + 2] as f32,
+            input[k + 3] as f32,
+            input[k + 4] as f32,
+            input[k + 5] as f32,
+            input[k + 6] as f32,
+            input[k + 7] as f32,
+        ]);
+        let result = v - level_shift;
+        let arr: [f32; 8] = result.into();
+        shifted[k..k + 8].copy_from_slice(&arr);
     }
 
-    #[cfg(not(feature = "simd"))]
-    {
-        let mut shifted = [0.0f32; DCT_BLOCK_SIZE];
-        for (i, &v) in input.iter().enumerate() {
-            shifted[i] = v as f32 - 128.0;
-        }
-        forward_dct_8x8(&shifted)
-    }
+    forward_dct_8x8(&shifted)
 }
 
 /// Performs forward DCT on multiple blocks.
@@ -1277,32 +1227,22 @@ pub fn aan_forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZ
     }
 
     // Apply 1/8 scaling for JPEG decoder compatibility
-    #[cfg(feature = "simd")]
-    {
-        let scale = f32x8::splat(1.0 / 8.0);
-        for chunk in 0..8 {
-            let k = chunk * 8;
-            let v = f32x8::from([
-                data[k],
-                data[k + 1],
-                data[k + 2],
-                data[k + 3],
-                data[k + 4],
-                data[k + 5],
-                data[k + 6],
-                data[k + 7],
-            ]);
-            let scaled = v * scale;
-            let arr: [f32; 8] = scaled.into();
-            data[k..k + 8].copy_from_slice(&arr);
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        let scale = 1.0 / 8.0;
-        for v in &mut data {
-            *v *= scale;
-        }
+    let scale = f32x8::splat(1.0 / 8.0);
+    for chunk in 0..8 {
+        let k = chunk * 8;
+        let v = f32x8::from([
+            data[k],
+            data[k + 1],
+            data[k + 2],
+            data[k + 3],
+            data[k + 4],
+            data[k + 5],
+            data[k + 6],
+            data[k + 7],
+        ]);
+        let scaled = v * scale;
+        let arr: [f32; 8] = scaled.into();
+        data[k..k + 8].copy_from_slice(&arr);
     }
 
     data
@@ -1370,7 +1310,6 @@ mod tests {
         assert_eq!(output[9], 9.0); // (1,1)
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_simd_transpose_matches_scalar() {
         let mut input = [0.0f32; 64];
@@ -1395,7 +1334,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_simd_dct_rows_matches_scalar() {
         // Test with various input patterns
@@ -1531,7 +1469,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "simd", feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[test]
     fn test_avx2_dct_matches_scalar() {
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
@@ -1583,7 +1521,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "simd", feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[test]
     #[ignore] // Run with: cargo test --release --features unsafe_simd bench_avx2_dct -- --ignored --nocapture
     fn bench_avx2_dct_vs_scalar() {
@@ -1648,7 +1586,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_wide_dct_matches_array_dct() {
         use crate::simd_types::Block8x8f;

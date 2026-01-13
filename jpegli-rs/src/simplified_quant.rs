@@ -182,7 +182,6 @@ fn compute_block_activity(
     let py_start = by * 8;
 
     // Fast SIMD path for interior blocks (most common case)
-    #[cfg(feature = "simd")]
     if px_start + 8 <= width && py_start + 8 <= height {
         use wide::f32x8;
 

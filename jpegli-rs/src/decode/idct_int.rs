@@ -301,7 +301,7 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 // AVX2 SIMD Implementation
 // =============================================================================
 
-#[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod avx2 {
     use super::*;
 
@@ -567,7 +567,7 @@ mod avx2 {
 /// * `output` - Output pixel buffer (i16 in range [0, 255])
 /// * `stride` - Stride between output rows
 pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         if avx2::is_avx2_available() {
             // Safety: we just checked for AVX2 support
@@ -605,7 +605,7 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
         idct_int_4x4(coeffs, output, stride);
     } else {
         // Full 8x8 IDCT with SIMD dispatch
-        #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if avx2::is_avx2_available() {
                 // Safety: we just checked for AVX2 support
@@ -709,7 +709,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[test]
     fn test_avx2_matches_scalar() {
         if !avx2::is_avx2_available() {

@@ -5,7 +5,7 @@
 //! - RGB and CMYK
 //! - Various pixel format conversions
 //!
-//! SIMD optimization is available via the `simd` feature (enabled by default).
+//! SIMD optimization via the `wide` crate is always enabled.
 
 use crate::alloc::{checked_size, checked_size_2d, try_alloc_zeroed};
 use crate::consts::{
@@ -129,8 +129,7 @@ pub fn convert_ycbcr_to_rgb_buffer(buffer: &mut [u8]) {
     }
 }
 
-// SIMD-optimized color conversion
-#[cfg(feature = "simd")]
+// SIMD-optimized color conversion (always available via `wide` crate)
 mod simd {
     use super::*;
 
@@ -257,7 +256,6 @@ mod simd {
 /// # Errors
 ///
 /// Returns an error if memory allocation fails.
-#[cfg(feature = "simd")]
 pub fn rgb_to_ycbcr_planes(
     rgb: &[u8],
     width: usize,
@@ -314,35 +312,6 @@ pub fn rgb_to_ycbcr_planes(
     Ok((y_plane, cb_plane, cr_plane))
 }
 
-/// Converts RGB to separate Y, Cb, Cr planes (scalar version).
-///
-/// # Errors
-///
-/// Returns an error if memory allocation fails.
-#[cfg(not(feature = "simd"))]
-pub fn rgb_to_ycbcr_planes(
-    rgb: &[u8],
-    width: usize,
-    height: usize,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-    let num_pixels = checked_size_2d(width, height)?;
-    let expected_len = checked_size(width, height, 3)?;
-    assert_eq!(rgb.len(), expected_len);
-
-    let mut y_plane = try_alloc_zeroed(num_pixels, "YCbCr Y plane")?;
-    let mut cb_plane = try_alloc_zeroed(num_pixels, "YCbCr Cb plane")?;
-    let mut cr_plane = try_alloc_zeroed(num_pixels, "YCbCr Cr plane")?;
-
-    for i in 0..num_pixels {
-        let (y, cb, cr) = rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
-        y_plane[i] = y;
-        cb_plane[i] = cb;
-        cr_plane[i] = cr;
-    }
-
-    Ok((y_plane, cb_plane, cr_plane))
-}
-
 /// Converts separate Y, Cb, Cr planes to RGB.
 ///
 /// Uses SIMD optimization when the `simd` feature is enabled.
@@ -350,7 +319,6 @@ pub fn rgb_to_ycbcr_planes(
 /// # Errors
 ///
 /// Returns an error if memory allocation fails.
-#[cfg(feature = "simd")]
 pub fn ycbcr_planes_to_rgb(
     y_plane: &[u8],
     cb_plane: &[u8],
@@ -410,37 +378,6 @@ pub fn ycbcr_planes_to_rgb(
 
     // Handle remaining pixels with scalar code
     for i in (chunks * 4)..num_pixels {
-        let (r, g, b) = ycbcr_to_rgb(y_plane[i], cb_plane[i], cr_plane[i]);
-        rgb[i * 3] = r;
-        rgb[i * 3 + 1] = g;
-        rgb[i * 3 + 2] = b;
-    }
-
-    Ok(rgb)
-}
-
-/// Converts separate Y, Cb, Cr planes to RGB (scalar version).
-///
-/// # Errors
-///
-/// Returns an error if memory allocation fails.
-#[cfg(not(feature = "simd"))]
-pub fn ycbcr_planes_to_rgb(
-    y_plane: &[u8],
-    cb_plane: &[u8],
-    cr_plane: &[u8],
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>> {
-    let num_pixels = checked_size_2d(width, height)?;
-    assert_eq!(y_plane.len(), num_pixels);
-    assert_eq!(cb_plane.len(), num_pixels);
-    assert_eq!(cr_plane.len(), num_pixels);
-
-    let rgb_size = checked_size(width, height, 3)?;
-    let mut rgb = try_alloc_zeroed(rgb_size, "RGB output buffer")?;
-
-    for i in 0..num_pixels {
         let (r, g, b) = ycbcr_to_rgb(y_plane[i], cb_plane[i], cr_plane[i]);
         rgb[i * 3] = r;
         rgb[i * 3 + 1] = g;
@@ -590,7 +527,6 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
     const CR_TO_G: f32 = -0.714136;
     const CB_TO_B: f32 = 1.772;
 
-    #[cfg(feature = "simd")]
     {
         let cr_to_r = f32x8::splat(CR_TO_R);
         let cb_to_g = f32x8::splat(CB_TO_G);
@@ -645,7 +581,6 @@ pub fn ycbcr_planes_f32_to_rgb_f32(
         }
     }
 
-    #[cfg(not(feature = "simd"))]
     {
         for i in 0..num_pixels {
             let y = y_plane[i];
@@ -671,7 +606,6 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
 
     let num_pixels = y_plane.len();
 
-    #[cfg(feature = "simd")]
     {
         let offset = f32x8::splat(128.0);
         let zero = f32x8::splat(0.0);
@@ -704,7 +638,6 @@ pub fn gray_f32_to_rgb_u8(y_plane: &[f32], rgb: &mut [u8]) {
         }
     }
 
-    #[cfg(not(feature = "simd"))]
     {
         for (i, &y) in y_plane.iter().enumerate() {
             let val = (y + 128.0).clamp(0.0, 255.0) as u8;
@@ -723,7 +656,6 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
 
     let num_pixels = y_plane.len();
 
-    #[cfg(feature = "simd")]
     {
         let offset = f32x8::splat(128.0);
         let scale = f32x8::splat(1.0 / 255.0);
@@ -756,7 +688,6 @@ pub fn gray_f32_to_rgb_f32(y_plane: &[f32], rgb: &mut [f32]) {
         }
     }
 
-    #[cfg(not(feature = "simd"))]
     {
         for (i, &y) in y_plane.iter().enumerate() {
             let val = ((y + 128.0) / 255.0).clamp(0.0, 1.0);
@@ -775,7 +706,6 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
 
     let num_pixels = y_plane.len();
 
-    #[cfg(feature = "simd")]
     {
         let offset = f32x8::splat(128.0);
         let zero = f32x8::splat(0.0);
@@ -800,7 +730,6 @@ pub fn gray_f32_to_gray_u8(y_plane: &[f32], output: &mut [u8]) {
         }
     }
 
-    #[cfg(not(feature = "simd"))]
     {
         for (y, out) in y_plane.iter().zip(output.iter_mut()) {
             *out = (*y + 128.0).clamp(0.0, 255.0) as u8;
@@ -815,7 +744,6 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
 
     let num_pixels = y_plane.len();
 
-    #[cfg(feature = "simd")]
     {
         let offset = f32x8::splat(128.0);
         let scale = f32x8::splat(1.0 / 255.0);
@@ -838,7 +766,6 @@ pub fn gray_f32_to_gray_f32(y_plane: &[f32], output: &mut [f32]) {
         }
     }
 
-    #[cfg(not(feature = "simd"))]
     {
         for (y, out) in y_plane.iter().zip(output.iter_mut()) {
             *out = ((*y + 128.0) / 255.0).clamp(0.0, 1.0);
@@ -953,7 +880,7 @@ pub fn ycbcr_to_rgb_i16_x16(
     rgb: &mut [u8],
     offset: &mut usize,
 ) {
-    #[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         if is_x86_feature_detected!("avx2") {
             // Safety: we just checked for AVX2 support
@@ -997,7 +924,7 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 }
 
 /// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
-#[cfg(all(feature = "simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 unsafe fn ycbcr_to_rgb_i16_x16_avx2(
     y: &[i16; 16],
@@ -1277,7 +1204,6 @@ mod tests {
         assert_eq!(bgra_to_rgba(&[1, 2, 3, 4]), [3, 2, 1, 4]);
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_simd_rgb_to_ycbcr_matches_scalar() {
         // Test that SIMD version produces same results as scalar
@@ -1313,7 +1239,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "simd")]
     #[test]
     fn test_simd_ycbcr_to_rgb_matches_scalar() {
         // Test that SIMD version produces same results as scalar
