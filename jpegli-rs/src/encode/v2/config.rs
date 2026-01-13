@@ -20,6 +20,9 @@ pub struct EncoderConfig {
     pub(crate) restart_interval: u16,
     pub(crate) icc_profile: Option<Vec<u8>>,
     pub(crate) edge_padding: EdgePaddingConfig,
+    /// Parallel encoding configuration (requires `parallel` feature)
+    #[cfg(feature = "parallel")]
+    pub(crate) parallel: Option<super::types::ParallelEncoding>,
 }
 
 impl Default for EncoderConfig {
@@ -34,6 +37,8 @@ impl Default for EncoderConfig {
             restart_interval: 0,
             icc_profile: None,
             edge_padding: EdgePaddingConfig::default(),
+            #[cfg(feature = "parallel")]
+            parallel: None,
         }
     }
 }
@@ -111,6 +116,45 @@ impl EncoderConfig {
         self
     }
 
+    /// Enable parallel encoding for improved throughput on multi-core systems.
+    ///
+    /// When enabled, the encoder uses multiple threads for:
+    /// - DCT computation (block transforms)
+    /// - Entropy/Huffman encoding (via restart markers)
+    ///
+    /// # Restart Marker Behavior
+    ///
+    /// Parallel entropy encoding requires restart markers between segments.
+    /// When parallel encoding is enabled:
+    /// - If `restart_interval` is 0 or too small, it will be **increased** to an
+    ///   optimal value based on thread count and image size
+    /// - User-specified `restart_interval` values are respected as a minimum
+    ///   (the encoder may increase but will not decrease them)
+    ///
+    /// # Performance
+    ///
+    /// - 2 threads: ~1.2-1.6x speedup
+    /// - 4 threads: ~1.3-1.7x speedup
+    /// - Minimum useful size: ~512x512 (smaller images have too much overhead)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use jpegli::{EncoderConfig, ParallelEncoding};
+    ///
+    /// let config = EncoderConfig::new()
+    ///     .quality(85)
+    ///     .parallel(ParallelEncoding::Auto);
+    /// ```
+    ///
+    /// Requires the `parallel` feature flag.
+    #[cfg(feature = "parallel")]
+    #[must_use]
+    pub fn parallel(mut self, mode: super::types::ParallelEncoding) -> Self {
+        self.parallel = Some(mode);
+        self
+    }
+
     // === ICC Profile ===
 
     /// Attach an ICC color profile to the output JPEG.
@@ -156,33 +200,11 @@ impl EncoderConfig {
         self
     }
 
-    /// Set the edge padding strategy for partial MCU blocks.
-    ///
-    /// When image dimensions are not multiples of the MCU size (8 or 16 pixels),
-    /// the encoder must pad edge blocks. Different strategies produce different
-    /// compression and visual characteristics.
-    ///
-    /// # Presets
-    /// - `EdgePaddingConfig::default()` - Replicate for all channels (C++ jpegli behavior)
-    /// - `EdgePaddingConfig::recommended()` - Mirror for luma, Replicate for chroma
-    ///
-    /// # Example
-    /// ```ignore
-    /// let config = EncoderConfig::new()
-    ///     .edge_padding(EdgePaddingConfig::recommended());
-    /// ```
+    /// Internal: Set edge padding strategy for partial MCU blocks.
+    #[doc(hidden)]
     #[must_use]
-    pub fn edge_padding(mut self, config: EdgePaddingConfig) -> Self {
+    pub fn edge_padding_internal(mut self, config: EdgePaddingConfig) -> Self {
         self.edge_padding = config;
-        self
-    }
-
-    /// Set uniform edge padding strategy for all channels.
-    ///
-    /// Convenience method for `edge_padding(EdgePaddingConfig::uniform(strategy))`.
-    #[must_use]
-    pub fn edge_padding_uniform(mut self, strategy: EdgePadding) -> Self {
-        self.edge_padding = EdgePaddingConfig::uniform(strategy);
         self
     }
 
@@ -404,7 +426,8 @@ impl EncoderConfig {
         self.icc_profile.as_deref()
     }
 
-    /// Get the configured edge padding.
+    /// Internal: Get the configured edge padding.
+    #[doc(hidden)]
     #[must_use]
     pub fn get_edge_padding(&self) -> EdgePaddingConfig {
         self.edge_padding

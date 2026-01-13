@@ -93,10 +93,15 @@ pub use encode::scan_script;
 
 pub use encode::v2::{
     BytesEncoder, ChromaSubsampling, ColorMode, DownsamplingMethod,
-    EdgePadding, EdgePaddingConfig, EncoderConfig, PixelLayout, Quality,
-    QuantTableConfig, RgbEncoder, Stop, XybSubsampling, YCbCrPlanes,
-    YCbCrPlanarEncoder,
+    EncoderConfig, PixelLayout, Quality, QuantTableConfig, RgbEncoder,
+    Stop, XybSubsampling, YCbCrPlanes, YCbCrPlanarEncoder,
 };
+
+// Internal edge padding types (not public API)
+#[doc(hidden)]
+pub use encode::v2::{EdgePadding, EdgePaddingConfig};
+#[cfg(feature = "parallel")]
+pub use encode::v2::ParallelEncoding;
 
 // Internal encoder (used in doc examples)
 #[allow(deprecated)]
@@ -104,9 +109,11 @@ pub use encode::Encoder;
 
 // Backward-compatible alias for legacy code (deprecated, will be removed)
 #[doc(hidden)]
+#[allow(deprecated)]
 #[deprecated(since = "0.5.0", note = "Use EncoderConfig instead")]
 pub use encode::streaming::StreamingEncoder as JpegEncoder;
 #[doc(hidden)]
+#[allow(deprecated)]
 #[deprecated(since = "0.5.0", note = "Use EncoderConfig instead")]
 pub use encode::streaming::StreamingEncoderBuilder as JpegEncoderBuilder;
 
