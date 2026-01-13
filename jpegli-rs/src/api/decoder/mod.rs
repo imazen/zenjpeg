@@ -5,30 +5,40 @@
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::decoder::{Decoder, DecodedImage};
+//! use jpegli::decoder::{Decoder, DecodedImage, Result};
 //!
-//! let image: DecodedImage = Decoder::new().decode(&jpeg_data)?;
-//! let pixels: &[u8] = image.pixels();
+//! fn decode_jpeg(data: &[u8]) -> Result<DecodedImage> {
+//!     Decoder::new().decode(data)
+//! }
 //! ```
 //!
 //! # Decode to specific format
 //!
 //! ```rust,ignore
-//! use jpegli::decoder::{Decoder, PixelFormat};
+//! use jpegli::decoder::{Decoder, PixelFormat, Result};
 //!
-//! let image = Decoder::new()
-//!     .output_format(PixelFormat::Rgba)
-//!     .decode(&jpeg_data)?;
+//! fn decode_rgba(data: &[u8]) -> Result<Vec<u8>> {
+//!     let image = Decoder::new()
+//!         .output_format(PixelFormat::Rgba)
+//!         .decode(data)?;
+//!     Ok(image.into_pixels())
+//! }
 //! ```
 //!
 //! # Decode to f32
 //!
 //! ```rust,ignore
-//! use jpegli::decoder::Decoder;
+//! use jpegli::decoder::{Decoder, DecodedImageF32, Result};
 //!
-//! let image = Decoder::new().decode_f32(&jpeg_data)?;
-//! let pixels: &[f32] = image.pixels();
+//! fn decode_hdr(data: &[u8]) -> Result<DecodedImageF32> {
+//!     Decoder::new().decode_f32(data)
+//! }
 //! ```
+
+mod error;
+
+// === Error types ===
+pub use error::{Error, Result};
 
 // === Main decoder types ===
 pub use crate::decode::{
@@ -43,6 +53,3 @@ pub use crate::types::ColorSpace;
 
 // === JPEG mode (from decoded image info) ===
 pub use crate::types::JpegMode;
-
-// === Error types ===
-pub use crate::error::{Error, Result};

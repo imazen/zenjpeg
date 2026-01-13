@@ -1,6 +1,8 @@
 //! Public API modules.
 //!
-//! This module is internal - use `jpegli::encoder` and `jpegli::decoder` directly.
+//! Use `jpegli::encoder` and `jpegli::decoder` for encoding and decoding.
+//!
+//! Each module is self-contained with its own error types.
 
 pub mod decoder;
 pub mod encoder;
