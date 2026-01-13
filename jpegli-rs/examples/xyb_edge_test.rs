@@ -19,12 +19,10 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
 
 #[allow(deprecated)]
 fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::Encoder::new()
-        .width(width)
-        .height(height)
+    jpegli::JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444) // XYB uses custom subsampling internally
-        .jpegli_quality(Quality::from_quality(quality))
+        .quality(Quality::from_quality(quality))
         .optimize_huffman(true)
         .use_xyb(true)
         .encode(rgb)

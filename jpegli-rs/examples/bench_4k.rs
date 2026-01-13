@@ -1,5 +1,5 @@
 //! Quick 4K benchmark
-use jpegli::{Encoder, PixelFormat, Quality};
+use jpegli::{JpegEncoder, PixelFormat, Quality};
 use std::time::Instant;
 
 fn main() {
@@ -22,11 +22,9 @@ fn main() {
 
     println!("Warming up...");
     for _ in 0..2 {
-        let encoder = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let encoder = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(90.0));
+            .quality(Quality::from_quality(90.0));
         let _ = encoder.encode(&data).unwrap();
     }
 
@@ -37,11 +35,9 @@ fn main() {
         let iterations = 5;
 
         for _ in 0..iterations {
-            let encoder = Encoder::new()
-                .width(width as u32)
-                .height(height as u32)
+            let encoder = JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(quality));
+                .quality(Quality::from_quality(quality));
 
             let start = Instant::now();
             let result = encoder.encode(&data).unwrap();

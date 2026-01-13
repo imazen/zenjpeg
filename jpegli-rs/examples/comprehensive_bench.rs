@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --release --example comprehensive_bench [image.png]
 
-use jpegli::{Encoder, JpegMode, PixelFormat, Quality, Subsampling};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
 use png::Decoder;
 use std::fs::File;
 use std::io::BufReader;
@@ -62,13 +62,11 @@ fn bench_encode(
 
     // Warmup
     for _ in 0..2 {
-        let enc = Encoder::new()
-            .width(w)
-            .height(h)
+        let enc = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .subsampling(subsampling)
             .mode(mode)
-            .jpegli_quality(Quality::from_quality(quality));
+            .quality(Quality::from_quality(quality));
         let _ = enc.encode(data);
     }
 
@@ -76,13 +74,11 @@ fn bench_encode(
     let mut size = 0;
 
     for _ in 0..iterations {
-        let enc = Encoder::new()
-            .width(w)
-            .height(h)
+        let enc = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .subsampling(subsampling)
             .mode(mode)
-            .jpegli_quality(Quality::from_quality(quality));
+            .quality(Quality::from_quality(quality));
 
         let start = Instant::now();
         let result = enc.encode(data);

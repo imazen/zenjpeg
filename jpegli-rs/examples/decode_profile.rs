@@ -22,11 +22,9 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
         }
     }
     #[allow(deprecated)]
-    Encoder::new()
-        .width(width)
-        .height(height)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .encode(&data)
         .unwrap()
 }

@@ -11,7 +11,7 @@
 //! ```
 
 use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use jpegli_bench_utils::{
     create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
     EncoderConfig, EncoderImpl, ImageData, McuEdgeInfo, ScanMode,
@@ -49,11 +49,9 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
 }
 
 fn encode_rust(pixels: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    Encoder::new()
-        .width(width)
-        .height(height)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality as f32))
+        .quality(Quality::from_quality(quality as f32))
         .mode(JpegMode::Progressive)
         .optimize_huffman(true)
         .encode(pixels)

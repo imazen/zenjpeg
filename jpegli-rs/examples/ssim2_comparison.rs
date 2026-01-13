@@ -7,7 +7,7 @@
 
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
@@ -34,11 +34,9 @@ fn encode_rust(
     } else {
         JpegMode::Baseline
     };
-    Encoder::new()
-        .width(image.width as u32)
-        .height(image.height as u32)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality as f32))
+        .quality(Quality::from_quality(quality as f32))
         .mode(mode)
         .optimize_huffman(true)
         .subsampling(subsampling)

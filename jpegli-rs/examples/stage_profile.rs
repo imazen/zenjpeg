@@ -4,7 +4,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 
 fn main() {
     let width = 2048u32;
@@ -65,13 +65,13 @@ fn main() {
         for _ in 0..iterations {
             let start = Instant::now();
 
-            let jpeg = StreamingEncoder::new(width, height)
+            let jpeg = JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::from_quality(85.0))
                 .mode(mode)
                 .subsampling(subsampling)
                 .optimize_huffman(optimize)
-                .encode_all(&rgb)
+                .encode(&rgb)
                 .expect("encode failed");
 
             total_time += start.elapsed();

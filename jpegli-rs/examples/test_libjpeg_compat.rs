@@ -1,14 +1,12 @@
 use jpegli::quant::Quality;
 use jpegli::types::JpegMode;
-use jpegli::{Encoder, PixelFormat};
+use jpegli::{JpegEncoder, PixelFormat};
 use std::process::Command;
 
 fn test_pattern(name: &str, data: &[u8], width: u32, height: u32, quality: f32) {
-    let jpeg_data = Encoder::new()
-        .width(width)
-        .height(height)
+    let jpeg_data = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality))
+        .quality(Quality::from_quality(quality))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(data)
@@ -110,11 +108,9 @@ fn main() {
         .flat_map(|y| (0..64).map(move |x| ((x * 17 ^ y * 31) % 256) as u8))
         .collect();
 
-    let gray_jpeg = Encoder::new()
-        .width(64)
-        .height(64)
+    let gray_jpeg = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Gray)
-        .jpegli_quality(Quality::from_quality(50.0))
+        .quality(Quality::from_quality(50.0))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
         .encode(&gray_noise)

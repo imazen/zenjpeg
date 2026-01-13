@@ -21,7 +21,7 @@
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::test_utils::find_cjpegli;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -294,11 +294,9 @@ fn compute_ssim2(orig_rgb: &[u8], decoded_rgb: &[u8], width: usize, height: usiz
 // ============================================================================
 
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, config: &Config) -> Vec<u8> {
-    Encoder::new()
-        .width(width)
-        .height(height)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality as f32))
+        .quality(Quality::from_quality(quality as f32))
         .mode(config.scan.to_jpegli())
         .optimize_huffman(config.huffman == HuffmanMode::Optimized)
         .subsampling(config.chroma.to_jpegli())

@@ -1,7 +1,7 @@
 //! Test edge padding with a synthetic image that has varied edge content
 
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use std::fs;
 
 fn save_png(path: &str, rgb: &[u8], width: usize, height: usize) {
@@ -81,11 +81,9 @@ fn main() {
     println!("{}", "-".repeat(35));
 
     for quality in [50, 75, 90, 95] {
-        let jpeg = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let jpeg = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(quality as f32))
+            .quality(Quality::from_quality(quality as f32))
             .mode(JpegMode::Baseline)
             .subsampling(Subsampling::S444)
             .optimize_huffman(true)
@@ -120,11 +118,9 @@ fn main() {
     println!("{}", "-".repeat(35));
 
     for quality in [50, 75, 90, 95] {
-        let jpeg = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let jpeg = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(quality as f32))
+            .quality(Quality::from_quality(quality as f32))
             .mode(JpegMode::Baseline)
             .subsampling(Subsampling::S420)
             .optimize_huffman(true)
@@ -144,11 +140,9 @@ fn main() {
 
     println!("\n=== Progressive Mode ===");
     for quality in [50, 75, 90, 95] {
-        let jpeg = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
+        let jpeg = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(quality as f32))
+            .quality(Quality::from_quality(quality as f32))
             .mode(JpegMode::Progressive)
             .subsampling(Subsampling::S444)
             .optimize_huffman(true)

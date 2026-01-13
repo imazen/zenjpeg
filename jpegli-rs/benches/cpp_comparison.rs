@@ -33,7 +33,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
@@ -108,11 +108,9 @@ impl BenchConfig {
 }
 
 fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
-    Encoder::new()
-        .width(image.width as u32)
-        .height(image.height as u32)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(config.quality as f32))
+        .quality(Quality::from_quality(config.quality as f32))
         .mode(config.mode)
         .optimize_huffman(true)
         .subsampling(config.subsampling)

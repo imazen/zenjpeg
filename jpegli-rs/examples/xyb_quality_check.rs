@@ -22,11 +22,9 @@ fn main() {
     println!("Image: {}x{}\n", width, height);
 
     // Encode with Rust XYB
-    let rust_xyb = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
+    let rust_xyb = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(jpegli::quant::Quality::from_quality(90.0))
+        .quality(jpegli::quant::Quality::from_quality(90.0))
         .use_xyb(true)
         .encode(rgb)
         .unwrap();

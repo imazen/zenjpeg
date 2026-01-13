@@ -8,7 +8,7 @@
 //! No I/O or decode operations - pure encode timing.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jpegli::{Encoder, JpegMode, PixelFormat, Quality, Subsampling};
+use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
 
 /// Create a test image with realistic pixel patterns.
 ///
@@ -122,11 +122,9 @@ fn bench_encode_matrix(c: &mut Criterion) {
 
             group.bench_with_input(BenchmarkId::new("encode", &bench_name), &data, |b, data| {
                 b.iter(|| {
-                    let encoder = Encoder::new()
-                        .width(width as u32)
-                        .height(height as u32)
+                    let encoder = JpegEncoder::new(width, height)
                         .pixel_format(PixelFormat::Rgb)
-                        .jpegli_quality(Quality::from_quality(90.0))
+                        .quality(Quality::from_quality(90.0))
                         .subsampling(config.subsampling)
                         .mode(config.mode)
                         .optimize_huffman(config.optimize_huffman);
@@ -171,11 +169,9 @@ fn bench_encode_quick(c: &mut Criterion) {
     for (name, sub, mode, opt) in configs {
         group.bench_with_input(BenchmarkId::new("4k", name), &data, |b, data| {
             b.iter(|| {
-                let encoder = Encoder::new()
-                    .width(width as u32)
-                    .height(height as u32)
+                let encoder = JpegEncoder::new(width, height)
                     .pixel_format(PixelFormat::Rgb)
-                    .jpegli_quality(Quality::from_quality(90.0))
+                    .quality(Quality::from_quality(90.0))
                     .subsampling(sub)
                     .mode(mode)
                     .optimize_huffman(opt);

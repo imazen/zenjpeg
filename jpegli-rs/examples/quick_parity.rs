@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --example quick_parity
 
-use jpegli::{Encoder, PixelFormat, Quality, Subsampling};
+use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
 
 fn main() {
     let w = 256;
@@ -21,12 +21,10 @@ fn main() {
 
     // Encode
     #[allow(deprecated)]
-    let jpeg = Encoder::new()
-        .width(w as u32)
-        .height(h as u32)
+    let jpeg = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
-        .jpegli_quality(Quality::from_quality(90.0))
+        .quality(Quality::from_quality(90.0))
         .encode(&data)
         .unwrap();
 

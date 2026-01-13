@@ -19,7 +19,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Encoder, Quality};
+use jpegli::{JpegEncoder, Quality};
 use std::time::Duration;
 
 /// Generate a test image with realistic-ish content for profiling.
@@ -65,11 +65,9 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // YCbCr 4:2:0 - most common, has chroma downsampling
     group.bench_function("ycbcr-420", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(width)
-                .height(height)
+            JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(90.0))
+                .quality(Quality::from_quality(90.0))
                 .mode(JpegMode::Progressive)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S420)
@@ -80,11 +78,9 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // YCbCr 4:4:4 - no chroma downsampling
     group.bench_function("ycbcr-444", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(width)
-                .height(height)
+            JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(90.0))
+                .quality(Quality::from_quality(90.0))
                 .mode(JpegMode::Progressive)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S444)
@@ -95,11 +91,9 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // Baseline mode variants (simpler scan structure)
     group.bench_function("ycbcr-420-baseline", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(width)
-                .height(height)
+            JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(90.0))
+                .quality(Quality::from_quality(90.0))
                 .mode(JpegMode::Baseline)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S420)
@@ -109,11 +103,9 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
 
     group.bench_function("ycbcr-444-baseline", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(width)
-                .height(height)
+            JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
-                .jpegli_quality(Quality::from_quality(90.0))
+                .quality(Quality::from_quality(90.0))
                 .mode(JpegMode::Baseline)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S444)

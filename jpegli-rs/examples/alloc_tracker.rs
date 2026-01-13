@@ -80,7 +80,7 @@ fn format_bytes(bytes: usize) -> String {
 }
 
 fn main() {
-    use jpegli::{Encoder, PixelFormat, Quality, Subsampling};
+    use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
 
     println!("=== jpegli-rs Allocation Tracking ===\n");
 
@@ -119,10 +119,8 @@ fn main() {
                 reset_stats();
 
                 // Create encoder using builder pattern
-                let encoder = Encoder::new()
-                    .width(*width as u32)
-                    .height(*height as u32)
-                    .jpegli_quality(Quality::Traditional(quality as f32))
+                let encoder = JpegEncoder::new(width, height)
+                    .quality(Quality::Traditional(quality as f32))
                     .pixel_format(PixelFormat::Rgb)
                     .subsampling(*subsampling)
                     .optimize_huffman(true);
@@ -173,10 +171,8 @@ fn main() {
 
     reset_stats();
 
-    let encoder = Encoder::new()
-        .width(width as u32)
-        .height(height as u32)
-        .jpegli_quality(Quality::Traditional(85.0))
+    let encoder = JpegEncoder::new(width, height)
+        .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true);
