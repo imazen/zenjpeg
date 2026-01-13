@@ -391,7 +391,6 @@ impl Encoder {
         Ok(encoder.finish())
     }
 
-
     /// Collects symbol frequencies from a block for Huffman optimization.
     fn collect_block_frequencies(
         coeffs: &[i16; DCT_BLOCK_SIZE],
@@ -710,5 +709,4 @@ impl Encoder {
 
         Ok(encoder.finish())
     }
-
 }

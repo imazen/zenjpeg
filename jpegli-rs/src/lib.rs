@@ -49,15 +49,20 @@
 // ============================================================================
 
 // Public modules (stable API)
-pub mod aligned_alloc;
 pub mod decode;
 pub mod encode;
 pub mod error;
 pub mod pixel;
-pub mod quality_conversion;
 pub mod quant;
-pub mod simd_types;
 pub mod types;
+
+// Internal modules (accessible but hidden from docs)
+#[doc(hidden)]
+pub mod aligned_alloc;
+#[doc(hidden)]
+pub mod quality_conversion;
+#[doc(hidden)]
+pub mod simd_types;
 
 // Internal modules - NOT part of the stable public API.
 // These are hidden from documentation and may change without notice.
@@ -129,14 +134,13 @@ pub mod test_utils;
 // ============================================================================
 
 pub use error::{Error, Result};
-pub use types::{
-    ChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig, HuffmanMethod, JpegMode,
-    OutputDataType, PixelFormat, SampleDepth, Subsampling,
-};
 
-// Backward compatibility alias
-#[deprecated(since = "0.4.0", note = "Use ChromaDownsampling instead")]
-pub use types::ChromaDownsampling as ChromaConversion;
+// Core types (stable public API)
+pub use types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
+
+// Internal types (accessible but not primary API)
+#[doc(hidden)]
+pub use types::{EdgePadding, EdgePaddingConfig, HuffmanMethod, OutputDataType, SampleDepth};
 
 // Encoder API - new names
 pub use encode::streaming::StreamingEncoder as JpegEncoder;
@@ -160,17 +164,24 @@ pub use decode::Decoder as JpegDecoder;
 // Decoder API - original names (kept for compatibility)
 pub use decode::{DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig};
 
-// Quality settings
-pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
-pub use quant::{CustomQuantMatrices, Quality, QuantTable};
+// Quality settings (core)
+pub use quant::Quality;
 
-// Allocation tracking
+// Quality settings (advanced/internal)
+#[doc(hidden)]
+pub use quality_conversion::{QualityComparisonMetric, QualityConversion};
+#[doc(hidden)]
+pub use quant::{CustomQuantMatrices, QuantTable};
+
+// Allocation tracking (advanced)
+#[doc(hidden)]
 pub use foundation::AllocationStats;
 
 // Pixel types for typed encode/decode API
 pub use pixel::{Gray16, Gray8, Pixel, RGB16, RGB8, RGBA16, RGBA8};
 
-// Re-export imgref for convenient image buffer handling
+// Re-export imgref (used internally, hidden from docs)
+#[doc(hidden)]
 pub use imgref::{Img, ImgRef, ImgRefMut, ImgVec};
 
 // ============================================================================

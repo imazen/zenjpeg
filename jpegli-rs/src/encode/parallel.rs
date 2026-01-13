@@ -322,8 +322,7 @@ pub fn parallel_entropy_encode_444(
     if num_segments <= 1 {
         // Single segment - no parallelism benefit
         let result = encode_segment_444(
-            y_blocks, cb_blocks, cr_blocks,
-            0, total_mcus, is_color, config, 0,
+            y_blocks, cb_blocks, cr_blocks, 0, total_mcus, is_color, config, 0,
         );
         return result.data;
     }
@@ -337,8 +336,14 @@ pub fn parallel_entropy_encode_444(
             let restart_num = (seg_idx % 8) as u8;
 
             encode_segment_444(
-                y_blocks, cb_blocks, cr_blocks,
-                mcu_start, mcu_count, is_color, config, restart_num,
+                y_blocks,
+                cb_blocks,
+                cr_blocks,
+                mcu_start,
+                mcu_count,
+                is_color,
+                config,
+                restart_num,
             )
         })
         .collect();
@@ -375,10 +380,8 @@ pub fn parallel_entropy_encode_subsampled(
 
     if num_segments <= 1 {
         let result = encode_segment_subsampled(
-            y_blocks, cb_blocks, cr_blocks,
-            0, total_mcus, mcu_h,
-            y_blocks_h, y_blocks_v, c_blocks_h, c_blocks_v,
-            h_samp, v_samp, is_color, config, 0,
+            y_blocks, cb_blocks, cr_blocks, 0, total_mcus, mcu_h, y_blocks_h, y_blocks_v,
+            c_blocks_h, c_blocks_v, h_samp, v_samp, is_color, config, 0,
         );
         return result.data;
     }
@@ -392,10 +395,21 @@ pub fn parallel_entropy_encode_subsampled(
             let restart_num = (seg_idx % 8) as u8;
 
             encode_segment_subsampled(
-                y_blocks, cb_blocks, cr_blocks,
-                mcu_start, mcu_count, mcu_h,
-                y_blocks_h, y_blocks_v, c_blocks_h, c_blocks_v,
-                h_samp, v_samp, is_color, config, restart_num,
+                y_blocks,
+                cb_blocks,
+                cr_blocks,
+                mcu_start,
+                mcu_count,
+                mcu_h,
+                y_blocks_h,
+                y_blocks_v,
+                c_blocks_h,
+                c_blocks_v,
+                h_samp,
+                v_samp,
+                is_color,
+                config,
+                restart_num,
             )
         })
         .collect();
@@ -460,11 +474,23 @@ mod tests {
 
         // Sequential reference
         let mut seq_output = vec![Block8x8f::default(); total_blocks];
-        sequential_dct_plane(&strip, blocks_w, total_blocks, padded_width, &mut seq_output);
+        sequential_dct_plane(
+            &strip,
+            blocks_w,
+            total_blocks,
+            padded_width,
+            &mut seq_output,
+        );
 
         // Parallel implementation
         let mut par_output = vec![Block8x8f::default(); total_blocks];
-        parallel_dct_plane(&strip, blocks_w, total_blocks, padded_width, &mut par_output);
+        parallel_dct_plane(
+            &strip,
+            blocks_w,
+            total_blocks,
+            padded_width,
+            &mut par_output,
+        );
 
         // Compare
         assert_eq!(seq_output.len(), par_output.len());
@@ -476,7 +502,11 @@ mod tests {
                     assert!(
                         (s_arr[col] - p_arr[col]).abs() < 1e-6,
                         "Mismatch at block {}, row {}, col {}: {} vs {}",
-                        i, row, col, s_arr[col], p_arr[col]
+                        i,
+                        row,
+                        col,
+                        s_arr[col],
+                        p_arr[col]
                     );
                 }
             }

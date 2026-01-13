@@ -70,7 +70,10 @@ fn main() {
     let blocks_v = (height + 7) / 8;
     let total_blocks = blocks_h * blocks_v;
 
-    println!("Image: {}x{} ({} blocks, {} MCUs)", width, height, total_blocks, total_blocks);
+    println!(
+        "Image: {}x{} ({} blocks, {} MCUs)",
+        width, height, total_blocks, total_blocks
+    );
 
     // Create test data
     let y_blocks = create_test_blocks(width, height);
@@ -111,8 +114,12 @@ fn main() {
             // Warmup
             for _ in 0..3 {
                 let _ = parallel_entropy_encode_444(
-                    &y_blocks, &cb_blocks, &cr_blocks,
-                    true, restart_interval, &config,
+                    &y_blocks,
+                    &cb_blocks,
+                    &cr_blocks,
+                    true,
+                    restart_interval,
+                    &config,
                 );
             }
 
@@ -120,8 +127,12 @@ fn main() {
             let mut par_size = 0;
             for _ in 0..iterations {
                 let result = parallel_entropy_encode_444(
-                    &y_blocks, &cb_blocks, &cr_blocks,
-                    true, restart_interval, &config,
+                    &y_blocks,
+                    &cb_blocks,
+                    &cr_blocks,
+                    true,
+                    restart_interval,
+                    &config,
                 );
                 par_size = result.len();
                 std::hint::black_box(&result);
@@ -129,7 +140,10 @@ fn main() {
             let par_time = start.elapsed().as_millis() as f64 / iterations as f64;
             let speedup = seq_time / par_time;
             let size_diff = (par_size as f64 - seq_size as f64) / seq_size as f64 * 100.0;
-            println!("Parallel:    {:7.2}ms, {:7} bytes ({:+.2}%)", par_time, par_size, size_diff);
+            println!(
+                "Parallel:    {:7.2}ms, {:7} bytes ({:+.2}%)",
+                par_time, par_size, size_diff
+            );
             println!("Speedup:     {:7.2}x", speedup);
         }
     }

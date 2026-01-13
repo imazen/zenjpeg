@@ -95,10 +95,7 @@ fn estimate_effective_bits(values: &[f32], expected_range: f32) -> f64 {
     }
 
     // Count unique values (discretization)
-    let mut sorted: Vec<i64> = values
-        .iter()
-        .map(|&v| (v * 1_000_000.0) as i64)
-        .collect();
+    let mut sorted: Vec<i64> = values.iter().map(|&v| (v * 1_000_000.0) as i64).collect();
     sorted.sort();
     sorted.dedup();
     let unique_levels = sorted.len();
@@ -176,7 +173,11 @@ fn test_16bit_input_preserves_good_precision() {
     println!("Input gradient range: 0.4 to 0.6 (20% of full range)");
     println!("16-bit input → f32 output: {:.2} effective bits", bits_16);
     println!("8-bit input → f32 output: {:.2} effective bits", bits_8);
-    println!("JPEG sizes: 16-bit={} bytes, 8-bit={} bytes", jpeg_16.len(), jpeg_8.len());
+    println!(
+        "JPEG sizes: 16-bit={} bytes, 8-bit={} bytes",
+        jpeg_16.len(),
+        jpeg_8.len()
+    );
 
     // Both paths should achieve at least 10 effective bits for this gradient
     // (10 bits = 1024 unique levels, showing good precision preservation)
@@ -195,8 +196,10 @@ fn test_16bit_input_preserves_good_precision() {
     // The 16-bit path produces smaller files (more efficient encoding)
     // because it starts with linear values and can better exploit the
     // perceptual encoding of jpegli
-    println!("16-bit compression advantage: {:.1}%",
-        (1.0 - jpeg_16.len() as f64 / jpeg_8.len() as f64) * 100.0);
+    println!(
+        "16-bit compression advantage: {:.1}%",
+        (1.0 - jpeg_16.len() as f64 / jpeg_8.len() as f64) * 100.0
+    );
 }
 
 #[test]
@@ -294,7 +297,10 @@ fn test_to_u16_conversion_preserves_precision() {
 
     println!("=== to_u16 Conversion Test ===");
     println!("16-bit output range: {} to {}", min, max);
-    println!("Expected sRGB range: ~{} to ~{}", expected_min, expected_max);
+    println!(
+        "Expected sRGB range: ~{} to ~{}",
+        expected_min, expected_max
+    );
 
     // Should be in a reasonable range
     assert!(min > 15000, "min should be > 0.23 * 65535, got {}", min);
@@ -359,9 +365,16 @@ fn test_gradient_banding_reduced() {
 
     println!("=== Gradient Banding Test ===");
     println!("Gradient length: {} pixels", width);
-    println!("Average step size: {:.6} (ideal: {:.6})", avg_step, 0.2 / width as f32);
+    println!(
+        "Average step size: {:.6} (ideal: {:.6})",
+        avg_step,
+        0.2 / width as f32
+    );
     println!("Max step size: {:.6}", max_step);
-    println!("Banding events (step > {}): {}", banding_threshold, banding_count);
+    println!(
+        "Banding events (step > {}): {}",
+        banding_threshold, banding_count
+    );
 
     // With good 10+ bit encoding, we should have very few banding events
     // Allow some due to DCT block boundaries
@@ -450,7 +463,10 @@ fn test_full_pipeline_8bit_to_f32_precision() {
         / reference.len() as f64;
 
     // Count unique values in each output
-    let mut f32_unique: Vec<i64> = output_f32.iter().map(|&v| (v * 1_000_000.0) as i64).collect();
+    let mut f32_unique: Vec<i64> = output_f32
+        .iter()
+        .map(|&v| (v * 1_000_000.0) as i64)
+        .collect();
     f32_unique.sort();
     f32_unique.dedup();
 
@@ -468,11 +484,7 @@ fn test_full_pipeline_8bit_to_f32_precision() {
     println!("MAE (u8 path): {:.6}", mae_u8);
 
     // At Q99, both should have low error
-    assert!(
-        mae_f32 < 0.01,
-        "f32 MAE should be < 0.01, got {}",
-        mae_f32
-    );
+    assert!(mae_f32 < 0.01, "f32 MAE should be < 0.01, got {}", mae_f32);
 
     // f32 should have at least as many unique values as u8
     assert!(
@@ -575,9 +587,20 @@ fn test_subsampling_comparison() {
 
     // 4:4:4 should be larger (more data) and have similar or better precision
     println!("=== Subsampling Comparison Test ===");
-    println!("4:4:4: {} bytes, {:.2} effective bits", jpeg_444.len(), bits_444);
-    println!("4:2:0: {} bytes, {:.2} effective bits", jpeg_420.len(), bits_420);
-    println!("Size ratio: {:.2}x", jpeg_444.len() as f64 / jpeg_420.len() as f64);
+    println!(
+        "4:4:4: {} bytes, {:.2} effective bits",
+        jpeg_444.len(),
+        bits_444
+    );
+    println!(
+        "4:2:0: {} bytes, {:.2} effective bits",
+        jpeg_420.len(),
+        bits_420
+    );
+    println!(
+        "Size ratio: {:.2}x",
+        jpeg_444.len() as f64 / jpeg_420.len() as f64
+    );
 
     // 4:4:4 should be larger since it has more chroma data
     assert!(

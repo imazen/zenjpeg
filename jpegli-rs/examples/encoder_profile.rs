@@ -63,7 +63,11 @@ fn main() {
             name,
             time,
             parallel,
-            if *parallelizable { "parallel" } else { "sequential" }
+            if *parallelizable {
+                "parallel"
+            } else {
+                "sequential"
+            }
         );
     }
     println!("  {:-<50}", "");

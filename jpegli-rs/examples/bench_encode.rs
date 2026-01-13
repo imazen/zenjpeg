@@ -1,7 +1,12 @@
-use std::time::Instant;
 use jpegli::{Quality, StreamingEncoder};
+use std::time::Instant;
 
-fn benchmark(width: usize, height: usize, restart_interval: u16, iterations: usize) -> (f64, usize) {
+fn benchmark(
+    width: usize,
+    height: usize,
+    restart_interval: u16,
+    iterations: usize,
+) -> (f64, usize) {
     // Create test image - moderate complexity
     let mut pixels = vec![0u8; width * height * 3];
     let mut seed = 12345u64;
@@ -56,16 +61,27 @@ fn main() {
 
         // Sequential (no restart interval)
         let (seq_time, seq_size) = benchmark(width, height, 0, iterations);
-        println!("Sequential (restart=0):   {:7.2}ms, {:7} bytes, {:5.1} MP/s",
-                 seq_time, seq_size, megapixels / seq_time * 1000.0);
+        println!(
+            "Sequential (restart=0):   {:7.2}ms, {:7} bytes, {:5.1} MP/s",
+            seq_time,
+            seq_size,
+            megapixels / seq_time * 1000.0
+        );
 
         // With restart interval (enables parallel when feature is on)
         for &restart in &[64, 256, 1024] {
             let (par_time, par_size) = benchmark(width, height, restart, iterations);
             let speedup = seq_time / par_time;
             let size_diff = (par_size as f64 - seq_size as f64) / seq_size as f64 * 100.0;
-            println!("Restart interval {:4}:    {:7.2}ms, {:7} bytes ({:+.2}%), {:5.1} MP/s, {:.2}x",
-                     restart, par_time, par_size, size_diff, megapixels / par_time * 1000.0, speedup);
+            println!(
+                "Restart interval {:4}:    {:7.2}ms, {:7} bytes ({:+.2}%), {:5.1} MP/s, {:.2}x",
+                restart,
+                par_time,
+                par_size,
+                size_diff,
+                megapixels / par_time * 1000.0,
+                speedup
+            );
         }
         println!();
     }

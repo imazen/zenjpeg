@@ -603,7 +603,6 @@ impl Encoder {
         write_table(output, 1, 0, &ac_table.bits, &ac_table.values);
     }
 
-
     /// Writes SOS header for a progressive scan with slot ID support.
     ///
     /// This version uses `ac_slot_ids` to get the correct JPEG DHT slot for each AC table,
