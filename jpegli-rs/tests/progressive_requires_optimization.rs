@@ -25,7 +25,7 @@ fn test_progressive_requires_huffman_optimization() {
         Err(e) => {
             let err_str = format!("{}", e);
             assert!(
-                err_str.contains("Progressive mode with fixed Huffman"),
+                err_str.contains("progressive mode requires optimized Huffman"),
                 "Expected error message about Progressive + fixed Huffman, got: {}",
                 err_str
             );
@@ -51,7 +51,7 @@ fn test_progressive_xyb_requires_huffman_optimization() {
         Err(e) => {
             let err_str = format!("{}", e);
             assert!(
-                err_str.contains("Progressive mode with fixed Huffman"),
+                err_str.contains("progressive mode requires optimized Huffman"),
                 "Expected error message about Progressive + fixed Huffman, got: {}",
                 err_str
             );

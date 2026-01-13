@@ -48,120 +48,129 @@
 // Module structure
 // ============================================================================
 
-// Clean public API - use jpegli::encoder::* and jpegli::decoder::*
-mod api;
-pub use api::decoder;
-pub use api::encoder;
+// ============================================================================
+// Public Modules
+// ============================================================================
 
-// Implementation modules (internal, may become pub(crate) later)
 pub mod decode;
 pub mod encode;
 pub mod error;
-pub mod quant;
-pub mod types;
 
-// Internal modules - NOT part of the stable public API.
-// These are hidden from documentation and may change without notice.
-// Use at your own risk.
+// Internal modules - hidden but accessible for tests/examples
 #[doc(hidden)]
 pub mod color;
-
-// Re-export encoder modules for backward compatibility
-#[doc(hidden)]
-pub use encode::chroma;
-#[doc(hidden)]
-pub use encode::dct;
-
-// Foundation module (low-level utilities)
 #[doc(hidden)]
 pub mod foundation;
-
-// Backward-compatible re-exports from foundation
 #[doc(hidden)]
-pub use foundation::aligned_alloc;
+pub mod quant;
 #[doc(hidden)]
-pub use foundation::alloc;
-#[doc(hidden)]
-pub use foundation::bitstream;
-#[doc(hidden)]
-pub use foundation::consts;
-#[doc(hidden)]
-pub use foundation::simd_types;
+pub mod types;
 #[doc(hidden)]
 pub mod encode_simd;
 #[doc(hidden)]
 pub mod entropy;
-
-// Huffman module (encoding, tables, optimization)
 #[doc(hidden)]
 pub mod huffman;
-
-// Backward-compatible re-exports from huffman module
 #[doc(hidden)]
-pub use huffman::classic as huffman_classic;
-#[doc(hidden)]
-pub use huffman::types as huffman_types;
-// Re-export IDCT modules from decode for backward compatibility
-#[doc(hidden)]
-pub use decode::idct;
-#[doc(hidden)]
-pub use decode::idct_int;
-#[doc(hidden)]
-pub use encode::scan_script;
-
-// Re-export from color module for backward compatibility
-#[doc(hidden)]
-pub use color::icc;
-#[doc(hidden)]
-pub use color::xyb;
+pub mod test_utils;
 
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
 #[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid;
 
-// Test utilities (available for tests and examples)
-// Hidden from docs but always available for integration tests
+// Internal re-exports for backward compatibility with internal code paths
+// These allow `crate::chroma` to work as an alias for `crate::encode::chroma`
 #[doc(hidden)]
-pub mod test_utils;
+pub use encode::chroma;
+#[doc(hidden)]
+pub use encode::dct;
+#[doc(hidden)]
+pub use encode::scan_script;
 
 // ============================================================================
-// Re-exports for public API
+// Primary Encoder API (from encode::v2)
+// ============================================================================
+
+pub use encode::v2::{
+    BytesEncoder, ChromaSubsampling, ColorMode, DownsamplingMethod,
+    EdgePadding, EdgePaddingConfig, EncoderConfig, PixelLayout, Quality,
+    QuantTableConfig, RgbEncoder, Stop, XybSubsampling, YCbCrPlanes,
+    YCbCrPlanarEncoder,
+};
+
+// Internal encoder (used in doc examples)
+#[allow(deprecated)]
+pub use encode::Encoder;
+
+// Backward-compatible alias for legacy code (deprecated, will be removed)
+#[doc(hidden)]
+#[deprecated(since = "0.5.0", note = "Use EncoderConfig instead")]
+pub use encode::streaming::StreamingEncoder as JpegEncoder;
+#[doc(hidden)]
+#[deprecated(since = "0.5.0", note = "Use EncoderConfig instead")]
+pub use encode::streaming::StreamingEncoderBuilder as JpegEncoderBuilder;
+
+// ============================================================================
+// Decoder API
+// ============================================================================
+
+pub use decode::{DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig};
+pub use decode::Decoder as JpegDecoder;
+
+// ============================================================================
+// Error Types
 // ============================================================================
 
 pub use error::{Error, Result};
 
-// Core types (stable public API)
-pub use types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
+// ============================================================================
+// Legacy/Internal Types (hidden from docs)
+// ============================================================================
 
-// Internal types (accessible but not primary API)
+// Legacy types from types module
 #[doc(hidden)]
-pub use types::{EdgePadding, EdgePaddingConfig, HuffmanMethod};
+pub use types::{
+    ChromaDownsampling as LegacyChromaDownsampling, ColorSpace,
+    HuffmanMethod, JpegMode, PixelFormat, Subsampling,
+};
+// Backward-compatible alias for old type name
+#[doc(hidden)]
+#[deprecated(since = "0.5.0", note = "Use DownsamplingMethod instead")]
+pub use types::ChromaDownsampling;
 
-// Encoder API
-pub use encode::streaming::StreamingEncoder as JpegEncoder;
-pub use encode::streaming::StreamingEncoderBuilder as JpegEncoderBuilder;
-pub use encode::EncoderConfig;
-
-// Decoder API
-pub use decode::Decoder as JpegDecoder;
-
-// Decoder API - original names (kept for compatibility)
-pub use decode::{DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig};
-
-// Quality settings (core)
-pub use quant::Quality;
-
-// Quality settings (advanced/internal)
+// Legacy quality types
+#[doc(hidden)]
+pub use quant::Quality as LegacyQuality;
 #[doc(hidden)]
 pub use quant::quality_conversion::{QualityComparisonMetric, QualityConversion};
 #[doc(hidden)]
 pub use quant::{CustomQuantMatrices, QuantTable};
 
-// Allocation tracking (advanced)
+// Foundation utilities
 #[doc(hidden)]
 pub use foundation::AllocationStats;
+#[doc(hidden)]
+pub use foundation::{aligned_alloc, alloc, bitstream, consts, simd_types};
 
-// Re-export imgref (used internally, hidden from docs)
+// Huffman internals
+#[doc(hidden)]
+pub use huffman::classic as huffman_classic;
+#[doc(hidden)]
+pub use huffman::types as huffman_types;
+
+// Decode internals
+#[doc(hidden)]
+pub use decode::idct;
+#[doc(hidden)]
+pub use decode::idct_int;
+
+// Color internals
+#[doc(hidden)]
+pub use color::icc;
+#[doc(hidden)]
+pub use color::xyb;
+
+// imgref re-export
 #[doc(hidden)]
 pub use imgref::{Img, ImgRef, ImgRefMut, ImgVec};
 
@@ -195,10 +204,11 @@ pub use imgref::{Img, ImgRef, ImgRefMut, ImgVec};
 /// - Data size doesn't match width × height × 3
 /// - Encoding fails
 pub fn encode_rgb(width: u32, height: u32, rgb_data: &[u8], quality: u8) -> Result<Vec<u8>> {
-    JpegEncoder::new(width, height)
-        .quality(Quality::from_quality(f32::from(quality.clamp(1, 100))))
-        .pixel_format(PixelFormat::Rgb)
-        .encode(rgb_data)
+    use enough::Never;
+    let config = EncoderConfig::new().quality(quality.clamp(1, 100));
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(rgb_data, Never)?;
+    enc.finish()
 }
 
 /// Encodes an RGBA image to JPEG at the specified quality.
@@ -219,10 +229,11 @@ pub fn encode_rgb(width: u32, height: u32, rgb_data: &[u8], quality: u8) -> Resu
 /// let jpeg = jpegli::encode_rgba(640, 480, &rgba_pixels, 85)?;
 /// ```
 pub fn encode_rgba(width: u32, height: u32, rgba_data: &[u8], quality: u8) -> Result<Vec<u8>> {
-    JpegEncoder::new(width, height)
-        .quality(Quality::from_quality(f32::from(quality.clamp(1, 100))))
-        .pixel_format(PixelFormat::Rgba)
-        .encode(rgba_data)
+    use enough::Never;
+    let config = EncoderConfig::new().quality(quality.clamp(1, 100));
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgbx8Srgb)?;
+    enc.push_packed(rgba_data, Never)?;
+    enc.finish()
 }
 
 /// Encodes a grayscale image to JPEG at the specified quality.
@@ -241,10 +252,11 @@ pub fn encode_rgba(width: u32, height: u32, rgba_data: &[u8], quality: u8) -> Re
 /// let jpeg = jpegli::encode_gray(640, 480, &gray_pixels, 85)?;
 /// ```
 pub fn encode_gray(width: u32, height: u32, gray_data: &[u8], quality: u8) -> Result<Vec<u8>> {
-    JpegEncoder::new(width, height)
-        .quality(Quality::from_quality(f32::from(quality.clamp(1, 100))))
-        .pixel_format(PixelFormat::Gray)
-        .encode(gray_data)
+    use enough::Never;
+    let config = EncoderConfig::new().quality(quality.clamp(1, 100));
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
+    enc.push_packed(gray_data, Never)?;
+    enc.finish()
 }
 
 /// Decodes a JPEG image to RGB.
