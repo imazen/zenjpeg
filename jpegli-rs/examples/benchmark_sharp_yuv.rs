@@ -6,7 +6,8 @@
 //! This measures encode time and file size for both methods to quantify the
 //! performance/quality tradeoff of Sharp YUV.
 
-use jpegli::{JpegEncoder, Subsampling};
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -29,25 +30,29 @@ fn benchmark_encode_std(
     name: &str,
     width: u32,
     height: u32,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     data: &[u8],
     iterations: u32,
 ) -> (f64, usize) {
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .ycbcr(subsampling);
+
     // Warmup
-    let _ = JpegEncoder::new(width, height)
-        .quality(90)
-        .subsampling(subsampling)
-        .encode(data)
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
+    enc.push_packed(data, Never).unwrap();
+    let _ = enc.finish().unwrap();
 
     let start = Instant::now();
     let mut output_size = 0;
     for _ in 0..iterations {
-        let output = JpegEncoder::new(width, height)
-            .quality(90)
-            .subsampling(subsampling)
-            .encode(data)
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(data, Never).unwrap();
+        let output = enc.finish().unwrap();
         output_size = output.len();
     }
     let elapsed = start.elapsed();
@@ -64,27 +69,30 @@ fn benchmark_encode_sharp(
     name: &str,
     width: u32,
     height: u32,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     data: &[u8],
     iterations: u32,
 ) -> (f64, usize) {
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .ycbcr(subsampling)
+        .sharp_yuv(true);
+
     // Warmup
-    let _ = JpegEncoder::new(width, height)
-        .quality(90)
-        .subsampling(subsampling)
-        .sharp_yuv(true)
-        .encode(data)
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
+    enc.push_packed(data, Never).unwrap();
+    let _ = enc.finish().unwrap();
 
     let start = Instant::now();
     let mut output_size = 0;
     for _ in 0..iterations {
-        let output = JpegEncoder::new(width, height)
-            .quality(90)
-            .subsampling(subsampling)
-            .sharp_yuv(true)
-            .encode(data)
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(data, Never).unwrap();
+        let output = enc.finish().unwrap();
         output_size = output.len();
     }
     let elapsed = start.elapsed();
@@ -122,7 +130,7 @@ fn main() {
             "Standard 4:2:0",
             width as u32,
             height as u32,
-            Subsampling::S420,
+            ChromaSubsampling::Quarter,
             &data,
             iterations,
         );
@@ -131,7 +139,7 @@ fn main() {
             "Sharp    4:2:0",
             width as u32,
             height as u32,
-            Subsampling::S420,
+            ChromaSubsampling::Quarter,
             &data,
             iterations,
         );
@@ -148,7 +156,7 @@ fn main() {
             "Standard 4:2:2",
             width as u32,
             height as u32,
-            Subsampling::S422,
+            ChromaSubsampling::HalfHorizontal,
             &data,
             iterations,
         );
@@ -157,7 +165,7 @@ fn main() {
             "Sharp    4:2:2",
             width as u32,
             height as u32,
-            Subsampling::S422,
+            ChromaSubsampling::HalfHorizontal,
             &data,
             iterations,
         );
@@ -178,9 +186,9 @@ fn main() {
     let data = generate_test_image(4096, 2160);
     let megapixels = 4096.0 * 2160.0 / 1_000_000.0;
 
-    let (std_ms, _) = benchmark_encode_std("Standard", 4096, 2160, Subsampling::S420, &data, 10);
+    let (std_ms, _) = benchmark_encode_std("Standard", 4096, 2160, ChromaSubsampling::Quarter, &data, 10);
     let (sharp_ms, _) =
-        benchmark_encode_sharp("Sharp   ", 4096, 2160, Subsampling::S420, &data, 10);
+        benchmark_encode_sharp("Sharp   ", 4096, 2160, ChromaSubsampling::Quarter, &data, 10);
 
     let std_mpps = megapixels / (std_ms / 1000.0);
     println!("\nStandard throughput: {:.1} MP/s", std_mpps);

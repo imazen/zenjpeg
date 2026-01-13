@@ -1,6 +1,6 @@
 //! Benchmark 4:4:4 baseline encoding path
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -37,30 +37,28 @@ fn main() {
 
     let iterations = 20;
 
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .progressive(false) // Baseline
+        .optimize_huffman(false) // Fixed tables for consistency
+        .ycbcr(ChromaSubsampling::Full); // 4:4:4
+
     // Warmup
     for _ in 0..3 {
-        let _ = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0))
-            .mode(JpegMode::Baseline)
-            .optimize_huffman(false) // Fixed tables for consistency
-            .subsampling(Subsampling::S444)
-            .use_xyb(false)
-            .encode(black_box(&pixels))
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(black_box(&pixels), Never).unwrap();
+        let _ = enc.finish().unwrap();
     }
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let result = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0))
-            .mode(JpegMode::Baseline)
-            .optimize_huffman(false)
-            .subsampling(Subsampling::S444)
-            .use_xyb(false)
-            .encode(black_box(&pixels))
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(black_box(&pixels), Never).unwrap();
+        let result = enc.finish().unwrap();
         black_box(&result);
     }
     let elapsed = start.elapsed();
