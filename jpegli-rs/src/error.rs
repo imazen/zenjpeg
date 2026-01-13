@@ -118,11 +118,6 @@ pub enum Error {
         /// Maximum allowed
         limit: usize,
     },
-    /// Encoding backends produced different output (parity test failure).
-    EncodingBackendMismatch {
-        /// Details about the mismatch
-        details: String,
-    },
     /// Operation was cancelled via Stop trait.
     Cancelled,
     /// Pixel format not yet supported for this operation.
@@ -229,13 +224,6 @@ impl fmt::Display for Error {
             }
             Self::TooManyScans { count, limit } => {
                 write!(f, "too many scans: {} exceeds limit of {}", count, limit)
-            }
-            Self::EncodingBackendMismatch { details } => {
-                write!(
-                    f,
-                    "encoding backends produced different output: {}",
-                    details
-                )
             }
             Self::Cancelled => {
                 write!(f, "operation cancelled")

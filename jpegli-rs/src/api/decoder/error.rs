@@ -205,9 +205,6 @@ impl From<crate::error::Error> for Error {
             E::IncompleteImage { .. } => Self::InternalError {
                 reason: "incomplete image (encoder error)",
             },
-            E::EncodingBackendMismatch { .. } => Self::InternalError {
-                reason: "encoding backend mismatch (encoder error)",
-            },
         }
     }
 }

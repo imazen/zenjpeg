@@ -213,9 +213,6 @@ impl From<crate::error::Error> for Error {
             E::TooManyScans { .. } => Self::InternalError {
                 reason: "too many scans",
             },
-            E::EncodingBackendMismatch { .. } => Self::InternalError {
-                reason: "encoding backend mismatch",
-            },
         }
     }
 }
