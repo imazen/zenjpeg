@@ -3,9 +3,20 @@
 //! Tests Rust vs C++ progressive encoding on various image types to identify
 //! patterns in where differences occur.
 
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .progressive(true);
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).expect("create encoder");
+    enc.push_packed(data, Never).expect("push data");
+    enc.finish().expect("finish")
+}
 
 /// Write PPM file for C++ cjpegli
 fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Result<()> {
@@ -308,13 +319,6 @@ fn encode_cpp_progressive(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
     fs::read(&output_path).ok()
 }
 
-fn encode_rust_progressive(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::JpegEncoder::new(width, height)
-        .quality(jpegli::quant::Quality::Traditional(quality))
-        .mode(jpegli::types::JpegMode::Progressive)
-        .encode(rgb)
-        .expect("Rust encoding failed")
-}
 
 #[test]
 #[ignore = "requires C++ cjpegli build"]
@@ -342,10 +346,10 @@ fn test_ac_refinement_across_image_types() {
         };
 
         // Encode with Rust
-        let rust_jpeg = encode_rust_progressive(
-            &img.data,
+        let rust_jpeg = encode_rgb_progressive(
             img.width as u32,
             img.height as u32,
+            &img.data,
             quality as f32,
         );
 
@@ -492,7 +496,7 @@ fn test_ac_refinement_real_images() {
                 None => continue,
             };
 
-            let rust_jpeg = encode_rust_progressive(&rgb, info.width, info.height, quality as f32);
+            let rust_jpeg = encode_rgb_progressive(info.width, info.height, &rgb, quality as f32);
 
             let diff_pct =
                 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;
@@ -539,7 +543,7 @@ fn test_ac_refinement_quality_levels() {
                 None => continue,
             };
 
-            let rust_jpeg = encode_rust_progressive(data, size as u32, size as u32, quality as f32);
+            let rust_jpeg = encode_rgb_progressive(size as u32, size as u32, data, quality as f32);
 
             let diff_pct =
                 100.0 * (rust_jpeg.len() as f64 - cpp_jpeg.len() as f64) / cpp_jpeg.len() as f64;

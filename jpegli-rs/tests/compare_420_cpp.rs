@@ -1,5 +1,13 @@
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
+
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
@@ -34,10 +42,10 @@ fn compare_rust_cpp_420() {
     println!("Image: {}x{}", width, height);
 
     // Encode with Rust 4:2:0
-    let encoder = jpegli::JpegEncoder::new(width, height)
-        .quality(jpegli::Quality::from_quality(85.0))
-        .subsampling(jpegli::types::Subsampling::S420);
-    let rust_jpeg = encoder.encode(&pixels).expect("encode");
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Quarter);
+    let rust_jpeg = encode_rgb(width, height, &pixels, &config).expect("encode");
     fs::write("/tmp/rust_420_flower.jpg", &rust_jpeg).unwrap();
     println!("Rust 4:2:0: {} bytes", rust_jpeg.len());
 
@@ -79,10 +87,10 @@ fn compare_rust_cpp_420() {
     }
 
     // Also compare 4:4:4
-    let encoder444 = jpegli::JpegEncoder::new(width, height)
-        .quality(jpegli::Quality::from_quality(85.0))
-        .subsampling(jpegli::types::Subsampling::S444);
-    let rust_444 = encoder444.encode(&pixels).expect("encode");
+    let config444 = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let rust_444 = encode_rgb(width, height, &pixels, &config444).expect("encode");
     println!("Rust 4:4:4: {} bytes", rust_444.len());
 
     let reduction = 100.0 * (1.0 - rust_jpeg.len() as f64 / rust_444.len() as f64);
