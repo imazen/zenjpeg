@@ -187,7 +187,7 @@ struct SegmentResult {
 
 /// Creates an entropy encoder configured with the given Huffman tables.
 #[inline]
-fn create_encoder(config: &ParallelEntropyConfig, capacity: usize) -> EntropyEncoder {
+fn create_encoder(config: &ParallelEntropyConfig, capacity: usize) -> EntropyEncoder<'_> {
     let mut encoder = EntropyEncoder::with_capacity(capacity);
     encoder.set_dc_table(0, &config.dc_luma);
     encoder.set_ac_table(0, &config.ac_luma);
