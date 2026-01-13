@@ -6,9 +6,10 @@
 //!
 //! Thresholds are intentionally tight to catch regressions.
 
+use enough::Never;
 use jpegli::decode::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{JpegEncoder, Quality};
+use jpegli::{EncoderConfig, PixelLayout};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -195,12 +196,27 @@ fn test_file_size_parity() {
         };
 
         for point in &img_ref.points {
-            let encoder = JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(point.quality as f32));
-
-            let rust_jpeg = match encoder.encode(&pixels) {
-                Ok(data) => data,
+            let config = EncoderConfig::new().quality(point.quality as f32);
+            let rust_jpeg = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
+                Ok(mut enc) => {
+                    if let Err(e) = enc.push_packed(&pixels, Never) {
+                        failures.push(format!(
+                            "{} Q{}: push failed: {:?}",
+                            img_ref.name, point.quality, e
+                        ));
+                        continue;
+                    }
+                    match enc.finish() {
+                        Ok(data) => data,
+                        Err(e) => {
+                            failures.push(format!(
+                                "{} Q{}: finish failed: {:?}",
+                                img_ref.name, point.quality, e
+                            ));
+                            continue;
+                        }
+                    }
+                }
                 Err(e) => {
                     failures.push(format!(
                         "{} Q{}: encode failed: {:?}",
@@ -281,12 +297,17 @@ fn test_dssim_parity() {
         };
 
         for point in &img_ref.points {
-            let encoder = JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(point.quality as f32));
-
-            let rust_jpeg = match encoder.encode(&pixels) {
-                Ok(data) => data,
+            let config = EncoderConfig::new().quality(point.quality as f32);
+            let rust_jpeg = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
+                Ok(mut enc) => {
+                    if enc.push_packed(&pixels, Never).is_err() {
+                        continue;
+                    }
+                    match enc.finish() {
+                        Ok(data) => data,
+                        Err(_) => continue,
+                    }
+                }
                 Err(_) => continue,
             };
 

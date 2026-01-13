@@ -10,8 +10,8 @@
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
-use jpegli::types::{ChromaDownsampling, JpegMode, Subsampling};
-use jpegli::{JpegEncoder, PixelFormat};
+use enough::Never;
+use jpegli::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout};
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -104,25 +104,36 @@ fn sha256_hex(data: &[u8]) -> String {
 #[derive(Clone, Debug)]
 struct EncoderTestConfig {
     name: &'static str,
-    mode: JpegMode,
-    subsampling: Subsampling,
+    progressive: bool,
+    subsampling: ChromaSubsampling,
     optimize_huffman: bool,
-    chroma_downsampling: ChromaDownsampling,
+    downsampling_method: DownsamplingMethod,
     use_xyb: bool,
 }
 
 impl EncoderTestConfig {
     fn encode(&self, rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-        JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
+        let mut config = EncoderConfig::new()
             .quality(quality)
-            .mode(self.mode)
-            .subsampling(self.subsampling)
+            .progressive(self.progressive)
+            .ycbcr(self.subsampling)
             .optimize_huffman(self.optimize_huffman)
-            .chroma_downsampling(self.chroma_downsampling)
-            .use_xyb(self.use_xyb)
-            .encode(rgb)
-            .expect("Encoding failed")
+            .downsampling_method(self.downsampling_method);
+        if self.use_xyb {
+            config = config.xyb();
+        }
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(rgb, Never).expect("push data");
+        enc.finish().expect("Encoding failed")
+    }
+
+    fn mcu_size(&self) -> usize {
+        match self.subsampling {
+            ChromaSubsampling::Full => 8,
+            _ => 16, // All subsampled modes have MCU size of 16
+        }
     }
 }
 
@@ -132,100 +143,100 @@ fn test_configs() -> Vec<EncoderTestConfig> {
         // Baseline modes (YCbCr)
         EncoderTestConfig {
             name: "baseline_444_opt",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S444,
+            progressive: false,
+            subsampling: ChromaSubsampling::Full,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_444_fixed",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S444,
+            progressive: false,
+            subsampling: ChromaSubsampling::Full,
             optimize_huffman: false,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_420_opt",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420,
+            progressive: false,
+            subsampling: ChromaSubsampling::Quarter,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_420_gamma",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420,
+            progressive: false,
+            subsampling: ChromaSubsampling::Quarter,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::GammaAware,
+            downsampling_method: DownsamplingMethod::GammaAware,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_420_sharpyuv",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420,
+            progressive: false,
+            subsampling: ChromaSubsampling::Quarter,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::GammaAwareIterative,
+            downsampling_method: DownsamplingMethod::GammaAwareIterative,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_422_opt",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S422,
+            progressive: false,
+            subsampling: ChromaSubsampling::HalfHorizontal,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "baseline_440_opt",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S440,
+            progressive: false,
+            subsampling: ChromaSubsampling::HalfVertical,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         // Progressive modes (YCbCr)
         EncoderTestConfig {
             name: "progressive_444_opt",
-            mode: JpegMode::Progressive,
-            subsampling: Subsampling::S444,
+            progressive: true,
+            subsampling: ChromaSubsampling::Full,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         EncoderTestConfig {
             name: "progressive_420_opt",
-            mode: JpegMode::Progressive,
-            subsampling: Subsampling::S420,
+            progressive: true,
+            subsampling: ChromaSubsampling::Quarter,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
         },
         // XYB modes (subsampling is ignored for XYB)
         EncoderTestConfig {
             name: "baseline_xyb_opt",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420, // Ignored for XYB
+            progressive: false,
+            subsampling: ChromaSubsampling::Quarter, // Ignored for XYB
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: true,
         },
         EncoderTestConfig {
             name: "baseline_xyb_fixed",
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420, // Ignored for XYB
+            progressive: false,
+            subsampling: ChromaSubsampling::Quarter, // Ignored for XYB
             optimize_huffman: false,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: true,
         },
         EncoderTestConfig {
             name: "progressive_xyb_opt",
-            mode: JpegMode::Progressive,
-            subsampling: Subsampling::S420, // Ignored for XYB
+            progressive: true,
+            subsampling: ChromaSubsampling::Quarter, // Ignored for XYB
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            downsampling_method: DownsamplingMethod::Box,
             use_xyb: true,
         },
     ]
@@ -281,14 +292,11 @@ fn test_frymire_backend_parity() {
     let (rgb, width, height) = load_frymire();
 
     // Test all configs that support strip encoding (baseline and progressive, including XYB)
-    let strip_configs = test_configs()
-        .into_iter()
-        .filter(|c| c.mode == JpegMode::Baseline || c.mode == JpegMode::Progressive)
-        .collect::<Vec<_>>();
+    let strip_configs = test_configs();
 
     for config in &strip_configs {
         // Skip configs where dimensions don't align to MCU (strip encoder lacks edge padding)
-        let mcu_size = config.subsampling.mcu_size();
+        let mcu_size = config.mcu_size();
         if width as usize % mcu_size != 0 || height as usize % mcu_size != 0 {
             // Strip encoder doesn't have edge padding yet - skip non-aligned configs
             continue;
@@ -296,18 +304,7 @@ fn test_frymire_backend_parity() {
 
         for &quality in &[50u8, 90] {
             // Use Both backend - will error if outputs differ
-            let _jpeg = JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(quality as f32)
-                .mode(config.mode)
-                .subsampling(config.subsampling)
-                .optimize_huffman(config.optimize_huffman)
-                .chroma_downsampling(config.chroma_downsampling)
-                .use_xyb(config.use_xyb)
-                .encode(&rgb)
-                .unwrap_or_else(|e| {
-                    panic!("{} Q{}: backend mismatch: {}", config.name, quality, e)
-                });
+            let _jpeg = config.encode(&rgb, width, height, quality as f32);
         }
     }
 }
@@ -350,14 +347,15 @@ fn print_all_hashes() {
 fn print_single_hash() {
     let (rgb, width, height) = load_frymire();
 
-    let jpeg = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
+    let config = EncoderConfig::new()
         .quality(90.0)
-        .mode(JpegMode::Baseline)
-        .subsampling(Subsampling::S444)
-        .optimize_huffman(true)
-        .encode(&rgb)
-        .expect("Encoding failed");
+        .ycbcr(ChromaSubsampling::Full)
+        .optimize_huffman(true);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&rgb, Never).expect("push data");
+    let jpeg = enc.finish().expect("Encoding failed");
 
     println!("Size: {} bytes", jpeg.len());
     println!("SHA256: {}", sha256_hex(&jpeg));
