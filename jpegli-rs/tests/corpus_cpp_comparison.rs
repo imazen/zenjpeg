@@ -5,7 +5,8 @@
 #![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
-use jpegli::quant::Quality;
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -94,17 +95,23 @@ fn register_rust_jpegli(session: &mut EvalSession) {
 
             let quality = request.quality as f32;
 
-            let encoder = jpegli::JpegEncoder::new(width as u32, height as u32)
-                .pixel_format(jpegli::PixelFormat::Rgb)
-                .quality(Quality::from_quality(quality))
+            let config = EncoderConfig::new()
+                .quality(quality)
                 .optimize_huffman(false); // Match C++ --fixed_code
-
-            let encoded = encoder
-                .encode(&rgb_data)
+            let mut enc = config
+                .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
                 .map_err(|e| codec_eval::Error::Codec {
                     codec: "jpegli-rs".to_string(),
                     message: format!("{}", e),
                 })?;
+            enc.push_packed(&rgb_data, Never).map_err(|e| codec_eval::Error::Codec {
+                codec: "jpegli-rs".to_string(),
+                message: format!("{}", e),
+            })?;
+            let encoded = enc.finish().map_err(|e| codec_eval::Error::Codec {
+                codec: "jpegli-rs".to_string(),
+                message: format!("{}", e),
+            })?;
 
             Ok(encoded)
         }),
