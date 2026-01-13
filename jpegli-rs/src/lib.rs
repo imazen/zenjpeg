@@ -97,8 +97,6 @@ pub mod entropy;
 // Huffman module (encoding, tables, optimization)
 #[doc(hidden)]
 pub mod huffman;
-#[doc(hidden)]
-pub mod huffman_opt;
 
 // Backward-compatible re-exports from huffman module
 #[doc(hidden)]
@@ -114,8 +112,6 @@ pub use decode::idct;
 pub use decode::idct_int;
 #[doc(hidden)]
 pub use encode::scan_script;
-#[doc(hidden)]
-pub mod simplified_quant;
 #[doc(hidden)]
 pub mod tone_mapping;
 #[doc(hidden)]
