@@ -1,0 +1,27 @@
+# Cargo configuration for jpegli-rs
+# See: https://doc.rust-lang.org/cargo/reference/config.html
+
+# WASM SIMD128 Support
+# ====================
+# To enable WASM SIMD128 acceleration, uncomment the [target.wasm32-wasip1] section below.
+# This provides ~2-3x speedup for IDCT and DCT operations on WASM.
+#
+# Supported runtimes (2025):
+# - Wasmtime >= 0.26 (2021)
+# - Wasmer >= 2.0 (2021)
+# - Node.js >= 16.4 (2021)
+# - Chrome >= 91, Firefox >= 89, Safari >= 16.4, Edge >= 91
+#
+# Note: Binaries built with simd128 will NOT run on runtimes without SIMD support.
+# Build separate binaries for maximum compatibility if needed.
+
+# Uncomment to enable WASM SIMD128 by default for wasm32-wasip1 target:
+# [target.wasm32-wasip1]
+# rustflags = ["-C", "target-feature=+simd128"]
+
+# Uncomment to enable WASM SIMD128 by default for wasm32-unknown-unknown target:
+# [target.wasm32-unknown-unknown]
+# rustflags = ["-C", "target-feature=+simd128"]
+
+# Alternative: Set RUSTFLAGS environment variable per-build:
+# RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1

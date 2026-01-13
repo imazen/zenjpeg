@@ -80,6 +80,10 @@ cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 debug-tokens = []
 # Enable test utilities (image generation, quality verification)
 test-utils = []
+# Enable WASM SIMD128 tests (requires wasm runtime with SIMD support)
+# Build with: RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
+# Supported runtimes (2025): Wasmtime, Wasmer, Node.js, all major browsers
+wasm-simd = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
 experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 
