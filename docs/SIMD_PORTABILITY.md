@@ -182,8 +182,32 @@ To enable WASM SIMD128 acceleration:
 RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
 ```
 
+Or enable in `.cargo/config.toml`:
+```toml
+[target.wasm32-wasip1]
+rustflags = ["-C", "target-feature=+simd128"]
+```
+
+**Runtime Support (2025):** SIMD128 is universally supported:
+
+| Runtime | SIMD128 Since | Notes |
+|---------|---------------|-------|
+| Chrome | v91 (May 2021) | Full support |
+| Firefox | v89 (Jun 2021) | Full support |
+| Safari | v16.4 (Mar 2023) | Full support |
+| Edge | v91 (May 2021) | Full support |
+| Node.js | v16.4 (Jun 2021) | Full support |
+| Wasmtime | v0.26 (Mar 2021) | Full support |
+| Wasmer | v2.0 (Jun 2021) | Full support |
+| wasm3 | v0.5.0 | Interpreter, slower |
+
 **Note:** WASM SIMD detection is compile-time only (no runtime detection).
 Binaries built with simd128 require a SIMD-capable runtime.
+
+**Testing:** Use the `wasm-simd` feature to gate SIMD-specific tests:
+```bash
+RUSTFLAGS="-C target-feature=+simd128" cargo test --target wasm32-wasip1 --features wasm-simd
+```
 
 **Key finding:** The `wide` crate REQUIRES `#[multiversion]` or `#[target_feature]`
 to use SIMD - it uses compile-time `#[cfg]`, not runtime detection. Without this,
