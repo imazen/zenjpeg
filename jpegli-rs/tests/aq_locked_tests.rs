@@ -8,7 +8,15 @@
 //! If these tests fail, the AQ implementation is BROKEN.
 //! Fix the implementation, not the tests.
 
+use enough::Never;
 use jpegli::quant::{Quality, ZeroBiasParams};
+use jpegli::{EncoderConfig, PixelLayout};
+
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 /// Test that aq_strength values are in the expected range.
 /// STRICT CHECK: C++ produces values in 0.0-0.2 range with mean ~0.08.
@@ -137,10 +145,8 @@ fn test_encoding_with_zero_bias_valid() {
         .collect();
 
     // Encode at Q90 (high quality, where zero-biasing is active)
-    let jpeg_data = jpegli::JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(jpegli::PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .encode(&rgb)
+    let config = EncoderConfig::new().quality(90.0);
+    let jpeg_data = encode_rgb(width as u32, height as u32, &rgb, &config)
         .expect("encoding failed");
 
     // Verify output is valid JPEG
@@ -187,10 +193,8 @@ fn test_quality_affects_size() {
         .collect();
 
     let encode_at_quality = |q: f32| -> usize {
-        jpegli::JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(jpegli::PixelFormat::Rgb)
-            .quality(Quality::from_quality(q))
-            .encode(&rgb)
+        let config = EncoderConfig::new().quality(q);
+        encode_rgb(width as u32, height as u32, &rgb, &config)
             .expect("encoding failed")
             .len()
     };

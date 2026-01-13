@@ -4,8 +4,16 @@
 //! The C++ output is generated using instrumentation in entropy_coding.cc with
 //! the DUMP_AC_REFINEMENT environment variable.
 
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
+
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> Vec<u8> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).expect("create encoder");
+    enc.push_packed(data, Never).expect("push data");
+    enc.finish().expect("finish")
+}
 
 /// Parsed token from C++ output
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -505,18 +513,12 @@ fn test_progressive_filesize_comparison() {
                 // Encode with Rust
                 // Check if progressive by looking for "-p" followed by "2"
                 let is_progressive = args.windows(2).any(|w| w[0] == "-p" && w[1] == "2");
-                let mode = if is_progressive {
-                    jpegli::types::JpegMode::Progressive
-                } else {
-                    jpegli::types::JpegMode::Baseline
-                };
 
                 // Note: Rust encoder always uses AQ, so we can only test with-AQ case for comparison
-                let rust_jpeg = jpegli::JpegEncoder::new(info.width, info.height)
-                    .quality(jpegli::quant::Quality::Traditional(quality as f32))
-                    .mode(mode)
-                    .encode(&rgb)
-                    .expect("Rust encoding failed");
+                let config = EncoderConfig::new()
+                    .quality(quality as f32)
+                    .progressive(is_progressive);
+                let rust_jpeg = encode_rgb(info.width, info.height, &rgb, &config);
 
                 // Verify the JPEG is actually progressive by checking for SOF2 marker
                 let is_progressive_jpeg = rust_jpeg.windows(2).any(|w| w == [0xFF, 0xC2]);
