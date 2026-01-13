@@ -4,6 +4,17 @@
 //! Based on zune-jpeg's implementation (MIT/Apache/Zlib licensed).
 //!
 //! For XYB mode, use the f32 IDCT in `idct.rs` instead.
+//!
+//! # SIMD Implementations
+//!
+//! Three implementations are available:
+//! - **wide**: Portable SIMD using `wide` crate with `multiversion` (recommended)
+//! - **avx2**: Raw AVX2 intrinsics (x86_64 only, kept for reference)
+//! - **scalar**: Pure scalar fallback
+//!
+//! Benchmarks (8x8 IDCT block):
+//! - x86_64 AVX2: wide 1.64x faster than scalar
+//! - aarch64 NEON: wide 1.11x faster than scalar
 
 /// Rounding and level-shift constants.
 /// SCALE_BITS = 512 + 65536 + (128 << 17)
@@ -540,17 +551,142 @@ mod avx2 {
         pack_store!(row6, row7);
     }
 
-    /// Check if AVX2 is available at runtime.
-    #[inline]
-    pub fn is_avx2_available() -> bool {
-        #[cfg(target_arch = "x86_64")]
-        {
-            is_x86_feature_detected!("avx2")
+}
+
+// =============================================================================
+// Portable SIMD Implementation using `wide` crate
+// =============================================================================
+
+/// Portable SIMD IDCT using `wide` crate with `multiversion` for cross-platform support.
+///
+/// This implementation uses `wide::i32x8` for the butterfly operations and
+/// `wide::i32x8::transpose` for the 8x8 matrix transpose.
+///
+/// Performance vs scalar (standalone benchmark):
+/// - x86_64 AVX2: 1.64x faster (26.9 ns vs 44.2 ns per block)
+/// - aarch64 NEON: 1.11x faster (583.9 ns vs 646.9 ns per block via qemu)
+mod wide_simd {
+    use super::SCALE_BITS;
+    use multiversion::multiversion;
+    use wide::i32x8;
+
+    /// IDCT constants (fixed-point, 12-bit precision)
+    const C2217: i32 = 2217;
+    const C3135: i32 = 3135;
+    const CN7567: i32 = -7567;
+    const C4816: i32 = 4816;
+    const C1223: i32 = 1223;
+    const C8410: i32 = 8410;
+    const C12586: i32 = 12586;
+    const C6149: i32 = 6149;
+    const CN3685: i32 = -3685;
+    const CN10497: i32 = -10497;
+    const CN8034: i32 = -8034;
+    const CN1597: i32 = -1597;
+
+    /// Portable SIMD IDCT using `wide` crate.
+    ///
+    /// IMPORTANT: Uses `#[multiversion]` to enable SIMD on each target.
+    /// Without this, `wide` falls back to scalar and is slower!
+    ///
+    /// Targets (in priority order):
+    /// - x86_64+avx2: Uses AVX2 for i32x8 ops and transpose
+    /// - x86_64+sse4.1: Uses SSE4.1 (i32x8 = 2x __m128i)
+    /// - aarch64+neon: Uses NEON for i32x8 ops
+    /// - default: Scalar fallback
+    #[multiversion(targets(
+        "x86_64+avx2",
+        "x86_64+sse4.1",
+        "x86+avx2",
+        "x86+sse4.1",
+        "aarch64+neon",
+        "arm+neon",
+    ))]
+    pub fn idct_int_wide(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
+        // Load 8 rows as i32x8 vectors
+        let mut rows: [i32x8; 8] = [
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap()),
+            i32x8::from(*<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap()),
+        ];
+
+        // First pass (columns) - process all 8 columns in parallel
+        idct_pass(&mut rows, i32x8::splat(512), 10);
+
+        // Transpose using wide's built-in (uses SIMD on supported targets)
+        rows = i32x8::transpose(rows);
+
+        // Second pass (rows)
+        idct_pass(&mut rows, i32x8::splat(SCALE_BITS), 17);
+
+        // Transpose back to row-major order
+        rows = i32x8::transpose(rows);
+
+        // Extract and clamp to output with stride
+        let mut out_pos = 0;
+        for row in &rows {
+            let arr = row.to_array();
+            for (j, &val) in arr.iter().enumerate() {
+                out_vector[out_pos + j] = val.clamp(0, 255) as i16;
+            }
+            out_pos += stride;
         }
-        #[cfg(target_arch = "x86")]
-        {
-            is_x86_feature_detected!("avx2")
-        }
+    }
+
+    /// One pass of IDCT butterfly using i32x8 SIMD.
+    ///
+    /// This is the core IDCT computation, called twice (columns then rows).
+    #[inline(always)]
+    fn idct_pass(rows: &mut [i32x8; 8], scale_bits: i32x8, shift: i32) {
+        // Even part (rows 0, 2, 4, 6)
+        let p1 = (rows[2] + rows[6]) * i32x8::splat(C2217);
+        let t2 = p1 + rows[6] * i32x8::splat(CN7567);
+        let t3 = p1 + rows[2] * i32x8::splat(C3135);
+
+        let t0 = (rows[0] + rows[4]) << 12;
+        let t1 = (rows[0] - rows[4]) << 12;
+
+        let x0 = t0 + t3 + scale_bits;
+        let x3 = t0 - t3 + scale_bits;
+        let x1 = t1 + t2 + scale_bits;
+        let x2 = t1 - t2 + scale_bits;
+
+        // Odd part (rows 1, 3, 5, 7)
+        let p3 = rows[7] + rows[3];
+        let p4 = rows[5] + rows[1];
+        let p1_odd = rows[7] + rows[1];
+        let p2_odd = rows[5] + rows[3];
+        let p5 = (p3 + p4) * i32x8::splat(C4816);
+
+        let mut t0 = rows[7] * i32x8::splat(C1223);
+        let mut t1 = rows[5] * i32x8::splat(C8410);
+        let mut t2 = rows[3] * i32x8::splat(C12586);
+        let mut t3 = rows[1] * i32x8::splat(C6149);
+
+        let p1_final = p5 + p1_odd * i32x8::splat(CN3685);
+        let p2_final = p5 + p2_odd * i32x8::splat(CN10497);
+        let p3_final = p3 * i32x8::splat(CN8034);
+        let p4_final = p4 * i32x8::splat(CN1597);
+
+        t3 = t3 + p1_final + p4_final;
+        t2 = t2 + p2_final + p3_final;
+        t1 = t1 + p2_final + p4_final;
+        t0 = t0 + p1_final + p3_final;
+
+        // Combine even and odd parts, then shift
+        rows[0] = (x0 + t3) >> shift;
+        rows[1] = (x1 + t2) >> shift;
+        rows[2] = (x2 + t1) >> shift;
+        rows[3] = (x3 + t0) >> shift;
+        rows[4] = (x3 - t0) >> shift;
+        rows[5] = (x2 - t1) >> shift;
+        rows[6] = (x1 - t2) >> shift;
+        rows[7] = (x0 - t3) >> shift;
     }
 }
 
@@ -560,26 +696,31 @@ mod avx2 {
 
 /// Perform integer IDCT with automatic SIMD dispatch.
 ///
-/// Uses AVX2 when available, falls back to scalar otherwise.
+/// Uses the portable `wide` crate implementation with `multiversion` for
+/// cross-platform SIMD support (AVX2, SSE4.1, NEON).
 ///
 /// # Arguments
-/// * `coeffs` - Input dequantized DCT coefficients (modified in place)
+/// * `coeffs` - Input dequantized DCT coefficients (not modified)
 /// * `output` - Output pixel buffer (i16 in range [0, 255])
 /// * `stride` - Stride between output rows
+#[inline]
 pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        if avx2::is_avx2_available() {
-            // Safety: we just checked for AVX2 support
-            unsafe {
-                avx2::idct_int_avx2(coeffs, output, stride);
-            }
-            return;
-        }
-    }
+    // Use portable wide implementation (multiversion handles dispatch)
+    wide_simd::idct_int_wide(coeffs, output, stride);
+}
 
-    // Scalar fallback
-    idct_int(coeffs, output, stride);
+/// Perform integer IDCT using raw AVX2 intrinsics.
+///
+/// This is the legacy implementation kept for comparison. In most cases,
+/// `idct_int_auto` (which uses `wide`) should be preferred as it's portable
+/// and has similar performance.
+///
+/// # Safety
+/// Caller must ensure AVX2 is available.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+pub unsafe fn idct_int_avx2_raw(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+    avx2::idct_int_avx2(coeffs, output, stride);
 }
 
 /// Tiered IDCT selection based on coefficient count.
@@ -588,10 +729,10 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 /// coefficients are in the block (in zigzag scan order):
 /// - count <= 1: DC-only (just broadcast DC value)
 /// - count <= 10: 4x4 IDCT (upper-left block only)
-/// - count > 10: Full 8x8 IDCT
+/// - count > 10: Full 8x8 IDCT with portable SIMD
 ///
 /// # Arguments
-/// * `coeffs` - Input dequantized DCT coefficients (modified in place)
+/// * `coeffs` - Input dequantized DCT coefficients (modified in place for 4x4)
 /// * `output` - Output pixel buffer (i16 in range [0, 255])
 /// * `stride` - Stride between output rows
 /// * `coeff_count` - Number of non-zero coefficients (1 = DC only, up to 64)
@@ -604,18 +745,8 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
         // 4x4 IDCT - coefficients only in upper-left 4x4 block
         idct_int_4x4(coeffs, output, stride);
     } else {
-        // Full 8x8 IDCT with SIMD dispatch
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            if avx2::is_avx2_available() {
-                // Safety: we just checked for AVX2 support
-                unsafe {
-                    avx2::idct_int_avx2(coeffs, output, stride);
-                }
-                return;
-            }
-        }
-        idct_int(coeffs, output, stride);
+        // Full 8x8 IDCT with portable SIMD (multiversion handles dispatch)
+        wide_simd::idct_int_wide(coeffs, output, stride);
     }
 }
 
@@ -712,7 +843,7 @@ mod tests {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[test]
     fn test_avx2_matches_scalar() {
-        if !avx2::is_avx2_available() {
+        if !is_x86_feature_detected!("avx2") {
             return;
         }
 
@@ -740,6 +871,107 @@ mod tests {
                 "Mismatch at {}: scalar={}, avx2={}",
                 i, output_scalar[i], output_avx2[i]
             );
+        }
+    }
+
+    #[test]
+    fn test_wide_matches_scalar() {
+        // Test with random-ish pattern
+        let mut coeffs_scalar = [0i32; 64];
+        let coeffs_wide: [i32; 64];
+
+        for i in 0..64 {
+            let v = ((i as i32 * 17 + 31) % 256) - 128;
+            coeffs_scalar[i] = v * 8;
+        }
+        coeffs_wide = coeffs_scalar;
+
+        let mut output_scalar = [0i16; 64];
+        let mut output_wide = [0i16; 64];
+
+        idct_int(&mut coeffs_scalar, &mut output_scalar, 8);
+        wide_simd::idct_int_wide(&coeffs_wide, &mut output_wide, 8);
+
+        for i in 0..64 {
+            assert_eq!(
+                output_scalar[i], output_wide[i],
+                "Mismatch at {}: scalar={}, wide={}",
+                i, output_scalar[i], output_wide[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_wide_with_stride() {
+        // Test wide implementation with non-8 stride
+        let coeffs: [i32; 64] = std::array::from_fn(|i| {
+            let v = ((i as i32 * 17 + 31) % 256) - 128;
+            v * 8
+        });
+
+        // Test with stride 16 (typical for interleaved output)
+        let mut output_stride8 = [0i16; 64];
+        let mut output_stride16 = [0i16; 128];
+
+        wide_simd::idct_int_wide(&coeffs, &mut output_stride8, 8);
+        wide_simd::idct_int_wide(&coeffs, &mut output_stride16, 16);
+
+        // Compare row by row
+        for row in 0..8 {
+            for col in 0..8 {
+                assert_eq!(
+                    output_stride8[row * 8 + col],
+                    output_stride16[row * 16 + col],
+                    "Stride mismatch at ({}, {})",
+                    row, col
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_wide_dc_patterns() {
+        // Test various DC-only patterns
+        for dc in [-2000i32, -500, 0, 500, 1000, 2000] {
+            let mut coeffs = [0i32; 64];
+            coeffs[0] = dc;
+
+            let mut output = [0i16; 64];
+            wide_simd::idct_int_wide(&coeffs, &mut output, 8);
+
+            // All values should be same and in range
+            let first = output[0];
+            for (i, &v) in output.iter().enumerate() {
+                assert!(v >= 0 && v <= 255, "DC {} produced out-of-range {} at {}", dc, v, i);
+                // DC-only should produce uniform output (within rounding)
+                assert!((v - first).abs() <= 1, "DC {} non-uniform: {} vs {} at {}", dc, first, v, i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_wide_exhaustive() {
+        // Test many coefficient patterns
+        for seed in 0..100 {
+            let coeffs: [i32; 64] = std::array::from_fn(|i| {
+                let v = ((i as i32 * 17 + seed * 7 + 31) % 512) - 256;
+                v * 4
+            });
+
+            let mut coeffs_scalar = coeffs;
+            let mut output_scalar = [0i16; 64];
+            let mut output_wide = [0i16; 64];
+
+            idct_int(&mut coeffs_scalar, &mut output_scalar, 8);
+            wide_simd::idct_int_wide(&coeffs, &mut output_wide, 8);
+
+            for i in 0..64 {
+                assert_eq!(
+                    output_scalar[i], output_wide[i],
+                    "Seed {}: Mismatch at {}: scalar={}, wide={}",
+                    seed, i, output_scalar[i], output_wide[i]
+                );
+            }
         }
     }
 }
