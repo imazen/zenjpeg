@@ -7,18 +7,23 @@ use enough::Stop;
 
 use super::config::EncoderConfig;
 use super::types::{PixelLayout, YCbCrPlanes};
+use crate::encode::streaming::StreamingEncoder;
 use crate::error::{Error, Result};
 
 /// Encoder for raw byte input with explicit pixel layout.
+///
+/// This encoder wraps `StreamingEncoder` to provide true streaming encoding
+/// without buffering the entire image in memory.
 pub struct BytesEncoder {
+    /// v2 config (kept for ICC profile injection)
     config: EncoderConfig,
+    /// Pixel layout
     layout: PixelLayout,
+    /// Image dimensions
     width: u32,
     height: u32,
-    rows_pushed: u32,
-    output: Vec<u8>,
-    // TODO: Replace with actual encoding state
-    pixel_buffer: Vec<u8>,
+    /// Inner streaming encoder (handles actual encoding)
+    inner: StreamingEncoder,
 }
 
 impl BytesEncoder {
@@ -47,15 +52,52 @@ impl BytesEncoder {
             });
         }
 
+        // Build and start the streaming encoder with config from v2
+        let inner = Self::build_streaming_encoder(&config, width, height, layout)?;
+
         Ok(Self {
             config,
             layout,
             width,
             height,
-            rows_pushed: 0,
-            output: Vec::new(),
-            pixel_buffer: Vec::new(),
+            inner,
         })
+    }
+
+    /// Build a StreamingEncoder from v2 config.
+    fn build_streaming_encoder(
+        config: &EncoderConfig,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Result<StreamingEncoder> {
+        use crate::encode::streaming::StreamingEncoder as SE;
+        use crate::quant::Quality as LegacyQuality;
+
+        let quality = LegacyQuality::from_quality(config.quality.to_internal());
+        let pixel_format = layout.to_legacy();
+        let subsampling = match config.color_mode {
+            super::types::ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            super::types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
+            super::types::ColorMode::Grayscale => crate::types::Subsampling::S444,
+        };
+
+        let mut builder = SE::new(width, height)
+            .quality(quality)
+            .pixel_format(pixel_format)
+            .subsampling(subsampling)
+            .optimize_huffman(config.optimize_huffman)
+            .chroma_downsampling(config.downsampling_method.to_legacy());
+
+        if config.progressive {
+            builder = builder.progressive(true);
+        }
+
+        if matches!(config.color_mode, super::types::ColorMode::Xyb { .. }) {
+            builder = builder.use_xyb(true);
+        }
+
+        builder.start()
     }
 
     /// Push rows with explicit stride.
@@ -88,7 +130,8 @@ impl BytesEncoder {
         }
 
         // Validate row count
-        let new_total = self.rows_pushed + rows as u32;
+        let current_rows = self.inner.rows_pushed() as u32;
+        let new_total = current_rows + rows as u32;
         if new_total > self.height {
             return Err(Error::TooManyRows {
                 height: self.height,
@@ -105,19 +148,25 @@ impl BytesEncoder {
             });
         }
 
-        // Copy row data (stripping padding if needed)
-        for row in 0..rows {
-            if stop.should_stop() {
-                return Err(Error::Cancelled);
-            }
+        // Push rows to streaming encoder
+        if stride_bytes == min_stride {
+            // Packed data - can push directly
+            self.inner
+                .push_rows_with_stop(&data[..rows * min_stride], rows, &stop)?;
+        } else {
+            // Strided data - push row by row
+            for row in 0..rows {
+                if stop.should_stop() {
+                    return Err(Error::Cancelled);
+                }
 
-            let src_start = row * stride_bytes;
-            let src_end = src_start + min_stride;
-            self.pixel_buffer
-                .extend_from_slice(&data[src_start..src_end]);
+                let src_start = row * stride_bytes;
+                let src_end = src_start + min_stride;
+                self.inner
+                    .push_row_with_stop(&data[src_start..src_end], &stop)?;
+            }
         }
 
-        self.rows_pushed = new_total;
         Ok(())
     }
 
@@ -165,13 +214,13 @@ impl BytesEncoder {
     /// Get number of rows pushed so far.
     #[must_use]
     pub fn rows_pushed(&self) -> u32 {
-        self.rows_pushed
+        self.inner.rows_pushed() as u32
     }
 
     /// Get number of rows remaining.
     #[must_use]
     pub fn rows_remaining(&self) -> u32 {
-        self.height - self.rows_pushed
+        self.height - self.inner.rows_pushed() as u32
     }
 
     /// Get the pixel layout.
@@ -184,54 +233,16 @@ impl BytesEncoder {
 
     /// Finish encoding, return JPEG bytes.
     pub fn finish(self) -> Result<Vec<u8>> {
-        if self.rows_pushed != self.height {
+        let rows_pushed = self.inner.rows_pushed() as u32;
+        if rows_pushed != self.height {
             return Err(Error::IncompleteImage {
                 height: self.height,
-                pushed: self.rows_pushed,
+                pushed: rows_pushed,
             });
         }
 
-        // TODO: Actually encode the image using the existing encoder infrastructure
-        // For now, use the legacy encoder
-        self.encode_with_legacy()
-    }
-
-    /// Finish encoding to Write destination.
-    pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
-        let jpeg = self.finish()?;
-        output.write_all(&jpeg)?;
-        Ok(output)
-    }
-
-    /// Internal: encode using legacy encoder
-    fn encode_with_legacy(self) -> Result<Vec<u8>> {
-        use crate::quant::Quality as LegacyQuality;
-        use crate::JpegEncoder;
-
-        let quality = LegacyQuality::from_quality(self.config.quality.to_internal());
-        let pixel_format = self.layout.to_legacy();
-        let subsampling = match self.config.color_mode {
-            super::types::ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
-            super::types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
-            super::types::ColorMode::Grayscale => crate::types::Subsampling::S444,
-        };
-
-        let mut encoder = JpegEncoder::new(self.width, self.height)
-            .quality(quality)
-            .pixel_format(pixel_format)
-            .subsampling(subsampling)
-            .optimize_huffman(self.config.optimize_huffman)
-            .chroma_downsampling(self.config.downsampling_method.to_legacy());
-
-        if self.config.progressive {
-            encoder = encoder.progressive(true);
-        }
-
-        if matches!(self.config.color_mode, super::types::ColorMode::Xyb { .. }) {
-            encoder = encoder.use_xyb(true);
-        }
-
-        let mut jpeg = encoder.encode(&self.pixel_buffer)?;
+        // Finish streaming encoder
+        let mut jpeg = self.inner.finish()?;
 
         // Inject ICC profile if present
         if let Some(ref icc_data) = self.config.icc_profile {
@@ -239,6 +250,13 @@ impl BytesEncoder {
         }
 
         Ok(jpeg)
+    }
+
+    /// Finish encoding to Write destination.
+    pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
+        let jpeg = self.finish()?;
+        output.write_all(&jpeg)?;
+        Ok(output)
     }
 }
 
