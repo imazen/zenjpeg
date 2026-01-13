@@ -10,6 +10,9 @@ categories = ["development-tools::testing"]
 publish = false  # Internal development crate
 
 [dependencies]
+# Cancellation support
+enough = { workspace = true }
+
 # Image buffer types
 rgb = { workspace = true }
 imgref = { workspace = true }

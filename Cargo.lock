@@ -690,6 +690,7 @@ version = "0.1.0"
 dependencies = [
  "butteraugli",
  "dssim",
+ "enough",
  "fast-ssim2",
  "imgref",
  "jpegli-internals-sys",

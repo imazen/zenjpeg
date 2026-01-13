@@ -36,58 +36,201 @@ However, jpegli-rs has been **rewritten from scratch multiple times** and is now
 - **Parallel encoding** - Multi-threaded for large images (1024x1024+)
 - **Color management** - Optional ICC profile support
 
-## Quick Start
+## API Reference
+
+### Encoder API
 
 ```rust
-use jpegli::{JpegEncoder, Quality};
-
-// Simple encoding (one-shot)
-let jpeg_data = jpegli::encode_rgb(800, 600, &rgb_pixels, 85)?;
-
-// Builder API for more control
-let jpeg_data = JpegEncoder::new(800, 600)
-    .quality(85)                      // 1-100 scale
-    .progressive(true)                // Progressive JPEG (~3% smaller)
-    .encode_all(&rgb_pixels)?;
-
-// Decode JPEG to RGB
-let image = jpegli::decode(&jpeg_data)?;
-let rgb_pixels: &[u8] = image.pixels();
+use jpegli::{EncoderConfig, PixelLayout, Quality, ChromaSubsampling};
+use enough::Never;  // For no-cancellation
 ```
 
-### Streaming Encoder (Memory Efficient)
-
-For large images or when reading from a stream:
+#### Quick Start
 
 ```rust
-use jpegli::JpegEncoder;
-
-let mut encoder = JpegEncoder::new(4096, 4096)
+// Create reusable config
+let config = EncoderConfig::new()
     .quality(85)
-    .start()?;
+    .progressive(true);
 
-// Push rows incrementally
-for row in image_rows {
-    encoder.push_row(row)?;
-}
-
-let jpeg_data = encoder.finish()?;
+// Encode from raw bytes
+let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
+enc.push_packed(&rgb_bytes, Never)?;
+let jpeg = enc.finish()?;
 ```
 
-### Quality Settings
+#### Three Encoder Entry Points
+
+| Method | Input Type | Use Case |
+|--------|------------|----------|
+| `encode_from_bytes(w, h, layout)` | `&[u8]` | Raw byte buffers |
+| `encode_from_rgb::<P>(w, h)` | `rgb` crate types | `RGB<u8>`, `RGBA<f32>`, etc. |
+| `encode_from_ycbcr_planar(w, h)` | `YCbCrPlanes` | Video decoder output |
+
+#### Examples
 
 ```rust
-use jpegli::{JpegEncoder, Quality};
+// From raw RGB bytes
+let mut enc = config.encode_from_bytes(800, 600, PixelLayout::Rgb8Srgb)?;
+enc.push_packed(&rgb_bytes, Never)?;
+let jpeg = enc.finish()?;
 
-// Traditional 1-100 quality scale
-JpegEncoder::new(w, h).quality(85)
+// From rgb crate types
+use rgb::RGB;
+let mut enc = config.encode_from_rgb::<RGB<u8>>(800, 600)?;
+enc.push_packed(&pixels, Never)?;
+let jpeg = enc.finish()?;
 
-// Butteraugli distance (advanced - lower = better quality)
-// 1.0 = high quality, 2.0 = medium, 3.0+ = low
-JpegEncoder::new(w, h).distance(1.0)
+// From planar YCbCr (video pipelines)
+let mut enc = config.encode_from_ycbcr_planar(1920, 1080)?;
+enc.push(&planes, num_rows, Never)?;
+let jpeg = enc.finish()?;
+```
 
-// Quality enum for explicit control
-JpegEncoder::new(w, h).quality(Quality::from_distance(1.0))
+#### EncoderConfig Builder Methods
+
+| Method | Description | Default |
+|--------|-------------|---------|
+| `.quality(q)` | Quality 0-100 or `Quality` enum | 90 |
+| `.progressive(bool)` | Progressive JPEG (~3% smaller) | `false` |
+| `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
+| `.ycbcr(sub)` | YCbCr with subsampling | `Quarter` (4:2:0) |
+| `.xyb()` | XYB perceptual color space | - |
+| `.grayscale()` | Single-channel output | - |
+| `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |
+| `.icc_profile(bytes)` | Attach ICC profile | None |
+| `.restart_interval(n)` | MCUs between restart markers | 0 |
+
+#### Quality Options
+
+```rust
+// Simple quality scale (0-100)
+config.quality(85)
+
+// Quality enum variants
+config.quality(Quality::ApproxJpegli(85.0))     // Default scale
+config.quality(Quality::ApproxMozjpeg(80))      // Match mozjpeg output
+config.quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
+config.quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
+```
+
+#### Pixel Layouts
+
+| Layout | Bytes/px | Notes |
+|--------|----------|-------|
+| `Rgb8Srgb` | 3 | Default, sRGB gamma |
+| `Bgr8Srgb` / `Bgrx8Srgb` | 3/4 | Windows/GDI order |
+| `Rgbx8Srgb` | 4 | 4th byte ignored |
+| `Gray8Srgb` | 1 | Grayscale sRGB |
+| `Rgb16Linear` | 6 | 16-bit linear |
+| `RgbF32Linear` | 12 | HDR float (0.0-1.0) |
+| `YCbCr8` / `YCbCrF32` | 3/12 | Pre-converted YCbCr |
+
+#### Chroma Subsampling
+
+```rust
+config.ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default, best compression)
+config.ycbcr(ChromaSubsampling::Full)           // 4:4:4 (best quality)
+config.ycbcr(ChromaSubsampling::HalfHorizontal) // 4:2:2
+config.ycbcr(ChromaSubsampling::HalfVertical)   // 4:4:0
+```
+
+#### Resource Estimation
+
+```rust
+let config = EncoderConfig::new().quality(85);
+let memory_estimate = config.estimate_memory(1920, 1080);
+```
+
+---
+
+### Decoder API
+
+```rust
+use jpegli::{Decoder, DecodedImage, DecodedImageF32, DecoderConfig};
+```
+
+#### Basic Decoding
+
+```rust
+// Decode to RGB (default)
+let image = Decoder::new().decode(&jpeg_data)?;
+let pixels: &[u8] = image.pixels();
+let (width, height) = image.dimensions();
+```
+
+#### High-Precision Decoding (f32)
+
+Preserves jpegli's 12-bit internal precision:
+
+```rust
+let image: DecodedImageF32 = Decoder::new().decode_f32(&jpeg_data)?;
+let pixels: &[f32] = image.pixels();  // Values in 0.0-1.0
+
+// Convert to 8-bit or 16-bit when needed
+let u8_pixels: Vec<u8> = image.to_u8();
+let u16_pixels: Vec<u16> = image.to_u16();
+```
+
+#### YCbCr Output (Zero Color Conversion)
+
+For video pipelines or re-encoding:
+
+```rust
+use jpegli::DecodedYCbCr;
+
+let ycbcr: DecodedYCbCr = Decoder::new().decode_to_ycbcr_f32(&jpeg_data)?;
+// Access Y, Cb, Cr planes directly (f32, range [-128, 127])
+```
+
+#### Reading JPEG Info Without Decoding
+
+```rust
+let info = Decoder::new().read_info(&jpeg_data)?;
+println!("{}x{}, {} components", info.width, info.height, info.num_components);
+```
+
+#### Decoder Options
+
+| Method | Description | Default |
+|--------|-------------|---------|
+| `.output_format(fmt)` | Output pixel format | `Rgb` |
+| `.fancy_upsampling(bool)` | Smooth chroma upsampling | `true` |
+| `.block_smoothing(bool)` | DCT block edge smoothing | `false` |
+| `.apply_icc(bool)` | Apply embedded ICC profile | `true` |
+| `.max_pixels(n)` | Pixel count limit (DoS protection) | 100M |
+| `.max_memory(n)` | Memory limit in bytes | 512 MB |
+
+#### Decoded Image Methods
+
+```rust
+let image = Decoder::new().decode(&jpeg_data)?;
+
+image.width()           // Image width
+image.height()          // Image height
+image.dimensions()      // (width, height) tuple
+image.pixels()          // &[u8] pixel data
+image.bytes_per_pixel() // Bytes per pixel for format
+image.stride()          // Bytes per row
+```
+
+#### DecoderConfig (Advanced)
+
+```rust
+use jpegli::{Decoder, DecoderConfig};
+
+// Most users should use the builder methods instead:
+let image = Decoder::new()
+    .fancy_upsampling(true)
+    .block_smoothing(false)
+    .apply_icc(true)
+    .max_pixels(100_000_000)
+    .max_memory(512 * 1024 * 1024)
+    .decode(&jpeg_data)?;
+
+// Or construct DecoderConfig directly:
+let config = DecoderConfig::default();
+let decoder = Decoder::from_config(config);
 ```
 
 ## Performance
@@ -115,24 +258,6 @@ JpegEncoder::new(w, h).quality(Quality::from_distance(1.0))
 - Use **Sequential** for: real-time encoding, high throughput
 - Use **Progressive** for: web delivery, storage optimization
 
-### Parallel Encoding
-
-```rust
-// Enable parallel encoding (requires `parallel` feature)
-JpegEncoder::new(2048, 2048)
-    .quality(85)
-    .parallel(true)  // 1.4x speedup on large images
-    .encode_all(&pixels)?;
-```
-
-| Image Size | Parallel Speedup | Notes |
-|------------|------------------|-------|
-| 512x512 | 0.69x (slower!) | Overhead exceeds benefit |
-| 1024x1024 | 1.11x | Marginal benefit |
-| 2048x2048 | **1.40x** | Significant benefit |
-
-**Only use parallel for images 1024x1024 or larger.**
-
 ### Decoding Speed
 
 | Decoder | Speed | Notes |
@@ -159,21 +284,22 @@ Quality is identical; file sizes within 0.5%.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `simd` | Yes | Portable SIMD via `wide` crate |
-| `parallel` | No | Multi-threaded encoding (rayon) |
 | `cms-lcms2` | Yes | Color management via lcms2 |
 | `cms-moxcms` | No | Pure Rust color management |
+| `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
 | `test-utils` | Yes | Testing utilities |
+
+SIMD via the `wide` crate is always enabled (portable, safe).
 
 ```toml
 [dependencies]
-jpegli-rs = "0.4"
-
-# Or with parallel encoding:
-jpegli-rs = { version = "0.4", features = ["parallel"] }
+jpegli-rs = "0.5"
 
 # Minimal (no CMS):
-jpegli-rs = { version = "0.4", default-features = false, features = ["simd"] }
+jpegli-rs = { version = "0.5", default-features = false }
+
+# With unsafe SIMD (x86_64 only):
+jpegli-rs = { version = "0.5", features = ["unsafe_simd"] }
 ```
 
 ## Encoder Status
@@ -187,8 +313,9 @@ jpegli-rs = { version = "0.4", default-features = false, features = ["simd"] }
 | 4:4:4 / 4:2:0 / 4:2:2 / 4:4:0 | Working |
 | XYB color space | Working |
 | Grayscale | Working |
-| Parallel encoding | Working (1024x1024+) |
 | Custom quant tables | Working |
+| ICC profile embedding | Working |
+| YCbCr planar input | Working |
 
 ## Decoder Status
 

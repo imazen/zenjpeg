@@ -1386,7 +1386,7 @@ impl ChromaSubsampling {
         }
     }
 
-    /// Convert to jpegli Subsampling type.
+    /// Convert to jpegli Subsampling type (legacy).
     #[must_use]
     pub fn to_jpegli(&self) -> jpegli::Subsampling {
         match self {
@@ -1394,6 +1394,17 @@ impl ChromaSubsampling {
             Self::S422 => jpegli::Subsampling::S422,
             Self::S420 => jpegli::Subsampling::S420,
             Self::S440 => jpegli::Subsampling::S440,
+        }
+    }
+
+    /// Convert to v2 API ChromaSubsampling type.
+    #[must_use]
+    pub fn to_v2(&self) -> jpegli::ChromaSubsampling {
+        match self {
+            Self::S444 => jpegli::ChromaSubsampling::Full,
+            Self::S422 => jpegli::ChromaSubsampling::HalfHorizontal,
+            Self::S420 => jpegli::ChromaSubsampling::Quarter,
+            Self::S440 => jpegli::ChromaSubsampling::HalfVertical,
         }
     }
 }
@@ -1517,26 +1528,33 @@ impl EncoderConfig {
     }
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        #[cfg_attr(not(feature = "experimental-hybrid-trellis"), allow(unused_mut))]
-        let mut encoder = jpegli::JpegEncoder::new(img.width as u32, img.height as u32)
-            .quality(jpegli::Quality::from_quality(self.quality as f32))
-            .use_xyb(self.color == ColorMode::Xyb)
-            .mode(self.scan.to_jpegli())
-            .subsampling(self.subsampling.to_jpegli());
-
-        #[cfg(feature = "experimental-hybrid-trellis")]
-        if self.hybrid {
-            encoder = encoder.hybrid_config(jpegli::hybrid_config::HybridConfig::default());
-        }
+        use jpegli::{EncoderConfig, PixelLayout};
 
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         if self.hybrid {
             return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
         }
 
-        encoder
-            .encode(&img.pixels)
-            .map_err(|e| format!("jpegli-rs encode failed: {e}"))
+        let mut config = EncoderConfig::new()
+            .quality(self.quality as f32)
+            .progressive(self.scan == ScanMode::Progressive);
+
+        // Set color mode and subsampling
+        if self.color == ColorMode::Xyb {
+            config = config.xyb();
+        } else {
+            config = config.ycbcr(self.subsampling.to_v2());
+        }
+
+        let mut enc = config
+            .encode_from_bytes(img.width as u32, img.height as u32, PixelLayout::Rgb8Srgb)
+            .map_err(|e| format!("jpegli-rs encode setup failed: {e}"))?;
+
+        enc.push_packed(&img.pixels, enough::Never)
+            .map_err(|e| format!("jpegli-rs encode failed: {e}"))?;
+
+        enc.finish()
+            .map_err(|e| format!("jpegli-rs encode finish failed: {e}"))
     }
 
     /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
