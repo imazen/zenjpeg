@@ -14,7 +14,7 @@ use test_utils::{
 use jpegli::{
     decode::Decoder,
     types::{JpegMode, PixelFormat, Subsampling},
-    Quality, StreamingEncoder,
+    Quality, JpegEncoder,
 };
 use test_case::test_case;
 
@@ -25,8 +25,8 @@ use test_case::test_case;
 #[test]
 fn test_encode_basic_rgb() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Verify JPEG structure
     assert!(jpeg.len() > 100, "JPEG too small");
@@ -37,8 +37,8 @@ fn test_encode_basic_rgb() {
 #[test]
 fn test_encode_basic_grayscale() {
     let img = generate_gradient_h(64, 64, 1);
-    let encoder = StreamingEncoder::new(64, 64).pixel_format(PixelFormat::Gray);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64).pixel_format(PixelFormat::Gray);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     assert!(jpeg.len() > 50, "JPEG too small");
     assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Missing SOI marker");
@@ -57,8 +57,8 @@ fn test_encode_rgba_input() {
         }
     }
 
-    let encoder = StreamingEncoder::new(32, 32).pixel_format(PixelFormat::Rgba);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(32, 32).pixel_format(PixelFormat::Rgba);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "JPEG too small");
 }
 
@@ -76,9 +76,9 @@ fn test_encode_rgba_input() {
 #[test_case(100.0 ; "Q100")]
 fn test_encode_quality_levels(quality: f32) {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_quality(quality));
+    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(quality));
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "Q{} JPEG too small", quality);
 
     // Decode and verify roundtrip
@@ -95,8 +95,8 @@ fn test_encode_quality_affects_size() {
     let sizes: Vec<usize> = [30.0, 50.0, 70.0, 90.0]
         .iter()
         .map(|&q| {
-            let encoder = StreamingEncoder::new(256, 256).quality(Quality::from_quality(q));
-            encoder.encode_all(&img.pixels).unwrap().len()
+            let encoder = JpegEncoder::new(256, 256).quality(Quality::from_quality(q));
+            encoder.encode(&img.pixels).unwrap().len()
         })
         .collect();
 
@@ -123,9 +123,9 @@ fn test_encode_quality_affects_size() {
 #[test_case(4.0 ; "distance_4_0")]
 fn test_encode_distance_quality(distance: f32) {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_distance(distance));
+    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_distance(distance));
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 100, "Distance {} JPEG too small", distance);
 }
 
@@ -144,9 +144,9 @@ fn test_encode_distance_quality(distance: f32) {
 #[test_case(640, 480 ; "640x480_vga")]
 fn test_encode_various_sizes(width: u32, height: u32) {
     let img = generate_gradient_d(width, height, 3);
-    let encoder = StreamingEncoder::new(width, height);
+    let encoder = JpegEncoder::new(width, height);
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     assert!(jpeg.len() > 50, "{}x{} JPEG too small", width, height);
 
     // Verify dimensions in decoded output
@@ -160,9 +160,9 @@ fn test_encode_various_sizes(width: u32, height: u32) {
 fn test_encode_non_square() {
     // Wide image
     let wide = generate_gradient_h(256, 64, 3);
-    let encoder = StreamingEncoder::new(256, 64);
+    let encoder = JpegEncoder::new(256, 64);
     let jpeg = encoder
-        .encode_all(&wide.pixels)
+        .encode(&wide.pixels)
         .expect("encode wide failed");
 
     let decoder = Decoder::new();
@@ -172,9 +172,9 @@ fn test_encode_non_square() {
 
     // Tall image
     let tall = generate_gradient_h(64, 256, 3);
-    let encoder = StreamingEncoder::new(64, 256);
+    let encoder = JpegEncoder::new(64, 256);
     let jpeg = encoder
-        .encode_all(&tall.pixels)
+        .encode(&tall.pixels)
         .expect("encode tall failed");
 
     let decoded = decoder.decode(&jpeg).expect("decode tall failed");
@@ -189,9 +189,9 @@ fn test_encode_non_square() {
 #[test]
 fn test_encode_baseline_mode() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128).mode(JpegMode::Baseline);
+    let encoder = JpegEncoder::new(128, 128).mode(JpegMode::Baseline);
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Baseline should use SOF0 marker
     let sof0_pos = jpeg
@@ -204,9 +204,9 @@ fn test_encode_baseline_mode() {
 #[test]
 fn test_encode_progressive_mode() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128).mode(JpegMode::Progressive);
+    let encoder = JpegEncoder::new(128, 128).mode(JpegMode::Progressive);
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Progressive should use SOF2 marker
     let sof2_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xC2]);
@@ -217,18 +217,18 @@ fn test_encode_progressive_mode() {
 fn test_encode_progressive_smaller_than_baseline() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let baseline_encoder = StreamingEncoder::new(256, 256)
+    let baseline_encoder = JpegEncoder::new(256, 256)
         .mode(JpegMode::Baseline)
         .quality(Quality::from_quality(85.0));
     let baseline_jpeg = baseline_encoder
-        .encode_all(&img.pixels)
+        .encode(&img.pixels)
         .expect("baseline failed");
 
-    let progressive_encoder = StreamingEncoder::new(256, 256)
+    let progressive_encoder = JpegEncoder::new(256, 256)
         .mode(JpegMode::Progressive)
         .quality(Quality::from_quality(85.0));
     let progressive_jpeg = progressive_encoder
-        .encode_all(&img.pixels)
+        .encode(&img.pixels)
         .expect("progressive failed");
 
     // Progressive encoding typically produces smaller files
@@ -248,13 +248,13 @@ fn test_encode_progressive_smaller_than_baseline() {
 fn test_encode_optimized_huffman() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let encoder_opt = StreamingEncoder::new(256, 256).optimize_huffman(true);
+    let encoder_opt = JpegEncoder::new(256, 256).optimize_huffman(true);
     let jpeg_opt = encoder_opt
-        .encode_all(&img.pixels)
+        .encode(&img.pixels)
         .expect("optimized failed");
 
-    let encoder_fixed = StreamingEncoder::new(256, 256).optimize_huffman(false);
-    let jpeg_fixed = encoder_fixed.encode_all(&img.pixels).expect("fixed failed");
+    let encoder_fixed = JpegEncoder::new(256, 256).optimize_huffman(false);
+    let jpeg_fixed = encoder_fixed.encode(&img.pixels).expect("fixed failed");
 
     // Optimized should be smaller or equal
     println!(
@@ -274,7 +274,7 @@ fn test_encode_optimized_huffman() {
 
 #[test]
 fn test_encode_reuse_encoder() {
-    let encoder_config = StreamingEncoder::new(64, 64);
+    let encoder_config = JpegEncoder::new(64, 64);
 
     // Encode multiple different images with same encoder config
     for i in 0..5u8 {
@@ -285,10 +285,10 @@ fn test_encode_reuse_encoder() {
             *p = p.wrapping_add(i * 10);
         }
 
-        // Clone the config for each encode (StreamingEncoder consumes self)
+        // Clone the config for each encode (JpegEncoder consumes self)
         let jpeg = encoder_config
             .clone()
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect("encode failed");
         assert!(jpeg.len() > 100, "Iteration {} JPEG too small", i);
 
@@ -318,8 +318,8 @@ fn test_encode_solid_color() {
 
     for (r, g, b) in colors {
         let img = generate_solid_rgb(64, 64, r, g, b);
-        let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(95.0));
-        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(95.0));
+        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let decoder = Decoder::new();
         let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -333,8 +333,8 @@ fn test_encode_solid_color() {
 #[test]
 fn test_encode_checkerboard() {
     let img = generate_checkerboard(128, 128, 8, 3);
-    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_quality(95.0));
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(95.0));
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -350,8 +350,8 @@ fn test_encode_checkerboard() {
 #[test]
 fn test_encode_color_bars() {
     let img = generate_color_bars(128, 64);
-    let encoder = StreamingEncoder::new(128, 64).quality(Quality::from_quality(90.0));
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(128, 64).quality(Quality::from_quality(90.0));
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -371,8 +371,8 @@ fn test_encode_color_bars() {
 fn test_encode_minimum_dimensions() {
     // Smallest possible JPEG
     let img = TestImage::from_pixels(1, 1, 3, vec![128, 64, 192]);
-    let encoder = StreamingEncoder::new(1, 1);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode 1x1 failed");
+    let encoder = JpegEncoder::new(1, 1);
+    let jpeg = encoder.encode(&img.pixels).expect("encode 1x1 failed");
     assert!(jpeg.len() > 0, "1x1 JPEG should not be empty");
 
     let decoder = Decoder::new();
@@ -385,10 +385,10 @@ fn test_encode_minimum_dimensions() {
 fn test_encode_large_image() {
     // Test larger image (but not too large for CI)
     let img = generate_gradient_d(1024, 768, 3);
-    let encoder = StreamingEncoder::new(1024, 768).quality(Quality::from_quality(85.0));
+    let encoder = JpegEncoder::new(1024, 768).quality(Quality::from_quality(85.0));
 
     let jpeg = encoder
-        .encode_all(&img.pixels)
+        .encode(&img.pixels)
         .expect("encode large failed");
     assert!(jpeg.len() > 10000, "Large JPEG suspiciously small");
 
@@ -407,8 +407,8 @@ fn test_encode_no_jfif_header() {
     // jpegli-rs intentionally omits the JFIF APP0 marker to match C++ jpegli behavior.
     // This saves 18 bytes per file.
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Should NOT have APP0 JFIF marker (matches C++ jpegli)
     let app0_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xE0]);
@@ -425,8 +425,8 @@ fn test_encode_no_jfif_header() {
 #[test]
 fn test_encode_dqt_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Look for DQT marker
     let dqt_count = jpeg.windows(2).filter(|w| w == &[0xFF, 0xDB]).count();
@@ -440,8 +440,8 @@ fn test_encode_dqt_present() {
 #[test]
 fn test_encode_dht_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Look for DHT marker
     let dht_count = jpeg.windows(2).filter(|w| w == &[0xFF, 0xC4]).count();
@@ -455,8 +455,8 @@ fn test_encode_dht_present() {
 #[test]
 fn test_xyb_has_app14_adobe_marker() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64).use_xyb(true);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64).use_xyb(true);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Look for APP14 marker (0xFF 0xEE)
     let app14_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xEE]);
@@ -490,8 +490,8 @@ fn test_xyb_has_app14_adobe_marker() {
 #[test]
 fn test_ycbcr_no_app14_marker() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64);
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // YCbCr mode should NOT have APP14 marker (JFIF is sufficient)
     let app14_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xEE]);
@@ -508,11 +508,11 @@ fn test_ycbcr_no_app14_marker() {
 #[test]
 fn test_xyb_optimized_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
+    let encoder = JpegEncoder::new(64, 64)
         .quality(Quality::from_quality(90.0))
         .use_xyb(true)
         .optimize_huffman(true);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
@@ -524,11 +524,11 @@ fn test_xyb_optimized_huffman_decodable() {
 #[test]
 fn test_xyb_standard_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
+    let encoder = JpegEncoder::new(64, 64)
         .quality(Quality::from_quality(90.0))
         .use_xyb(true)
         .optimize_huffman(false);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
@@ -540,11 +540,11 @@ fn test_xyb_standard_huffman_decodable() {
 #[test]
 fn test_ycbcr_optimized_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
+    let encoder = JpegEncoder::new(64, 64)
         .quality(Quality::from_quality(90.0))
         .use_xyb(false)
         .optimize_huffman(true);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
@@ -558,11 +558,11 @@ fn test_ycbcr_optimized_huffman_decodable() {
 #[test]
 fn test_ycbcr_standard_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64)
+    let encoder = JpegEncoder::new(64, 64)
         .quality(Quality::from_quality(90.0))
         .use_xyb(false)
         .optimize_huffman(false);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     // Should be decodable by our decoder
     let decoder = Decoder::new();
@@ -583,12 +583,12 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
     ];
 
     for (use_xyb, optimize, label) in &configs {
-        let encoder = StreamingEncoder::new(64, 64)
+        let encoder = JpegEncoder::new(64, 64)
             .quality(Quality::from_quality(90.0))
             .use_xyb(*use_xyb)
             .optimize_huffman(*optimize);
         let jpeg = encoder
-            .encode_all(&img.pixels)
+            .encode(&img.pixels)
             .expect(&format!("encode {} failed", label));
 
         // Test with zune-jpeg

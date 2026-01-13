@@ -97,13 +97,13 @@ fn encode_rust(
     subsampling: Subsampling,
     quality: f32,
 ) -> Vec<u8> {
-    jpegli::StreamingEncoder::new(width, height)
+    jpegli::JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(subsampling)
         .quality(Quality::from_quality(quality))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
-        .encode_all(rgb)
+        .encode(rgb)
         .expect("Rust encode failed")
 }
 

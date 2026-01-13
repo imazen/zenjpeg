@@ -94,13 +94,13 @@ fn register_rust_jpegli(session: &mut EvalSession) {
 
             let quality = request.quality as f32;
 
-            let encoder = jpegli::StreamingEncoder::new(width as u32, height as u32)
+            let encoder = jpegli::JpegEncoder::new(width as u32, height as u32)
                 .pixel_format(jpegli::PixelFormat::Rgb)
                 .quality(Quality::from_quality(quality))
                 .optimize_huffman(false); // Match C++ --fixed_code
 
             let encoded = encoder
-                .encode_all(&rgb_data)
+                .encode(&rgb_data)
                 .map_err(|e| codec_eval::Error::Codec {
                     codec: "jpegli-rs".to_string(),
                     message: format!("{}", e),
@@ -269,7 +269,7 @@ fn test_corpus_comparison() {
         .report_dir(PathBuf::from("/tmp/jpegli-corpus-comparison"))
         .viewing(ViewingCondition::desktop())
         .quality_levels(vec![60.0, 80.0, 90.0])
-        .build();
+        .start();
 
     let mut session = EvalSession::new(config);
 

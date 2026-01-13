@@ -426,11 +426,6 @@ impl ChromaDownsampling {
     }
 }
 
-/// Legacy alias for backwards compatibility.
-#[doc(hidden)]
-#[deprecated(since = "0.4.0", note = "Use ChromaDownsampling instead")]
-pub type ChromaConversion = ChromaDownsampling;
-
 /// JPEG encoding mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

@@ -1,4 +1,4 @@
-use jpegli::{decode::Decoder, types::Subsampling, Quality, StreamingEncoder};
+use jpegli::{decode::Decoder, types::Subsampling, Quality, JpegEncoder};
 
 fn create_gradient(size: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (size * size * 3) as usize];
@@ -17,10 +17,10 @@ fn create_gradient(size: u32) -> Vec<u8> {
 fn test_size(size: u32) {
     let pixels = create_gradient(size);
 
-    let encoder = StreamingEncoder::new(size, size)
+    let encoder = JpegEncoder::new(size, size)
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S420);
-    let jpeg = match encoder.encode_all(&pixels) {
+    let jpeg = match encoder.encode(&pixels) {
         Ok(j) => j,
         Err(e) => {
             println!("  {}x{}: ENCODE FAILED: {:?}", size, size, e);

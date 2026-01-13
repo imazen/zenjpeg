@@ -12,7 +12,7 @@
 
 use jpegli::decode::Decoder;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 
 /// Regression test for the exact case found by the fuzzer.
 #[test]
@@ -23,13 +23,13 @@ fn test_s440_progressive_roundtrip() {
     // Generate test pixels
     let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-    let encoder = StreamingEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S440)
         .mode(JpegMode::Progressive);
 
-    let encoded = encoder.encode_all(&pixels).expect("encode should succeed");
+    let encoded = encoder.encode(&pixels).expect("encode should succeed");
     eprintln!(
         "Encoded {} bytes for {}x{} S440 Progressive",
         encoded.len(),
@@ -60,13 +60,13 @@ fn test_all_subsampling_progressive() {
 
         let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-        let encoder = StreamingEncoder::new(width, height)
+        let encoder = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .quality(Quality::from_quality(90.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive);
 
-        let encoded = match encoder.encode_all(&pixels) {
+        let encoded = match encoder.encode(&pixels) {
             Ok(data) => data,
             Err(e) => panic!("{} encode failed: {:?}", name, e),
         };
@@ -103,14 +103,14 @@ fn test_progressive_subsampling_various_sizes() {
                 .map(|i| ((i * 7) % 256) as u8)
                 .collect();
 
-            let encoder = StreamingEncoder::new(width as u32, height as u32)
+            let encoder = JpegEncoder::new(width as u32, height as u32)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::from_quality(85.0))
                 .subsampling(*subsampling)
                 .mode(JpegMode::Progressive);
 
             let encoded = encoder
-                .encode_all(&pixels)
+                .encode(&pixels)
                 .unwrap_or_else(|e| panic!("{}x{} {} encode failed: {:?}", width, height, name, e));
 
             let decoder = Decoder::new().output_format(PixelFormat::Rgb);

@@ -1,7 +1,7 @@
 //! Compare Rust vs C++ progressive encoding quality and size.
 
 use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 use std::fs;
 use std::process::Command;
 
@@ -64,12 +64,12 @@ fn test_cpp_quality_comparison() {
 
     for q in [3, 10, 30, 50, 70, 80, 85, 95] {
         // Rust encoding (progressive + optimized)
-        let rust_jpeg = StreamingEncoder::new(width, height)
+        let rust_jpeg = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .quality(Quality::from_quality(q as f32))
             .optimize_huffman(true)
             .mode(JpegMode::Progressive)
-            .encode_all(&data)
+            .encode(&data)
             .unwrap();
         let rust_size = rust_jpeg.len();
 

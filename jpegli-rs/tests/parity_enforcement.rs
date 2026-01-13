@@ -154,9 +154,9 @@ fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
 
 /// Encode with Rust jpegli
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::StreamingEncoder::new(width, height)
+    jpegli::JpegEncoder::new(width, height)
         .quality(jpegli::quant::Quality::Traditional(quality))
-        .encode_all(rgb)
+        .encode(rgb)
         .expect("Rust encoding failed")
 }
 

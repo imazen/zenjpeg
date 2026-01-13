@@ -18,7 +18,7 @@
 
 use dssim::Dssim;
 use jpegli::{
-    ChromaDownsampling, Decoder, Error, PixelFormat, Quality, StreamingEncoder, Subsampling,
+    ChromaDownsampling, Decoder, Error, PixelFormat, Quality, JpegEncoder, Subsampling,
 };
 use std::time::Instant;
 
@@ -190,7 +190,7 @@ fn encode_with_method(
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
-    let mut encoder = StreamingEncoder::new(width, height)
+    let mut encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(subsampling)
         .quality(Quality::from_quality(90.0));
@@ -199,7 +199,7 @@ fn encode_with_method(
         encoder = encoder.chroma_downsampling(m);
     }
 
-    let jpeg_data = encoder.encode_all(data)?;
+    let jpeg_data = encoder.encode(data)?;
     let encode_time = start.elapsed().as_micros();
 
     Ok(EncodingResult {

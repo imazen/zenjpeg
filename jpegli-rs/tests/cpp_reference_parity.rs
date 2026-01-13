@@ -8,7 +8,7 @@
 
 use jpegli::decode::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -195,11 +195,11 @@ fn test_file_size_parity() {
         };
 
         for point in &img_ref.points {
-            let encoder = StreamingEncoder::new(width, height)
+            let encoder = JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::from_quality(point.quality as f32));
 
-            let rust_jpeg = match encoder.encode_all(&pixels) {
+            let rust_jpeg = match encoder.encode(&pixels) {
                 Ok(data) => data,
                 Err(e) => {
                     failures.push(format!(
@@ -281,11 +281,11 @@ fn test_dssim_parity() {
         };
 
         for point in &img_ref.points {
-            let encoder = StreamingEncoder::new(width, height)
+            let encoder = JpegEncoder::new(width, height)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::from_quality(point.quality as f32));
 
-            let rust_jpeg = match encoder.encode_all(&pixels) {
+            let rust_jpeg = match encoder.encode(&pixels) {
                 Ok(data) => data,
                 Err(_) => continue,
             };

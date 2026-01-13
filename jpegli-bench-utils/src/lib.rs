@@ -1516,13 +1516,10 @@ impl EncoderConfig {
         }
     }
 
-    #[allow(deprecated)] // Uses legacy Encoder for benchmark compatibility
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         #[cfg_attr(not(feature = "experimental-hybrid-trellis"), allow(unused_mut))]
-        let mut encoder = jpegli::Encoder::new()
-            .width(img.width as u32)
-            .height(img.height as u32)
-            .jpegli_quality(jpegli::quant::Quality::from_quality(self.quality as f32))
+        let mut encoder = jpegli::JpegEncoder::new(img.width as u32, img.height as u32)
+            .quality(jpegli::Quality::from_quality(self.quality as f32))
             .use_xyb(self.color == ColorMode::Xyb)
             .mode(self.scan.to_jpegli())
             .subsampling(self.subsampling.to_jpegli());

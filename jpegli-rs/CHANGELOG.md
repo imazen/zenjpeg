@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **StreamingEncoder API**: New recommended encoder with row-by-row input
-  - `StreamingEncoder::new(width, height).build()` - Builder pattern for configuration
+- **JpegEncoder API**: New recommended encoder with row-by-row input
+  - `JpegEncoder::new(width, height).start()` - Builder pattern for configuration
   - `push_row()` / `push_rows()` - Incremental row input
   - `push_row_with_stop()` / `push_rows_with_stop()` - With cancellation support
   - `encode_all()` - Convenience method for single-call encoding
@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- **`Encoder` struct** - Use `StreamingEncoder` instead for better performance and lower memory usage
+- **`Encoder` struct** - Use `JpegEncoder` instead for better performance and lower memory usage
 - `Encoder::quality()` - Use `jpegli_quality()` or `equivalent_quality()` instead
 
 ### Fixed

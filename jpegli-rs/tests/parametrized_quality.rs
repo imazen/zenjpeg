@@ -9,7 +9,7 @@ mod test_utils;
 
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
-use jpegli::{Decoder, Quality, StreamingEncoder};
+use jpegli::{Decoder, Quality, JpegEncoder};
 use test_case::test_case;
 
 /// Helper to encode and decode an image, returning RMS and max diff.
@@ -21,9 +21,9 @@ fn roundtrip_quality(
 ) -> (f64, u8, usize) {
     let img = generate_test_image(width, height, pattern, 3);
 
-    let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(quality));
+    let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(quality));
 
-    let jpeg_data = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg_data = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg_data).expect("decode failed");
 

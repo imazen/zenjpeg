@@ -1,7 +1,7 @@
 //! Debug test for Gray16 linear encoding issue
 
 use jpegli::decode::Decoder;
-use jpegli::{PixelFormat, Quality, StreamingEncoder};
+use jpegli::{PixelFormat, Quality, JpegEncoder};
 use std::collections::HashSet;
 
 fn srgb_to_linear(s: f64) -> f64 {
@@ -70,17 +70,17 @@ fn debug_gray_linear_encoding() {
     }
 
     // Encode Gray8
-    let jpeg8 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg8 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(98.0))
         .pixel_format(PixelFormat::Gray)
-        .encode_all(&gray8)
+        .encode(&gray8)
         .expect("Gray8 encode failed");
 
     // Encode Gray16
-    let jpeg16 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg16 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(98.0))
         .pixel_format(PixelFormat::Gray16)
-        .encode_all(&gray16_bytes)
+        .encode(&gray16_bytes)
         .expect("Gray16 encode failed");
 
     println!("\n=== ENCODED JPEG ===");
