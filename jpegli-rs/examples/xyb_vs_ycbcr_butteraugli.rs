@@ -52,7 +52,7 @@ fn main() {
 
     for &q in &qualities {
         // Encode XYB
-        let xyb_jpeg = jpegli::JpegEncoder::new(width, height)
+        let xyb_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
             .quality(jpegli::quant::Quality::from_quality(q as f32))
             .use_xyb(true)
             .encode(pixels)
@@ -60,7 +60,7 @@ fn main() {
         let xyb_bytes = xyb_jpeg.len();
 
         // Encode YCbCr
-        let ycbcr_jpeg = jpegli::JpegEncoder::new(width, height)
+        let ycbcr_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
             .quality(jpegli::quant::Quality::from_quality(q as f32))
             .use_xyb(false)
             .encode(pixels)

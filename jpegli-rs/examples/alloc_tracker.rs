@@ -119,7 +119,7 @@ fn main() {
                 reset_stats();
 
                 // Create encoder using builder pattern
-                let encoder = JpegEncoder::new(width, height)
+                let encoder = JpegEncoder::new(*width as u32, *height as u32)
                     .quality(Quality::Traditional(quality as f32))
                     .pixel_format(PixelFormat::Rgb)
                     .subsampling(*subsampling)
@@ -171,7 +171,7 @@ fn main() {
 
     reset_stats();
 
-    let encoder = JpegEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)

@@ -156,7 +156,7 @@ fn main() {
         }
 
         // Rust YCbCr
-        let rust_jpeg = jpegli::encode::JpegEncoder::new(width, height)
+        let rust_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
             .quality(jpegli::quant::Quality::Traditional(q as f32))
             .encode(&rgb)
             .unwrap();
@@ -218,7 +218,7 @@ fn main() {
         }
 
         // Rust XYB
-        if let Ok(rust_jpeg) = jpegli::encode::JpegEncoder::new(width, height)
+        if let Ok(rust_jpeg) = jpegli::JpegEncoder::new(width as u32, height as u32)
             .quality(jpegli::quant::Quality::Traditional(q as f32))
             .use_xyb(true)
             .encode(&rgb)

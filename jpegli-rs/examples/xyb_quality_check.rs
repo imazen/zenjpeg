@@ -2,7 +2,7 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{Decoder, Encoder, PixelFormat};
+use jpegli::{Decoder, JpegEncoder, PixelFormat};
 use std::fs;
 use std::io::Write;
 use std::process::Command;
@@ -22,7 +22,7 @@ fn main() {
     println!("Image: {}x{}\n", width, height);
 
     // Encode with Rust XYB
-    let rust_xyb = JpegEncoder::new(width, height)
+    let rust_xyb = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(jpegli::quant::Quality::from_quality(90.0))
         .use_xyb(true)

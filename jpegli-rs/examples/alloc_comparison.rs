@@ -8,8 +8,8 @@
 //! Benefits: both cache locality AND reduced peak memory.
 
 use jpegli::encode::strip::StripProcessor;
-use jpegli::quant::{generate_quant_table, quant_vals_to_distance, ZeroBiasParams};
-use jpegli::{ColorSpace, PixelFormat, Quality, Subsampling};
+use jpegli::quant::{generate_quant_table, quant_vals_to_distance, Quality, ZeroBiasParams};
+use jpegli::{ColorSpace, PixelFormat, Subsampling};
 
 fn format_bytes(bytes: usize) -> String {
     if bytes >= 1024 * 1024 {
