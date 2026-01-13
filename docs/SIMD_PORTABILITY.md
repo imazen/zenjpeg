@@ -149,24 +149,41 @@ cargo test --release -- comparison --nocapture --ignored
 
 | Platform | IDCT | YCbCr→RGB | DCT | Status |
 |----------|------|-----------|-----|--------|
-| x86_64 AVX2 | `wide` i32x8 (**1.64x faster**) | AVX2 | AVX2+FMA | ✅ Done |
+| x86_64 AVX2 | `wide` i32x8 (**1.77x faster**) | AVX2 | AVX2+FMA | ✅ Done |
 | x86_64 SSE2 | `wide` i32x8 | Scalar | SSE2 | ✅ Works |
-| aarch64 NEON | `wide` i32x8 (**1.11x faster**) | Portable | NEON | ✅ Tested |
-| wasm32 | Scalar | Portable | Scalar | ✅ Builds |
+| x86_64 SSE4.1 | `wide` i32x8 | Multiversion | SSE4.1 | ✅ Works |
+| aarch64 NEON | `wide` i32x8 (**1.07x faster**) | Multiversion | NEON | ✅ Tested |
+| arm NEON | `wide` i32x8 | Multiversion | NEON | ✅ Targets |
+| wasm32 | Scalar/SIMD128 | Portable | Scalar/SIMD128 | ✅ Parity verified |
+| wasm32+simd128 | `wide` SIMD | Portable | `wide` SIMD | ✅ Builds (69KB) |
 
-### Benchmark Results (standalone test)
+### Benchmark Results (standalone test, Jan 2025)
 
 ```
 x86_64 AVX2:
-  Scalar: 44.2 ns/block
-  Wide:   26.9 ns/block
-  Speedup: 1.64x
+  Scalar: 62.5 ns/block
+  Wide:   35.3 ns/block
+  Speedup: 1.77x
 
 aarch64 NEON (via qemu):
-  Scalar: 646.9 ns/block
-  Wide:   583.9 ns/block
-  Speedup: 1.11x
+  Scalar: 670.1 ns/block
+  Wide:   628.2 ns/block
+  Speedup: 1.07x (qemu overhead affects this)
+
+wasm32-wasip1:
+  Parity: ✓ Scalar and Wide MATCH exactly
+  SIMD128: Requires RUSTFLAGS="-C target-feature=+simd128"
 ```
+
+### WASM SIMD128 Support
+
+To enable WASM SIMD128 acceleration:
+```bash
+RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
+```
+
+**Note:** WASM SIMD detection is compile-time only (no runtime detection).
+Binaries built with simd128 require a SIMD-capable runtime.
 
 **Key finding:** The `wide` crate REQUIRES `#[multiversion]` or `#[target_feature]`
 to use SIMD - it uses compile-time `#[cfg]`, not runtime detection. Without this,

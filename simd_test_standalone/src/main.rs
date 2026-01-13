@@ -262,27 +262,33 @@ fn main() {
         println!("Wide:   {:?}", &out_wide[0..16]);
     }
 
-    // Benchmark
-    let iterations = 100_000;
+    // Benchmark (not available on WASM - no std::time::Instant)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let iterations = 100_000;
 
-    let start = Instant::now();
-    for _ in 0..iterations {
-        let mut out = [0i16; 64];
-        scalar::idct_int(&input, &mut out);
-        std::hint::black_box(&out);
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let mut out = [0i16; 64];
+            scalar::idct_int(&input, &mut out);
+            std::hint::black_box(&out);
+        }
+        let scalar_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let mut out = [0i16; 64];
+            idct_wide(&input, &mut out);
+            std::hint::black_box(&out);
+        }
+        let wide_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+        println!("\nBenchmark ({} iterations):", iterations);
+        println!("  Scalar: {:.1} ns/block ({:.3} µs)", scalar_ns, scalar_ns / 1000.0);
+        println!("  Wide:   {:.1} ns/block ({:.3} µs)", wide_ns, wide_ns / 1000.0);
+        println!("  Speedup: {:.2}x", scalar_ns / wide_ns);
     }
-    let scalar_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
 
-    let start = Instant::now();
-    for _ in 0..iterations {
-        let mut out = [0i16; 64];
-        idct_wide(&input, &mut out);
-        std::hint::black_box(&out);
-    }
-    let wide_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
-
-    println!("\nBenchmark ({} iterations):", iterations);
-    println!("  Scalar: {:.1} ns/block ({:.3} µs)", scalar_ns, scalar_ns / 1000.0);
-    println!("  Wide:   {:.1} ns/block ({:.3} µs)", wide_ns, wide_ns / 1000.0);
-    println!("  Speedup: {:.2}x", scalar_ns / wide_ns);
+    #[cfg(target_arch = "wasm32")]
+    println!("\n(Benchmark skipped on WASM - no std::time::Instant)");
 }
