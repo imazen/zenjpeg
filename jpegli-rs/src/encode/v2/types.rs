@@ -59,6 +59,52 @@ impl Quality {
             Quality::ApproxButteraugli(dist) => butteraugli_to_internal(*dist),
         }
     }
+
+    /// Create quality from a 0-100 scale value.
+    ///
+    /// This is equivalent to `Quality::ApproxJpegli(q)` or `Quality::from(q)`.
+    #[deprecated(since = "0.5.0", note = "Use Quality::from(f32) or Quality::ApproxJpegli(f32) instead")]
+    #[must_use]
+    pub fn from_quality(q: f32) -> Self {
+        Quality::ApproxJpegli(q)
+    }
+
+    /// Create quality from butteraugli distance (backward compatibility).
+    ///
+    /// This is equivalent to `Quality::ApproxButteraugli(d)`.
+    #[deprecated(since = "0.5.0", note = "Use Quality::ApproxButteraugli(f32) instead")]
+    #[must_use]
+    pub fn from_distance(d: f32) -> Self {
+        Quality::ApproxButteraugli(d)
+    }
+
+    /// Backward-compatible constructor matching old `Quality::Traditional(f32)`.
+    #[deprecated(since = "0.5.0", note = "Use Quality::ApproxJpegli(f32) instead")]
+    #[must_use]
+    pub fn Traditional(q: f32) -> Self {
+        Quality::ApproxJpegli(q)
+    }
+
+    /// Convert to butteraugli distance (backward compatibility).
+    #[deprecated(since = "0.5.0", note = "Use Quality::ApproxButteraugli and to_internal() instead")]
+    #[must_use]
+    pub fn to_distance(&self) -> f32 {
+        // If already butteraugli distance, return it directly
+        if let Quality::ApproxButteraugli(d) = self {
+            return *d;
+        }
+        // Approximate conversion from internal quality to butteraugli distance
+        let q = self.to_internal();
+        if q >= 100.0 {
+            0.0
+        } else if q >= 90.0 {
+            (100.0 - q) * 0.1
+        } else if q >= 75.0 {
+            1.0 + (90.0 - q) * 0.13
+        } else {
+            3.0 + (75.0 - q) * 0.2
+        }
+    }
 }
 
 // Empirical mapping functions - TODO: calibrate from test data
