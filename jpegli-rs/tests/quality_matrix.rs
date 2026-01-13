@@ -14,9 +14,13 @@
 //! cargo test --release --test quality_matrix --features ffi-tests -- --nocapture
 //! ```
 
+use enough::Never;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
+
+// Re-use old types for FFI compatibility
+use jpegli::types::{JpegMode, Subsampling};
 
 // ============================================================================
 // TEST CONFIGURATION
@@ -235,21 +239,31 @@ fn encode_rust(
     height: u32,
     quality: u8,
     subsampling: Subsampling,
-    mode: JpegMode,
+    progressive: bool,
     use_xyb: bool,
 ) -> Vec<u8> {
-    let mut encoder = JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality.into()))
-        .subsampling(subsampling)
-        .mode(mode)
-        .optimize_huffman(true);
+    // Convert old Subsampling to new ChromaSubsampling
+    let chroma = match subsampling {
+        Subsampling::S444 => ChromaSubsampling::Full,
+        Subsampling::S422 => ChromaSubsampling::HalfHorizontal,
+        Subsampling::S420 => ChromaSubsampling::Quarter,
+        Subsampling::S440 => ChromaSubsampling::HalfVertical,
+        _ => ChromaSubsampling::Full,
+    };
+
+    let mut config = EncoderConfig::new()
+        .quality(quality as f32)
+        .ycbcr(chroma)
+        .progressive(progressive);
 
     if use_xyb {
-        encoder = encoder.use_xyb(true);
+        config = config.xyb();
     }
 
-    encoder.encode(rgb).expect("Rust encode failed")
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("Encoder creation failed");
+    enc.push_packed(rgb, Never).expect("push_packed failed");
+    enc.finish().expect("Rust encode failed")
 }
 
 /// Encode via C++ jpegli FFI (proper libjpeg-62 API - no subprocess overhead).
@@ -572,7 +586,7 @@ fn test_configuration(
             height_u32,
             quality,
             subsampling,
-            mode,
+            progressive,
             use_xyb,
         );
         // Use jpegli decoder for XYB (has ICC support), zune-jpeg for YCbCr
@@ -1019,6 +1033,7 @@ fn generate_reference_values() {
 
     for (name, subsampling, mode, use_xyb) in configs {
         println!("pub const {}: [RefData; 6] = [", name);
+        let progressive = mode == JpegMode::Progressive;
 
         for &quality in &QUALITY_LEVELS {
             let rust_jpeg = encode_rust(
@@ -1027,7 +1042,7 @@ fn generate_reference_values() {
                 height as u32,
                 quality,
                 subsampling,
-                mode,
+                progressive,
                 use_xyb,
             );
             let rust_decoded = decode_jpeg(&rust_jpeg);
@@ -1036,7 +1051,6 @@ fn generate_reference_values() {
 
             #[cfg(feature = "ffi-tests")]
             let (cpp_ssim2, cpp_size) = {
-                let progressive = mode == JpegMode::Progressive;
                 if let Some(cpp_jpeg) = encode_cpp(
                     &rgb,
                     width as u32,
