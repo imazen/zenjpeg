@@ -8,13 +8,10 @@ mod test_utils;
 
 use jpegli::{
     decode::{Decoder, DecoderConfig},
-    types::{
-        ColorSpace, Component, Dimensions, HuffmanTable, JpegMode, OutputDataType, PixelFormat,
-        QuantTable, RestartInterval, SampleDepth, ScanSpec, Subsampling,
-    },
-    JpegEncoder, Quality,
+    types::{ColorSpace, Component, Dimensions, HuffmanTable, JpegMode, PixelFormat, Subsampling},
+    JpegEncoder, Quality, QuantTable,
 };
-use test_utils::{generate_gradient_d, generate_noise, TestImage};
+use test_utils::{generate_gradient_d, generate_noise};
 
 // ============================================================================
 // TYPES MODULE COVERAGE
@@ -75,21 +72,6 @@ mod types_coverage {
 
         // Test Default trait
         assert_eq!(PixelFormat::default(), PixelFormat::Rgb);
-    }
-
-    #[test]
-    fn sample_depth_coverage() {
-        assert_eq!(SampleDepth::Bits8.bytes_per_sample(), 1);
-        assert_eq!(SampleDepth::Bits16.bytes_per_sample(), 2);
-        assert_eq!(SampleDepth::Float32.bytes_per_sample(), 4);
-        assert_eq!(SampleDepth::default(), SampleDepth::Bits8);
-    }
-
-    #[test]
-    fn output_data_type_coverage() {
-        assert_eq!(OutputDataType::default(), OutputDataType::Uint8);
-        let _ = OutputDataType::Uint16;
-        let _ = OutputDataType::Float32;
     }
 
     #[test]
@@ -178,28 +160,6 @@ mod types_coverage {
         assert_eq!(dim3.height, 0);
     }
 
-    #[test]
-    fn scan_spec_coverage() {
-        let spec = ScanSpec::default();
-        assert_eq!(spec.comp_start, 0);
-        assert_eq!(spec.num_comps, 3);
-        assert_eq!(spec.ss, 0);
-        assert_eq!(spec.se, 63);
-        assert_eq!(spec.ah, 0);
-        assert_eq!(spec.al, 0);
-
-        // Test equality
-        let spec2 = ScanSpec::default();
-        assert_eq!(spec, spec2);
-    }
-
-    #[test]
-    fn restart_interval_coverage() {
-        let ri = RestartInterval(100);
-        assert_eq!(ri.0, 100);
-        let ri2 = RestartInterval::default();
-        assert_eq!(ri2.0, 0);
-    }
 }
 
 // ============================================================================
