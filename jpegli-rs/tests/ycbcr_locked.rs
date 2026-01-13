@@ -23,8 +23,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use jpegli::types::Subsampling;
-use jpegli::{JpegEncoder, JpegMode, PixelFormat};
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
@@ -167,17 +167,19 @@ fn encode_jpeg(
     width: u32,
     height: u32,
     quality: u8,
-    mode: JpegMode,
-    subsampling: Subsampling,
+    progressive: bool,
+    subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
+    let config = EncoderConfig::new()
         .quality(quality as f32)
-        .subsampling(subsampling)
+        .ycbcr(subsampling)
         .optimize_huffman(true)
-        .mode(mode)
-        .encode(rgb)
-        .expect("Encoding failed")
+        .progressive(progressive);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb, Never).expect("push");
+    enc.finish().expect("Encoding failed")
 }
 
 fn hash_bytes(data: &[u8]) -> u64 {
@@ -191,14 +193,14 @@ fn test_exact_sizes(
     rgb: &[u8],
     width: u32,
     height: u32,
-    mode: JpegMode,
-    subsampling: Subsampling,
+    progressive: bool,
+    subsampling: ChromaSubsampling,
     expected: &[(u8, usize)],
     mode_name: &str,
     sub_name: &str,
 ) {
     for &(quality, expected_size) in expected {
-        let jpeg = encode_jpeg(rgb, width, height, quality, mode, subsampling);
+        let jpeg = encode_jpeg(rgb, width, height, quality, progressive, subsampling);
 
         assert_eq!(
             jpeg.len(),

@@ -6,8 +6,8 @@
 //! Run with: cargo test --release -p jpegli-rs --test strip_edge_cpp_comparison -- --nocapture --ignored
 
 use dssim::Dssim;
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::Quality;
+use enough::Never;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -94,17 +94,19 @@ fn encode_rust(
     rgb: &[u8],
     width: u32,
     height: u32,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     quality: f32,
 ) -> Vec<u8> {
-    jpegli::JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(subsampling)
-        .quality(Quality::from_quality(quality))
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(subsampling)
         .optimize_huffman(true)
-        .mode(JpegMode::Progressive)
-        .encode(rgb)
-        .expect("Rust encode failed")
+        .progressive(true);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb, Never).expect("push");
+    enc.finish().expect("Rust encode failed")
 }
 
 /// Encode with C++ cjpegli CLI - SAME SETTINGS AS RUST
@@ -112,7 +114,7 @@ fn encode_cpp(
     rgb: &[u8],
     width: usize,
     height: usize,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     quality: u8,
     cjpegli: &Path,
 ) -> Option<Vec<u8>> {
@@ -135,11 +137,11 @@ fn encode_cpp(
     fs::write(&ppm_path, &ppm).ok()?;
 
     let sample_arg = match subsampling {
-        Subsampling::S444 => "444",
-        Subsampling::S422 => "422",
-        Subsampling::S420 => "420",
-        Subsampling::S440 => "440",
-        _ => "420",
+        ChromaSubsampling::Full => "444",
+        ChromaSubsampling::HalfHorizontal => "422",
+        ChromaSubsampling::Quarter => "420",
+        ChromaSubsampling::HalfVertical => "440",
+        _ => return None, // Unknown subsampling mode
     };
 
     // Match Rust settings: progressive_level=2 (default)
@@ -214,7 +216,7 @@ fn test_cropped_image(
     image_name: &str,
     target_width: usize,
     target_height: usize,
-    subsampling: Subsampling,
+    subsampling: ChromaSubsampling,
     quality: u8,
     cjpegli: &Path,
 ) -> Option<TestResult> {
@@ -304,7 +306,7 @@ fn test_strip_edge_real_images() {
     println!("Settings: Progressive, Q85, S444, optimized Huffman\n");
 
     let quality = 85u8;
-    let subsampling = Subsampling::S444;
+    let subsampling = ChromaSubsampling::Full;
 
     // Test partial MCU dimensions (1-7 for 8x8 MCU)
     let remainders = [1, 2, 3, 4, 5, 6, 7];
@@ -544,7 +546,7 @@ fn test_strip_edge_synthetic_quick() {
     println!("\n=== SYNTHETIC EDGE TEST (Quick) ===\n");
 
     let quality = 85u8;
-    let subsampling = Subsampling::S444;
+    let subsampling = ChromaSubsampling::Full;
     let base_width = 256usize;
     let height = 128usize;
 

@@ -1,4 +1,5 @@
-use jpegli::{Decoder, JpegEncoder, JpegMode, Quality};
+use enough::Never;
+use jpegli::{Decoder, EncoderConfig, PixelLayout};
 
 #[test]
 fn test_progressive_xyb_all_quality_levels() {
@@ -16,11 +17,16 @@ fn test_progressive_xyb_all_quality_levels() {
 
     for &quality in &[10u8, 30, 50, 70, 85, 95] {
         // Encode progressive XYB
-        let jpeg = JpegEncoder::new(width, height)
-            .use_xyb(true)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::Traditional(quality as f32))
-            .encode(&rgb)
+        let config = EncoderConfig::new()
+            .xyb()
+            .progressive(true)
+            .quality(quality as f32);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&rgb, Never).expect("push");
+        let jpeg = enc
+            .finish()
             .expect(&format!("encode Q{} failed", quality));
 
         println!("Q{}: encoded {} bytes", quality, jpeg.len());
@@ -58,11 +64,16 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     );
 
     // Encode progressive XYB
-    let jpeg = JpegEncoder::new(width, height)
-        .use_xyb(true)
-        .mode(JpegMode::Progressive)
-        .quality(Quality::Traditional(quality as f32))
-        .encode(&rgb)
+    let config = EncoderConfig::new()
+        .xyb()
+        .progressive(true)
+        .quality(quality as f32);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&rgb, Never).expect("push");
+    let jpeg = enc
+        .finish()
         .expect(&format!("encode Q{} failed", quality));
 
     println!("Q{}: encoded {} bytes", quality, jpeg.len());
@@ -122,11 +133,15 @@ fn test_progressive_ycbcr_non_aligned_dimensions() {
         );
 
         // Encode progressive YCbCr
-        let jpeg = JpegEncoder::new(width, height)
-            .use_xyb(false)
-            .mode(JpegMode::Progressive)
-            .quality(Quality::Traditional(quality as f32))
-            .encode(&rgb)
+        let config = EncoderConfig::new()
+            .progressive(true)
+            .quality(quality as f32);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&rgb, Never).expect("push");
+        let jpeg = enc
+            .finish()
             .expect(&format!("encode Q{} failed", quality));
 
         println!("Q{}: encoded {} bytes", quality, jpeg.len());

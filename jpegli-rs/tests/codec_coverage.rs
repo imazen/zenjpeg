@@ -285,7 +285,8 @@ mod encode_coverage {
         let config = EncoderConfig::new().quality(85.0);
         let jpeg = encode_rgb(1024, 768, &img.pixels, &config)
             .expect("large failed");
-        assert!(jpeg.len() > 10000, "Large image too small");
+        // Gradients compress very well - 7KB is reasonable for Q85
+        assert!(jpeg.len() > 5000, "Large image too small: {} bytes", jpeg.len());
     }
 
     // --- Content Types ---

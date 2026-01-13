@@ -46,14 +46,18 @@ fn wide_simd_operations() {
 #[test]
 #[cfg(target_feature = "simd128")]
 fn idct_parity_with_simd128() {
+    use enough::Never;
+
     // Simple DCT coefficients (DC only)
     let mut input = [0i32; 64];
     input[0] = 1024; // DC coefficient
 
     // The IDCT should produce uniform output for DC-only input
-    let encoder = jpegli::JpegEncoder::new(8, 8)
-        .pixel_format(jpegli::PixelFormat::Luma);
-
     // Just verify encoder creation works with SIMD128
-    assert!(encoder.quality(jpegli::Quality::from(90.0)).encode(&[128u8; 64]).is_ok());
+    let config = jpegli::EncoderConfig::new().quality(90.0);
+    let mut enc = config
+        .encode_from_bytes(8, 8, jpegli::PixelLayout::Gray8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&[128u8; 64], Never).expect("push");
+    assert!(enc.finish().is_ok());
 }

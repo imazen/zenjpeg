@@ -1,29 +1,25 @@
-//! Test XYB encoding via the strip-based encoder.
+//! Basic XYB encoding tests.
 //!
-//! Verifies that the strip-based XYB encoder produces valid, high-quality output.
+//! Verifies that the XYB encoder produces valid, decodable output.
 
-use jpegli::quant::Quality;
-use jpegli::{JpegEncoder, PixelFormat, Subsampling};
+use enough::Never;
+use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
 
-/// Encode with strip-based XYB encoder
-fn encode_xyb(
-    rgb: &[u8],
-    width: u32,
-    height: u32,
-    quality: f32,
-    subsampling: Subsampling,
-) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality))
-        .subsampling(subsampling)
-        .use_xyb(true)
-        .encode(rgb)
-        .expect("XYB encode failed")
+/// Encode with XYB color mode
+fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .xyb();
+
+    let mut encoder = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder creation failed");
+    encoder.push_packed(rgb, Never).expect("push failed");
+    encoder.finish().expect("XYB encode failed")
 }
 
 #[test]
-fn test_xyb_strip_basic() {
+fn test_xyb_basic() {
     let width = 64u32;
     let height = 64u32;
 
@@ -39,29 +35,23 @@ fn test_xyb_strip_basic() {
     }
 
     for quality in [70.0, 85.0, 95.0] {
-        let jpeg = encode_xyb(&rgb, width, height, quality, Subsampling::S420);
+        let jpeg = encode_xyb(&rgb, width, height, quality);
 
-        println!(
-            "Q{}: XYB strip encoder = {} bytes",
-            quality as i32,
-            jpeg.len(),
-        );
+        println!("Q{}: XYB encoder = {} bytes", quality as i32, jpeg.len());
 
         // Verify valid JPEG
         assert!(!jpeg.is_empty(), "JPEG is empty");
         assert_eq!(jpeg[0..2], [0xFF, 0xD8], "not valid JPEG SOI");
 
         // Verify it can be decoded
-        let decoded = jpegli::Decoder::new()
-            .decode(&jpeg)
-            .expect("failed to decode JPEG");
+        let decoded = Decoder::new().decode(&jpeg).expect("failed to decode JPEG");
         assert_eq!(decoded.width, width);
         assert_eq!(decoded.height, height);
     }
 }
 
 #[test]
-fn test_xyb_strip_output_quality() {
+fn test_xyb_output_quality() {
     use dssim::Dssim;
     use rgb::RGBA8;
 
@@ -87,10 +77,10 @@ fn test_xyb_strip_output_quality() {
     }
 
     let quality = 90.0;
-    let jpeg = encode_xyb(&rgb, width, height, quality, Subsampling::S420);
+    let jpeg = encode_xyb(&rgb, width, height, quality);
 
     // Decode and measure quality
-    let decoded = jpegli::Decoder::new()
+    let decoded = Decoder::new()
         .apply_icc(true)
         .decode(&jpeg)
         .expect("decode failed");
@@ -110,16 +100,9 @@ fn test_xyb_strip_output_quality() {
     let (dssim_val, _) = dssim.compare(&orig_img, decoded_img);
 
     println!(
-        "XYB strip Q{}: {} bytes, DSSIM: {:.6}",
+        "XYB Q{}: {} bytes, DSSIM: {:.6}",
         quality as i32,
         jpeg.len(),
         dssim_val
     );
-
-    // Note: XYB strip encoding doesn't have proper header output yet,
-    // so decoded quality will be wrong. This test just verifies the
-    // encoding pipeline produces valid JPEG output.
-    // TODO: Implement proper XYB headers (ICC profile, APP14, component IDs)
-    // then tighten this threshold to < 0.1
-    println!("Note: XYB headers not yet implemented, DSSIM expected to be high");
 }

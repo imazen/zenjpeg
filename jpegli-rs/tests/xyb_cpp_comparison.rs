@@ -46,12 +46,12 @@ fn test_xyb_cpp_comparison() {
     println!("C++ JPEG size: {} bytes", cpp_jpeg.len());
 
     // Encode with Rust in XYB mode
-    let rust_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(jpegli::types::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(90.0))
-        .use_xyb(true)
-        .encode(&rgb_data)
-        .expect("Rust encoding failed");
+    let config = jpegli::EncoderConfig::new().quality(90.0).xyb();
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&rgb_data, enough::Never).expect("push");
+    let rust_jpeg = enc.finish().expect("Rust encoding failed");
 
     println!("Rust JPEG size: {} bytes", rust_jpeg.len());
 
@@ -322,12 +322,12 @@ fn test_icc_profile_embedding() {
     let height = 8;
     let rgb_data = vec![128u8; width * height * 3];
 
-    let jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(jpegli::types::PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(90.0))
-        .use_xyb(true)
-        .encode(&rgb_data)
-        .expect("Encoding failed");
+    let config = jpegli::EncoderConfig::new().quality(90.0).xyb();
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&rgb_data, enough::Never).expect("push");
+    let jpeg = enc.finish().expect("Encoding failed");
 
     // Check JPEG structure
     assert_eq!(jpeg[0], 0xFF, "Missing SOI marker");
