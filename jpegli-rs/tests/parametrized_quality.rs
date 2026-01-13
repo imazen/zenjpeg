@@ -9,8 +9,16 @@ mod test_utils;
 
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
-use jpegli::{Decoder, JpegEncoder};
+use enough::Never;
+use jpegli::{decode::Decoder, EncoderConfig, PixelLayout};
 use test_case::test_case;
+
+/// Helper function to encode RGB data
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 /// Helper to encode and decode an image, returning RMS and max diff.
 fn roundtrip_quality(
@@ -21,9 +29,9 @@ fn roundtrip_quality(
 ) -> (f64, u8, usize) {
     let img = generate_test_image(width, height, pattern, 3);
 
-    let encoder = JpegEncoder::new(width, height).quality(quality);
+    let config = EncoderConfig::new().quality(quality);
 
-    let jpeg_data = encoder.encode(&img.pixels).expect("encode failed");
+    let jpeg_data = encode_rgb(width, height, &img.pixels, &config).expect("encode failed");
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg_data).expect("decode failed");
 
