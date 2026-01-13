@@ -2692,7 +2692,7 @@ impl<'a> JpegParser<'a> {
                     // XYB mode: Output raw level-shifted values, NO YCbCr→RGB conversion.
                     // The XYB values are stored in YCbCr positions but are NOT YCbCr.
                     // The ICC profile transforms these directly to sRGB.
-                    crate::encode_simd::xyb_planes_to_rgb_u8_simd(
+                    crate::color::xyb::xyb_planes_to_rgb_u8_simd(
                         &planes_f32[0],
                         &planes_f32[1],
                         &planes_f32[2],
@@ -2946,7 +2946,7 @@ impl<'a> JpegParser<'a> {
 
                 if is_xyb {
                     // XYB mode: Output raw level-shifted values, normalized to 0.0-1.0
-                    crate::encode_simd::xyb_planes_to_rgb_f32_simd(
+                    crate::color::xyb::xyb_planes_to_rgb_f32_simd(
                         &planes_f32[0],
                         &planes_f32[1],
                         &planes_f32[2],

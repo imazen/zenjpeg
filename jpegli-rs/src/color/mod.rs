@@ -22,5 +22,6 @@ pub use ycbcr::{
 // Re-export commonly used items from xyb
 pub use xyb::{
     linear_rgb_to_xyb, linear_rgb_to_xyb_255, linear_to_srgb, linear_to_srgb_fast,
-    srgb_to_linear, srgb_to_scaled_xyb, srgb_u8_to_linear, xyb_to_linear_rgb,
+    srgb_to_linear, srgb_to_scaled_xyb, srgb_u8_to_linear, xyb_planes_to_rgb_f32_simd,
+    xyb_planes_to_rgb_u8_simd, xyb_to_linear_rgb,
 };
