@@ -229,7 +229,11 @@ Additional extraction:
     - Removed `#[cfg(feature = "simd")]` gates (wide crate is always available)
     - Note: scanline.rs has separate i16 upsampling (different algorithm, in-place)
 
-Note: parser.rs (2251 lines) is slightly over 2000. Remaining methods (`to_pixels*`)
+21. [x] Extract `CompInfo` struct to module level (was defined 4x inline)
+    - Added `build_comp_infos()` helper method
+    - parser.rs now 2206 lines (saved ~45 lines)
+
+Note: parser.rs (~2200 lines) is slightly over 2000. Remaining methods (`to_pixels*`)
 use `self` heavily - extraction would require significant refactoring.
 
 ### Phase 7: Foundation cleanup (optional)
