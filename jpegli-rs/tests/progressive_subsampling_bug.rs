@@ -8,10 +8,10 @@
 //! Symptom: "Corrupt JPEG data: N extraneous bytes before marker" from djpeg,
 //! and all subsampled progressive modes produce the same file size as 4:4:4.
 
+use enough::Never;
 use jpegli::decode::Decoder;
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-
-use jpegli::{JpegEncoder, Quality};
+use jpegli::types::PixelFormat;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Test that progressive + subsampling produces files that can be decoded
 /// by multiple external decoders without corruption errors.
@@ -31,20 +31,25 @@ fn test_progressive_subsampling_external_decoder_compat() {
     }
 
     let configs = [
-        (Subsampling::S444, "S444"),
-        (Subsampling::S422, "S422"),
-        (Subsampling::S420, "S420"),
-        (Subsampling::S440, "S440"),
+        (ChromaSubsampling::Full, "S444"),
+        (ChromaSubsampling::HalfHorizontal, "S422"),
+        (ChromaSubsampling::Quarter, "S420"),
+        (ChromaSubsampling::HalfVertical, "S440"),
     ];
 
     for (subsampling, name) in configs {
-        let jpeg = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .mode(JpegMode::Progressive)
-            .subsampling(subsampling)
-            .optimize_huffman(true)
-            .quality(Quality::from_quality(85.0))
-            .encode(&rgb)
+        let config = EncoderConfig::new()
+            .quality(85.0)
+            .progressive(true)
+            .ycbcr(subsampling)
+            .optimize_huffman(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap_or_else(|e| panic!("Progressive {} encoder setup failed: {:?}", name, e));
+        enc.push_packed(&rgb, Never)
+            .unwrap_or_else(|e| panic!("Progressive {} push failed: {:?}", name, e));
+        let jpeg = enc
+            .finish()
             .unwrap_or_else(|e| panic!("Progressive {} encode failed: {:?}", name, e));
 
         // Test with zune-jpeg decoder
@@ -88,22 +93,23 @@ fn test_progressive_subsampling_file_sizes() {
         }
     }
 
-    let encode = |sub: Subsampling| -> usize {
-        JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .mode(JpegMode::Progressive)
-            .subsampling(sub)
-            .optimize_huffman(true)
-            .quality(Quality::from_quality(85.0))
-            .encode(&rgb)
-            .expect("encode failed")
-            .len()
+    let encode = |sub: ChromaSubsampling| -> usize {
+        let config = EncoderConfig::new()
+            .quality(85.0)
+            .progressive(true)
+            .ycbcr(sub)
+            .optimize_huffman(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&rgb, Never).expect("push data");
+        enc.finish().expect("encode failed").len()
     };
 
-    let size_444 = encode(Subsampling::S444);
-    let size_422 = encode(Subsampling::S422);
-    let size_420 = encode(Subsampling::S420);
-    let size_440 = encode(Subsampling::S440);
+    let size_444 = encode(ChromaSubsampling::Full);
+    let size_422 = encode(ChromaSubsampling::HalfHorizontal);
+    let size_420 = encode(ChromaSubsampling::Quarter);
+    let size_440 = encode(ChromaSubsampling::HalfVertical);
 
     eprintln!("Progressive file sizes:");
     eprintln!("  S444: {} bytes", size_444);
@@ -166,20 +172,20 @@ fn test_baseline_subsampling_works() {
         }
     }
 
-    let encode = |sub: Subsampling| -> usize {
-        JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .mode(JpegMode::Baseline)
-            .subsampling(sub)
-            .optimize_huffman(true)
-            .quality(Quality::from_quality(85.0))
-            .encode(&rgb)
-            .expect("encode failed")
-            .len()
+    let encode = |sub: ChromaSubsampling| -> usize {
+        let config = EncoderConfig::new()
+            .quality(85.0)
+            .ycbcr(sub)
+            .optimize_huffman(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&rgb, Never).expect("push data");
+        enc.finish().expect("encode failed").len()
     };
 
-    let size_444 = encode(Subsampling::S444);
-    let size_420 = encode(Subsampling::S420);
+    let size_444 = encode(ChromaSubsampling::Full);
+    let size_420 = encode(ChromaSubsampling::Quarter);
 
     eprintln!("Baseline file sizes: S444={}, S420={}", size_444, size_420);
 

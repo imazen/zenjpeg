@@ -130,10 +130,12 @@ fn jpegli_decodes_baseline_xyb() {
     let height = 8u32;
     let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    let jpeg_data = jpegli::JpegEncoder::new(width, height)
-        .use_xyb(true)
-        .encode(&pixels)
-        .expect("encode");
+    let config = jpegli::EncoderConfig::new().use_xyb(true);
+    let mut enc = config
+        .encode_from_bytes(width, height, jpegli::PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&pixels, enough::Never).expect("push");
+    let jpeg_data = enc.finish().expect("encode");
 
     // Verify it's baseline (not progressive)
     assert!(

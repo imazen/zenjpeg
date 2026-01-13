@@ -4,8 +4,10 @@
 //! This test answers: "How many distinct colors can survive a roundtrip
 //! through jpegli for each input/output format combination?"
 
+use enough::Never;
 use jpegli::decode::Decoder;
-use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
+use jpegli::types::PixelFormat;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashSet;
 
 /// Test image dimensions
@@ -221,6 +223,24 @@ struct PrecisionResult {
     is_gray: bool,
 }
 
+/// Map legacy PixelFormat to v2 PixelLayout
+fn pixel_format_to_layout(fmt: PixelFormat) -> PixelLayout {
+    match fmt {
+        PixelFormat::Rgb => PixelLayout::Rgb8Srgb,
+        PixelFormat::Rgba => PixelLayout::Rgbx8Srgb,
+        PixelFormat::Bgr => PixelLayout::Bgr8Srgb,
+        PixelFormat::Bgra => PixelLayout::Bgrx8Srgb,
+        PixelFormat::Gray => PixelLayout::Gray8Srgb,
+        PixelFormat::Rgb16 => PixelLayout::Rgb16Linear,
+        PixelFormat::Rgba16 => PixelLayout::Rgbx16Linear,
+        PixelFormat::Gray16 => PixelLayout::Gray16Linear,
+        PixelFormat::RgbF32 => PixelLayout::RgbF32Linear,
+        PixelFormat::RgbaF32 => PixelLayout::RgbxF32Linear,
+        PixelFormat::GrayF32 => PixelLayout::GrayF32Linear,
+        _ => PixelLayout::Rgb8Srgb,
+    }
+}
+
 /// Test a single encode/decode combination
 fn test_combination(
     encode_format: PixelFormat,
@@ -233,12 +253,22 @@ fn test_combination(
     );
 
     // Encode
-    let jpeg = JpegEncoder::new(WIDTH as u32, HEIGHT as u32)
-        .quality(Quality::from_quality(QUALITY))
-        .pixel_format(encode_format)
-        .subsampling(Subsampling::S444)
-        .encode(input_data)
-        .expect(&format!("encode {} failed", encode_name));
+    let layout = pixel_format_to_layout(encode_format);
+    let config = if is_gray {
+        EncoderConfig::new()
+            .quality(QUALITY)
+            .grayscale()
+    } else {
+        EncoderConfig::new()
+            .quality(QUALITY)
+            .ycbcr(ChromaSubsampling::Full)
+    };
+    let mut enc = config
+        .encode_from_bytes(WIDTH as u32, HEIGHT as u32, layout)
+        .expect(&format!("encoder setup {} failed", encode_name));
+    enc.push_packed(input_data, Never)
+        .expect(&format!("push {} failed", encode_name));
+    let jpeg = enc.finish().expect(&format!("encode {} failed", encode_name));
 
     let jpeg_size = jpeg.len();
     let decoder = Decoder::new();
@@ -601,12 +631,14 @@ fn test_precision_improvement_summary() {
 
     let input = create_test_pattern_rgb8();
 
-    let jpeg = JpegEncoder::new(WIDTH as u32, HEIGHT as u32)
-        .quality(Quality::from_quality(QUALITY))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444)
-        .encode(&input)
-        .expect("encode failed");
+    let config = EncoderConfig::new()
+        .quality(QUALITY)
+        .ycbcr(ChromaSubsampling::Full);
+    let mut enc = config
+        .encode_from_bytes(WIDTH as u32, HEIGHT as u32, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&input, Never).expect("push data");
+    let jpeg = enc.finish().expect("encode failed");
 
     let decoder = Decoder::new();
 
@@ -683,11 +715,14 @@ fn test_10plus_bit_demonstration() {
     println!("Input: {}×{} grayscale", width, height);
     println!("Input unique values: {}", unique_input);
 
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(QUALITY))
-        .pixel_format(PixelFormat::Gray)
-        .encode(&input)
-        .expect("encode failed");
+    let config = EncoderConfig::new()
+        .quality(QUALITY)
+        .grayscale();
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, PixelLayout::Gray8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&input, Never).expect("push data");
+    let jpeg = enc.finish().expect("encode failed");
 
     println!("JPEG size: {} bytes", jpeg.len());
 
