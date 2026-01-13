@@ -170,9 +170,21 @@ aarch64 NEON (via qemu):
   Wide:   628.2 ns/block
   Speedup: 1.07x (qemu overhead affects this)
 
-wasm32-wasip1:
-  Parity: ✓ Scalar and Wide MATCH exactly
-  SIMD128: Requires RUSTFLAGS="-C target-feature=+simd128"
+wasm32-wasip1 (no SIMD128):
+  Scalar: 181.9 ns/block
+  Wide:   139.2 ns/block
+  Speedup: 1.31x
+
+wasm32-wasip1 (SIMD128 enabled):
+  Scalar: 83.1 ns/block
+  Wide:   44.7 ns/block
+  Speedup: 1.86x
+  SIMD128 benefit: 3.1x faster Wide, 2.2x faster Scalar
+
+Comparison to native x86_64 AVX2:
+  Native Wide: 32.0 ns/block (baseline)
+  WASM SIMD128 Wide: 44.7 ns/block (only 1.4x slower!)
+  WASM scalar Wide: 139.2 ns/block (4.4x slower)
 ```
 
 ### WASM SIMD128 Support

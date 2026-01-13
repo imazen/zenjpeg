@@ -1,7 +1,11 @@
 //! Minimal standalone SIMD parity test for cross-platform benchmarking.
 //! No external dependencies except `wide` and `multiversion`.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+
 use wide::i32x8;
 use multiversion::multiversion;
 
@@ -262,33 +266,27 @@ fn main() {
         println!("Wide:   {:?}", &out_wide[0..16]);
     }
 
-    // Benchmark (not available on WASM - no std::time::Instant)
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let iterations = 100_000;
+    // Benchmark - now works on WASM with web-time crate
+    let iterations = 100_000;
 
-        let start = Instant::now();
-        for _ in 0..iterations {
-            let mut out = [0i16; 64];
-            scalar::idct_int(&input, &mut out);
-            std::hint::black_box(&out);
-        }
-        let scalar_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
-
-        let start = Instant::now();
-        for _ in 0..iterations {
-            let mut out = [0i16; 64];
-            idct_wide(&input, &mut out);
-            std::hint::black_box(&out);
-        }
-        let wide_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
-
-        println!("\nBenchmark ({} iterations):", iterations);
-        println!("  Scalar: {:.1} ns/block ({:.3} µs)", scalar_ns, scalar_ns / 1000.0);
-        println!("  Wide:   {:.1} ns/block ({:.3} µs)", wide_ns, wide_ns / 1000.0);
-        println!("  Speedup: {:.2}x", scalar_ns / wide_ns);
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let mut out = [0i16; 64];
+        scalar::idct_int(&input, &mut out);
+        std::hint::black_box(&out);
     }
+    let scalar_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
 
-    #[cfg(target_arch = "wasm32")]
-    println!("\n(Benchmark skipped on WASM - no std::time::Instant)");
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let mut out = [0i16; 64];
+        idct_wide(&input, &mut out);
+        std::hint::black_box(&out);
+    }
+    let wide_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+    println!("\nBenchmark ({} iterations):", iterations);
+    println!("  Scalar: {:.1} ns/block ({:.3} µs)", scalar_ns, scalar_ns / 1000.0);
+    println!("  Wide:   {:.1} ns/block ({:.3} µs)", wide_ns, wide_ns / 1000.0);
+    println!("  Speedup: {:.2}x", scalar_ns / wide_ns);
 }
