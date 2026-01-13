@@ -45,7 +45,10 @@
 
 // Encoder implementation modules
 mod blocks;
+pub mod chroma;
+pub mod dct;
 mod progressive;
+pub mod scan_script;
 mod serialize;
 
 pub mod config;
