@@ -133,7 +133,7 @@ fn test_xyb_buffer_roundtrip() {
 #[test]
 fn test_xyb_encode_decode() {
     use jpegli::quant::Quality;
-    use jpegli::{PixelFormat, StreamingEncoder};
+    use jpegli::{PixelFormat, JpegEncoder};
 
     let width = 64u32;
     let height = 64u32;
@@ -150,13 +150,13 @@ fn test_xyb_encode_decode() {
     }
 
     // Encode with XYB (note: actual XYB encoding may not be fully implemented)
-    let encoder = StreamingEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
         .use_xyb(true);
 
     // Try encoding - this tests that the XYB flag doesn't break encoding
-    match encoder.encode_all(&rgb) {
+    match encoder.encode(&rgb) {
         Ok(jpeg_data) => {
             println!("XYB encoded JPEG: {} bytes", jpeg_data.len());
             assert!(!jpeg_data.is_empty());
@@ -261,11 +261,11 @@ fn test_xyb_roundtrip_loss_vs_cpp() {
     let cpp_jpeg = fs::read(cpp_jpeg_path).expect("Failed to read C++ JPEG");
 
     // Encode with Rust in XYB mode
-    let rust_jpeg = jpegli::StreamingEncoder::new(width as u32, height as u32)
+    let rust_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
         .pixel_format(jpegli::types::PixelFormat::Rgb)
         .quality(jpegli::quant::Quality::from_quality(90.0))
         .use_xyb(true)
-        .encode_all(&rgb_data)
+        .encode(&rgb_data)
         .expect("Rust encoding failed");
 
     println!("C++ JPEG size: {} bytes", cpp_jpeg.len());

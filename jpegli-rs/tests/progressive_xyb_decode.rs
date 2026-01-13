@@ -130,9 +130,9 @@ fn jpegli_decodes_baseline_xyb() {
     let height = 8u32;
     let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    let jpeg_data = jpegli::StreamingEncoder::new(width, height)
+    let jpeg_data = jpegli::JpegEncoder::new(width, height)
         .use_xyb(true)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("encode");
 
     // Verify it's baseline (not progressive)

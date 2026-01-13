@@ -137,10 +137,10 @@ fn test_encoding_with_zero_bias_valid() {
         .collect();
 
     // Encode at Q90 (high quality, where zero-biasing is active)
-    let jpeg_data = jpegli::StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_data = jpegli::JpegEncoder::new(width as u32, height as u32)
         .pixel_format(jpegli::PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
-        .encode_all(&rgb)
+        .encode(&rgb)
         .expect("encoding failed");
 
     // Verify output is valid JPEG
@@ -187,10 +187,10 @@ fn test_quality_affects_size() {
         .collect();
 
     let encode_at_quality = |q: f32| -> usize {
-        jpegli::StreamingEncoder::new(width as u32, height as u32)
+        jpegli::JpegEncoder::new(width as u32, height as u32)
             .pixel_format(jpegli::PixelFormat::Rgb)
             .quality(Quality::from_quality(q))
-            .encode_all(&rgb)
+            .encode(&rgb)
             .expect("encoding failed")
             .len()
     };

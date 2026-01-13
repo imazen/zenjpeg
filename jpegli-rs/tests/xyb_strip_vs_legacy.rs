@@ -3,7 +3,7 @@
 //! Verifies that the strip-based XYB encoder produces valid, high-quality output.
 
 use jpegli::quant::Quality;
-use jpegli::{PixelFormat, StreamingEncoder, Subsampling};
+use jpegli::{PixelFormat, JpegEncoder, Subsampling};
 
 /// Encode with strip-based XYB encoder
 fn encode_xyb(
@@ -13,12 +13,12 @@ fn encode_xyb(
     quality: f32,
     subsampling: Subsampling,
 ) -> Vec<u8> {
-    StreamingEncoder::new(width, height)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality))
         .subsampling(subsampling)
         .use_xyb(true)
-        .encode_all(rgb)
+        .encode(rgb)
         .expect("XYB encode failed")
 }
 

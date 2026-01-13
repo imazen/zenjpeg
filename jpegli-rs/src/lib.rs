@@ -142,23 +142,12 @@ pub use types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampli
 #[doc(hidden)]
 pub use types::{EdgePadding, EdgePaddingConfig, HuffmanMethod, OutputDataType, SampleDepth};
 
-// Encoder API - new names
+// Encoder API
 pub use encode::streaming::StreamingEncoder as JpegEncoder;
 pub use encode::streaming::StreamingEncoderBuilder as JpegEncoderBuilder;
-
-// Encoder API - old names (deprecated aliases)
-#[deprecated(since = "0.5.0", note = "Use JpegEncoder instead")]
-pub use encode::streaming::StreamingEncoder;
-#[deprecated(since = "0.5.0", note = "Use JpegEncoderBuilder instead")]
-pub use encode::streaming::StreamingEncoderBuilder;
-
-// Legacy encoder (deprecated)
-#[doc(hidden)]
-#[allow(deprecated)]
-pub use encode::Encoder;
 pub use encode::EncoderConfig;
 
-// Decoder API - new name for consistency
+// Decoder API
 pub use decode::Decoder as JpegDecoder;
 
 // Decoder API - original names (kept for compatibility)
@@ -217,7 +206,7 @@ pub fn encode_rgb(width: u32, height: u32, rgb_data: &[u8], quality: u8) -> Resu
     JpegEncoder::new(width, height)
         .quality(Quality::from_quality(f32::from(quality.clamp(1, 100))))
         .pixel_format(PixelFormat::Rgb)
-        .encode_all(rgb_data)
+        .encode(rgb_data)
 }
 
 /// Encodes an RGBA image to JPEG at the specified quality.
@@ -241,7 +230,7 @@ pub fn encode_rgba(width: u32, height: u32, rgba_data: &[u8], quality: u8) -> Re
     JpegEncoder::new(width, height)
         .quality(Quality::from_quality(f32::from(quality.clamp(1, 100))))
         .pixel_format(PixelFormat::Rgba)
-        .encode_all(rgba_data)
+        .encode(rgba_data)
 }
 
 /// Encodes a grayscale image to JPEG at the specified quality.
@@ -263,7 +252,7 @@ pub fn encode_gray(width: u32, height: u32, gray_data: &[u8], quality: u8) -> Re
     JpegEncoder::new(width, height)
         .quality(Quality::from_quality(f32::from(quality.clamp(1, 100))))
         .pixel_format(PixelFormat::Gray)
-        .encode_all(gray_data)
+        .encode(gray_data)
 }
 
 /// Decodes a JPEG image to RGB.

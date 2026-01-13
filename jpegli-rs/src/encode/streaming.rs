@@ -17,7 +17,7 @@
 //! let mut encoder = StreamingEncoder::new(1920, 1080)
 //!     .quality(Quality::from_quality(85.0))
 //!     .subsampling(Subsampling::S420)
-//!     .build()?;
+//!     .start()?;
 //!
 //! // Push rows one at a time (e.g., from a decoder or generator)
 //! for row in image_rows {
@@ -145,6 +145,9 @@ impl StreamingEncoderBuilder {
     ///
     /// When enabled, `optimize_huffman` is automatically enabled as well.
     ///
+    /// When disabled, if the current mode is Progressive, it switches to Baseline.
+    /// Otherwise, the current mode (e.g., Extended) is preserved.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -155,7 +158,8 @@ impl StreamingEncoderBuilder {
         if enable {
             self.mode = JpegMode::Progressive;
             self.optimize_huffman = true;
-        } else {
+        } else if self.mode == JpegMode::Progressive {
+            // Only change from Progressive to Baseline; preserve other modes like Extended
             self.mode = JpegMode::Baseline;
         }
         self
@@ -361,12 +365,6 @@ impl StreamingEncoderBuilder {
         StreamingEncoder::from_builder(self)
     }
 
-    /// Alias for `.start()` (kept for backwards compatibility).
-    #[doc(hidden)]
-    pub fn build(self) -> Result<StreamingEncoder> {
-        self.start()
-    }
-
     /// Encodes a complete image buffer in one call.
     ///
     /// This is the simplest way to encode an image. For streaming scenarios
@@ -390,17 +388,6 @@ impl StreamingEncoderBuilder {
     /// - Buffer size doesn't match width × height × bytes_per_pixel
     /// - Encoding fails
     pub fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
-        // Delegate to encode_all for backwards compatibility
-        self.encode_impl(data)
-    }
-
-    /// Alias for `.encode()` (kept for backwards compatibility).
-    #[doc(hidden)]
-    pub fn encode_all(self, data: &[u8]) -> Result<Vec<u8>> {
-        self.encode_impl(data)
-    }
-
-    fn encode_impl(self, data: &[u8]) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
         let bpp = self.pixel_format.bytes_per_pixel();
@@ -413,7 +400,7 @@ impl StreamingEncoderBuilder {
             });
         }
 
-        let mut encoder = self.build()?;
+        let mut encoder = self.start()?;
         let row_size = width * bpp;
 
         for y in 0..height {
@@ -426,8 +413,8 @@ impl StreamingEncoderBuilder {
 
     /// Encodes a complete image buffer with cancellation support.
     ///
-    /// Like `encode_all()`, but checks for cancellation between strips.
-    pub fn encode_all_with_stop(self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
+    /// Like `encode()`, but checks for cancellation between strips.
+    pub fn encode_with_stop(self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
         let bpp = self.pixel_format.bytes_per_pixel();
@@ -440,7 +427,7 @@ impl StreamingEncoderBuilder {
             });
         }
 
-        let mut encoder = self.build()?;
+        let mut encoder = self.start()?;
         let row_size = width * bpp;
 
         for y in 0..height {
@@ -569,7 +556,7 @@ impl StreamingEncoderBuilder {
 /// ```rust,ignore
 /// use jpegli::StreamingEncoder;
 ///
-/// let mut encoder = StreamingEncoder::new(1920, 1080).build()?;
+/// let mut encoder = StreamingEncoder::new(1920, 1080).start()?;
 ///
 /// // Push rows from a decoder or generator
 /// for row in image_rows {
@@ -620,7 +607,7 @@ impl StreamingEncoder {
     /// let encoder = StreamingEncoder::new(1920, 1080)
     ///     .quality(Quality::from_quality(85.0))
     ///     .subsampling(Subsampling::S420)
-    ///     .build()?;
+    ///     .start()?;
     /// ```
     #[must_use]
     #[allow(clippy::new_ret_no_self)] // Builder pattern: new() returns builder
@@ -1288,7 +1275,7 @@ mod tests {
 
     #[test]
     fn test_streaming_encoder_creation() {
-        let encoder = StreamingEncoder::new(640, 480).build();
+        let encoder = StreamingEncoder::new(640, 480).start();
         assert!(encoder.is_ok());
         let encoder = encoder.unwrap();
         assert_eq!(encoder.height(), 480);
@@ -1299,7 +1286,7 @@ mod tests {
     fn test_streaming_encoder_420_strip_height() {
         let encoder = StreamingEncoder::new(640, 480)
             .subsampling(Subsampling::S420)
-            .build()
+            .start()
             .unwrap();
         assert_eq!(encoder.strip_height(), 16);
     }
@@ -1308,14 +1295,14 @@ mod tests {
     fn test_streaming_encoder_444_strip_height() {
         let encoder = StreamingEncoder::new(640, 480)
             .subsampling(Subsampling::S444)
-            .build()
+            .start()
             .unwrap();
         assert_eq!(encoder.strip_height(), 8);
     }
 
     #[test]
     fn test_streaming_encoder_wrong_row_size() {
-        let mut encoder = StreamingEncoder::new(640, 480).build().unwrap();
+        let mut encoder = StreamingEncoder::new(640, 480).start().unwrap();
         let wrong_row = vec![0u8; 100]; // Wrong size
         let result = encoder.push_row(&wrong_row);
         assert!(result.is_err());
@@ -1323,7 +1310,7 @@ mod tests {
 
     #[test]
     fn test_streaming_encoder_too_many_rows() {
-        let mut encoder = StreamingEncoder::new(4, 2).build().unwrap();
+        let mut encoder = StreamingEncoder::new(4, 2).start().unwrap();
         let row = vec![128u8; 4 * 3]; // 4 pixels * 3 channels
 
         // Push first 2 rows (all of them)
@@ -1337,7 +1324,7 @@ mod tests {
 
     #[test]
     fn test_streaming_encoder_incomplete() {
-        let mut encoder = StreamingEncoder::new(4, 4).build().unwrap();
+        let mut encoder = StreamingEncoder::new(4, 4).start().unwrap();
         let row = vec![128u8; 4 * 3];
 
         // Push only 2 of 4 rows
@@ -1384,7 +1371,7 @@ mod tests {
         let mut streaming = StreamingEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(Subsampling::S444)
-            .build()
+            .start()
             .unwrap();
 
         let row_size = width as usize * 3;

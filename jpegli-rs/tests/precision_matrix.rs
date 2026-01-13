@@ -5,7 +5,7 @@
 //! through jpegli for each input/output format combination?"
 
 use jpegli::decode::Decoder;
-use jpegli::{PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{PixelFormat, Quality, JpegEncoder, Subsampling};
 use std::collections::HashSet;
 
 /// Test image dimensions
@@ -233,11 +233,11 @@ fn test_combination(
     );
 
     // Encode
-    let jpeg = StreamingEncoder::new(WIDTH as u32, HEIGHT as u32)
+    let jpeg = JpegEncoder::new(WIDTH as u32, HEIGHT as u32)
         .quality(Quality::from_quality(QUALITY))
         .pixel_format(encode_format)
         .subsampling(Subsampling::S444)
-        .encode_all(input_data)
+        .encode(input_data)
         .expect(&format!("encode {} failed", encode_name));
 
     let jpeg_size = jpeg.len();
@@ -601,11 +601,11 @@ fn test_precision_improvement_summary() {
 
     let input = create_test_pattern_rgb8();
 
-    let jpeg = StreamingEncoder::new(WIDTH as u32, HEIGHT as u32)
+    let jpeg = JpegEncoder::new(WIDTH as u32, HEIGHT as u32)
         .quality(Quality::from_quality(QUALITY))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
-        .encode_all(&input)
+        .encode(&input)
         .expect("encode failed");
 
     let decoder = Decoder::new();
@@ -683,10 +683,10 @@ fn test_10plus_bit_demonstration() {
     println!("Input: {}×{} grayscale", width, height);
     println!("Input unique values: {}", unique_input);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(QUALITY))
         .pixel_format(PixelFormat::Gray)
-        .encode_all(&input)
+        .encode(&input)
         .expect("encode failed");
 
     println!("JPEG size: {} bytes", jpeg.len());

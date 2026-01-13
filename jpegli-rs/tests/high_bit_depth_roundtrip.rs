@@ -15,7 +15,7 @@
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
 
 use jpegli::decode::Decoder;
-use jpegli::{PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{PixelFormat, Quality, JpegEncoder, Subsampling};
 
 /// Convert sRGB value [0,1] to linear [0,1].
 fn srgb_to_linear(s: f64) -> f64 {
@@ -137,18 +137,18 @@ fn test_16bit_input_preserves_good_precision() {
     let input_8 = create_slow_gradient_rgb8(width, height);
 
     // Encode both at high quality with 4:4:4 (no chroma subsampling)
-    let jpeg_16 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_16 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(98.0))
         .pixel_format(PixelFormat::Rgb16)
         .subsampling(Subsampling::S444)
-        .encode_all(&input_16)
+        .encode(&input_16)
         .expect("16-bit encode should succeed");
 
-    let jpeg_8 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_8 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(98.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
-        .encode_all(&input_8)
+        .encode(&input_8)
         .expect("8-bit encode should succeed");
 
     // Decode both to f32 for maximum precision comparison
@@ -216,11 +216,11 @@ fn test_f32_decode_recovers_sub_sample_precision() {
     let input = create_precision_test_rgb8(width, height);
 
     // Encode at high quality with 4:4:4
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(99.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
-        .encode_all(&input)
+        .encode(&input)
         .expect("encode should succeed");
 
     let decoder = Decoder::new();
@@ -273,11 +273,11 @@ fn test_to_u16_conversion_preserves_precision() {
     let height = 64;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(98.0))
         .pixel_format(PixelFormat::Rgb16)
         .subsampling(Subsampling::S444)
-        .encode_all(&input)
+        .encode(&input)
         .expect("encode should succeed");
 
     let decoder = Decoder::new();
@@ -331,11 +331,11 @@ fn test_gradient_banding_reduced() {
     let height = 8;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(95.0))
         .pixel_format(PixelFormat::Rgb16)
         .subsampling(Subsampling::S444)
-        .encode_all(&input)
+        .encode(&input)
         .expect("encode should succeed");
 
     let decoder = Decoder::new();
@@ -427,11 +427,11 @@ fn test_full_pipeline_8bit_to_f32_precision() {
     }
 
     // Encode at very high quality
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(99.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
-        .encode_all(&input_bytes)
+        .encode(&input_bytes)
         .expect("encode should succeed");
 
     // Decode to f32
@@ -509,11 +509,11 @@ fn test_quality_affects_precision() {
     let mut prev_bits = f64::MAX;
 
     for quality in [70.0, 85.0, 95.0, 99.0] {
-        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(quality))
             .pixel_format(PixelFormat::Rgb16)
             .subsampling(Subsampling::S444)
-            .encode_all(&input)
+            .encode(&input)
             .expect("encode should succeed");
 
         let decoded = decoder.decode_f32(&jpeg).expect("decode failed");
@@ -561,18 +561,18 @@ fn test_subsampling_comparison() {
 
     let decoder = Decoder::new();
 
-    let jpeg_444 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_444 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(95.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
-        .encode_all(&input)
+        .encode(&input)
         .expect("444 encode failed");
 
-    let jpeg_420 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_420 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(95.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
-        .encode_all(&input)
+        .encode(&input)
         .expect("420 encode failed");
 
     let decoded_444 = decoder.decode_f32(&jpeg_444).expect("444 decode failed");

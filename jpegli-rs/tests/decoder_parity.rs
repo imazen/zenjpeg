@@ -4,7 +4,7 @@
 //! output to C++ djpegli for various JPEG configurations.
 
 use dssim::Dssim;
-use jpegli::{decode::Decoder, types::Subsampling, PixelFormat, Quality, StreamingEncoder};
+use jpegli::{decode::Decoder, types::Subsampling, PixelFormat, Quality, JpegEncoder};
 use rgb::RGBA8;
 use std::process::Command;
 
@@ -58,11 +58,11 @@ fn encode_rust(
     quality: u8,
     subsampling: Subsampling,
 ) -> Vec<u8> {
-    StreamingEncoder::new(width, height)
+    JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality as f32))
         .subsampling(subsampling)
-        .encode_all(pixels)
+        .encode(pixels)
         .expect("Rust encode failed")
 }
 

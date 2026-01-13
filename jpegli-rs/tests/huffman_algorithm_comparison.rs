@@ -11,7 +11,7 @@
 
 use jpegli::huffman_types::{compare_algorithms, SymbolFrequencies};
 use jpegli::types::HuffmanMethod;
-use jpegli::{JpegMode, PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{JpegMode, PixelFormat, Quality, JpegEncoder, Subsampling};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -84,14 +84,14 @@ fn encode_with_method(
 ) -> Result<Vec<u8>, jpegli::error::Error> {
     // We need to use internal pipeline to set huffman method
     // For now, just use the public API with optimize_huffman (uses JpegliCreateTree)
-    let encoder = StreamingEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality))
         .subsampling(Subsampling::S444)
         .optimize_huffman(true)
         .mode(mode);
 
-    encoder.encode_all(data)
+    encoder.encode(data)
 }
 
 /// Test: Both algorithms produce decodable baseline JPEGs
@@ -416,14 +416,14 @@ fn test_grayscale_huffman_optimization() {
     let height = 64;
     let data: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
 
-    let encoder = StreamingEncoder::new(width as u32, height as u32)
+    let encoder = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Gray)
         .quality(Quality::from_quality(90.0))
         .optimize_huffman(true)
         .mode(JpegMode::Baseline);
 
     let jpeg = encoder
-        .encode_all(&data)
+        .encode(&data)
         .expect("Grayscale encoding should work");
 
     assert!(

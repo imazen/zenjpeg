@@ -15,7 +15,7 @@
 //! ```
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{JpegMode, PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{JpegMode, PixelFormat, Quality, JpegEncoder, Subsampling};
 use std::path::PathBuf;
 
 // ============================================================================
@@ -238,7 +238,7 @@ fn encode_rust(
     mode: JpegMode,
     use_xyb: bool,
 ) -> Vec<u8> {
-    let mut encoder = StreamingEncoder::new(width, height)
+    let mut encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(quality.into()))
         .subsampling(subsampling)
@@ -249,7 +249,7 @@ fn encode_rust(
         encoder = encoder.use_xyb(true);
     }
 
-    encoder.encode_all(rgb).expect("Rust encode failed")
+    encoder.encode(rgb).expect("Rust encode failed")
 }
 
 /// Encode via C++ jpegli FFI (proper libjpeg-62 API - no subprocess overhead).

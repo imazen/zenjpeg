@@ -11,7 +11,7 @@
 use jpegli::decode::Decoder;
 use jpegli::types::{JpegMode, PixelFormat, Subsampling};
 
-use jpegli::{Quality, StreamingEncoder};
+use jpegli::{Quality, JpegEncoder};
 
 /// Test that progressive + subsampling produces files that can be decoded
 /// by multiple external decoders without corruption errors.
@@ -38,13 +38,13 @@ fn test_progressive_subsampling_external_decoder_compat() {
     ];
 
     for (subsampling, name) in configs {
-        let jpeg = StreamingEncoder::new(width, height)
+        let jpeg = JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .mode(JpegMode::Progressive)
             .subsampling(subsampling)
             .optimize_huffman(true)
             .quality(Quality::from_quality(85.0))
-            .encode_all(&rgb)
+            .encode(&rgb)
             .unwrap_or_else(|e| panic!("Progressive {} encode failed: {:?}", name, e));
 
         // Test with zune-jpeg decoder
@@ -89,13 +89,13 @@ fn test_progressive_subsampling_file_sizes() {
     }
 
     let encode = |sub: Subsampling| -> usize {
-        StreamingEncoder::new(width, height)
+        JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .mode(JpegMode::Progressive)
             .subsampling(sub)
             .optimize_huffman(true)
             .quality(Quality::from_quality(85.0))
-            .encode_all(&rgb)
+            .encode(&rgb)
             .expect("encode failed")
             .len()
     };
@@ -167,13 +167,13 @@ fn test_baseline_subsampling_works() {
     }
 
     let encode = |sub: Subsampling| -> usize {
-        StreamingEncoder::new(width, height)
+        JpegEncoder::new(width, height)
             .pixel_format(PixelFormat::Rgb)
             .mode(JpegMode::Baseline)
             .subsampling(sub)
             .optimize_huffman(true)
             .quality(Quality::from_quality(85.0))
-            .encode_all(&rgb)
+            .encode(&rgb)
             .expect("encode failed")
             .len()
     };

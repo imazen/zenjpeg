@@ -14,12 +14,12 @@
 //! let jpeg = StreamingEncoder::new(640, 480)
 //!     .quality(Quality::from_quality(85.0))
 //!     .subsampling(Subsampling::S420)
-//!     .encode_all(&pixels)?;
+//!     .encode(&pixels)?;
 //!
 //! // Or stream rows for large images
 //! let mut enc = StreamingEncoder::new(640, 480)
 //!     .quality(Quality::from_quality(85.0))
-//!     .build()?;
+//!     .start()?;
 //! for row in image_rows {
 //!     enc.push_row(row)?;
 //! }
@@ -92,7 +92,7 @@ use enough::{Never, Stop};
 ///
 /// // New API (recommended):
 /// let jpeg = StreamingEncoder::new(640, 480)
-///     .encode_all(&pixels)?;
+///     .encode(&pixels)?;
 /// ```
 #[deprecated(
     since = "0.4.0",
@@ -524,7 +524,7 @@ impl Encoder {
             builder = builder.custom_quant_matrices(custom.clone());
         }
 
-        builder.encode_all_with_stop(data, stop)
+        builder.encode_with_stop(data, stop)
     }
 
     /// Generate a quantization table, using custom matrices if configured.

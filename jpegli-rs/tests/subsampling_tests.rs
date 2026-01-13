@@ -14,7 +14,7 @@ use test_utils::{
 use jpegli::{
     decode::Decoder,
     types::{JpegMode, PixelFormat, Subsampling},
-    Quality, StreamingEncoder,
+    Quality, JpegEncoder,
 };
 use test_case::test_case;
 
@@ -27,10 +27,10 @@ fn roundtrip_with_subsampling(
     quality: f32,
     subsampling: Subsampling,
 ) -> (f64, u8, usize) {
-    let encoder = StreamingEncoder::new(img.width, img.height)
+    let encoder = JpegEncoder::new(img.width, img.height)
         .quality(Quality::from_quality(quality))
         .subsampling(subsampling);
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -327,11 +327,11 @@ fn test_color_edge_444() {
 #[test]
 fn test_grayscale_no_subsampling() {
     let img = test_utils::generate_gradient_h(128, 128, 1);
-    let encoder = StreamingEncoder::new(128, 128)
+    let encoder = JpegEncoder::new(128, 128)
         .pixel_format(PixelFormat::Gray)
         .quality(Quality::from_quality(90.0));
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     println!("Grayscale JPEG: {} bytes", jpeg.len());
 
@@ -405,8 +405,8 @@ fn count_components_in_sof(jpeg: &[u8]) -> Option<u8> {
 #[test]
 fn test_rgb_has_three_components() {
     let img = generate_gradient_d(64, 64, 3);
-    let encoder = StreamingEncoder::new(64, 64).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(64, 64).quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");
     assert_eq!(components, 3, "RGB JPEG should have 3 components");
@@ -415,10 +415,10 @@ fn test_rgb_has_three_components() {
 #[test]
 fn test_grayscale_has_one_component() {
     let img = test_utils::generate_gradient_h(64, 64, 1);
-    let encoder = StreamingEncoder::new(64, 64)
+    let encoder = JpegEncoder::new(64, 64)
         .pixel_format(PixelFormat::Gray)
         .quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");
     assert_eq!(components, 1, "Grayscale JPEG should have 1 component");

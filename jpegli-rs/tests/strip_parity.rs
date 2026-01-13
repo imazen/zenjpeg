@@ -6,7 +6,7 @@
 use jpegli::encode::strip::{StripProcessor, StripProcessorOutput};
 use jpegli::quant::{generate_quant_table, Quality, ZeroBiasParams};
 use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
-use jpegli::StreamingEncoder;
+use jpegli::JpegEncoder;
 
 /// Generate a deterministic test image (gradient pattern).
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -182,12 +182,12 @@ fn test_strip_vs_standard_output_comparable() {
     let rgb_data = generate_test_image(width, height);
 
     // Encode with standard encoder
-    let standard_output = StreamingEncoder::new(width as u32, height as u32)
+    let standard_output = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::Traditional(85.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true)
-        .encode_all(&rgb_data)
+        .encode(&rgb_data)
         .expect("encoding failed");
 
     // Encode with strip processor

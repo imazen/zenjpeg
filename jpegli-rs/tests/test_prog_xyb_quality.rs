@@ -1,4 +1,4 @@
-use jpegli::{Decoder, JpegMode, Quality, StreamingEncoder};
+use jpegli::{Decoder, JpegMode, Quality, JpegEncoder};
 
 #[test]
 fn test_progressive_xyb_all_quality_levels() {
@@ -16,11 +16,11 @@ fn test_progressive_xyb_all_quality_levels() {
 
     for &quality in &[10u8, 30, 50, 70, 85, 95] {
         // Encode progressive XYB
-        let jpeg = StreamingEncoder::new(width, height)
+        let jpeg = JpegEncoder::new(width, height)
             .use_xyb(true)
             .mode(JpegMode::Progressive)
             .quality(Quality::Traditional(quality as f32))
-            .encode_all(&rgb)
+            .encode(&rgb)
             .expect(&format!("encode Q{} failed", quality));
 
         println!("Q{}: encoded {} bytes", quality, jpeg.len());
@@ -58,11 +58,11 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     );
 
     // Encode progressive XYB
-    let jpeg = StreamingEncoder::new(width, height)
+    let jpeg = JpegEncoder::new(width, height)
         .use_xyb(true)
         .mode(JpegMode::Progressive)
         .quality(Quality::Traditional(quality as f32))
-        .encode_all(&rgb)
+        .encode(&rgb)
         .expect(&format!("encode Q{} failed", quality));
 
     println!("Q{}: encoded {} bytes", quality, jpeg.len());
@@ -122,11 +122,11 @@ fn test_progressive_ycbcr_non_aligned_dimensions() {
         );
 
         // Encode progressive YCbCr
-        let jpeg = StreamingEncoder::new(width, height)
+        let jpeg = JpegEncoder::new(width, height)
             .use_xyb(false)
             .mode(JpegMode::Progressive)
             .quality(Quality::Traditional(quality as f32))
-            .encode_all(&rgb)
+            .encode(&rgb)
             .expect(&format!("encode Q{} failed", quality));
 
         println!("Q{}: encoded {} bytes", quality, jpeg.len());

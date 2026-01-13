@@ -3,7 +3,7 @@
 //! These tests verify the decoder's `decode_to_ycbcr_f32()` method and
 //! the encoder's `push_ycbcr_strip_f32()` methods.
 
-use jpegli::{Decoder, PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{Decoder, PixelFormat, Quality, JpegEncoder, Subsampling};
 
 /// Helper to create a test RGB image with a gradient pattern.
 fn create_test_rgb(width: usize, height: usize) -> Vec<u8> {
@@ -42,11 +42,11 @@ fn test_decode_to_ycbcr_f32_basic() {
 
     // Create and encode a test image
     let rgb = create_test_rgb(width, height);
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S444)
-        .encode_all(&rgb)
+        .encode(&rgb)
         .unwrap();
 
     // Decode to YCbCr f32
@@ -99,20 +99,20 @@ fn test_encode_ycbcr_parity_with_rgb() {
     }
 
     // Encode from RGB
-    let jpeg_rgb = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_rgb = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S444)
-        .encode_all(&rgb)
+        .encode(&rgb)
         .unwrap();
 
     // Encode from YCbCr
     let strip_height = 16; // Typical strip height
-    let mut encoder_ycbcr = StreamingEncoder::new(width as u32, height as u32)
+    let mut encoder_ycbcr = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb) // Still need to specify format for other params
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S444)
-        .build()
+        .start()
         .unwrap();
 
     // Push strips
@@ -161,11 +161,11 @@ fn test_decode_to_ycbcr_f32_420() {
 
     // Create and encode a test image with 4:2:0
     let rgb = create_test_rgb(width, height);
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
         .subsampling(Subsampling::S420)
-        .encode_all(&rgb)
+        .encode(&rgb)
         .unwrap();
 
     // Decode to YCbCr f32
@@ -186,10 +186,10 @@ fn test_decode_to_ycbcr_f32_icc_passthrough() {
 
     // Create and encode a test image
     let rgb = create_test_rgb(width, height);
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(90.0))
-        .encode_all(&rgb)
+        .encode(&rgb)
         .unwrap();
 
     // Decode to YCbCr f32
@@ -210,10 +210,10 @@ fn test_decode_to_ycbcr_f32_grayscale_error() {
 
     // Create and encode a grayscale image
     let gray: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Gray)
         .quality(Quality::from_quality(90.0))
-        .encode_all(&gray)
+        .encode(&gray)
         .unwrap();
 
     // Decode to YCbCr f32 should fail for grayscale
@@ -232,11 +232,11 @@ fn test_ycbcr_f32_roundtrip() {
     let original_rgb = create_test_rgb(width, height);
 
     // Encode at high quality
-    let jpeg1 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg1 = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(95.0))
         .subsampling(Subsampling::S444)
-        .encode_all(&original_rgb)
+        .encode(&original_rgb)
         .unwrap();
 
     // Decode to YCbCr
@@ -245,11 +245,11 @@ fn test_ycbcr_f32_roundtrip() {
 
     // Re-encode from YCbCr
     let strip_height = 16;
-    let mut encoder = StreamingEncoder::new(width as u32, height as u32)
+    let mut encoder = JpegEncoder::new(width as u32, height as u32)
         .pixel_format(PixelFormat::Rgb)
         .quality(Quality::from_quality(95.0))
         .subsampling(Subsampling::S444)
-        .build()
+        .start()
         .unwrap();
 
     for strip_y in (0..height).step_by(strip_height) {

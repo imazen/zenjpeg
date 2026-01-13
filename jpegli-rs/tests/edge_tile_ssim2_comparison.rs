@@ -159,13 +159,13 @@ fn tile_bottom_edge(rgb: &[u8], width: usize, height: usize, edge_height: usize)
 
 /// Encode with Rust jpegli
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::StreamingEncoder::new(width, height)
+    jpegli::JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
         .quality(Quality::from_quality(quality))
         .optimize_huffman(true)
         .mode(JpegMode::Progressive)
-        .encode_all(rgb)
+        .encode(rgb)
         .expect("Rust encode failed")
 }
 

@@ -3,7 +3,7 @@
 //! These formats are treated as linear RGB and converted through sRGB
 //! gamma correction before YCbCr encoding.
 
-use jpegli::{PixelFormat, Quality, StreamingEncoder, Subsampling};
+use jpegli::{PixelFormat, Quality, JpegEncoder, Subsampling};
 
 /// Create a simple gradient test image in the specified format.
 fn create_gradient_rgb16(width: usize, height: usize) -> Vec<u8> {
@@ -128,11 +128,11 @@ fn test_rgb16_encoding() {
     let height = 64;
     let pixels = create_gradient_rgb16(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
         .pixel_format(PixelFormat::Rgb16)
         .subsampling(Subsampling::S444)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("RGB16 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -146,11 +146,11 @@ fn test_rgba16_encoding() {
     let height = 64;
     let pixels = create_gradient_rgba16(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
         .pixel_format(PixelFormat::Rgba16)
         .subsampling(Subsampling::S420)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("RGBA16 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -163,10 +163,10 @@ fn test_gray16_encoding() {
     let height = 64;
     let pixels = create_gradient_gray16(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
         .pixel_format(PixelFormat::Gray16)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("Gray16 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -179,11 +179,11 @@ fn test_rgbf32_encoding() {
     let height = 64;
     let pixels = create_gradient_rgbf32(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
         .pixel_format(PixelFormat::RgbF32)
         .subsampling(Subsampling::S444)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("RgbF32 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -196,11 +196,11 @@ fn test_rgbaf32_encoding() {
     let height = 64;
     let pixels = create_gradient_rgbaf32(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
         .pixel_format(PixelFormat::RgbaF32)
         .subsampling(Subsampling::S420)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("RgbaF32 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -213,10 +213,10 @@ fn test_grayf32_encoding() {
     let height = 64;
     let pixels = create_gradient_grayf32(width, height);
 
-    let jpeg = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(85.0))
         .pixel_format(PixelFormat::GrayF32)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .expect("GrayF32 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -228,10 +228,10 @@ fn test_linear_formats_different_sizes() {
     // Test non-MCU-aligned sizes
     for (width, height) in [(63, 65), (17, 33), (100, 100), (1, 1)] {
         let pixels = create_gradient_rgbf32(width, height);
-        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(75.0))
             .pixel_format(PixelFormat::RgbF32)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect(&format!("RgbF32 {}x{} should succeed", width, height));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -245,10 +245,10 @@ fn test_linear_format_quality_range() {
     let pixels = create_gradient_rgb16(width, height);
 
     for quality in [10.0, 50.0, 85.0, 95.0] {
-        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(quality))
             .pixel_format(PixelFormat::Rgb16)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect(&format!("RGB16 quality {} should succeed", quality));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -268,11 +268,11 @@ fn test_linear_format_subsampling_modes() {
         Subsampling::S420,
         Subsampling::S440,
     ] {
-        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+        let jpeg = JpegEncoder::new(width as u32, height as u32)
             .quality(Quality::from_quality(85.0))
             .pixel_format(PixelFormat::RgbF32)
             .subsampling(subsampling)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect(&format!("RgbF32 {:?} should succeed", subsampling));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
@@ -293,11 +293,11 @@ fn test_xyb_with_linear_formats() {
 
     // Test RgbF32 with XYB
     let pixels_f32 = create_gradient_rgbf32(width, height);
-    let jpeg_f32 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_f32 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_distance(1.0))
         .pixel_format(PixelFormat::RgbF32)
         .use_xyb(true)
-        .encode_all(&pixels_f32)
+        .encode(&pixels_f32)
         .expect("XYB with RgbF32 should succeed");
 
     assert!(verify_jpeg(&jpeg_f32), "Output should be valid JPEG");
@@ -305,11 +305,11 @@ fn test_xyb_with_linear_formats() {
 
     // Test Rgb16 with XYB
     let pixels_16 = create_gradient_rgb16(width, height);
-    let jpeg_16 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_16 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_distance(1.0))
         .pixel_format(PixelFormat::Rgb16)
         .use_xyb(true)
-        .encode_all(&pixels_16)
+        .encode(&pixels_16)
         .expect("XYB with Rgb16 should succeed");
 
     assert!(verify_jpeg(&jpeg_16), "Output should be valid JPEG");
@@ -337,18 +337,18 @@ fn test_gamma_correction_applied() {
     let srgb_gray = 186u8;
     let pixels_8bit: Vec<u8> = vec![srgb_gray; width * height * 3];
 
-    let jpeg_f32 = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_f32 = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(100.0))
         .pixel_format(PixelFormat::RgbF32)
         .subsampling(Subsampling::S444)
-        .encode_all(&pixels_f32)
+        .encode(&pixels_f32)
         .expect("RgbF32 should succeed");
 
-    let jpeg_8bit = StreamingEncoder::new(width as u32, height as u32)
+    let jpeg_8bit = JpegEncoder::new(width as u32, height as u32)
         .quality(Quality::from_quality(100.0))
         .pixel_format(PixelFormat::Rgb)
         .subsampling(Subsampling::S444)
-        .encode_all(&pixels_8bit)
+        .encode(&pixels_8bit)
         .expect("Rgb should succeed");
 
     // Both should produce similar output sizes since they represent

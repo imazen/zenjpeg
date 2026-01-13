@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgb8() {
-        use crate::{Decoder, Quality, StreamingEncoder};
+        use crate::{Decoder, Quality, JpegEncoder};
 
         // Create test image - 64x48 for multiple MCU rows
         let width = 64u32;
@@ -818,8 +818,8 @@ mod tests {
         }
 
         // Encode as baseline 4:4:4 (default)
-        let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(95.0));
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(95.0));
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         // Decode normally for comparison
         let decoder = Decoder::new();
@@ -864,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_partial_reads() {
-        use crate::{Decoder, Quality, StreamingEncoder};
+        use crate::{Decoder, Quality, JpegEncoder};
 
         // Create test image - 32x32
         let width = 32u32;
@@ -879,8 +879,8 @@ mod tests {
             }
         }
 
-        let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(90.0));
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
         let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgbx8() {
-        use crate::{Decoder, Quality, StreamingEncoder};
+        use crate::{Decoder, Quality, JpegEncoder};
 
         let width = 24u32;
         let height = 24u32;
@@ -919,8 +919,8 @@ mod tests {
             pixels[i] = ((i * 7) % 256) as u8;
         }
 
-        let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(85.0));
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(85.0));
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
         let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_rgba_f32() {
-        use crate::{Decoder, Quality, StreamingEncoder};
+        use crate::{Decoder, Quality, JpegEncoder};
 
         let width = 16u32;
         let height = 16u32;
@@ -972,8 +972,8 @@ mod tests {
             pixels[i] = ((i * 11) % 256) as u8;
         }
 
-        let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(90.0));
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
         let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_ycbcr_planes() {
-        use crate::{Decoder, Quality, StreamingEncoder};
+        use crate::{Decoder, Quality, JpegEncoder};
 
         let width = 32u32;
         let height = 24u32;
@@ -1049,8 +1049,8 @@ mod tests {
             pixels[i] = ((i * 13) % 256) as u8;
         }
 
-        let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(90.0));
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
 
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_non_mcu_aligned() {
-        use crate::{Decoder, Quality, StreamingEncoder};
+        use crate::{Decoder, Quality, JpegEncoder};
 
         // Non-MCU-aligned dimensions (not multiples of 8)
         let width = 37u32;
@@ -1118,8 +1118,8 @@ mod tests {
             }
         }
 
-        let encoder = StreamingEncoder::new(width, height).quality(Quality::from_quality(90.0));
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let encoder = JpegEncoder::new(width, height).quality(Quality::from_quality(90.0));
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         let decoder = Decoder::new();
         let decoded = decoder.decode(&jpeg).expect("decode failed");
@@ -1146,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_420() {
-        use crate::{Decoder, Quality, StreamingEncoder, Subsampling};
+        use crate::{Decoder, Quality, JpegEncoder, Subsampling};
 
         // Create test image - 64x48 for multiple MCU rows
         // 4:2:0 has 16x16 MCUs, so this is 4x3 MCUs
@@ -1163,10 +1163,10 @@ mod tests {
         }
 
         // Encode as 4:2:0
-        let encoder = StreamingEncoder::new(width, height)
+        let encoder = JpegEncoder::new(width, height)
             .quality(Quality::from_quality(95.0))
             .subsampling(Subsampling::S420);
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         // Decode normally for comparison
         let decoder = Decoder::new();
@@ -1228,7 +1228,7 @@ mod tests {
 
     #[test]
     fn test_scanline_reader_420_non_mcu_aligned() {
-        use crate::{Decoder, Quality, StreamingEncoder, Subsampling};
+        use crate::{Decoder, Quality, JpegEncoder, Subsampling};
 
         // Non-MCU-aligned dimensions (not multiples of 16 for 4:2:0)
         let width = 37u32;
@@ -1244,10 +1244,10 @@ mod tests {
         }
 
         // Encode as 4:2:0
-        let encoder = StreamingEncoder::new(width, height)
+        let encoder = JpegEncoder::new(width, height)
             .quality(Quality::from_quality(90.0))
             .subsampling(Subsampling::S420);
-        let jpeg = encoder.encode_all(&pixels).expect("encode failed");
+        let jpeg = encoder.encode(&pixels).expect("encode failed");
 
         // Decode normally for comparison
         let decoder = Decoder::new();

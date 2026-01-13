@@ -15,7 +15,7 @@ use test_utils::{
 use jpegli::{
     decode::Decoder,
     types::{JpegMode, PixelFormat},
-    Quality, StreamingEncoder,
+    Quality, JpegEncoder,
 };
 use test_case::test_case;
 
@@ -25,11 +25,11 @@ use test_case::test_case;
 
 /// Encode and decode an image, returning quality metrics.
 fn roundtrip_metrics(img: &TestImage, quality: f32, mode: JpegMode) -> (f64, u8, usize, usize) {
-    let encoder = StreamingEncoder::new(img.width, img.height)
+    let encoder = JpegEncoder::new(img.width, img.height)
         .quality(Quality::from_quality(quality))
         .mode(mode);
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
 
@@ -287,11 +287,11 @@ fn test_progressive_vs_baseline_quality() {
 #[test_case(256, 256 ; "256x256")]
 fn test_grayscale_roundtrip(width: u32, height: u32) {
     let img = generate_gradient_h(width, height, 1);
-    let encoder = StreamingEncoder::new(width, height)
+    let encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Gray)
         .quality(Quality::from_quality(90.0));
 
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
 
@@ -316,14 +316,14 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
 #[test]
 fn test_encode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder_config = StreamingEncoder::new(128, 128).quality(Quality::from_quality(85.0));
+    let encoder_config = JpegEncoder::new(128, 128).quality(Quality::from_quality(85.0));
 
     let jpeg1 = encoder_config
         .clone()
-        .encode_all(&img.pixels)
+        .encode(&img.pixels)
         .expect("encode 1 failed");
     let jpeg2 = encoder_config
-        .encode_all(&img.pixels)
+        .encode(&img.pixels)
         .expect("encode 2 failed");
 
     assert_eq!(jpeg1, jpeg2, "Encoding should be deterministic");
@@ -332,8 +332,8 @@ fn test_encode_deterministic() {
 #[test]
 fn test_decode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let encoder = StreamingEncoder::new(128, 128).quality(Quality::from_quality(85.0));
-    let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+    let encoder = JpegEncoder::new(128, 128).quality(Quality::from_quality(85.0));
+    let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
     let decoder = Decoder::new();
     let decoded1 = decoder.decode(&jpeg).expect("decode 1 failed");
@@ -364,8 +364,8 @@ fn test_compression_ratio() {
     for (name, img) in &test_cases {
         let raw_size = img.pixels.len();
         let encoder =
-            StreamingEncoder::new(img.width, img.height).quality(Quality::from_quality(85.0));
-        let jpeg = encoder.encode_all(&img.pixels).expect("encode failed");
+            JpegEncoder::new(img.width, img.height).quality(Quality::from_quality(85.0));
+        let jpeg = encoder.encode(&img.pixels).expect("encode failed");
 
         let ratio = raw_size as f64 / jpeg.len() as f64;
         println!(

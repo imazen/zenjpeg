@@ -1,6 +1,6 @@
 //! Test that streaming encoder produces identical output to standard encoder.
 
-use jpegli::{JpegMode, Quality, StreamingEncoder, Subsampling};
+use jpegli::{JpegMode, Quality, JpegEncoder, Subsampling};
 
 #[test]
 fn test_streaming_matches_standard_various_sizes() {
@@ -23,17 +23,17 @@ fn test_streaming_matches_standard_various_sizes() {
             .collect();
 
         // Encode with standard encoder using strip backend
-        let standard = StreamingEncoder::new(width, height)
+        let standard = JpegEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect("standard encode failed");
 
         // Encode with streaming encoder
-        let mut streaming = StreamingEncoder::new(width, height)
+        let mut streaming = JpegEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
-            .build()
+            .start()
             .expect("streaming build failed");
 
         let row_size = width as usize * 3;
@@ -82,10 +82,10 @@ fn test_streaming_push_rows() {
         .collect();
 
     // Encode with streaming encoder using push_rows
-    let mut streaming = StreamingEncoder::new(width, height)
+    let mut streaming = JpegEncoder::new(width, height)
         .quality(Quality::from_quality(85.0))
         .subsampling(Subsampling::S444)
-        .build()
+        .start()
         .unwrap();
 
     // Push 4 rows at a time
@@ -108,7 +108,7 @@ fn test_streaming_push_rows() {
 #[test]
 fn test_memory_estimate_reasonable() {
     // 4K image
-    let estimate = StreamingEncoder::new(3840, 2160)
+    let estimate = JpegEncoder::new(3840, 2160)
         .subsampling(Subsampling::S420)
         .estimate_memory_usage();
 
@@ -123,7 +123,7 @@ fn test_memory_estimate_reasonable() {
     );
 
     // 1080p image
-    let estimate_1080p = StreamingEncoder::new(1920, 1080)
+    let estimate_1080p = JpegEncoder::new(1920, 1080)
         .subsampling(Subsampling::S420)
         .estimate_memory_usage();
     let estimate_1080p_mb = estimate_1080p as f64 / 1024.0 / 1024.0;
@@ -151,19 +151,19 @@ fn test_streaming_progressive_mode() {
             .collect();
 
         // Encode with standard encoder (strip backend, progressive)
-        let standard = StreamingEncoder::new(width, height)
+        let standard = JpegEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect("standard progressive encode failed");
 
         // Encode with streaming encoder (progressive)
-        let streaming_result = StreamingEncoder::new(width, height)
+        let streaming_result = JpegEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(subsampling)
             .mode(JpegMode::Progressive)
-            .encode_all(&pixels)
+            .encode(&pixels)
             .expect("streaming progressive encode failed");
 
         // Compare
@@ -211,17 +211,17 @@ fn test_streaming_encode_all() {
         .collect();
 
     // Using encode_all
-    let encode_all_result = StreamingEncoder::new(width, height)
+    let encode_all_result = JpegEncoder::new(width, height)
         .quality(Quality::from_quality(85.0))
         .subsampling(Subsampling::S420)
-        .encode_all(&pixels)
+        .encode(&pixels)
         .unwrap();
 
     // Using build + push_row + finish
-    let mut streaming = StreamingEncoder::new(width, height)
+    let mut streaming = JpegEncoder::new(width, height)
         .quality(Quality::from_quality(85.0))
         .subsampling(Subsampling::S420)
-        .build()
+        .start()
         .unwrap();
 
     let row_size = width as usize * 3;
