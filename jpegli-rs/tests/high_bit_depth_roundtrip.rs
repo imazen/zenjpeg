@@ -14,8 +14,25 @@
 //! The encoder applies sRGB gamma correction during encoding.
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
 
+use enough::Never;
 use jpegli::decode::Decoder;
-use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
+
+fn encode_rgb16(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb16Linear)?;
+    enc.push_packed(data, Never)?;
+    enc.finish()
+}
 
 /// Convert sRGB value [0,1] to linear [0,1].
 fn srgb_to_linear(s: f64) -> f64 {
@@ -137,18 +154,16 @@ fn test_16bit_input_preserves_good_precision() {
     let input_8 = create_slow_gradient_rgb8(width, height);
 
     // Encode both at high quality with 4:4:4 (no chroma subsampling)
-    let jpeg_16 = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(98.0))
-        .pixel_format(PixelFormat::Rgb16)
-        .subsampling(Subsampling::S444)
-        .encode(&input_16)
+    let config_16 = EncoderConfig::new()
+        .quality(98.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg_16 = encode_rgb16(width as u32, height as u32, &input_16, &config_16)
         .expect("16-bit encode should succeed");
 
-    let jpeg_8 = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(98.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444)
-        .encode(&input_8)
+    let config_8 = EncoderConfig::new()
+        .quality(98.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg_8 = encode_rgb(width as u32, height as u32, &input_8, &config_8)
         .expect("8-bit encode should succeed");
 
     // Decode both to f32 for maximum precision comparison
@@ -216,11 +231,10 @@ fn test_f32_decode_recovers_sub_sample_precision() {
     let input = create_precision_test_rgb8(width, height);
 
     // Encode at high quality with 4:4:4
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(99.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444)
-        .encode(&input)
+    let config = EncoderConfig::new()
+        .quality(99.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg = encode_rgb(width as u32, height as u32, &input, &config)
         .expect("encode should succeed");
 
     let decoder = Decoder::new();
@@ -273,11 +287,10 @@ fn test_to_u16_conversion_preserves_precision() {
     let height = 64;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(98.0))
-        .pixel_format(PixelFormat::Rgb16)
-        .subsampling(Subsampling::S444)
-        .encode(&input)
+    let config = EncoderConfig::new()
+        .quality(98.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg = encode_rgb16(width as u32, height as u32, &input, &config)
         .expect("encode should succeed");
 
     let decoder = Decoder::new();
@@ -331,11 +344,10 @@ fn test_gradient_banding_reduced() {
     let height = 8;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(95.0))
-        .pixel_format(PixelFormat::Rgb16)
-        .subsampling(Subsampling::S444)
-        .encode(&input)
+    let config = EncoderConfig::new()
+        .quality(95.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg = encode_rgb16(width as u32, height as u32, &input, &config)
         .expect("encode should succeed");
 
     let decoder = Decoder::new();
@@ -427,11 +439,10 @@ fn test_full_pipeline_8bit_to_f32_precision() {
     }
 
     // Encode at very high quality
-    let jpeg = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(99.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444)
-        .encode(&input_bytes)
+    let config = EncoderConfig::new()
+        .quality(99.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg = encode_rgb(width as u32, height as u32, &input_bytes, &config)
         .expect("encode should succeed");
 
     // Decode to f32
@@ -509,11 +520,10 @@ fn test_quality_affects_precision() {
     let mut prev_bits = f64::MAX;
 
     for quality in [70.0, 85.0, 95.0, 99.0] {
-        let jpeg = JpegEncoder::new(width as u32, height as u32)
-            .quality(Quality::from_quality(quality))
-            .pixel_format(PixelFormat::Rgb16)
-            .subsampling(Subsampling::S444)
-            .encode(&input)
+        let config = EncoderConfig::new()
+            .quality(quality)
+            .ycbcr(ChromaSubsampling::Full);
+        let jpeg = encode_rgb16(width as u32, height as u32, &input, &config)
             .expect("encode should succeed");
 
         let decoded = decoder.decode_f32(&jpeg).expect("decode failed");
@@ -561,18 +571,16 @@ fn test_subsampling_comparison() {
 
     let decoder = Decoder::new();
 
-    let jpeg_444 = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(95.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444)
-        .encode(&input)
+    let config_444 = EncoderConfig::new()
+        .quality(95.0)
+        .ycbcr(ChromaSubsampling::Full);
+    let jpeg_444 = encode_rgb(width as u32, height as u32, &input, &config_444)
         .expect("444 encode failed");
 
-    let jpeg_420 = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(95.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S420)
-        .encode(&input)
+    let config_420 = EncoderConfig::new()
+        .quality(95.0)
+        .ycbcr(ChromaSubsampling::Quarter);
+    let jpeg_420 = encode_rgb(width as u32, height as u32, &input, &config_420)
         .expect("420 encode failed");
 
     let decoded_444 = decoder.decode_f32(&jpeg_444).expect("444 decode failed");
