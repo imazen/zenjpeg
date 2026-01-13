@@ -188,7 +188,7 @@ fn test_fuzzy_erosion_vs_cpp() {
 /// Make the implementation accessible for testing
 mod aq_impl {
     // Re-export the implementation function for testing
-    pub use jpegli::adaptive_quant::*;
+    pub use jpegli::quant::aq::*;
 }
 
 #[test]

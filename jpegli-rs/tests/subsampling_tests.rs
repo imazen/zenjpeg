@@ -395,7 +395,10 @@ fn test_444_filesize_reasonable() {
 
 fn count_components_in_sof(jpeg: &[u8]) -> Option<u8> {
     for pos in 0..jpeg.len() - 10 {
-        if jpeg[pos] == 0xFF && (jpeg[pos + 1] == 0xC0 || jpeg[pos + 1] == 0xC2) {
+        // SOF0 = 0xC0 (Baseline), SOF1 = 0xC1 (Extended Sequential), SOF2 = 0xC2 (Progressive)
+        if jpeg[pos] == 0xFF
+            && (jpeg[pos + 1] == 0xC0 || jpeg[pos + 1] == 0xC1 || jpeg[pos + 1] == 0xC2)
+        {
             return Some(jpeg[pos + 9]);
         }
     }
