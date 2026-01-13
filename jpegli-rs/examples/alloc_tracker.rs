@@ -80,7 +80,8 @@ fn format_bytes(bytes: usize) -> String {
 }
 
 fn main() {
-    use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
+    use enough::Never;
+    use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
     println!("=== jpegli-rs Allocation Tracking ===\n");
 
@@ -92,7 +93,7 @@ fn main() {
     ];
 
     let quality_levels = [75, 85, 95];
-    let subsamplings = [(Subsampling::S420, "4:2:0"), (Subsampling::S444, "4:4:4")];
+    let subsamplings = [(ChromaSubsampling::Quarter, "4:2:0"), (ChromaSubsampling::Full, "4:4:4")];
 
     println!(
         "{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
@@ -118,15 +119,17 @@ fn main() {
                 // Reset stats before encoding
                 reset_stats();
 
-                // Create encoder using builder pattern
-                let encoder = JpegEncoder::new(*width as u32, *height as u32)
+                // Create encoder using v2 API
+                let config = EncoderConfig::new()
                     .quality(Quality::Traditional(quality as f32))
-                    .pixel_format(PixelFormat::Rgb)
-                    .subsampling(*subsampling)
+                    .ycbcr(*subsampling)
                     .optimize_huffman(true);
 
-                // Encode
-                let output = encoder.encode(&rgb_data).expect("encoding failed");
+                let mut enc = config
+                    .encode_from_bytes(*width as u32, *height as u32, PixelLayout::Rgb8Srgb)
+                    .expect("encoder setup");
+                enc.push_packed(&rgb_data, Never).expect("push");
+                let output = enc.finish().expect("encoding failed");
 
                 let (current, peak, alloc_count, _dealloc_count) = get_stats();
 
@@ -171,10 +174,9 @@ fn main() {
 
     reset_stats();
 
-    let encoder = JpegEncoder::new(width as u32, height as u32)
+    let config = EncoderConfig::new()
         .quality(Quality::Traditional(85.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S420)
+        .ycbcr(ChromaSubsampling::Quarter)
         .optimize_huffman(true);
 
     // Track pre-encode baseline
@@ -186,7 +188,11 @@ fn main() {
 
     reset_stats();
 
-    let output = encoder.encode(&rgb_data).expect("encoding failed");
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&rgb_data, Never).expect("push");
+    let output = enc.finish().expect("encoding failed");
 
     let (post_current, post_peak, post_allocs, post_deallocs) = get_stats();
 
