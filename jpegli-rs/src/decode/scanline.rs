@@ -30,7 +30,7 @@ use crate::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
-use crate::idct_int::idct_int_tiered;
+use super::idct_int::idct_int_tiered;
 use crate::quant::dequantize_unzigzag_i32_into;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
 use imgref::ImgRefMut;

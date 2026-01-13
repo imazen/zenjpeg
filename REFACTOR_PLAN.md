@@ -5,11 +5,11 @@ Target: No file over 2000 lines.
 
 ## Current State
 
-58 total .rs files, 4 files over 2k lines:
+58 total .rs files, 3 files over 2k lines:
 - `decode/mod.rs` (3416 lines)
 - `encode_simd.rs` (3176 lines)
 - `xyb.rs` (2301 lines)
-- `encode/strip.rs` (2125 lines)
+- ~~`encode/strip.rs` (2125 lines)~~ → Split into `encode/strip/mod.rs` (1235) + `encode/strip/convert.rs` (921)
 
 ## Guiding Principles
 
@@ -209,19 +209,28 @@ src/
 10. [ ] Split `encode_simd.rs` encoder parts → `encode/color.rs`
 11. [ ] Delete `encode_simd.rs` (after splitting)
 
-### Phase 4: Split large `encode/strip.rs`
-12. [ ] Create `encode/strip/mod.rs` with StripProcessor core
-13. [ ] Create `encode/strip/convert.rs` with color conversion methods
-14. [ ] Update imports
+### Phase 4: Split large `encode/strip.rs` ✓ COMPLETE
+12. [x] Create `encode/strip/mod.rs` with StripProcessor core (1235 lines)
+13. [x] Create `encode/strip/convert.rs` with color conversion methods (921 lines)
+14. [x] Update imports (automatic - Rust finds strip/mod.rs)
 
-### Phase 5: Move decoder-only code to `decode/`
-15. [ ] Move `idct.rs` → `decode/idct.rs`
-16. [ ] Move `idct_int.rs` → `decode/idct_int.rs`
+### Phase 5: Move decoder-only code to `decode/` ✓ COMPLETE
+15. [x] Move `idct.rs` → `decode/idct.rs`
+16. [x] Move `idct_int.rs` → `decode/idct_int.rs`
 
-### Phase 6: Split large `decode/mod.rs`
-17. [ ] Extract `JpegParser` → `decode/parser.rs`
-18. [ ] Extract `DecodedImage*` types → `decode/image.rs`
-19. [ ] Update imports
+### Phase 6: Split large `decode/mod.rs` ✓ COMPLETE
+17. [x] Extract `JpegParser` → `decode/parser.rs` (2452 lines)
+18. [x] Extract `DecodedImage*` types → `decode/image.rs` (294 lines)
+19. [x] Update imports - mod.rs now 697 lines
+
+Additional extraction:
+20. [x] Extract upsampling functions → `decode/upsample.rs` (182 lines)
+    - parser.rs now 2251 lines (was 2452)
+    - Removed `#[cfg(feature = "simd")]` gates (wide crate is always available)
+    - Note: scanline.rs has separate i16 upsampling (different algorithm, in-place)
+
+Note: parser.rs (2251 lines) is slightly over 2000. Remaining methods (`to_pixels*`)
+use `self` heavily - extraction would require significant refactoring.
 
 ### Phase 7: Foundation cleanup (optional)
 20. [ ] Move `simd_types.rs` → `foundation/simd_types.rs`

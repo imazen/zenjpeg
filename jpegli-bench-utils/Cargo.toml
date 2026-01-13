@@ -29,7 +29,7 @@ fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 
 # For test image discovery
-jpegli-rs = { path = "../jpegli-rs", default-features = false, features = ["simd"] }
+jpegli-rs = { path = "../jpegli-rs", default-features = false }
 
 # C++ jpegli FFI bindings (optional)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }
