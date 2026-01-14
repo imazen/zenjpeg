@@ -4,7 +4,6 @@
 //! output to C++ djpegli for various JPEG configurations.
 
 use dssim::Dssim;
-use enough::Unstoppable;
 use jpegli::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},

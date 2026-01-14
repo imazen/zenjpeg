@@ -4,7 +4,6 @@
 //! The C++ output is generated using instrumentation in entropy_coding.cc with
 //! the DUMP_AC_REFINEMENT environment variable.
 
-use enough::Unstoppable;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;

@@ -1,6 +1,5 @@
 //! Compare Rust vs C++ progressive encoding quality and size.
 
-use enough::Unstoppable;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;

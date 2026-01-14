@@ -20,7 +20,6 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use enough::Unstoppable;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use test_utils::generate_gradient_d;
 

@@ -1,4 +1,3 @@
-use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;

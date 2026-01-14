@@ -9,7 +9,6 @@
 //! 3. Fail loudly when parity regresses
 //! 4. Document expected gaps until they're fixed
 
-use enough::Unstoppable;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;

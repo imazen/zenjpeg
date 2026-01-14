@@ -3,7 +3,6 @@
 //! Verifies that the decoder produces consistent output across multiple roundtrips
 //! and that encode→decode→encode→decode produces stable results.
 
-use enough::Unstoppable;
 use jpegli::{
     decoder::Decoder,
     encoder::{EncoderConfig, PixelLayout},

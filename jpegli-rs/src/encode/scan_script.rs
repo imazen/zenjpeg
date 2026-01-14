@@ -435,7 +435,7 @@ mod tests {
     fn test_invalid_missing_dc_for_component() {
         // Component 0 has full coverage
         // Component 1 has DC (0-0) and AC (1-63) but they don't complete the DC
-        let scans = vec![
+        let _scans = vec![
             make_scan(&[0], 0, 63, 0, 0),
             make_scan(&[1], 0, 0, 0, 0),
             make_scan(&[1], 1, 63, 0, 0), // This is valid!
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn test_invalid_spectral_gap() {
         // Encode DC (0-1) then (2-63) - gap at coefficient 1
-        let scans = vec![
+        let _scans = vec![
             make_scan(&[0], 0, 1, 0, 0),  // 0-1
             make_scan(&[0], 2, 63, 0, 0), // 2-63, but 1 is in first scan as AC
         ];

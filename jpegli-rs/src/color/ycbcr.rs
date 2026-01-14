@@ -1282,10 +1282,10 @@ mod tests {
         assert!((cb - 85.0).abs() < 1.0);
         assert!((cr - 255.0).abs() < 1.0);
 
-        let (y, cb, cr) = rgb_to_ycbcr_f32(0.0, 255.0, 0.0); // Green
+        let (y, _cb, _cr) = rgb_to_ycbcr_f32(0.0, 255.0, 0.0); // Green
         assert!((y - 150.0).abs() < 1.0);
 
-        let (y, cb, cr) = rgb_to_ycbcr_f32(0.0, 0.0, 255.0); // Blue
+        let (y, _cb, _cr) = rgb_to_ycbcr_f32(0.0, 0.0, 255.0); // Blue
         assert!((y - 29.0).abs() < 1.0);
     }
 
@@ -1418,7 +1418,7 @@ mod tests {
         assert_eq!((c, m, y, k), (0, 0, 0, 0));
 
         // Black -> CMYK(0,0,0,255)
-        let (c, m, y, k) = rgb_to_cmyk(0, 0, 0);
+        let (_c, _m, _y, k) = rgb_to_cmyk(0, 0, 0);
         assert_eq!(k, 255);
 
         // Red -> Cyan=0

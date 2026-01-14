@@ -6,7 +6,6 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use enough::Unstoppable;
 use jpegli::{
     decoder::{ColorSpace, Decoder, DecoderConfig, Dimensions},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},

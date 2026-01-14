@@ -2095,7 +2095,7 @@ mod tests {
 
         for &v in &test_values {
             // Test sRGB decode (exponent 2.4)
-            let exact = ((v + 0.055) / 1.055_f32).powf(2.4);
+            let _exact = ((v + 0.055) / 1.055_f32).powf(2.4);
             let fast = srgb_to_linear_fast(v);
             let error = (fast - srgb_to_linear(v)).abs();
             assert!(

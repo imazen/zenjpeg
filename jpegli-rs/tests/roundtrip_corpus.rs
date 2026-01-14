@@ -8,11 +8,10 @@ mod test_utils;
 
 use test_utils::{
     distance_rms, generate_checkerboard, generate_color_bars, generate_gradient_d,
-    generate_gradient_h, generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb,
-    max_pixel_diff, thresholds, TestImage, TestPattern,
+    generate_gradient_h, generate_solid, generate_solid_rgb,
+    max_pixel_diff, thresholds, TestImage,
 };
 
-use enough::Unstoppable;
 use jpegli::{
     decoder::Decoder,
     encoder::{EncoderConfig, PixelLayout},

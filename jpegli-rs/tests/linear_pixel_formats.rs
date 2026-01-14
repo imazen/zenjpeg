@@ -3,7 +3,6 @@
 //! These formats are treated as linear RGB and converted through sRGB
 //! gamma correction before YCbCr encoding.
 
-use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
 /// Helper function to encode data with given config and layout
