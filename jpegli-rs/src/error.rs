@@ -1,9 +1,10 @@
 //! Error types for jpegli.
 
-use std::fmt;
+use alloc::string::String;
+use core::fmt;
 
 /// Result type for jpegli operations.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors that can occur during JPEG encoding/decoding.
 #[derive(Debug, Clone, PartialEq)]
@@ -265,8 +266,10 @@ impl From<enough::StopReason> for Error {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Self::IoError {
@@ -292,22 +295,23 @@ impl From<crate::foundation::aligned_alloc::AllocError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
 
     #[test]
     fn test_error_size() {
-        let size = std::mem::size_of::<Error>();
+        let size = core::mem::size_of::<Error>();
         println!("\n=== ERROR SIZES ===");
         println!("Error: {} bytes", size);
         println!(
             "Option<Error>: {} bytes",
-            std::mem::size_of::<Option<Error>>()
+            core::mem::size_of::<Option<Error>>()
         );
-        println!("Result<()>: {} bytes", std::mem::size_of::<Result<()>>());
+        println!("Result<()>: {} bytes", core::mem::size_of::<Result<()>>());
         println!(
-            "std::result::Result<(), Error>: {} bytes",
-            std::mem::size_of::<std::result::Result<(), Error>>()
+            "core::result::Result<(), Error>: {} bytes",
+            core::mem::size_of::<core::result::Result<(), Error>>()
         );
-        println!("Box<Error>: {} bytes", std::mem::size_of::<Box<Error>>());
+        println!("Box<Error>: {} bytes", core::mem::size_of::<Box<Error>>());
         // Error should ideally be <= 32 bytes for efficient Result types
         // Current size is larger due to String variants
         assert!(
@@ -327,6 +331,7 @@ mod tests {
         assert!(err.to_string().contains("width cannot be zero"));
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_io_error_conversion() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");

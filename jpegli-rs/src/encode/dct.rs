@@ -18,10 +18,8 @@
 
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
-
+use multiversed::multiversed;
 use wide::f32x8;
-
-use multiversion::multiversion;
 
 // ============================================================================
 // Recursive DCT (jpegli-compatible)
@@ -361,8 +359,8 @@ pub(crate) mod simd {
 
     /// Process 8 rows simultaneously using SIMD with AVX2 transpose.
     /// Uses cache-friendly row loads + fast transpose instead of element-by-element gather.
+    #[multiversed]
     #[allow(dead_code)]
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
     pub fn dct_8rows_parallel(input: &[f32; 64], output: &mut [f32; 64]) {
         // Step 1: Load all 8 rows (cache-friendly sequential access, zero-cost)
         let mut rows: [f32x8; 8] = [f32x8::ZERO; 8];
@@ -516,7 +514,7 @@ pub(crate) mod simd {
     ///
     /// The AVX2 version uses vunpcklps/vunpckhps and vperm2f128 for efficient
     /// register-to-register transpose (Highway algorithm).
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+    #[multiversed]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // When compiling for AVX2 target with unsafe_simd feature,
         // use raw intrinsics for maximum performance.
@@ -691,7 +689,7 @@ pub(crate) mod simd {
     /// Full SIMD-optimized 2D forward DCT with f32x8 chaining.
     /// Keeps data in SIMD registers throughout the pipeline.
     /// Uses only 2 transposes instead of multiple gather/scatter cycles.
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+    #[multiversed]
     pub fn forward_dct_8x8_simd_chained(input: &[f32; 64]) -> [f32; 64] {
         // Load input as rows (each f32x8 is one row of the 8x8 block)
         let rows = [
@@ -738,7 +736,7 @@ pub(crate) mod simd {
     ///
     /// This eliminates all conversion overhead when data is already in wide format.
     /// Use this in hot paths where blocks are stored as Block8x8f.
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+    #[multiversed]
     #[inline]
     pub fn forward_dct_8x8_wide(input: &Block8x8f) -> Block8x8f {
         // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
@@ -1022,7 +1020,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// Uses multiversion for one-time dispatch at load (not per-call).
 /// Inside each version, `cfg(target_feature)` provides zero-cost branching.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+#[multiversed]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Use raw AVX2 intrinsics only when unsafe_simd feature is enabled

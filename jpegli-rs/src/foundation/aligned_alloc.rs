@@ -25,8 +25,8 @@ pub enum AllocError {
     Overflow,
 }
 
-impl std::fmt::Display for AllocError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::OutOfMemory => write!(f, "out of memory"),
             Self::Overflow => write!(f, "allocation size overflow"),
@@ -34,6 +34,7 @@ impl std::fmt::Display for AllocError {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for AllocError {}
 
 /// Try to allocate an aligned vector with `count` elements, all zeroed.
@@ -98,11 +99,18 @@ mod tests {
         let (buffer, stride) = try_alloc_image(100, 4).unwrap();
         assert_eq!(stride, 104); // 100 rounded up to multiple of 8
 
-        for y in 0..4 {
-            let row_ptr = unsafe { buffer.as_ptr().add(y * stride) };
-            let addr = row_ptr as usize;
-            assert_eq!(addr % 32, 0, "Row {} should be 32-byte aligned", y);
-        }
+        // Check that the base is 32-byte aligned
+        let base_addr = buffer.as_ptr() as usize;
+        assert_eq!(base_addr % 32, 0, "Base buffer should be 32-byte aligned");
+
+        // Since stride is a multiple of 8, and each f32 is 4 bytes,
+        // stride * 4 bytes = stride * 4, which is multiple of 32 when stride % 8 == 0.
+        // Thus all rows are 32-byte aligned if base is.
+        assert_eq!(
+            (stride * 4) % 32,
+            0,
+            "Row stride in bytes should be 32-byte aligned"
+        );
     }
 
     #[test]

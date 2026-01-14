@@ -7,21 +7,45 @@
 
 #![allow(dead_code)]
 
-use std::sync::OnceLock;
+use spin::Lazy;
 
 use crate::error::{Error, Result};
 
 // Static standard encode tables (lazily initialized, ~1.3KB each)
-static STD_DC_LUMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
-static STD_DC_CHROMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
-static STD_AC_LUMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
-static STD_AC_CHROMINANCE_ENC: OnceLock<HuffmanEncodeTable> = OnceLock::new();
+static STD_DC_LUMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
+    HuffmanEncodeTable::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
+static STD_DC_CHROMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
+    HuffmanEncodeTable::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
+static STD_AC_LUMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
+    HuffmanEncodeTable::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
+static STD_AC_CHROMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
+    HuffmanEncodeTable::from_bits_values(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
 
 // Static standard decode tables (lazily initialized, ~1.5KB each)
-static STD_DC_LUMINANCE_DEC: OnceLock<HuffmanDecodeTable> = OnceLock::new();
-static STD_DC_CHROMINANCE_DEC: OnceLock<HuffmanDecodeTable> = OnceLock::new();
-static STD_AC_LUMINANCE_DEC: OnceLock<HuffmanDecodeTable> = OnceLock::new();
-static STD_AC_CHROMINANCE_DEC: OnceLock<HuffmanDecodeTable> = OnceLock::new();
+static STD_DC_LUMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
+    HuffmanDecodeTable::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
+static STD_DC_CHROMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
+    HuffmanDecodeTable::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
+static STD_AC_LUMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
+    HuffmanDecodeTable::from_bits_values_ac(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
+static STD_AC_CHROMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
+    HuffmanDecodeTable::from_bits_values_ac(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
+        .expect("standard table should be valid")
+});
 
 /// Maximum code length in bits for JPEG Huffman codes.
 pub const MAX_CODE_LENGTH: usize = 16;
@@ -152,37 +176,25 @@ impl HuffmanEncodeTable {
     /// Returns a reference to the standard DC luminance table (lazily initialized).
     #[must_use]
     pub fn std_dc_luminance() -> &'static Self {
-        STD_DC_LUMINANCE_ENC.get_or_init(|| {
-            Self::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_DC_LUMINANCE_ENC
     }
 
     /// Returns a reference to the standard DC chrominance table (lazily initialized).
     #[must_use]
     pub fn std_dc_chrominance() -> &'static Self {
-        STD_DC_CHROMINANCE_ENC.get_or_init(|| {
-            Self::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_DC_CHROMINANCE_ENC
     }
 
     /// Returns a reference to the standard AC luminance table (lazily initialized).
     #[must_use]
     pub fn std_ac_luminance() -> &'static Self {
-        STD_AC_LUMINANCE_ENC.get_or_init(|| {
-            Self::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_AC_LUMINANCE_ENC
     }
 
     /// Returns a reference to the standard AC chrominance table (lazily initialized).
     #[must_use]
     pub fn std_ac_chrominance() -> &'static Self {
-        STD_AC_CHROMINANCE_ENC.get_or_init(|| {
-            Self::from_bits_values(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_AC_CHROMINANCE_ENC
     }
 }
 
@@ -422,37 +434,25 @@ impl HuffmanDecodeTable {
     /// Returns a reference to the standard DC luminance decode table (lazily initialized).
     #[must_use]
     pub fn std_dc_luminance() -> &'static Self {
-        STD_DC_LUMINANCE_DEC.get_or_init(|| {
-            Self::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_DC_LUMINANCE_DEC
     }
 
     /// Returns a reference to the standard DC chrominance decode table (lazily initialized).
     #[must_use]
     pub fn std_dc_chrominance() -> &'static Self {
-        STD_DC_CHROMINANCE_DEC.get_or_init(|| {
-            Self::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_DC_CHROMINANCE_DEC
     }
 
     /// Returns a reference to the standard AC luminance decode table (lazily initialized).
     #[must_use]
     pub fn std_ac_luminance() -> &'static Self {
-        STD_AC_LUMINANCE_DEC.get_or_init(|| {
-            Self::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_AC_LUMINANCE_DEC
     }
 
     /// Returns a reference to the standard AC chrominance decode table (lazily initialized).
     #[must_use]
     pub fn std_ac_chrominance() -> &'static Self {
-        STD_AC_CHROMINANCE_DEC.get_or_init(|| {
-            Self::from_bits_values(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
-                .expect("standard table should be valid")
-        })
+        &STD_AC_CHROMINANCE_DEC
     }
 }
 
@@ -499,9 +499,9 @@ fn set_depth(tree: &[HuffmanNode], node_idx: usize, depth: &mut [u8], level: u8)
 }
 
 /// Compare nodes for sorting: by count ascending, then by value descending.
-fn compare_nodes(a: &HuffmanNode, b: &HuffmanNode) -> std::cmp::Ordering {
+fn compare_nodes(a: &HuffmanNode, b: &HuffmanNode) -> core::cmp::Ordering {
     match a.total_count.cmp(&b.total_count) {
-        std::cmp::Ordering::Equal => b.index_right_or_value.cmp(&a.index_right_or_value),
+        core::cmp::Ordering::Equal => b.index_right_or_value.cmp(&a.index_right_or_value),
         other => other,
     }
 }

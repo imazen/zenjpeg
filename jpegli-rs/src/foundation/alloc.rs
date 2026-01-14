@@ -213,7 +213,7 @@ impl AllocationStats {
     #[inline]
     #[track_caller]
     pub fn record_alloc_typed<T>(&mut self, count: usize, context: &'static str) {
-        let element_size = std::mem::size_of::<T>();
+        let element_size = core::mem::size_of::<T>();
         let bytes = count * element_size;
 
         self.record_alloc(bytes);
@@ -384,7 +384,7 @@ pub fn try_alloc_vec_tracked<T: Default + Clone>(
     stats: &mut AllocationStats,
 ) -> Result<Vec<T>> {
     let byte_size = count
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
@@ -436,7 +436,7 @@ pub fn try_with_capacity_tracked<T>(
     stats: &mut AllocationStats,
 ) -> Result<Vec<T>> {
     let byte_size = capacity
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
@@ -542,7 +542,7 @@ pub fn validate_dimensions(width: u32, height: u32, max_pixels: u64) -> Result<(
 #[inline]
 pub fn try_alloc_vec<T: Default + Clone>(count: usize, context: &'static str) -> Result<Vec<T>> {
     let byte_size = count
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
@@ -589,7 +589,7 @@ pub fn try_alloc_zeroed_f32(count: usize, context: &'static str) -> Result<Vec<f
 #[inline]
 pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Vec<T>> {
     let byte_size = capacity
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
@@ -617,7 +617,7 @@ pub fn try_alloc_maybeuninit<T: Default + Clone>(
     context: &'static str,
 ) -> Result<Vec<T>> {
     let byte_size = count
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
@@ -651,7 +651,7 @@ pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[
 #[inline]
 pub fn try_alloc_filled<T: Clone>(count: usize, value: T, context: &'static str) -> Result<Vec<T>> {
     let byte_size = count
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();
@@ -669,7 +669,7 @@ pub fn try_alloc_filled<T: Clone>(count: usize, value: T, context: &'static str)
 pub fn try_clone_slice<T: Clone>(slice: &[T], context: &'static str) -> Result<Vec<T>> {
     let byte_size = slice
         .len()
-        .checked_mul(std::mem::size_of::<T>())
+        .checked_mul(core::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
 
     let mut v = Vec::new();

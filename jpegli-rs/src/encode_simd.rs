@@ -27,7 +27,7 @@
 
 #![allow(dead_code)]
 
-use multiversion::multiversion;
+use multiversed::multiversed;
 use wide::f32x8;
 
 // Raw AVX2/SSE intrinsics - only available with `unsafe_simd` feature on x86_64
@@ -75,7 +75,7 @@ fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
 /// * `width` - Input width
 /// * `height` - Input height
 /// * `result` - Output buffer (must be at least `((width+1)/2) * ((height+1)/2)` elements)
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+#[multiversed]
 pub fn downsample_2x2_simd_inplace(plane: &[f32], width: usize, height: usize, result: &mut [f32]) {
     let new_width = (width + 1) / 2;
     let new_height = (height + 1) / 2;
@@ -261,8 +261,8 @@ unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
     let odds_raw = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v3131), 0xD8));
 
     (
-        std::mem::transmute::<__m256, f32x8>(evens_raw),
-        std::mem::transmute::<__m256, f32x8>(odds_raw),
+        core::mem::transmute::<__m256, f32x8>(evens_raw),
+        core::mem::transmute::<__m256, f32x8>(odds_raw),
     )
 }
 
@@ -599,16 +599,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
 /// Fallback implementation using wide crate's f32x8 (portable SIMD)
 ///
 /// Uses multiversion for load-time dispatch to optimal SIMD path.
-#[multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 fn rgb_to_ycbcr_planes_simd_inplace_fallback(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -698,16 +689,7 @@ fn rgb_to_ycbcr_planes_simd_inplace_fallback(
 }
 
 /// SIMD-optimized RGBA to YCbCr conversion, writing to pre-allocated buffers.
-#[multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 pub fn rgba_to_ycbcr_planes_simd_inplace(
     rgba_data: &[u8],
     y_plane: &mut [f32],
@@ -797,16 +779,7 @@ pub fn rgba_to_ycbcr_planes_simd_inplace(
 }
 
 /// SIMD-optimized BGR to YCbCr conversion, writing to pre-allocated buffers.
-#[multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 pub fn bgr_to_ycbcr_planes_simd_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],
@@ -896,16 +869,7 @@ pub fn bgr_to_ycbcr_planes_simd_inplace(
 }
 
 /// SIMD-optimized BGRA to YCbCr conversion, writing to pre-allocated buffers.
-#[multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 pub fn bgra_to_ycbcr_planes_simd_inplace(
     bgra_data: &[u8],
     y_plane: &mut [f32],
@@ -1013,16 +977,7 @@ pub fn bgra_to_ycbcr_planes_simd_inplace(
 /// * `height` - Number of rows to process
 /// * `y_stride` - Y output stride (typically padded_width)
 /// * `bpp` - Bytes per pixel (3 for RGB)
-#[multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 pub fn rgb_to_ycbcr_strided_inplace(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -1184,16 +1139,7 @@ pub fn rgb_to_ycbcr_strided_inplace(
 }
 
 /// BGR variant of strided conversion (for BGR/BGRA input).
-#[multiversion(targets(
-    "x86_64+avx2+fma",
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 pub fn bgr_to_ycbcr_strided_inplace(
     bgr_data: &[u8],
     y_plane: &mut [f32],

@@ -1,4 +1,5 @@
 #![cfg_attr(not(feature = "unsafe_simd"), forbid(unsafe_code))]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 //! # jpegli
 //!
@@ -110,6 +111,8 @@
 // Lint configuration is in workspace Cargo.toml [workspace.lints.clippy]
 #![allow(missing_docs)]
 #![allow(clippy::module_name_repetitions)]
+
+extern crate alloc;
 
 // ============================================================================
 // Public API Modules
