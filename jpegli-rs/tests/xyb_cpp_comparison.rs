@@ -237,8 +237,8 @@ fn test_xyb_color_conversion_values() {
 /// Test that XYB constants match C++.
 #[test]
 fn test_xyb_constants_match_cpp() {
-    use jpegli::foundation::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
     use jpegli::color::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
+    use jpegli::foundation::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
 
     // Get C++ constants via FFI
     let (cpp_matrix, cpp_bias, cpp_offset, cpp_scale) =

@@ -308,7 +308,8 @@ impl Decoder {
             scan_info.data_start,
             parser.restart_interval,
             is_xyb,
-        )}
+        )
+    }
 
     /// Decodes a JPEG image.
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {

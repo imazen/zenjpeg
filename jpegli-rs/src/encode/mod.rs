@@ -107,10 +107,7 @@ use enough::Unstoppable;
 /// enc.push_packed(&pixels, Unstoppable)?;
 /// let jpeg = enc.finish()?;
 /// ```
-#[deprecated(
-    since = "0.4.0",
-    note = "Use jpegli::encoder::EncoderConfig instead"
-)]
+#[deprecated(since = "0.4.0", note = "Use jpegli::encoder::EncoderConfig instead")]
 pub struct Encoder {
     /// Encoder configuration (accessible within crate for streaming encoder).
     pub(crate) config: LegacyEncoderConfig,

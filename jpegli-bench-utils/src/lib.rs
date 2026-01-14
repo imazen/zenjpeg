@@ -1666,7 +1666,8 @@ impl EncoderConfig {
             let row_stride = img.width * 3;
             let mut row_pointer: [JSAMPROW; 1] = [ptr::null_mut()];
 
-            #[allow(clippy::while_immutable_condition)] // FFI: jpeg_write_scanlines mutates next_scanline
+            #[allow(clippy::while_immutable_condition)]
+            // FFI: jpeg_write_scanlines mutates next_scanline
             while (*cinfo_ptr).next_scanline < (*cinfo_ptr).image_height {
                 let row_idx = (*cinfo_ptr).next_scanline as usize;
                 let row_start = row_idx * row_stride;
