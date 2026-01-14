@@ -53,9 +53,9 @@ fuzz_target!(|input: EncodeInput| {
     let (pixel_layout, bytes_per_pixel) = match input.pixel_format % 5 {
         0 => (PixelLayout::Gray8Srgb, 1),
         1 => (PixelLayout::Rgb8Srgb, 3),
-        2 => (PixelLayout::Rgba8Srgb, 4),
+        2 => (PixelLayout::Rgbx8Srgb, 4),
         3 => (PixelLayout::Bgr8Srgb, 3),
-        _ => (PixelLayout::Bgra8Srgb, 4),
+        _ => (PixelLayout::Bgrx8Srgb, 4),
     };
 
     // Generate pixel buffer
@@ -69,8 +69,8 @@ fuzz_target!(|input: EncodeInput| {
         .progressive(input.progressive)
         .optimize_huffman(input.optimize_huffman);
 
-    // XYB only works with RGB
-    if input.use_xyb && matches!(pixel_layout, PixelLayout::Rgb8Srgb) {
+    // XYB only works with RGB/RGBX
+    if input.use_xyb && matches!(pixel_layout, PixelLayout::Rgb8Srgb | PixelLayout::Rgbx8Srgb) {
         config = config.xyb();
     } else {
         config = config.ycbcr(subsampling);
