@@ -87,7 +87,7 @@ fn compare_y_precision(rgb: &[u8], width: usize, height: usize) {
         width as u32 * 3,
         YuvRange::Full,
         YuvStandardMatrix::Bt601,
-        YuvConversionMode::Balanced,
+        YuvConversionMode::Professional,
     )
     .unwrap();
 
@@ -171,7 +171,7 @@ fn compare_chroma_precision(rgb: &[u8], width: usize, height: usize) {
         width as u32 * 3,
         YuvRange::Full,
         YuvStandardMatrix::Bt601,
-        YuvConversionMode::Balanced,
+        YuvConversionMode::Professional,
     )
     .unwrap();
 

@@ -42,7 +42,7 @@ fast-ssim2 = { version = "0.6", features = ["imgref"] }
 rayon = "1.10"
 
 # Color conversion (for benchmarking/comparison - faster than libyuv)
-yuv = "0.8"
+yuv = { version = "0.8", features = ["professional_mode"] }
 
 # Testing
 approx = "0.5"
