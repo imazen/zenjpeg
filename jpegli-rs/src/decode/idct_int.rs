@@ -819,7 +819,7 @@ mod tests {
             idct_int(&mut coeffs, &mut output, 8);
 
             for &v in &output {
-                assert!(v >= 0 && v <= 255, "Output {} out of range [0,255]", v);
+                assert!((0..=255).contains(&v), "Output {} out of range [0,255]", v);
             }
         }
     }
@@ -836,7 +836,7 @@ mod tests {
 
         // Verify output is in valid range
         for &v in &output {
-            assert!(v >= 0 && v <= 255);
+            assert!((0..=255).contains(&v));
         }
     }
 
@@ -881,13 +881,12 @@ mod tests {
     fn test_wide_matches_scalar() {
         // Test with random-ish pattern
         let mut coeffs_scalar = [0i32; 64];
-        let coeffs_wide: [i32; 64];
 
         for i in 0..64 {
             let v = ((i as i32 * 17 + 31) % 256) - 128;
             coeffs_scalar[i] = v * 8;
         }
-        coeffs_wide = coeffs_scalar;
+        let coeffs_wide: [i32; 64] = coeffs_scalar;
 
         let mut output_scalar = [0i16; 64];
         let mut output_wide = [0i16; 64];
@@ -947,7 +946,7 @@ mod tests {
             let first = output[0];
             for (i, &v) in output.iter().enumerate() {
                 assert!(
-                    v >= 0 && v <= 255,
+                    (0..=255).contains(&v),
                     "DC {} produced out-of-range {} at {}",
                     dc,
                     v,

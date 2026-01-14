@@ -252,6 +252,7 @@ fn encode_cpp(png_path: &str, quality: u8, subsampling: &str) -> Option<Vec<u8>>
     }
 }
 
+#[allow(dead_code)] // Used in some test configurations
 fn compute_dssim(original: &[u8], decoded: &[u8], _width: usize, _height: usize) -> f64 {
     // Simple MSE-based approximation (actual DSSIM requires more complex computation)
     if original.len() != decoded.len() {

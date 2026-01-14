@@ -141,7 +141,7 @@ fn test_srgb_linear_precision() {
 
         // Check value is in valid range
         assert!(
-            linear >= 0.0 && linear <= 1.0,
+            (0.0..=1.0).contains(&linear),
             "Linear value {} out of range for input {}",
             linear,
             v

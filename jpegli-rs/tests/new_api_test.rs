@@ -195,7 +195,7 @@ fn test_decode_f32() {
 
     // Values should be in 0.0-1.0 range
     for &val in decoded.pixels() {
-        assert!(val >= 0.0 && val <= 1.0, "f32 value {} out of range", val);
+        assert!((0.0..=1.0).contains(&val), "f32 value {} out of range", val);
     }
 }
 

@@ -143,10 +143,12 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
         let mut length = None;
 
         // Markers with length field
-        if marker != 0xD8 && marker != 0xD9 && !(0xD0..=0xD7).contains(&marker) {
-            if pos + 3 < data.len() {
-                length = Some(u16::from_be_bytes([data[pos + 2], data[pos + 3]]));
-            }
+        if marker != 0xD8
+            && marker != 0xD9
+            && !(0xD0..=0xD7).contains(&marker)
+            && pos + 3 < data.len()
+        {
+            length = Some(u16::from_be_bytes([data[pos + 2], data[pos + 3]]));
         }
 
         markers.push(JpegMarker {
@@ -169,7 +171,7 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
                     parse_dht(&data[pos + 4..pos + 2 + len as usize], &mut huffman_tables);
                 }
             }
-            0xC0 | 0xC1 | 0xC2 | 0xC3 => {
+            0xC0..=0xC3 => {
                 // SOF - Start of Frame
                 is_progressive = marker == 0xC2;
                 if pos + 9 < data.len() {
@@ -306,8 +308,8 @@ fn parse_sos(data: &[u8], header_len: usize) -> ScanInfo {
 fn print_markers(analysis: &JpegAnalysis) {
     println!("\n=== JPEG Markers ===");
     println!(
-        "{:>8}  {:>4}  {:>6}  {}",
-        "Offset", "0xFF", "Length", "Description"
+        "{:>8}  {:>4}  {:>6}  Description",
+        "Offset", "0xFF", "Length"
     );
     println!("{}", "-".repeat(60));
 

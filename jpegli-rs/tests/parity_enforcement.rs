@@ -57,6 +57,7 @@ struct ParityBaseline {
 }
 
 /// CID22-512 test images to fetch from GitHub
+#[allow(dead_code)] // Used conditionally based on test configuration
 const CID22_IMAGES: &[(&str, &str)] = &[
     ("1459534.png", "cid22_large"),        // 621KB - complex photo
     ("2504911.png", "cid22_medium_large"), // 459KB - typical photo
@@ -562,13 +563,13 @@ fn test_parity_gap_breakdown() {
     println!("│ DCT precision         │ ~ Varies  │ -2% to +4%  │");
     println!("│ Entropy details       │ ~ Varies  │   variable  │");
     println!("───────────────────────────────────────────────────");
-    println!("");
+    println!();
     println!("MEASURED RESULTS (with matching settings):");
     println!("  - Average gap: 0.70% (Rust usually within ±2% of C++)");
     println!("  - Complex photos: Rust often SMALLER than C++");
     println!("  - Simple graphics: Rust slightly larger (+2%)");
     println!("  - Flower test image: outlier at +4%");
-    println!("");
+    println!();
     println!("IMPORTANT: This is with MATCHING settings.");
     println!("C++ default enables AQ, progressive, optimized Huffman.");
     println!("Default C++ would be ~10-15% smaller than Rust currently.");

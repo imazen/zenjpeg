@@ -262,12 +262,12 @@ fn test_combination(
     };
     let mut enc = config
         .encode_from_bytes(WIDTH as u32, HEIGHT as u32, layout)
-        .expect(&format!("encoder setup {} failed", encode_name));
+        .unwrap_or_else(|_| panic!("encoder setup {} failed", encode_name));
     enc.push_packed(input_data, enough::Unstoppable)
-        .expect(&format!("push {} failed", encode_name));
+        .unwrap_or_else(|_| panic!("push {} failed", encode_name));
     let jpeg = enc
         .finish()
-        .expect(&format!("encode {} failed", encode_name));
+        .unwrap_or_else(|_| panic!("encode {} failed", encode_name));
 
     let jpeg_size = jpeg.len();
     let decoder = Decoder::new();

@@ -280,7 +280,7 @@ fn test_linear_formats_different_sizes() {
             &config,
             PixelLayout::RgbF32Linear,
         )
-        .expect(&format!("RgbF32 {}x{} should succeed", width, height));
+        .unwrap_or_else(|_| panic!("RgbF32 {}x{} should succeed", width, height));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     }
@@ -303,7 +303,7 @@ fn test_linear_format_quality_range() {
             &config,
             PixelLayout::Rgb16Linear,
         )
-        .expect(&format!("RGB16 quality {} should succeed", quality));
+        .unwrap_or_else(|_| panic!("RGB16 quality {} should succeed", quality));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
         println!("RGB16 q{}: {} bytes", quality, jpeg.len());
@@ -330,7 +330,7 @@ fn test_linear_format_subsampling_modes() {
             &config,
             PixelLayout::RgbF32Linear,
         )
-        .expect(&format!("RgbF32 {:?} should succeed", subsampling));
+        .unwrap_or_else(|_| panic!("RgbF32 {:?} should succeed", subsampling));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
         println!("RgbF32 {:?}: {} bytes", subsampling, jpeg.len());

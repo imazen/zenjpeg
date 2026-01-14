@@ -295,7 +295,7 @@ mod decode_coverage {
 
         // Verify f32 values are in [0, 1] range
         for &val in decoded.data.iter() {
-            assert!(val >= 0.0 && val <= 1.0, "f32 value {} out of range", val);
+            assert!((0.0..=1.0).contains(&val), "f32 value {} out of range", val);
         }
     }
 
@@ -419,12 +419,12 @@ mod encode_coverage {
         for size in [1, 2, 3, 4, 5, 6, 7, 8] {
             let img = generate_gradient_d(size, size, 3);
             let config = EncoderConfig::new();
-            let jpeg = encode_rgb(size as u32, size as u32, &img.pixels, &config)
-                .expect(&format!("{}x{} encode failed", size, size));
+            let jpeg = encode_rgb(size, size, &img.pixels, &config)
+                .unwrap_or_else(|_| panic!("{}x{} encode failed", size, size));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
-            assert_eq!(decoded.width, size as u32);
-            assert_eq!(decoded.height, size as u32);
+            assert_eq!(decoded.width, size);
+            assert_eq!(decoded.height, size);
         }
     }
 
@@ -577,7 +577,7 @@ mod huffman_coverage {
 
         for (name, img) in patterns {
             let jpeg = encode_rgb(128, 128, &img.pixels, &config)
-                .expect(&format!("{} encode failed", name));
+                .unwrap_or_else(|_| panic!("{} encode failed", name));
 
             // Both should decode correctly
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -607,7 +607,7 @@ mod aq_coverage {
         for (i, img) in patterns.iter().enumerate() {
             let config = EncoderConfig::new().quality(85.0);
             let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config)
-                .expect(&format!("pattern {} encode failed", i));
+                .unwrap_or_else(|_| panic!("pattern {} encode failed", i));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
             assert_eq!(decoded.width, img.width);
@@ -621,8 +621,8 @@ mod aq_coverage {
         // Test AQ behavior across quality range
         for q in [10.0, 30.0, 50.0, 70.0, 90.0, 100.0] {
             let config = EncoderConfig::new().quality(q);
-            let jpeg =
-                encode_rgb(64, 64, &img.pixels, &config).expect(&format!("Q{} encode failed", q));
+            let jpeg = encode_rgb(64, 64, &img.pixels, &config)
+                .unwrap_or_else(|_| panic!("Q{} encode failed", q));
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
             assert_eq!(decoded.width, 64);

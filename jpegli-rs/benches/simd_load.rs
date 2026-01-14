@@ -66,7 +66,7 @@ where
     let chunks = data.len() / 8;
     for i in 0..chunks {
         let v = load_fn(data, i * 8);
-        acc = acc + v * scale; // Actual SIMD work
+        acc += v * scale; // Actual SIMD work
     }
 
     // Reduce to scalar (prevents acc from being optimized away)
@@ -97,7 +97,7 @@ where
         // Simulate base calculation: 0.25 * (left + right + top + bottom)
         let base = (left + right + top + bottom) * quarter;
         let diff = center - base;
-        acc = acc + diff * diff; // Accumulate squared differences
+        acc += diff * diff; // Accumulate squared differences
     }
 
     let arr: [f32; 8] = acc.into();

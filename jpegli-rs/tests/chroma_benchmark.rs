@@ -149,9 +149,7 @@ fn generate_natural_pattern(width: usize, height: usize) -> Vec<u8> {
 fn generate_thin_lines(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
     // Gray background
-    for i in 0..data.len() {
-        data[i] = 128;
-    }
+    data.fill(128);
 
     // Horizontal colored lines
     for y in (0..height).step_by(8) {

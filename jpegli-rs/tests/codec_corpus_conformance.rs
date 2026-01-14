@@ -265,9 +265,10 @@ fn test_zune_sampling_factors() {
         );
 
         // Large images may be skipped to avoid OOM in tests
-        if !filename.contains("7680") && result.is_ok() {
-            let img = result.unwrap();
-            assert!(img.width > 0 && img.height > 0);
+        if !filename.contains("7680") {
+            if let Ok(img) = result {
+                assert!(img.width > 0 && img.height > 0);
+            }
         }
     }
 }
@@ -415,8 +416,7 @@ fn test_image_rs_general() {
         );
 
         // Standard test images should decode
-        if result.is_ok() {
-            let img = result.unwrap();
+        if let Ok(img) = result {
             assert!(img.width > 0 && img.height > 0);
         }
     }

@@ -407,7 +407,7 @@ fn test_encode_minimum_dimensions() {
     let img = TestImage::from_pixels(1, 1, 3, vec![128, 64, 192]);
     let config = EncoderConfig::new();
     let jpeg = encode_rgb(1, 1, &img.pixels, &config).expect("encode 1x1 failed");
-    assert!(jpeg.len() > 0, "1x1 JPEG should not be empty");
+    assert!(!jpeg.is_empty(), "1x1 JPEG should not be empty");
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode 1x1 failed");
@@ -916,8 +916,8 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
     ];
 
     for (config, label) in &configs {
-        let jpeg =
-            encode_rgb(64, 64, &img.pixels, config).expect(&format!("encode {} failed", label));
+        let jpeg = encode_rgb(64, 64, &img.pixels, config)
+            .unwrap_or_else(|_| panic!("encode {} failed", label));
 
         // Test with zune-jpeg
         use zune_jpeg::zune_core::bytestream::ZCursor;

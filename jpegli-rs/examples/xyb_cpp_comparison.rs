@@ -52,7 +52,7 @@ fn main() {
         // 1. Encode with C jpegli (XYB mode)
         let cpp_path = format!("/tmp/cpp_xyb_q{}.jpg", q);
         let cpp_status = Command::new("cjpegli")
-            .args(&[&image_path, &cpp_path, "-q", &q.to_string(), "--xyb"])
+            .args([&image_path, &cpp_path, "-q", &q.to_string(), "--xyb"])
             .output()
             .expect("Failed to run cjpegli");
 
@@ -120,7 +120,7 @@ fn main() {
 fn compute_butteraugli(original: &str, compressed: &str) -> f64 {
     // Use butteraugli_main if available, otherwise fall back to our Rust impl
     let output = Command::new("butteraugli")
-        .args(&[original, compressed])
+        .args([original, compressed])
         .output();
 
     if let Ok(output) = output {
