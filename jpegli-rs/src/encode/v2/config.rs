@@ -384,6 +384,45 @@ impl EncoderConfig {
             .estimate_memory_usage()
     }
 
+    /// Returns an absolute ceiling on memory usage.
+    ///
+    /// Unlike [`estimate_memory`], this returns a **guaranteed upper bound**
+    /// that actual peak memory will never exceed. Use this for resource reservation
+    /// when you need certainty rather than a close estimate.
+    ///
+    /// The ceiling accounts for:
+    /// - Worst-case token counts per block (high-frequency content)
+    /// - Maximum output buffer size (incompressible images)
+    /// - Vec capacity overhead (allocator rounding)
+    /// - All intermediate buffers at their maximum sizes
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::encoder::EncoderConfig;
+    ///
+    /// let config = EncoderConfig::new().quality(85);
+    /// let ceiling = config.estimate_memory_ceiling(1920, 1080);
+    ///
+    /// // Reserve this much memory - actual usage guaranteed to be less
+    /// let buffer = Vec::with_capacity(ceiling);
+    /// ```
+    #[must_use]
+    #[allow(deprecated)]
+    pub fn estimate_memory_ceiling(&self, width: u32, height: u32) -> usize {
+        use crate::encode::streaming::StreamingEncoder;
+
+        let subsampling = match self.color_mode {
+            ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
+            ColorMode::Grayscale => crate::types::Subsampling::S444,
+        };
+
+        StreamingEncoder::new(width, height)
+            .subsampling(subsampling)
+            .estimate_memory_ceiling()
+    }
+
     // === Accessors ===
 
     /// Get the configured quality.
