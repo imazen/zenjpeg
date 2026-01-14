@@ -1071,7 +1071,7 @@ mod tests {
         // (without the v70+ fields)
         let compress_size = std::mem::size_of::<jpeg_compress_struct>();
         assert!(
-            compress_size >= 400 && compress_size <= 600,
+            (400..=600).contains(&compress_size),
             "jpeg_compress_struct size {} seems wrong",
             compress_size
         );
