@@ -9,7 +9,7 @@
 
 use jpegli::encode::strip::StripProcessor;
 use jpegli::quant::{generate_quant_table, quant_vals_to_distance, Quality, ZeroBiasParams};
-use jpegli::{ColorSpace, PixelFormat, Subsampling};
+use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
 
 fn format_bytes(bytes: usize) -> String {
     if bytes >= 1024 * 1024 {
