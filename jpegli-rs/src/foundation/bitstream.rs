@@ -47,7 +47,7 @@ impl BitWriter {
     /// # Arguments
     /// * `bits` - The bits to write (right-aligned)
     /// * `count` - Number of bits to write (1-24)
-    #[inline]
+    #[inline(always)]
     pub fn write_bits(&mut self, bits: u32, count: u8) {
         debug_assert!(count <= 24);
         debug_assert!(bits < (1 << count) || count == 0);
@@ -73,7 +73,7 @@ impl BitWriter {
     /// * `code_len` - Length of Huffman code in bits
     /// * `extra` - Extra bits to write after code (right-aligned)
     /// * `extra_len` - Length of extra bits
-    #[inline]
+    #[inline(always)]
     pub fn write_code_and_extra(&mut self, code: u32, code_len: u8, extra: u16, extra_len: u8) {
         debug_assert!(code_len <= 16);
         debug_assert!(extra_len <= 16);
@@ -93,52 +93,78 @@ impl BitWriter {
 
     /// Flushes complete bytes from the bit buffer.
     /// Marked cold to keep write_bits hot path small.
+    ///
+    /// Uses the same algorithm as C++ jpegli:
+    /// - Process 64 bits (8 bytes) at a time for efficiency
+    /// - Use SWAR bit trick to detect 0xFF bytes without branching per byte
+    /// - Fast path: direct 8-byte store when no 0xFF present
     #[inline(never)]
     #[cold]
     fn flush_bytes(&mut self) {
-        // Optimization: flush 4 bytes at once when possible (common case)
-        // This reduces per-byte branching overhead
+        // Process 64 bits at a time (matching C++ jpegli's DischargeBitBuffer)
+        while self.bits_in_buffer >= 64 {
+            self.bits_in_buffer -= 64;
+            let word = self.bit_buffer; // All 64 bits
+            self.emit_8_bytes(word);
+        }
+
+        // Handle 32-56 bits: extract top 32-56 bits, emit as many complete bytes as possible
+        // This bridges between our 64-bit accumulator and the threshold
         while self.bits_in_buffer >= 32 {
             self.bits_in_buffer -= 32;
             let word = (self.bit_buffer >> self.bits_in_buffer) as u32;
-            let bytes = word.to_be_bytes();
-
-            // Fast path: check if any byte is 0xFF
-            // A byte is 0xFF iff adding 1 makes it 0x00 (overflow).
-            // We detect this by: if all high bits are set (0x80) in v, and adding
-            // 0x01010101 clears them, then we had 0xFF bytes.
-            // Simpler: (v & 0x7F7F7F7F) + 0x01010101 will overflow the 0x80 bit
-            // only if the original byte was >= 0x80. Combined with checking
-            // the original high bits, we can detect 0xFF.
-            //
-            // Actually simplest correct check: XOR with 0x7F7F7F7F, add 0x01010101,
-            // then check if any byte's high bit differs from original.
-            // But let's just use the straightforward approach:
-            let has_ff =
-                (bytes[0] == 0xFF) | (bytes[1] == 0xFF) | (bytes[2] == 0xFF) | (bytes[3] == 0xFF);
-
-            if !has_ff {
-                // Fast path: no 0xFF bytes, write directly
-                self.buffer.extend_from_slice(&bytes);
-            } else {
-                // Slow path: has at least one 0xFF, do byte-by-byte stuffing
-                for &b in &bytes {
-                    self.buffer.push(b);
-                    if b == 0xFF {
-                        self.buffer.push(0x00);
-                    }
-                }
-            }
+            self.emit_4_bytes(word);
         }
 
         // Handle remaining bytes (0-3)
         while self.bits_in_buffer >= 8 {
             self.bits_in_buffer -= 8;
             let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
-            self.buffer.push(byte);
-            if byte == 0xFF {
-                self.buffer.push(0x00);
-            }
+            self.emit_byte(byte);
+        }
+    }
+
+    /// Emits a single byte with 0xFF stuffing.
+    #[inline(always)]
+    fn emit_byte(&mut self, byte: u8) {
+        self.buffer.push(byte);
+        if byte == 0xFF {
+            self.buffer.push(0x00);
+        }
+    }
+
+    /// Emits 4 bytes with 0xFF stuffing using SWAR bit trick.
+    #[inline(always)]
+    fn emit_4_bytes(&mut self, word: u32) {
+        if !has_byte_0xff_u32(word) {
+            // Fast path: no 0xFF bytes, write directly as big-endian
+            self.buffer.extend_from_slice(&word.to_be_bytes());
+        } else {
+            // Slow path: has 0xFF, emit byte-by-byte
+            self.emit_byte((word >> 24) as u8);
+            self.emit_byte((word >> 16) as u8);
+            self.emit_byte((word >> 8) as u8);
+            self.emit_byte(word as u8);
+        }
+    }
+
+    /// Emits 8 bytes with 0xFF stuffing using SWAR bit trick.
+    /// Matches C++ jpegli's DischargeBitBuffer exactly.
+    #[inline(always)]
+    fn emit_8_bytes(&mut self, word: u64) {
+        if !has_byte_0xff_u64(word) {
+            // Fast path: no 0xFF bytes, write directly as big-endian
+            self.buffer.extend_from_slice(&word.to_be_bytes());
+        } else {
+            // Slow path: has at least one 0xFF, emit byte-by-byte
+            self.emit_byte((word >> 56) as u8);
+            self.emit_byte((word >> 48) as u8);
+            self.emit_byte((word >> 40) as u8);
+            self.emit_byte((word >> 32) as u8);
+            self.emit_byte((word >> 24) as u8);
+            self.emit_byte((word >> 16) as u8);
+            self.emit_byte((word >> 8) as u8);
+            self.emit_byte(word as u8);
         }
     }
 
@@ -253,11 +279,25 @@ pub struct BitReaderState {
 /// Check if a u32 contains a 0xFF byte using SWAR (SIMD Within A Register).
 /// From Stanford Bithacks: https://graphics.stanford.edu/~seander/bithacks.html
 #[inline(always)]
-const fn has_byte_0xff(v: u32) -> bool {
+const fn has_byte_0xff_u32(v: u32) -> bool {
     // XOR with 0xFFFFFFFF to find bytes that are 0xFF (they become 0x00)
     let x = v ^ 0xFFFF_FFFF;
     // Check if any byte is zero using the "has zero byte" trick
     (((x.wrapping_sub(0x0101_0101)) & !x) & 0x8080_8080) != 0
+}
+
+/// Check if a u64 contains a 0xFF byte using SWAR (SIMD Within A Register).
+/// This is the same algorithm as jpegli's HasZeroByte, inverted to detect 0xFF.
+/// Returns true if any of the 8 bytes equals 0xFF.
+#[inline(always)]
+const fn has_byte_0xff_u64(v: u64) -> bool {
+    // XOR with all 1s to find bytes that are 0xFF (they become 0x00)
+    let x = v ^ 0xFFFF_FFFF_FFFF_FFFF;
+    // Check if any byte is zero using the "has zero byte" trick:
+    // (x - 0x01...) sets bit 7 if a byte was 0 (due to borrow)
+    // & !x masks off bytes that already had bit 7 set
+    // & 0x80... extracts only the bit 7 from each byte
+    (((x.wrapping_sub(0x0101_0101_0101_0101)) & !x) & 0x8080_8080_8080_8080) != 0
 }
 
 impl<'a> BitReader<'a> {
@@ -363,7 +403,7 @@ impl<'a> BitReader<'a> {
             let word = u32::from_be_bytes(bytes);
 
             // Check if any byte is 0xFF using SWAR
-            if !has_byte_0xff(word) {
+            if !has_byte_0xff_u32(word) {
                 // No 0xFF - fast path
                 self.position += 4;
                 self.bit_buffer = (self.bit_buffer << 32) | (word as u64);

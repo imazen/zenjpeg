@@ -167,7 +167,7 @@ impl HuffmanEncodeTable {
     }
 
     /// Returns the code and length for a symbol.
-    #[inline]
+    #[inline(always)]
     pub fn encode(&self, symbol: u8) -> (u32, u8) {
         let idx = symbol as usize;
         (self.codes[idx], self.lengths[idx])
