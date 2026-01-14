@@ -9,11 +9,11 @@
 #![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
 use super::Encoder;
-use crate::foundation::consts::DCT_BLOCK_SIZE;
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::encode::hybrid;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::optimize::{FrequencyCounter, OptimizedHuffmanTables};
 use crate::huffman::HuffmanEncodeTable;
 use crate::types::Subsampling;

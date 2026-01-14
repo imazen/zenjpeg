@@ -2,9 +2,9 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jpegli::decode::Decoder;
+use jpegli::decoder::PixelFormat;
 use jpegli::encode::Encoder;
 use jpegli::quant::Quality;
-use jpegli::decoder::PixelFormat;
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];

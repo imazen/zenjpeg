@@ -49,7 +49,9 @@ fn quick_bench(c: &mut Criterion) {
     // Core path: progressive + optimized huffman + 420 (most common)
     group.bench_function("prog-opt-420", |b| {
         b.iter(|| {
-            Encoder::new().width(WIDTH).height(HEIGHT)
+            Encoder::new()
+                .width(WIDTH)
+                .height(HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::Traditional(90.0))
                 .mode(JpegMode::Progressive)
@@ -62,7 +64,9 @@ fn quick_bench(c: &mut Criterion) {
     // Baseline (simpler path)
     group.bench_function("base-opt-420", |b| {
         b.iter(|| {
-            Encoder::new().width(WIDTH).height(HEIGHT)
+            Encoder::new()
+                .width(WIDTH)
+                .height(HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::Traditional(90.0))
                 .mode(JpegMode::Baseline)
@@ -75,7 +79,9 @@ fn quick_bench(c: &mut Criterion) {
     // 444 subsampling (no chroma downsampling)
     group.bench_function("prog-opt-444", |b| {
         b.iter(|| {
-            Encoder::new().width(WIDTH).height(HEIGHT)
+            Encoder::new()
+                .width(WIDTH)
+                .height(HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::Traditional(90.0))
                 .mode(JpegMode::Progressive)
@@ -88,7 +94,9 @@ fn quick_bench(c: &mut Criterion) {
     // XYB color space
     group.bench_function("prog-opt-444-xyb", |b| {
         b.iter(|| {
-            Encoder::new().width(WIDTH).height(HEIGHT)
+            Encoder::new()
+                .width(WIDTH)
+                .height(HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
                 .quality(Quality::Traditional(90.0))
                 .mode(JpegMode::Progressive)

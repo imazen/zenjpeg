@@ -75,8 +75,8 @@ fn locked_expectation(width: usize, height: usize, subsampling: &str) -> Option<
     // Format: (width, height, subsampling) -> max allowed peak bytes
     // These are ~10% above measured values to allow for minor fluctuations
     match (width, height, subsampling) {
-        (1920, 1080, "4:2:0") => Some(28 * 1024 * 1024),  // ~25 MB measured
-        (1920, 1080, "4:4:4") => Some(35 * 1024 * 1024),  // ~32 MB measured
+        (1920, 1080, "4:2:0") => Some(28 * 1024 * 1024), // ~25 MB measured
+        (1920, 1080, "4:4:4") => Some(35 * 1024 * 1024), // ~32 MB measured
         (3840, 2160, "4:2:0") => Some(105 * 1024 * 1024), // ~95 MB measured
         (3840, 2160, "4:4:4") => Some(135 * 1024 * 1024), // ~122 MB measured
         (4000, 3000, "4:2:0") => Some(130 * 1024 * 1024), // ~118 MB measured
@@ -96,11 +96,7 @@ fn main() {
     );
     println!("{}", "-".repeat(90));
 
-    let test_cases = [
-        (1920, 1080, "2K"),
-        (3840, 2160, "4K"),
-        (4000, 3000, "12MP"),
-    ];
+    let test_cases = [(1920, 1080, "2K"), (3840, 2160, "4K"), (4000, 3000, "12MP")];
 
     let subsamplings = [
         (ChromaSubsampling::Quarter, "4:2:0"),

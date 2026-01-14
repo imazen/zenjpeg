@@ -61,18 +61,18 @@ pub mod strip;
 pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
+#[cfg(feature = "parallel")]
+pub use v2::ParallelEncoding;
 pub use v2::{
     BytesEncoder, ChromaSubsampling, ColorMode, DownsamplingMethod, EncoderConfig, PixelLayout,
     Quality, QuantTableConfig, RgbEncoder, Stop, XybSubsampling, YCbCrPlanarEncoder, YCbCrPlanes,
 };
-#[cfg(feature = "parallel")]
-pub use v2::ParallelEncoding;
 
 use crate::error::{Error, Result};
 
 // Internal config types (v2::EncoderConfig is re-exported above, legacy one is used internally)
-pub(crate) use config::ProgressiveScan;
 use config::EncoderConfig as LegacyEncoderConfig;
+pub(crate) use config::ProgressiveScan;
 
 use crate::foundation::alloc::{
     checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, validate_dimensions, DEFAULT_MAX_PIXELS,

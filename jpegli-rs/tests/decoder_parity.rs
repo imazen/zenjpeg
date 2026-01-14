@@ -5,7 +5,10 @@
 
 use dssim::Dssim;
 use enough::Unstoppable;
-use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+};
 use rgb::RGBA8;
 use std::process::Command;
 
@@ -73,9 +76,11 @@ fn encode_rust(
     let config = EncoderConfig::new()
         .quality(quality as f32)
         .ycbcr(subsampling);
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
-    enc.push_packed(pixels, enough::Unstoppable).expect("push data");
+    enc.push_packed(pixels, enough::Unstoppable)
+        .expect("push data");
     enc.finish().expect("finish")
 }
 
@@ -262,7 +267,13 @@ fn test_decoder_vs_reference_422() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::HalfHorizontal);
+            let jpeg = encode_rust(
+                &pixels,
+                width,
+                height,
+                quality,
+                ChromaSubsampling::HalfHorizontal,
+            );
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, refW, refH) =
@@ -303,7 +314,13 @@ fn test_decoder_vs_reference_440() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::HalfVertical);
+            let jpeg = encode_rust(
+                &pixels,
+                width,
+                height,
+                quality,
+                ChromaSubsampling::HalfVertical,
+            );
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, refW, refH) =

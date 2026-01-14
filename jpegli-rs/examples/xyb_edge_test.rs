@@ -80,7 +80,9 @@ fn main() {
 
         match std::panic::catch_unwind(|| encode_xyb(&rgb, width as u32, height as u32, quality)) {
             Ok(jpeg) => {
-                let decoded = jpegli::decoder::Decoder::new().decode(&jpeg).expect("decode failed");
+                let decoded = jpegli::decoder::Decoder::new()
+                    .decode(&jpeg)
+                    .expect("decode failed");
                 let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
                 let status = if ssim2 >= 85.0 { "OK" } else { "FAIL" };
                 if ssim2 < 85.0 {
@@ -126,7 +128,9 @@ fn main() {
 
         match std::panic::catch_unwind(|| encode_xyb(&rgb, width as u32, height as u32, quality)) {
             Ok(jpeg) => {
-                let decoded = jpegli::decoder::Decoder::new().decode(&jpeg).expect("decode failed");
+                let decoded = jpegli::decoder::Decoder::new()
+                    .decode(&jpeg)
+                    .expect("decode failed");
                 let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
                 let status = if ssim2 >= 85.0 { "OK" } else { "FAIL" };
                 if ssim2 < 85.0 {
@@ -175,7 +179,9 @@ fn main() {
                 encode_xyb(&rgb, width as u32, height as u32, quality)
             }) {
                 Ok(jpeg) => {
-                    let decoded = jpegli::decoder::Decoder::new().decode(&jpeg).expect("decode failed");
+                    let decoded = jpegli::decoder::Decoder::new()
+                        .decode(&jpeg)
+                        .expect("decode failed");
                     let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
                     let status = if ssim2 >= 85.0 { "OK" } else { "FAIL" };
                     if ssim2 < 85.0 {

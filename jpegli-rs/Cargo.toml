@@ -63,6 +63,9 @@ sha2 = "0.10"
 
 [features]
 default = ["cms", "test-utils"]
+# Enable the decoder API. The decoder is still in prerelease with frequent breaking changes.
+# When disabled, no decoder types or functions are available in the public API.
+decoder = []
 parallel = ["dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
 # Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
 # Without this, all SIMD uses safe `wide` crate which auto-vectorizes on all platforms.
@@ -94,6 +97,7 @@ harness = false
 [[bench]]
 name = "decode"
 harness = false
+required-features = ["decoder"]
 
 [[bench]]
 name = "cpp_comparison"

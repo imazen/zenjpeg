@@ -10,9 +10,11 @@ fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) ->
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true);
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
-    enc.push_packed(data, enough::Unstoppable).expect("push data");
+    enc.push_packed(data, enough::Unstoppable)
+        .expect("push data");
     enc.finish().expect("finish")
 }
 

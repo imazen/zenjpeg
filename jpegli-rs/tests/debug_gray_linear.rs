@@ -5,7 +5,13 @@ use jpegli::decoder::Decoder;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::collections::HashSet;
 
-fn encode(width: u32, height: u32, data: &[u8], config: &EncoderConfig, layout: PixelLayout) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+    layout: PixelLayout,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, layout)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -77,15 +83,25 @@ fn debug_gray_linear_encoding() {
     }
 
     // Encode Gray8
-    let config = EncoderConfig::new()
-        .quality(98.0)
-        .grayscale();
-    let jpeg8 = encode(width as u32, height as u32, &gray8, &config, PixelLayout::Gray8Srgb)
-        .expect("Gray8 encode failed");
+    let config = EncoderConfig::new().quality(98.0).grayscale();
+    let jpeg8 = encode(
+        width as u32,
+        height as u32,
+        &gray8,
+        &config,
+        PixelLayout::Gray8Srgb,
+    )
+    .expect("Gray8 encode failed");
 
     // Encode Gray16
-    let jpeg16 = encode(width as u32, height as u32, &gray16_bytes, &config, PixelLayout::Gray16Linear)
-        .expect("Gray16 encode failed");
+    let jpeg16 = encode(
+        width as u32,
+        height as u32,
+        &gray16_bytes,
+        &config,
+        PixelLayout::Gray16Linear,
+    )
+    .expect("Gray16 encode failed");
 
     println!("\n=== ENCODED JPEG ===");
     println!("Gray8 JPEG size: {} bytes", jpeg8.len());

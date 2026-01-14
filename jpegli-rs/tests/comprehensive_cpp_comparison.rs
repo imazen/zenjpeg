@@ -9,7 +9,12 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
-fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb_progressive(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    quality: f32,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new()
         .quality(quality)
         .progressive(true)

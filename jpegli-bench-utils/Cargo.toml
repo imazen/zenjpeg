@@ -31,8 +31,8 @@ dssim = { workspace = true }
 fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 
-# For test image discovery and encoding
-jpegli-rs = { path = "../jpegli-rs", default-features = false, features = ["test-utils"] }
+# For test image discovery and encoding (decoder required for comparison utilities)
+jpegli-rs = { path = "../jpegli-rs", default-features = false, features = ["test-utils", "decoder"] }
 
 # C++ jpegli FFI bindings (optional)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }

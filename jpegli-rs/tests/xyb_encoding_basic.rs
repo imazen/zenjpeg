@@ -3,18 +3,21 @@
 //! Verifies that the XYB encoder produces valid, decodable output.
 
 use enough::Unstoppable;
-use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+};
 
 /// Encode with XYB color mode
 fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new()
-        .quality(quality)
-        .xyb();
+    let config = EncoderConfig::new().quality(quality).xyb();
 
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");
-    encoder.push_packed(rgb, enough::Unstoppable).expect("push failed");
+    encoder
+        .push_packed(rgb, enough::Unstoppable)
+        .expect("push failed");
     encoder.finish().expect("XYB encode failed")
 }
 

@@ -260,9 +260,11 @@ fn encode_rust(
         config = config.xyb();
     }
 
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("Encoder creation failed");
-    enc.push_packed(rgb, enough::Unstoppable).expect("push_packed failed");
+    enc.push_packed(rgb, enough::Unstoppable)
+        .expect("push_packed failed");
     enc.finish().expect("Rust encode failed")
 }
 

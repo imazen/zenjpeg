@@ -104,10 +104,11 @@ fn register_rust_jpegli(session: &mut EvalSession) {
                     codec: "jpegli-rs".to_string(),
                     message: format!("{}", e),
                 })?;
-            enc.push_packed(&rgb_data, enough::Unstoppable).map_err(|e| codec_eval::Error::Codec {
-                codec: "jpegli-rs".to_string(),
-                message: format!("{}", e),
-            })?;
+            enc.push_packed(&rgb_data, enough::Unstoppable)
+                .map_err(|e| codec_eval::Error::Codec {
+                    codec: "jpegli-rs".to_string(),
+                    message: format!("{}", e),
+                })?;
             let encoded = enc.finish().map_err(|e| codec_eval::Error::Codec {
                 codec: "jpegli-rs".to_string(),
                 message: format!("{}", e),

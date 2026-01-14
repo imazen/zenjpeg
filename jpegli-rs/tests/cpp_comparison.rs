@@ -19,7 +19,12 @@ use jpegli::{
 use std::path::Path;
 use test_case::test_case;
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -275,9 +280,7 @@ fn test_marker_structure() {
 #[test]
 fn test_progressive_marker_structure() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new()
-        .quality(85.0)
-        .progressive(true);
+    let config = EncoderConfig::new().quality(85.0).progressive(true);
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     let sof2_count = count_markers(&jpeg, 0xC2);
@@ -485,7 +488,9 @@ fn test_huffman_tables_present() {
 fn extract_sof_params(jpeg: &[u8]) -> Option<(u8, u16, u16, u8)> {
     for pos in 0..jpeg.len() - 10 {
         // SOF0 (baseline), SOF1 (extended sequential), SOF2 (progressive)
-        if jpeg[pos] == 0xFF && (jpeg[pos + 1] == 0xC0 || jpeg[pos + 1] == 0xC1 || jpeg[pos + 1] == 0xC2) {
+        if jpeg[pos] == 0xFF
+            && (jpeg[pos + 1] == 0xC0 || jpeg[pos + 1] == 0xC1 || jpeg[pos + 1] == 0xC2)
+        {
             let precision = jpeg[pos + 4];
             let height = ((jpeg[pos + 5] as u16) << 8) | (jpeg[pos + 6] as u16);
             let width = ((jpeg[pos + 7] as u16) << 8) | (jpeg[pos + 8] as u16);

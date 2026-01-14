@@ -25,11 +25,11 @@
 //! ```
 
 use super::idct_int::idct_int_tiered;
-use crate::foundation::alloc::try_alloc_uninitialized;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
-use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result};
+use crate::foundation::alloc::try_alloc_uninitialized;
+use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into;
 use crate::types::{ColorSpace, Dimensions, Subsampling};
@@ -797,18 +797,30 @@ mod tests {
         use crate::encode::v2::{ChromaSubsampling, EncoderConfig, PixelLayout};
         use enough::Unstoppable;
         // Use 4:4:4 to ensure streaming decode path is used (same IDCT as scanline reader)
-        let config = EncoderConfig::new().quality(quality).ycbcr(ChromaSubsampling::Full);
-        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+        let config = EncoderConfig::new()
+            .quality(quality)
+            .ycbcr(ChromaSubsampling::Full);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
     }
 
     /// Helper to encode RGB pixels with subsampling
-    fn encode_rgb_subsampled(width: u32, height: u32, pixels: &[u8], quality: f32, subsampling: crate::encode::v2::ChromaSubsampling) -> Vec<u8> {
+    fn encode_rgb_subsampled(
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+        quality: f32,
+        subsampling: crate::encode::v2::ChromaSubsampling,
+    ) -> Vec<u8> {
         use crate::encode::v2::{EncoderConfig, PixelLayout};
         use enough::Unstoppable;
         let config = EncoderConfig::new().quality(quality).ycbcr(subsampling);
-        let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
         enc.push_packed(pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
     }
@@ -995,7 +1007,11 @@ mod tests {
         }
 
         assert_eq!(total_rows, height as usize);
-        assert_slices_equal_u8(&scanline_pixels, &decoded.data, "test_scanline_reader_partial_reads");
+        assert_slices_equal_u8(
+            &scanline_pixels,
+            &decoded.data,
+            "test_scanline_reader_partial_reads",
+        );
     }
 
     #[test]
@@ -1260,7 +1276,11 @@ mod tests {
         }
 
         assert_eq!(total_rows, height as usize);
-        assert_slices_equal_u8(&scanline_pixels, &decoded.data, "test_scanline_reader_non_mcu_aligned");
+        assert_slices_equal_u8(
+            &scanline_pixels,
+            &decoded.data,
+            "test_scanline_reader_non_mcu_aligned",
+        );
     }
 
     #[test]

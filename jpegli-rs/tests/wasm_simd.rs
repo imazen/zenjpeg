@@ -58,6 +58,7 @@ fn idct_parity_with_simd128() {
     let mut enc = config
         .encode_from_bytes(8, 8, jpegli::encoder::PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&[128u8; 64], enough::Unstoppable).expect("push");
+    enc.push_packed(&[128u8; 64], enough::Unstoppable)
+        .expect("push");
     assert!(enc.finish().is_ok());
 }

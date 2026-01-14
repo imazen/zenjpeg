@@ -8,12 +8,12 @@
 
 #![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
+use crate::error::Result;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, MARKER_APP14, MARKER_APP2,
     MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI,
     MARKER_SOS, MAX_ICC_BYTES_PER_MARKER,
 };
-use crate::error::Result;
 use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, Subsampling};

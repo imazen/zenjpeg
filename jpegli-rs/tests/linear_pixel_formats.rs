@@ -7,7 +7,13 @@ use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
 /// Helper function to encode data with given config and layout
-fn encode(width: u32, height: u32, data: &[u8], config: &EncoderConfig, layout: PixelLayout) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+    layout: PixelLayout,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, layout)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -139,8 +145,14 @@ fn test_rgb16_encoding() {
     let config = EncoderConfig::new()
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Full);
-    let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::Rgb16Linear)
-        .expect("RGB16 encoding should succeed");
+    let jpeg = encode(
+        width as u32,
+        height as u32,
+        &pixels,
+        &config,
+        PixelLayout::Rgb16Linear,
+    )
+    .expect("RGB16 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     assert!(jpeg.len() > 100, "JPEG should have reasonable size");
@@ -156,8 +168,14 @@ fn test_rgba16_encoding() {
     let config = EncoderConfig::new()
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Quarter);
-    let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::Rgbx16Linear)
-        .expect("RGBA16 encoding should succeed");
+    let jpeg = encode(
+        width as u32,
+        height as u32,
+        &pixels,
+        &config,
+        PixelLayout::Rgbx16Linear,
+    )
+    .expect("RGBA16 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     println!("RGBA16 encode: {} bytes", jpeg.len());
@@ -169,11 +187,15 @@ fn test_gray16_encoding() {
     let height = 64;
     let pixels = create_gradient_gray16(width, height);
 
-    let config = EncoderConfig::new()
-        .quality(85.0)
-        .grayscale();
-    let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::Gray16Linear)
-        .expect("Gray16 encoding should succeed");
+    let config = EncoderConfig::new().quality(85.0).grayscale();
+    let jpeg = encode(
+        width as u32,
+        height as u32,
+        &pixels,
+        &config,
+        PixelLayout::Gray16Linear,
+    )
+    .expect("Gray16 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     println!("Gray16 encode: {} bytes", jpeg.len());
@@ -188,8 +210,14 @@ fn test_rgbf32_encoding() {
     let config = EncoderConfig::new()
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Full);
-    let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::RgbF32Linear)
-        .expect("RgbF32 encoding should succeed");
+    let jpeg = encode(
+        width as u32,
+        height as u32,
+        &pixels,
+        &config,
+        PixelLayout::RgbF32Linear,
+    )
+    .expect("RgbF32 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     println!("RgbF32 encode: {} bytes", jpeg.len());
@@ -204,8 +232,14 @@ fn test_rgbaf32_encoding() {
     let config = EncoderConfig::new()
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Quarter);
-    let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::RgbxF32Linear)
-        .expect("RgbaF32 encoding should succeed");
+    let jpeg = encode(
+        width as u32,
+        height as u32,
+        &pixels,
+        &config,
+        PixelLayout::RgbxF32Linear,
+    )
+    .expect("RgbaF32 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     println!("RgbaF32 encode: {} bytes", jpeg.len());
@@ -217,11 +251,15 @@ fn test_grayf32_encoding() {
     let height = 64;
     let pixels = create_gradient_grayf32(width, height);
 
-    let config = EncoderConfig::new()
-        .quality(85.0)
-        .grayscale();
-    let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::GrayF32Linear)
-        .expect("GrayF32 encoding should succeed");
+    let config = EncoderConfig::new().quality(85.0).grayscale();
+    let jpeg = encode(
+        width as u32,
+        height as u32,
+        &pixels,
+        &config,
+        PixelLayout::GrayF32Linear,
+    )
+    .expect("GrayF32 encoding should succeed");
 
     assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     println!("GrayF32 encode: {} bytes", jpeg.len());
@@ -236,8 +274,14 @@ fn test_linear_formats_different_sizes() {
     // Test non-MCU-aligned sizes
     for (width, height) in [(63, 65), (17, 33), (100, 100), (1, 1)] {
         let pixels = create_gradient_rgbf32(width, height);
-        let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::RgbF32Linear)
-            .expect(&format!("RgbF32 {}x{} should succeed", width, height));
+        let jpeg = encode(
+            width as u32,
+            height as u32,
+            &pixels,
+            &config,
+            PixelLayout::RgbF32Linear,
+        )
+        .expect(&format!("RgbF32 {}x{} should succeed", width, height));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
     }
@@ -253,8 +297,14 @@ fn test_linear_format_quality_range() {
         let config = EncoderConfig::new()
             .quality(quality)
             .ycbcr(ChromaSubsampling::Full);
-        let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::Rgb16Linear)
-            .expect(&format!("RGB16 quality {} should succeed", quality));
+        let jpeg = encode(
+            width as u32,
+            height as u32,
+            &pixels,
+            &config,
+            PixelLayout::Rgb16Linear,
+        )
+        .expect(&format!("RGB16 quality {} should succeed", quality));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
         println!("RGB16 q{}: {} bytes", quality, jpeg.len());
@@ -273,11 +323,15 @@ fn test_linear_format_subsampling_modes() {
         ChromaSubsampling::Quarter,
         ChromaSubsampling::HalfVertical,
     ] {
-        let config = EncoderConfig::new()
-            .quality(85.0)
-            .ycbcr(subsampling);
-        let jpeg = encode(width as u32, height as u32, &pixels, &config, PixelLayout::RgbF32Linear)
-            .expect(&format!("RgbF32 {:?} should succeed", subsampling));
+        let config = EncoderConfig::new().quality(85.0).ycbcr(subsampling);
+        let jpeg = encode(
+            width as u32,
+            height as u32,
+            &pixels,
+            &config,
+            PixelLayout::RgbF32Linear,
+        )
+        .expect(&format!("RgbF32 {:?} should succeed", subsampling));
 
         assert!(verify_jpeg(&jpeg), "Output should be valid JPEG");
         println!("RgbF32 {:?}: {} bytes", subsampling, jpeg.len());
@@ -300,8 +354,14 @@ fn test_xyb_with_linear_formats() {
     let config_f32 = EncoderConfig::new()
         .quality(Quality::ApproxButteraugli(1.0))
         .xyb();
-    let jpeg_f32 = encode(width as u32, height as u32, &pixels_f32, &config_f32, PixelLayout::RgbF32Linear)
-        .expect("XYB with RgbF32 should succeed");
+    let jpeg_f32 = encode(
+        width as u32,
+        height as u32,
+        &pixels_f32,
+        &config_f32,
+        PixelLayout::RgbF32Linear,
+    )
+    .expect("XYB with RgbF32 should succeed");
 
     assert!(verify_jpeg(&jpeg_f32), "Output should be valid JPEG");
     println!("XYB RgbF32: {} bytes", jpeg_f32.len());
@@ -311,8 +371,14 @@ fn test_xyb_with_linear_formats() {
     let config_16 = EncoderConfig::new()
         .quality(Quality::ApproxButteraugli(1.0))
         .xyb();
-    let jpeg_16 = encode(width as u32, height as u32, &pixels_16, &config_16, PixelLayout::Rgb16Linear)
-        .expect("XYB with Rgb16 should succeed");
+    let jpeg_16 = encode(
+        width as u32,
+        height as u32,
+        &pixels_16,
+        &config_16,
+        PixelLayout::Rgb16Linear,
+    )
+    .expect("XYB with Rgb16 should succeed");
 
     assert!(verify_jpeg(&jpeg_16), "Output should be valid JPEG");
     println!("XYB Rgb16: {} bytes", jpeg_16.len());
@@ -343,11 +409,23 @@ fn test_gamma_correction_applied() {
         .quality(100.0)
         .ycbcr(ChromaSubsampling::Full);
 
-    let jpeg_f32 = encode(width as u32, height as u32, &pixels_f32, &config, PixelLayout::RgbF32Linear)
-        .expect("RgbF32 should succeed");
+    let jpeg_f32 = encode(
+        width as u32,
+        height as u32,
+        &pixels_f32,
+        &config,
+        PixelLayout::RgbF32Linear,
+    )
+    .expect("RgbF32 should succeed");
 
-    let jpeg_8bit = encode(width as u32, height as u32, &pixels_8bit, &config, PixelLayout::Rgb8Srgb)
-        .expect("Rgb should succeed");
+    let jpeg_8bit = encode(
+        width as u32,
+        height as u32,
+        &pixels_8bit,
+        &config,
+        PixelLayout::Rgb8Srgb,
+    )
+    .expect("Rgb should succeed");
 
     // Both should produce similar output sizes since they represent
     // approximately the same visual brightness

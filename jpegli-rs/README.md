@@ -40,14 +40,19 @@ However, jpegli-rs has been **rewritten from scratch multiple times** and is now
 
 ### Encoder API
 
+All encoder types are in `jpegli::encoder`:
+
 ```rust
-use jpegli::{EncoderConfig, PixelLayout, Quality, ChromaSubsampling};
-use enough::Never;  // For no-cancellation
+use jpegli::encoder::{
+    EncoderConfig, PixelLayout, Quality, ChromaSubsampling, Unstoppable
+};
 ```
 
 #### Quick Start
 
 ```rust
+use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+
 // Create reusable config
 let config = EncoderConfig::new()
     .quality(85)
@@ -55,7 +60,7 @@ let config = EncoderConfig::new()
 
 // Encode from raw bytes
 let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
-enc.push_packed(&rgb_bytes, Never)?;
+enc.push_packed(&rgb_bytes, Unstoppable)?;
 let jpeg = enc.finish()?;
 ```
 
@@ -70,20 +75,24 @@ let jpeg = enc.finish()?;
 #### Examples
 
 ```rust
+use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+
+let config = EncoderConfig::new().quality(85);
+
 // From raw RGB bytes
 let mut enc = config.encode_from_bytes(800, 600, PixelLayout::Rgb8Srgb)?;
-enc.push_packed(&rgb_bytes, Never)?;
+enc.push_packed(&rgb_bytes, Unstoppable)?;
 let jpeg = enc.finish()?;
 
 // From rgb crate types
 use rgb::RGB;
 let mut enc = config.encode_from_rgb::<RGB<u8>>(800, 600)?;
-enc.push_packed(&pixels, Never)?;
+enc.push_packed(&pixels, Unstoppable)?;
 let jpeg = enc.finish()?;
 
 // From planar YCbCr (video pipelines)
 let mut enc = config.encode_from_ycbcr_planar(1920, 1080)?;
-enc.push(&planes, num_rows, Never)?;
+enc.push(&planes, num_rows, Unstoppable)?;
 let jpeg = enc.finish()?;
 ```
 
@@ -104,14 +113,17 @@ let jpeg = enc.finish()?;
 #### Quality Options
 
 ```rust
+use jpegli::encoder::{EncoderConfig, Quality};
+
 // Simple quality scale (0-100)
-config.quality(85)
+let config = EncoderConfig::new().quality(85);
 
 // Quality enum variants
-config.quality(Quality::ApproxJpegli(85.0))     // Default scale
-config.quality(Quality::ApproxMozjpeg(80))      // Match mozjpeg output
-config.quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
-config.quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
+let config = EncoderConfig::new()
+    .quality(Quality::ApproxJpegli(85.0))     // Default scale
+    .quality(Quality::ApproxMozjpeg(80))      // Match mozjpeg output
+    .quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
+    .quality(Quality::ApproxButteraugli(1.0)); // Target butteraugli distance
 ```
 
 #### Pixel Layouts
@@ -129,25 +141,40 @@ config.quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
 #### Chroma Subsampling
 
 ```rust
-config.ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default, best compression)
-config.ycbcr(ChromaSubsampling::Full)           // 4:4:4 (best quality)
-config.ycbcr(ChromaSubsampling::HalfHorizontal) // 4:2:2
-config.ycbcr(ChromaSubsampling::HalfVertical)   // 4:4:0
+use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+
+let config = EncoderConfig::new()
+    .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default, best compression)
+    .ycbcr(ChromaSubsampling::Full)           // 4:4:4 (best quality)
+    .ycbcr(ChromaSubsampling::HalfHorizontal) // 4:2:2
+    .ycbcr(ChromaSubsampling::HalfVertical);  // 4:4:0
 ```
 
 #### Resource Estimation
 
 ```rust
+use jpegli::encoder::EncoderConfig;
+
 let config = EncoderConfig::new().quality(85);
-let memory_estimate = config.estimate_memory(1920, 1080);
+
+// Typical memory estimate
+let estimate = config.estimate_memory(1920, 1080);
+
+// Guaranteed upper bound (for resource reservation)
+let ceiling = config.estimate_memory_ceiling(1920, 1080);
 ```
 
 ---
 
 ### Decoder API
 
+> **Prerelease:** The decoder API is behind the `decoder` feature flag and will have breaking changes.
+> Enable with `jpegli-rs = { version = "...", features = ["decoder"] }`.
+
+All decoder types are in `jpegli::decoder`:
+
 ```rust
-use jpegli::{Decoder, DecodedImage, DecodedImageF32, DecoderConfig};
+use jpegli::decoder::{Decoder, DecodedImage, DecodedImageF32, DecoderConfig};
 ```
 
 #### Basic Decoding
@@ -177,7 +204,7 @@ let u16_pixels: Vec<u16> = image.to_u16();
 For video pipelines or re-encoding:
 
 ```rust
-use jpegli::DecodedYCbCr;
+use jpegli::decoder::{Decoder, DecodedYCbCr};
 
 let ycbcr: DecodedYCbCr = Decoder::new().decode_to_ycbcr_f32(&jpeg_data)?;
 // Access Y, Cb, Cr planes directly (f32, range [-128, 127])
@@ -217,7 +244,7 @@ image.stride()          // Bytes per row
 #### DecoderConfig (Advanced)
 
 ```rust
-use jpegli::{Decoder, DecoderConfig};
+use jpegli::decoder::{Decoder, DecoderConfig};
 
 // Most users should use the builder methods instead:
 let image = Decoder::new()
@@ -284,6 +311,7 @@ Quality is identical; file sizes within 0.5%.
 
 | Feature | Default | Description |
 |---------|---------|-------------|
+| `decoder` | No | Enable decoder API (prerelease, API will change) |
 | `cms-lcms2` | Yes | Color management via lcms2 |
 | `cms-moxcms` | No | Pure Rust color management |
 | `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
@@ -318,6 +346,8 @@ jpegli-rs = { version = "0.5", features = ["unsafe_simd"] }
 | YCbCr planar input | Working |
 
 ## Decoder Status
+
+> **Prerelease:** Enable with `features = ["decoder"]`. API will have breaking changes.
 
 | Feature | Status |
 |---------|--------|

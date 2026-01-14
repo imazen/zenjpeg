@@ -23,12 +23,12 @@
 //! Gamma-aware methods work in linear RGB space to preserve perceptual accuracy.
 //! The iterative variant additionally handles out-of-gamut clipping for best quality.
 
-use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_f32};
 use crate::color;
-use crate::foundation::consts::{YCBCR_B_TO_Y, YCBCR_G_TO_Y, YCBCR_R_TO_Y};
-use crate::error::{Error, Result};
-use crate::types::PixelFormat;
 use crate::color::xyb::{linear_to_srgb_fast, srgb_u8_to_linear};
+use crate::error::{Error, Result};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_zeroed_f32};
+use crate::foundation::consts::{YCBCR_B_TO_Y, YCBCR_G_TO_Y, YCBCR_R_TO_Y};
+use crate::types::PixelFormat;
 
 use wide::f32x8;
 

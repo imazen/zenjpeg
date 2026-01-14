@@ -18,11 +18,11 @@
 //! cargo run --release --example cpp_timing_matrix -- --csv results.csv
 //! ```
 
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use enough::Unstoppable;
+use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use jpegli::test_utils::find_cjpegli;
 use jpegli::types::{JpegMode, Subsampling};
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;

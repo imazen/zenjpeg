@@ -241,7 +241,6 @@ fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
     (evens, odds)
 }
 
-
 /// AVX2-optimized deinterleave using Highway's ConcatEven/ConcatOdd pattern.
 /// This is ~4x faster than element-by-element construction.
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]

@@ -35,9 +35,9 @@ pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsamplin
 
 use crate::error::{Error, Result};
 
-use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
+use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 
 /// Decoder configuration.
 #[derive(Debug, Clone)]

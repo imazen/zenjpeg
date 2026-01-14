@@ -40,10 +40,10 @@ const QUALITY_LEVELS: &[u8] = &[
 /// Maximum allowed parity difference percentage per mode
 /// These are set just above actual observed variance to catch regressions
 /// Updated 2026-01-13: Increased tolerance for Q5 16-bit quant table overhead (~1%)
-const MAX_DIFF_S444: f64 = 1.0;  // Q5: +0.7% due to 16-bit quant tables
-const MAX_DIFF_S420: f64 = 1.0;  // Q5: +1.0% due to 16-bit quant tables
-const MAX_DIFF_S422: f64 = 1.0;  // Q5: +0.9% due to 16-bit quant tables
-const MAX_DIFF_S440: f64 = 1.0;  // Q5: +0.9% due to 16-bit quant tables
+const MAX_DIFF_S444: f64 = 1.0; // Q5: +0.7% due to 16-bit quant tables
+const MAX_DIFF_S420: f64 = 1.0; // Q5: +1.0% due to 16-bit quant tables
+const MAX_DIFF_S422: f64 = 1.0; // Q5: +0.9% due to 16-bit quant tables
+const MAX_DIFF_S440: f64 = 1.0; // Q5: +0.9% due to 16-bit quant tables
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - DO NOT MODIFY WITHOUT VALID REASON
@@ -221,7 +221,8 @@ fn encode_rust(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, enough::Unstoppable).expect("push data");
+    enc.push_packed(rgb, enough::Unstoppable)
+        .expect("push data");
     enc.finish().expect("Rust encode failed")
 }
 
@@ -358,7 +359,14 @@ fn test_s422_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
     for &(q, expected_rust, expected_cpp, _, _) in S422_OPT {
-        let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::HalfHorizontal, true);
+        let jpeg = encode_rust(
+            &rgb,
+            width,
+            height,
+            q,
+            ChromaSubsampling::HalfHorizontal,
+            true,
+        );
         let rust_size = jpeg.len();
 
         let diff_pct = 100.0 * (rust_size as f64 - expected_rust as f64) / expected_rust as f64;
@@ -379,7 +387,14 @@ fn test_s440_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
     for &(q, expected_rust, expected_cpp, _, _) in S440_OPT {
-        let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::HalfVertical, true);
+        let jpeg = encode_rust(
+            &rgb,
+            width,
+            height,
+            q,
+            ChromaSubsampling::HalfVertical,
+            true,
+        );
         let rust_size = jpeg.len();
 
         let diff_pct = 100.0 * (rust_size as f64 - expected_rust as f64) / expected_rust as f64;
@@ -416,9 +431,27 @@ fn print_summary() {
 
     let configs = [
         ("4:4:4 OPT", ChromaSubsampling::Full, true, "444", S444_OPT),
-        ("4:2:0 OPT", ChromaSubsampling::Quarter, true, "420", S420_OPT),
-        ("4:2:2 OPT", ChromaSubsampling::HalfHorizontal, true, "422", S422_OPT),
-        ("4:4:0 OPT", ChromaSubsampling::HalfVertical, true, "440", S440_OPT),
+        (
+            "4:2:0 OPT",
+            ChromaSubsampling::Quarter,
+            true,
+            "420",
+            S420_OPT,
+        ),
+        (
+            "4:2:2 OPT",
+            ChromaSubsampling::HalfHorizontal,
+            true,
+            "422",
+            S422_OPT,
+        ),
+        (
+            "4:4:0 OPT",
+            ChromaSubsampling::HalfVertical,
+            true,
+            "440",
+            S440_OPT,
+        ),
     ];
 
     for (name, subsampling, opt, cpp_mode, reference) in configs {

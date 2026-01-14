@@ -37,12 +37,12 @@
 
 mod convert;
 
+use crate::error::Result;
 use crate::foundation::alloc::{
     try_alloc_filled, try_alloc_zeroed_f32_tracked, try_clone_slice, try_with_capacity_tracked,
     AllocationStats,
 };
 use crate::foundation::consts::DCT_BLOCK_SIZE;
-use crate::error::Result;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};

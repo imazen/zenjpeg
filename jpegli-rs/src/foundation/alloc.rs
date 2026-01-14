@@ -135,7 +135,11 @@ impl AllocationInfo {
             } else {
                 format!("{} ({}B)", self.type_name, self.element_size)
             },
-            self.location.file().rsplit('/').next().unwrap_or(self.location.file()),
+            self.location
+                .file()
+                .rsplit('/')
+                .next()
+                .unwrap_or(self.location.file()),
             self.location.line()
         )
     }
@@ -206,11 +210,7 @@ impl AllocationStats {
     /// is true, stores full `AllocationInfo` for later analysis.
     #[inline]
     #[track_caller]
-    pub fn record_alloc_typed<T>(
-        &mut self,
-        count: usize,
-        context: &'static str,
-    ) {
+    pub fn record_alloc_typed<T>(&mut self, count: usize, context: &'static str) {
         let element_size = std::mem::size_of::<T>();
         let bytes = count * element_size;
 

@@ -13,7 +13,10 @@ use test_utils::{
 };
 
 use enough::Unstoppable;
-use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{EncoderConfig, PixelLayout},
+};
 use test_case::test_case;
 
 // ============================================================================
@@ -28,7 +31,8 @@ fn roundtrip_metrics(img: &TestImage, quality: f32, progressive: bool) -> (f64, 
     let mut enc = config
         .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
+    enc.push_packed(&img.pixels, enough::Unstoppable)
+        .expect("push");
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
@@ -142,7 +146,9 @@ fn test_color_bars_roundtrip() {
     // Color bars have sharp edges causing ringing - allow higher RMS
     assert!(
         rms < thresholds::Q90_MAX_RMS * 4.0,
-        "Color bars RMS too high: {:.2} (max: {:.2})", rms, thresholds::Q90_MAX_RMS * 4.0
+        "Color bars RMS too high: {:.2} (max: {:.2})",
+        rms,
+        thresholds::Q90_MAX_RMS * 4.0
     );
 }
 
@@ -261,8 +267,7 @@ fn test_progressive_vs_baseline_quality() {
     let img = generate_gradient_d(256, 256, 3);
 
     let (baseline_rms, _, baseline_size, _) = roundtrip_metrics(&img, 85.0, false);
-    let (progressive_rms, _, progressive_size, _) =
-        roundtrip_metrics(&img, 85.0, true);
+    let (progressive_rms, _, progressive_size, _) = roundtrip_metrics(&img, 85.0, true);
 
     println!(
         "Baseline:    RMS={:.2}, size={}",
@@ -293,7 +298,8 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
+    enc.push_packed(&img.pixels, enough::Unstoppable)
+        .expect("push");
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
@@ -326,13 +332,15 @@ fn test_encode_deterministic() {
         .clone()
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup 1");
-    enc1.push_packed(&img.pixels, enough::Unstoppable).expect("push 1");
+    enc1.push_packed(&img.pixels, enough::Unstoppable)
+        .expect("push 1");
     let jpeg1 = enc1.finish().expect("encode 1");
 
     let mut enc2 = config
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup 2");
-    enc2.push_packed(&img.pixels, enough::Unstoppable).expect("push 2");
+    enc2.push_packed(&img.pixels, enough::Unstoppable)
+        .expect("push 2");
     let jpeg2 = enc2.finish().expect("encode 2");
 
     assert_eq!(jpeg1, jpeg2, "Encoding should be deterministic");
@@ -345,7 +353,8 @@ fn test_decode_deterministic() {
     let mut enc = config
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
+    enc.push_packed(&img.pixels, enough::Unstoppable)
+        .expect("push");
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
@@ -380,7 +389,8 @@ fn test_compression_ratio() {
         let mut enc = config
             .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
+        enc.push_packed(&img.pixels, enough::Unstoppable)
+            .expect("push");
         let jpeg = enc.finish().expect("encode");
 
         let ratio = raw_size as f64 / jpeg.len() as f64;

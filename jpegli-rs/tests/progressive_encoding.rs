@@ -12,14 +12,24 @@ use std::io::Cursor;
 use std::process::Command;
 
 /// Helper function to encode RGB data with given config
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
 /// Helper function to encode grayscale data with given config
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_gray(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -51,8 +61,8 @@ fn test_progressive_grayscale_gradient() {
         .quality(90.0)
         .progressive(true);
 
-    let jpeg_data = encode_gray(width, height, &data, &config)
-        .expect("Progressive encoding should succeed");
+    let jpeg_data =
+        encode_gray(width, height, &data, &config).expect("Progressive encoding should succeed");
 
     // Verify the file is a valid JPEG by checking markers
     assert!(jpeg_data.len() > 100, "JPEG should be at least 100 bytes");
@@ -98,8 +108,8 @@ fn test_progressive_solid_gray() {
         .quality(90.0)
         .progressive(true);
 
-    let jpeg_data = encode_gray(width, height, &data, &config)
-        .expect("Progressive encoding should succeed");
+    let jpeg_data =
+        encode_gray(width, height, &data, &config).expect("Progressive encoding should succeed");
 
     // Basic validation
     assert!(jpeg_data.len() > 50);
@@ -123,12 +133,10 @@ fn test_progressive_rgb() {
         }
     }
 
-    let config = EncoderConfig::new()
-        .quality(90.0)
-        .progressive(true);
+    let config = EncoderConfig::new().quality(90.0).progressive(true);
 
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Progressive RGB encoding should succeed");
+    let jpeg_data =
+        encode_rgb(width, height, &data, &config).expect("Progressive RGB encoding should succeed");
 
     // Verify SOF2 marker for progressive
     let mut found_sof2 = false;
@@ -222,8 +230,8 @@ fn test_progressive_optimized_smaller() {
         .progressive(false)
         .optimize_huffman(true);
 
-    let baseline_data = encode_rgb(width, height, &data, &config_baseline)
-        .expect("Baseline should succeed");
+    let baseline_data =
+        encode_rgb(width, height, &data, &config_baseline).expect("Baseline should succeed");
 
     // Progressive should be smaller than baseline (or close)
     let savings = baseline_data.len() as f64 - opt_data.len() as f64;
@@ -353,8 +361,7 @@ fn test_progressive_optimized_solid_color() {
         .quality(90.0)
         .progressive(true)
         .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Encoding should succeed");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Encoding should succeed");
 
     // Solid colors should compress very well
     assert!(jpeg_data.len() < 2000, "Solid color should compress well");
@@ -385,8 +392,7 @@ fn test_progressive_optimized_high_frequency() {
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Encoding should succeed");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Encoding should succeed");
 
     // Verify decode with zune-jpeg
     let decoded = decode_with_zune(&jpeg_data).expect("Should decode");
@@ -448,8 +454,7 @@ fn test_progressive_optimized_single_block() {
         .quality(90.0)
         .progressive(true)
         .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Single block should encode");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Single block should encode");
 
     // Should still be valid
     assert_eq!(&jpeg_data[0..2], &[0xFF, 0xD8]);
@@ -496,8 +501,7 @@ fn test_progressive_optimized_scan_structure() {
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Encoding should succeed");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Encoding should succeed");
 
     // Count markers
     let mut sos_count = 0;
@@ -547,8 +551,7 @@ fn test_progressive_optimized_non_square() {
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Wide image should encode");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Wide image should encode");
 
     let decoded = decode_with_zune(&jpeg_data).expect("Wide image should decode");
     assert_eq!(decoded.len(), (width * height * 3) as usize);
@@ -565,8 +568,7 @@ fn test_progressive_optimized_non_square() {
         }
     }
 
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Tall image should encode");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Tall image should encode");
 
     let decoded = decode_with_zune(&jpeg_data).expect("Tall image should decode");
     assert_eq!(decoded.len(), (width * height * 3) as usize);
@@ -624,8 +626,8 @@ fn test_baseline_still_works() {
         .quality(90.0)
         .progressive(false);
 
-    let jpeg_data = encode_gray(width, height, &data, &config)
-        .expect("Baseline encoding should succeed");
+    let jpeg_data =
+        encode_gray(width, height, &data, &config).expect("Baseline encoding should succeed");
 
     // Verify SOF0 marker for baseline (not SOF2)
     let mut found_sof0 = false;
@@ -863,8 +865,7 @@ fn test_libjpeg_compatibility_noise() {
         .quality(50.0)
         .progressive(true)
         .optimize_huffman(true);
-    let jpeg_data = encode_rgb(width, height, &data, &config)
-        .expect("Encoding should succeed");
+    let jpeg_data = encode_rgb(width, height, &data, &config).expect("Encoding should succeed");
 
     // Verify the file decodes with our test decoders
     let zune_decoded = decode_with_zune(&jpeg_data).expect("zune-jpeg should decode");
@@ -939,8 +940,7 @@ fn test_cpp_pixel_parity() {
         .quality(50.0)
         .progressive(true)
         .optimize_huffman(true);
-    let rust_jpeg = encode_rgb(width, height, &data, &config)
-        .expect("Encoding should succeed");
+    let rust_jpeg = encode_rgb(width, height, &data, &config).expect("Encoding should succeed");
 
     // Decode with zune-jpeg
     let rust_decoded = decode_with_zune(&rust_jpeg).expect("Should decode");

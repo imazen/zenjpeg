@@ -201,9 +201,7 @@ fn encode_with_method(
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
-    let mut config = EncoderConfig::new()
-        .quality(90.0)
-        .ycbcr(subsampling);
+    let mut config = EncoderConfig::new().quality(90.0).ycbcr(subsampling);
 
     if let Some(m) = method {
         config = config.downsampling_method(m);
@@ -701,13 +699,7 @@ fn test_all_methods_valid() {
 
     // Test 4:2:0
     for (name, method) in &methods_subsampled {
-        let result = encode_with_method(
-            &data,
-            width as u32,
-            height as u32,
-            S420,
-            *method,
-        );
+        let result = encode_with_method(&data, width as u32, height as u32, S420, *method);
         assert!(result.is_ok(), "{} should work with 4:2:0", name);
         let jpeg = result.unwrap().jpeg_data;
         assert_eq!(
@@ -720,37 +712,19 @@ fn test_all_methods_valid() {
 
     // Test 4:2:2
     for (name, method) in &methods_subsampled {
-        let result = encode_with_method(
-            &data,
-            width as u32,
-            height as u32,
-            S422,
-            *method,
-        );
+        let result = encode_with_method(&data, width as u32, height as u32, S422, *method);
         assert!(result.is_ok(), "{} should work with 4:2:2", name);
     }
 
     // Test 4:4:0
     for (name, method) in &methods_subsampled {
-        let result = encode_with_method(
-            &data,
-            width as u32,
-            height as u32,
-            S440,
-            *method,
-        );
+        let result = encode_with_method(&data, width as u32, height as u32, S440, *method);
         assert!(result.is_ok(), "{} should work with 4:4:0", name);
     }
 
     // Test 4:4:4 (no downsampling needed)
     for (name, method) in &methods_444 {
-        let result = encode_with_method(
-            &data,
-            width as u32,
-            height as u32,
-            S444,
-            *method,
-        );
+        let result = encode_with_method(&data, width as u32, height as u32, S444, *method);
         assert!(result.is_ok(), "{} should work with 4:4:4", name);
     }
 }
@@ -771,16 +745,8 @@ fn test_performance_comparison() {
 
     let methods = [
         ("Box (default)", S420, None),
-        (
-            "Box (explicit)",
-            S420,
-            Some(ChromaDownsampling::Box),
-        ),
-        (
-            "GammaAware",
-            S420,
-            Some(ChromaDownsampling::GammaAware),
-        ),
+        ("Box (explicit)", S420, Some(ChromaDownsampling::Box)),
+        ("GammaAware", S420, Some(ChromaDownsampling::GammaAware)),
         (
             "GammaAwareIterative",
             S420,

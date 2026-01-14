@@ -158,7 +158,11 @@ fn main() {
         // Rust YCbCr
         let config = jpegli::encoder::EncoderConfig::new().quality(q as f32);
         let mut enc = config
-            .encode_from_bytes(width as u32, height as u32, jpegli::encoder::PixelLayout::Rgb8Srgb)
+            .encode_from_bytes(
+                width as u32,
+                height as u32,
+                jpegli::encoder::PixelLayout::Rgb8Srgb,
+            )
             .unwrap();
         enc.push_packed(&rgb, enough::Unstoppable).unwrap();
         let rust_jpeg = enc.finish().unwrap();
@@ -220,9 +224,14 @@ fn main() {
         }
 
         // Rust XYB
-        let xyb_config = jpegli::encoder::EncoderConfig::new().quality(q as f32).xyb();
-        let xyb_enc = xyb_config
-            .encode_from_bytes(width as u32, height as u32, jpegli::encoder::PixelLayout::Rgb8Srgb);
+        let xyb_config = jpegli::encoder::EncoderConfig::new()
+            .quality(q as f32)
+            .xyb();
+        let xyb_enc = xyb_config.encode_from_bytes(
+            width as u32,
+            height as u32,
+            jpegli::encoder::PixelLayout::Rgb8Srgb,
+        );
         if let Ok(mut enc) = xyb_enc {
             enc.push_packed(&rgb, enough::Unstoppable).unwrap();
             let rust_jpeg = enc.finish().unwrap();

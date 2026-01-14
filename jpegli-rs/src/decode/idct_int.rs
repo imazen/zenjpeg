@@ -550,7 +550,6 @@ mod avx2 {
         pack_store!(row4, row5);
         pack_store!(row6, row7);
     }
-
 }
 
 // =============================================================================
@@ -924,7 +923,8 @@ mod tests {
                     output_stride8[row * 8 + col],
                     output_stride16[row * 16 + col],
                     "Stride mismatch at ({}, {})",
-                    row, col
+                    row,
+                    col
                 );
             }
         }
@@ -943,9 +943,22 @@ mod tests {
             // All values should be same and in range
             let first = output[0];
             for (i, &v) in output.iter().enumerate() {
-                assert!(v >= 0 && v <= 255, "DC {} produced out-of-range {} at {}", dc, v, i);
+                assert!(
+                    v >= 0 && v <= 255,
+                    "DC {} produced out-of-range {} at {}",
+                    dc,
+                    v,
+                    i
+                );
                 // DC-only should produce uniform output (within rounding)
-                assert!((v - first).abs() <= 1, "DC {} non-uniform: {} vs {} at {}", dc, first, v, i);
+                assert!(
+                    (v - first).abs() <= 1,
+                    "DC {} non-uniform: {} vs {} at {}",
+                    dc,
+                    first,
+                    v,
+                    i
+                );
             }
         }
     }
