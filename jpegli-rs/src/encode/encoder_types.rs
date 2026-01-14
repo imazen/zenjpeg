@@ -89,27 +89,24 @@ impl Quality {
         Quality::ApproxJpegli(q)
     }
 
-    /// Convert to butteraugli distance (backward compatibility).
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use Quality::ApproxButteraugli and to_internal() instead"
-    )]
+    /// Convert to butteraugli distance.
+    ///
+    /// Uses the exact same formula as C++ jpegli's `jpegli_quality_to_distance`.
     #[must_use]
     pub fn to_distance(&self) -> f32 {
         // If already butteraugli distance, return it directly
         if let Quality::ApproxButteraugli(d) = self {
             return *d;
         }
-        // Approximate conversion from internal quality to butteraugli distance
+        // Exact C++ jpegli formula from lib/jpegli/encode.cc:jpegli_quality_to_distance
         let q = self.to_internal();
         if q >= 100.0 {
-            0.0
-        } else if q >= 90.0 {
-            (100.0 - q) * 0.1
-        } else if q >= 75.0 {
-            1.0 + (90.0 - q) * 0.13
+            0.01
+        } else if q >= 30.0 {
+            0.1 + (100.0 - q) * 0.09
         } else {
-            3.0 + (75.0 - q) * 0.2
+            // Quadratic for very low quality
+            53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
         }
     }
 }
