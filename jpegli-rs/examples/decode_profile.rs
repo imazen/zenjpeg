@@ -3,7 +3,8 @@
 //! Usage: cargo run --release --example decode_profile
 //!        cargo run --release --example decode_profile -- --jpegli-only
 
-use jpegli::{Decoder, JpegEncoder, PixelFormat, Quality};
+use enough::Never;
+use jpegli::{Decoder, EncoderConfig, PixelFormat, PixelLayout};
 use std::env;
 use std::time::Instant;
 use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -21,11 +22,12 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(90.0))
-        .encode(&data)
-        .unwrap()
+    let config = EncoderConfig::new().quality(90.0);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&data, Never).unwrap();
+    enc.finish().unwrap()
 }
 
 fn bench_jpegli(jpeg_data: &[u8], iterations: usize) -> f64 {

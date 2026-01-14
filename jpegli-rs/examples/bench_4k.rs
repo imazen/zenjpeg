@@ -1,5 +1,6 @@
 //! Quick 4K benchmark
-use jpegli::{JpegEncoder, PixelFormat, Quality};
+use enough::Never;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn main() {
@@ -22,10 +23,12 @@ fn main() {
 
     println!("Warming up...");
     for _ in 0..2 {
-        let encoder = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0));
-        let _ = encoder.encode(&data).unwrap();
+        let config = EncoderConfig::new().quality(90.0);
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&data, Never).unwrap();
+        let _ = enc.finish().unwrap();
     }
 
     println!("\nBenchmarking 4K encoding ({}x{})...\n", width, height);
@@ -33,14 +36,15 @@ fn main() {
     for (name, quality) in [("q75", 75.0), ("q90", 90.0), ("q95", 95.0)] {
         let mut times = Vec::new();
         let iterations = 5;
+        let config = EncoderConfig::new().quality(quality);
 
         for _ in 0..iterations {
-            let encoder = JpegEncoder::new(width as u32, height as u32)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(quality));
-
             let start = Instant::now();
-            let result = encoder.encode(&data).unwrap();
+            let mut enc = config
+                .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(&data, Never).unwrap();
+            let result = enc.finish().unwrap();
             let elapsed = start.elapsed();
             times.push(elapsed.as_millis());
 
