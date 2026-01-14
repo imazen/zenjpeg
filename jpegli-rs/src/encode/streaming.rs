@@ -1510,10 +1510,10 @@ mod tests {
             .subsampling(Subsampling::S420)
             .estimate_memory_usage();
 
-        // Should be around 26 MB for 4K with 4:2:0
+        // Should be around 67 MB for 4K with 4:2:0 (includes token buffer)
         // Allow some tolerance for implementation details
-        assert!(estimate > 20_000_000, "estimate {} too low", estimate);
-        assert!(estimate < 40_000_000, "estimate {} too high", estimate);
+        assert!(estimate > 60_000_000, "estimate {} too low", estimate);
+        assert!(estimate < 80_000_000, "estimate {} too high", estimate);
     }
 
     #[test]
