@@ -784,6 +784,10 @@ extern "C" {
 }
 
 /// Safe wrapper to compute butteraugli score between two sRGB images.
+///
+/// # Safety
+/// This function calls into C++ FFI. The caller must ensure the jpegli C++ library
+/// was built with butteraugli support enabled.
 #[cfg(feature = "butteraugli")]
 pub unsafe fn compute_butteraugli_cpp(
     srgb0: &[u8],

@@ -1612,6 +1612,7 @@ impl EncoderConfig {
             // Set subsampling via comp_info
             if !(*cinfo_ptr).comp_info.is_null() {
                 let comp_info = (*cinfo_ptr).comp_info;
+                #[allow(unreachable_patterns)] // ChromaSubsampling is #[non_exhaustive]
                 match self.subsampling {
                     ChromaSubsampling::S444 => {
                         (*comp_info.add(0)).h_samp_factor = 1;
@@ -1665,6 +1666,7 @@ impl EncoderConfig {
             let row_stride = img.width * 3;
             let mut row_pointer: [JSAMPROW; 1] = [ptr::null_mut()];
 
+            #[allow(clippy::while_immutable_condition)] // FFI: jpeg_write_scanlines mutates next_scanline
             while (*cinfo_ptr).next_scanline < (*cinfo_ptr).image_height {
                 let row_idx = (*cinfo_ptr).next_scanline as usize;
                 let row_start = row_idx * row_stride;

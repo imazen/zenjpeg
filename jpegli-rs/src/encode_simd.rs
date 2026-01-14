@@ -30,8 +30,13 @@
 use multiversion::multiversion;
 use wide::f32x8;
 
-// Raw AVX2/SSE intrinsics are used via `use std::arch::x86_64::*` locally in functions
-// (only available with `unsafe_simd` feature on x86_64)
+// Raw AVX2/SSE intrinsics - only available with `unsafe_simd` feature on x86_64
+#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+#[allow(unused_imports)] // Not all intrinsics used in every code path
+use core::arch::x86_64::{
+    __m128, __m128i, __m256, _mm_cvtepu8_epi32, _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps,
+    _mm_set1_ps, _mm_setr_epi8, _mm_shuffle_epi8, _mm_storeu_ps,
+};
 
 use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,

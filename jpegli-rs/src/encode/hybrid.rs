@@ -12,13 +12,14 @@
 use crate::encode::dct::forward_dct_8x8;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::hybrid::config::HybridConfig;
+use crate::error::Result;
 use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 
 use super::natural_to_zigzag_into;
 
-use super::EncoderConfig;
+use super::config::EncoderConfig;
 
 // ============================================================================
 // Setup Helpers
@@ -32,7 +33,7 @@ pub(super) fn get_aq_map_or_compute(
     width: usize,
     height: usize,
     y_quant_01: u16,
-) -> crate::Result<AQStrengthMap> {
+) -> Result<AQStrengthMap> {
     if let Some(ref custom) = config.custom_aq_map {
         Ok(custom.clone())
     } else {
