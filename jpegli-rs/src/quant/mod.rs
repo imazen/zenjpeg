@@ -6,6 +6,8 @@
 //! - Quality parameter handling (traditional and butteraugli distance)
 //! - Adaptive quantization support
 
+#![allow(dead_code)] // Quality conversion tables and reference implementations
+
 // Adaptive quantization submodule
 pub mod aq;
 

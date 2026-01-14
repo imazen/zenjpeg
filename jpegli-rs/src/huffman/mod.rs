@@ -13,10 +13,14 @@ pub mod types;
 
 // Re-export commonly used items from encode (the main huffman.rs functionality)
 pub use encode::{
-    build_code_lengths, HuffmanDecodeTable, HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
+    build_code_lengths, HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
     STD_AC_LUMINANCE_BITS, STD_AC_LUMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
     STD_DC_CHROMINANCE_VALUES, STD_DC_LUMINANCE_BITS, STD_DC_LUMINANCE_VALUES,
 };
+
+// Decoder-only exports
+#[cfg(feature = "decoder")]
+pub use encode::HuffmanDecodeTable;
 
 // Re-export from classic
 

@@ -5,6 +5,8 @@
 //! - Huffman table building from symbol frequencies
 //! - Lookup table generation for fast encoding/decoding
 
+#![allow(dead_code)]
+
 use std::sync::OnceLock;
 
 use crate::error::{Error, Result};

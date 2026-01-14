@@ -84,6 +84,7 @@ impl Quality {
     /// Backward-compatible constructor matching old `Quality::Traditional(f32)`.
     #[deprecated(since = "0.5.0", note = "Use Quality::ApproxJpegli(f32) instead")]
     #[must_use]
+    #[allow(non_snake_case)] // Mimics old enum variant naming
     pub fn Traditional(q: f32) -> Self {
         Quality::ApproxJpegli(q)
     }
@@ -145,6 +146,7 @@ fn butteraugli_to_internal(dist: f32) -> f32 {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 #[derive(Default)]
+#[allow(clippy::large_enum_variant)] // Custom matrices are rarely used
 pub enum QuantTableConfig {
     /// Jpegli's perceptual tables, scaled by Quality. (default)
     #[default]

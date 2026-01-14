@@ -3,6 +3,8 @@
 //! This module provides `FrequencyCounter` for collecting symbol frequencies
 //! during a first pass over the data, then generating optimal Huffman tables.
 
+#![allow(dead_code)]
+
 use crate::error::Result;
 use crate::huffman::classic::{
     depths_to_bits_values, generate_code_lengths, generate_optimal_table,

@@ -7,6 +7,8 @@
 //!
 //! SIMD optimization via the `wide` crate is always enabled.
 
+#![allow(dead_code)] // Multiple conversion variants for different pipelines
+
 use crate::error::Result;
 use crate::foundation::alloc::{checked_size, checked_size_2d, try_alloc_zeroed};
 use crate::foundation::consts::{

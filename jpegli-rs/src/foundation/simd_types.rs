@@ -3,6 +3,9 @@
 //! These types store data in SIMD-friendly layouts to eliminate load/store overhead
 //! during DCT and quantization operations.
 
+#![allow(dead_code)]
+#![allow(clippy::wrong_self_convention)] // to_* methods need &self for SIMD types
+
 use multiversion::multiversion;
 use wide::{f32x8, i16x8, i32x8, CmpGe};
 

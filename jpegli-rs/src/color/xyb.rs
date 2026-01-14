@@ -10,6 +10,8 @@
 //! 4. Final XYB matrix
 //! 5. Scale for JPEG encoding (ScaleXYBRow)
 
+#![allow(dead_code)] // Reference implementations and alternative codepaths
+
 use crate::foundation::consts::{
     XYB_NEG_OPSIN_ABSORBANCE_BIAS_CBRT, XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX,
 };

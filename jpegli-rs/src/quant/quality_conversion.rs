@@ -21,6 +21,8 @@
 //!     .equivalent_quality(conversion);
 //! ```
 
+#![allow(dead_code)]
+
 use crate::quant::Quality;
 use crate::types::Subsampling;
 

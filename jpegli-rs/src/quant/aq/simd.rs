@@ -16,6 +16,8 @@
 //! Locked test values are derived from frymire.png (1118x1105) Y plane.
 //! To regenerate: `cargo test --lib adaptive_quant_simd -- --nocapture`
 
+#![allow(dead_code)]
+
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
 use multiversion::multiversion;
 use wide::f32x8;
