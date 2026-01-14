@@ -567,15 +567,33 @@ mod tests {
 
     #[test]
     fn test_idct_u8_clamping() {
-        // Test that output is properly clamped
+        // Test that output is properly clamped to [0, 255]
         let mut input = [0.0f32; DCT_BLOCK_SIZE];
-        input[0] = 1000.0; // Very large DC, should result in values > 255
+        input[0] = 1000.0; // Very large DC - should produce high values
 
         let output = inverse_dct_8x8_u8(&input);
 
-        for &v in &output {
-            assert!(v <= 255);
-        }
+        // All values must be in valid u8 range (implicitly true for u8)
+        // With a large positive DC, most values should be high
+        let max_val = output.iter().copied().max().unwrap();
+
+        // The output should have high values due to large DC
+        assert!(
+            max_val > 200,
+            "Large DC should produce high values, got max={}",
+            max_val
+        );
+
+        // Test negative clamping - with large negative DC, min should be 0 (clamped)
+        input[0] = -1000.0;
+        let output_neg = inverse_dct_8x8_u8(&input);
+        let min_val_neg = output_neg.iter().copied().min().unwrap();
+        // Should be clamped to low values (near 0)
+        assert!(
+            min_val_neg < 10,
+            "Large negative DC should produce low values clamped near 0, got min={}",
+            min_val_neg
+        );
     }
 
     #[test]
