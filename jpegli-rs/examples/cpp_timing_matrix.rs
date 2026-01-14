@@ -20,9 +20,9 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use jpegli::decoder::{decode_jpeg_with_icc, JpegMode, Subsampling};
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use jpegli::test_utils::find_cjpegli;
-use jpegli::decoder::{decode_jpeg_with_icc, JpegMode, Subsampling};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;

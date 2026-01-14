@@ -13,5 +13,3 @@ pub mod simd_targets;
 pub mod simd_types;
 
 // Re-export commonly used items at module level
-
-

@@ -160,7 +160,6 @@ pub enum QuantTableConfig {
     Exact { luma: [u16; 64], chroma: [u16; 64] },
 }
 
-
 /// Output color space with bundled subsampling options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]

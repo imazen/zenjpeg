@@ -10,9 +10,9 @@
 //! Note: This module is gated by `experimental-hybrid-trellis` feature in mod.rs.
 
 use crate::encode::dct::forward_dct_8x8;
+use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::hybrid::config::HybridConfig;
-use crate::error::Result;
 use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};

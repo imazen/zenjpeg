@@ -140,7 +140,9 @@ fn extract_block_sequential(
 
 /// Simple DCT implementation for benchmarking (using public API)
 #[cfg(feature = "parallel")]
-fn dct_block(block: &jpegli::foundation::simd_types::Block8x8f) -> jpegli::foundation::simd_types::Block8x8f {
+fn dct_block(
+    block: &jpegli::foundation::simd_types::Block8x8f,
+) -> jpegli::foundation::simd_types::Block8x8f {
     // Use the dct module's public function
     let arr = block.to_array();
     let output = jpegli::encode::dct::forward_dct_8x8(&arr);
