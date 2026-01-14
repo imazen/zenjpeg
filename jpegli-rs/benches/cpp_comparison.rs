@@ -1,39 +1,17 @@
-//! Criterion benchmarks comparing Rust jpegli-rs vs C++ cjpegli.
-//!
-//! Uses FFI encoding (not CLI subprocess) for accurate timing comparisons.
+//! Criterion benchmarks comparing Rust jpegli-rs vs C++ cjpegli via FFI.
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Run all comparison benchmarks (requires cjpegli-ffi feature in jpegli-bench-utils)
 //! cargo bench --bench cpp_comparison
-//!
-//! # Run specific benchmark
-//! cargo bench --bench cpp_comparison -- "baseline"
-//!
-//! # Save baseline for regression detection
 //! cargo bench --bench cpp_comparison -- --save-baseline main
-//!
-//! # Compare against baseline
 //! cargo bench --bench cpp_comparison -- --baseline main
-//! ```
-//!
-//! # Requirements
-//!
-//! This benchmark requires building jpegli-bench-utils with the `cjpegli-ffi` feature,
-//! which in turn requires building internal/jpegli-cpp:
-//!
-//! ```bash
-//! git submodule update --init --recursive
-//! cd internal/jpegli-cpp
-//! mkdir -p build && cd build
-//! cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
-//! ninja jpegli
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use jpegli::encoder::{
+    ChromaSubsampling as RustSubsampling, EncoderConfig as RustConfig, PixelLayout, Unstoppable,
+};
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
@@ -60,25 +38,20 @@ fn create_test_image(width: u32, height: u32) -> ImageData {
 
 #[derive(Debug, Clone, Copy)]
 struct BenchConfig {
-    mode: JpegMode,
-    subsampling: Subsampling,
+    progressive: bool,
+    subsampling: ChromaSubsampling,
     use_xyb: bool,
     quality: u8,
 }
 
 impl BenchConfig {
     fn name(&self) -> String {
-        let mode = match self.mode {
-            JpegMode::Baseline => "base",
-            JpegMode::Progressive => "prog",
-            _ => "other",
-        };
+        let mode = if self.progressive { "prog" } else { "base" };
         let sub = match self.subsampling {
-            Subsampling::S444 => "444",
-            Subsampling::S422 => "422",
-            Subsampling::S420 => "420",
-            Subsampling::S440 => "440",
-            _ => "other",
+            ChromaSubsampling::S444 => "444",
+            ChromaSubsampling::S422 => "422",
+            ChromaSubsampling::S420 => "420",
+            ChromaSubsampling::S440 => "440",
         };
         let color = if self.use_xyb { "xyb" } else { "ycbcr" };
         format!("{}-{}-{}-q{}", mode, sub, color, self.quality)
@@ -91,32 +64,37 @@ impl BenchConfig {
             } else {
                 ColorMode::YCbCr
             })
-            .scan(match self.mode {
-                JpegMode::Baseline => ScanMode::Baseline,
-                JpegMode::Progressive => ScanMode::Progressive,
-                _ => ScanMode::Progressive,
+            .scan(if self.progressive {
+                ScanMode::Progressive
+            } else {
+                ScanMode::Baseline
             })
-            .subsampling(match self.subsampling {
-                Subsampling::S444 => ChromaSubsampling::S444,
-                Subsampling::S422 => ChromaSubsampling::S422,
-                Subsampling::S420 => ChromaSubsampling::S420,
-                Subsampling::S440 => ChromaSubsampling::S440,
-                _ => ChromaSubsampling::S420,
-            })
+            .subsampling(self.subsampling)
             .quality(self.quality)
+    }
+
+    fn to_rust_subsampling(&self) -> RustSubsampling {
+        match self.subsampling {
+            ChromaSubsampling::S444 => RustSubsampling::Full,
+            ChromaSubsampling::S422 => RustSubsampling::HalfHorizontal,
+            ChromaSubsampling::S420 => RustSubsampling::Quarter,
+            ChromaSubsampling::S440 => RustSubsampling::HalfVertical,
+        }
     }
 }
 
 fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(config.quality as f32))
-        .mode(config.mode)
-        .optimize_huffman(true)
-        .subsampling(config.subsampling)
-        .use_xyb(config.use_xyb)
-        .encode(&image.pixels)
-        .expect("Rust encode failed")
+    let rust_config = RustConfig::new()
+        .quality(config.quality)
+        .progressive(config.progressive)
+        .ycbcr(config.to_rust_subsampling());
+
+    let mut enc = rust_config
+        .encode_from_bytes(image.width as u32, image.height as u32, PixelLayout::Rgb8Srgb)
+        .expect("Failed to create encoder");
+    enc.push_packed(&image.pixels, Unstoppable)
+        .expect("Rust encode failed");
+    enc.finish().expect("Rust finish failed")
 }
 
 fn encode_cpp_ffi(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
@@ -165,27 +143,27 @@ fn bench_rust_vs_cpp(c: &mut Criterion) {
     let configs = vec![
         // Baseline YCbCr
         BenchConfig {
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S420,
+            progressive: false,
+            subsampling: ChromaSubsampling::S420,
             use_xyb: false,
             quality: 90,
         },
         BenchConfig {
-            mode: JpegMode::Baseline,
-            subsampling: Subsampling::S444,
+            progressive: false,
+            subsampling: ChromaSubsampling::S444,
             use_xyb: false,
             quality: 90,
         },
         // Progressive YCbCr
         BenchConfig {
-            mode: JpegMode::Progressive,
-            subsampling: Subsampling::S420,
+            progressive: true,
+            subsampling: ChromaSubsampling::S420,
             use_xyb: false,
             quality: 90,
         },
         BenchConfig {
-            mode: JpegMode::Progressive,
-            subsampling: Subsampling::S444,
+            progressive: true,
+            subsampling: ChromaSubsampling::S444,
             use_xyb: false,
             quality: 90,
         },
@@ -226,8 +204,8 @@ fn bench_sizes(c: &mut Criterion) {
     }
 
     let config = BenchConfig {
-        mode: JpegMode::Progressive,
-        subsampling: Subsampling::S420,
+        progressive: true,
+        subsampling: ChromaSubsampling::S420,
         use_xyb: false,
         quality: 90,
     };
@@ -275,8 +253,8 @@ fn bench_quality_levels(c: &mut Criterion) {
 
     for quality in [50, 75, 90, 95] {
         let config = BenchConfig {
-            mode: JpegMode::Progressive,
-            subsampling: Subsampling::S420,
+            progressive: true,
+            subsampling: ChromaSubsampling::S420,
             use_xyb: false,
             quality,
         };
@@ -317,8 +295,8 @@ fn verify_outputs_match(c: &mut Criterion) {
 
     let image = create_test_image(512, 512);
     let config = BenchConfig {
-        mode: JpegMode::Progressive,
-        subsampling: Subsampling::S420,
+        progressive: true,
+        subsampling: ChromaSubsampling::S420,
         use_xyb: false,
         quality: 90,
     };

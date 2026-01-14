@@ -88,7 +88,7 @@ impl Default for StandardHuffmanTables {
 /// so we can use coarser quantization (higher quant values = fewer bits).
 ///
 /// # Arguments
-/// * `base_quant` - Base quantization table (u16[64])
+/// * `base_quant` - Base quantization table (u16\[64\])
 /// * `aq_strength` - Per-block AQ strength from jpegli (typically 0.0 to ~0.5)
 ///
 /// # Returns

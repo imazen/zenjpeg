@@ -532,25 +532,34 @@ opaque_struct!(jpeg_color_deconverter);
 opaque_struct!(jpeg_color_quantizer);
 
 // ============================================================================
-// External function declarations (libjpeg API)
+// External function declarations (jpegli API - uses jpegli_* symbols)
 // ============================================================================
 
 extern "C" {
     // Error handling
+    #[link_name = "jpegli_std_error"]
     pub fn jpeg_std_error(err: *mut jpeg_error_mgr) -> *mut jpeg_error_mgr;
 
     // Compression lifecycle
+    #[link_name = "jpegli_CreateCompress"]
     pub fn jpeg_CreateCompress(cinfo: j_compress_ptr, version: c_int, structsize: size_t);
+    #[link_name = "jpegli_destroy_compress"]
     pub fn jpeg_destroy_compress(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_set_defaults"]
     pub fn jpeg_set_defaults(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_set_colorspace"]
     pub fn jpeg_set_colorspace(cinfo: j_compress_ptr, colorspace: J_COLOR_SPACE);
+    #[link_name = "jpegli_default_colorspace"]
     pub fn jpeg_default_colorspace(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_set_quality"]
     pub fn jpeg_set_quality(cinfo: j_compress_ptr, quality: c_int, force_baseline: boolean);
+    #[link_name = "jpegli_set_linear_quality"]
     pub fn jpeg_set_linear_quality(
         cinfo: j_compress_ptr,
         scale_factor: c_int,
         force_baseline: boolean,
     );
+    #[link_name = "jpegli_add_quant_table"]
     pub fn jpeg_add_quant_table(
         cinfo: j_compress_ptr,
         which_tbl: c_int,
@@ -558,32 +567,46 @@ extern "C" {
         scale_factor: c_int,
         force_baseline: boolean,
     );
+    #[link_name = "jpegli_quality_scaling"]
     pub fn jpeg_quality_scaling(quality: c_int) -> c_int;
+    #[link_name = "jpegli_simple_progression"]
     pub fn jpeg_simple_progression(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_suppress_tables"]
     pub fn jpeg_suppress_tables(cinfo: j_compress_ptr, suppress: boolean);
+    #[link_name = "jpegli_alloc_quant_table"]
     pub fn jpeg_alloc_quant_table(cinfo: j_common_ptr) -> *mut JQUANT_TBL;
+    #[link_name = "jpegli_alloc_huff_table"]
     pub fn jpeg_alloc_huff_table(cinfo: j_common_ptr) -> *mut JHUFF_TBL;
+    #[link_name = "jpegli_start_compress"]
     pub fn jpeg_start_compress(cinfo: j_compress_ptr, write_all_tables: boolean);
+    #[link_name = "jpegli_write_scanlines"]
     pub fn jpeg_write_scanlines(
         cinfo: j_compress_ptr,
         scanlines: JSAMPARRAY,
         num_lines: JDIMENSION,
     ) -> JDIMENSION;
+    #[link_name = "jpegli_finish_compress"]
     pub fn jpeg_finish_compress(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_write_raw_data"]
     pub fn jpeg_write_raw_data(
         cinfo: j_compress_ptr,
         data: JSAMPIMAGE,
         num_lines: JDIMENSION,
     ) -> JDIMENSION;
+    #[link_name = "jpegli_write_marker"]
     pub fn jpeg_write_marker(
         cinfo: j_compress_ptr,
         marker: c_int,
         dataptr: *const JOCTET,
         datalen: c_uint,
     );
+    #[link_name = "jpegli_write_m_header"]
     pub fn jpeg_write_m_header(cinfo: j_compress_ptr, marker: c_int, datalen: c_uint);
+    #[link_name = "jpegli_write_m_byte"]
     pub fn jpeg_write_m_byte(cinfo: j_compress_ptr, val: c_int);
+    #[link_name = "jpegli_write_tables"]
     pub fn jpeg_write_tables(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_write_icc_profile"]
     pub fn jpeg_write_icc_profile(
         cinfo: j_compress_ptr,
         icc_data_ptr: *const JOCTET,
@@ -591,6 +614,7 @@ extern "C" {
     );
 
     // Memory destination
+    #[link_name = "jpegli_mem_dest"]
     pub fn jpeg_mem_dest(
         cinfo: j_compress_ptr,
         outbuffer: *mut *mut c_uchar,
@@ -598,51 +622,77 @@ extern "C" {
     );
 
     // Decompression lifecycle
+    #[link_name = "jpegli_CreateDecompress"]
     pub fn jpeg_CreateDecompress(cinfo: j_decompress_ptr, version: c_int, structsize: size_t);
+    #[link_name = "jpegli_destroy_decompress"]
     pub fn jpeg_destroy_decompress(cinfo: j_decompress_ptr);
+    #[link_name = "jpegli_read_header"]
     pub fn jpeg_read_header(cinfo: j_decompress_ptr, require_image: boolean) -> c_int;
+    #[link_name = "jpegli_start_decompress"]
     pub fn jpeg_start_decompress(cinfo: j_decompress_ptr) -> boolean;
+    #[link_name = "jpegli_read_scanlines"]
     pub fn jpeg_read_scanlines(
         cinfo: j_decompress_ptr,
         scanlines: JSAMPARRAY,
         max_lines: JDIMENSION,
     ) -> JDIMENSION;
+    #[link_name = "jpegli_skip_scanlines"]
     pub fn jpeg_skip_scanlines(cinfo: j_decompress_ptr, num_lines: JDIMENSION) -> JDIMENSION;
+    #[link_name = "jpegli_crop_scanline"]
     pub fn jpeg_crop_scanline(
         cinfo: j_decompress_ptr,
         xoffset: *mut JDIMENSION,
         width: *mut JDIMENSION,
     );
+    #[link_name = "jpegli_finish_decompress"]
     pub fn jpeg_finish_decompress(cinfo: j_decompress_ptr) -> boolean;
+    #[link_name = "jpegli_read_raw_data"]
     pub fn jpeg_read_raw_data(
         cinfo: j_decompress_ptr,
         data: JSAMPIMAGE,
         max_lines: JDIMENSION,
     ) -> JDIMENSION;
+    #[link_name = "jpegli_has_multiple_scans"]
     pub fn jpeg_has_multiple_scans(cinfo: j_decompress_ptr) -> boolean;
+    #[link_name = "jpegli_start_output"]
     pub fn jpeg_start_output(cinfo: j_decompress_ptr, scan_number: c_int) -> boolean;
+    #[link_name = "jpegli_finish_output"]
     pub fn jpeg_finish_output(cinfo: j_decompress_ptr) -> boolean;
+    #[link_name = "jpegli_input_complete"]
     pub fn jpeg_input_complete(cinfo: j_decompress_ptr) -> boolean;
+    #[link_name = "jpegli_new_colormap"]
     pub fn jpeg_new_colormap(cinfo: j_decompress_ptr);
+    #[link_name = "jpegli_consume_input"]
     pub fn jpeg_consume_input(cinfo: j_decompress_ptr) -> c_int;
+    #[link_name = "jpegli_calc_output_dimensions"]
     pub fn jpeg_calc_output_dimensions(cinfo: j_decompress_ptr);
+    #[link_name = "jpegli_save_markers"]
     pub fn jpeg_save_markers(cinfo: j_decompress_ptr, marker_code: c_int, length_limit: c_uint);
 
     // Memory source
+    #[link_name = "jpegli_mem_src"]
     pub fn jpeg_mem_src(cinfo: j_decompress_ptr, inbuffer: *const c_uchar, insize: c_ulong);
 
     // Coefficient access
+    #[link_name = "jpegli_read_coefficients"]
     pub fn jpeg_read_coefficients(cinfo: j_decompress_ptr) -> *mut jvirt_barray_ptr;
+    #[link_name = "jpegli_write_coefficients"]
     pub fn jpeg_write_coefficients(cinfo: j_compress_ptr, coef_arrays: *mut jvirt_barray_ptr);
+    #[link_name = "jpegli_copy_critical_parameters"]
     pub fn jpeg_copy_critical_parameters(srcinfo: j_decompress_ptr, dstinfo: j_compress_ptr);
 
     // Abort/destroy
+    #[link_name = "jpegli_abort_compress"]
     pub fn jpeg_abort_compress(cinfo: j_compress_ptr);
+    #[link_name = "jpegli_abort_decompress"]
     pub fn jpeg_abort_decompress(cinfo: j_decompress_ptr);
+    #[link_name = "jpegli_abort"]
     pub fn jpeg_abort(cinfo: j_common_ptr);
+    #[link_name = "jpegli_destroy"]
     pub fn jpeg_destroy(cinfo: j_common_ptr);
 
     // ICC profile
+    #[link_name = "jpegli_read_icc_profile"]
     pub fn jpeg_read_icc_profile(
         cinfo: j_decompress_ptr,
         icc_data_ptr: *mut *mut JOCTET,

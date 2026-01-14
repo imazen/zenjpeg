@@ -357,7 +357,7 @@ impl Encoder {
     ///
     /// - [`EdgePaddingConfig::cpp_compat()`]: Match C++ jpegli behavior (Replicate all)
     /// - [`EdgePaddingConfig::recommended()`]: Mirror for luma, Replicate for chroma
-    /// - [`EdgePaddingConfig::uniform(strategy)`]: Same strategy for all channels
+    /// - `EdgePaddingConfig::uniform(strategy)`: Same strategy for all channels
     ///
     /// # Example
     ///

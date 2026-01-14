@@ -762,7 +762,7 @@ pub fn coeffs_i32_to_f32(coeffs: &[i32; 64]) -> [f32; 64] {
 }
 
 /// Convert [i16; 64] pixel output to [f32; 64] for compatibility.
-/// Subtracts 128 to convert from [0,255] to centered [-128,127] range.
+/// Subtracts 128 to convert from 0-255 to centered -128 to 127 range.
 #[inline]
 pub fn pixels_i16_to_f32_centered(pixels: &[i16; 64]) -> [f32; 64] {
     let mut out = [0.0f32; 64];

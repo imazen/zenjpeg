@@ -1559,11 +1559,7 @@ impl EncoderConfig {
 
     /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
     ///
-    /// Uses the standard libjpeg-62 API exposed by jpegli for accurate
-    /// benchmarking against the original C++ implementation.
-    ///
-    /// Note: XYB mode is NOT supported via the standard libjpeg API.
-    /// Use CLI fallback for XYB comparisons.
+    /// Note: XYB mode is NOT supported via the libjpeg API.
     #[cfg(feature = "cjpegli-ffi")]
     fn encode_with_cjpegli_ffi(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         use jpegli_internals_sys::*;

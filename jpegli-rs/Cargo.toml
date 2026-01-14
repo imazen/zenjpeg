@@ -34,9 +34,8 @@ rayon = { workspace = true, optional = true }  # For parallel encoding
 mozjpeg-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
-# NOTE: default-features = false to avoid complex FFI linking requirements
-# cjpegli-ffi requires libjpeg-compatible symbols which aren't in jpegli-static
-jpegli-bench-utils = { path = "../jpegli-bench-utils", default-features = false }
+# C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
+jpegli-bench-utils = { path = "../jpegli-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
 # For FFI comparison testing against C++ jpegli (internal development only)
 # This dependency is NOT published to crates.io - it requires building the C++ jpegli
 # from source via cmake. Only works in a local checkout with the C++ submodule.
@@ -56,9 +55,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
-# NOTE: mozjpeg conflicts with jpegli FFI - both provide libjpeg-62 symbols!
-# Only enable for mozjpeg-specific benchmarks, not when using cjpegli-ffi
-# mozjpeg = { workspace = true }
+mozjpeg-rs = { workspace = true }
 rayon = { workspace = true }
 sha2 = "0.10"
 # Note: turbojpeg conflicts with mozjpeg (duplicate libjpeg symbols)

@@ -112,3 +112,5 @@ similar_names = "allow"  # Common in math code
 many_single_char_names = "allow"  # Math variables (x, y, r, g, b)
 enum_variant_names = "allow"  # Emit* prefix is clear
 doc_overindented_list_items = "allow"  # Doc formatting preferences
+manual_div_ceil = "allow"  # Common pattern in ported code
+manual_is_multiple_of = "allow"  # Common pattern in ported code
