@@ -9,22 +9,14 @@ use crate::foundation::bitstream::BitWriter;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::optimize::{ScanTokenInfo, Token};
 use crate::huffman::HuffmanEncodeTable;
-use multiversion::multiversion;
+use multiversed::multiversed;
 use wide::{i16x8, CmpEq};
 
 use super::{additional_bits_with_cat, category};
 
 /// Build a 64-bit mask of non-zero coefficients using SIMD.
 /// Each bit i is set if coeffs[i] != 0.
-#[multiversion(targets(
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-    "arm+neon",
-    "wasm32+simd128",
-))]
+#[multiversed]
 #[inline]
 fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
     let zero = i16x8::ZERO;

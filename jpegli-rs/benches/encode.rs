@@ -1,7 +1,7 @@
 //! Encoding benchmarks for jpegli.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jpegli::{JpegEncoder, PixelFormat, Quality};
+use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];
@@ -27,10 +27,12 @@ fn bench_encode(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let encoder = JpegEncoder::new(size as u32, size as u32)
-                        .pixel_format(PixelFormat::Rgb)
-                        .quality(Quality::from(90.0));
-                    encoder.encode(black_box(data))
+                    let config = EncoderConfig::new().quality(90);
+                    let mut enc = config
+                        .encode_from_bytes(size as u32, size as u32, PixelLayout::Rgb8Srgb)
+                        .unwrap();
+                    enc.push_packed(black_box(data), Unstoppable).unwrap();
+                    enc.finish()
                 });
             },
         );
@@ -47,10 +49,12 @@ fn bench_quality_levels(c: &mut Criterion) {
     for quality in [50, 75, 90, 95] {
         group.bench_with_input(BenchmarkId::new("q", quality), &data, |b, data| {
             b.iter(|| {
-                let encoder = JpegEncoder::new(512, 512)
-                    .pixel_format(PixelFormat::Rgb)
-                    .quality(Quality::from(quality as f32));
-                encoder.encode(black_box(data))
+                let config = EncoderConfig::new().quality(quality);
+                let mut enc = config
+                    .encode_from_bytes(512, 512, PixelLayout::Rgb8Srgb)
+                    .unwrap();
+                enc.push_packed(black_box(data), Unstoppable).unwrap();
+                enc.finish()
             });
         });
     }

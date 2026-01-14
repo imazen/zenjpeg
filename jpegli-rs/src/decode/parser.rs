@@ -2192,9 +2192,9 @@ impl<'a> JpegParser<'a> {
         }
 
         Ok((
-            std::mem::take(&mut planes_f32[0]),
-            std::mem::take(&mut planes_f32[1]),
-            std::mem::take(&mut planes_f32[2]),
+            core::mem::take(&mut planes_f32[0]),
+            core::mem::take(&mut planes_f32[1]),
+            core::mem::take(&mut planes_f32[2]),
         ))
     }
 }

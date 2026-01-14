@@ -351,8 +351,8 @@ impl StreamingAQ {
     /// Process a single row for pre-erosion computation.
     fn process_pre_erosion_row(&mut self, row: &[f32], global_y: usize) {
         // Shift row buffers
-        std::mem::swap(&mut self.row_prev_prev, &mut self.row_prev);
-        std::mem::swap(&mut self.row_prev, &mut self.row_curr);
+        core::mem::swap(&mut self.row_prev_prev, &mut self.row_prev);
+        core::mem::swap(&mut self.row_prev, &mut self.row_curr);
         self.row_curr.copy_from_slice(row);
 
         // Initialize for first rows (boundary clamping)

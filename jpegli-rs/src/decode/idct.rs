@@ -38,11 +38,11 @@ fn transpose_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 // SIMD-optimized implementations (always available via `wide` crate)
 mod simd {
     use super::*;
-    use multiversion::multiversion;
+    use multiversed::multiversed;
 
     /// SIMD-optimized 8x8 transpose using wide's built-in transpose.
     /// Accelerated on AVX.
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+    #[multiversed]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load all 8 rows
         let rows = [
@@ -248,7 +248,7 @@ mod simd {
     /// Full SIMD-optimized 2D IDCT with f32x8 chaining.
     /// Keeps data in SIMD registers throughout the pipeline to avoid gather/scatter overhead.
     /// Uses only 2 transposes instead of the previous 4 gather/scatter cycles.
-    #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+    #[multiversed]
     pub fn inverse_dct_8x8_simd(input: &[f32; 64]) -> [f32; 64] {
         // Load input as rows (each f32x8 is one row of the 8x8 block)
         let rows = [

@@ -314,7 +314,10 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 // AVX2 SIMD Implementation
 // =============================================================================
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 mod avx2 {
     use super::*;
 
@@ -568,7 +571,7 @@ mod avx2 {
 /// - aarch64 NEON: 1.11x faster (583.9 ns vs 646.9 ns per block via qemu)
 mod wide_simd {
     use super::SCALE_BITS;
-    use multiversion::multiversion;
+    use multiversed::multiversed;
     use wide::i32x8;
 
     /// IDCT constants (fixed-point, 12-bit precision)
@@ -595,15 +598,7 @@ mod wide_simd {
     /// - x86_64+sse4.1: Uses SSE4.1 (i32x8 = 2x __m128i)
     /// - aarch64+neon: Uses NEON for i32x8 ops
     /// - default: Scalar fallback
-    #[multiversion(targets(
-        "x86_64+avx2",
-        "x86_64+sse4.1",
-        "x86+avx2",
-        "x86+sse4.1",
-        "aarch64+neon",
-        "arm+neon",
-        "wasm32+simd128",
-    ))]
+    #[multiversed]
     pub fn idct_int_wide(in_vector: &[i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load 8 rows as i32x8 vectors
         let mut rows: [i32x8; 8] = [
@@ -845,7 +840,10 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(all(
+        feature = "unsafe_simd",
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
     #[test]
     fn test_avx2_matches_scalar() {
         if !is_x86_feature_detected!("avx2") {

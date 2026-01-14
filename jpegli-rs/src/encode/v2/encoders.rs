@@ -3,8 +3,10 @@
 // Allow use of deprecated StreamingEncoder internally - v2 API wraps it
 #![allow(deprecated)]
 
+use core::marker::PhantomData;
+
+#[cfg(feature = "std")]
 use std::io::Write;
-use std::marker::PhantomData;
 
 use enough::Stop;
 
@@ -264,6 +266,7 @@ impl BytesEncoder {
     }
 
     /// Finish encoding to Write destination.
+    #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
         let jpeg = self.finish()?;
         output.write_all(&jpeg)?;
@@ -429,7 +432,7 @@ impl<P: Pixel> RgbEncoder<P> {
     /// - `stride`: Pixels per row in buffer (>= width)
     /// - `stop`: Cancellation token
     pub fn push(&mut self, data: &[P], rows: usize, stride: usize, stop: impl Stop) -> Result<()> {
-        let stride_bytes = stride * std::mem::size_of::<P>();
+        let stride_bytes = stride * core::mem::size_of::<P>();
         let bytes = bytemuck::cast_slice(data);
         self.inner.push(bytes, rows, stride_bytes, stop)
     }
@@ -476,6 +479,7 @@ impl<P: Pixel> RgbEncoder<P> {
     }
 
     /// Finish encoding to Write destination.
+    #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, output: W) -> Result<W> {
         self.inner.finish_to(output)
     }
@@ -648,6 +652,7 @@ impl YCbCrPlanarEncoder {
     }
 
     /// Finish encoding to Write destination.
+    #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
         let jpeg = self.finish()?;
         output.write_all(&jpeg)?;

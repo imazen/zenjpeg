@@ -19,7 +19,7 @@
 #![allow(dead_code)]
 
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};
-use multiversion::multiversion;
+use multiversed::multiversed;
 use wide::f32x8;
 
 // ============================================================================
@@ -181,7 +181,7 @@ pub fn pre_erosion_pixel_x8(
 /// * `row_above` - Row above (or same row if y=0)
 /// * `row_below` - Row below (or same row if y=height-1)
 /// * `output` - Output buffer to accumulate into (must be same length as row)
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+#[multiversed]
 pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output: &mut [f32]) {
     let width = row.len();
     assert_eq!(row_above.len(), width);
@@ -336,7 +336,7 @@ pub fn compute_pre_erosion_simd(
 }
 
 /// Downsample by 4x with sum and scale by 0.25.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+#[multiversed]
 fn downsample_4x_sum(input: &[f32], output: &mut [f32]) {
     let width = input.len();
     let out_w = output.len();
@@ -629,7 +629,7 @@ pub fn per_block_modulations_simd(
 /// Process per_block_modulations for a row of blocks.
 ///
 /// Combines ComputeMask, HfModulation, GammaModulation, and final transform.
-#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse2", "aarch64+neon", "wasm32+simd128"))]
+#[multiversed]
 pub fn per_block_modulations_row(
     input: &[f32],
     width: usize,

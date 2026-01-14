@@ -1,9 +1,10 @@
 //! Encoder error types.
 
-use std::fmt;
+use alloc::string::String;
+use core::fmt;
 
 /// Result type for encoder operations.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Errors that can occur during JPEG encoding.
 #[derive(Debug, Clone, PartialEq)]
@@ -137,8 +138,10 @@ impl fmt::Display for Error {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Self::IoError {
