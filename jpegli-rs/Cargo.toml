@@ -32,6 +32,8 @@ zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
 # Hybrid trellis quantization from mozjpeg
 mozjpeg-rs = { workspace = true, optional = true }
+# Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
+yuv = { workspace = true, optional = true }
 
 [dev-dependencies]
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
@@ -63,7 +65,7 @@ yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy tes
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["std"]
+default = ["std", "fast-yuv"]
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
@@ -96,6 +98,9 @@ wasm-simd = []
 sharp-yuv = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
 experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
+# Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
+# Uses integer fixed-point with 13-bit precision (max error: 1.2 levels, invisible after JPEG quantization)
+fast-yuv = ["dep:yuv"]
 
 [[bench]]
 name = "encode"
