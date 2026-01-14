@@ -1,6 +1,6 @@
 //! Core types for jpegli.
 
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 
 /// Color space representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -477,7 +477,7 @@ impl QuantTable {
     pub fn from_natural_order(values: &[u16; DCT_BLOCK_SIZE]) -> Self {
         let mut zigzag = [0u16; DCT_BLOCK_SIZE];
         for (i, &v) in values.iter().enumerate() {
-            let zi = crate::consts::JPEG_ZIGZAG_ORDER[i] as usize;
+            let zi = crate::foundation::consts::JPEG_ZIGZAG_ORDER[i] as usize;
             zigzag[zi] = v;
         }
         Self {
@@ -494,7 +494,7 @@ impl QuantTable {
     #[must_use]
     pub fn to_natural_order(&self) -> [u16; DCT_BLOCK_SIZE] {
         let mut natural = [0u16; DCT_BLOCK_SIZE];
-        for (i, &zi) in crate::consts::JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE]
+        for (i, &zi) in crate::foundation::consts::JPEG_NATURAL_ORDER[..DCT_BLOCK_SIZE]
             .iter()
             .enumerate()
         {

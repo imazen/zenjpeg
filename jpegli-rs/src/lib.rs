@@ -55,89 +55,29 @@ pub mod decoder;
 // ============================================================================
 
 // Internal encoder implementation
-#[doc(hidden)]
-pub mod encode;
+pub(crate) mod encode;
 
 // Internal decoder implementation
-#[doc(hidden)]
-pub mod decode;
+pub(crate) mod decode;
 
 // Internal shared error type (encoder/decoder have their own public errors)
-#[doc(hidden)]
-pub mod error;
+pub(crate) mod error;
 
-// Internal modules - hidden but accessible for tests/examples
-#[doc(hidden)]
-pub mod color;
-#[doc(hidden)]
-pub mod foundation;
-#[doc(hidden)]
-pub mod quant;
-#[doc(hidden)]
-pub mod types;
-#[doc(hidden)]
-pub mod encode_simd;
-#[doc(hidden)]
-pub mod entropy;
-#[doc(hidden)]
-pub mod huffman;
-#[doc(hidden)]
+// Internal modules
+pub(crate) mod color;
+pub(crate) mod foundation;
+pub(crate) mod quant;
+pub(crate) mod types;
+pub(crate) mod encode_simd;
+pub(crate) mod entropy;
+pub(crate) mod huffman;
+
+// Test utilities - public when feature enabled for external test crates
+#[cfg(feature = "test-utils")]
 pub mod test_utils;
+#[cfg(not(feature = "test-utils"))]
+pub(crate) mod test_utils;
 
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
 #[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid;
-
-// ============================================================================
-// Internal re-exports for backward compatibility
-// ============================================================================
-
-#[doc(hidden)]
-pub use encode::chroma;
-#[doc(hidden)]
-pub use encode::dct;
-#[doc(hidden)]
-pub use encode::scan_script;
-
-// ============================================================================
-// Legacy/Internal Types (hidden from docs)
-// ============================================================================
-
-#[doc(hidden)]
-pub use types::{
-    ChromaDownsampling as LegacyChromaDownsampling, ColorSpace, HuffmanMethod, JpegMode,
-    PixelFormat, Subsampling,
-};
-#[doc(hidden)]
-#[deprecated(since = "0.5.0", note = "Use DownsamplingMethod instead")]
-pub use types::ChromaDownsampling;
-
-#[doc(hidden)]
-pub use quant::Quality as LegacyQuality;
-#[doc(hidden)]
-pub use quant::quality_conversion::{QualityComparisonMetric, QualityConversion};
-#[doc(hidden)]
-pub use quant::{CustomQuantMatrices, QuantTable};
-
-#[doc(hidden)]
-pub use foundation::AllocationStats;
-#[doc(hidden)]
-pub use foundation::{aligned_alloc, alloc, bitstream, consts, simd_types};
-
-#[doc(hidden)]
-pub use huffman::classic as huffman_classic;
-#[doc(hidden)]
-pub use huffman::types as huffman_types;
-
-#[doc(hidden)]
-pub use decode::idct;
-#[doc(hidden)]
-pub use decode::idct_int;
-
-#[doc(hidden)]
-pub use color::icc;
-#[doc(hidden)]
-pub use color::xyb;
-
-#[doc(hidden)]
-pub use imgref::{Img, ImgRef, ImgRefMut, ImgVec};

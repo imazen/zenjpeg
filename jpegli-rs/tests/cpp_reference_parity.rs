@@ -8,7 +8,7 @@
 
 use enough::Unstoppable;
 use jpegli::decoder::Decoder;
-use jpegli::types::PixelFormat;
+use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use serde::{Deserialize, Serialize};
 use std::fs;

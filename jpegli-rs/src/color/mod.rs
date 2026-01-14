@@ -10,6 +10,9 @@ pub mod icc;
 pub mod xyb;
 pub mod ycbcr;
 
+#[cfg(test)]
+mod xyb_tests;
+
 // Re-export commonly used items from ycbcr
 pub use ycbcr::{
     bgr_to_rgb, bgra_to_rgba, cmyk_to_rgb, convert_rgb_to_ycbcr_buffer,

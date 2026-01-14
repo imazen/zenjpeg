@@ -10,8 +10,6 @@ use enough::Unstoppable;
 use jpegli::{
     decoder::{ColorSpace, Decoder, DecoderConfig, Dimensions},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
-    types::{Component, HuffmanTable},
-    quant::QuantTable,
 };
 use test_utils::{generate_gradient_d, generate_noise};
 
@@ -83,49 +81,7 @@ mod types_coverage {
         let _half_v = ChromaSubsampling::HalfVertical;
     }
 
-    #[test]
-    fn component_coverage() {
-        let comp = Component::default();
-        assert_eq!(comp.id, 0);
-        assert_eq!(comp.h_samp_factor, 1);
-        assert_eq!(comp.v_samp_factor, 1);
-        assert_eq!(comp.quant_table_idx, 0);
-        assert_eq!(comp.dc_huffman_idx, 0);
-        assert_eq!(comp.ac_huffman_idx, 0);
-
-        // Test clone and debug
-        let comp2 = comp.clone();
-        assert_eq!(format!("{:?}", comp), format!("{:?}", comp2));
-    }
-
-    #[test]
-    fn quant_table_coverage() {
-        let table = QuantTable::default();
-        assert_eq!(table.precision, 0);
-        assert_eq!(table.values[0], 16);
-
-        // Test with 16-bit values
-        let mut values = [256u16; 64];
-        values[0] = 1;
-        let table = QuantTable::from_natural_order(&values);
-        assert_eq!(table.precision, 1); // 16-bit precision
-
-        // Test to_natural_order
-        let recovered = table.to_natural_order();
-        assert_eq!(recovered[0], 1);
-    }
-
-    #[test]
-    fn huffman_table_coverage() {
-        let table = HuffmanTable::default();
-        assert!(table.is_dc);
-        assert!(table.values.is_empty());
-        assert_eq!(table.bits, [0; 16]);
-
-        // Test clone and debug
-        let table2 = table.clone();
-        assert_eq!(format!("{:?}", table), format!("{:?}", table2));
-    }
+    // Note: Component, QuantTable, HuffmanTable tests moved to internal src/_tests.rs
 
     #[test]
     fn dimensions_coverage() {

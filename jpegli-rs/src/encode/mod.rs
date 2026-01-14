@@ -74,11 +74,11 @@ use crate::error::{Error, Result};
 pub(crate) use config::ProgressiveScan;
 use config::EncoderConfig as LegacyEncoderConfig;
 
-use crate::alloc::{
+use crate::foundation::alloc::{
     checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, validate_dimensions, DEFAULT_MAX_PIXELS,
 };
 #[cfg(feature = "experimental-hybrid-trellis")]
-use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
+use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
 use crate::quant::{self, Quality as LegacyQuality, QuantTable};
 use crate::types::{
     ChromaDownsampling as LegacyChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig,

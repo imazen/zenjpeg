@@ -6,7 +6,7 @@ use super::idct::inverse_dct_8x8;
 use super::idct_int::{idct_int_auto, idct_int_tiered};
 use super::upsample::upsample_fancy;
 use super::{JpegInfo, ScanInfo};
-use crate::alloc::{
+use crate::foundation::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_uninitialized, validate_dimensions,
 };
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
@@ -14,7 +14,7 @@ use crate::color::{
     gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
     ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
 };
-use crate::consts::{
+use crate::foundation::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
     MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI, MARKER_SOS,
     MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,

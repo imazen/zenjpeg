@@ -304,45 +304,6 @@ fn test_rust_produces_16bit_tables_when_needed() {
     );
 }
 
-/// Test comparing computed quant values (unclamped) against what we actually write.
-#[test]
-fn test_quant_value_clamping_detection() {
-    use jpegli::quant::{generate_standard_jpeg_table, STD_LUMINANCE_QUANT};
-
-    // Calculate what the UNCLAMPED values would be at quality 5
-    let quality = 5.0_f32;
-    let scale = 5000.0 / quality; // = 1000%
-
-    let mut expected_unclamped = [0u16; 64];
-    for (i, &base) in STD_LUMINANCE_QUANT.iter().enumerate() {
-        let q = ((base as f32 * scale + 50.0) / 100.0).round();
-        expected_unclamped[i] = q as u16;
-    }
-
-    let max_unclamped = *expected_unclamped.iter().max().unwrap();
-    println!(
-        "Quality 5 unclamped max value: {} (needs 16-bit: {})",
-        max_unclamped,
-        max_unclamped > 255
-    );
-
-    // Now generate the actual table (which clamps)
-    let actual_table = generate_standard_jpeg_table(quality, false);
-    let max_actual = *actual_table.values.iter().max().unwrap();
-    println!("Quality 5 actual max value: {} (clamped)", max_actual);
-
-    // Document the bug: we're clamping values that should use 16-bit precision
-    if max_unclamped > 255 {
-        assert!(
-            max_actual > 255 || actual_table.precision == 1,
-            "Quality 5 needs 16-bit tables (unclamped max={}), but we clamped to {} with precision={}",
-            max_unclamped,
-            max_actual,
-            actual_table.precision
-        );
-    }
-}
-
 // ============================================================================
 // C++ Comparison Tests (require cjpegli binary)
 // ============================================================================

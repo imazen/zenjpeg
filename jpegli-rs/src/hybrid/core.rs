@@ -31,7 +31,7 @@ use mozjpeg_rs::{
     TrellisConfig,
 };
 
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 
 /// Standard AC Huffman tables for trellis rate estimation.
 ///

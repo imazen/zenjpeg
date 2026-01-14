@@ -5,7 +5,7 @@
 //!
 //! SIMD optimization via the `wide` crate is always enabled.
 
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 
 use wide::f32x8;
 
@@ -518,7 +518,7 @@ pub fn inverse_dct_blocks(blocks: &[[f32; DCT_BLOCK_SIZE]]) -> Vec<[f32; DCT_BLO
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dct::forward_dct_8x8;
+    use crate::encode::dct::forward_dct_8x8;
 
     #[test]
     fn test_dct_idct_roundtrip() {

@@ -233,7 +233,7 @@ impl StripProcessor {
             }
             PixelFormat::Cmyk => {
                 // CMYK: scalar conversion with strided Y output
-                use crate::consts::{
+                use crate::foundation::consts::{
                     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR,
                     YCBCR_G_TO_Y, YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
                 };
@@ -626,7 +626,7 @@ impl StripProcessor {
 
         match self.subsampling {
             Subsampling::S420 => {
-                crate::chroma::gamma_aware_strip_420(
+                crate::encode::chroma::gamma_aware_strip_420(
                     rgb_strip,
                     &mut self.y_strip[..num_pixels],
                     &mut self.cb_down[..c_size],
@@ -640,7 +640,7 @@ impl StripProcessor {
                 );
             }
             Subsampling::S422 => {
-                crate::chroma::gamma_aware_strip_422(
+                crate::encode::chroma::gamma_aware_strip_422(
                     rgb_strip,
                     &mut self.y_strip[..num_pixels],
                     &mut self.cb_down[..c_size],
@@ -652,7 +652,7 @@ impl StripProcessor {
                 );
             }
             Subsampling::S440 => {
-                crate::chroma::gamma_aware_strip_440(
+                crate::encode::chroma::gamma_aware_strip_440(
                     rgb_strip,
                     &mut self.y_strip[..num_pixels],
                     &mut self.cb_down[..c_size],
@@ -705,7 +705,7 @@ impl StripProcessor {
 
         match self.subsampling {
             Subsampling::S420 => {
-                crate::chroma::box_fused_strip_420(
+                crate::encode::chroma::box_fused_strip_420(
                     rgb_strip,
                     &mut self.y_strip[..num_pixels],
                     &mut self.cb_down[..c_size],
@@ -716,7 +716,7 @@ impl StripProcessor {
                 );
             }
             Subsampling::S422 => {
-                crate::chroma::box_fused_strip_422(
+                crate::encode::chroma::box_fused_strip_422(
                     rgb_strip,
                     &mut self.y_strip[..num_pixels],
                     &mut self.cb_down[..c_size],
@@ -727,7 +727,7 @@ impl StripProcessor {
                 );
             }
             Subsampling::S440 => {
-                crate::chroma::box_fused_strip_440(
+                crate::encode::chroma::box_fused_strip_440(
                     rgb_strip,
                     &mut self.y_strip[..num_pixels],
                     &mut self.cb_down[..c_size],

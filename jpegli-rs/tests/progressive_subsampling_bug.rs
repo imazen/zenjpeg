@@ -10,7 +10,7 @@
 
 use enough::Unstoppable;
 use jpegli::decoder::Decoder;
-use jpegli::types::PixelFormat;
+use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Test that progressive + subsampling produces files that can be decoded

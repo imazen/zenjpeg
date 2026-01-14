@@ -9,8 +9,8 @@
 //!
 //! Note: This module is gated by `experimental-hybrid-trellis` feature in mod.rs.
 
-use crate::consts::DCT_BLOCK_SIZE;
-use crate::dct::forward_dct_8x8;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
+use crate::encode::dct::forward_dct_8x8;
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
 use crate::quant::aq::AQStrengthMap;
@@ -166,9 +166,9 @@ pub(crate) fn quantize_all_blocks_xyb_with_aq(
     let num_b_blocks = mcu_cols * mcu_rows; // 1 block per MCU for B
 
     // Pre-allocate block arrays to avoid push() overhead
-    let mut x_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "x_blocks")?;
-    let mut y_blocks = crate::alloc::try_alloc_dct_blocks(num_xy_blocks, "y_blocks")?;
-    let mut b_blocks = crate::alloc::try_alloc_dct_blocks(num_b_blocks, "b_blocks")?;
+    let mut x_blocks = crate::foundation::alloc::try_alloc_dct_blocks(num_xy_blocks, "x_blocks")?;
+    let mut y_blocks = crate::foundation::alloc::try_alloc_dct_blocks(num_xy_blocks, "y_blocks")?;
+    let mut b_blocks = crate::foundation::alloc::try_alloc_dct_blocks(num_b_blocks, "b_blocks")?;
 
     for mcu_y in 0..mcu_rows {
         for mcu_x in 0..mcu_cols {

@@ -20,7 +20,7 @@ use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 
 // Re-use old types for FFI compatibility
-use jpegli::types::{JpegMode, Subsampling};
+use jpegli::decoder::{JpegMode, Subsampling};
 
 // ============================================================================
 // TEST CONFIGURATION

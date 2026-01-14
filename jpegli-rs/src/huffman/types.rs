@@ -267,7 +267,7 @@ impl HuffmanAlgorithm {
 
 /// mozjpeg/libjpeg algorithm implementation.
 fn generate_lengths_mozjpeg(frequencies: &SymbolFrequencies) -> Result<CodeLengths> {
-    use crate::huffman_classic::generate_code_lengths;
+    use crate::huffman::classic::generate_code_lengths;
 
     // Convert to the format mozjpeg expects: [i64; 257] with pseudo-symbol
     let mut freq = [0i64; 257];

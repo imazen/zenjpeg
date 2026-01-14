@@ -562,7 +562,7 @@ fn test_fuzz_corpus_vs_reference() {
 // ============================================================================
 
 /// Checks if an error is for an unsupported feature (not a bug).
-fn is_unsupported_feature(err: &jpegli::error::Error) -> bool {
+fn is_unsupported_feature(err: &jpegli::decoder::Error) -> bool {
     let err_str = format!("{:?}", err);
     // Arithmetic coding
     err_str.contains("Arithmetic")

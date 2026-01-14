@@ -6,7 +6,7 @@
 
 use enough::Unstoppable;
 use jpegli::decoder::Decoder;
-use jpegli::types::PixelFormat;
+use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashSet;
 
