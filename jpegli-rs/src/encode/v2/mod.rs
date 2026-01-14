@@ -47,15 +47,20 @@
 //! enc.push(&data, rows, stride, &cancel)?;
 //! ```
 
-// Re-export from new locations at encode:: level
+// Re-export from new locations at encode:: level (backwards compatibility)
+#[allow(unused_imports)] // Public API re-exports for backwards compatibility
 pub use super::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
+#[allow(unused_imports)] // Public API re-export
 pub use super::encoder_config::EncoderConfig;
 #[cfg(feature = "parallel")]
+#[allow(unused_imports)] // Public API re-export
 pub use super::encoder_types::ParallelEncoding;
+#[allow(unused_imports)] // Public API re-exports
 pub use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, YCbCrPlanes,
 };
 
 // Re-export Stop trait for convenience
+#[allow(unused_imports)] // Public API re-export
 pub use enough::Stop;
