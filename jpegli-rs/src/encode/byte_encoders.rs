@@ -99,7 +99,10 @@ impl BytesEncoder {
             builder = builder.progressive(true);
         }
 
-        if matches!(config.color_mode, super::encoder_types::ColorMode::Xyb { .. }) {
+        if matches!(
+            config.color_mode,
+            super::encoder_types::ColorMode::Xyb { .. }
+        ) {
             builder = builder.use_xyb(true);
         }
 
