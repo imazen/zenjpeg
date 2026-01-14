@@ -357,6 +357,25 @@ jpegli-rs = { version = "0.5", features = ["unsafe_simd"] }
 | XYB decoding | Working (with CMS) |
 | f32 output | Working |
 
+## Future Optimization Opportunities
+
+Profiling against C++ jpegli reveals these bottlenecks (2K image, progressive 4:2:0):
+
+| Area | Rust | C++ | Gap | Notes |
+|------|------|-----|-----|-------|
+| **RGB→YCbCr** | 11.7% | 1.7% | **6.9x** | Biggest opportunity |
+| **Adaptive quantization** | 28.6% | 12.1% | **2.4x** | Algorithm efficiency |
+| **Huffman freq counting** | 5.7% | 0.5% | **11x** | Already SIMD, still slow |
+| DCT | 7.3% | 5.5% | 1.3x | Reasonable |
+| Entropy encoding | 10.9% | 35.9% | — | C++ slower here |
+
+**Crates to investigate for RGB→YCbCr:**
+- [`yuv`](https://lib.rs/crates/yuv) (0.8.9) - Faster than libyuv, AVX-512/AVX2/SSE/NEON
+- [`yuvutils-rs`](https://lib.rs/crates/yuvutils-rs) - AVX2/SSE/NEON, optional AVX-512
+- [`dcv-color-primitives`](https://lib.rs/crates/dcv-color-primitives) - AWS, AVX2/NEON
+
+Current gap: Rust is **~1.6-1.9x slower** than C++ jpegli (fair FFI comparison).
+
 ## Development
 
 ### Verify C++ Parity
