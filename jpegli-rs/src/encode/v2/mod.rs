@@ -61,7 +61,6 @@ pub use types::{
 };
 
 // Re-export edge padding types from crate::types
-pub use crate::types::{EdgePadding, EdgePaddingConfig};
 
 // Re-export Stop trait for convenience
 pub use enough::Stop;

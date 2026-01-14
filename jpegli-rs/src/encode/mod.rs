@@ -63,10 +63,7 @@ pub mod v2;
 // Re-export v2 types at encode:: level for cleaner imports
 #[cfg(feature = "parallel")]
 pub use v2::ParallelEncoding;
-pub use v2::{
-    BytesEncoder, ChromaSubsampling, ColorMode, DownsamplingMethod, EncoderConfig, PixelLayout,
-    Quality, QuantTableConfig, RgbEncoder, Stop, XybSubsampling, YCbCrPlanarEncoder, YCbCrPlanes,
-};
+pub use v2::Stop;
 
 use crate::error::{Error, Result};
 
@@ -554,8 +551,7 @@ impl Encoder {
             builder = builder.custom_quant_matrices(custom.clone());
         }
 
-        builder.encode_with_stop(data, stop).map_err(Into::into)
-    }
+        builder.encode_with_stop(data, stop)}
 
     /// Generate a quantization table, using custom matrices if configured.
     ///

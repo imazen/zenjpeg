@@ -122,9 +122,6 @@ macro_rules! simd_multiversion_full {
 }
 
 // Re-export for convenience
-pub use simd_multiversion;
-pub use simd_multiversion_extended;
-pub use simd_multiversion_full;
 
 #[cfg(test)]
 mod tests {
