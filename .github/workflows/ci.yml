@@ -48,20 +48,14 @@ jobs:
             runner: ubuntu-latest
           - os: macos
             arch: x64
-            runner: macos-13  # Intel Mac
+            runner: macos-15-intel  # Intel Mac
           - os: windows
             arch: x64
             runner: windows-latest
-          # ARM targets
-          - os: ubuntu
-            arch: arm64
-            runner: ubuntu-24.04-arm
+          # ARM targets (requires public repo for GitHub-hosted runners)
           - os: macos
             arch: arm64
             runner: macos-latest  # Apple Silicon
-          - os: windows
-            arch: arm64
-            runner: windows-11-arm
     steps:
       - uses: actions/checkout@v6
         with:
@@ -86,21 +80,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test no default features
         run: cargo test -p jpegli-rs --no-default-features
-      - name: Test simd only
-        run: cargo test -p jpegli-rs --no-default-features --features simd
+      - name: Test std only
+        run: cargo test -p jpegli-rs --no-default-features --features std
       - name: Test cms-lcms2
-        run: cargo test -p jpegli-rs --no-default-features --features simd,cms-lcms2
+        run: cargo test -p jpegli-rs --no-default-features --features std,cms-lcms2
       - name: Test cms-moxcms
-        run: cargo test -p jpegli-rs --no-default-features --features simd,cms-moxcms
+        run: cargo test -p jpegli-rs --no-default-features --features std,cms-moxcms
 
   msrv:
-    name: MSRV (1.70)
+    name: MSRV (1.92)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.70
+      - uses: dtolnay/rust-toolchain@1.92
       - uses: Swatinem/rust-cache@v2
       - name: Check MSRV
         run: cargo check -p jpegli-rs --all-features
