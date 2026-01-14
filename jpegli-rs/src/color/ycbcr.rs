@@ -870,7 +870,7 @@ const YUV_ROUND: i32 = 8192; // 0.5 << 14 for rounding
 /// Fast integer YCbCr to RGB conversion for 16 pixels.
 ///
 /// This is the core conversion function for the fast decode path.
-/// Takes i16 inputs (IDCT output with level shift already applied, range [0,255])
+/// Takes i16 inputs (IDCT output with level shift already applied, range 0-255)
 /// and writes interleaved RGB u8 output.
 ///
 /// The conversion uses 14-bit fixed-point arithmetic for speed.

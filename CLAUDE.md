@@ -163,23 +163,6 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
    - Affects images where `width % 8 != 0`
    - See `CODE.md` for full analysis
 
-4. **FFI benchmark symbol conflict (UNFIXED)** - mozjpeg and jpegli both provide libjpeg-62 API
-   When both mozjpeg and jpegli-internals-sys are linked, the linker picks mozjpeg's symbols.
-   This means "cjpegli FFI" benchmarks actually call mozjpeg with trellis quantization!
-
-   **Verification:**
-   ```bash
-   objdump -t target/release/examples/perf_ffi_compare | grep quantize_trellis
-   # If this shows a match, you're calling mozjpeg, not jpegli!
-   ```
-
-   **Workaround:** Use CLI-based comparison with actual cjpegli binary (but adds I/O overhead).
-
-   **Proper fix needed:** Either:
-   - Build jpegli with symbol prefixing (e.g., `jpegli_` prefix)
-   - Use separate binary without mozjpeg in dep tree
-   - Link jpegli with +whole-archive before mozjpeg
-
 ## Planned Features / TODO
 
 ### Resource Estimation API (docs/API_DESIGN.md)

@@ -264,7 +264,7 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<([u8; 16], Vec<u8
 ///
 /// The depths array contains the bit length for each symbol 0-255.
 /// Returns (bits, values) where:
-/// - bits[i] = number of codes with length i+1 (1-16 bits)
+/// - bits\[i\] = number of codes with length i+1 (1-16 bits)
 /// - values = symbols sorted by code length, then by symbol value
 ///
 /// This function is used when converting from jpegli-style depths to DHT format.

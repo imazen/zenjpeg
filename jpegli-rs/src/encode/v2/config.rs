@@ -404,7 +404,7 @@ impl EncoderConfig {
 
     /// Returns an absolute ceiling on memory usage.
     ///
-    /// Unlike [`estimate_memory`], this returns a **guaranteed upper bound**
+    /// Unlike `estimate_memory`, this returns a **guaranteed upper bound**
     /// that actual peak memory will never exceed. Use this for resource reservation
     /// when you need certainty rather than a close estimate.
     ///

@@ -173,9 +173,9 @@ pub struct QuantTableSimd {
 #[derive(Clone, Debug)]
 #[repr(C, align(32))]
 pub struct ZeroBiasSimd {
-    /// offset[k] for each coefficient (8 rows of f32x8)
+    /// offset\[k\] for each coefficient (8 rows of f32x8)
     pub offset_rows: [f32x8; 8],
-    /// mul[k] for each coefficient (8 rows of f32x8)
+    /// mul\[k\] for each coefficient (8 rows of f32x8)
     pub mul_rows: [f32x8; 8],
 }
 

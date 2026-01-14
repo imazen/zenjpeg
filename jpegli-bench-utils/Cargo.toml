@@ -41,9 +41,7 @@ libc = { workspace = true, optional = true }
 [features]
 default = []
 experimental-hybrid-trellis = ["jpegli-rs/experimental-hybrid-trellis"]
-# Enable C++ jpegli encoding via libjpeg-compatible FFI
-# NOTE: Requires building jpegli with libjpeg_wrapper.cc (not built by default)
-# The wrapper provides jpeg_* symbols that map to jpegli_* functions.
+# Enable C++ jpegli encoding via FFI (uses jpegli_* symbols directly)
 cjpegli-ffi = ["dep:jpegli-internals-sys", "dep:libc"]
 
 [lints]

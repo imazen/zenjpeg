@@ -15,13 +15,13 @@
 //!
 //! # Entry Points
 //!
-//! [`EncoderConfig`] provides three encoder creation methods:
+//! `EncoderConfig` provides three encoder creation methods:
 //!
 //! | Method | Input Type | Use Case |
 //! |--------|------------|----------|
-//! | [`encode_from_bytes()`](EncoderConfig::encode_from_bytes) | `&[u8]` | Raw byte buffers |
-//! | [`encode_from_rgb()`](EncoderConfig::encode_from_rgb) | `rgb` crate types | Type-safe pixels |
-//! | [`encode_from_ycbcr_planar()`](EncoderConfig::encode_from_ycbcr_planar) | [`YCbCrPlanes`] | Video pipelines |
+//! | `encode_from_bytes()` | `&[u8]` | Raw byte buffers |
+//! | `encode_from_rgb()` | `rgb` crate types | Type-safe pixels |
+//! | `encode_from_ycbcr_planar()` | `YCbCrPlanes` | Video pipelines |
 //!
 //! # Configuration
 //!
@@ -55,7 +55,7 @@
 //!
 //! # Pixel Layouts
 //!
-//! [`PixelLayout`] describes the format of raw byte input:
+//! `PixelLayout` describes the format of raw byte input:
 //!
 //! | Layout | Bytes/px | Description |
 //! |--------|----------|-------------|
