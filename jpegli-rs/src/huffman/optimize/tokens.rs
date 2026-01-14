@@ -4,6 +4,7 @@
 //! during a first pass, then replaying them with optimized Huffman tables.
 
 #![allow(dead_code)]
+#![allow(clippy::wrong_self_convention)]
 
 use super::frequency::FrequencyCounter;
 use crate::error::Result;
