@@ -1,21 +1,19 @@
-//! Comprehensive timing benchmark: Rust jpegli-rs vs C++ cjpegli
+//! File size and quality parity comparison: Rust jpegli-rs vs C++ cjpegli
 //!
-//! Tests multiple image sizes (512, 2K, 4K) with timing, file size, and SSIMULACRA2.
+//! Compares output file sizes and SSIMULACRA2 quality scores.
+//! Does NOT compare timing (unfair: subprocess vs library call).
 //!
 //! # Usage
 //!
 //! ```bash
 //! # Run with default settings (512, 2K, 4K synthetic images)
-//! cargo run --release --example cpp_timing_matrix
+//! cargo run --release --example cpp_parity_matrix
 //!
-//! # Run with a specific image (tests that image at its native size)
-//! cargo run --release --example cpp_timing_matrix -- path/to/image.png
+//! # Run with a specific image
+//! cargo run --release --example cpp_parity_matrix -- path/to/image.png
 //!
-//! # Run with iterations for more stable timing
-//! cargo run --release --example cpp_timing_matrix -- --iterations 5
-//!
-//! # Save results to CSV for tracking over time
-//! cargo run --release --example cpp_timing_matrix -- --csv results.csv
+//! # Save results to CSV
+//! cargo run --release --example cpp_parity_matrix -- --csv results.csv
 //! ```
 
 use enough::Unstoppable;
@@ -27,7 +25,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::time::Instant;
 
 const SYNTHETIC_SIZES: &[(u32, u32, &str)] =
     &[(512, 512, "512"), (2048, 2048, "2K"), (4096, 4096, "4K")];
@@ -175,39 +172,22 @@ impl Config {
             self.chroma.name(),
         )
     }
-
-    fn is_valid(&self) -> bool {
-        // Progressive + Fixed huffman is not a common/supported combination
-        // XYB mode always uses 444 subsampling
-        if self.color == ColorMode::Xyb && self.chroma == ChromaSampling::S420 {
-            return false;
-        }
-        true
-    }
 }
 
 // ============================================================================
-// Benchmark Results
+// Parity Results
 // ============================================================================
 
 #[derive(Debug, Clone)]
-struct TimingResult {
-    rust_time_ms: f64,
-    cpp_time_ms: f64,
+struct ParityResult {
     rust_size: usize,
     cpp_size: usize,
-    // Quality metrics (vs original)
     rust_ssim2: f64,
     cpp_ssim2: f64,
-    // Parity metrics (Rust vs C++)
     max_pixel_diff: u8,
 }
 
-impl TimingResult {
-    fn speedup(&self) -> f64 {
-        self.cpp_time_ms / self.rust_time_ms
-    }
-
+impl ParityResult {
     fn size_diff_pct(&self) -> f64 {
         (self.rust_size as f64 - self.cpp_size as f64) / self.cpp_size as f64 * 100.0
     }
@@ -318,7 +298,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, config: &Config
 }
 
 fn encode_cpp(cjpegli: &Path, input_path: &Path, quality: u8, config: &Config) -> Option<Vec<u8>> {
-    let output_path = format!("/tmp/cpp_timing_{}.jpg", config.name());
+    let output_path = format!("/tmp/cpp_parity_{}.jpg", config.name());
 
     let mut args: Vec<String> = vec![
         input_path.to_str().unwrap().to_string(),
@@ -327,7 +307,6 @@ fn encode_cpp(cjpegli: &Path, input_path: &Path, quality: u8, config: &Config) -
         quality.to_string(),
     ];
 
-    // Add mode-specific arguments
     for arg in config.scan.cpp_args() {
         args.push(arg.to_string());
     }
@@ -357,7 +336,7 @@ fn encode_cpp(cjpegli: &Path, input_path: &Path, quality: u8, config: &Config) -
     Some(data)
 }
 
-fn benchmark_config(
+fn compare_config(
     rgb: &[u8],
     width: u32,
     height: u32,
@@ -365,50 +344,18 @@ fn benchmark_config(
     config: &Config,
     cjpegli: &Path,
     ppm_path: &Path,
-    iterations: usize,
-) -> Option<TimingResult> {
-    // Warmup
-    let _ = encode_rust(rgb, width, height, quality, config);
-    let _ = encode_cpp(cjpegli, ppm_path, quality, config)?;
+) -> Option<ParityResult> {
+    let rust_jpeg = encode_rust(rgb, width, height, quality, config);
+    let cpp_jpeg = encode_cpp(cjpegli, ppm_path, quality, config)?;
 
-    // Benchmark Rust - take minimum time (least noise)
-    let mut rust_min_ms = f64::MAX;
-    let mut rust_jpeg = Vec::new();
-    for _ in 0..iterations {
-        let start = Instant::now();
-        rust_jpeg = encode_rust(rgb, width, height, quality, config);
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        if elapsed < rust_min_ms {
-            rust_min_ms = elapsed;
-        }
-    }
-
-    // Benchmark C++ - take minimum time
-    let mut cpp_min_ms = f64::MAX;
-    let mut cpp_jpeg = Vec::new();
-    for _ in 0..iterations {
-        let start = Instant::now();
-        cpp_jpeg = encode_cpp(cjpegli, ppm_path, quality, config)?;
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        if elapsed < cpp_min_ms {
-            cpp_min_ms = elapsed;
-        }
-    }
-
-    // Decode and compute quality metrics
     let rust_decoded = decode_jpeg(&rust_jpeg, config.color);
     let cpp_decoded = decode_jpeg(&cpp_jpeg, config.color);
 
-    // SSIM2 vs original
     let rust_ssim2 = compute_ssim2(rgb, &rust_decoded, width as usize, height as usize);
     let cpp_ssim2 = compute_ssim2(rgb, &cpp_decoded, width as usize, height as usize);
-
-    // Parity check: Rust vs C++
     let max_pixel_diff = compute_max_pixel_diff(&rust_decoded, &cpp_decoded);
 
-    Some(TimingResult {
-        rust_time_ms: rust_min_ms,
-        cpp_time_ms: cpp_min_ms,
+    Some(ParityResult {
         rust_size: rust_jpeg.len(),
         cpp_size: cpp_jpeg.len(),
         rust_ssim2,
@@ -456,7 +403,6 @@ fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
             let fx = x as f64 / width as f64;
             let fy = y as f64 / height as f64;
 
-            // Mix of gradients and patterns for realistic content
             rgb[idx] = ((fx * 255.0) + (fx * fy * 50.0).sin() * 30.0).clamp(0.0, 255.0) as u8;
             rgb[idx + 1] = ((fy * 255.0) + (fx * fy * 100.0).cos() * 40.0).clamp(0.0, 255.0) as u8;
             rgb[idx + 2] = (128.0 + ((fx + fy) * 50.0).sin() * 50.0).clamp(0.0, 255.0) as u8;
@@ -479,74 +425,54 @@ fn write_ppm(path: &Path, rgb: &[u8], width: u32, height: u32) -> std::io::Resul
 // Main
 // ============================================================================
 
-fn run_benchmark_for_size(
+fn run_comparison_for_size(
     rgb: &[u8],
     width: u32,
     height: u32,
     size_name: &str,
     quality: u8,
-    iterations: usize,
     cjpegli: &Path,
     configs: &[Config],
-) -> BTreeMap<Config, TimingResult> {
-    // Write PPM for C++ encoder
-    let ppm_path_str = format!("/tmp/cpp_timing_{}x{}.ppm", width, height);
+) -> BTreeMap<Config, ParityResult> {
+    let ppm_path_str = format!("/tmp/cpp_parity_{}x{}.ppm", width, height);
     let ppm_path = Path::new(&ppm_path_str);
     write_ppm(ppm_path, rgb, width, height).expect("Failed to write PPM");
 
-    println!("\n{}", "=".repeat(140));
+    println!("\n{}", "=".repeat(100));
     println!(
-        " SIZE: {} ({}x{} = {} Mpx)",
+        " SIZE: {} ({}x{} = {:.2} Mpx)",
         size_name,
         width,
         height,
         (width as f64 * height as f64) / 1_000_000.0
     );
-    println!("{}", "=".repeat(140));
+    println!("{}", "=".repeat(100));
     println!();
 
-    // Print header
     println!(
-        "{:<16} | {:>9} {:>9} {:>8} | {:>9} {:>9} {:>8} | {:>7} {:>7} {:>7}",
-        "Mode",
-        "Rust ms",
-        "C++ ms",
-        "Δ Time",
-        "Rust KB",
-        "C++ KB",
-        "Δ Size",
-        "R SSIM2",
-        "C SSIM2",
-        "Δ SSIM2"
+        "{:<16} | {:>9} {:>9} {:>8} | {:>7} {:>7} {:>7} | {:>6}",
+        "Mode", "Rust KB", "C++ KB", "Δ Size", "R SSIM2", "C SSIM2", "Δ SSIM2", "Δ px"
     );
-    println!("{:-<140}", "");
+    println!("{:-<100}", "");
 
-    let mut results: BTreeMap<Config, TimingResult> = BTreeMap::new();
+    let mut results: BTreeMap<Config, ParityResult> = BTreeMap::new();
 
     for config in configs {
         print!("{:<16} | ", config.short_name());
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
-        match benchmark_config(
-            rgb, width, height, quality, config, cjpegli, ppm_path, iterations,
-        ) {
+        match compare_config(rgb, width, height, quality, config, cjpegli, ppm_path) {
             Some(result) => {
-                let time_diff_pct =
-                    (result.rust_time_ms - result.cpp_time_ms) / result.cpp_time_ms * 100.0;
-
                 println!(
-                    "{:>9.2} {:>9.2} {:>+7.1}% | {:>9.1} {:>9.1} {:>+7.2}% | {:>7.2} {:>7.2} {:>+6.2}",
-                    result.rust_time_ms,
-                    result.cpp_time_ms,
-                    time_diff_pct,
+                    "{:>9.1} {:>9.1} {:>+7.2}% | {:>7.2} {:>7.2} {:>+6.2} | {:>6}",
                     result.rust_size as f64 / 1024.0,
                     result.cpp_size as f64 / 1024.0,
                     result.size_diff_pct(),
                     result.rust_ssim2,
                     result.cpp_ssim2,
-                    result.ssim2_diff()
+                    result.ssim2_diff(),
+                    result.max_pixel_diff
                 );
-
                 results.insert(*config, result);
             }
             None => {
@@ -555,28 +481,20 @@ fn run_benchmark_for_size(
         }
     }
 
-    // Cleanup
     let _ = fs::remove_file(ppm_path);
-
     results
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Parse arguments
     let mut image_path: Option<String> = None;
-    let mut iterations = 5;
     let mut csv_path: Option<String> = None;
     let mut quality = 90u8;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--iterations" | "-i" => {
-                iterations = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(5);
-                i += 2;
-            }
             "--csv" | "-c" => {
                 csv_path = args.get(i + 1).cloned();
                 i += 2;
@@ -586,17 +504,19 @@ fn main() {
                 i += 2;
             }
             "--help" | "-h" => {
-                println!("Usage: cpp_timing_matrix [OPTIONS] [IMAGE]");
+                println!("Usage: cpp_parity_matrix [OPTIONS] [IMAGE]");
+                println!();
+                println!("Compares Rust jpegli-rs vs C++ cjpegli output parity.");
+                println!("Does NOT compare timing (unfair: subprocess vs library).");
                 println!();
                 println!("Options:");
-                println!("  -i, --iterations N   Number of iterations per config (default: 5)");
-                println!("  -q, --quality Q      Quality level 1-100 (default: 90)");
-                println!("  -c, --csv FILE       Save results to CSV file");
-                println!("  -h, --help           Show this help");
+                println!("  -q, --quality Q   Quality level 1-100 (default: 90)");
+                println!("  -c, --csv FILE    Save results to CSV file");
+                println!("  -h, --help        Show this help");
                 println!();
                 println!("Arguments:");
-                println!("  IMAGE                Path to PNG image (uses that size only)");
-                println!("                       Default: runs 512, 2K, and 4K synthetic images");
+                println!("  IMAGE             Path to PNG image (uses that size only)");
+                println!("                    Default: runs 512, 2K, and 4K synthetic images");
                 return;
             }
             arg if !arg.starts_with('-') => {
@@ -607,7 +527,6 @@ fn main() {
         }
     }
 
-    // Check for cjpegli
     let cjpegli = match find_cjpegli() {
         Some(p) => p,
         None => {
@@ -619,16 +538,13 @@ fn main() {
     };
 
     println!();
-    println!("{}", "=".repeat(140));
-    println!(" RUST vs C++ JPEGLI BENCHMARK: Timing + File Size + SSIMULACRA2");
-    println!("{}", "=".repeat(140));
+    println!("{}", "=".repeat(100));
+    println!(" RUST vs C++ JPEGLI PARITY: File Size + SSIMULACRA2");
+    println!("{}", "=".repeat(100));
     println!();
-    println!("Quality:    {}", quality);
-    println!("Iterations: {} (taking minimum time)", iterations);
+    println!("Quality: {}", quality);
 
-    // Generate all valid configurations (reduced set for cleaner output)
     let configs: Vec<Config> = vec![
-        // YCbCr baseline
         Config {
             scan: ScanMode::Baseline,
             huffman: HuffmanMode::Fixed,
@@ -659,7 +575,6 @@ fn main() {
             chroma: ChromaSampling::S420,
             color: ColorMode::YCbCr,
         },
-        // XYB
         Config {
             scan: ScanMode::Baseline,
             huffman: HuffmanMode::Optimized,
@@ -674,18 +589,16 @@ fn main() {
         },
     ];
 
-    println!("Configs:    {}", configs.len());
+    println!("Configs: {}", configs.len());
 
-    // Collect all results across sizes
-    let mut all_results: Vec<(String, u32, u32, BTreeMap<Config, TimingResult>)> = Vec::new();
+    let mut all_results: Vec<(String, u32, u32, BTreeMap<Config, ParityResult>)> = Vec::new();
 
     if let Some(path) = &image_path {
-        // Single image mode
         match load_png(Path::new(path)) {
             Some((rgb, width, height)) => {
-                println!("Image:      {} ({}x{})", path, width, height);
-                let results = run_benchmark_for_size(
-                    &rgb, width, height, "custom", quality, iterations, &cjpegli, &configs,
+                println!("Image:   {} ({}x{})", path, width, height);
+                let results = run_comparison_for_size(
+                    &rgb, width, height, "custom", quality, &cjpegli, &configs,
                 );
                 all_results.push((path.clone(), width, height, results));
             }
@@ -695,8 +608,7 @@ fn main() {
             }
         }
     } else {
-        // Multi-size synthetic mode
-        println!("Sizes:      512, 2K, 4K synthetic images");
+        println!("Sizes:   512, 2K, 4K synthetic images");
 
         for &(width, height, name) in SYNTHETIC_SIZES {
             print!("\nGenerating {}x{} synthetic image...", width, height);
@@ -704,46 +616,37 @@ fn main() {
             let rgb = generate_test_image(width as usize, height as usize);
             println!(" done");
 
-            let results = run_benchmark_for_size(
-                &rgb, width, height, name, quality, iterations, &cjpegli, &configs,
-            );
+            let results =
+                run_comparison_for_size(&rgb, width, height, name, quality, &cjpegli, &configs);
             all_results.push((name.to_string(), width, height, results));
         }
     }
 
-    // Print summary across all sizes
-    println!("\n{}", "=".repeat(140));
+    // Summary
+    println!("\n{}", "=".repeat(100));
     println!(" SUMMARY ACROSS ALL SIZES");
-    println!("{}", "=".repeat(140));
+    println!("{}", "=".repeat(100));
 
-    // Aggregate all results
-    let all_timing_results: Vec<&TimingResult> = all_results
+    let all_parity_results: Vec<&ParityResult> = all_results
         .iter()
         .flat_map(|(_, _, _, results)| results.values())
         .collect();
 
-    if !all_timing_results.is_empty() {
+    if !all_parity_results.is_empty() {
         println!();
-
-        // Per-config summary across sizes
         println!(
-            "{:<16} | {:>12} {:>12} {:>12} | {:>10}",
-            "Mode", "Avg Δ Time", "Avg Δ Size", "Avg Δ SSIM2", "Parity Δpx"
+            "{:<16} | {:>12} {:>12} | {:>10}",
+            "Mode", "Avg Δ Size", "Avg Δ SSIM2", "Max Δ px"
         );
-        println!("{:-<80}", "");
+        println!("{:-<60}", "");
 
         for config in &configs {
-            let config_results: Vec<&TimingResult> = all_results
+            let config_results: Vec<&ParityResult> = all_results
                 .iter()
                 .filter_map(|(_, _, _, results)| results.get(config))
                 .collect();
 
             if !config_results.is_empty() {
-                let avg_time_diff: f64 = config_results
-                    .iter()
-                    .map(|r| (r.rust_time_ms - r.cpp_time_ms) / r.cpp_time_ms * 100.0)
-                    .sum::<f64>()
-                    / config_results.len() as f64;
                 let avg_size_diff: f64 = config_results
                     .iter()
                     .map(|r| r.size_diff_pct())
@@ -759,9 +662,8 @@ fn main() {
                     .unwrap_or(0);
 
                 println!(
-                    "{:<16} | {:>+11.1}% {:>+11.2}% {:>+11.2} | {:>10}",
+                    "{:<16} | {:>+11.2}% {:>+11.2} | {:>10}",
                     config.short_name(),
-                    avg_time_diff,
                     avg_size_diff,
                     avg_ssim2_diff,
                     max_parity_diff
@@ -769,48 +671,36 @@ fn main() {
             }
         }
 
-        // Overall stats
-        let avg_time_diff: f64 = all_timing_results
-            .iter()
-            .map(|r| (r.rust_time_ms - r.cpp_time_ms) / r.cpp_time_ms * 100.0)
-            .sum::<f64>()
-            / all_timing_results.len() as f64;
-        let avg_size_diff: f64 = all_timing_results
+        let avg_size_diff: f64 = all_parity_results
             .iter()
             .map(|r| r.size_diff_pct())
             .sum::<f64>()
-            / all_timing_results.len() as f64;
-        let avg_ssim2_diff: f64 = all_timing_results
+            / all_parity_results.len() as f64;
+        let avg_ssim2_diff: f64 = all_parity_results
             .iter()
             .map(|r| r.ssim2_diff())
             .sum::<f64>()
-            / all_timing_results.len() as f64;
+            / all_parity_results.len() as f64;
 
-        println!("{:-<80}", "");
+        println!("{:-<60}", "");
         println!(
-            "{:<16} | {:>+11.1}% {:>+11.2}% {:>+11.2} |",
-            "OVERALL", avg_time_diff, avg_size_diff, avg_ssim2_diff
+            "{:<16} | {:>+11.2}% {:>+11.2} |",
+            "OVERALL", avg_size_diff, avg_ssim2_diff
         );
     }
 
-    // Save to CSV if requested
     if let Some(csv_file) = csv_path {
         let mut csv = String::new();
-        csv.push_str("size,width,height,mode,rust_ms,cpp_ms,time_diff_pct,rust_kb,cpp_kb,size_diff_pct,rust_ssim2,cpp_ssim2,ssim2_diff,parity_px\n");
+        csv.push_str("size,width,height,mode,rust_kb,cpp_kb,size_diff_pct,rust_ssim2,cpp_ssim2,ssim2_diff,parity_px\n");
 
         for (name, width, height, results) in &all_results {
             for (config, result) in results {
-                let time_diff_pct =
-                    (result.rust_time_ms - result.cpp_time_ms) / result.cpp_time_ms * 100.0;
                 csv.push_str(&format!(
-                    "{},{},{},{},{:.2},{:.2},{:+.1},{:.1},{:.1},{:+.2},{:.2},{:.2},{:+.2},{}\n",
+                    "{},{},{},{},{:.1},{:.1},{:+.2},{:.2},{:.2},{:+.2},{}\n",
                     name,
                     width,
                     height,
                     config.short_name(),
-                    result.rust_time_ms,
-                    result.cpp_time_ms,
-                    time_diff_pct,
                     result.rust_size as f64 / 1024.0,
                     result.cpp_size as f64 / 1024.0,
                     result.size_diff_pct(),
@@ -827,12 +717,10 @@ fn main() {
     }
 
     println!();
-    println!("{}", "=".repeat(140));
+    println!("{}", "=".repeat(100));
     println!("LEGEND:");
-    println!("  Δ Time:   positive = Rust slower, negative = Rust faster");
     println!("  Δ Size:   positive = Rust larger, negative = Rust smaller");
     println!("  Δ SSIM2:  positive = Rust better quality, negative = C++ better");
-    println!("  Parity:   max pixel difference between Rust and C++ decoded outputs");
-    println!("  Modes:    B=Baseline, P=Progressive, O=Optimized huffman, Y=YCbCr, X=XYB");
-    println!("{}", "=".repeat(140));
+    println!("  Δ px:     max pixel difference between Rust and C++ decoded outputs");
+    println!("{}", "=".repeat(100));
 }

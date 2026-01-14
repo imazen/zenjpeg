@@ -78,8 +78,8 @@ cms = ["cms-lcms2"]  # Default CMS backend
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
 # Tests check for this feature with #[cfg(feature = "ffi-tests")]
 ffi-tests = []
-# Enable corpus comparison tests (requires codec-eval)
-#corpus-tests = ["dep:codec-eval"]
+# Enable corpus comparison tests (requires local codec-corpus directory)
+corpus-tests = []
 cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
 cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 # Enable debug token serialization for C++ comparison
@@ -91,6 +91,8 @@ test-utils = ["std"]
 # Build with: RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
 # Supported runtimes (2025): Wasmtime, Wasmer, Node.js, all major browsers
 wasm-simd = []
+# Enable sharp-yuv comparison tests (requires yuv crate, not in default deps)
+sharp-yuv = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
 experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 
@@ -145,7 +147,7 @@ required-features = ["test-utils"]
 
 # C++ comparison tools
 [[example]]
-name = "cpp_timing_matrix"
+name = "cpp_parity_matrix"
 required-features = ["decoder", "test-utils", "cms"]
 
 # Tests requiring FFI (libjpeg linkage)
