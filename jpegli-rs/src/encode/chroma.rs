@@ -1115,15 +1115,15 @@ mod tests {
 
         // Y values should be in valid range
         for &val in &y {
-            assert!(val >= 0.0 && val <= 255.0, "Y out of range: {}", val);
+            assert!((0.0..=255.0).contains(&val), "Y out of range: {}", val);
         }
 
         // Cb/Cr should be centered around 128
         for &val in &cb {
-            assert!(val >= 0.0 && val <= 255.0, "Cb out of range: {}", val);
+            assert!((0.0..=255.0).contains(&val), "Cb out of range: {}", val);
         }
         for &val in &cr {
-            assert!(val >= 0.0 && val <= 255.0, "Cr out of range: {}", val);
+            assert!((0.0..=255.0).contains(&val), "Cr out of range: {}", val);
         }
     }
 
@@ -1211,10 +1211,10 @@ mod tests {
 
         // Values should be in valid range
         for &val in &cb_iter {
-            assert!(val >= 0.0 && val <= 255.0);
+            assert!((0.0..=255.0).contains(&val));
         }
         for &val in &cr_iter {
-            assert!(val >= 0.0 && val <= 255.0);
+            assert!((0.0..=255.0).contains(&val));
         }
     }
 

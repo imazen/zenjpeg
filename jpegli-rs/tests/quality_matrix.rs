@@ -18,7 +18,6 @@
 //! cargo test --release --test quality_matrix --features ffi-tests -- --nocapture
 //! ```
 
-use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
@@ -579,8 +578,8 @@ fn test_configuration(
 
     println!("\n=== {} ===", name);
     println!(
-        "{:>4} | {:>10} {:>10} | {:>8} {:>8} | {:>6} {:>6} | {}",
-        "Q", "Rust SSIM2", "C++ SSIM2", "Rust KB", "Ref KB", "Δ SSIM", "Δ Size", "Status"
+        "{:>4} | {:>10} {:>10} | {:>8} {:>8} | {:>6} {:>6} | Status",
+        "Q", "Rust SSIM2", "C++ SSIM2", "Rust KB", "Ref KB", "Δ SSIM", "Δ Size"
     );
     println!("{}", "-".repeat(85));
 
@@ -1363,7 +1362,7 @@ fn test_ffi_encoding_works() {
     );
 
     // Try to decode with jpegli decoder to verify it's valid
-    let mut decoder = jpegli::decoder::Decoder::new();
+    let decoder = jpegli::decoder::Decoder::new();
     let decoded = decoder
         .decode(&jpeg[..])
         .expect("Failed to decode FFI-encoded JPEG");

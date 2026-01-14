@@ -1148,7 +1148,7 @@ mod tests {
         // First token: run=0, category=4 (for value 10)
         let t0 = &buf.tokens[0];
         assert_eq!(t0.context, 4);
-        assert_eq!(t0.symbol, (0 << 4) | 4); // run=0, cat=4
+        assert_eq!(t0.symbol, 4); // run=0, cat=4
 
         // Second token: run=3, category=3 (for value -5)
         let t1 = &buf.tokens[1];

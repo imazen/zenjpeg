@@ -191,7 +191,7 @@ fn test_invalid_dqt_table_index_0x05() {
 #[test]
 fn test_invalid_dqt_zero_quant_k0() {
     let mut compressed = COMPRESSED_0.to_vec();
-    compressed[DQT_OFFSET + 5 + 0] = 0;
+    compressed[DQT_OFFSET + 5] = 0;
     assert!(
         !parse_compressed(&compressed),
         "Should reject DQT with zero quant at k=0"

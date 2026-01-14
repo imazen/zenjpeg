@@ -437,7 +437,7 @@ mod tests {
         freq.add(17, 3000); // Run=1, size=1
         freq.add(33, 2000); // Run=2, size=1
         for i in 2..16 {
-            freq.add(i, (1000 / (i as u64 + 1)) as u64);
+            freq.add(i, 1000 / (i as u64 + 1));
         }
 
         let (mozjpeg, jpegli, moz_cost, jpg_cost) = compare_algorithms(&freq).unwrap();

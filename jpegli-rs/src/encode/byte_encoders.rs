@@ -702,7 +702,7 @@ mod tests {
             .unwrap();
 
         // Create 8x8 red image
-        let pixels = vec![255u8, 0, 0].repeat(64);
+        let pixels = [255u8, 0, 0].repeat(64);
         enc.push_packed(&pixels, Unstoppable).unwrap();
 
         let jpeg = enc.finish().unwrap();
@@ -834,14 +834,16 @@ mod tests {
         let mut chunk_count = 0;
         let mut pos = 2;
         while pos + 4 < jpeg.len() {
-            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xE2 {
-                if jpeg.len() > pos + 16 && &jpeg[pos + 4..pos + 16] == b"ICC_PROFILE\0" {
-                    chunk_count += 1;
-                    let chunk_num = jpeg[pos + 16];
-                    let total_chunks = jpeg[pos + 17];
-                    assert_eq!(chunk_num as usize, chunk_count);
-                    assert_eq!(total_chunks, 2); // 100000 / 65519 = 2 chunks
-                }
+            if jpeg[pos] == 0xFF
+                && jpeg[pos + 1] == 0xE2
+                && jpeg.len() > pos + 16
+                && &jpeg[pos + 4..pos + 16] == b"ICC_PROFILE\0"
+            {
+                chunk_count += 1;
+                let chunk_num = jpeg[pos + 16];
+                let total_chunks = jpeg[pos + 17];
+                assert_eq!(chunk_num as usize, chunk_count);
+                assert_eq!(total_chunks, 2); // 100000 / 65519 = 2 chunks
             }
             if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
                 let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);

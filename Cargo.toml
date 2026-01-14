@@ -41,6 +41,9 @@ dssim = "3.2"
 fast-ssim2 = { version = "0.6", features = ["imgref"] }
 rayon = "1.10"
 
+# Color conversion (for benchmarking/comparison - faster than libyuv)
+yuv = "0.8"
+
 # Testing
 approx = "0.5"
 proptest = "1.4"

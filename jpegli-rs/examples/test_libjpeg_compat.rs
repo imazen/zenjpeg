@@ -74,9 +74,9 @@ fn main() {
         let noise: Vec<u8> = (0..64)
             .flat_map(|y| {
                 (0..64).flat_map(move |x| {
-                    let r = ((x * 17 ^ y * 31) % 256) as u8;
-                    let g = ((x * 13 ^ y * 23) % 256) as u8;
-                    let b = ((x * 11 ^ y * 19) % 256) as u8;
+                    let r = (((x * 17) ^ (y * 31)) % 256) as u8;
+                    let g = (((x * 13) ^ (y * 23)) % 256) as u8;
+                    let b = (((x * 11) ^ (y * 19)) % 256) as u8;
                     [r, g, b]
                 })
             })
@@ -92,9 +92,9 @@ fn main() {
         let noise: Vec<u8> = (0..size)
             .flat_map(|y| {
                 (0..size).flat_map(move |x| {
-                    let r = ((x * 17 ^ y * 31) % 256) as u8;
-                    let g = ((x * 13 ^ y * 23) % 256) as u8;
-                    let b = ((x * 11 ^ y * 19) % 256) as u8;
+                    let r = (((x * 17) ^ (y * 31)) % 256) as u8;
+                    let g = (((x * 13) ^ (y * 23)) % 256) as u8;
+                    let b = (((x * 11) ^ (y * 19)) % 256) as u8;
                     [r, g, b]
                 })
             })
@@ -106,7 +106,7 @@ fn main() {
     // Test grayscale
     println!("\nTesting grayscale...\n");
     let gray_noise: Vec<u8> = (0..64)
-        .flat_map(|y| (0..64).map(move |x| ((x * 17 ^ y * 31) % 256) as u8))
+        .flat_map(|y| (0..64).map(move |x| (((x * 17) ^ (y * 31)) % 256) as u8))
         .collect();
 
     let gray_config = EncoderConfig::new()

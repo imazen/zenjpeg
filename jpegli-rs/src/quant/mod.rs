@@ -1404,7 +1404,7 @@ mod tests {
             let table = generate_standard_jpeg_table_ex(q, false, false); // allow_16bit = false
             for &v in &table.values {
                 assert!(
-                    v >= 1 && v <= QUANT_MAX_BASELINE,
+                    (1..=QUANT_MAX_BASELINE).contains(&v),
                     "8-bit table value {} out of range [1, {}]",
                     v,
                     QUANT_MAX_BASELINE
@@ -1418,7 +1418,7 @@ mod tests {
             let table = generate_standard_jpeg_table_ex(q, false, true); // allow_16bit = true
             for &v in &table.values {
                 assert!(
-                    v >= 1 && v <= QUANT_MAX_EXTENDED,
+                    (1..=QUANT_MAX_EXTENDED).contains(&v),
                     "16-bit table value {} out of range [1, {}]",
                     v,
                     QUANT_MAX_EXTENDED
@@ -1441,7 +1441,7 @@ mod tests {
 
         for &v in &table.values {
             assert!(
-                v >= 1 && v <= QUANT_MAX_BASELINE,
+                (1..=QUANT_MAX_BASELINE).contains(&v),
                 "8-bit XYB table value {} out of range",
                 v
             );
@@ -1459,7 +1459,7 @@ mod tests {
 
         for &v in &table_ex.values {
             assert!(
-                v >= 1 && v <= QUANT_MAX_EXTENDED,
+                (1..=QUANT_MAX_EXTENDED).contains(&v),
                 "16-bit XYB table value {} out of range",
                 v
             );

@@ -77,6 +77,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     decode_zune(data).unwrap()
 }
 
+#[allow(dead_code)] // Fields used in Debug output and extended reporting
 struct ComparisonResult {
     quality: u8,
     rust_size: usize,
@@ -198,7 +199,7 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
     if let Ok(entries) = fs::read_dir("/mnt/v/work/corpus/CID22-512") {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "png") {
+            if path.extension().is_some_and(|e| e == "png") {
                 images.push(path);
                 if images.len() >= max_images {
                     break;
@@ -213,7 +214,7 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
         if let Ok(entries) = fs::read_dir(&testdata_flower) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "png") {
+                if path.extension().is_some_and(|e| e == "png") {
                     images.push(path);
                     if images.len() >= max_images {
                         break;

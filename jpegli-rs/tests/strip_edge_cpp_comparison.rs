@@ -197,6 +197,7 @@ fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f6
     dssim.into()
 }
 
+#[allow(dead_code)] // Fields used in Debug output and test reporting
 struct TestResult {
     image_name: String,
     width: usize,
@@ -290,7 +291,7 @@ fn test_strip_edge_real_images() {
     let images: Vec<_> = fs::read_dir(&corpus_path)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .take(5)
         .collect();
 

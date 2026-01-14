@@ -628,7 +628,7 @@ mod tests {
 
         // Verify values are in 0.0-1.0 range
         for &v in &decoded_f32.data {
-            assert!(v >= 0.0 && v <= 1.0, "f32 value {} out of range", v);
+            assert!((0.0..=1.0).contains(&v), "f32 value {} out of range", v);
         }
 
         // Compare with u8 decode - converted f32 should match

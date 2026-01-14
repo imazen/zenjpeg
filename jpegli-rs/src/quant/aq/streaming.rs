@@ -701,7 +701,7 @@ mod tests {
 
         // All values should be in valid range
         for &v in &collected {
-            assert!(v >= 0.0 && v < 1.0, "Invalid AQ value: {}", v);
+            assert!((0.0..1.0).contains(&v), "Invalid AQ value: {}", v);
         }
     }
 }

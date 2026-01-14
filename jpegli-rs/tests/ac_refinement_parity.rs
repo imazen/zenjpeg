@@ -116,7 +116,7 @@ pub fn tokenize_block_refinement(
                     symbol: 0xF0,
                     refbits: pending_refbits.len() as u8,
                 });
-                refbits.extend(pending_refbits.drain(..));
+                refbits.append(&mut pending_refbits);
                 r -= 16;
             }
 
@@ -131,7 +131,7 @@ pub fn tokenize_block_refinement(
                 refbits: pending_refbits.len() as u8,
             });
             // Emit pending refbits, then the sign bit
-            refbits.extend(pending_refbits.drain(..));
+            refbits.append(&mut pending_refbits);
             refbits.push(sign);
 
             r = 0;

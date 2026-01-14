@@ -858,7 +858,7 @@ mod tests {
         assert_eq!(img.get_pixel(255, 0, 0), 255);
         // Middle should be ~128
         let mid = img.get_pixel(127, 0, 0);
-        assert!(mid >= 126 && mid <= 129);
+        assert!((126..=129).contains(&mid));
     }
 
     #[test]

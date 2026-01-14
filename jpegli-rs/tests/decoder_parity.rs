@@ -12,6 +12,7 @@ use rgb::RGBA8;
 use std::process::Command;
 
 // Map from test subsampling names to ChromaSubsampling
+#[allow(dead_code)] // May be used in future test configurations
 fn subsampling_from_name(name: &str) -> ChromaSubsampling {
     match name {
         "444" => ChromaSubsampling::Full,
@@ -106,6 +107,7 @@ fn decode_reference(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 /// Decode with C++ djpegli (if available)
+#[allow(dead_code)] // Available for C++ parity tests when enabled
 fn decode_cpp(jpeg_path: &str) -> Option<(Vec<u8>, u32, u32)> {
     let djpegli = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/djpegli";
     if !std::path::Path::new(djpegli).exists() {
@@ -114,7 +116,7 @@ fn decode_cpp(jpeg_path: &str) -> Option<(Vec<u8>, u32, u32)> {
 
     let ppm_path = format!("{}.ppm", jpeg_path);
     let status = Command::new(djpegli)
-        .args(&[jpeg_path, &ppm_path])
+        .args([jpeg_path, &ppm_path])
         .status()
         .ok()?;
 
@@ -187,10 +189,10 @@ fn test_decoder_vs_reference_444() {
             let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::Full);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
-            let (ref_decoded, refW, refH) =
+            let (ref_decoded, ref_w, ref_h) =
                 decode_reference(&jpeg).expect("Reference decode failed");
 
-            assert_eq!((rw, rh), (refW, refH), "Dimension mismatch");
+            assert_eq!((rw, rh), (ref_w, ref_h), "Dimension mismatch");
 
             let dssim = compute_dssim(&rust_decoded, &ref_decoded, rw as usize, rh as usize);
             let max_diff = max_pixel_diff(&rust_decoded, &ref_decoded);
@@ -228,10 +230,10 @@ fn test_decoder_vs_reference_420() {
             let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::Quarter);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
-            let (ref_decoded, refW, refH) =
+            let (ref_decoded, ref_w, ref_h) =
                 decode_reference(&jpeg).expect("Reference decode failed");
 
-            assert_eq!((rw, rh), (refW, refH), "Dimension mismatch");
+            assert_eq!((rw, rh), (ref_w, ref_h), "Dimension mismatch");
 
             let dssim = compute_dssim(&rust_decoded, &ref_decoded, rw as usize, rh as usize);
             let max_diff = max_pixel_diff(&rust_decoded, &ref_decoded);
@@ -275,10 +277,10 @@ fn test_decoder_vs_reference_422() {
             );
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
-            let (ref_decoded, refW, refH) =
+            let (ref_decoded, ref_w, ref_h) =
                 decode_reference(&jpeg).expect("Reference decode failed");
 
-            assert_eq!((rw, rh), (refW, refH), "Dimension mismatch");
+            assert_eq!((rw, rh), (ref_w, ref_h), "Dimension mismatch");
 
             let dssim = compute_dssim(&rust_decoded, &ref_decoded, rw as usize, rh as usize);
             let max_diff = max_pixel_diff(&rust_decoded, &ref_decoded);
@@ -322,10 +324,10 @@ fn test_decoder_vs_reference_440() {
             );
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
-            let (ref_decoded, refW, refH) =
+            let (ref_decoded, ref_w, ref_h) =
                 decode_reference(&jpeg).expect("Reference decode failed");
 
-            assert_eq!((rw, rh), (refW, refH), "Dimension mismatch");
+            assert_eq!((rw, rh), (ref_w, ref_h), "Dimension mismatch");
 
             let dssim = compute_dssim(&rust_decoded, &ref_decoded, rw as usize, rh as usize);
             let max_diff = max_pixel_diff(&rust_decoded, &ref_decoded);

@@ -99,6 +99,7 @@ fn compute_dssim(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
     dssim.into()
 }
 
+#[allow(dead_code)] // Available for quality metric comparisons when needed
 fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
     use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -144,6 +145,7 @@ fn compute_ssimulacra2(orig: &[u8], comp: &[u8], width: usize, height: usize) ->
     compute_frame_ssimulacra2(orig_frame, comp_frame).unwrap_or(0.0)
 }
 
+#[allow(dead_code)] // Available for quality metric comparisons when needed
 fn compute_butteraugli_score(orig: &[u8], comp: &[u8], width: usize, height: usize) -> f64 {
     use butteraugli::{compute_butteraugli, ButteraugliParams};
 

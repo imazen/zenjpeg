@@ -4,6 +4,8 @@
 
 #[cfg(feature = "parallel")]
 use jpegli::encode::parallel::parallel_dct_y_blocks;
+#[cfg(feature = "parallel")]
+use std::time::Instant;
 
 fn main() {
     println!("Parallel vs Sequential DCT Benchmark\n");

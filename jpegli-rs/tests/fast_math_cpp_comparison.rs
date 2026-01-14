@@ -458,10 +458,8 @@ fn test_brute_force_fast_pow2f_comparison() {
             max_diff_at = x;
         }
 
-        if diff > 0.0001 {
-            if large_diffs.len() < 20 {
-                large_diffs.push((x, cpp, rust, diff));
-            }
+        if diff > 0.0001 && large_diffs.len() < 20 {
+            large_diffs.push((x, cpp, rust, diff));
         }
 
         count += 1;

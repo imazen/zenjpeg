@@ -109,7 +109,7 @@ fn extract_dqt_tables(jpeg_data: &[u8]) -> Vec<DqtTable> {
         } else if marker == 0xD8 || marker == 0xD9 {
             // SOI or EOI - no length
             continue;
-        } else if marker >= 0xD0 && marker <= 0xD7 {
+        } else if (0xD0..=0xD7).contains(&marker) {
             // RST markers - no length
             continue;
         } else {
@@ -343,7 +343,7 @@ mod cpp_comparison {
 
         // Write PPM file
         let mut ppm = Vec::new();
-        ppm.extend_from_slice(format!("P6\n64 64\n255\n").as_bytes());
+        ppm.extend_from_slice("P6\n64 64\n255\n".to_string().as_bytes());
         ppm.extend_from_slice(&img.pixels);
         std::fs::write(&input_path, &ppm).expect("write ppm");
 

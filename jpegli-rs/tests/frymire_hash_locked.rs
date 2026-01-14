@@ -430,6 +430,7 @@ fn test_frymire_hashes_locked() {
 /// The full-plane encoder has edge padding, but the strip encoder doesn't yet.
 /// - 4:4:4: MCU=8, partial cols=6, partial rows=1 -> SKIP
 /// - 4:2:0/4:2:2/4:4:0: MCU=16, partial cols=14, partial rows=1 -> SKIP
+///
 /// TODO: Remove this skip once strip encoder has edge padding.
 #[test]
 fn test_frymire_backend_parity() {

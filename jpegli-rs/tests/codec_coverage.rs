@@ -130,7 +130,8 @@ mod encode_coverage {
         // Test quality boundaries and key points
         for q in [1.0, 10.0, 30.0, 50.0, 70.0, 85.0, 90.0, 95.0, 99.0, 100.0] {
             let config = EncoderConfig::new().quality(q);
-            let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect(&format!("Q{} failed", q));
+            let jpeg = encode_rgb(64, 64, &img.pixels, &config)
+                .unwrap_or_else(|_| panic!("Q{} failed", q));
             assert!(jpeg.len() > 50, "Q{} too small", q);
         }
     }
@@ -141,8 +142,8 @@ mod encode_coverage {
         // Test distance-based quality (butteraugli distance)
         for d in [0.1, 0.5, 1.0, 2.0, 4.0, 8.0] {
             let config = EncoderConfig::new().quality(Quality::ApproxButteraugli(d));
-            let jpeg =
-                encode_rgb(64, 64, &img.pixels, &config).expect(&format!("dist {} failed", d));
+            let jpeg = encode_rgb(64, 64, &img.pixels, &config)
+                .unwrap_or_else(|_| panic!("dist {} failed", d));
             assert!(jpeg.len() > 50);
         }
     }
@@ -264,8 +265,8 @@ mod encode_coverage {
         for (w, h) in [(7, 7), (9, 9), (15, 17), (33, 31), (100, 101)] {
             let img = generate_gradient_d(w, h, 3);
             let config = EncoderConfig::new();
-            let jpeg =
-                encode_rgb(w, h, &img.pixels, &config).expect(&format!("{}x{} failed", w, h));
+            let jpeg = encode_rgb(w, h, &img.pixels, &config)
+                .unwrap_or_else(|_| panic!("{}x{} failed", w, h));
             verify_jpeg_structure(&jpeg);
         }
     }
@@ -448,7 +449,7 @@ mod decode_coverage {
             let decoder = Decoder::new();
             let decoded = decoder
                 .decode(&jpeg)
-                .expect(&format!("Q{} decode failed", q));
+                .unwrap_or_else(|_| panic!("Q{} decode failed", q));
             assert_eq!(decoded.width, 64);
         }
     }
@@ -461,7 +462,9 @@ mod decode_coverage {
         for (w, h) in sizes {
             let jpeg = create_test_jpeg(w, h, 90.0);
             let decoder = Decoder::new();
-            let decoded = decoder.decode(&jpeg).expect(&format!("{}x{} failed", w, h));
+            let decoded = decoder
+                .decode(&jpeg)
+                .unwrap_or_else(|_| panic!("{}x{} failed", w, h));
             assert_eq!(decoded.width, w);
             assert_eq!(decoded.height, h);
         }
@@ -570,7 +573,9 @@ mod decode_coverage {
         for i in 0..5 {
             let size = 64 + i * 16;
             let jpeg = create_test_jpeg(size, size, 85.0);
-            let decoded = decoder.decode(&jpeg).expect(&format!("reuse {} failed", i));
+            let decoded = decoder
+                .decode(&jpeg)
+                .unwrap_or_else(|_| panic!("reuse {} failed", i));
             assert_eq!(decoded.width, size);
         }
     }
@@ -780,12 +785,12 @@ mod roundtrip_coverage {
         ];
 
         for (name, img) in patterns {
-            let jpeg =
-                encode_rgb(64, 64, &img.pixels, &config).expect(&format!("{} encode failed", name));
+            let jpeg = encode_rgb(64, 64, &img.pixels, &config)
+                .unwrap_or_else(|_| panic!("{} encode failed", name));
 
             let decoded = Decoder::new()
                 .decode(&jpeg)
-                .expect(&format!("{} decode failed", name));
+                .unwrap_or_else(|_| panic!("{} decode failed", name));
 
             assert_eq!(decoded.width, 64, "{} width mismatch", name);
             assert_eq!(decoded.height, 64, "{} height mismatch", name);

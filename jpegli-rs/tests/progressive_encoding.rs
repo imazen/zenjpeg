@@ -423,7 +423,7 @@ fn test_progressive_optimized_quality_levels() {
             .progressive(true)
             .optimize_huffman(true);
         let jpeg_data = encode_rgb(width, height, &data, &config)
-            .expect(&format!("Q{} encoding should succeed", quality));
+            .unwrap_or_else(|_| panic!("Q{} encoding should succeed", quality));
 
         // Higher quality should generally produce larger files
         if prev_size > 0 {
@@ -438,7 +438,7 @@ fn test_progressive_optimized_quality_levels() {
         prev_size = jpeg_data.len();
 
         // Verify decode with zune-jpeg
-        decode_with_zune(&jpeg_data).expect(&format!("Q{} should decode", quality));
+        decode_with_zune(&jpeg_data).unwrap_or_else(|_| panic!("Q{} should decode", quality));
     }
 }
 
@@ -479,10 +479,10 @@ fn test_progressive_optimized_grayscale_sizes() {
             .progressive(true)
             .optimize_huffman(true);
         let jpeg_data = encode_gray(size, size, &data, &config)
-            .expect(&format!("{}x{} gray should encode", size, size));
+            .unwrap_or_else(|_| panic!("{}x{} gray should encode", size, size));
 
-        let decoded =
-            decode_with_zune(&jpeg_data).expect(&format!("{}x{} gray should decode", size, size));
+        let decoded = decode_with_zune(&jpeg_data)
+            .unwrap_or_else(|_| panic!("{}x{} gray should decode", size, size));
 
         // zune-jpeg decodes grayscale to RGB (3 bytes per pixel)
         assert_eq!(decoded.len(), (size * size * 3) as usize);
@@ -592,11 +592,11 @@ fn test_progressive_optimized_odd_dimensions() {
         }
 
         let jpeg_data = encode_rgb(width, height, &data, &config)
-            .expect(&format!("{}x{} should encode", width, height));
+            .unwrap_or_else(|_| panic!("{}x{} should encode", width, height));
 
         // Verify full decode works and size is correct using zune-jpeg
-        let decoded =
-            decode_with_zune(&jpeg_data).expect(&format!("{}x{} should decode", width, height));
+        let decoded = decode_with_zune(&jpeg_data)
+            .unwrap_or_else(|_| panic!("{}x{} should decode", width, height));
         assert_eq!(
             decoded.len(),
             (width * height * 3) as usize,
@@ -671,12 +671,12 @@ fn test_progressive_all_quality_levels() {
             .progressive(true)
             .optimize_huffman(true);
         let jpeg_data = encode_rgb(width, height, &data, &config)
-            .expect(&format!("Q{} encoding should succeed", q));
+            .unwrap_or_else(|_| panic!("Q{} encoding should succeed", q));
 
         let size = jpeg_data.len();
 
         // Verify it decodes with zune-jpeg
-        decode_with_zune(&jpeg_data).expect(&format!("Q{} should decode", q));
+        decode_with_zune(&jpeg_data).unwrap_or_else(|_| panic!("Q{} should decode", q));
 
         // Check size progression (higher Q should generally be >= lower Q - 500 bytes tolerance)
         if prev_size > 0 {
@@ -786,9 +786,10 @@ fn test_progressive_quality_various_content() {
                 .progressive(true)
                 .optimize_huffman(true);
             let jpeg_data = encode_rgb(tc.width, tc.height, &data, &config)
-                .expect(&format!("{} Q{} encoding should succeed", tc.name, q));
+                .unwrap_or_else(|_| panic!("{} Q{} encoding should succeed", tc.name, q));
 
-            decode_with_zune(&jpeg_data).expect(&format!("{} Q{} should decode", tc.name, q));
+            decode_with_zune(&jpeg_data)
+                .unwrap_or_else(|_| panic!("{} Q{} should decode", tc.name, q));
 
             println!(
                 "{} {}x{} Q{}: {} bytes",
@@ -826,9 +827,9 @@ fn test_progressive_extreme_low_quality() {
             .progressive(true)
             .optimize_huffman(true);
         let jpeg_data = encode_rgb(width, height, &data, &config)
-            .expect(&format!("Q{} encoding should succeed", q));
+            .unwrap_or_else(|_| panic!("Q{} encoding should succeed", q));
 
-        decode_with_zune(&jpeg_data).expect(&format!("Q{} should decode", q));
+        decode_with_zune(&jpeg_data).unwrap_or_else(|_| panic!("Q{} should decode", q));
 
         println!("Q{}: {} bytes", q, jpeg_data.len());
     }
