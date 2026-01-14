@@ -10,9 +10,9 @@ use std::io::Write;
 
 use enough::Stop;
 
-use super::config::EncoderConfig;
-use super::types::{PixelLayout, YCbCrPlanes};
-use crate::encode::streaming::StreamingEncoder;
+use super::encoder_config::EncoderConfig;
+use super::encoder_types::{PixelLayout, YCbCrPlanes};
+use super::streaming::StreamingEncoder;
 use crate::error::{Error, Result};
 
 /// Encoder for raw byte input with explicit pixel layout.
@@ -82,9 +82,9 @@ impl BytesEncoder {
         let quality = LegacyQuality::from_quality(config.quality.to_internal());
         let pixel_format = layout.to_legacy();
         let subsampling = match config.color_mode {
-            super::types::ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
-            super::types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
-            super::types::ColorMode::Grayscale => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
+            super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
         };
 
         let mut builder = SE::new(width, height)
@@ -99,7 +99,10 @@ impl BytesEncoder {
             builder = builder.progressive(true);
         }
 
-        if matches!(config.color_mode, super::types::ColorMode::Xyb { .. }) {
+        if matches!(
+            config.color_mode,
+            super::encoder_types::ColorMode::Xyb { .. }
+        ) {
             builder = builder.use_xyb(true);
         }
 

@@ -8,7 +8,8 @@
 //! No I/O or decode operations - pure encode timing.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
+use enough::Unstoppable;
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Create a test image with realistic pixel patterns.
 ///
@@ -35,23 +36,19 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
 /// Encode configuration for benchmarking.
 #[derive(Clone, Copy)]
 struct EncodeConfig {
-    subsampling: Subsampling,
-    mode: JpegMode,
+    subsampling: ChromaSubsampling,
+    progressive: bool,
     optimize_huffman: bool,
 }
 
 impl EncodeConfig {
     fn name(&self) -> String {
         let sub = match self.subsampling {
-            Subsampling::S444 => "444",
-            Subsampling::S420 => "420",
+            ChromaSubsampling::Full => "444",
+            ChromaSubsampling::Quarter => "420",
             _ => "other",
         };
-        let mode = match self.mode {
-            JpegMode::Baseline => "baseline",
-            JpegMode::Progressive => "prog",
-            _ => "other",
-        };
+        let mode = if self.progressive { "prog" } else { "baseline" };
         let huff = if self.optimize_huffman { "opt" } else { "std" };
         format!("{}_{}_{}", sub, mode, huff)
     }
@@ -68,44 +65,44 @@ fn bench_encode_matrix(c: &mut Criterion) {
     let configs = [
         // YCbCr 4:4:4 configurations
         EncodeConfig {
-            subsampling: Subsampling::S444,
-            mode: JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Full,
+            progressive: false,
             optimize_huffman: false,
         },
         EncodeConfig {
-            subsampling: Subsampling::S444,
-            mode: JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Full,
+            progressive: false,
             optimize_huffman: true,
         },
         EncodeConfig {
-            subsampling: Subsampling::S444,
-            mode: JpegMode::Progressive,
+            subsampling: ChromaSubsampling::Full,
+            progressive: true,
             optimize_huffman: false,
         },
         EncodeConfig {
-            subsampling: Subsampling::S444,
-            mode: JpegMode::Progressive,
+            subsampling: ChromaSubsampling::Full,
+            progressive: true,
             optimize_huffman: true,
         },
         // YCbCr 4:2:0 configurations
         EncodeConfig {
-            subsampling: Subsampling::S420,
-            mode: JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: false,
             optimize_huffman: false,
         },
         EncodeConfig {
-            subsampling: Subsampling::S420,
-            mode: JpegMode::Baseline,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: false,
             optimize_huffman: true,
         },
         EncodeConfig {
-            subsampling: Subsampling::S420,
-            mode: JpegMode::Progressive,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: true,
             optimize_huffman: false,
         },
         EncodeConfig {
-            subsampling: Subsampling::S420,
-            mode: JpegMode::Progressive,
+            subsampling: ChromaSubsampling::Quarter,
+            progressive: true,
             optimize_huffman: true,
         },
     ];
@@ -122,13 +119,16 @@ fn bench_encode_matrix(c: &mut Criterion) {
 
             group.bench_with_input(BenchmarkId::new("encode", &bench_name), &data, |b, data| {
                 b.iter(|| {
-                    let encoder = JpegEncoder::new(width, height)
-                        .pixel_format(PixelFormat::Rgb)
-                        .quality(Quality::from_quality(90.0))
-                        .subsampling(config.subsampling)
-                        .mode(config.mode)
-                        .optimize_huffman(config.optimize_huffman);
-                    encoder.encode(black_box(data))
+                    let encoder_config = EncoderConfig::new()
+                        .quality(90.0)
+                        .progressive(config.progressive)
+                        .optimize_huffman(config.optimize_huffman)
+                        .ycbcr(config.subsampling);
+                    let mut enc = encoder_config
+                        .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+                        .unwrap();
+                    enc.push_packed(black_box(data), Unstoppable).unwrap();
+                    enc.finish()
                 });
             });
         }
@@ -146,36 +146,29 @@ fn bench_encode_quick(c: &mut Criterion) {
     group.sample_size(30);
 
     // 4K image for realistic workload
-    let width = 3840;
-    let height = 2160;
-    let data = create_test_image(width, height);
+    let width: u32 = 3840;
+    let height: u32 = 2160;
+    let data = create_test_image(width as usize, height as usize);
 
     // Most common production configurations
     let configs = [
-        (
-            "420_prog_opt",
-            Subsampling::S420,
-            JpegMode::Progressive,
-            true,
-        ),
-        (
-            "444_baseline_opt",
-            Subsampling::S444,
-            JpegMode::Baseline,
-            true,
-        ),
+        ("420_prog_opt", ChromaSubsampling::Quarter, true, true),
+        ("444_baseline_opt", ChromaSubsampling::Full, false, true),
     ];
 
-    for (name, sub, mode, opt) in configs {
+    for (name, subsampling, progressive, optimize_huffman) in configs {
         group.bench_with_input(BenchmarkId::new("4k", name), &data, |b, data| {
             b.iter(|| {
-                let encoder = JpegEncoder::new(width, height)
-                    .pixel_format(PixelFormat::Rgb)
-                    .quality(Quality::from_quality(90.0))
-                    .subsampling(sub)
-                    .mode(mode)
-                    .optimize_huffman(opt);
-                encoder.encode(black_box(data))
+                let config = EncoderConfig::new()
+                    .quality(90.0)
+                    .progressive(progressive)
+                    .optimize_huffman(optimize_huffman)
+                    .ycbcr(subsampling);
+                let mut enc = config
+                    .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                    .unwrap();
+                enc.push_packed(black_box(data), Unstoppable).unwrap();
+                enc.finish()
             });
         });
     }

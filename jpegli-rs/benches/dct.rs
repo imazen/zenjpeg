@@ -7,7 +7,7 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use jpegli::dct::{aan_forward_dct_8x8, forward_dct_8x8};
+use jpegli::encode::dct::{aan_forward_dct_8x8, forward_dct_8x8};
 use std::time::Duration;
 
 /// Generate test blocks with realistic patterns

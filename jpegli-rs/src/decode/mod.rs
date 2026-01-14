@@ -184,7 +184,7 @@ impl Decoder {
     ///
     /// # Example
     /// ```
-    /// use jpegli::Decoder;
+    /// use jpegli::decode::Decoder;
     ///
     /// let decoder = Decoder::new();
     /// let estimated = decoder.estimate_memory_usage(4096, 4096);
@@ -321,6 +321,7 @@ impl Decoder {
 
         // Convert to output format
         // For XYB images, use simple dequantization so ICC profile works correctly
+        #[allow(unused_mut)] // pixels is mutated when cms features are enabled
         let mut pixels =
             parser.to_pixels(output_format, info.is_xyb, self.config.fancy_upsampling)?;
 
@@ -491,8 +492,8 @@ pub(crate) struct ScanInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::Encoder;
-    use crate::quant::Quality;
+    use crate::encode::{EncoderConfig, PixelLayout};
+    use enough::Unstoppable;
 
     #[test]
     fn test_decoder_creation() {
@@ -507,23 +508,23 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip_gray() {
         // Create a simple 8x8 grayscale image
-        let width = 8;
-        let height = 8;
-        let mut input = vec![0u8; width * height];
-        for y in 0..height {
-            for x in 0..width {
-                input[y * width + x] = ((x + y) * 16) as u8;
+        let width = 8u32;
+        let height = 8u32;
+        let mut input = vec![0u8; (width * height) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                input[y * width as usize + x] = ((x + y) * 16) as u8;
             }
         }
 
-        // Encode
-        let encoder = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .pixel_format(PixelFormat::Gray)
-            .jpegli_quality(Quality::from_quality(95.0));
-
-        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+        // Encode using v2 API
+        let config = EncoderConfig::new().quality(95.0).grayscale();
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
 
         // Verify JPEG structure
         assert_eq!(jpeg[0], 0xFF);
@@ -535,9 +536,9 @@ mod tests {
         let decoder = Decoder::new().output_format(PixelFormat::Gray);
         let decoded = decoder.decode(&jpeg).expect("decoding should succeed");
 
-        assert_eq!(decoded.width, width as u32);
-        assert_eq!(decoded.height, height as u32);
-        assert_eq!(decoded.data.len(), width * height);
+        assert_eq!(decoded.width, width);
+        assert_eq!(decoded.height, height);
+        assert_eq!(decoded.data.len(), (width * height) as usize);
 
         // Check pixel values are reasonably close (JPEG is lossy)
         let mut max_diff = 0i32;
@@ -552,34 +553,34 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip_rgb() {
         // Create a simple 16x16 RGB image
-        let width = 16;
-        let height = 16;
-        let mut input = vec![0u8; width * height * 3];
-        for y in 0..height {
-            for x in 0..width {
-                let idx = (y * width + x) * 3;
+        let width = 16u32;
+        let height = 16u32;
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
                 input[idx] = (x * 16) as u8; // R
                 input[idx + 1] = (y * 16) as u8; // G
                 input[idx + 2] = 128; // B
             }
         }
 
-        // Encode
-        let encoder = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(95.0));
-
-        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+        // Encode using v2 API
+        let config = EncoderConfig::new().quality(95.0);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
 
         // Decode
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
         let decoded = decoder.decode(&jpeg).expect("decoding should succeed");
 
-        assert_eq!(decoded.width, width as u32);
-        assert_eq!(decoded.height, height as u32);
-        assert_eq!(decoded.data.len(), width * height * 3);
+        assert_eq!(decoded.width, width);
+        assert_eq!(decoded.height, height);
+        assert_eq!(decoded.data.len(), (width * height * 3) as usize);
 
         // Check pixel values are reasonably close
         let mut max_diff = 0i32;
@@ -594,26 +595,26 @@ mod tests {
     #[test]
     fn test_decode_f32_roundtrip() {
         // Create a simple 16x16 RGB image
-        let width = 16;
-        let height = 16;
-        let mut input = vec![0u8; width * height * 3];
-        for y in 0..height {
-            for x in 0..width {
-                let idx = (y * width + x) * 3;
+        let width = 16u32;
+        let height = 16u32;
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
                 input[idx] = (x * 16) as u8; // R
                 input[idx + 1] = (y * 16) as u8; // G
                 input[idx + 2] = 128; // B
             }
         }
 
-        // Encode
-        let encoder = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(95.0));
-
-        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+        // Encode using v2 API
+        let config = EncoderConfig::new().quality(95.0);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
 
         // Decode to f32
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
@@ -621,9 +622,9 @@ mod tests {
             .decode_f32(&jpeg)
             .expect("f32 decoding should succeed");
 
-        assert_eq!(decoded_f32.width, width as u32);
-        assert_eq!(decoded_f32.height, height as u32);
-        assert_eq!(decoded_f32.data.len(), width * height * 3);
+        assert_eq!(decoded_f32.width, width);
+        assert_eq!(decoded_f32.height, height);
+        assert_eq!(decoded_f32.data.len(), (width * height * 3) as usize);
 
         // Verify values are in 0.0-1.0 range
         for &v in &decoded_f32.data {
@@ -651,12 +652,12 @@ mod tests {
     #[test]
     fn test_decode_f32_precision() {
         // Create a gradient image to test precision
-        let width = 64;
-        let height = 64;
-        let mut input = vec![0u8; width * height * 3];
-        for y in 0..height {
-            for x in 0..width {
-                let idx = (y * width + x) * 3;
+        let width = 64u32;
+        let height = 64u32;
+        let mut input = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let idx = (y * width as usize + x) * 3;
                 // Create a smooth gradient
                 let val = ((x + y) * 2) as u8;
                 input[idx] = val;
@@ -665,14 +666,14 @@ mod tests {
             }
         }
 
-        // Encode at high quality
-        let encoder = Encoder::new()
-            .width(width as u32)
-            .height(height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .jpegli_quality(Quality::from_quality(98.0));
-
-        let jpeg = encoder.encode(&input).expect("encoding should succeed");
+        // Encode at high quality using v2 API
+        let config = EncoderConfig::new().quality(98.0);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation should succeed");
+        enc.push_packed(&input, Unstoppable)
+            .expect("push should succeed");
+        let jpeg = enc.finish().expect("encoding should succeed");
 
         // Decode to f32
         let decoder = Decoder::new().output_format(PixelFormat::Rgb);
