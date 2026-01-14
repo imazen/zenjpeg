@@ -9,9 +9,7 @@ A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
 ## Heritage and Divergence
 
-This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. After **six complete rewrites**, it's no longer really "jpegli" — it's an independent JPEG encoder that draws from the best ideas in jpegli and elsewhere.
-
-The name persists for historical reasons, but the codebase shares little with the C++ original beyond core concepts.
+This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. It's been rewritten a few times and has diverged to the point it should probably be renamed. 
 
 **Ideas we adopted from jpegli:**
 - Adaptive quantization (content-aware bit allocation)
