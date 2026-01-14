@@ -209,7 +209,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             decode_value(dc_cat, bits)
         };
 
-        coeffs[0] = self.prev_dc[component] + dc_diff;
+        // Use wrapping_add to handle malformed input gracefully without panicking
+        coeffs[0] = self.prev_dc[component].wrapping_add(dc_diff);
         self.prev_dc[component] = coeffs[0];
 
         // Decode AC coefficients with fast path
@@ -342,7 +343,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             decode_value(dc_cat, bits)
         };
 
-        coeffs[0] = self.prev_dc[component] + dc_diff;
+        // Use wrapping_add to handle malformed input gracefully without panicking
+        coeffs[0] = self.prev_dc[component].wrapping_add(dc_diff);
         self.prev_dc[component] = coeffs[0];
 
         // Track the last non-zero position for tiered IDCT
