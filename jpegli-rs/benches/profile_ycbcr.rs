@@ -18,8 +18,8 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use enough::Unstoppable;
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Duration;
 
 /// Generate a test image with realistic-ish content for profiling.
@@ -65,51 +65,63 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // YCbCr 4:2:0 - most common, has chroma downsampling
     group.bench_function("ycbcr-420", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
-                .mode(JpegMode::Progressive)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(true)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S420)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Quarter);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 
     // YCbCr 4:4:4 - no chroma downsampling
     group.bench_function("ycbcr-444", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
-                .mode(JpegMode::Progressive)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(true)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S444)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Full);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 
     // Baseline mode variants (simpler scan structure)
     group.bench_function("ycbcr-420-baseline", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
-                .mode(JpegMode::Baseline)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(false)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S420)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Quarter);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 
     group.bench_function("ycbcr-444-baseline", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
-                .mode(JpegMode::Baseline)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(false)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S444)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Full);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 

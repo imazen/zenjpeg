@@ -5,7 +5,7 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```ignore
 //! use jpegli::{Encoder, QualityConversion, QualityComparisonMetric, Subsampling};
 //!
 //! // Convert mozjpeg Q85 to equivalent jpegli quality

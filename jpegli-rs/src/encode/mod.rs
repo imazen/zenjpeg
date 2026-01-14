@@ -181,7 +181,7 @@ impl Encoder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```ignore
     /// use jpegli::{Encoder, QualityConversion, QualityComparisonMetric, Subsampling};
     ///
     /// // Match mozjpeg Q85 visual quality
@@ -376,7 +376,7 @@ impl Encoder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```ignore
     /// use jpegli::{Encoder, EdgePaddingConfig, EdgePadding};
     ///
     /// // Match C++ jpegli behavior

@@ -1,10 +1,10 @@
 //! Decoding benchmarks for jpegli.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use enough::Unstoppable;
 use jpegli::decode::Decoder;
 use jpegli::decoder::PixelFormat;
-use jpegli::encode::Encoder;
-use jpegli::quant::Quality;
+use jpegli::encode::{EncoderConfig, PixelLayout};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];
@@ -17,13 +17,13 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
         }
     }
 
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::Traditional(quality));
-
-    encoder.encode(&data).expect("encoding should succeed")
+    let config = EncoderConfig::new().quality(quality);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder creation should succeed");
+    enc.push_packed(&data, Unstoppable)
+        .expect("push should succeed");
+    enc.finish().expect("encoding should succeed")
 }
 
 fn bench_decode(c: &mut Criterion) {
