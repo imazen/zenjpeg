@@ -1,7 +1,7 @@
 //! Test edge padding with a synthetic image that has varied edge content
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::fs;
 
 fn save_png(path: &str, rgb: &[u8], width: usize, height: usize) {

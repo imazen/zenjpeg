@@ -4,7 +4,7 @@
 //!        cargo run --release --example decode_profile -- --jpegli-only
 
 use enough::Unstoppable;
-use jpegli::{Decoder, EncoderConfig, PixelFormat, PixelLayout};
+use jpegli::{decoder::{Decoder, PixelFormat}, encoder::{EncoderConfig, PixelLayout}};
 use std::env;
 use std::time::Instant;
 use zune_jpeg::zune_core::bytestream::ZCursor;

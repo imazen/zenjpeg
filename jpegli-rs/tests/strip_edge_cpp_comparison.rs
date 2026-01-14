@@ -7,7 +7,7 @@
 
 use dssim::Dssim;
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -105,7 +105,7 @@ fn encode_rust(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, Never).expect("push");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push");
     enc.finish().expect("Rust encode failed")
 }
 

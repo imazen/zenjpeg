@@ -5,7 +5,7 @@
 
 use dssim::Dssim;
 use enough::Unstoppable;
-use jpegli::{decode::Decoder, ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
 use rgb::RGBA8;
 use std::process::Command;
 
@@ -75,7 +75,7 @@ fn encode_rust(
         .ycbcr(subsampling);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
-    enc.push_packed(pixels, Never).expect("push data");
+    enc.push_packed(pixels, enough::Unstoppable).expect("push data");
     enc.finish().expect("finish")
 }
 

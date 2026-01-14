@@ -16,7 +16,7 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 
 // Re-use old types for FFI compatibility
@@ -262,7 +262,7 @@ fn encode_rust(
 
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("Encoder creation failed");
-    enc.push_packed(rgb, Never).expect("push_packed failed");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push_packed failed");
     enc.finish().expect("Rust encode failed")
 }
 
@@ -533,7 +533,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 
 /// Decode using jpegli-rs with ICC profile support (required for XYB)
 fn decode_jpeg_jpegli(data: &[u8]) -> Vec<u8> {
-    jpegli::Decoder::new()
+    jpegli::decoder::Decoder::new()
         .apply_icc(true)
         .decode(data)
         .expect("jpegli decode failed")
@@ -1357,7 +1357,7 @@ fn test_ffi_encoding_works() {
     );
 
     // Try to decode with jpegli decoder to verify it's valid
-    let mut decoder = jpegli::Decoder::new();
+    let mut decoder = jpegli::decoder::Decoder::new();
     let decoded = decoder
         .decode(&jpeg[..])
         .expect("Failed to decode FFI-encoded JPEG");

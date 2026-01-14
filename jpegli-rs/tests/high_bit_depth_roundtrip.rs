@@ -15,22 +15,22 @@
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
 
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::decoder::Decoder;
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_rgb16(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb16(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb16Linear)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

@@ -4,7 +4,7 @@
 //! and that encode→decode→encode→decode produces stable results.
 
 use enough::Unstoppable;
-use jpegli::{Decoder, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -33,7 +33,7 @@ fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> V
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");
-    enc.push_packed(data, Never).expect("push failed");
+    enc.push_packed(data, enough::Unstoppable).expect("push failed");
     enc.finish().expect("finish failed")
 }
 

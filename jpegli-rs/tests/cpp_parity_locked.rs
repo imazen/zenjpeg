@@ -16,9 +16,9 @@
 use butteraugli::ButteraugliParams;
 use dssim::Dssim;
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 
@@ -324,7 +324,7 @@ fn encode_jpeg(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, Never).expect("push data");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push data");
     enc.finish().expect("Encoding failed")
 }
 

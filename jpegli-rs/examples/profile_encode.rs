@@ -3,7 +3,7 @@
 //! Run with: cargo flamegraph --release --example profile_encode -o encode.svg
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 
 fn main() {
     let (width, height) = (2048usize, 2048usize);

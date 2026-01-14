@@ -12,7 +12,7 @@
 use enough::Unstoppable;
 use jpegli::huffman_types::{compare_algorithms, SymbolFrequencies};
 use jpegli::types::HuffmanMethod;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a gradient test image
 fn generate_gradient(width: usize, height: usize) -> Vec<u8> {
@@ -45,7 +45,7 @@ fn generate_complex(width: usize, height: usize) -> Vec<u8> {
 /// Decode with multiple decoders to verify output is valid
 fn verify_decodable(jpeg_data: &[u8], expected_width: usize, expected_height: usize) -> bool {
     // Test with jpegli-rs decoder
-    let jpegli_ok = jpegli::Decoder::new().decode(jpeg_data).is_ok();
+    let jpegli_ok = jpegli::decoder::Decoder::new().decode(jpeg_data).is_ok();
 
     // Test with jpeg-decoder
     let jpeg_decoder_ok = {
@@ -80,9 +80,9 @@ fn encode_rgb(
     height: u32,
     data: &[u8],
     config: &EncoderConfig,
-) -> jpegli::Result<Vec<u8>> {
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
@@ -427,9 +427,9 @@ fn encode_gray(
     height: u32,
     data: &[u8],
     config: &EncoderConfig,
-) -> jpegli::Result<Vec<u8>> {
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

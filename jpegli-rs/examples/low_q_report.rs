@@ -34,7 +34,7 @@ fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize
 
 /// Decode JPEG using jpegli-rs decoder (works for YCbCr)
 fn decode_jpegli(data: &[u8]) -> Option<Vec<u8>> {
-    let decoder = jpegli::Decoder::new().apply_icc(true);
+    let decoder = jpegli::decoder::Decoder::new().apply_icc(true);
     decoder.decode(data).ok().map(|r| r.data)
 }
 
@@ -156,9 +156,9 @@ fn main() {
         }
 
         // Rust YCbCr
-        let config = jpegli::EncoderConfig::new().quality(q as f32);
+        let config = jpegli::encoder::EncoderConfig::new().quality(q as f32);
         let mut enc = config
-            .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
+            .encode_from_bytes(width as u32, height as u32, jpegli::encoder::PixelLayout::Rgb8Srgb)
             .unwrap();
         enc.push_packed(&rgb, enough::Unstoppable).unwrap();
         let rust_jpeg = enc.finish().unwrap();
@@ -220,9 +220,9 @@ fn main() {
         }
 
         // Rust XYB
-        let xyb_config = jpegli::EncoderConfig::new().quality(q as f32).xyb();
+        let xyb_config = jpegli::encoder::EncoderConfig::new().quality(q as f32).xyb();
         let xyb_enc = xyb_config
-            .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb);
+            .encode_from_bytes(width as u32, height as u32, jpegli::encoder::PixelLayout::Rgb8Srgb);
         if let Ok(mut enc) = xyb_enc {
             enc.push_packed(&rgb, enough::Unstoppable).unwrap();
             let rust_jpeg = enc.finish().unwrap();

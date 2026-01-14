@@ -9,9 +9,8 @@ use enough::Unstoppable;
 use test_utils::{generate_gradient_d, read_test_data, TestImage};
 
 use jpegli::{
-    decode::Decoder,
-    types::PixelFormat,
-    EncoderConfig, PixelLayout,
+    decoder::{Decoder, PixelFormat},
+    encoder::{EncoderConfig, PixelLayout},
 };
 use test_case::test_case;
 
@@ -19,15 +18,15 @@ use test_case::test_case;
 // Helper Functions
 // ============================================================================
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

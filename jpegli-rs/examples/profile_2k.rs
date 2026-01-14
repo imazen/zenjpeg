@@ -1,6 +1,6 @@
 //! Simple 2K profiling target for samply
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; width * height * 3];

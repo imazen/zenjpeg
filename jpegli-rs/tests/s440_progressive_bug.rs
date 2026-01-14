@@ -11,9 +11,9 @@
 //! uses luma table and Cb/Cr use chroma table, regardless of scan order.
 
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Regression test for the exact case found by the fuzzer.
 #[test]
@@ -31,7 +31,7 @@ fn test_s440_progressive_roundtrip() {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&pixels, Never).expect("push");
+    enc.push_packed(&pixels, enough::Unstoppable).expect("push");
     let encoded = enc.finish().expect("encode should succeed");
     eprintln!(
         "Encoded {} bytes for {}x{} S440 Progressive",
@@ -70,7 +70,7 @@ fn test_all_subsampling_progressive() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&pixels, Never).expect("push");
+        enc.push_packed(&pixels, enough::Unstoppable).expect("push");
 
         let encoded = match enc.finish() {
             Ok(data) => data,
@@ -116,7 +116,7 @@ fn test_progressive_subsampling_various_sizes() {
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
                 .expect("encoder setup");
-            enc.push_packed(&pixels, Never).expect("push");
+            enc.push_packed(&pixels, enough::Unstoppable).expect("push");
 
             let encoded = enc
                 .finish()

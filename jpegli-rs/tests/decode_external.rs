@@ -24,7 +24,7 @@ fn compute_dssim(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
 }
 
 fn decode_with_jpegli(data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
-    let decoder = jpegli::Decoder::new();
+    let decoder = jpegli::decoder::Decoder::new();
     let img = decoder.decode(data).map_err(|e| e.to_string())?;
     Ok((img.data, img.width as usize, img.height as usize))
 }

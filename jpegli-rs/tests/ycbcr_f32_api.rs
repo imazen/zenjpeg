@@ -7,7 +7,7 @@
 //! YCbCrPlanarEncoder::finish() is not yet implemented.
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelFormat, PixelLayout};
+use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::{Decoder, PixelFormat}};
 
 /// Helper to create a test RGB image with a gradient pattern.
 fn create_test_rgb(width: usize, height: usize) -> Vec<u8> {
@@ -46,7 +46,7 @@ fn encode_rgb_v2(width: u32, height: u32, data: &[u8], quality: f32, subsampling
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(data, Never).expect("push");
+    enc.push_packed(data, enough::Unstoppable).expect("push");
     enc.finish().expect("encode")
 }
 
@@ -56,7 +56,7 @@ fn encode_gray_v2(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8>
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(data, Never).expect("push");
+    enc.push_packed(data, enough::Unstoppable).expect("push");
     enc.finish().expect("encode")
 }
 

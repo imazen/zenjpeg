@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // =============================================================================
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
@@ -178,7 +178,7 @@ fn encode_jpeg(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, Never).expect("push");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push");
     enc.finish().expect("Encoding failed")
 }
 

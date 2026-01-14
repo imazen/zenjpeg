@@ -10,13 +10,13 @@ mod test_utils;
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
 use enough::Unstoppable;
-use jpegli::{decode::Decoder, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
 use test_case::test_case;
 
 /// Helper function to encode RGB data
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

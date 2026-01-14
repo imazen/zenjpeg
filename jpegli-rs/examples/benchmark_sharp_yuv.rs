@@ -7,7 +7,7 @@
 //! performance/quality tradeoff of Sharp YUV.
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {

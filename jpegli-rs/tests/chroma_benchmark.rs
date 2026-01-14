@@ -19,7 +19,8 @@
 use dssim::Dssim;
 use enough::Unstoppable;
 use jpegli::{
-    ChromaSubsampling, Decoder, DownsamplingMethod, EncoderConfig, Error, PixelLayout,
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, Error, PixelLayout},
 };
 use std::time::Instant;
 
@@ -209,7 +210,7 @@ fn encode_with_method(
     }
 
     let mut encoder = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    encoder.push_packed(data, Never)?;
+    encoder.push_packed(data, enough::Unstoppable)?;
     let jpeg_data = encoder.finish()?;
     let encode_time = start.elapsed().as_micros();
 

@@ -21,7 +21,7 @@
 mod test_utils;
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use test_utils::generate_gradient_d;
 
 /// Maximum quant value for baseline JPEG (8-bit DQT)
@@ -198,7 +198,7 @@ fn encode_test_image(pixels: &[u8], width: u32, height: u32, quality: f32) -> Ve
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(pixels, Never).expect("push");
+    enc.push_packed(pixels, enough::Unstoppable).expect("push");
     enc.finish().expect("encode")
 }
 

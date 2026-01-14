@@ -10,7 +10,7 @@
 //! 4. Document expected gaps until they're fixed
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;
 
@@ -160,7 +160,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, Never).expect("push data");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push data");
     enc.finish().expect("Rust encoding failed")
 }
 

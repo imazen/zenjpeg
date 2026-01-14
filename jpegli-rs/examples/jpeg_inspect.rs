@@ -440,7 +440,7 @@ fn validate_jpeg(data: &[u8], path: &str) {
 
     // Test with jpegli-rs decoder
     print!("  jpegli-rs:  ");
-    match jpegli::Decoder::new().decode(data) {
+    match jpegli::decoder::Decoder::new().decode(data) {
         Ok(img) => println!(
             "OK ({}x{}, {} bytes)",
             img.width,

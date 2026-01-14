@@ -12,7 +12,7 @@ use test_utils::{
     TestImage,
 };
 
-use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
 
 // ============================================================================
 // Helper Functions
@@ -22,7 +22,7 @@ fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> V
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");
-    enc.push_packed(data, Never).expect("push failed");
+    enc.push_packed(data, enough::Unstoppable).expect("push failed");
     enc.finish().expect("finish failed")
 }
 
@@ -30,7 +30,7 @@ fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> 
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
         .expect("encoder creation failed");
-    enc.push_packed(data, Never).expect("push failed");
+    enc.push_packed(data, enough::Unstoppable).expect("push failed");
     enc.finish().expect("finish failed")
 }
 

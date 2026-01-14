@@ -11,7 +11,7 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::path::Path;
 use std::process::Command;
 

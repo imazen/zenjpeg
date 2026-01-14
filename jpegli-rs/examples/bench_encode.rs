@@ -1,5 +1,5 @@
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn benchmark(

@@ -6,7 +6,7 @@
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -104,7 +104,7 @@ fn register_rust_jpegli(session: &mut EvalSession) {
                     codec: "jpegli-rs".to_string(),
                     message: format!("{}", e),
                 })?;
-            enc.push_packed(&rgb_data, Never).map_err(|e| codec_eval::Error::Codec {
+            enc.push_packed(&rgb_data, enough::Unstoppable).map_err(|e| codec_eval::Error::Codec {
                 codec: "jpegli-rs".to_string(),
                 message: format!("{}", e),
             })?;
