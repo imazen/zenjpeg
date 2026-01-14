@@ -39,6 +39,7 @@ use std::path::Path;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // pareto/same_size are parsed but not yet implemented
 struct Config {
     encoders: Vec<EncoderConfig>,
     qualities: Vec<u8>,

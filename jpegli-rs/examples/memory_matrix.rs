@@ -92,6 +92,7 @@ struct EncoderTest {
 }
 
 /// Result of running an encoder test
+#[allow(dead_code)] // Fields stored for analysis/reporting
 struct TestResult {
     test: EncoderTest,
     estimated: usize,
