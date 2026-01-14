@@ -146,7 +146,7 @@ required-features = ["test-utils"]
 # C++ comparison tools
 [[example]]
 name = "cpp_timing_matrix"
-required-features = ["decoder", "test-utils"]
+required-features = ["decoder", "test-utils", "cms"]
 
 # Tests requiring FFI (libjpeg linkage)
 [[test]]
