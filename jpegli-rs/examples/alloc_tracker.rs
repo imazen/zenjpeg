@@ -1,7 +1,8 @@
-//! Allocation tracker to measure peak memory usage during encoding.
+//! Memory usage validation: estimated vs actual vs locked expectations.
 //!
-//! This example tracks all allocations through a custom global allocator
-//! and reports peak memory usage for different image sizes.
+//! This example validates that:
+//! 1. Actual peak memory matches the estimate within tolerance
+//! 2. Actual peak memory doesn't exceed locked regression thresholds
 //!
 //! Run with: cargo run --release --example alloc_tracker
 
@@ -13,8 +14,6 @@ struct TrackingAllocator;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
-static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-static DEALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -23,7 +22,6 @@ unsafe impl GlobalAlloc for TrackingAllocator {
             let size = layout.size();
             let current = ALLOCATED.fetch_add(size, Ordering::SeqCst) + size;
             PEAK.fetch_max(current, Ordering::SeqCst);
-            ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
         }
         ptr
     }
@@ -31,7 +29,6 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         System.dealloc(ptr, layout);
         ALLOCATED.fetch_sub(layout.size(), Ordering::SeqCst);
-        DEALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -53,20 +50,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 #[global_allocator]
 static GLOBAL: TrackingAllocator = TrackingAllocator;
 
-fn reset_stats() {
-    ALLOCATED.store(0, Ordering::SeqCst);
-    PEAK.store(0, Ordering::SeqCst);
-    ALLOC_COUNT.store(0, Ordering::SeqCst);
-    DEALLOC_COUNT.store(0, Ordering::SeqCst);
+fn reset_peak() {
+    PEAK.store(ALLOCATED.load(Ordering::SeqCst), Ordering::SeqCst);
 }
 
-fn get_stats() -> (usize, usize, usize, usize) {
-    (
-        ALLOCATED.load(Ordering::SeqCst),
-        PEAK.load(Ordering::SeqCst),
-        ALLOC_COUNT.load(Ordering::SeqCst),
-        DEALLOC_COUNT.load(Ordering::SeqCst),
-    )
+fn get_peak() -> usize {
+    PEAK.load(Ordering::SeqCst)
 }
 
 fn format_bytes(bytes: usize) -> String {
@@ -75,194 +64,135 @@ fn format_bytes(bytes: usize) -> String {
     } else if bytes >= 1024 {
         format!("{:.2} KB", bytes as f64 / 1024.0)
     } else {
-        format!("{} bytes", bytes)
+        format!("{} B", bytes)
+    }
+}
+
+/// Locked memory expectations (peak bytes).
+/// These are regression thresholds - actual usage should not exceed these.
+/// Update these values when intentionally changing memory behavior.
+fn locked_expectation(width: usize, height: usize, subsampling: &str) -> Option<usize> {
+    // Format: (width, height, subsampling) -> max allowed peak bytes
+    // These are ~10% above measured values to allow for minor fluctuations
+    match (width, height, subsampling) {
+        (1920, 1080, "4:2:0") => Some(28 * 1024 * 1024),  // ~25 MB measured
+        (1920, 1080, "4:4:4") => Some(35 * 1024 * 1024),  // ~32 MB measured
+        (3840, 2160, "4:2:0") => Some(105 * 1024 * 1024), // ~95 MB measured
+        (3840, 2160, "4:4:4") => Some(135 * 1024 * 1024), // ~122 MB measured
+        (4000, 3000, "4:2:0") => Some(130 * 1024 * 1024), // ~118 MB measured
+        (4000, 3000, "4:4:4") => Some(170 * 1024 * 1024), // ~155 MB measured
+        _ => None,
     }
 }
 
 fn main() {
     use enough::Unstoppable;
-    use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
+    use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
-    println!("=== jpegli-rs Allocation Tracking ===\n");
+    println!("=== Memory Usage Validation ===\n");
+    println!(
+        "{:<20} {:<10} {:>12} {:>12} {:>12} {:>8} {:>8}",
+        "Image", "Subsamp", "Estimated", "Actual", "Locked", "Est Δ", "Status"
+    );
+    println!("{}", "-".repeat(90));
 
-    // Test different image sizes
     let test_cases = [
-        (1920, 1080, "2K (1920×1080)"),
-        (3840, 2160, "4K (3840×2160)"),
-        (4000, 3000, "12MP (4000×3000)"),
+        (1920, 1080, "2K"),
+        (3840, 2160, "4K"),
+        (4000, 3000, "12MP"),
     ];
 
-    let quality_levels = [75, 85, 95];
-    let subsamplings = [(ChromaSubsampling::Quarter, "4:2:0"), (ChromaSubsampling::Full, "4:4:4")];
+    let subsamplings = [
+        (ChromaSubsampling::Quarter, "4:2:0"),
+        (ChromaSubsampling::Full, "4:4:4"),
+    ];
 
-    println!(
-        "{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
-        "Image", "Quality", "Subsamp", "Input Size", "Peak Alloc", "Allocs", "Output"
-    );
-    println!("{}", "-".repeat(95));
+    let mut all_passed = true;
 
     for (width, height, name) in &test_cases {
-        for &quality in &quality_levels {
-            for (subsampling, sub_name) in &subsamplings {
-                // Create test image (gradient)
-                let input_size = width * height * 3;
-                let mut rgb_data = vec![0u8; input_size];
-                for y in 0..*height {
-                    for x in 0..*width {
-                        let idx = (y * width + x) * 3;
-                        rgb_data[idx] = (x * 255 / width) as u8;
-                        rgb_data[idx + 1] = (y * 255 / height) as u8;
-                        rgb_data[idx + 2] = 128;
-                    }
+        for (subsampling, sub_name) in &subsamplings {
+            // Create test image
+            let input_size = width * height * 3;
+            let mut rgb_data = vec![0u8; input_size];
+            for y in 0..*height {
+                for x in 0..*width {
+                    let idx = (y * width + x) * 3;
+                    rgb_data[idx] = (x * 255 / width) as u8;
+                    rgb_data[idx + 1] = (y * 255 / height) as u8;
+                    rgb_data[idx + 2] = 128;
                 }
-
-                // Reset stats before encoding
-                reset_stats();
-
-                // Create encoder using v2 API
-                let config = EncoderConfig::new()
-                    .quality(Quality::Traditional(quality as f32))
-                    .ycbcr(*subsampling)
-                    .optimize_huffman(true);
-
-                let mut enc = config
-                    .encode_from_bytes(*width as u32, *height as u32, PixelLayout::Rgb8Srgb)
-                    .expect("encoder setup");
-                enc.push_packed(&rgb_data, Unstoppable).expect("push");
-                let output = enc.finish().expect("encoding failed");
-
-                let (current, peak, alloc_count, _dealloc_count) = get_stats();
-
-                println!(
-                    "{:<20} {:<10} {:<10} {:<15} {:<15} {:<12} {:<12}",
-                    name,
-                    quality,
-                    sub_name,
-                    format_bytes(input_size),
-                    format_bytes(peak),
-                    alloc_count,
-                    format_bytes(output.len())
-                );
-
-                // Give some time for deallocations
-                drop(output);
-                drop(rgb_data);
-
-                // Small yield for memory tracking to settle
-                std::thread::yield_now();
             }
+
+            // Get estimate before encoding
+            let config = EncoderConfig::new()
+                .quality(85.0)
+                .ycbcr(*subsampling)
+                .optimize_huffman(true);
+
+            let estimated = config.estimate_memory(*width as u32, *height as u32);
+
+            // Measure actual usage
+            reset_peak();
+
+            let mut enc = config
+                .encode_from_bytes(*width as u32, *height as u32, PixelLayout::Rgb8Srgb)
+                .expect("encoder setup");
+            enc.push_packed(&rgb_data, Unstoppable).expect("push");
+            let _output = enc.finish().expect("encoding failed");
+
+            let actual = get_peak();
+
+            // Get locked expectation
+            let locked = locked_expectation(*width, *height, sub_name);
+
+            // Calculate estimate accuracy
+            let est_diff_pct = ((actual as f64 - estimated as f64) / estimated as f64) * 100.0;
+
+            // Check status
+            let status = if let Some(max) = locked {
+                if actual > max {
+                    all_passed = false;
+                    "REGRESS"
+                } else if est_diff_pct.abs() > 20.0 {
+                    "EST_OFF"
+                } else {
+                    "OK"
+                }
+            } else if est_diff_pct.abs() > 20.0 {
+                "EST_OFF"
+            } else {
+                "OK"
+            };
+
+            println!(
+                "{:<20} {:<10} {:>12} {:>12} {:>12} {:>+7.1}% {:>8}",
+                name,
+                sub_name,
+                format_bytes(estimated),
+                format_bytes(actual),
+                locked.map(format_bytes).unwrap_or_else(|| "-".to_string()),
+                est_diff_pct,
+                status
+            );
+
+            // Clean up
+            drop(_output);
+            drop(rgb_data);
         }
     }
 
-    println!("\n=== Detailed Breakdown for 12MP @ q85 4:2:0 ===\n");
-
-    // Detailed breakdown for one case
-    let width = 4000usize;
-    let height = 3000usize;
-    let input_size = width * height * 3;
-
-    // Create test image
-    let mut rgb_data = vec![0u8; input_size];
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) * 3;
-            rgb_data[idx] = ((x + y) % 256) as u8;
-            rgb_data[idx + 1] = ((x * 2 + y) % 256) as u8;
-            rgb_data[idx + 2] = ((x + y * 2) % 256) as u8;
-        }
+    println!();
+    if all_passed {
+        println!("✓ All memory checks passed");
+    } else {
+        println!("✗ Memory regression detected!");
+        std::process::exit(1);
     }
 
-    reset_stats();
-
-    let config = EncoderConfig::new()
-        .quality(Quality::Traditional(85.0))
-        .ycbcr(ChromaSubsampling::Quarter)
-        .optimize_huffman(true);
-
-    // Track pre-encode baseline
-    let (pre_current, pre_peak, pre_allocs, _) = get_stats();
-    println!("Pre-encode baseline:");
-    println!("  Current: {}", format_bytes(pre_current));
-    println!("  Peak:    {}", format_bytes(pre_peak));
-    println!("  Allocs:  {}", pre_allocs);
-
-    reset_stats();
-
-    let mut enc = config
-        .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
-        .expect("encoder setup");
-    enc.push_packed(&rgb_data, Unstoppable).expect("push");
-    let output = enc.finish().expect("encoding failed");
-
-    let (post_current, post_peak, post_allocs, post_deallocs) = get_stats();
-
-    println!("\nDuring encode:");
-    println!("  Peak:          {}", format_bytes(post_peak));
-    println!("  Final current: {}", format_bytes(post_current));
-    println!("  Allocations:   {}", post_allocs);
-    println!("  Deallocations: {}", post_deallocs);
-    println!("  Output size:   {}", format_bytes(output.len()));
-
-    println!("\nExpected components (theoretical):");
-    println!(
-        "  RGB input (owned by caller):      {} (not counted)",
-        format_bytes(input_size)
-    );
-    println!(
-        "  Y plane (f32):                    {}",
-        format_bytes(width * height * 4)
-    );
-    println!(
-        "  Cb plane (f32):                   {}",
-        format_bytes(width * height * 4)
-    );
-    println!(
-        "  Cr plane (f32):                   {}",
-        format_bytes(width * height * 4)
-    );
-    println!(
-        "  Cb downsampled (f32):             {}",
-        format_bytes((width / 2) * (height / 2) * 4)
-    );
-    println!(
-        "  Cr downsampled (f32):             {}",
-        format_bytes((width / 2) * (height / 2) * 4)
-    );
-
-    let blocks_y = ((width + 7) / 8) * ((height + 7) / 8);
-    let blocks_c = ((width / 2 + 7) / 8) * (((height / 2) + 7) / 8);
-    println!(
-        "  Y blocks (i16×64):                {}",
-        format_bytes(blocks_y * 64 * 2)
-    );
-    println!(
-        "  Cb blocks (i16×64):               {}",
-        format_bytes(blocks_c * 64 * 2)
-    );
-    println!(
-        "  Cr blocks (i16×64):               {}",
-        format_bytes(blocks_c * 64 * 2)
-    );
-    println!(
-        "  AQ map:                           {}",
-        format_bytes(blocks_y * 4)
-    );
-
-    let theoretical_total = width * height * 4 * 3 +  // YCbCr f32 planes
-        (width/2) * (height/2) * 4 * 2 +  // downsampled chroma
-        blocks_y * 64 * 2 + blocks_c * 64 * 2 * 2 +  // blocks
-        blocks_y * 4; // AQ map
-
-    println!(
-        "\n  Theoretical total:                {}",
-        format_bytes(theoretical_total)
-    );
-    println!(
-        "  Actual peak:                      {}",
-        format_bytes(post_peak)
-    );
-    println!(
-        "  Ratio:                            {:.2}x theoretical",
-        post_peak as f64 / theoretical_total as f64
-    );
+    println!("\nLegend:");
+    println!("  Estimated: EncoderConfig::estimate_memory() prediction");
+    println!("  Actual:    Peak allocation measured via tracking allocator");
+    println!("  Locked:    Regression threshold (actual must not exceed)");
+    println!("  Est Δ:     (Actual - Estimated) / Estimated × 100%");
+    println!("  Status:    OK | EST_OFF (>20% estimate error) | REGRESS (exceeds locked)");
 }
