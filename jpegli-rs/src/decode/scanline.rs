@@ -810,6 +810,78 @@ mod tests {
         enc.finish().unwrap()
     }
 
+    /// Compare two u8 slices and return (max_diff, diff_count, first_diff_idx)
+    fn compare_u8_slices(a: &[u8], b: &[u8]) -> (u8, usize, Option<usize>) {
+        assert_eq!(a.len(), b.len(), "slice length mismatch");
+        let mut max_diff: u8 = 0;
+        let mut diff_count: usize = 0;
+        let mut first_diff_idx: Option<usize> = None;
+
+        for (i, (&va, &vb)) in a.iter().zip(b.iter()).enumerate() {
+            let diff = (va as i16 - vb as i16).unsigned_abs() as u8;
+            if diff > 0 {
+                diff_count += 1;
+                if first_diff_idx.is_none() {
+                    first_diff_idx = Some(i);
+                }
+                if diff > max_diff {
+                    max_diff = diff;
+                }
+            }
+        }
+        (max_diff, diff_count, first_diff_idx)
+    }
+
+    /// Compare two f32 slices and return (max_diff, diff_count, first_diff_idx)
+    fn compare_f32_slices(a: &[f32], b: &[f32]) -> (f32, usize, Option<usize>) {
+        assert_eq!(a.len(), b.len(), "slice length mismatch");
+        let mut max_diff: f32 = 0.0;
+        let mut diff_count: usize = 0;
+        let mut first_diff_idx: Option<usize> = None;
+
+        for (i, (&va, &vb)) in a.iter().zip(b.iter()).enumerate() {
+            let diff = (va - vb).abs();
+            if diff > 1e-6 {
+                diff_count += 1;
+                if first_diff_idx.is_none() {
+                    first_diff_idx = Some(i);
+                }
+                if diff > max_diff {
+                    max_diff = diff;
+                }
+            }
+        }
+        (max_diff, diff_count, first_diff_idx)
+    }
+
+    /// Assert slices are equal, with detailed diff info on failure
+    fn assert_slices_equal_u8(actual: &[u8], expected: &[u8], context: &str) {
+        let (max_diff, diff_count, first_diff_idx) = compare_u8_slices(actual, expected);
+        if diff_count > 0 {
+            let first_idx = first_diff_idx.unwrap();
+            panic!(
+                "{}: slices differ - max_diff={}, diff_count={}/{} ({:.2}%), first_diff at idx {} (actual={}, expected={})",
+                context, max_diff, diff_count, actual.len(),
+                100.0 * diff_count as f64 / actual.len() as f64,
+                first_idx, actual[first_idx], expected[first_idx]
+            );
+        }
+    }
+
+    /// Assert f32 slices are equal, with detailed diff info on failure
+    fn assert_slices_equal_f32(actual: &[f32], expected: &[f32], context: &str) {
+        let (max_diff, diff_count, first_diff_idx) = compare_f32_slices(actual, expected);
+        if diff_count > 0 {
+            let first_idx = first_diff_idx.unwrap();
+            panic!(
+                "{}: slices differ - max_diff={:.6}, diff_count={}/{} ({:.2}%), first_diff at idx {} (actual={:.6}, expected={:.6})",
+                context, max_diff, diff_count, actual.len(),
+                100.0 * diff_count as f64 / actual.len() as f64,
+                first_idx, actual[first_idx], expected[first_idx]
+            );
+        }
+    }
+
     #[test]
     fn test_srgb_to_linear() {
         // Black
@@ -875,10 +947,7 @@ mod tests {
             decoded.data.len(),
             "output size mismatch"
         );
-        assert_eq!(
-            scanline_pixels, decoded.data,
-            "scanline reader output differs from regular decode"
-        );
+        assert_slices_equal_u8(&scanline_pixels, &decoded.data, "test_scanline_reader_rgb8");
     }
 
     #[test]
@@ -923,7 +992,7 @@ mod tests {
         }
 
         assert_eq!(total_rows, height as usize);
-        assert_eq!(scanline_pixels, decoded.data);
+        assert_slices_equal_u8(&scanline_pixels, &decoded.data, "test_scanline_reader_partial_reads");
     }
 
     #[test]
@@ -958,23 +1027,42 @@ mod tests {
         }
 
         // Verify RGBX matches RGB with alpha=255
+        // First collect stats
+        let mut max_diff: u8 = 0;
+        let mut diff_count: usize = 0;
+        let mut first_diff: Option<(usize, usize, &str, u8, u8)> = None;
+
         for y in 0..height as usize {
             for x in 0..width as usize {
                 let rgb_idx = (y * width as usize + x) * 3;
                 let rgbx_idx = (y * width as usize + x) * 4;
-                assert_eq!(rgbx_pixels[rgbx_idx], decoded.data[rgb_idx], "R mismatch");
-                assert_eq!(
-                    rgbx_pixels[rgbx_idx + 1],
-                    decoded.data[rgb_idx + 1],
-                    "G mismatch"
-                );
-                assert_eq!(
-                    rgbx_pixels[rgbx_idx + 2],
-                    decoded.data[rgb_idx + 2],
-                    "B mismatch"
-                );
+
+                for (c, name) in [(0, "R"), (1, "G"), (2, "B")] {
+                    let actual = rgbx_pixels[rgbx_idx + c];
+                    let expected = decoded.data[rgb_idx + c];
+                    let diff = (actual as i16 - expected as i16).unsigned_abs() as u8;
+                    if diff > 0 {
+                        diff_count += 1;
+                        if first_diff.is_none() {
+                            first_diff = Some((x, y, name, actual, expected));
+                        }
+                        if diff > max_diff {
+                            max_diff = diff;
+                        }
+                    }
+                }
                 assert_eq!(rgbx_pixels[rgbx_idx + 3], 255, "Alpha should be 255");
             }
+        }
+
+        if diff_count > 0 {
+            let (x, y, ch, actual, expected) = first_diff.unwrap();
+            let total = (width * height * 3) as usize;
+            panic!(
+                "test_scanline_reader_rgbx8: max_diff={}, diff_count={}/{} ({:.2}%), first_diff at ({},{}) {}={} expected={}",
+                max_diff, diff_count, total, 100.0 * diff_count as f64 / total as f64,
+                x, y, ch, actual, expected
+            );
         }
     }
 
@@ -1031,26 +1119,40 @@ mod tests {
         }
 
         // Verify RGB matches (converting back from linear)
+        let mut max_diff: f32 = 0.0;
+        let mut diff_count: usize = 0;
+        let mut first_diff: Option<(usize, usize, usize, f32, f32)> = None;
+
         for y in 0..height as usize {
             for x in 0..width as usize {
                 let rgb_idx = (y * width as usize + x) * 3;
                 let rgba_idx = (y * width as usize + x) * 4;
 
-                // Compare each channel (allow some tolerance due to linear conversion)
                 for c in 0..3 {
                     let expected_linear = srgb_to_linear(decoded.data[rgb_idx + c]);
                     let actual_linear = rgba_pixels[rgba_idx + c];
-                    assert!(
-                        (expected_linear - actual_linear).abs() < 0.01,
-                        "Linear mismatch at ({},{}) channel {}: expected {}, got {}",
-                        x,
-                        y,
-                        c,
-                        expected_linear,
-                        actual_linear
-                    );
+                    let diff = (expected_linear - actual_linear).abs();
+                    if diff > 0.01 {
+                        diff_count += 1;
+                        if first_diff.is_none() {
+                            first_diff = Some((x, y, c, actual_linear, expected_linear));
+                        }
+                        if diff > max_diff {
+                            max_diff = diff;
+                        }
+                    }
                 }
             }
+        }
+
+        if diff_count > 0 {
+            let (x, y, c, actual, expected) = first_diff.unwrap();
+            let total = (width * height * 3) as usize;
+            panic!(
+                "test_scanline_reader_rgba_f32: max_diff={:.6}, diff_count={}/{} ({:.2}%), first_diff at ({},{}) ch{}={:.6} expected={:.6}",
+                max_diff, diff_count, total, 100.0 * diff_count as f64 / total as f64,
+                x, y, c, actual, expected
+            );
         }
     }
 
@@ -1155,7 +1257,7 @@ mod tests {
         }
 
         assert_eq!(total_rows, height as usize);
-        assert_eq!(scanline_pixels, decoded.data);
+        assert_slices_equal_u8(&scanline_pixels, &decoded.data, "test_scanline_reader_non_mcu_aligned");
     }
 
     #[test]
