@@ -8,7 +8,6 @@
 //! Symptom: "Corrupt JPEG data: N extraneous bytes before marker" from djpeg,
 //! and all subsampled progressive modes produce the same file size as 4:4:4.
 
-use enough::Unstoppable;
 use jpegli::decoder::Decoder;
 use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

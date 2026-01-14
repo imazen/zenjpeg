@@ -6,7 +6,6 @@
 //! Run with: cargo test --release -p jpegli-rs --test strip_edge_cpp_comparison -- --nocapture --ignored
 
 use dssim::Dssim;
-use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;

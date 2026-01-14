@@ -10,7 +10,6 @@
 //! Fix: Use component_index for AC context assignment to ensure Y always
 //! uses luma table and Cb/Cr use chroma table, regardless of scan order.
 
-use enough::Unstoppable;
 use jpegli::decoder::Decoder;
 use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

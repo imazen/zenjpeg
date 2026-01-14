@@ -8,7 +8,6 @@
 //!
 //! Run with: cargo test --release -p jpegli-rs --test edge_tile_ssim2_comparison -- --nocapture --ignored
 
-use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;

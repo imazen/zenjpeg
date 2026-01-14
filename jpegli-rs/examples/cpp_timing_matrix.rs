@@ -795,7 +795,7 @@ fn main() {
 
     // Save to CSV if requested
     if let Some(csv_file) = csv_path {
-        use std::io::Write;
+        
         let mut csv = String::new();
         csv.push_str("size,width,height,mode,rust_ms,cpp_ms,time_diff_pct,rust_kb,cpp_kb,size_diff_pct,rust_ssim2,cpp_ssim2,ssim2_diff,parity_px\n");
 

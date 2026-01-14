@@ -7,17 +7,13 @@
 mod test_utils;
 
 use test_utils::{
-    distance_rms, generate_gradient_d, get_test_data_path, max_pixel_diff, read_test_data,
-    TestImage,
+    distance_rms, generate_gradient_d, get_test_data_path, read_test_data,
 };
 
-use enough::Unstoppable;
 use jpegli::{
     decoder::Decoder,
     encoder::{EncoderConfig, PixelLayout},
 };
-use std::path::Path;
-use test_case::test_case;
 
 fn encode_rgb(
     width: u32,

@@ -479,7 +479,7 @@ mod tests {
         // Should be able to encode all symbols
         let (code0, len0) = table.encode(0);
         let (code1, len1) = table.encode(1);
-        let (code2, len2) = table.encode(2);
+        let (_code2, len2) = table.encode(2);
 
         assert!(len0 > 0);
         assert!(len1 > 0);

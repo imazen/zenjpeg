@@ -13,7 +13,6 @@ use butteraugli::{compute_butteraugli, ButteraugliParams};
 use enough::Unstoppable;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::path::Path;
-use std::process::Command;
 
 fn main() {
     let image_path = std::env::args()

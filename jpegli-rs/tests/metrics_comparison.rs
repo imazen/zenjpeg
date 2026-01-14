@@ -4,12 +4,10 @@
 //! consistent results that match C++ implementations.
 
 use dssim::Dssim;
-use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
-use std::path::Path;
 
 fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
     data.chunks(3)

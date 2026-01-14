@@ -1,6 +1,5 @@
 //! Debug test for Gray16 linear encoding issue
 
-use enough::Unstoppable;
 use jpegli::decoder::Decoder;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::collections::HashSet;

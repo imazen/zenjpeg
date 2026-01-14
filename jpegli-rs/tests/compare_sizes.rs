@@ -1,4 +1,3 @@
-use enough::Unstoppable;
 use jpegli::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},

@@ -6,7 +6,6 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use enough::Unstoppable;
 use test_utils::{
     distance_rms, generate_color_bars, generate_gradient_d, max_pixel_diff, read_test_data,
     TestImage,

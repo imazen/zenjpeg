@@ -674,7 +674,7 @@ mod tests {
     fn test_std_ac_luminance_encode() {
         let table = HuffmanEncodeTable::std_ac_luminance();
         // EOB (0x00) should be encoded
-        let (code, len) = table.encode(0x00);
+        let (_code, len) = table.encode(0x00);
         assert!(len > 0 && len <= 16);
     }
 

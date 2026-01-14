@@ -10,7 +10,6 @@
 //!
 //! To regenerate values: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 
-use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashMap;
 use std::process::Command;
@@ -306,7 +305,7 @@ fn test_s444_opt_parity() {
 fn test_s444_fixed_parity() {
     let (rgb, width, height) = load_test_image();
 
-    for &(q, expected_rust, expected_cpp, _, _) in S444_FIXED {
+    for &(q, expected_rust, _expected_cpp, _, _) in S444_FIXED {
         let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::Full, false);
         let rust_size = jpeg.len();
 
@@ -358,7 +357,7 @@ fn test_s420_opt_parity() {
 fn test_s422_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
-    for &(q, expected_rust, expected_cpp, _, _) in S422_OPT {
+    for &(q, expected_rust, _expected_cpp, _, _) in S422_OPT {
         let jpeg = encode_rust(
             &rgb,
             width,
@@ -424,7 +423,7 @@ fn test_s440_opt_parity() {
 #[ignore] // Run with: cargo test --test parity_reference_locked print_summary -- --ignored --nocapture
 fn print_summary() {
     let (rgb, width, height) = load_test_image();
-    let png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/1.png");
+    let _png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/1.png");
 
     println!("=== C++ vs Rust Parity Summary ===\n");
     println!("Test image: {}x{}\n", width, height);
@@ -454,7 +453,7 @@ fn print_summary() {
         ),
     ];
 
-    for (name, subsampling, opt, cpp_mode, reference) in configs {
+    for (name, subsampling, opt, _cpp_mode, reference) in configs {
         println!("{}:", name);
         println!("{:>5} {:>10} {:>10} {:>10}", "Q", "C++", "Rust", "Diff");
 

@@ -4,7 +4,6 @@
 //! This test answers: "How many distinct colors can survive a roundtrip
 //! through jpegli for each input/output format combination?"
 
-use enough::Unstoppable;
 use jpegli::decoder::Decoder;
 use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

@@ -12,10 +12,9 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use enough::Unstoppable;
 use jpegli::{
     decoder::{Decoder, DecoderConfig, PixelFormat},
-    encoder::{ChromaSubsampling, EncoderConfig, Error, PixelLayout, Quality},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
 };
 use test_utils::{
     generate_checkerboard, generate_color_bars, generate_gradient_d, generate_gradient_h,

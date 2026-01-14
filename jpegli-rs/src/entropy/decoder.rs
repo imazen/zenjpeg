@@ -724,7 +724,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::huffman::{HuffmanDecodeTable, HuffmanEncodeTable};
+    use crate::huffman::HuffmanDecodeTable;
 
     #[test]
     fn test_entropy_decoder_new() {

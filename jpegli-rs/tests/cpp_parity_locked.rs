@@ -15,7 +15,6 @@
 
 use butteraugli::ButteraugliParams;
 use dssim::Dssim;
-use enough::Unstoppable;
 use jpegli::decoder::Decoder;
 use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

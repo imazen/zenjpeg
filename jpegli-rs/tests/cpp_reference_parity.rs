@@ -6,7 +6,6 @@
 //!
 //! Thresholds are intentionally tight to catch regressions.
 
-use enough::Unstoppable;
 use jpegli::decoder::Decoder;
 use jpegli::decoder::PixelFormat;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
