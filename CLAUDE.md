@@ -2,6 +2,15 @@
 
 Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 
+## API Stability Rules (CRITICAL)
+
+**DO NOT change the public API without explicit approval:**
+
+1. **No re-exports at crate root** - Types stay in their modules (`encoder::EncoderConfig`, not `EncoderConfig`)
+2. **No new public types/functions** without approval
+3. **No changes to existing function signatures**
+4. **Doc links use full paths** - `[`encoder::EncoderConfig`]` not `[`EncoderConfig`]`
+
 ## Context Preservation (CRITICAL)
 
 **You may lose context at any time.** Always record findings immediately:

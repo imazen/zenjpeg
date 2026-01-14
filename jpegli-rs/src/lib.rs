@@ -57,9 +57,9 @@
 //!
 //! | Method | Input Type | Use Case |
 //! |--------|------------|----------|
-//! | [`EncoderConfig::encode_from_bytes`] | `&[u8]` | Raw byte buffers |
-//! | [`EncoderConfig::encode_from_rgb`] | `rgb` crate types | Type-safe pixels |
-//! | [`EncoderConfig::encode_from_ycbcr_planar`] | [`YCbCrPlanes`](encoder::YCbCrPlanes) | Video pipelines |
+//! | [`encoder::EncoderConfig::encode_from_bytes`] | `&[u8]` | Raw byte buffers |
+//! | [`encoder::EncoderConfig::encode_from_rgb`] | `rgb` crate types | Type-safe pixels |
+//! | [`encoder::EncoderConfig::encode_from_ycbcr_planar`] | [`YCbCrPlanes`](encoder::YCbCrPlanes) | Video pipelines |
 //!
 //! ### Configuration Options
 //!
