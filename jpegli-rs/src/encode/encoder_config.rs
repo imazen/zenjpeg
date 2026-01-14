@@ -22,7 +22,7 @@ pub struct EncoderConfig {
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
-    pub(crate) parallel: Option<super::types::ParallelEncoding>,
+    pub(crate) parallel: Option<super::encoder_types::ParallelEncoding>,
     /// Hybrid quantization configuration (requires `experimental-hybrid-trellis` feature)
     #[cfg(feature = "experimental-hybrid-trellis")]
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
@@ -155,7 +155,7 @@ impl EncoderConfig {
     /// Requires the `parallel` feature flag.
     #[cfg(feature = "parallel")]
     #[must_use]
-    pub fn parallel(mut self, mode: super::types::ParallelEncoding) -> Self {
+    pub fn parallel(mut self, mode: super::encoder_types::ParallelEncoding) -> Self {
         self.parallel = Some(mode);
         self
     }
