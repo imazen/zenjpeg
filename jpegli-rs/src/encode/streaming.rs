@@ -1196,7 +1196,7 @@ impl StreamingEncoder {
             // XYB mode: uses different headers, tables, and encoding
             encoder.write_header_xyb(&mut output)?;
             encoder.write_app14_adobe(&mut output, 0)?;
-            encoder.write_icc_profile(&mut output, &crate::consts::XYB_ICC_PROFILE)?;
+            encoder.write_icc_profile(&mut output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
             encoder.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
             // Use SOF1 if any quant table needs 16-bit precision
             let is_extended =
@@ -1291,7 +1291,7 @@ impl StreamingEncoder {
 
         // Write EOI marker
         output.push(0xFF);
-        output.push(crate::consts::MARKER_EOI);
+        output.push(crate::foundation::consts::MARKER_EOI);
 
         Ok(output)
     }

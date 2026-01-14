@@ -7,8 +7,8 @@
 //!
 //! SIMD optimization via the `wide` crate is always enabled.
 
-use crate::alloc::{checked_size, checked_size_2d, try_alloc_zeroed};
-use crate::consts::{
+use crate::foundation::alloc::{checked_size, checked_size_2d, try_alloc_zeroed};
+use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_CB_TO_B, YCBCR_CB_TO_G, YCBCR_CB_TO_R,
     YCBCR_CR_TO_B, YCBCR_CR_TO_G, YCBCR_CR_TO_R, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y, YCBCR_Y_TO_B, YCBCR_Y_TO_G, YCBCR_Y_TO_R,

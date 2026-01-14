@@ -12,7 +12,7 @@ pub mod aq;
 // Quality conversion between encoders
 pub mod quality_conversion;
 
-use crate::consts::{
+use crate::foundation::consts::{
     quality_to_distance, BASE_QUANT_MATRIX_STD, BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR,
     DCT_BLOCK_SIZE, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
 };
@@ -304,7 +304,7 @@ pub fn quant_vals_to_distance(
     cb_quant: &QuantTable,
     cr_quant: &QuantTable,
 ) -> f32 {
-    use crate::consts::{BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_YCBCR};
+    use crate::foundation::consts::{BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_YCBCR};
 
     const DIST_MAX: f32 = 10000.0;
     const QUANT_MAX: u16 = 255; // baseline JPEG
@@ -560,7 +560,7 @@ fn generate_standard_quant_table(
     is_420: bool,
     allow_16bit: bool,
 ) -> QuantTable {
-    use crate::consts::{GLOBAL_SCALE_420, K420_RESCALE};
+    use crate::foundation::consts::{GLOBAL_SCALE_420, K420_RESCALE};
 
     let mut values = [0u16; DCT_BLOCK_SIZE];
 
@@ -873,7 +873,7 @@ pub fn dequantize_unzigzag_i32(
     zigzag_coeffs: &[i16; DCT_BLOCK_SIZE],
     quant_natural: &[u16; DCT_BLOCK_SIZE],
 ) -> [i32; DCT_BLOCK_SIZE] {
-    use crate::consts::JPEG_ZIGZAG_ORDER;
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
     let mut result = [0i32; DCT_BLOCK_SIZE];
 
@@ -895,7 +895,7 @@ pub fn dequantize_unzigzag_i32_into(
     quant_natural: &[u16; DCT_BLOCK_SIZE],
     result: &mut [i32; DCT_BLOCK_SIZE],
 ) {
-    use crate::consts::JPEG_ZIGZAG_ORDER;
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
     for natural_idx in 0..DCT_BLOCK_SIZE {
         let zigzag_idx = JPEG_ZIGZAG_ORDER[natural_idx] as usize;

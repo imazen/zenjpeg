@@ -2,8 +2,8 @@
 //!
 //! Provides `EntropyDecoder` for baseline and progressive JPEG decoding.
 
-use crate::bitstream::BitReader;
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::bitstream::BitReader;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;
 
@@ -66,7 +66,7 @@ pub struct EntropyDecoder<'data, 'tables> {
 /// Saved state of an EntropyDecoder for speculative decoding.
 #[derive(Clone, Copy)]
 pub struct EntropyDecoderState {
-    reader_state: crate::bitstream::BitReaderState,
+    reader_state: crate::foundation::bitstream::BitReaderState,
     prev_dc: [i16; 4],
 }
 

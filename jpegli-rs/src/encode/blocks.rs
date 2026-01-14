@@ -9,7 +9,7 @@
 #![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
 use super::Encoder;
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::encode::hybrid;
 use crate::entropy::{self, EntropyEncoder};

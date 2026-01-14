@@ -37,7 +37,7 @@ use core::arch::x86_64::{
     _mm_shuffle_epi8, _mm_storeu_ps,
 };
 
-use crate::consts::{
+use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
 };

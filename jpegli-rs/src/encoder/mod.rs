@@ -31,3 +31,6 @@ pub use crate::encode::v2::{
 
 #[cfg(feature = "parallel")]
 pub use crate::encode::v2::ParallelEncoding;
+
+// === Types used in encoder configuration ===
+pub use crate::types::HuffmanMethod;

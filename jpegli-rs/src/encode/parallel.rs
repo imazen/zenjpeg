@@ -15,8 +15,8 @@
 //!
 //! Minimum useful size: ~512x512 (4096 blocks)
 
-use crate::consts::DCT_BLOCK_SIZE;
-use crate::dct::simd::forward_dct_8x8_wide;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
+use crate::encode::dct::simd::forward_dct_8x8_wide;
 use crate::entropy::encoder::EntropyEncoder;
 use crate::foundation::simd_types::Block8x8f;
 use crate::huffman::HuffmanEncodeTable;

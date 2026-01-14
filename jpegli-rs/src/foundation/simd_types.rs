@@ -404,7 +404,7 @@ fn quantize_block_zigzag(
     zero_bias: &ZeroBiasSimd,
     aq_strength: f32,
 ) -> [i16; 64] {
-    use crate::consts::JPEG_ZIGZAG_ORDER;
+    use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
     let mut result = [0i16; 64];
     let aq = f32x8::splat(aq_strength);

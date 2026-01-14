@@ -25,9 +25,9 @@
 //! ```
 
 use super::idct_int::idct_int_tiered;
-use crate::alloc::try_alloc_uninitialized;
+use crate::foundation::alloc::try_alloc_uninitialized;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
-use crate::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
+use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result};
 use crate::huffman::HuffmanDecodeTable;

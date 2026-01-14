@@ -2,8 +2,8 @@
 //!
 //! Provides `EntropyEncoder` for baseline and progressive JPEG encoding.
 
-use crate::bitstream::BitWriter;
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::bitstream::BitWriter;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::error::{Error, Result};
 use crate::huffman::optimize::{ScanTokenInfo, Token};
 use crate::huffman::HuffmanEncodeTable;

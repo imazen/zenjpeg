@@ -1346,10 +1346,10 @@ impl ScanMode {
 
     /// Convert to jpegli JpegMode.
     #[must_use]
-    pub fn to_jpegli(&self) -> jpegli::JpegMode {
+    pub fn to_jpegli(&self) -> jpegli::decoder::JpegMode {
         match self {
-            Self::Baseline => jpegli::JpegMode::Baseline,
-            Self::Progressive => jpegli::JpegMode::Progressive,
+            Self::Baseline => jpegli::decoder::JpegMode::Baseline,
+            Self::Progressive => jpegli::decoder::JpegMode::Progressive,
         }
     }
 }
@@ -1388,23 +1388,23 @@ impl ChromaSubsampling {
 
     /// Convert to jpegli Subsampling type (legacy).
     #[must_use]
-    pub fn to_jpegli(&self) -> jpegli::Subsampling {
+    pub fn to_jpegli(&self) -> jpegli::decoder::Subsampling {
         match self {
-            Self::S444 => jpegli::Subsampling::S444,
-            Self::S422 => jpegli::Subsampling::S422,
-            Self::S420 => jpegli::Subsampling::S420,
-            Self::S440 => jpegli::Subsampling::S440,
+            Self::S444 => jpegli::decoder::Subsampling::S444,
+            Self::S422 => jpegli::decoder::Subsampling::S422,
+            Self::S420 => jpegli::decoder::Subsampling::S420,
+            Self::S440 => jpegli::decoder::Subsampling::S440,
         }
     }
 
     /// Convert to v2 API ChromaSubsampling type.
     #[must_use]
-    pub fn to_v2(&self) -> jpegli::encode::ChromaSubsampling {
+    pub fn to_v2(&self) -> jpegli::encoder::ChromaSubsampling {
         match self {
-            Self::S444 => jpegli::encode::ChromaSubsampling::Full,
-            Self::S422 => jpegli::encode::ChromaSubsampling::HalfHorizontal,
-            Self::S420 => jpegli::encode::ChromaSubsampling::Quarter,
-            Self::S440 => jpegli::encode::ChromaSubsampling::HalfVertical,
+            Self::S444 => jpegli::encoder::ChromaSubsampling::Full,
+            Self::S422 => jpegli::encoder::ChromaSubsampling::HalfHorizontal,
+            Self::S420 => jpegli::encoder::ChromaSubsampling::Quarter,
+            Self::S440 => jpegli::encoder::ChromaSubsampling::HalfVertical,
         }
     }
 }
@@ -1528,7 +1528,7 @@ impl EncoderConfig {
     }
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        use jpegli::encode::{EncoderConfig, PixelLayout};
+        use jpegli::encoder::{EncoderConfig, PixelLayout};
 
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         if self.hybrid {

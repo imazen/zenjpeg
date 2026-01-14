@@ -37,11 +37,11 @@
 
 mod convert;
 
-use crate::alloc::{
+use crate::foundation::alloc::{
     try_alloc_filled, try_alloc_zeroed_f32_tracked, try_clone_slice, try_with_capacity_tracked,
     AllocationStats,
 };
-use crate::consts::DCT_BLOCK_SIZE;
+use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::error::Result;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::quant::aq::streaming::StreamingAQ;
@@ -204,7 +204,7 @@ pub struct StripProcessor {
 
     // === Allocation tracking ===
     /// Tracks all allocations made by this processor
-    alloc_stats: crate::alloc::AllocationStats,
+    alloc_stats: crate::foundation::alloc::AllocationStats,
 }
 
 impl StripProcessor {
@@ -816,7 +816,7 @@ impl StripProcessor {
                         local_by,
                         padded_width,
                     );
-                    let dct = crate::dct::simd::forward_dct_8x8_wide(&block);
+                    let dct = crate::encode::dct::simd::forward_dct_8x8_wide(&block);
                     self.pending_y_blocks[pending_idx].push(dct);
                 }
             }
@@ -845,7 +845,7 @@ impl StripProcessor {
                             local_by,
                             padded_width,
                         );
-                        let cb_dct = crate::dct::simd::forward_dct_8x8_wide(&cb_block);
+                        let cb_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
                         self.pending_cb_blocks[pending_idx].push(cb_dct);
                     }
                 }
@@ -874,7 +874,7 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        let cr_dct = crate::dct::simd::forward_dct_8x8_wide(&cr_block);
+                        let cr_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
                         self.pending_cr_blocks[pending_idx].push(cr_dct);
                     }
                 }
@@ -903,7 +903,7 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        let cb_dct = crate::dct::simd::forward_dct_8x8_wide(&cb_block);
+                        let cb_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
                         self.pending_cb_blocks[pending_idx].push(cb_dct);
 
                         // Cr block - DCT only (wide-native path)
@@ -913,7 +913,7 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        let cr_dct = crate::dct::simd::forward_dct_8x8_wide(&cr_block);
+                        let cr_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
                         self.pending_cr_blocks[pending_idx].push(cr_dct);
                     }
                 }
