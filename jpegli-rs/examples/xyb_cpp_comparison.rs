@@ -69,7 +69,7 @@ fn main() {
         // 2. Encode with Rust (XYB + hybrid)
         #[cfg(feature = "experimental-hybrid-trellis")]
         let rust_jpeg = {
-            use jpegli::hybrid_config::HybridConfig;
+            use jpegli::hybrid::HybridConfig;
 
             let config = EncoderConfig::new()
                 .quality(q as f32)

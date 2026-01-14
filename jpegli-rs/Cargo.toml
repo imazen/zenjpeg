@@ -144,6 +144,11 @@ required-features = ["test-utils"]
 name = "cpp_timing_matrix"
 required-features = ["decoder", "test-utils"]
 
+# Tests requiring FFI (libjpeg linkage)
+[[test]]
+name = "quality_matrix"
+required-features = ["ffi-tests"]
+
 # XYB debugging tools (for investigating quality gap vs C++ jpegli)
 [[example]]
 name = "compare_xyb_constants"

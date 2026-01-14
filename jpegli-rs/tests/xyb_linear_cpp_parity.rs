@@ -5,7 +5,7 @@
 
 #![cfg(feature = "ffi-tests")]
 
-use jpegli::xyb::{linear_rgb_to_xyb, linear_rgb_to_xyb_simd};
+use jpegli::color::xyb::{linear_rgb_to_xyb, linear_rgb_to_xyb_simd};
 
 fn cpp_linear_to_xyb(pixels: &[[f32; 3]]) -> Vec<[f32; 3]> {
     use jpegli_internals_sys::jpegli_linear_to_xyb;

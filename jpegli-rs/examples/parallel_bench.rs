@@ -116,8 +116,8 @@ fn extract_block_sequential(
     block_x: usize,
     block_y: usize,
     padded_width: usize,
-) -> jpegli::simd_types::Block8x8f {
-    use jpegli::simd_types::Block8x8f;
+) -> jpegli::foundation::simd_types::Block8x8f {
+    use jpegli::foundation::simd_types::Block8x8f;
     use wide::f32x8;
 
     let start_x = block_x * 8;
@@ -140,9 +140,9 @@ fn extract_block_sequential(
 
 /// Simple DCT implementation for benchmarking (using public API)
 #[cfg(feature = "parallel")]
-fn dct_block(block: &jpegli::simd_types::Block8x8f) -> jpegli::simd_types::Block8x8f {
+fn dct_block(block: &jpegli::foundation::simd_types::Block8x8f) -> jpegli::foundation::simd_types::Block8x8f {
     // Use the dct module's public function
     let arr = block.to_array();
-    let output = jpegli::dct::forward_dct_8x8(&arr);
-    jpegli::simd_types::Block8x8f::from_array(&output)
+    let output = jpegli::encode::dct::forward_dct_8x8(&arr);
+    jpegli::foundation::simd_types::Block8x8f::from_array(&output)
 }

@@ -173,7 +173,7 @@ fn cbrtf_fast_2iter(x: f32) -> f32 {
 
 /// Current jpegli-rs implementation
 fn rust_current(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    jpegli::xyb::linear_rgb_to_xyb(r, g, b)
+    jpegli::color::xyb::linear_rgb_to_xyb(r, g, b)
 }
 
 /// Rust with 3 Newton iterations (matching C++ exactly)
@@ -329,7 +329,7 @@ fn main() {
 
     // Test each Rust implementation against C++
     let implementations: Vec<(&str, fn(f32, f32, f32) -> (f32, f32, f32))> = vec![
-        ("rust_current (jpegli::xyb)", rust_current),
+        ("rust_current (jpegli::color::xyb)", rust_current),
         ("rust_3iter (3 Newton iterations)", rust_3iter),
         ("rust_2iter (2 Newton iterations)", rust_2iter),
     ];
