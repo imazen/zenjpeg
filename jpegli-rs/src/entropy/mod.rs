@@ -52,7 +52,7 @@ static CATEGORY_TABLE: [u8; 4096] = {
 
 /// Returns the category (number of bits needed) for a value.
 /// Uses a lookup table for values in range -2047..=2047 (covers all JPEG coefficients).
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn category(value: i16) -> u8 {
     // Fast path: use lookup table for common range
@@ -94,7 +94,7 @@ pub fn additional_bits(value: i16) -> u16 {
 
 /// Returns the additional bits for a value given its pre-computed category.
 /// Avoids recomputing category when it's already known.
-#[inline]
+#[inline(always)]
 #[must_use]
 pub fn additional_bits_with_cat(value: i16, cat: u8) -> u16 {
     if value >= 0 {
