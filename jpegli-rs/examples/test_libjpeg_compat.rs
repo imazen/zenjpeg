@@ -116,7 +116,9 @@ fn main() {
     let mut gray_enc = gray_config
         .encode_from_bytes(64, 64, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    gray_enc.push_packed(&gray_noise, Unstoppable).expect("push");
+    gray_enc
+        .push_packed(&gray_noise, Unstoppable)
+        .expect("push");
     let gray_jpeg = gray_enc.finish().expect("Encoding should succeed");
 
     let path = "/tmp/test_gray64.jpg";

@@ -12,7 +12,10 @@
 //! ```
 
 use enough::Unstoppable;
-use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+};
 
 /// Result of testing one encoder configuration
 #[derive(Debug)]
@@ -49,13 +52,23 @@ fn generate_test_image(width: usize, height: usize, channels: usize) -> Vec<u8> 
     data
 }
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_gray(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -90,7 +103,11 @@ fn test_config(
     let data = generate_test_image(width as usize, height as usize, channels);
 
     let pixel_format_name = if is_grayscale { "Gray" } else { "Rgb" };
-    let mode_name = if progressive { "Progressive" } else { "Baseline" };
+    let mode_name = if progressive {
+        "Progressive"
+    } else {
+        "Baseline"
+    };
     let sub_name = match subsampling {
         ChromaSubsampling::Full => "444",
         ChromaSubsampling::HalfHorizontal => "422",
@@ -301,13 +318,55 @@ fn test_common_configurations() {
 
     let configs: Vec<(&str, bool, ChromaSubsampling, bool, bool)> = vec![
         // (name, progressive, subsampling, optimize_huffman, use_xyb)
-        ("baseline_444_fixed", false, ChromaSubsampling::Full, false, false),
-        ("baseline_444_opt", false, ChromaSubsampling::Full, true, false),
-        ("baseline_420_opt", false, ChromaSubsampling::Quarter, true, false),
-        ("progressive_444_opt", true, ChromaSubsampling::Full, true, false),
-        ("progressive_420_opt", true, ChromaSubsampling::Quarter, true, false),
-        ("xyb_baseline_opt", false, ChromaSubsampling::Full, true, true),
-        ("xyb_progressive_opt", true, ChromaSubsampling::Full, true, true),
+        (
+            "baseline_444_fixed",
+            false,
+            ChromaSubsampling::Full,
+            false,
+            false,
+        ),
+        (
+            "baseline_444_opt",
+            false,
+            ChromaSubsampling::Full,
+            true,
+            false,
+        ),
+        (
+            "baseline_420_opt",
+            false,
+            ChromaSubsampling::Quarter,
+            true,
+            false,
+        ),
+        (
+            "progressive_444_opt",
+            true,
+            ChromaSubsampling::Full,
+            true,
+            false,
+        ),
+        (
+            "progressive_420_opt",
+            true,
+            ChromaSubsampling::Quarter,
+            true,
+            false,
+        ),
+        (
+            "xyb_baseline_opt",
+            false,
+            ChromaSubsampling::Full,
+            true,
+            true,
+        ),
+        (
+            "xyb_progressive_opt",
+            true,
+            ChromaSubsampling::Full,
+            true,
+            true,
+        ),
     ];
 
     println!("\n=== Common Configuration Smoke Test ===\n");

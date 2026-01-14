@@ -3,7 +3,10 @@
 //! Run with: cargo run --release --example ycbcr_benchmark
 
 use enough::Unstoppable;
-use jpegli::{decoder::{Decoder, PixelFormat}, encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}};
+use jpegli::{
+    decoder::{Decoder, PixelFormat},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+};
 use std::time::{Duration, Instant};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {

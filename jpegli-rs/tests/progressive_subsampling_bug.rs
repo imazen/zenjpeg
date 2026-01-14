@@ -102,7 +102,8 @@ fn test_progressive_subsampling_file_sizes() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&rgb, enough::Unstoppable).expect("push data");
+        enc.push_packed(&rgb, enough::Unstoppable)
+            .expect("push data");
         enc.finish().expect("encode failed").len()
     };
 
@@ -180,7 +181,8 @@ fn test_baseline_subsampling_works() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&rgb, enough::Unstoppable).expect("push data");
+        enc.push_packed(&rgb, enough::Unstoppable)
+            .expect("push data");
         enc.finish().expect("encode failed").len()
     };
 

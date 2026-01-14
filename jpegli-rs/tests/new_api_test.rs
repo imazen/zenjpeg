@@ -7,14 +7,24 @@ use jpegli::{
 };
 
 /// Helper function to encode RGB data
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, Unstoppable)?;
     enc.finish()
 }
 
 /// Helper function to encode gray data
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_gray(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
     enc.push_packed(data, Unstoppable)?;
     enc.finish()
@@ -89,9 +99,7 @@ fn test_encoder_config_progressive() {
     let height = 32u32;
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
-    let config = EncoderConfig::new()
-        .quality(85.0)
-        .progressive(true);
+    let config = EncoderConfig::new().quality(85.0).progressive(true);
     let jpeg = encode_rgb(width, height, &pixels, &config).expect("encode failed");
 
     assert!(jpeg.starts_with(&[0xFF, 0xD8]));
@@ -134,7 +142,8 @@ fn test_encoder_config_streaming() {
     let pixels: Vec<u8> = vec![128; (width * height * 3) as usize];
 
     let config = EncoderConfig::new().quality(85.0);
-    let mut encoder = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+    let mut encoder = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("start failed");
 
     let row_size = width as usize * 3;

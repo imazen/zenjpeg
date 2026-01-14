@@ -10,8 +10,11 @@ use std::fs;
 use std::path::Path;
 
 fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> Vec<u8> {
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).expect("create encoder");
-    enc.push_packed(data, enough::Unstoppable).expect("push data");
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("create encoder");
+    enc.push_packed(data, enough::Unstoppable)
+        .expect("push data");
     enc.finish().expect("finish")
 }
 

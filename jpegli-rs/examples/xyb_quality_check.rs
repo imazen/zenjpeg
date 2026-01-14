@@ -3,7 +3,10 @@
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{decoder::Decoder, encoder::{EncoderConfig, PixelLayout}};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{EncoderConfig, PixelLayout},
+};
 use std::fs;
 use std::io::Write;
 use std::process::Command;

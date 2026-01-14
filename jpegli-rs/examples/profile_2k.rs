@@ -29,8 +29,7 @@ fn main() {
         .quality(90.0)
         .progressive(false)
         .optimize_huffman(true)
-        .ycbcr(ChromaSubsampling::Full)
-        ;
+        .ycbcr(ChromaSubsampling::Full);
     for i in 0..50 {
         let mut enc = config_444
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -45,8 +44,7 @@ fn main() {
     let config_420 = EncoderConfig::new()
         .quality(70.0)
         .progressive(true)
-        .ycbcr(ChromaSubsampling::Quarter)
-        ;
+        .ycbcr(ChromaSubsampling::Quarter);
     for i in 0..50 {
         let mut enc = config_420
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

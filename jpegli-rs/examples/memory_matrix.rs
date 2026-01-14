@@ -142,7 +142,9 @@ fn run_test(test: EncoderTest) -> TestResult {
         .optimize_huffman(test.optimize_huffman);
 
     if test.xyb_mode {
-        config = config.color_mode(ColorMode::Xyb { subsampling: XybSubsampling::Full });
+        config = config.color_mode(ColorMode::Xyb {
+            subsampling: XybSubsampling::Full,
+        });
     } else {
         config = config.ycbcr(test.subsampling);
     }
@@ -337,13 +339,18 @@ fn main() {
     let max_headroom = headrooms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let avg_headroom = headrooms.iter().sum::<f64>() / headrooms.len() as f64;
 
-    println!("Ceiling violations: {}/{} tests", ceil_violations, results.len());
+    println!(
+        "Ceiling violations: {}/{} tests",
+        ceil_violations,
+        results.len()
+    );
     if ceil_violations == 0 {
         println!("  ✓ All tests passed - actual never exceeded ceiling");
     } else {
         println!("  ✗ CEILING VIOLATED - actual exceeded ceiling!");
         for r in results.iter().filter(|r| r.ceiling_violated) {
-            println!("    {} {:?}: actual {} > ceiling {}",
+            println!(
+                "    {} {:?}: actual {} > ceiling {}",
                 r.test.name,
                 r.test.subsampling,
                 format_bytes(r.actual_peak),
@@ -383,19 +390,36 @@ fn main() {
     }
 
     // By Huffman optimization
-    let huff_yes: Vec<f64> = results.iter().filter(|r| r.test.optimize_huffman).map(|r| r.error_pct).collect();
-    let huff_no: Vec<f64> = results.iter().filter(|r| !r.test.optimize_huffman).map(|r| r.error_pct).collect();
+    let huff_yes: Vec<f64> = results
+        .iter()
+        .filter(|r| r.test.optimize_huffman)
+        .map(|r| r.error_pct)
+        .collect();
+    let huff_no: Vec<f64> = results
+        .iter()
+        .filter(|r| !r.test.optimize_huffman)
+        .map(|r| r.error_pct)
+        .collect();
     println!("\nBy Huffman optimization:");
     if !huff_no.is_empty() {
-        println!("  Without: {:+.1}% avg error", huff_no.iter().sum::<f64>() / huff_no.len() as f64);
+        println!(
+            "  Without: {:+.1}% avg error",
+            huff_no.iter().sum::<f64>() / huff_no.len() as f64
+        );
     }
     if !huff_yes.is_empty() {
-        println!("  With: {:+.1}% avg error", huff_yes.iter().sum::<f64>() / huff_yes.len() as f64);
+        println!(
+            "  With: {:+.1}% avg error",
+            huff_yes.iter().sum::<f64>() / huff_yes.len() as f64
+        );
     }
 
     // Find worst cases
     println!("\n=== Worst Cases (>20% error) ===\n");
-    let mut worst: Vec<_> = results.iter().filter(|r| r.error_pct.abs() > 20.0).collect();
+    let mut worst: Vec<_> = results
+        .iter()
+        .filter(|r| r.error_pct.abs() > 20.0)
+        .collect();
     worst.sort_by(|a, b| b.error_pct.abs().partial_cmp(&a.error_pct.abs()).unwrap());
 
     if worst.is_empty() {
@@ -430,7 +454,8 @@ fn main() {
     println!("\n=== Memory Efficiency Analysis ===\n");
     println!("Bytes per megapixel (actual peak / megapixels):");
 
-    let mut by_mode: std::collections::HashMap<&str, Vec<(f64, f64)>> = std::collections::HashMap::new();
+    let mut by_mode: std::collections::HashMap<&str, Vec<(f64, f64)>> =
+        std::collections::HashMap::new();
     for r in &results {
         let mp = (r.test.width as f64 * r.test.height as f64) / 1_000_000.0;
         let bytes_per_mp = r.actual_peak as f64 / mp;
@@ -464,7 +489,10 @@ fn main() {
         println!("Estimates are too LOW by {:.1}% on average.", avg_err);
         println!("Consider adding a {:.1}% safety margin.", avg_err.abs());
     } else if avg_err < -5.0 {
-        println!("Estimates are too HIGH by {:.1}% on average.", avg_err.abs());
+        println!(
+            "Estimates are too HIGH by {:.1}% on average.",
+            avg_err.abs()
+        );
         println!("Consider reducing estimates by {:.1}%.", avg_err.abs());
     } else {
         println!("Estimates are reasonably accurate (within 5% average).");
@@ -477,7 +505,11 @@ fn main() {
             if avg > 0.0 {
                 println!("\n{} mode: estimates are {:.1}% too low. Check:", mode, avg);
             } else {
-                println!("\n{} mode: estimates are {:.1}% too high. Check:", mode, avg.abs());
+                println!(
+                    "\n{} mode: estimates are {:.1}% too high. Check:",
+                    mode,
+                    avg.abs()
+                );
             }
             println!("  - Strip buffer calculations");
             println!("  - DCT block count formulas");

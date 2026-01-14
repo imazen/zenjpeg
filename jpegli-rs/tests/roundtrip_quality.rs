@@ -15,7 +15,12 @@ use std::path::Path;
 const MAX_DSSIM_Q90: f64 = 0.005;
 
 /// Helper function to encode RGB data with given config
-fn encode_rgb(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    quality: f32,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new().quality(quality);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
@@ -95,8 +100,8 @@ fn test_roundtrip_flower_small() {
     let (original_rgb, width, height) = load_png(&path).expect("Failed to load test image");
 
     // Encode with jpegli at quality 90
-    let jpeg_data = encode_rgb(width as u32, height as u32, &original_rgb, 90.0)
-        .expect("jpegli encode failed");
+    let jpeg_data =
+        encode_rgb(width as u32, height as u32, &original_rgb, 90.0).expect("jpegli encode failed");
 
     // Decode with reference decoder (jpeg-decoder)
     let (decoded_rgb, dec_width, dec_height) = decode_with_jpeg_decoder(&jpeg_data);
@@ -140,8 +145,8 @@ fn test_roundtrip_gradient() {
     }
 
     // Encode with jpegli at quality 90
-    let jpeg_data = encode_rgb(width as u32, height as u32, &rgb, 90.0)
-        .expect("jpegli encode failed");
+    let jpeg_data =
+        encode_rgb(width as u32, height as u32, &rgb, 90.0).expect("jpegli encode failed");
 
     // Decode with reference decoder
     let (decoded_rgb, dec_width, dec_height) = decode_with_jpeg_decoder(&jpeg_data);
@@ -172,8 +177,8 @@ fn test_roundtrip_solid_color() {
     // Solid magenta
     let rgb: Vec<u8> = (0..width * height).flat_map(|_| [200u8, 50, 180]).collect();
 
-    let jpeg_data = encode_rgb(width as u32, height as u32, &rgb, 90.0)
-        .expect("jpegli encode failed");
+    let jpeg_data =
+        encode_rgb(width as u32, height as u32, &rgb, 90.0).expect("jpegli encode failed");
     let (decoded_rgb, _, _) = decode_with_jpeg_decoder(&jpeg_data);
 
     let dssim = compute_dssim(&rgb, &decoded_rgb, width, height);

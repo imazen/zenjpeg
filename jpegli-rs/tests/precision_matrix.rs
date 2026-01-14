@@ -255,9 +255,7 @@ fn test_combination(
     // Encode
     let layout = pixel_format_to_layout(encode_format);
     let config = if is_gray {
-        EncoderConfig::new()
-            .quality(QUALITY)
-            .grayscale()
+        EncoderConfig::new().quality(QUALITY).grayscale()
     } else {
         EncoderConfig::new()
             .quality(QUALITY)
@@ -268,7 +266,9 @@ fn test_combination(
         .expect(&format!("encoder setup {} failed", encode_name));
     enc.push_packed(input_data, enough::Unstoppable)
         .expect(&format!("push {} failed", encode_name));
-    let jpeg = enc.finish().expect(&format!("encode {} failed", encode_name));
+    let jpeg = enc
+        .finish()
+        .expect(&format!("encode {} failed", encode_name));
 
     let jpeg_size = jpeg.len();
     let decoder = Decoder::new();
@@ -637,7 +637,8 @@ fn test_precision_improvement_summary() {
     let mut enc = config
         .encode_from_bytes(WIDTH as u32, HEIGHT as u32, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&input, enough::Unstoppable).expect("push data");
+    enc.push_packed(&input, enough::Unstoppable)
+        .expect("push data");
     let jpeg = enc.finish().expect("encode failed");
 
     let decoder = Decoder::new();
@@ -715,13 +716,12 @@ fn test_10plus_bit_demonstration() {
     println!("Input: {}×{} grayscale", width, height);
     println!("Input unique values: {}", unique_input);
 
-    let config = EncoderConfig::new()
-        .quality(QUALITY)
-        .grayscale();
+    let config = EncoderConfig::new().quality(QUALITY).grayscale();
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&input, enough::Unstoppable).expect("push data");
+    enc.push_packed(&input, enough::Unstoppable)
+        .expect("push data");
     let jpeg = enc.finish().expect("encode failed");
 
     println!("JPEG size: {} bytes", jpeg.len());

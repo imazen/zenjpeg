@@ -53,12 +53,12 @@ mod types;
 
 pub use config::EncoderConfig;
 pub use encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
+#[cfg(feature = "parallel")]
+pub use types::ParallelEncoding;
 pub use types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, YCbCrPlanes,
 };
-#[cfg(feature = "parallel")]
-pub use types::ParallelEncoding;
 
 // Re-export edge padding types from crate::types
 pub use crate::types::{EdgePadding, EdgePaddingConfig};

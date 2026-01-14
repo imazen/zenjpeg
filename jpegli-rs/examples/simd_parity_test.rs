@@ -165,8 +165,8 @@ mod idct_scalar {
 
 /// Wide crate portable IDCT using wide::i32x8::transpose
 mod idct_wide {
-    use wide::i32x8;
     use multiversion::multiversion;
+    use wide::i32x8;
 
     const SCALE_BITS: i32 = 512 + 65536 + (128 << 17);
 
@@ -276,12 +276,7 @@ mod ycbcr_scalar {
     const CB_TO_G_INT: i32 = -5638;
     const YUV_ROUND: i32 = 8192;
 
-    pub fn ycbcr_to_rgb_i16_x16(
-        y: &[i16; 16],
-        cb: &[i16; 16],
-        cr: &[i16; 16],
-        rgb: &mut [u8; 48],
-    ) {
+    pub fn ycbcr_to_rgb_i16_x16(y: &[i16; 16], cb: &[i16; 16], cr: &[i16; 16], rgb: &mut [u8; 48]) {
         for i in 0..16 {
             let y_val = i32::from(y[i]);
             let cb_val = i32::from(cb[i]) - 128;
@@ -312,12 +307,7 @@ mod ycbcr_wide {
 
     /// Portable YCbCr to RGB using wide crate i32x8
     /// Processes 8 pixels at a time (vs AVX2's 16)
-    pub fn ycbcr_to_rgb_i16_x8(
-        y: &[i16; 8],
-        cb: &[i16; 8],
-        cr: &[i16; 8],
-        rgb: &mut [u8; 24],
-    ) {
+    pub fn ycbcr_to_rgb_i16_x8(y: &[i16; 8], cb: &[i16; 8], cr: &[i16; 8], rgb: &mut [u8; 24]) {
         // Convert i16 to i32 (sign extension)
         let y_i32: [i32; 8] = std::array::from_fn(|i| y[i] as i32);
         let cb_i32: [i32; 8] = std::array::from_fn(|i| (cb[i] as i32) - 128);
@@ -361,12 +351,7 @@ mod ycbcr_wide {
     }
 
     /// Process 16 pixels by calling 8-pixel version twice
-    pub fn ycbcr_to_rgb_i16_x16(
-        y: &[i16; 16],
-        cb: &[i16; 16],
-        cr: &[i16; 16],
-        rgb: &mut [u8; 48],
-    ) {
+    pub fn ycbcr_to_rgb_i16_x16(y: &[i16; 16], cb: &[i16; 16], cr: &[i16; 16], rgb: &mut [u8; 48]) {
         // First 8 pixels
         let y0: [i16; 8] = y[0..8].try_into().unwrap();
         let cb0: [i16; 8] = cb[0..8].try_into().unwrap();

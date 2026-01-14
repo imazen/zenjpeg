@@ -30,7 +30,12 @@ struct TestEncodingConfig {
 }
 
 /// Helper to encode RGB data with v2 encoder API
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -451,8 +456,8 @@ fn benchmark_decoders() {
 
     // Encode at Q85
     let encoder_config = EncoderConfig::new().quality(85.0);
-    let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
-        .expect("encode failed");
+    let jpeg_data =
+        encode_rgb(width as u32, height as u32, &original, &encoder_config).expect("encode failed");
 
     println!(
         "\n=== Decoder Benchmark ({}x{}, {} bytes) ===\n",
@@ -503,8 +508,8 @@ fn test_grayscale_compatibility() {
     }
 
     let encoder_config = EncoderConfig::new().quality(90.0);
-    let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
-        .expect("encode failed");
+    let jpeg_data =
+        encode_rgb(width as u32, height as u32, &original, &encoder_config).expect("encode failed");
 
     println!("\n=== Grayscale Compatibility Test ===\n");
 

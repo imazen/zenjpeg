@@ -1,5 +1,8 @@
 use enough::Unstoppable;
-use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+};
 
 fn create_gradient(size: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (size * size * 3) as usize];
@@ -15,7 +18,12 @@ fn create_gradient(size: u32) -> Vec<u8> {
     pixels
 }
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()

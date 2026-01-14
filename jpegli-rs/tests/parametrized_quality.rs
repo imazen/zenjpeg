@@ -10,11 +10,19 @@ mod test_utils;
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
 use enough::Unstoppable;
-use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{EncoderConfig, PixelLayout},
+};
 use test_case::test_case;
 
 /// Helper function to encode RGB data
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -128,7 +136,11 @@ fn test_pattern_roundtrip(pattern: TestPattern, name: &str) {
 
     // All patterns should roundtrip reasonably well at Q90
     // Color bars have sharp edges causing ringing, so allow higher RMS
-    let multiplier = if pattern == TestPattern::ColorBars { 4.0 } else { 2.0 };
+    let multiplier = if pattern == TestPattern::ColorBars {
+        4.0
+    } else {
+        2.0
+    };
     assert!(
         rms <= thresholds::Q90_MAX_RMS * multiplier,
         "{}: RMS {:.2} exceeds threshold {:.2}",

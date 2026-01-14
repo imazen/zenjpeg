@@ -323,6 +323,7 @@ use butteraugli::compute_butteraugli;
 ```toml
 [features]
 default = ["cms", "test-utils"]
+decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
 unsafe_simd = []          # Raw AVX2/SSE intrinsics (opt-in)
 cms = ["cms-lcms2"]       # Color management
@@ -330,6 +331,9 @@ ffi-tests = []            # C++ parity tests (requires jpegli-sys)
 corpus-tests = []         # Corpus comparison tests
 test-utils = []           # Testing utilities
 ```
+
+**Decoder:** The decoder API is in prerelease. Enable with `features = ["decoder"]`.
+API will have breaking changes.
 
 SIMD via the `wide` crate is always enabled (portable, safe).
 The `unsafe_simd` feature enables raw AVX2/SSE intrinsics for ~10-20% speedup on x86_64.

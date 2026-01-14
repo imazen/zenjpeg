@@ -164,15 +164,19 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
         .ycbcr(ChromaSubsampling::Full)
         .progressive(true)
         .optimize_huffman(true);
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
-    enc.push_packed(rgb, enough::Unstoppable).expect("push data");
+    enc.push_packed(rgb, enough::Unstoppable)
+        .expect("push data");
     enc.finish().expect("finish")
 }
 
 /// Decode JPEG to RGB
 fn decode_jpeg(jpeg: &[u8]) -> Vec<u8> {
-    let decoded = jpegli::decoder::Decoder::new().decode(jpeg).expect("decode failed");
+    let decoded = jpegli::decoder::Decoder::new()
+        .decode(jpeg)
+        .expect("decode failed");
     decoded.data
 }
 

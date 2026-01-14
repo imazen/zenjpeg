@@ -21,19 +21,34 @@ use test_case::test_case;
 // Helper Functions
 // ============================================================================
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgb(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_gray(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_rgba(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
+fn encode_rgba(
+    width: u32,
+    height: u32,
+    data: &[u8],
+    config: &EncoderConfig,
+) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgbx8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -245,17 +260,13 @@ fn test_encode_progressive_mode() {
 fn test_encode_progressive_smaller_than_baseline() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let baseline_config = EncoderConfig::new()
-        .progressive(false)
-        .quality(85.0);
-    let baseline_jpeg = encode_rgb(256, 256, &img.pixels, &baseline_config)
-        .expect("baseline failed");
+    let baseline_config = EncoderConfig::new().progressive(false).quality(85.0);
+    let baseline_jpeg =
+        encode_rgb(256, 256, &img.pixels, &baseline_config).expect("baseline failed");
 
-    let progressive_config = EncoderConfig::new()
-        .progressive(true)
-        .quality(85.0);
-    let progressive_jpeg = encode_rgb(256, 256, &img.pixels, &progressive_config)
-        .expect("progressive failed");
+    let progressive_config = EncoderConfig::new().progressive(true).quality(85.0);
+    let progressive_jpeg =
+        encode_rgb(256, 256, &img.pixels, &progressive_config).expect("progressive failed");
 
     // Progressive encoding typically produces smaller files
     // Allow some variance as it depends on image content
@@ -381,7 +392,9 @@ fn test_encode_color_bars() {
     // Color bars have sharp edges which cause ringing - allow higher RMS
     assert!(
         rms < thresholds::Q90_MAX_RMS * 4.0,
-        "Color bars RMS too high: {:.2} (max: {:.2})", rms, thresholds::Q90_MAX_RMS * 4.0
+        "Color bars RMS too high: {:.2} (max: {:.2})",
+        rms,
+        thresholds::Q90_MAX_RMS * 4.0
     );
 }
 
@@ -411,7 +424,11 @@ fn test_encode_large_image() {
 
     let jpeg = encode_rgb(1024, 768, &img.pixels, &config).expect("encode large failed");
     // Gradients compress very well - 5KB is reasonable for Q85
-    assert!(jpeg.len() > 5000, "Large JPEG suspiciously small: {} bytes", jpeg.len());
+    assert!(
+        jpeg.len() > 5000,
+        "Large JPEG suspiciously small: {} bytes",
+        jpeg.len()
+    );
 
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode large failed");
@@ -597,15 +614,39 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
     let img = generate_gradient_d(64, 64, 3);
 
     let configs: Vec<(EncoderConfig, &str)> = vec![
-        (EncoderConfig::new().quality(90.0).xyb().optimize_huffman(true), "XYB + optimized"),
-        (EncoderConfig::new().quality(90.0).xyb().optimize_huffman(false), "XYB + standard"),
-        (EncoderConfig::new().quality(90.0).ycbcr(ChromaSubsampling::Full).optimize_huffman(true), "YCbCr + optimized"),
-        (EncoderConfig::new().quality(90.0).ycbcr(ChromaSubsampling::Full).optimize_huffman(false), "YCbCr + standard"),
+        (
+            EncoderConfig::new()
+                .quality(90.0)
+                .xyb()
+                .optimize_huffman(true),
+            "XYB + optimized",
+        ),
+        (
+            EncoderConfig::new()
+                .quality(90.0)
+                .xyb()
+                .optimize_huffman(false),
+            "XYB + standard",
+        ),
+        (
+            EncoderConfig::new()
+                .quality(90.0)
+                .ycbcr(ChromaSubsampling::Full)
+                .optimize_huffman(true),
+            "YCbCr + optimized",
+        ),
+        (
+            EncoderConfig::new()
+                .quality(90.0)
+                .ycbcr(ChromaSubsampling::Full)
+                .optimize_huffman(false),
+            "YCbCr + standard",
+        ),
     ];
 
     for (config, label) in &configs {
-        let jpeg = encode_rgb(64, 64, &img.pixels, config)
-            .expect(&format!("encode {} failed", label));
+        let jpeg =
+            encode_rgb(64, 64, &img.pixels, config).expect(&format!("encode {} failed", label));
 
         // Test with zune-jpeg
         use zune_jpeg::zune_core::bytestream::ZCursor;

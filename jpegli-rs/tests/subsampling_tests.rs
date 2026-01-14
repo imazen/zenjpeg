@@ -12,7 +12,10 @@ use test_utils::{
     TestImage,
 };
 
-use jpegli::{encoder::{ChromaSubsampling, EncoderConfig, PixelLayout}, decoder::Decoder};
+use jpegli::{
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+};
 
 // ============================================================================
 // Helper Functions
@@ -22,7 +25,8 @@ fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> V
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");
-    enc.push_packed(data, enough::Unstoppable).expect("push failed");
+    enc.push_packed(data, enough::Unstoppable)
+        .expect("push failed");
     enc.finish().expect("finish failed")
 }
 
@@ -30,7 +34,8 @@ fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> 
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
         .expect("encoder creation failed");
-    enc.push_packed(data, enough::Unstoppable).expect("push failed");
+    enc.push_packed(data, enough::Unstoppable)
+        .expect("push failed");
     enc.finish().expect("finish failed")
 }
 
@@ -39,9 +44,7 @@ fn roundtrip_with_subsampling(
     quality: f32,
     subsampling: ChromaSubsampling,
 ) -> (f64, u8, usize) {
-    let config = EncoderConfig::new()
-        .quality(quality)
-        .ycbcr(subsampling);
+    let config = EncoderConfig::new().quality(quality).ycbcr(subsampling);
     let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config);
 
     let decoder = Decoder::new();
@@ -74,7 +77,8 @@ fn test_444_subsampling() {
 #[test]
 fn test_422_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
-    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::HalfHorizontal);
+    let (rms, max_diff, size) =
+        roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::HalfHorizontal);
 
     println!(
         "4:2:2: RMS={:.2}, max_diff={}, size={}",
@@ -278,7 +282,8 @@ fn test_saturated_colors_subsampling() {
             }
         }
 
-        let (rms, max_diff, _size) = roundtrip_with_subsampling(&img, 95.0, ChromaSubsampling::Full);
+        let (rms, max_diff, _size) =
+            roundtrip_with_subsampling(&img, 95.0, ChromaSubsampling::Full);
 
         assert!(
             rms < 5.0,

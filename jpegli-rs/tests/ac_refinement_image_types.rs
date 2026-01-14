@@ -10,11 +10,12 @@ use std::path::Path;
 use std::process::Command;
 
 fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new()
-        .quality(quality)
-        .progressive(true);
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).expect("create encoder");
-    enc.push_packed(data, enough::Unstoppable).expect("push data");
+    let config = EncoderConfig::new().quality(quality).progressive(true);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("create encoder");
+    enc.push_packed(data, enough::Unstoppable)
+        .expect("push data");
     enc.finish().expect("finish")
 }
 
@@ -318,7 +319,6 @@ fn encode_cpp_progressive(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
 
     fs::read(&output_path).ok()
 }
-
 
 #[test]
 #[ignore = "requires C++ cjpegli build"]

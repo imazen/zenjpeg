@@ -8,7 +8,9 @@
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
 use jpegli::types::Subsampling;
-use jpegli::{ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout};
+use jpegli::{
+    ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
+};
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
@@ -41,10 +43,13 @@ fn encode_rust(
         .quality(quality as f32)
         .progressive(progressive)
         .optimize_huffman(true)
-        .ycbcr(sub)
-        ;
+        .ycbcr(sub);
     let mut enc = config
-        .encode_from_bytes(image.width as u32, image.height as u32, PixelLayout::Rgb8Srgb)
+        .encode_from_bytes(
+            image.width as u32,
+            image.height as u32,
+            PixelLayout::Rgb8Srgb,
+        )
         .expect("encoder setup");
     enc.push_packed(&image.pixels, Unstoppable).expect("push");
     enc.finish().expect("Rust encode failed")

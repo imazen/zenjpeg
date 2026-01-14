@@ -63,7 +63,10 @@ impl Quality {
     /// Create quality from a 0-100 scale value.
     ///
     /// This is equivalent to `Quality::ApproxJpegli(q)` or `Quality::from(q)`.
-    #[deprecated(since = "0.5.0", note = "Use Quality::from(f32) or Quality::ApproxJpegli(f32) instead")]
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use Quality::from(f32) or Quality::ApproxJpegli(f32) instead"
+    )]
     #[must_use]
     pub fn from_quality(q: f32) -> Self {
         Quality::ApproxJpegli(q)
@@ -86,7 +89,10 @@ impl Quality {
     }
 
     /// Convert to butteraugli distance (backward compatibility).
-    #[deprecated(since = "0.5.0", note = "Use Quality::ApproxButteraugli and to_internal() instead")]
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use Quality::ApproxButteraugli and to_internal() instead"
+    )]
     #[must_use]
     pub fn to_distance(&self) -> f32 {
         // If already butteraugli distance, return it directly

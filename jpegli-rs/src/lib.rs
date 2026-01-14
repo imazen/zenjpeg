@@ -1,36 +1,109 @@
 //! # jpegli
 //!
-//! Rust port of jpegli - an improved JPEG encoder and decoder.
+//! Pure Rust JPEG encoder with perceptual optimizations.
 //!
 //! jpegli provides enhanced compression quality compared to standard JPEG
-//! through advanced quantization, optional XYB color space, and other
+//! through adaptive quantization, optional XYB color space, and other
 //! perceptual optimizations.
 //!
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::encoder::{EncoderConfig, PixelLayout, Result};
-//! use enough::Unstoppable;
+//! use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
 //!
-//! // Encode RGB to JPEG
-//! let config = EncoderConfig::new().quality(85);
-//! let mut enc = config.encode_from_bytes(640, 480, PixelLayout::Rgb8Srgb)?;
-//! enc.push_packed(&rgb_pixels, Unstoppable)?;
-//! let jpeg_data = enc.finish()?;
+//! // Create reusable config
+//! let config = EncoderConfig::new()
+//!     .quality(85)
+//!     .progressive(true);
 //!
-//! // Decode JPEG to RGB
-//! let image = jpegli::decoder::Decoder::new().decode(&jpeg_data)?;
+//! // Encode from raw bytes
+//! let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
+//! enc.push_packed(&rgb_bytes, Unstoppable)?;
+//! let jpeg = enc.finish()?;
+//! ```
+//!
+//! ## Encoder API
+//!
+//! All encoder types are in [`encoder`]:
+//!
+//! ```rust,ignore
+//! use jpegli::encoder::{
+//!     // Core types
+//!     EncoderConfig,          // Builder for encoder configuration
+//!     BytesEncoder,           // Encoder for raw byte buffers
+//!     RgbEncoder,             // Encoder for rgb crate types
+//!     YCbCrPlanarEncoder,     // Encoder for planar YCbCr
+//!
+//!     // Configuration
+//!     Quality,                // Quality settings (ApproxJpegli, ApproxMozjpeg, etc.)
+//!     PixelLayout,            // Pixel format for raw bytes
+//!     ChromaSubsampling,      // 4:4:4, 4:2:0, 4:2:2, 4:4:0
+//!     ColorMode,              // YCbCr, XYB, Grayscale
+//!     DownsamplingMethod,     // Box, GammaAware, GammaAwareIterative
+//!
+//!     // Cancellation
+//!     Stop,                   // Trait for cancellation tokens
+//!     Unstoppable,            // Use when no cancellation needed
+//!
+//!     // Results
+//!     Error, Result,          // Error handling
+//! };
+//! ```
+//!
+//! ### Three Entry Points
+//!
+//! | Method | Input Type | Use Case |
+//! |--------|------------|----------|
+//! | [`EncoderConfig::encode_from_bytes`] | `&[u8]` | Raw byte buffers |
+//! | [`EncoderConfig::encode_from_rgb`] | `rgb` crate types | Type-safe pixels |
+//! | [`EncoderConfig::encode_from_ycbcr_planar`] | [`YCbCrPlanes`](encoder::YCbCrPlanes) | Video pipelines |
+//!
+//! ### Configuration Options
+//!
+//! ```rust,ignore
+//! let config = EncoderConfig::new()
+//!     .quality(85)                              // 0-100 scale
+//!     .quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
+//!     .quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
+//!     .progressive(true)                        // Progressive JPEG (~3% smaller)
+//!     .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default)
+//!     .xyb()                                    // XYB perceptual color space
+//!     .grayscale()                              // Single-channel output
+//!     .sharp_yuv(true)                          // Better color edges (~3x slower)
+//!     .icc_profile(bytes);                      // Attach ICC profile
+//! ```
+//!
+//! ## Decoder API
+//!
+//! The decoder is in prerelease. Enable with `features = ["decoder"]`.
+//!
+//! ```rust,ignore
+//! #[cfg(feature = "decoder")]
+//! use jpegli::decoder::{Decoder, DecodedImage};
+//!
+//! let image = Decoder::new().decode(&jpeg_data)?;
 //! let pixels: &[u8] = image.pixels();
 //! ```
 //!
-//! ## Features
+//! ## Feature Flags
 //!
-//! - **Baseline JPEG**: Standard 8-bit JPEG encoding/decoding
-//! - **Progressive JPEG**: Multi-scan progressive encoding
-//! - **XYB Color Space**: Perceptually optimized color space for better quality
-//! - **Adaptive Quantization**: Content-aware quantization for improved detail
-//! - **16-bit Support**: High bit-depth input/output
-//! - **Parallel Encoding**: Multi-threaded encoding (with `parallel` feature)
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `decoder` | No | Enable decoder API (prerelease) |
+//! | `parallel` | No | Multi-threaded encoding via rayon |
+//! | `cms-lcms2` | Yes | Color management via lcms2 |
+//! | `cms-moxcms` | No | Pure Rust color management |
+//! | `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
+//!
+//! ## Capabilities
+//!
+//! - **Baseline JPEG**: Standard 8-bit JPEG encoding
+//! - **Progressive JPEG**: Multi-scan encoding (~3% smaller files)
+//! - **XYB Color Space**: Perceptually optimized for better quality
+//! - **Adaptive Quantization**: Content-aware bit allocation
+//! - **16-bit / f32 Input**: High bit-depth source support
+//! - **Streaming API**: Memory-efficient row-by-row encoding
+//! - **Parallel Encoding**: Multi-threaded for large images
 
 // Lint configuration is in workspace Cargo.toml [workspace.lints.clippy]
 #![allow(missing_docs)]
@@ -48,6 +121,10 @@ pub mod encoder;
 /// JPEG decoder - public API.
 ///
 /// Contains: `Decoder`, `DecodedImage`, `Error`, `Result`, etc.
+///
+/// **Note:** The decoder is in prerelease and the API will have breaking changes.
+/// Enable with the `decoder` feature flag.
+#[cfg(feature = "decoder")]
 pub mod decoder;
 
 // ============================================================================
@@ -58,6 +135,7 @@ pub mod decoder;
 pub(crate) mod encode;
 
 // Internal decoder implementation
+#[cfg(feature = "decoder")]
 pub(crate) mod decode;
 
 // Internal shared error type (encoder/decoder have their own public errors)
@@ -65,12 +143,12 @@ pub(crate) mod error;
 
 // Internal modules
 pub(crate) mod color;
-pub(crate) mod foundation;
-pub(crate) mod quant;
-pub(crate) mod types;
 pub(crate) mod encode_simd;
 pub(crate) mod entropy;
+pub(crate) mod foundation;
 pub(crate) mod huffman;
+pub(crate) mod quant;
+pub(crate) mod types;
 
 // Test utilities - public when feature enabled for external test crates
 #[cfg(feature = "test-utils")]

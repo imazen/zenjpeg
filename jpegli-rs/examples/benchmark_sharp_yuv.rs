@@ -34,9 +34,7 @@ fn benchmark_encode_std(
     data: &[u8],
     iterations: u32,
 ) -> (f64, usize) {
-    let config = EncoderConfig::new()
-        .quality(90.0)
-        .ycbcr(subsampling);
+    let config = EncoderConfig::new().quality(90.0).ycbcr(subsampling);
 
     // Warmup
     let mut enc = config
@@ -186,9 +184,22 @@ fn main() {
     let data = generate_test_image(4096, 2160);
     let megapixels = 4096.0 * 2160.0 / 1_000_000.0;
 
-    let (std_ms, _) = benchmark_encode_std("Standard", 4096, 2160, ChromaSubsampling::Quarter, &data, 10);
-    let (sharp_ms, _) =
-        benchmark_encode_sharp("Sharp   ", 4096, 2160, ChromaSubsampling::Quarter, &data, 10);
+    let (std_ms, _) = benchmark_encode_std(
+        "Standard",
+        4096,
+        2160,
+        ChromaSubsampling::Quarter,
+        &data,
+        10,
+    );
+    let (sharp_ms, _) = benchmark_encode_sharp(
+        "Sharp   ",
+        4096,
+        2160,
+        ChromaSubsampling::Quarter,
+        &data,
+        10,
+    );
 
     let std_mpps = megapixels / (std_ms / 1000.0);
     println!("\nStandard throughput: {:.1} MP/s", std_mpps);
