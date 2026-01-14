@@ -90,7 +90,11 @@ fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
         .ycbcr(config.to_rust_subsampling());
 
     let mut enc = rust_config
-        .encode_from_bytes(image.width as u32, image.height as u32, PixelLayout::Rgb8Srgb)
+        .encode_from_bytes(
+            image.width as u32,
+            image.height as u32,
+            PixelLayout::Rgb8Srgb,
+        )
         .expect("Failed to create encoder");
     enc.push_packed(&image.pixels, Unstoppable)
         .expect("Rust encode failed");
