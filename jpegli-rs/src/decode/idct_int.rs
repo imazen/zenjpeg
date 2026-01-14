@@ -719,7 +719,10 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 ///
 /// # Safety
 /// Caller must ensure AVX2 is available.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 #[inline]
 pub unsafe fn idct_int_avx2_raw(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
     avx2::idct_int_avx2(coeffs, output, stride);

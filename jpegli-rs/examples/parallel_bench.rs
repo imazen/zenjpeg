@@ -2,7 +2,6 @@
 //!
 //! Run with: cargo run --release --features parallel --example parallel_bench
 
-
 #[cfg(feature = "parallel")]
 use jpegli::encode::parallel::parallel_dct_y_blocks;
 

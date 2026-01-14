@@ -14,7 +14,7 @@ use crate::color::{
 use crate::entropy::EntropyDecoder;
 use crate::error::{Error, Result};
 use crate::foundation::alloc::{
-    checked_size_2d, try_alloc_dct_blocks, try_alloc_uninitialized, validate_dimensions,
+    checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit, validate_dimensions,
 };
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
@@ -901,19 +901,16 @@ impl<'a> JpegParser<'a> {
         }
 
         // Allocate strip buffers for one MCU row (8 rows of pixels)
-        // SAFETY: All elements are written by IDCT before color conversion reads them
+        // Note: All elements are written by IDCT before color conversion reads them
         let strip_size = strip_width * 8;
-        let mut y_strip: Vec<i16> =
-            unsafe { try_alloc_uninitialized(strip_size, "Y strip buffer")? };
-        let mut cb_strip: Vec<i16> =
-            unsafe { try_alloc_uninitialized(strip_size, "Cb strip buffer")? };
-        let mut cr_strip: Vec<i16> =
-            unsafe { try_alloc_uninitialized(strip_size, "Cr strip buffer")? };
+        let mut y_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Y strip buffer")?;
+        let mut cb_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cb strip buffer")?;
+        let mut cr_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cr strip buffer")?;
 
         // Allocate output RGB buffer
-        // SAFETY: All pixels are written by color conversion before return
+        // Note: All pixels are written by color conversion before return
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = unsafe { try_alloc_uninitialized(rgb_size, "RGB output buffer")? };
+        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
         let mut mcu_count = 0u32;
         let restart_interval = self.restart_interval as u32;
@@ -1384,18 +1381,15 @@ impl<'a> JpegParser<'a> {
         let strip_size = strip_width * strip_height;
 
         // Allocate strip buffers - values will be fully overwritten by IDCT
-        // SAFETY: Strips are fully written by IDCT before color conversion reads them
-        let mut y_strip: Vec<i16> =
-            unsafe { try_alloc_uninitialized(strip_size, "Y strip buffer")? };
-        let mut cb_strip: Vec<i16> =
-            unsafe { try_alloc_uninitialized(strip_size, "Cb strip buffer")? };
-        let mut cr_strip: Vec<i16> =
-            unsafe { try_alloc_uninitialized(strip_size, "Cr strip buffer")? };
+        // Note: Strips are fully written by IDCT before color conversion reads them
+        let mut y_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Y strip buffer")?;
+        let mut cb_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cb strip buffer")?;
+        let mut cr_strip: Vec<i16> = try_alloc_maybeuninit(strip_size, "Cr strip buffer")?;
 
         // Allocate output RGB buffer
-        // SAFETY: All pixels are written by color conversion before the buffer is returned
+        // Note: All pixels are written by color conversion before the buffer is returned
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
-        let mut rgb: Vec<u8> = unsafe { try_alloc_uninitialized(rgb_size, "RGB output buffer")? };
+        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
         // Process MCU row by row
         for imcu_row in 0..mcu_rows {

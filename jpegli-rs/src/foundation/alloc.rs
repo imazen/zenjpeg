@@ -601,10 +601,21 @@ pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Ve
     Ok(v)
 }
 
-/// Allocate a Vec with capacity and set length (uninitialized memory).
-/// SAFETY: Caller MUST write to all elements before reading them.
+/// Allocate a Vec with zeroed memory using fallible allocation.
+///
+/// This function allocates and zero-initializes memory. All callers are expected
+/// to overwrite the contents before reading, so the zeroing is technically
+/// unnecessary but ensures memory safety.
+///
+/// # Future optimization path
+/// When performance is critical, this could be replaced with `MaybeUninit<T>`-based
+/// allocation that skips zeroing, provided callers guarantee complete initialization
+/// before any reads. Such optimization would require `unsafe` and careful auditing.
 #[inline]
-pub unsafe fn try_alloc_uninitialized<T>(count: usize, context: &'static str) -> Result<Vec<T>> {
+pub fn try_alloc_maybeuninit<T: Default + Clone>(
+    count: usize,
+    context: &'static str,
+) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(std::mem::size_of::<T>())
         .ok_or(Error::SizeOverflow { context })?;
@@ -615,8 +626,7 @@ pub unsafe fn try_alloc_uninitialized<T>(count: usize, context: &'static str) ->
             bytes: byte_size,
             context,
         })?;
-    // SAFETY: Caller guarantees all elements will be written before read
-    v.set_len(count);
+    v.resize(count, T::default());
     Ok(v)
 }
 

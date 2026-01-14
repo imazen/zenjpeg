@@ -28,7 +28,7 @@ use super::idct_int::idct_int_tiered;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
 use crate::error::{Error, Result};
-use crate::foundation::alloc::try_alloc_uninitialized;
+use crate::foundation::alloc::try_alloc_maybeuninit;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into;
@@ -170,16 +170,16 @@ impl<'a> ScanlineReader<'a> {
         let chroma_strip_size = chroma_strip_width * chroma_strip_height;
 
         // Allocate strip buffers
-        let y_strip = unsafe { try_alloc_uninitialized(y_strip_size, "Y strip buffer")? };
-        let cb_strip = unsafe { try_alloc_uninitialized(chroma_strip_size, "Cb strip buffer")? };
-        let cr_strip = unsafe { try_alloc_uninitialized(chroma_strip_size, "Cr strip buffer")? };
+        let y_strip = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
+        let cb_strip = try_alloc_maybeuninit(chroma_strip_size, "Cb strip buffer")?;
+        let cr_strip = try_alloc_maybeuninit(chroma_strip_size, "Cr strip buffer")?;
 
         // Upsampled chroma buffers (only needed for non-4:4:4)
         let (cb_upsampled, cr_upsampled) = if subsampling != Subsampling::S444 {
             let upsampled_size = strip_width * mcu_height;
             (
-                unsafe { try_alloc_uninitialized(upsampled_size, "Cb upsampled buffer")? },
-                unsafe { try_alloc_uninitialized(upsampled_size, "Cr upsampled buffer")? },
+                try_alloc_maybeuninit(upsampled_size, "Cb upsampled buffer")?,
+                try_alloc_maybeuninit(upsampled_size, "Cr upsampled buffer")?,
             )
         } else {
             (Vec::new(), Vec::new())

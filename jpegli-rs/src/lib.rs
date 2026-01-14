@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "unsafe_simd"), forbid(unsafe_code))]
+
 //! # jpegli
 //!
 //! Pure Rust JPEG encoder with perceptual optimizations.
