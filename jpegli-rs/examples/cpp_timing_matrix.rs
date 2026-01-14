@@ -22,7 +22,7 @@ use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use jpegli::test_utils::find_cjpegli;
-use jpegli::types::{JpegMode, Subsampling};
+use jpegli::decoder::{decode_jpeg_with_icc, JpegMode, Subsampling};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -223,7 +223,7 @@ impl TimingResult {
 
 fn decode_jpeg(data: &[u8], color: ColorMode) -> Vec<u8> {
     match color {
-        ColorMode::Xyb => jpegli::icc::decode_jpeg_with_icc(data)
+        ColorMode::Xyb => decode_jpeg_with_icc(data)
             .map(|(pixels, _, _)| pixels)
             .unwrap_or_else(|_| {
                 use zune_jpeg::zune_core::bytestream::ZCursor;

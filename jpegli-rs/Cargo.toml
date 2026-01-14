@@ -139,6 +139,11 @@ required-features = ["test-utils"]
 name = "low_q_report"
 required-features = ["test-utils"]
 
+# C++ comparison tools
+[[example]]
+name = "cpp_timing_matrix"
+required-features = ["decoder", "test-utils"]
+
 # XYB debugging tools (for investigating quality gap vs C++ jpegli)
 [[example]]
 name = "compare_xyb_constants"

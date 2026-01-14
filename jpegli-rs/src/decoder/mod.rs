@@ -41,3 +41,7 @@ pub use crate::decode::{
 
 // === Types used in public structs ===
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsampling};
+
+// === ICC profile support ===
+#[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
+pub use crate::color::icc::{decode_jpeg_with_icc, extract_icc_profile};
