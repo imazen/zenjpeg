@@ -272,6 +272,15 @@ impl BytesEncoder {
         output.write_all(&jpeg)?;
         Ok(output)
     }
+
+    /// Finish encoding, appending JPEG bytes to an existing Vec.
+    ///
+    /// Useful for no_std environments or buffer reuse.
+    pub fn finish_to_vec(self, output: &mut Vec<u8>) -> Result<()> {
+        let jpeg = self.finish()?;
+        output.extend_from_slice(&jpeg);
+        Ok(())
+    }
 }
 
 /// ICC profile signature for APP2 marker.
@@ -483,6 +492,13 @@ impl<P: Pixel> RgbEncoder<P> {
     pub fn finish_to<W: Write>(self, output: W) -> Result<W> {
         self.inner.finish_to(output)
     }
+
+    /// Finish encoding, appending JPEG bytes to an existing Vec.
+    ///
+    /// Useful for no_std environments or buffer reuse.
+    pub fn finish_to_vec(self, output: &mut Vec<u8>) -> Result<()> {
+        self.inner.finish_to_vec(output)
+    }
 }
 
 /// Encoder for planar f32 YCbCr input.
@@ -658,6 +674,15 @@ impl YCbCrPlanarEncoder {
         output.write_all(&jpeg)?;
         Ok(output)
     }
+
+    /// Finish encoding, appending JPEG bytes to an existing Vec.
+    ///
+    /// Useful for no_std environments or buffer reuse.
+    pub fn finish_to_vec(self, output: &mut Vec<u8>) -> Result<()> {
+        let jpeg = self.finish()?;
+        output.extend_from_slice(&jpeg);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -823,6 +848,41 @@ mod tests {
             }
         }
         assert_eq!(chunk_count, 2, "Expected 2 ICC chunks for 100KB profile");
+    }
+
+    #[test]
+    fn test_finish_to_vec() {
+        let config = EncoderConfig::new().quality(85);
+        let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
+
+        let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+
+        // Finish to existing vec
+        let mut output = Vec::new();
+        enc.finish_to_vec(&mut output).unwrap();
+
+        assert!(!output.is_empty());
+        assert_eq!(&output[0..2], &[0xFF, 0xD8]); // JPEG SOI marker
+    }
+
+    #[test]
+    fn test_finish_to_vec_append() {
+        let config = EncoderConfig::new().quality(85);
+        let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
+
+        let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+
+        // Finish to vec with existing content
+        let mut output = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let prefix_len = output.len();
+        enc.finish_to_vec(&mut output).unwrap();
+
+        // Verify prefix preserved
+        assert_eq!(&output[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        // Verify JPEG appended
+        assert_eq!(&output[prefix_len..prefix_len + 2], &[0xFF, 0xD8]);
     }
 
     #[test]
