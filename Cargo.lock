@@ -713,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "jpegli-rs"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aligned-vec",
  "almost-enough",
@@ -730,8 +730,10 @@ dependencies = [
  "jpegli-bench-utils",
  "jpegli-internals-sys",
  "lcms2",
+ "linear-srgb",
  "moxcms",
  "mozjpeg-rs",
+ "multiversed 0.1.0",
  "multiversion",
  "png",
  "proptest",
@@ -740,6 +742,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spin",
  "test-case",
  "wide 1.1.1",
  "zune-jpeg",
@@ -785,12 +788,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
+name = "libm"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
+
+[[package]]
 name = "libz-rs-sys"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c10501e7805cee23da17c7790e59df2870c0d4043ec6d03f67d31e2b53e77415"
 dependencies = [
  "zlib-rs",
+]
+
+[[package]]
+name = "linear-srgb"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "multiversed 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "multiversion",
+ "num-traits",
+ "wide 1.1.1",
 ]
 
 [[package]]
@@ -813,6 +833,15 @@ dependencies = [
  "quick-error 2.0.1",
  "rexif",
  "rgb",
+]
+
+[[package]]
+name = "lock_api"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
 ]
 
 [[package]]
@@ -867,6 +896,26 @@ dependencies = [
  "bytemuck",
  "multiversion",
  "wide 1.1.1",
+]
+
+[[package]]
+name = "multiversed"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "multiversed"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31eede710ee60ecb1708685a9d948d25a67ee3940ee8a1096431590cb21eef7d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -939,6 +988,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -1237,6 +1287,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "scopeguard"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1301,6 +1357,15 @@ name = "simd-adler32"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "syn"

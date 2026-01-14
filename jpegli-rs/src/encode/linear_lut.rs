@@ -1,51 +1,29 @@
-//! Fast linear RGB to sRGB/YCbCr conversion using LUTs and polynomial approximations.
+//! Fast linear RGB to sRGB/YCbCr conversion using the linear-srgb crate.
 //!
-//! Two approaches for different input formats:
-//! - 16-bit input: Direct 65536-entry LUT (256KB, exact)
-//! - f32 input: Fast polynomial approximation (SIMD-friendly)
-
-use std::sync::OnceLock;
+//! Uses direct transfer function computation - no LUTs, no runtime initialization.
+//! The linear-srgb crate provides optimized implementations with FMA acceleration.
 
 use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
 };
+use linear_srgb::linear_to_srgb;
 
 /// Cb/Cr offset (128.0 for 8-bit JPEG)
 const CHROMA_OFFSET: f32 = 128.0;
 
 // ============================================================================
-// 16-bit LUT approach (exact, 256KB)
+// 16-bit input conversion
 // ============================================================================
 
-/// LUT for converting linear u16 [0, 65535] to sRGB f32 [0, 255].
-///
-/// This combines the normalization, gamma curve, and scaling in one lookup.
-/// 65536 * 4 bytes = 256 KB per channel, but we only need one since the
-/// transfer function is the same for R, G, B.
-static LINEAR_U16_TO_SRGB_255: OnceLock<Box<[f32; 65536]>> = OnceLock::new();
-
-fn init_u16_lut() -> Box<[f32; 65536]> {
-    let mut lut = Box::new([0.0f32; 65536]);
-    for i in 0..65536 {
-        let linear = i as f64 / 65535.0;
-        let srgb = if linear <= 0.0031308 {
-            linear * 12.92
-        } else {
-            1.055 * linear.powf(1.0 / 2.4) - 0.055
-        };
-        lut[i] = (srgb * 255.0) as f32;
-    }
-    lut
-}
-
-/// Convert linear u16 to sRGB f32 scaled to [0, 255] using LUT.
+/// Convert linear u16 [0, 65535] to sRGB f32 [0, 255].
 #[inline]
 pub fn linear_u16_to_srgb_255(value: u16) -> f32 {
-    LINEAR_U16_TO_SRGB_255.get_or_init(init_u16_lut)[value as usize]
+    let linear = value as f32 / 65535.0;
+    linear_to_srgb_255(linear)
 }
 
-/// Convert linear RGB16 pixel to YCbCr f32 using LUT.
+/// Convert linear RGB16 pixel to YCbCr f32.
 #[inline]
 pub fn linear_rgb16_to_ycbcr(r: u16, g: u16, b: u16) -> (f32, f32, f32) {
     let r = linear_u16_to_srgb_255(r);
@@ -60,68 +38,15 @@ pub fn linear_rgb16_to_ycbcr(r: u16, g: u16, b: u16) -> (f32, f32, f32) {
 }
 
 // ============================================================================
-// f32 fast approximation (using LUT - proven accurate)
+// f32 input conversion
 // ============================================================================
 
-/// Fast sRGB conversion using the interpolated LUT.
+/// Convert linear f32 [0, 1] to sRGB [0, 255].
 ///
-/// This provides ~1.8x speedup over powf with excellent accuracy (< 0.02 units).
-/// For cases where you need maximum speed and can tolerate ~1% error, see
-/// `linear_to_srgb_approx` (experimental).
+/// Uses direct transfer function computation (no LUTs).
+/// Values > 1.0 are tone-mapped with Reinhard.
 #[inline]
-#[allow(dead_code)]
-pub fn linear_to_srgb_fast(x: f32) -> f32 {
-    // Delegate to the accurate LUT-based implementation
-    linear_f32_to_srgb_255_lut(x) / 255.0
-}
-
-/// Convert linear f32 [0,1] to sRGB f32 [0, 255] using fast LUT.
-#[inline]
-pub fn linear_f32_to_srgb_255_fast(x: f32) -> f32 {
-    linear_f32_to_srgb_255_lut(x)
-}
-
-/// Convert linear RGB f32 pixel to YCbCr f32 using fast approximation.
-#[inline]
-pub fn linear_rgbf32_to_ycbcr_fast(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let r = linear_f32_to_srgb_255_fast(r);
-    let g = linear_f32_to_srgb_255_fast(g);
-    let b = linear_f32_to_srgb_255_fast(b);
-
-    let y = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
-    let cb = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB * b)) + CHROMA_OFFSET;
-    let cr = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR * b)) + CHROMA_OFFSET;
-
-    (y, cb, cr)
-}
-
-// ============================================================================
-// f32 LUT with interpolation (accurate, ~4KB)
-// ============================================================================
-
-/// Small LUT size for f32 interpolation approach.
-const F32_LUT_SIZE: usize = 4096;
-
-/// LUT for f32 interpolation - maps [0, 1] to sRGB [0, 255].
-static F32_SRGB_LUT: OnceLock<Box<[f32; F32_LUT_SIZE]>> = OnceLock::new();
-
-fn init_f32_lut() -> Box<[f32; F32_LUT_SIZE]> {
-    let mut lut = Box::new([0.0f32; F32_LUT_SIZE]);
-    for i in 0..F32_LUT_SIZE {
-        let linear = i as f64 / (F32_LUT_SIZE - 1) as f64;
-        let srgb = if linear <= 0.0031308 {
-            linear * 12.92
-        } else {
-            1.055 * linear.powf(1.0 / 2.4) - 0.055
-        };
-        lut[i] = (srgb * 255.0) as f32;
-    }
-    lut
-}
-
-/// Convert linear f32 to sRGB [0, 255] using LUT with linear interpolation.
-#[inline]
-pub fn linear_f32_to_srgb_255_lut(x: f32) -> f32 {
+pub fn linear_to_srgb_255(x: f32) -> f32 {
     if x <= 0.0 {
         return 0.0;
     }
@@ -129,28 +54,47 @@ pub fn linear_f32_to_srgb_255_lut(x: f32) -> f32 {
     // Handle HDR with Reinhard tone mapping
     let x = if x > 1.0 { x / (1.0 + x) } else { x };
 
-    let lut = F32_SRGB_LUT.get_or_init(init_f32_lut);
-    let idx_f = x * (F32_LUT_SIZE - 1) as f32;
-    let lo = (idx_f as usize).min(F32_LUT_SIZE - 2);
-    let hi = lo + 1;
-    let t = idx_f - lo as f32;
-
-    lut[lo] * (1.0 - t) + lut[hi] * t
+    linear_to_srgb(x) * 255.0
 }
 
-/// Convert linear RGB f32 pixel to YCbCr f32 using LUT interpolation.
+/// Fast sRGB conversion using direct computation.
 #[inline]
 #[allow(dead_code)]
-pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let r = linear_f32_to_srgb_255_lut(r);
-    let g = linear_f32_to_srgb_255_lut(g);
-    let b = linear_f32_to_srgb_255_lut(b);
+pub fn linear_to_srgb_fast(x: f32) -> f32 {
+    linear_to_srgb_255(x) / 255.0
+}
+
+/// Convert linear f32 [0,1] to sRGB f32 [0, 255] using fast computation.
+#[inline]
+pub fn linear_f32_to_srgb_255_fast(x: f32) -> f32 {
+    linear_to_srgb_255(x)
+}
+
+/// Alias for `linear_to_srgb_255` (compatibility).
+#[inline]
+pub fn linear_f32_to_srgb_255_lut(x: f32) -> f32 {
+    linear_to_srgb_255(x)
+}
+
+/// Convert linear RGB f32 pixel to YCbCr f32.
+#[inline]
+pub fn linear_rgbf32_to_ycbcr_fast(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let r = linear_to_srgb_255(r);
+    let g = linear_to_srgb_255(g);
+    let b = linear_to_srgb_255(b);
 
     let y = YCBCR_R_TO_Y.mul_add(r, YCBCR_G_TO_Y.mul_add(g, YCBCR_B_TO_Y * b));
     let cb = YCBCR_R_TO_CB.mul_add(r, YCBCR_G_TO_CB.mul_add(g, YCBCR_B_TO_CB * b)) + CHROMA_OFFSET;
     let cr = YCBCR_R_TO_CR.mul_add(r, YCBCR_G_TO_CR.mul_add(g, YCBCR_B_TO_CR * b)) + CHROMA_OFFSET;
 
     (y, cb, cr)
+}
+
+/// Alias for `linear_rgbf32_to_ycbcr_fast` (compatibility).
+#[inline]
+#[allow(dead_code)]
+pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    linear_rgbf32_to_ycbcr_fast(r, g, b)
 }
 
 // ============================================================================
@@ -190,7 +134,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_u16_lut_endpoints() {
+    fn test_u16_endpoints() {
         // Black
         assert!((linear_u16_to_srgb_255(0) - 0.0).abs() < 0.001);
         // White
@@ -201,17 +145,17 @@ mod tests {
     }
 
     #[test]
-    fn test_u16_lut_matches_reference() {
+    fn test_u16_matches_reference() {
         for i in (0..65536).step_by(256) {
             let linear = i as f32 / 65535.0;
-            let lut_val = linear_u16_to_srgb_255(i as u16);
+            let result = linear_u16_to_srgb_255(i as u16);
             let ref_val = linear_f32_to_srgb_255_reference(linear);
-            let diff = (lut_val - ref_val).abs();
+            let diff = (result - ref_val).abs();
             assert!(
-                diff < 0.01,
-                "u16 LUT mismatch at {}: lut={}, ref={}, diff={}",
+                diff < 0.1,
+                "u16 mismatch at {}: result={}, ref={}, diff={}",
                 i,
-                lut_val,
+                result,
                 ref_val,
                 diff
             );
@@ -220,7 +164,6 @@ mod tests {
 
     #[test]
     fn test_f32_fast_accuracy() {
-        // Test accuracy of fast conversion (now uses LUT)
         let mut max_error = 0.0f32;
         let mut max_error_at = 0.0f32;
 
@@ -236,45 +179,10 @@ mod tests {
             }
         }
 
-        println!(
-            "Fast (LUT) max error: {} at linear={}",
-            max_error, max_error_at
-        );
-        // Fast now uses LUT, so should be very accurate (< 0.1 units)
+        println!("Fast max error: {} at linear={}", max_error, max_error_at);
         assert!(
             max_error < 0.1,
             "Fast approximation error too high: {} at {}",
-            max_error,
-            max_error_at
-        );
-    }
-
-    #[test]
-    fn test_f32_lut_accuracy() {
-        // Test accuracy of LUT interpolation
-        let mut max_error = 0.0f32;
-        let mut max_error_at = 0.0f32;
-
-        for i in 0..10000 {
-            let linear = i as f32 / 9999.0;
-            let lut = linear_f32_to_srgb_255_lut(linear);
-            let reference = linear_f32_to_srgb_255_reference(linear);
-            let error = (lut - reference).abs();
-
-            if error > max_error {
-                max_error = error;
-                max_error_at = linear;
-            }
-        }
-
-        println!(
-            "LUT interp max error: {} at linear={}",
-            max_error, max_error_at
-        );
-        // LUT interpolation should be very accurate - < 0.1 units
-        assert!(
-            max_error < 0.1,
-            "LUT interpolation error too high: {} at {}",
             max_error,
             max_error_at
         );
@@ -319,6 +227,7 @@ mod tests {
 
     /// Benchmark-style test to compare performance
     #[test]
+    #[cfg(feature = "std")]
     fn bench_conversion_methods() {
         use std::time::Instant;
 
@@ -332,7 +241,6 @@ mod tests {
         for &v in &test_values {
             let _ = linear_f32_to_srgb_255_reference(v);
             let _ = linear_f32_to_srgb_255_fast(v);
-            let _ = linear_f32_to_srgb_255_lut(v);
         }
         for &v in &test_u16 {
             let _ = linear_u16_to_srgb_255(v);
@@ -349,7 +257,7 @@ mod tests {
         let ref_time = start.elapsed();
         println!("Reference (powf): {:?}, sum={}", ref_time, sum);
 
-        // Benchmark fast polynomial
+        // Benchmark fast (linear-srgb crate)
         let start = Instant::now();
         let mut sum = 0.0f32;
         for _ in 0..ITERATIONS / 1000 {
@@ -358,20 +266,9 @@ mod tests {
             }
         }
         let fast_time = start.elapsed();
-        println!("Fast poly: {:?}, sum={}", fast_time, sum);
+        println!("Fast (linear-srgb): {:?}, sum={}", fast_time, sum);
 
-        // Benchmark f32 LUT
-        let start = Instant::now();
-        let mut sum = 0.0f32;
-        for _ in 0..ITERATIONS / 1000 {
-            for &v in &test_values {
-                sum += linear_f32_to_srgb_255_lut(v);
-            }
-        }
-        let lut_time = start.elapsed();
-        println!("F32 LUT interp: {:?}, sum={}", lut_time, sum);
-
-        // Benchmark u16 LUT
+        // Benchmark u16 conversion
         let start = Instant::now();
         let mut sum = 0.0f32;
         for _ in 0..ITERATIONS / 1000 {
@@ -380,14 +277,13 @@ mod tests {
             }
         }
         let u16_time = start.elapsed();
-        println!("U16 LUT direct: {:?}, sum={}", u16_time, sum);
+        println!("U16 conversion: {:?}, sum={}", u16_time, sum);
 
         // Print speedups
         let ref_ns = ref_time.as_nanos() as f64;
         println!(
-            "\nSpeedups vs reference:\n  Fast poly: {:.1}x\n  F32 LUT: {:.1}x\n  U16 LUT: {:.1}x",
+            "\nSpeedups vs reference:\n  Fast: {:.1}x\n  U16: {:.1}x",
             ref_ns / fast_time.as_nanos() as f64,
-            ref_ns / lut_time.as_nanos() as f64,
             ref_ns / u16_time.as_nanos() as f64
         );
     }
