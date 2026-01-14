@@ -1,5 +1,6 @@
 //! Benchmark showing encoding performance at different image sizes
-use jpegli::{JpegEncoder, PixelFormat, Quality};
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn bench(width: usize, height: usize) -> (f64, usize) {
@@ -13,22 +14,26 @@ fn bench(width: usize, height: usize) -> (f64, usize) {
         }
     }
 
+    let config = EncoderConfig::new().quality(90.0);
+
     // Warmup
     for _ in 0..3 {
-        let enc = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0));
-        let _ = enc.encode(&data);
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&data, Unstoppable).unwrap();
+        let _ = enc.finish();
     }
 
     let mut times = Vec::new();
     let mut size = 0;
     for _ in 0..5 {
         let start = Instant::now();
-        let enc = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0));
-        let result = enc.encode(&data).unwrap();
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&data, Unstoppable).unwrap();
+        let result = enc.finish().unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
         size = result.len();
     }

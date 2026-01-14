@@ -11,7 +11,7 @@
 //! cargo test --test encoder_matrix -- --nocapture
 //! ```
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
 
 /// Result of testing one encoder configuration

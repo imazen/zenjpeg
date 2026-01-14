@@ -20,13 +20,13 @@
 //!
 //! ```rust,ignore
 //! use jpegli::{EncoderConfig, PixelLayout};
-//! use enough::Never;
+//! use enough::Unstoppable;
 //!
 //! let config = EncoderConfig::new().quality(85);
 //! let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
 //!
 //! // Push rows (or use push_packed for all at once)
-//! enc.push_packed(&rgb_bytes, Never)?;
+//! enc.push_packed(&rgb_bytes, Unstoppable)?;
 //! let jpeg = enc.finish()?;
 //! ```
 
@@ -49,7 +49,8 @@ pub mod config;
 mod hybrid;
 pub(crate) mod linear_lut;
 #[cfg(feature = "parallel")]
-pub(crate) mod parallel;
+#[doc(hidden)]
+pub mod parallel;
 #[doc(hidden)]
 pub mod streaming;
 #[doc(hidden)]
@@ -74,7 +75,7 @@ use crate::types::{
     ChromaDownsampling as LegacyChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig,
     JpegMode, PixelFormat as LegacyPixelFormat, Subsampling as LegacySubsampling,
 };
-use enough::{Never, Stop};
+use enough::{Stop, Unstoppable};
 
 /// JPEG encoder.
 ///
@@ -453,9 +454,9 @@ impl Encoder {
 
     /// Encodes the image data.
     ///
-    /// This is equivalent to calling `encode_with_stop(data, Never)`.
+    /// This is equivalent to calling `encode_with_stop(data, Unstoppable)`.
     pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.encode_with_stop(data, Never)
+        self.encode_with_stop(data, Unstoppable)
     }
 
     /// Encodes the image data with cooperative cancellation support.
@@ -522,7 +523,7 @@ impl Encoder {
     ///     .encode_strip_based(&rgb_data)?;
     /// ```
     pub fn encode_strip_based(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.encode_strip_based_with_stop(data, Never)
+        self.encode_strip_based_with_stop(data, Unstoppable)
     }
 
     /// Encodes using strip-based processing with cancellation support.

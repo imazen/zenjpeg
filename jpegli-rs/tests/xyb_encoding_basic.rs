@@ -2,7 +2,7 @@
 //!
 //! Verifies that the XYB encoder produces valid, decodable output.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
 
 /// Encode with XYB color mode

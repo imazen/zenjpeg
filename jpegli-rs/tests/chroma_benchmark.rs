@@ -17,7 +17,7 @@
 //! - Encoding time: Performance
 
 use dssim::Dssim;
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{
     ChromaSubsampling, Decoder, DownsamplingMethod, EncoderConfig, Error, PixelLayout,
 };

@@ -2,7 +2,8 @@
 //!
 //! Run with: cargo run --release --features parallel --example parallel_encoder_bench
 
-use jpegli::{JpegEncoder, Quality};
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn main() {
@@ -49,11 +50,16 @@ fn benchmark_encode(width: usize, height: usize) -> BenchResult {
         *p = (seed >> 33) as u8;
     }
 
+    let config = EncoderConfig::new().quality(85.0);
+
     // Warm up
-    let _ = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::from_quality(85.0))
-        .encode(&pixels)
-        .unwrap();
+    {
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        let _ = enc.finish().unwrap();
+    }
 
     // Benchmark
     let iterations = if width * height < 4_000_000 { 20 } else { 5 };
@@ -61,10 +67,11 @@ fn benchmark_encode(width: usize, height: usize) -> BenchResult {
     let start = Instant::now();
     let mut output = Vec::new();
     for _ in 0..iterations {
-        output = JpegEncoder::new(width as u32, height as u32)
-            .quality(Quality::from_quality(85.0))
-            .encode(&pixels)
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        output = enc.finish().unwrap();
     }
     let elapsed = start.elapsed();
 

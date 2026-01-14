@@ -2,7 +2,8 @@
 //!
 //! Run with: cargo run --release --example quick_parity
 
-use jpegli::{JpegEncoder, PixelFormat, Quality, Subsampling};
+use enough::Unstoppable;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     let w = 256;
@@ -20,12 +21,14 @@ fn main() {
     }
 
     // Encode
-    let jpeg = JpegEncoder::new(w as u32, h as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S420)
-        .quality(Quality::from_quality(90.0))
-        .encode(&data)
+    let config = EncoderConfig::new()
+        .quality(90.0)
+        .ycbcr(ChromaSubsampling::Quarter);
+    let mut enc = config
+        .encode_from_bytes(w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .unwrap();
+    enc.push_packed(&data, Unstoppable).unwrap();
+    let jpeg = enc.finish().unwrap();
 
     println!("JPEG size: {} bytes", jpeg.len());
 

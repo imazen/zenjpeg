@@ -19,9 +19,10 @@
 //! ```
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use enough::Unstoppable;
 use jpegli::test_utils::find_cjpegli;
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use jpegli::types::{JpegMode, Subsampling};
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -294,15 +295,26 @@ fn compute_ssim2(orig_rgb: &[u8], decoded_rgb: &[u8], width: usize, height: usiz
 // ============================================================================
 
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, config: &Config) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
-        .mode(config.scan.to_jpegli())
+    let sub = match config.chroma.to_jpegli() {
+        Subsampling::S444 => ChromaSubsampling::Full,
+        Subsampling::S422 => ChromaSubsampling::HalfHorizontal,
+        Subsampling::S420 => ChromaSubsampling::Quarter,
+        Subsampling::S440 => ChromaSubsampling::HalfVertical,
+        _ => ChromaSubsampling::Quarter,
+    };
+    let mut enc_config = EncoderConfig::new()
+        .quality(quality as f32)
+        .progressive(config.scan.to_jpegli() == JpegMode::Progressive)
         .optimize_huffman(config.huffman == HuffmanMode::Optimized)
-        .subsampling(config.chroma.to_jpegli())
-        .use_xyb(config.color == ColorMode::Xyb)
-        .encode(rgb)
-        .expect("Rust encoding failed")
+        .ycbcr(sub);
+    if config.color == ColorMode::Xyb {
+        enc_config = enc_config.xyb();
+    }
+    let mut enc = enc_config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb, Unstoppable).expect("push");
+    enc.finish().expect("Rust encoding failed")
 }
 
 fn encode_cpp(cjpegli: &Path, input_path: &Path, quality: u8, config: &Config) -> Option<Vec<u8>> {

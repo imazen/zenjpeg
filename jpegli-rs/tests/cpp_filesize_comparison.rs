@@ -3,7 +3,7 @@
 //! This test ensures the Rust port produces comparable file sizes to C++.
 //! Differences > 5% are investigated as potential bugs.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;

@@ -12,7 +12,7 @@ use test_utils::{
     max_pixel_diff, thresholds, TestImage, TestPattern,
 };
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{decode::Decoder, EncoderConfig, PixelLayout};
 use test_case::test_case;
 

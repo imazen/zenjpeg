@@ -6,7 +6,7 @@
 //! Note: Planar YCbCr encoding tests use the old streaming API because v2's
 //! YCbCrPlanarEncoder::finish() is not yet implemented.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelFormat, PixelLayout};
 
 /// Helper to create a test RGB image with a gradient pattern.

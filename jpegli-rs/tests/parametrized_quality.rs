@@ -9,7 +9,7 @@ mod test_utils;
 
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{decode::Decoder, EncoderConfig, PixelLayout};
 use test_case::test_case;
 

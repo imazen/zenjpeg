@@ -291,7 +291,7 @@ impl EncoderConfig {
     /// ```ignore
     /// let config = EncoderConfig::new().quality(85);
     /// let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
-    /// enc.push_packed(&rgb_bytes, Never)?;
+    /// enc.push_packed(&rgb_bytes, Unstoppable)?;
     /// let jpeg = enc.finish()?;
     /// ```
     pub fn encode_from_bytes(
@@ -318,7 +318,7 @@ impl EncoderConfig {
     ///
     /// let config = EncoderConfig::new().quality(85);
     /// let mut enc = config.encode_from_rgb::<RGB<u8>>(1920, 1080)?;
-    /// enc.push_packed(&pixels, Never)?;
+    /// enc.push_packed(&pixels, Unstoppable)?;
     /// let jpeg = enc.finish()?;
     /// ```
     pub fn encode_from_rgb<P: super::Pixel>(
@@ -344,7 +344,7 @@ impl EncoderConfig {
     ///     .ycbcr(ChromaSubsampling::Quarter);
     ///
     /// let mut enc = config.encode_from_ycbcr_planar(1920, 1080)?;
-    /// enc.push(&planes, height, Never)?;
+    /// enc.push(&planes, height, Unstoppable)?;
     /// let jpeg = enc.finish()?;
     /// ```
     pub fn encode_from_ycbcr_planar(&self, width: u32, height: u32) -> Result<YCbCrPlanarEncoder> {

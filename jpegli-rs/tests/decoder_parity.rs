@@ -4,7 +4,7 @@
 //! output to C++ djpegli for various JPEG configurations.
 
 use dssim::Dssim;
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{decode::Decoder, ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::process::Command;

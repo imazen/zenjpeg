@@ -134,7 +134,7 @@ fn jpegli_decodes_baseline_xyb() {
     let mut enc = config
         .encode_from_bytes(width, height, jpegli::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&pixels, enough::Never).expect("push");
+    enc.push_packed(&pixels, enough::Unstoppable).expect("push");
     let jpeg_data = enc.finish().expect("encode");
 
     // Verify it's baseline (not progressive)

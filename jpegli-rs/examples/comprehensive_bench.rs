@@ -4,7 +4,8 @@
 //!
 //! Run with: cargo run --release --example comprehensive_bench [image.png]
 
-use jpegli::{JpegEncoder, JpegMode, PixelFormat, Quality, Subsampling};
+use enough::Unstoppable;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use png::Decoder;
 use std::fs::File;
 use std::io::BufReader;
@@ -47,41 +48,40 @@ struct BenchResult {
     size_bytes: usize,
 }
 
-#[allow(deprecated)]
 fn bench_encode(
     data: &[u8],
     width: usize,
     height: usize,
-    subsampling: Subsampling,
-    mode: JpegMode,
+    subsampling: ChromaSubsampling,
+    progressive: bool,
     quality: f32,
     iterations: usize,
 ) -> BenchResult {
-    let w = width as u32;
-    let h = height as u32;
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(subsampling)
+        .progressive(progressive);
 
     // Warmup
     for _ in 0..2 {
-        let enc = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .subsampling(subsampling)
-            .mode(mode)
-            .quality(Quality::from_quality(quality));
-        let _ = enc.encode(data);
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(data, Unstoppable).unwrap();
+        let _ = enc.finish();
     }
 
     let mut times = Vec::with_capacity(iterations);
     let mut size = 0;
 
     for _ in 0..iterations {
-        let enc = JpegEncoder::new(width as u32, height as u32)
-            .pixel_format(PixelFormat::Rgb)
-            .subsampling(subsampling)
-            .mode(mode)
-            .quality(Quality::from_quality(quality));
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .unwrap();
 
         let start = Instant::now();
-        let result = enc.encode(data);
+        enc.push_packed(data, Unstoppable).unwrap();
+        let result = enc.finish();
         times.push(start.elapsed().as_secs_f64() * 1000.0);
 
         if let Ok(r) = result {
@@ -128,23 +128,12 @@ fn main() {
     for (w, h, size_name) in sizes {
         let data = load_and_resize(&source_path, w, h);
 
-        for &subsampling in &[Subsampling::S444, Subsampling::S420] {
-            let sub_name = if subsampling == Subsampling::S444 {
-                "444"
-            } else {
-                "420"
-            };
-
+        for &(subsampling, sub_name) in &[
+            (ChromaSubsampling::Full, "444"),
+            (ChromaSubsampling::Quarter, "420"),
+        ] {
             // Baseline
-            let baseline = bench_encode(
-                &data,
-                w,
-                h,
-                subsampling,
-                JpegMode::Baseline,
-                quality,
-                iterations,
-            );
+            let baseline = bench_encode(&data, w, h, subsampling, false, quality, iterations);
 
             println!(
                 "{:<6} {:>4} {:>6} {:>10.1} {:>8.1} {:>8}",
@@ -157,15 +146,7 @@ fn main() {
             );
 
             // Progressive
-            let progressive = bench_encode(
-                &data,
-                w,
-                h,
-                subsampling,
-                JpegMode::Progressive,
-                quality,
-                iterations,
-            );
+            let progressive = bench_encode(&data, w, h, subsampling, true, quality, iterations);
 
             println!(
                 "{:<6} {:>4} {:>6} {:>10.1} {:>8.1} {:>8}",

@@ -132,7 +132,7 @@ fn test_xyb_buffer_roundtrip() {
 /// Test XYB with image encoding (if encoder supports XYB).
 #[test]
 fn test_xyb_encode_decode() {
-    use enough::Never;
+    use enough::Unstoppable;
     use jpegli::{EncoderConfig, PixelLayout};
 
     fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
@@ -208,7 +208,7 @@ fn test_srgb_linear_precision() {
 #[ignore = "requires C++ cjpegli build"]
 fn test_xyb_roundtrip_loss_vs_cpp() {
     use dssim::Dssim;
-    use enough::Never;
+    use enough::Unstoppable;
     use jpegli::{EncoderConfig, PixelLayout};
     use rgb::RGBA8;
     use std::fs;

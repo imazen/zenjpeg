@@ -1,5 +1,8 @@
 //! Encoder implementations for v2 API.
 
+// Allow use of deprecated StreamingEncoder internally - v2 API wraps it
+#![allow(deprecated)]
+
 use std::io::Write;
 use std::marker::PhantomData;
 
@@ -87,7 +90,8 @@ impl BytesEncoder {
             .pixel_format(pixel_format)
             .subsampling(subsampling)
             .optimize_huffman(config.optimize_huffman)
-            .chroma_downsampling(config.downsampling_method.to_legacy());
+            .chroma_downsampling(config.downsampling_method.to_legacy())
+            .restart_interval(config.restart_interval);
 
         if config.progressive {
             builder = builder.progressive(true);
@@ -95,6 +99,13 @@ impl BytesEncoder {
 
         if matches!(config.color_mode, super::types::ColorMode::Xyb { .. }) {
             builder = builder.use_xyb(true);
+        }
+
+        #[cfg(feature = "parallel")]
+        if config.parallel.is_some() {
+            // ParallelEncoding::Auto means enable parallel encoding
+            // Future variants may have different behaviors
+            builder = builder.parallel(true);
         }
 
         builder.start()
@@ -105,7 +116,7 @@ impl BytesEncoder {
     /// - `data`: Raw pixel bytes
     /// - `rows`: Number of scanlines to push
     /// - `stride_bytes`: Bytes per row in buffer (>= width * bytes_per_pixel)
-    /// - `stop`: Cancellation token (use `enough::Never` if not needed)
+    /// - `stop`: Cancellation token (use `enough::Unstoppable` if not needed)
     pub fn push(
         &mut self,
         data: &[u8],
@@ -647,7 +658,7 @@ impl YCbCrPlanarEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enough::Never;
+    use enough::Unstoppable;
     use rgb::RGB;
 
     #[test]
@@ -659,7 +670,7 @@ mod tests {
 
         // Create 8x8 red image
         let pixels = vec![255u8, 0, 0].repeat(64);
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
 
         let jpeg = enc.finish().unwrap();
         assert!(!jpeg.is_empty());
@@ -673,7 +684,7 @@ mod tests {
 
         // Create 8x8 green image
         let pixels: Vec<RGB<u8>> = vec![RGB::new(0, 255, 0); 64];
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
 
         let jpeg = enc.finish().unwrap();
         assert!(!jpeg.is_empty());
@@ -688,7 +699,7 @@ mod tests {
             .unwrap();
 
         // Stride too small (less than width * 3)
-        let result = enc.push(&[0u8; 100], 1, 100, Never);
+        let result = enc.push(&[0u8; 100], 1, 100, Unstoppable);
         assert!(matches!(result, Err(Error::StrideTooSmall { .. })));
     }
 
@@ -703,11 +714,11 @@ mod tests {
 
         // Push all 4 rows
         for _ in 0..4 {
-            enc.push_packed(&row_data, Never).unwrap();
+            enc.push_packed(&row_data, Unstoppable).unwrap();
         }
 
         // Try to push one more
-        let result = enc.push_packed(&row_data, Never);
+        let result = enc.push_packed(&row_data, Unstoppable);
         assert!(matches!(result, Err(Error::TooManyRows { .. })));
     }
 
@@ -720,7 +731,7 @@ mod tests {
 
         // Only push 4 rows
         let rows_data = vec![0u8; 8 * 3 * 4];
-        enc.push_packed(&rows_data, Never).unwrap();
+        enc.push_packed(&rows_data, Unstoppable).unwrap();
 
         // Try to finish
         let result = enc.finish();
@@ -740,7 +751,7 @@ mod tests {
             .unwrap();
 
         let pixels = vec![128u8; 8 * 8 * 3];
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
 
         let jpeg = enc.finish().unwrap();
 
@@ -782,7 +793,7 @@ mod tests {
             .unwrap();
 
         let pixels = vec![128u8; 8 * 8 * 3];
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
 
         let jpeg = enc.finish().unwrap();
 
@@ -822,7 +833,7 @@ mod tests {
             .unwrap();
 
         let pixels = vec![100u8; 8 * 8 * 3];
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
 
         let jpeg = enc.finish().unwrap();
 

@@ -2,7 +2,8 @@
 //!
 //! Run with: cargo run --release --example ycbcr_benchmark
 
-use jpegli::{Decoder, JpegEncoder, PixelFormat, Quality, Subsampling};
+use enough::Unstoppable;
+use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelFormat, PixelLayout};
 use std::time::{Duration, Instant};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
@@ -15,12 +16,14 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality))
-        .subsampling(Subsampling::S420)
-        .encode(&data)
-        .unwrap()
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(ChromaSubsampling::Quarter);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .unwrap();
+    enc.push_packed(&data, Unstoppable).unwrap();
+    enc.finish().unwrap()
 }
 
 fn bench_decode_rgb(jpeg_data: &[u8], iterations: usize) -> Duration {

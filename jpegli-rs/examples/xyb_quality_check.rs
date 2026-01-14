@@ -1,8 +1,9 @@
 //! Check XYB quality metrics: Rust vs C++
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
+use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{Decoder, JpegEncoder, PixelFormat};
+use jpegli::{Decoder, EncoderConfig, PixelLayout};
 use std::fs;
 use std::io::Write;
 use std::process::Command;
@@ -22,12 +23,12 @@ fn main() {
     println!("Image: {}x{}\n", width, height);
 
     // Encode with Rust XYB
-    let rust_xyb = JpegEncoder::new(width as u32, height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(jpegli::quant::Quality::from_quality(90.0))
-        .use_xyb(true)
-        .encode(rgb)
+    let config = EncoderConfig::new().quality(90.0).xyb();
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
         .unwrap();
+    enc.push_packed(rgb, Unstoppable).unwrap();
+    let rust_xyb = enc.finish().unwrap();
 
     println!("Rust XYB: {} bytes", rust_xyb.len());
 

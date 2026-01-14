@@ -1550,7 +1550,7 @@ impl EncoderConfig {
             .encode_from_bytes(img.width as u32, img.height as u32, PixelLayout::Rgb8Srgb)
             .map_err(|e| format!("jpegli-rs encode setup failed: {e}"))?;
 
-        enc.push_packed(&img.pixels, enough::Never)
+        enc.push_packed(&img.pixels, enough::Unstoppable)
             .map_err(|e| format!("jpegli-rs encode failed: {e}"))?;
 
         enc.finish()

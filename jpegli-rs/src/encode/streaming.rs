@@ -37,11 +37,17 @@ use crate::encode::Encoder;
 use crate::error::{Error, Result};
 use crate::quant::{self, CustomQuantMatrices, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
-use enough::{Never, Stop};
+use enough::{Stop, Unstoppable};
 
 /// Builder for creating a streaming encoder.
 ///
 /// Use [`StreamingEncoder::new()`] to start building.
+///
+/// # Deprecated
+///
+/// This type is deprecated. Use [`crate::EncoderConfig`] from the v2 API instead.
+#[doc(hidden)]
+#[deprecated(since = "0.5.0", note = "Use EncoderConfig from v2 API instead")]
 #[derive(Debug, Clone)]
 pub struct StreamingEncoderBuilder {
     width: u32,
@@ -551,20 +557,21 @@ impl StreamingEncoderBuilder {
 /// Accepts rows incrementally and outputs JPEG at the end.
 /// Uses strip-based processing internally for low peak memory usage.
 ///
-/// # Example
+/// # Deprecated
+///
+/// This type is deprecated. Use [`crate::EncoderConfig`] from the v2 API instead:
 ///
 /// ```rust,ignore
-/// use jpegli::StreamingEncoder;
+/// use jpegli::{EncoderConfig, PixelLayout};
+/// use enough::Unstoppable;
 ///
-/// let mut encoder = StreamingEncoder::new(1920, 1080).start()?;
-///
-/// // Push rows from a decoder or generator
-/// for row in image_rows {
-///     encoder.push_row(row)?;
-/// }
-///
+/// let config = EncoderConfig::new().quality(85);
+/// let mut encoder = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
+/// encoder.push_packed(&rgb_data, Unstoppable)?;
 /// let jpeg = encoder.finish()?;
 /// ```
+#[doc(hidden)]
+#[deprecated(since = "0.5.0", note = "Use EncoderConfig from v2 API instead")]
 pub struct StreamingEncoder {
     /// Image width in pixels
     width: usize,
@@ -785,7 +792,7 @@ impl StreamingEncoder {
     /// - All rows have already been pushed
     /// - Internal processing fails
     pub fn push_row(&mut self, row: &[u8]) -> Result<()> {
-        self.push_row_with_stop(row, Never)
+        self.push_row_with_stop(row, Unstoppable)
     }
 
     /// Pushes a single row with cancellation support.
@@ -836,7 +843,7 @@ impl StreamingEncoder {
     /// - Too many rows would be pushed
     /// - Internal processing fails
     pub fn push_rows(&mut self, data: &[u8], num_rows: usize) -> Result<()> {
-        self.push_rows_with_stop(data, num_rows, Never)
+        self.push_rows_with_stop(data, num_rows, Unstoppable)
     }
 
     /// Pushes multiple rows with cancellation support.
@@ -1069,7 +1076,7 @@ impl StreamingEncoder {
     /// - Not all rows have been pushed
     /// - JPEG generation fails
     pub fn finish(self) -> Result<Vec<u8>> {
-        self.finish_with_stop(Never)
+        self.finish_with_stop(Unstoppable)
     }
 
     /// Finishes encoding with cancellation support.

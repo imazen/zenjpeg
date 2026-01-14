@@ -1,4 +1,4 @@
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{Decoder, EncoderConfig, PixelLayout};
 
 #[test]

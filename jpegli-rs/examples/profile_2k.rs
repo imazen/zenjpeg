@@ -1,6 +1,6 @@
 //! Simple 2K profiling target for samply
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use enough::Unstoppable;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; width * height * 3];
@@ -25,30 +25,34 @@ fn main() {
     let rgb = generate_test_image(width as usize, height as usize);
 
     eprintln!("Running 50 encode iterations (q90 4:4:4 YCbCr for profiling...");
+    let config_444 = EncoderConfig::new()
+        .quality(90.0)
+        .progressive(false)
+        .optimize_huffman(true)
+        .ycbcr(ChromaSubsampling::Full)
+        ;
     for i in 0..50 {
-        let _jpeg = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(90.0))
-            .mode(JpegMode::Baseline)
-            .optimize_huffman(true)
-            .subsampling(Subsampling::S444)
-            .use_xyb(false)
-            .encode(&rgb)
-            .expect("encode failed");
+        let mut enc = config_444
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&rgb, Unstoppable).expect("push");
+        let _jpeg = enc.finish().expect("encode failed");
         if i % 5 == 0 {
             eprintln!("  iteration {}/50", i + 1);
         }
     }
     eprintln!("Running 50 encode iterations (q70 4:2:0 YCbCr for profiling...");
+    let config_420 = EncoderConfig::new()
+        .quality(70.0)
+        .progressive(true)
+        .ycbcr(ChromaSubsampling::Quarter)
+        ;
     for i in 0..50 {
-        let _jpeg = JpegEncoder::new(width, height)
-            .pixel_format(PixelFormat::Rgb)
-            .quality(Quality::from_quality(70.0))
-            .progressive(true)
-            .subsampling(Subsampling::S420)
-            .use_xyb(false)
-            .encode(&rgb)
-            .expect("encode failed");
+        let mut enc = config_420
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(&rgb, Unstoppable).expect("push");
+        let _jpeg = enc.finish().expect("encode failed");
         if i % 5 == 0 {
             eprintln!("  iteration {}/50", i + 1);
         }

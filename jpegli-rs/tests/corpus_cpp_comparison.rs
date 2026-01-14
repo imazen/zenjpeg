@@ -5,7 +5,7 @@
 #![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use std::path::{Path, PathBuf};
 use std::process::Command;

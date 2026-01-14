@@ -1,5 +1,7 @@
 //! Compare XYB output quality and size against C jpegli.
 
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::process::Command;
 
 fn main() {
@@ -54,19 +56,25 @@ fn main() {
             #[cfg(feature = "experimental-hybrid-trellis")]
             let rust_jpeg = {
                 use jpegli::hybrid_config::HybridConfig;
-                jpegli::JpegEncoder::new(width, height)
-                    .quality(jpegli::quant::Quality::from_quality(q as f32))
-                    .use_xyb(true)
-                    .hybrid_config(HybridConfig::default())
-                    .encode(pixels)
-                    .expect("encode")
+                let config = EncoderConfig::new()
+                    .quality(q as f32)
+                    .xyb()
+                    .hybrid_config(HybridConfig::default());
+                let mut enc = config
+                    .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                    .expect("encoder setup");
+                enc.push_packed(pixels, Unstoppable).expect("push");
+                enc.finish().expect("encode")
             };
             #[cfg(not(feature = "experimental-hybrid-trellis"))]
-            let rust_jpeg = jpegli::JpegEncoder::new(width, height)
-                .quality(jpegli::quant::Quality::from_quality(q as f32))
-                .use_xyb(true)
-                .encode(pixels)
-                .expect("encode");
+            let rust_jpeg = {
+                let config = EncoderConfig::new().quality(q as f32).xyb();
+                let mut enc = config
+                    .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                    .expect("encoder setup");
+                enc.push_packed(pixels, Unstoppable).expect("push");
+                enc.finish().expect("encode")
+            };
             let rust_bytes = rust_jpeg.len();
             let rust_path = format!("/tmp/rust_xyb_{}_{}.jpg", img_name, q);
             std::fs::write(&rust_path, &rust_jpeg).expect("write");

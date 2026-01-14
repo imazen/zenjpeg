@@ -4,7 +4,7 @@
 //! then verify quality using DSSIM.
 
 use dssim::Dssim;
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;

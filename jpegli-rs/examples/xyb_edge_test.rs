@@ -1,8 +1,8 @@
 //! Test XYB mode edge handling with partial MCU dimensions
 
+use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
-use jpegli::types::{PixelFormat, Subsampling};
-use jpegli::Quality;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; width * height * 3];
@@ -17,16 +17,17 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
     rgb
 }
 
-#[allow(deprecated)]
 fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    jpegli::JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S444) // XYB uses custom subsampling internally
-        .quality(Quality::from_quality(quality))
+    let config = EncoderConfig::new()
+        .quality(quality)
+        .ycbcr(ChromaSubsampling::Full) // XYB uses custom subsampling internally
         .optimize_huffman(true)
-        .use_xyb(true)
-        .encode(rgb)
-        .expect("XYB encode failed")
+        .xyb();
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb, Unstoppable).expect("push");
+    enc.finish().expect("XYB encode failed")
 }
 
 fn bytes_to_linear(data: &[u8], width: usize, height: usize) -> LinearRgbImage {

@@ -211,10 +211,10 @@ pub use imgref::{Img, ImgRef, ImgRefMut, ImgVec};
 /// - Data size doesn't match width × height × 3
 /// - Encoding fails
 pub fn encode_rgb(width: u32, height: u32, rgb_data: &[u8], quality: u8) -> Result<Vec<u8>> {
-    use enough::Never;
+    use enough::Unstoppable;
     let config = EncoderConfig::new().quality(quality.clamp(1, 100));
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(rgb_data, Never)?;
+    enc.push_packed(rgb_data, Unstoppable)?;
     enc.finish()
 }
 
@@ -236,10 +236,10 @@ pub fn encode_rgb(width: u32, height: u32, rgb_data: &[u8], quality: u8) -> Resu
 /// let jpeg = jpegli::encode_rgba(640, 480, &rgba_pixels, 85)?;
 /// ```
 pub fn encode_rgba(width: u32, height: u32, rgba_data: &[u8], quality: u8) -> Result<Vec<u8>> {
-    use enough::Never;
+    use enough::Unstoppable;
     let config = EncoderConfig::new().quality(quality.clamp(1, 100));
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgbx8Srgb)?;
-    enc.push_packed(rgba_data, Never)?;
+    enc.push_packed(rgba_data, Unstoppable)?;
     enc.finish()
 }
 
@@ -259,10 +259,10 @@ pub fn encode_rgba(width: u32, height: u32, rgba_data: &[u8], quality: u8) -> Re
 /// let jpeg = jpegli::encode_gray(640, 480, &gray_pixels, 85)?;
 /// ```
 pub fn encode_gray(width: u32, height: u32, gray_data: &[u8], quality: u8) -> Result<Vec<u8>> {
-    use enough::Never;
+    use enough::Unstoppable;
     let config = EncoderConfig::new().quality(quality.clamp(1, 100));
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(gray_data, Never)?;
+    enc.push_packed(gray_data, Unstoppable)?;
     enc.finish()
 }
 

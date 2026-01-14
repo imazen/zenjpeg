@@ -50,7 +50,7 @@ fn test_xyb_cpp_comparison() {
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&rgb_data, enough::Never).expect("push");
+    enc.push_packed(&rgb_data, enough::Unstoppable).expect("push");
     let rust_jpeg = enc.finish().expect("Rust encoding failed");
 
     println!("Rust JPEG size: {} bytes", rust_jpeg.len());
@@ -326,7 +326,7 @@ fn test_icc_profile_embedding() {
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&rgb_data, enough::Never).expect("push");
+    enc.push_packed(&rgb_data, enough::Unstoppable).expect("push");
     let jpeg = enc.finish().expect("Encoding failed");
 
     // Check JPEG structure

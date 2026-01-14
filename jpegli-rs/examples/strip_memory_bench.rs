@@ -8,10 +8,11 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+use enough::Unstoppable;
 use jpegli::encode::strip::{StripProcessor, StripProcessorOutput};
 use jpegli::quant::{generate_quant_table, Quality, ZeroBiasParams};
 use jpegli::types::{ColorSpace, PixelFormat, Subsampling};
-use jpegli::JpegEncoder;
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Tracking allocator that wraps System allocator
 struct TrackingAllocator;
@@ -85,13 +86,15 @@ fn encode_standard(rgb_data: &[u8], width: usize, height: usize) -> (usize, std:
     reset_stats();
     let start = Instant::now();
 
-    let encoder = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::Traditional(85.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S420)
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Quarter)
         .optimize_huffman(true);
-
-    let output = encoder.encode(rgb_data).expect("encoding failed");
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb_data, Unstoppable).expect("push");
+    let output = enc.finish().expect("encoding failed");
     let elapsed = start.elapsed();
 
     // Keep output alive until we measure
@@ -111,15 +114,15 @@ fn encode_strip_jpeg(
     reset_stats();
     let start = Instant::now();
 
-    let encoder = JpegEncoder::new(width as u32, height as u32)
-        .quality(Quality::Traditional(85.0))
-        .pixel_format(PixelFormat::Rgb)
-        .subsampling(Subsampling::S420)
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Quarter)
         .optimize_huffman(true);
-
-    let output = encoder
-        .encode(rgb_data)
-        .expect("encoding failed");
+    let mut enc = config
+        .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(rgb_data, Unstoppable).expect("push");
+    let output = enc.finish().expect("encoding failed");
     let elapsed = start.elapsed();
 
     let output_size = output.len();
@@ -130,6 +133,7 @@ fn encode_strip_jpeg(
 }
 
 /// Encode using the strip-based approach (blocks only, for comparison)
+#[allow(deprecated)]
 fn encode_strip_blocks(
     rgb_data: &[u8],
     width: usize,
@@ -154,14 +158,16 @@ fn encode_strip_blocks(
     let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
     let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
 
-    processor.set_quant_tables(
-        y_quant,
-        cb_quant,
-        cr_quant,
-        y_zero_bias,
-        cb_zero_bias,
-        cr_zero_bias,
-    );
+    processor
+        .set_quant_tables(
+            y_quant,
+            cb_quant,
+            cr_quant,
+            y_zero_bias,
+            cb_zero_bias,
+            cr_zero_bias,
+        )
+        .unwrap();
 
     // Process in strips
     let strip_height = processor.strip_height();

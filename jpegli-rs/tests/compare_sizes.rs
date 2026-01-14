@@ -1,4 +1,4 @@
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, Decoder, EncoderConfig, PixelLayout};
 
 fn create_gradient(size: u32) -> Vec<u8> {

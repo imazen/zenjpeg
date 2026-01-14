@@ -1,7 +1,7 @@
 //! Decoding benchmarks for jpegli.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jpegli::{Decoder, Encoder, PixelFormat, Quality};
+use jpegli::{Decoder, JpegEncoder, PixelFormat, Quality};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];
@@ -16,7 +16,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
 
     let encoder = JpegEncoder::new(width, height)
         .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality));
+        .quality(Quality::from(quality));
 
     encoder.encode(&data).expect("encoding should succeed")
 }

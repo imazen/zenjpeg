@@ -156,10 +156,12 @@ fn main() {
         }
 
         // Rust YCbCr
-        let rust_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
-            .quality(jpegli::quant::Quality::Traditional(q as f32))
-            .encode(&rgb)
+        let config = jpegli::EncoderConfig::new().quality(q as f32);
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(&rgb, enough::Unstoppable).unwrap();
+        let rust_jpeg = enc.finish().unwrap();
 
         if let Some(rust_decoded) = decode_jpegli(&rust_jpeg) {
             let rust_dssim = compute_dssim(&rgb, &rust_decoded, width, height);
@@ -218,11 +220,12 @@ fn main() {
         }
 
         // Rust XYB
-        if let Ok(rust_jpeg) = jpegli::JpegEncoder::new(width as u32, height as u32)
-            .quality(jpegli::quant::Quality::Traditional(q as f32))
-            .use_xyb(true)
-            .encode(&rgb)
-        {
+        let xyb_config = jpegli::EncoderConfig::new().quality(q as f32).xyb();
+        let xyb_enc = xyb_config
+            .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb);
+        if let Ok(mut enc) = xyb_enc {
+            enc.push_packed(&rgb, enough::Unstoppable).unwrap();
+            let rust_jpeg = enc.finish().unwrap();
             let rust_path = format!("/tmp/rust_xyb_q{}.jpg", q);
             fs::write(&rust_path, &rust_jpeg).unwrap();
             let rust_bpp = rust_jpeg.len() as f64 * 8.0 / pixels as f64;

@@ -6,7 +6,7 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{
     decode::{Decoder, DecoderConfig},
     types::{ColorSpace, Component, Dimensions, HuffmanTable},

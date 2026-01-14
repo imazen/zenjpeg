@@ -1,5 +1,5 @@
 //! Quick 4K benchmark
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
@@ -27,7 +27,7 @@ fn main() {
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(&data, Never).unwrap();
+        enc.push_packed(&data, Unstoppable).unwrap();
         let _ = enc.finish().unwrap();
     }
 
@@ -43,7 +43,7 @@ fn main() {
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
                 .unwrap();
-            enc.push_packed(&data, Never).unwrap();
+            enc.push_packed(&data, Unstoppable).unwrap();
             let result = enc.finish().unwrap();
             let elapsed = start.elapsed();
             times.push(elapsed.as_millis());

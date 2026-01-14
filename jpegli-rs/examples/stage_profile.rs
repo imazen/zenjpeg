@@ -1,10 +1,10 @@
 //! Profile individual encoding stages
 
+use enough::Unstoppable;
 use std::hint::black_box;
 use std::time::Instant;
 
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     let width = 2048u32;
@@ -33,31 +33,11 @@ fn main() {
 
     let iterations = 5;
 
-    for (name, mode, subsampling, optimize) in [
-        (
-            "Baseline/Fixed/444",
-            JpegMode::Baseline,
-            Subsampling::S444,
-            false,
-        ),
-        (
-            "Baseline/Opt/444",
-            JpegMode::Baseline,
-            Subsampling::S444,
-            true,
-        ),
-        (
-            "Baseline/Opt/420",
-            JpegMode::Baseline,
-            Subsampling::S420,
-            true,
-        ),
-        (
-            "Progressive/Opt/444",
-            JpegMode::Progressive,
-            Subsampling::S444,
-            true,
-        ),
+    for (name, progressive, subsampling, optimize) in [
+        ("Baseline/Fixed/444", false, ChromaSubsampling::Full, false),
+        ("Baseline/Opt/444", false, ChromaSubsampling::Full, true),
+        ("Baseline/Opt/420", false, ChromaSubsampling::Quarter, true),
+        ("Progressive/Opt/444", true, ChromaSubsampling::Full, true),
     ] {
         let mut total_time = std::time::Duration::ZERO;
         let mut output_size = 0;
@@ -65,14 +45,16 @@ fn main() {
         for _ in 0..iterations {
             let start = Instant::now();
 
-            let jpeg = JpegEncoder::new(width, height)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(85.0))
-                .mode(mode)
-                .subsampling(subsampling)
-                .optimize_huffman(optimize)
-                .encode(&rgb)
-                .expect("encode failed");
+            let config = EncoderConfig::new()
+                .quality(85.0)
+                .progressive(progressive)
+                .ycbcr(subsampling)
+                .optimize_huffman(optimize);
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .expect("encoder setup");
+            enc.push_packed(&rgb, Unstoppable).expect("push");
+            let jpeg = enc.finish().expect("encode failed");
 
             total_time += start.elapsed();
             output_size = jpeg.len();

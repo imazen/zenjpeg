@@ -80,7 +80,7 @@ fn format_bytes(bytes: usize) -> String {
 }
 
 fn main() {
-    use enough::Never;
+    use enough::Unstoppable;
     use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
     println!("=== jpegli-rs Allocation Tracking ===\n");
@@ -128,7 +128,7 @@ fn main() {
                 let mut enc = config
                     .encode_from_bytes(*width as u32, *height as u32, PixelLayout::Rgb8Srgb)
                     .expect("encoder setup");
-                enc.push_packed(&rgb_data, Never).expect("push");
+                enc.push_packed(&rgb_data, Unstoppable).expect("push");
                 let output = enc.finish().expect("encoding failed");
 
                 let (current, peak, alloc_count, _dealloc_count) = get_stats();
@@ -191,7 +191,7 @@ fn main() {
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&rgb_data, Never).expect("push");
+    enc.push_packed(&rgb_data, Unstoppable).expect("push");
     let output = enc.finish().expect("encoding failed");
 
     let (post_current, post_peak, post_allocs, post_deallocs) = get_stats();

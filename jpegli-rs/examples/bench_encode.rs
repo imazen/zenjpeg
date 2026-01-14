@@ -1,4 +1,4 @@
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
@@ -32,7 +32,7 @@ fn benchmark(
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
         let _ = enc.finish().unwrap();
     }
 
@@ -43,7 +43,7 @@ fn benchmark(
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(&pixels, Never).unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
         let result = enc.finish().unwrap();
         result_size = result.len();
         std::hint::black_box(&result);

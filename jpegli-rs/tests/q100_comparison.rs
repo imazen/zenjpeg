@@ -2,7 +2,7 @@
 //!
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;

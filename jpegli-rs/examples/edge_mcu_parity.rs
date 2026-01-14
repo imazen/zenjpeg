@@ -10,8 +10,8 @@
 //! cargo run --release --example edge_mcu_parity -- --edge-width 1
 //! ```
 
-use jpegli::types::{JpegMode, PixelFormat};
-use jpegli::{JpegEncoder, Quality};
+use enough::Unstoppable;
+use jpegli::{EncoderConfig as JpegliEncoderConfig, PixelLayout};
 use jpegli_bench_utils::{
     create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
     EncoderConfig, EncoderImpl, ImageData, McuEdgeInfo, ScanMode,
@@ -49,13 +49,15 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
 }
 
 fn encode_rust(pixels: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    JpegEncoder::new(width, height)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
-        .mode(JpegMode::Progressive)
-        .optimize_huffman(true)
-        .encode(pixels)
-        .expect("Rust encode failed")
+    let config = JpegliEncoderConfig::new()
+        .quality(quality as f32)
+        .progressive(true)
+        .optimize_huffman(true);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(pixels, Unstoppable).expect("push");
+    enc.finish().expect("Rust encode failed")
 }
 
 fn encode_cpp(image: &ImageData, quality: u8) -> Vec<u8> {
