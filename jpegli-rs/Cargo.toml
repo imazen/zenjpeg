@@ -10,7 +10,7 @@ description = "Pure Rust JPEG encoder/decoder - port of Google's jpegli with per
 keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
 categories = ["multimedia::images", "encoding"]
 authors = ["Lilith River <lilith@imazen.io>"]
-rust-version = "1.70"
+rust-version = "1.92"
 
 [lib]
 name = "jpegli"  # Keep import name as `use jpegli` for compatibility
