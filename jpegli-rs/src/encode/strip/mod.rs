@@ -1157,8 +1157,7 @@ mod tests {
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
                 .expect("encoder creation failed");
-            enc.push_packed(&rgb, Unstoppable)
-                .expect("push failed");
+            enc.push_packed(&rgb, Unstoppable).expect("push failed");
             let jpeg_strip = enc.finish().expect("strip encode failed");
 
             // Decode and verify

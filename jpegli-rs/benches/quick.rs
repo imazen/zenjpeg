@@ -14,9 +14,8 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use jpegli::encode::Encoder;
-use jpegli::quant::Quality;
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
+use enough::Unstoppable;
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Duration;
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -49,61 +48,64 @@ fn quick_bench(c: &mut Criterion) {
     // Core path: progressive + optimized huffman + 420 (most common)
     group.bench_function("prog-opt-420", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(WIDTH)
-                .height(HEIGHT)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::Traditional(90.0))
-                .mode(JpegMode::Progressive)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(true)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S420)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Quarter);
+            let mut enc = config
+                .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 
     // Baseline (simpler path)
     group.bench_function("base-opt-420", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(WIDTH)
-                .height(HEIGHT)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::Traditional(90.0))
-                .mode(JpegMode::Baseline)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(false)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S420)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Quarter);
+            let mut enc = config
+                .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 
     // 444 subsampling (no chroma downsampling)
     group.bench_function("prog-opt-444", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(WIDTH)
-                .height(HEIGHT)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::Traditional(90.0))
-                .mode(JpegMode::Progressive)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(true)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S444)
-                .encode(black_box(&image))
+                .ycbcr(ChromaSubsampling::Full);
+            let mut enc = config
+                .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 
     // XYB color space
     group.bench_function("prog-opt-444-xyb", |b| {
         b.iter(|| {
-            Encoder::new()
-                .width(WIDTH)
-                .height(HEIGHT)
-                .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::Traditional(90.0))
-                .mode(JpegMode::Progressive)
+            let config = EncoderConfig::new()
+                .quality(90.0)
+                .progressive(true)
                 .optimize_huffman(true)
-                .subsampling(Subsampling::S444)
-                .use_xyb(true)
-                .encode(black_box(&image))
+                .xyb();
+            let mut enc = config
+                .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
+                .unwrap();
+            enc.push_packed(black_box(&image), Unstoppable).unwrap();
+            enc.finish()
         });
     });
 

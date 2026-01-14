@@ -184,7 +184,7 @@ impl Decoder {
     ///
     /// # Example
     /// ```
-    /// use jpegli::Decoder;
+    /// use jpegli::decode::Decoder;
     ///
     /// let decoder = Decoder::new();
     /// let estimated = decoder.estimate_memory_usage(4096, 4096);
@@ -321,6 +321,7 @@ impl Decoder {
 
         // Convert to output format
         // For XYB images, use simple dequantization so ICC profile works correctly
+        #[allow(unused_mut)] // pixels is mutated when cms features are enabled
         let mut pixels =
             parser.to_pixels(output_format, info.is_xyb, self.config.fancy_upsampling)?;
 
