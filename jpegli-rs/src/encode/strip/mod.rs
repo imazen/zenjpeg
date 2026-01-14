@@ -1099,8 +1099,8 @@ mod tests {
     /// Validates that decoded output is close to original (PSNR-based check).
     #[test]
     fn test_strip_partial_mcu_heights() {
-        use crate::encode::Encoder;
-        use crate::quant::Quality;
+        use crate::encode::{EncoderConfig, PixelLayout};
+        use enough::Unstoppable;
 
         let width = 64usize;
         let mut results = Vec::new();
@@ -1150,15 +1150,16 @@ mod tests {
             }
 
             // Encode with strip encoder (current default)
-            let jpeg_strip = Encoder::new()
-                .width(width as u32)
-                .height(height as u32)
-                .pixel_format(PixelFormat::Rgb)
-                .subsampling(Subsampling::S420)
-                .jpegli_quality(Quality::from_quality(85.0))
-                .optimize_huffman(true)
-                .encode(&rgb)
-                .expect("strip encode failed");
+            let config = EncoderConfig::new()
+                .quality(85.0)
+                .ycbcr(crate::encode::ChromaSubsampling::Quarter)
+                .optimize_huffman(true);
+            let mut enc = config
+                .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+                .expect("encoder creation failed");
+            enc.push_packed(&rgb, Unstoppable)
+                .expect("push failed");
+            let jpeg_strip = enc.finish().expect("strip encode failed");
 
             // Decode and verify
             let decoded_strip = crate::decode::Decoder::new()
