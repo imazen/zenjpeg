@@ -733,7 +733,7 @@ dependencies = [
  "linear-srgb",
  "moxcms",
  "mozjpeg-rs",
- "multiversed 0.1.0",
+ "multiversed",
  "multiversion",
  "png",
  "proptest",
@@ -805,9 +805,11 @@ dependencies = [
 [[package]]
 name = "linear-srgb"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d347d97e1549c03278cd1b4e09b99835ed9fc1e70ac0b9da68f5904941a7f41"
 dependencies = [
  "bytemuck",
- "multiversed 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "multiversed",
  "multiversion",
  "num-traits",
  "wide 1.1.1",
@@ -896,15 +898,6 @@ dependencies = [
  "bytemuck",
  "multiversion",
  "wide 1.1.1",
-]
-
-[[package]]
-name = "multiversed"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
