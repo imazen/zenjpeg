@@ -71,6 +71,7 @@ struct HuffmanTable {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // Fields used for Debug output
 struct ScanInfo {
     offset: usize,
     components: Vec<ScanComponent>,
