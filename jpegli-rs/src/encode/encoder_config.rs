@@ -1,10 +1,10 @@
 //! Encoder configuration for v2 API.
 
-use super::types::{
+use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
+use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling,
 };
-use super::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
 
@@ -339,7 +339,7 @@ impl EncoderConfig {
     /// enc.push_packed(&pixels, Unstoppable)?;
     /// let jpeg = enc.finish()?;
     /// ```
-    pub fn encode_from_rgb<P: super::Pixel>(
+    pub fn encode_from_rgb<P: super::byte_encoders::Pixel>(
         &self,
         width: u32,
         height: u32,

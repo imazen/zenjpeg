@@ -57,6 +57,11 @@ pub mod streaming;
 #[doc(hidden)]
 pub mod strip;
 
+// v2 types moved to encode root (v2/mod.rs re-exports these for compatibility)
+pub mod byte_encoders;
+pub mod encoder_config;
+pub mod encoder_types;
+
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
 pub mod v2;
