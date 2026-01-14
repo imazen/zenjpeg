@@ -3,7 +3,7 @@
 //! Tests the new Block8x8f and QuantTableSimd types.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use jpegli::simd_types::{Block8x8f, QuantTableSimd};
+use jpegli::foundation::simd_types::{Block8x8f, QuantTableSimd};
 use wide::f32x8;
 
 /// Old-style quantization (load/store dance)

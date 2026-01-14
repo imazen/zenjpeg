@@ -9,10 +9,10 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
+use enough::Unstoppable;
 use jpegli::decode::Decoder;
-use jpegli::encode::Encoder;
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::Quality;
+use jpegli::decoder::PixelFormat;
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use libfuzzer_sys::fuzz_target;
 
 /// Structured input for roundtrip fuzzing.
@@ -26,8 +26,8 @@ struct RoundtripInput {
     quality: u8,
     /// Subsampling mode
     subsampling: u8,
-    /// JPEG mode
-    mode: u8,
+    /// Progressive mode
+    progressive: bool,
     /// Pixel data (will be truncated/extended to fit dimensions)
     pixels: Vec<u8>,
 }
@@ -43,16 +43,10 @@ fuzz_target!(|input: RoundtripInput| {
 
     // Select subsampling
     let subsampling = match input.subsampling % 4 {
-        0 => Subsampling::S444,
-        1 => Subsampling::S422,
-        2 => Subsampling::S420,
-        _ => Subsampling::S440,
-    };
-
-    // Select mode
-    let mode = match input.mode % 2 {
-        0 => JpegMode::Baseline,
-        _ => JpegMode::Progressive,
+        0 => ChromaSubsampling::Full,
+        1 => ChromaSubsampling::HalfHorizontal,
+        2 => ChromaSubsampling::Quarter,
+        _ => ChromaSubsampling::HalfVertical,
     };
 
     // Generate pixel buffer (RGB)
@@ -60,16 +54,23 @@ fuzz_target!(|input: RoundtripInput| {
     let mut pixels = input.pixels;
     pixels.resize(pixel_count, 128); // Pad with gray if too short
 
-    // Encode
-    let encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .pixel_format(PixelFormat::Rgb)
-        .jpegli_quality(Quality::from_quality(quality_val))
-        .subsampling(subsampling)
-        .mode(mode);
+    // Build encoder config
+    let config = EncoderConfig::new()
+        .quality(quality_val)
+        .progressive(input.progressive)
+        .ycbcr(subsampling);
 
-    let encoded = match encoder.encode(&pixels) {
+    // Create encoder and encode
+    let mut enc = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
+        Ok(enc) => enc,
+        Err(_) => return,
+    };
+
+    if enc.push_packed(&pixels, Unstoppable).is_err() {
+        return;
+    }
+
+    let encoded = match enc.finish() {
         Ok(data) => data,
         Err(_) => return, // Encoding can fail for edge cases
     };
@@ -81,7 +82,7 @@ fuzz_target!(|input: RoundtripInput| {
         Err(_e) => {
             // TODO: Some subsampling+mode combinations have known issues
             // For now, skip rather than panic to allow fuzzing other paths
-            // Known issue: S440 + Progressive fails to decode
+            // Known issue: HalfVertical + Progressive fails to decode
             return;
         }
     };

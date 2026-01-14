@@ -47,20 +47,20 @@
 //! enc.push(&data, rows, stride, &cancel)?;
 //! ```
 
-mod config;
-mod encoders;
-mod types;
-
-pub use config::EncoderConfig;
-pub use encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
+// Re-export from new locations at encode:: level (backwards compatibility)
+#[allow(unused_imports)] // Public API re-exports for backwards compatibility
+pub use super::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
+#[allow(unused_imports)] // Public API re-export
+pub use super::encoder_config::EncoderConfig;
 #[cfg(feature = "parallel")]
-pub use types::ParallelEncoding;
-pub use types::{
+#[allow(unused_imports)] // Public API re-export
+pub use super::encoder_types::ParallelEncoding;
+#[allow(unused_imports)] // Public API re-exports
+pub use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, YCbCrPlanes,
 };
 
-// Re-export edge padding types from crate::types
-
 // Re-export Stop trait for convenience
+#[allow(unused_imports)] // Public API re-export
 pub use enough::Stop;

@@ -109,21 +109,24 @@
 //! ```
 
 // Note: Currently re-exporting internal error types since the encoder
-// types we re-export from crate::encode::v2 use them internally.
+// types we re-export from crate::encode use them internally.
 // TODO: Create wrapper types or unified error type in the future.
 
 // === Error types ===
-// Re-export internal error types since the v2 encoder types use them
+// Re-export internal error types since the encoder types use them
 pub use crate::error::{Error, Result};
 
-// === Main encoder types ===
-pub use crate::encode::v2::{
-    BytesEncoder, ChromaSubsampling, ColorMode, DownsamplingMethod, EncoderConfig, PixelLayout,
-    Quality, QuantTableConfig, RgbEncoder, Stop, XybSubsampling, YCbCrPlanarEncoder, YCbCrPlanes,
+// === Main encoder types (from encode root modules) ===
+pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
+pub use crate::encode::encoder_config::EncoderConfig;
+pub use crate::encode::encoder_types::{
+    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
+    XybSubsampling, YCbCrPlanes,
 };
+pub use crate::encode::Stop;
 
 #[cfg(feature = "parallel")]
-pub use crate::encode::v2::ParallelEncoding;
+pub use crate::encode::encoder_types::ParallelEncoding;
 
 // === Types used in encoder configuration ===
 pub use crate::types::HuffmanMethod;

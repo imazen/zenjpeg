@@ -6,9 +6,8 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use jpegli::encode::Encoder;
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::Quality;
+use enough::Unstoppable;
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use libfuzzer_sys::fuzz_target;
 
 /// Structured input for encoder fuzzing.
@@ -22,8 +21,8 @@ struct EncodeInput {
     quality: u8,
     /// Subsampling selector
     subsampling: u8,
-    /// Mode selector
-    mode: u8,
+    /// Mode selector (progressive or baseline)
+    progressive: bool,
     /// Pixel format selector
     pixel_format: u8,
     /// Use XYB color space
@@ -44,25 +43,19 @@ fuzz_target!(|input: EncodeInput| {
 
     // Select subsampling
     let subsampling = match input.subsampling % 4 {
-        0 => Subsampling::S444,
-        1 => Subsampling::S422,
-        2 => Subsampling::S420,
-        _ => Subsampling::S440,
+        0 => ChromaSubsampling::Full,
+        1 => ChromaSubsampling::HalfHorizontal,
+        2 => ChromaSubsampling::Quarter,
+        _ => ChromaSubsampling::HalfVertical,
     };
 
-    // Select mode
-    let mode = match input.mode % 2 {
-        0 => JpegMode::Baseline,
-        _ => JpegMode::Progressive,
-    };
-
-    // Select pixel format
-    let (pixel_format, bytes_per_pixel) = match input.pixel_format % 5 {
-        0 => (PixelFormat::Gray, 1),
-        1 => (PixelFormat::Rgb, 3),
-        2 => (PixelFormat::Rgba, 4),
-        3 => (PixelFormat::Bgr, 3),
-        _ => (PixelFormat::Bgra, 4),
+    // Select pixel format and layout
+    let (pixel_layout, bytes_per_pixel) = match input.pixel_format % 5 {
+        0 => (PixelLayout::Gray8Srgb, 1),
+        1 => (PixelLayout::Rgb8Srgb, 3),
+        2 => (PixelLayout::Rgbx8Srgb, 4),
+        3 => (PixelLayout::Bgr8Srgb, 3),
+        _ => (PixelLayout::Bgrx8Srgb, 4),
     };
 
     // Generate pixel buffer
@@ -70,21 +63,28 @@ fuzz_target!(|input: EncodeInput| {
     let mut pixels = input.pixels;
     pixels.resize(pixel_count, 128);
 
-    // Build encoder with various options
-    let mut encoder = Encoder::new()
-        .width(width)
-        .height(height)
-        .pixel_format(pixel_format)
-        .jpegli_quality(Quality::from_quality(quality_val))
-        .subsampling(subsampling)
-        .mode(mode)
+    // Build encoder config with various options
+    let mut config = EncoderConfig::new()
+        .quality(quality_val)
+        .progressive(input.progressive)
         .optimize_huffman(input.optimize_huffman);
 
-    // XYB only works with RGB
-    if input.use_xyb && pixel_format == PixelFormat::Rgb {
-        encoder = encoder.use_xyb(true);
+    // XYB only works with RGB/RGBX
+    if input.use_xyb && matches!(pixel_layout, PixelLayout::Rgb8Srgb | PixelLayout::Rgbx8Srgb) {
+        config = config.xyb();
+    } else {
+        config = config.ycbcr(subsampling);
     }
 
-    // Encode - we just want to ensure no panics
-    let _ = encoder.encode(&pixels);
+    // Handle grayscale separately
+    if matches!(pixel_layout, PixelLayout::Gray8Srgb) {
+        config = config.grayscale();
+    }
+
+    // Create encoder and encode - we just want to ensure no panics
+    let enc = config.encode_from_bytes(width, height, pixel_layout);
+    if let Ok(mut enc) = enc {
+        let _ = enc.push_packed(&pixels, Unstoppable);
+        let _ = enc.finish();
+    }
 });
