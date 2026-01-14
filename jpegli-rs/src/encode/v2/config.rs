@@ -364,34 +364,24 @@ impl EncoderConfig {
 
     /// Estimate peak memory usage for encoding an image of the given dimensions.
     ///
-    /// This is a rough estimate based on:
-    /// - Strip buffer size
-    /// - Block storage
-    /// - Huffman tables
-    /// - Output buffer
+    /// Returns estimated bytes based on color mode, subsampling, and dimensions.
+    /// Delegates to the streaming encoder's estimate which accounts for all
+    /// internal buffers.
     #[must_use]
+    #[allow(deprecated)]
     pub fn estimate_memory(&self, width: u32, height: u32) -> usize {
-        let w = width as usize;
-        let h = height as usize;
+        use crate::encode::streaming::StreamingEncoder;
 
-        // Strip height (16 rows for 4:2:0)
-        let strip_height = 16;
+        let subsampling = match self.color_mode {
+            ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
+            ColorMode::Grayscale => crate::types::Subsampling::S444,
+        };
 
-        // Strip buffers (YCbCr f32 planes)
-        let strip_buffer = w * strip_height * 4 * 3;
-
-        // Block storage (worst case: all blocks in memory for progressive)
-        let blocks_y = ((w + 7) / 8) * ((h + 7) / 8) * 64 * 2; // i16
-        let blocks_c = blocks_y / 4; // for 4:2:0
-        let blocks = blocks_y + blocks_c * 2;
-
-        // Huffman tables and other overhead
-        let overhead = 64 * 1024;
-
-        // Output buffer estimate (quality-dependent, rough)
-        let output_estimate = w * h / 4;
-
-        strip_buffer + blocks + overhead + output_estimate
+        StreamingEncoder::new(width, height)
+            .subsampling(subsampling)
+            .optimize_huffman(self.optimize_huffman)
+            .estimate_memory_usage()
     }
 
     // === Accessors ===

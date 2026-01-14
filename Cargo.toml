@@ -4,7 +4,6 @@ members = [
     "jpegli-rs",
     "jpegli-bench-utils",
     "internal/jpegli-internals-sys",
-    "internal/wasm-bench",
 ]
 
 [workspace.package]
