@@ -1,6 +1,6 @@
 [package]
 name = "jpegli-rs"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/imazen/jpegli-rs"
@@ -65,7 +65,7 @@ sha2 = "0.10"
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["std", "cms", "test-utils"]
+default = ["std"]
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
@@ -88,7 +88,8 @@ cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 # Enable debug token serialization for C++ comparison
 debug-tokens = []
 # Enable test utilities (image generation, quality verification)
-test-utils = []
+# Requires std for file path operations
+test-utils = ["std"]
 # Enable WASM SIMD128 tests (requires wasm runtime with SIMD support)
 # Build with: RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
 # Supported runtimes (2025): Wasmtime, Wasmer, Node.js, all major browsers
