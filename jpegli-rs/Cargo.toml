@@ -65,7 +65,7 @@ yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy tes
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["std", "fast-yuv"]
+default = ["std", "yuv"]
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
@@ -99,8 +99,8 @@ sharp-yuv = []
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
 experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 # Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
-# Uses integer fixed-point with 13-bit precision (max error: 1.2 levels, invisible after JPEG quantization)
-fast-yuv = ["dep:yuv"]
+# Uses 15-bit fixed-point Professional mode (max error: 0.5 levels, invisible after JPEG quantization)
+yuv = ["dep:yuv"]
 
 [[bench]]
 name = "encode"

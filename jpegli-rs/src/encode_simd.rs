@@ -994,7 +994,7 @@ pub fn rgb_to_ycbcr_strided_inplace(
     debug_assert!(cr_plane.len() >= width * height);
 
     // Use fast yuv crate when available (10-150× faster SIMD integer math)
-    #[cfg(feature = "fast-yuv")]
+    #[cfg(feature = "yuv")]
     {
         crate::color::fast_yuv::rgb_to_ycbcr_strided_fast(
             rgb_data, y_plane, cb_plane, cr_plane, width, height, y_stride, bpp,
@@ -1003,7 +1003,7 @@ pub fn rgb_to_ycbcr_strided_inplace(
     }
 
     // Fast path: if Y stride matches width, use contiguous conversion
-    #[cfg(not(feature = "fast-yuv"))]
+    #[cfg(not(feature = "yuv"))]
     if y_stride == width {
         let num_pixels = width * height;
         match bpp {
@@ -1018,8 +1018,8 @@ pub fn rgb_to_ycbcr_strided_inplace(
         return;
     }
 
-    // Strided path: process row-by-row (fallback when fast-yuv not available)
-    #[cfg(not(feature = "fast-yuv"))]
+    // Strided path: process row-by-row (fallback when yuv not available)
+    #[cfg(not(feature = "yuv"))]
     {
         let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
         let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
@@ -1148,7 +1148,7 @@ pub fn rgb_to_ycbcr_strided_inplace(
                 }
             }
         }
-    } // #[cfg(not(feature = "fast-yuv"))]
+    } // #[cfg(not(feature = "yuv"))]
 }
 
 /// BGR variant of strided conversion (for BGR/BGRA input).
@@ -1169,7 +1169,7 @@ pub fn bgr_to_ycbcr_strided_inplace(
     debug_assert!(cr_plane.len() >= width * height);
 
     // Use fast yuv crate when available (10-150× faster SIMD integer math)
-    #[cfg(feature = "fast-yuv")]
+    #[cfg(feature = "yuv")]
     {
         crate::color::fast_yuv::bgr_to_ycbcr_strided_fast(
             bgr_data, y_plane, cb_plane, cr_plane, width, height, y_stride, bpp,
@@ -1178,7 +1178,7 @@ pub fn bgr_to_ycbcr_strided_inplace(
     }
 
     // Fast path: if Y stride matches width, use contiguous conversion
-    #[cfg(not(feature = "fast-yuv"))]
+    #[cfg(not(feature = "yuv"))]
     if y_stride == width {
         let num_pixels = width * height;
         match bpp {
@@ -1194,7 +1194,7 @@ pub fn bgr_to_ycbcr_strided_inplace(
     }
 
     // Strided path: process row-by-row (swap R/B channels)
-    #[cfg(not(feature = "fast-yuv"))]
+    #[cfg(not(feature = "yuv"))]
     {
         let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
         let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
@@ -1319,7 +1319,7 @@ pub fn bgr_to_ycbcr_strided_inplace(
                 }
             }
         }
-    } // #[cfg(not(feature = "fast-yuv"))]
+    } // #[cfg(not(feature = "yuv"))]
 }
 
 // ============================================================================
