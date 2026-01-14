@@ -841,11 +841,11 @@ mod quality_coverage {
 // ERROR TYPE COVERAGE
 // ============================================================================
 
-mod error_coverage {
-    use super::*;
+mod encoder_error_coverage {
+    use jpegli::encoder::Error;
 
     #[test]
-    fn error_display() {
+    fn encoder_error_display() {
         let errors: Vec<Error> = vec![
             Error::InvalidDimensions {
                 width: 0,
@@ -863,6 +863,73 @@ mod error_coverage {
                 expected: 1000,
                 actual: 100,
             },
+            Error::UnsupportedFeature {
+                feature: "arithmetic coding",
+            },
+            Error::InternalError {
+                reason: "unexpected state",
+            },
+            Error::IoError {
+                reason: "disk full".to_string(),
+            },
+            Error::IccError("invalid profile".to_string()),
+            Error::InvalidScanScript("overlapping scans".to_string()),
+            Error::AllocationFailed {
+                bytes: 1_000_000_000,
+                context: "allocating DCT blocks",
+            },
+            Error::SizeOverflow {
+                context: "computing buffer size",
+            },
+            Error::ImageTooLarge {
+                pixels: 200_000_000,
+                limit: 100_000_000,
+            },
+            Error::TooManyRows {
+                height: 100,
+                pushed: 200,
+            },
+        ];
+
+        for err in errors {
+            let display = format!("{}", err);
+            assert!(!display.is_empty(), "Display should not be empty");
+            let debug = format!("{:?}", err);
+            assert!(!debug.is_empty(), "Debug should not be empty");
+        }
+    }
+
+    #[test]
+    fn encoder_error_equality() {
+        let err1 = Error::InvalidDimensions {
+            width: 0,
+            height: 0,
+            reason: "zero dimensions",
+        };
+        let err2 = Error::InvalidDimensions {
+            width: 0,
+            height: 0,
+            reason: "zero dimensions",
+        };
+        assert_eq!(err1, err2);
+    }
+
+    #[test]
+    fn encoder_error_clone() {
+        let err = Error::InternalError {
+            reason: "test error",
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+}
+
+mod decoder_error_coverage {
+    use jpegli::decoder::Error;
+
+    #[test]
+    fn decoder_error_display() {
+        let errors: Vec<Error> = vec![
             Error::InvalidJpegData {
                 reason: "not a valid JPEG",
             },
@@ -893,7 +960,6 @@ mod error_coverage {
             },
             Error::IccError("invalid profile".to_string()),
             Error::DecodeError("truncated data".to_string()),
-            Error::InvalidScanScript("overlapping scans".to_string()),
             Error::AllocationFailed {
                 bytes: 1_000_000_000,
                 context: "allocating DCT blocks",
@@ -920,22 +986,18 @@ mod error_coverage {
     }
 
     #[test]
-    fn error_equality() {
-        let err1 = Error::InvalidDimensions {
-            width: 0,
-            height: 0,
-            reason: "zero dimensions",
+    fn decoder_error_equality() {
+        let err1 = Error::InvalidJpegData {
+            reason: "truncated",
         };
-        let err2 = Error::InvalidDimensions {
-            width: 0,
-            height: 0,
-            reason: "zero dimensions",
+        let err2 = Error::InvalidJpegData {
+            reason: "truncated",
         };
         assert_eq!(err1, err2);
     }
 
     #[test]
-    fn error_clone() {
+    fn decoder_error_clone() {
         let err = Error::InvalidJpegData {
             reason: "test error",
         };

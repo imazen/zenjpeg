@@ -1159,7 +1159,7 @@ mod tests {
                 .expect("strip encode failed");
 
             // Decode and verify
-            let decoded_strip = crate::Decoder::new()
+            let decoded_strip = crate::decode::Decoder::new()
                 .decode(&jpeg_strip)
                 .expect("strip decode failed");
 
