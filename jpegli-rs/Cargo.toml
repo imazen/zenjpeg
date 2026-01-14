@@ -22,7 +22,10 @@ bytemuck = { workspace = true }
 rgb = { workspace = true }
 imgref = { workspace = true }
 multiversion = { workspace = true }
+multiversed = { workspace = true }
 enough = { workspace = true }
+spin = { workspace = true }  # no_std lazy initialization (for huffman tables)
+linear-srgb = { workspace = true }  # Fast linear↔sRGB conversion
 lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
@@ -62,11 +65,14 @@ sha2 = "0.10"
 # turbojpeg = { workspace = true }
 
 [features]
-default = ["cms", "test-utils"]
+default = ["std", "cms", "test-utils"]
+# Enable std library support (io::Write, std::error::Error impl).
+# Disable for no_std environments - only requires core + alloc.
+std = []
 # Enable the decoder API. The decoder is still in prerelease with frequent breaking changes.
 # When disabled, no decoder types or functions are available in the public API.
 decoder = []
-parallel = ["dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
+parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
 # Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
 # Without this, all SIMD uses safe `wide` crate which auto-vectorizes on all platforms.
 unsafe_simd = []
