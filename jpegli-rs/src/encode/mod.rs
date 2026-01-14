@@ -67,10 +67,20 @@ pub mod encoder_types;
 pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
+// (Now from encoder_types, encoder_config, byte_encoders - v2 re-exports for compatibility)
+#[allow(unused_imports)] // Public API re-exports
+pub use byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
+#[allow(unused_imports)] // Public API re-export
+pub use encoder_config::EncoderConfig;
+#[allow(unused_imports)] // Public API re-exports
+pub use encoder_types::{
+    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
+    XybSubsampling, YCbCrPlanes,
+};
 #[cfg(feature = "parallel")]
 #[allow(unused_imports)] // Public API re-export
-pub use v2::ParallelEncoding;
-pub use v2::Stop;
+pub use encoder_types::ParallelEncoding;
+pub use enough::Stop;
 
 use crate::error::{Error, Result};
 
