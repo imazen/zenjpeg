@@ -181,11 +181,9 @@ pub mod types;
 #[cfg(not(feature = "test-utils"))]
 pub(crate) mod types;
 
-// Test utilities - public when feature enabled for external test crates
+// Test utilities - only compiled when feature enabled (requires std)
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
-#[cfg(not(feature = "test-utils"))]
-pub(crate) mod test_utils;
 
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
 #[cfg(feature = "experimental-hybrid-trellis")]
