@@ -790,11 +790,14 @@ fn srgb_to_linear(srgb: u8) -> f32 {
 mod tests {
     use super::*;
 
-    /// Helper to encode RGB pixels to JPEG
+    /// Helper to encode RGB pixels with 4:4:4 (no subsampling).
+    /// This ensures the streaming decode path is used, which matches the scanline reader's
+    /// integer IDCT implementation.
     fn encode_rgb(width: u32, height: u32, pixels: &[u8], quality: f32) -> Vec<u8> {
-        use crate::encode::v2::{EncoderConfig, PixelLayout};
+        use crate::encode::v2::{ChromaSubsampling, EncoderConfig, PixelLayout};
         use enough::Unstoppable;
-        let config = EncoderConfig::new().quality(quality);
+        // Use 4:4:4 to ensure streaming decode path is used (same IDCT as scanline reader)
+        let config = EncoderConfig::new().quality(quality).ycbcr(ChromaSubsampling::Full);
         let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
         enc.push_packed(pixels, Unstoppable).unwrap();
         enc.finish().unwrap()
