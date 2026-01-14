@@ -31,7 +31,6 @@
 //! ```
 
 #![allow(dead_code)]
-
 #![allow(deprecated)] // Uses deprecated Encoder internally for progressive mode
 
 use crate::encode::strip::StripProcessor;
@@ -47,9 +46,9 @@ use enough::{Stop, Unstoppable};
 ///
 /// # Deprecated
 ///
-/// This type is deprecated. Use [`crate::EncoderConfig`] from the v2 API instead.
+/// This type is deprecated. Use [`crate::encoder::EncoderConfig`] instead.
 #[doc(hidden)]
-#[deprecated(since = "0.5.0", note = "Use EncoderConfig from v2 API instead")]
+#[deprecated(since = "0.5.0", note = "Use jpegli::encoder::EncoderConfig instead")]
 #[derive(Debug, Clone)]
 pub struct StreamingEncoderBuilder {
     width: u32,
@@ -714,11 +713,10 @@ impl StreamingEncoderBuilder {
 ///
 /// # Deprecated
 ///
-/// This type is deprecated. Use [`crate::EncoderConfig`] from the v2 API instead:
+/// This type is deprecated. Use [`crate::encoder::EncoderConfig`] instead:
 ///
 /// ```rust,ignore
-/// use jpegli::{EncoderConfig, PixelLayout};
-/// use enough::Unstoppable;
+/// use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
 ///
 /// let config = EncoderConfig::new().quality(85);
 /// let mut encoder = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
@@ -726,7 +724,7 @@ impl StreamingEncoderBuilder {
 /// let jpeg = encoder.finish()?;
 /// ```
 #[doc(hidden)]
-#[deprecated(since = "0.5.0", note = "Use EncoderConfig from v2 API instead")]
+#[deprecated(since = "0.5.0", note = "Use jpegli::encoder::EncoderConfig instead")]
 pub struct StreamingEncoder {
     /// Image width in pixels
     width: usize,

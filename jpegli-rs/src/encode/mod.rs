@@ -31,7 +31,6 @@
 //! ```
 
 #![allow(dead_code)]
-
 #![allow(deprecated)]
 
 // Internal implementation modules (pub for internal crate re-exports)
@@ -88,9 +87,8 @@ use enough::Unstoppable;
 
 /// JPEG encoder.
 ///
-/// **Deprecated:** Use [`StreamingEncoder`] instead, which provides better
-/// performance and lower memory usage. The streaming API is now the
-/// recommended way to encode JPEG images.
+/// **Deprecated:** Use [`crate::encoder::EncoderConfig`] instead, which provides
+/// a cleaner API with better ergonomics.
 ///
 /// # Migration
 ///
@@ -103,12 +101,15 @@ use enough::Unstoppable;
 ///     .encode(&pixels)?;
 ///
 /// // New API (recommended):
-/// let jpeg = StreamingEncoder::new(640, 480)
-///     .encode(&pixels)?;
+/// use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+/// let config = EncoderConfig::new().quality(85);
+/// let mut enc = config.encode_from_bytes(640, 480, PixelLayout::Rgb8Srgb)?;
+/// enc.push_packed(&pixels, Unstoppable)?;
+/// let jpeg = enc.finish()?;
 /// ```
 #[deprecated(
     since = "0.4.0",
-    note = "Use StreamingEncoder instead, which provides better performance and lower memory usage"
+    note = "Use jpegli::encoder::EncoderConfig instead"
 )]
 pub struct Encoder {
     /// Encoder configuration (accessible within crate for streaming encoder).
@@ -554,7 +555,8 @@ impl Encoder {
             builder = builder.custom_quant_matrices(custom.clone());
         }
 
-        builder.encode_with_stop(data, stop)}
+        builder.encode_with_stop(data, stop)
+    }
 
     /// Generate a quantization table, using custom matrices if configured.
     ///
