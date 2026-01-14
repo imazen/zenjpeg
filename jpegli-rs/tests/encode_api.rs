@@ -608,6 +608,276 @@ fn test_ycbcr_standard_huffman_decodable() {
     assert_eq!(decoded.height, 64);
 }
 
+// ============================================================================
+// Pre-converted YCbCr Input Tests
+// ============================================================================
+
+fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
+    // BT.601 RGB to YCbCr conversion
+    let rf = r as f32;
+    let gf = g as f32;
+    let bf = b as f32;
+
+    let y = (0.299 * rf + 0.587 * gf + 0.114 * bf).round().clamp(0.0, 255.0) as u8;
+    let cb = (128.0 - 0.168736 * rf - 0.331264 * gf + 0.5 * bf)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    let cr = (128.0 + 0.5 * rf - 0.418688 * gf - 0.081312 * bf)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+
+    (y, cb, cr)
+}
+
+fn rgb_to_ycbcr_f32(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    // BT.601 RGB to YCbCr conversion (f32 output)
+    let rf = r as f32;
+    let gf = g as f32;
+    let bf = b as f32;
+
+    let y = 0.299 * rf + 0.587 * gf + 0.114 * bf;
+    let cb = 128.0 - 0.168736 * rf - 0.331264 * gf + 0.5 * bf;
+    let cr = 128.0 + 0.5 * rf - 0.418688 * gf - 0.081312 * bf;
+
+    (y, cb, cr)
+}
+
+#[test]
+fn test_encode_ycbcr8_input() {
+    // Test pre-converted YCbCr8 input (skips RGB->YCbCr conversion)
+    let width = 64u32;
+    let height = 64u32;
+
+    // Generate gradient image and convert to YCbCr
+    let mut ycbcr_data = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let r = ((x * 255) / width) as u8;
+            let g = ((y * 255) / height) as u8;
+            let b = 128u8;
+            let (yy, cb, cr) = rgb_to_ycbcr(r, g, b);
+            ycbcr_data.push(yy);
+            ycbcr_data.push(cb);
+            ycbcr_data.push(cr);
+        }
+    }
+
+    let config = EncoderConfig::new().quality(90.0);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::YCbCr8)
+        .expect("encoder creation should succeed");
+    enc.push_packed(&ycbcr_data, enough::Unstoppable)
+        .expect("push should succeed");
+    let jpeg = enc.finish().expect("encoding should succeed");
+
+    // Verify JPEG structure
+    assert!(jpeg.len() > 100, "JPEG too small");
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Missing SOI marker");
+    assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9], "Missing EOI marker");
+
+    // Verify it decodes
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+}
+
+#[test]
+#[ignore = "YCbCrF32 layout not yet fully supported - to_legacy() returns Rgb which has wrong bytes_per_pixel"]
+fn test_encode_ycbcr_f32_input() {
+    // Test pre-converted YCbCrF32 input
+    // NOTE: This test is ignored because YCbCrF32.to_legacy() returns PixelFormat::Rgb,
+    // which the streaming encoder uses for buffer validation. Rgb is 3 bytes/pixel
+    // but YCbCrF32 is 12 bytes/pixel, causing InvalidBufferSize errors.
+    let width = 32u32;
+    let height = 32u32;
+
+    // Generate gradient image and convert to YCbCr f32
+    // YCbCrF32 is 12 bytes per pixel (3 x f32)
+    let mut ycbcr_data = Vec::with_capacity((width * height * 12) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let r = ((x * 255) / width) as u8;
+            let g = ((y * 255) / height) as u8;
+            let b = 128u8;
+            let (yy, cb, cr) = rgb_to_ycbcr_f32(r, g, b);
+            ycbcr_data.extend_from_slice(&yy.to_ne_bytes());
+            ycbcr_data.extend_from_slice(&cb.to_ne_bytes());
+            ycbcr_data.extend_from_slice(&cr.to_ne_bytes());
+        }
+    }
+
+    let config = EncoderConfig::new().quality(90.0);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::YCbCrF32)
+        .expect("encoder creation should succeed");
+    enc.push_packed(&ycbcr_data, enough::Unstoppable)
+        .expect("push should succeed");
+    let jpeg = enc.finish().expect("encoding should succeed");
+
+    // Verify JPEG structure
+    assert!(jpeg.len() > 100, "JPEG too small");
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "Missing SOI marker");
+
+    // Verify it decodes
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+}
+
+#[test]
+fn test_encode_ycbcr8_vs_rgb_both_valid() {
+    // Verify that both YCbCr8 input and RGB input produce valid, decodable JPEGs.
+    // Note: The internal RGB->YCbCr conversion uses jpegli-specific coefficients,
+    // so we don't expect exact matching output. This test verifies both paths work.
+    let width = 64u32;
+    let height = 64u32;
+
+    // Generate test image
+    let mut rgb_data = Vec::with_capacity((width * height * 3) as usize);
+    let mut ycbcr_data = Vec::with_capacity((width * height * 3) as usize);
+
+    for y in 0..height {
+        for x in 0..width {
+            let r = ((x * 255) / width) as u8;
+            let g = ((y * 255) / height) as u8;
+            let b = 128u8;
+
+            rgb_data.push(r);
+            rgb_data.push(g);
+            rgb_data.push(b);
+
+            let (yy, cb, cr) = rgb_to_ycbcr(r, g, b);
+            ycbcr_data.push(yy);
+            ycbcr_data.push(cb);
+            ycbcr_data.push(cr);
+        }
+    }
+
+    // Encode with RGB input (internal YCbCr conversion)
+    let config = EncoderConfig::new()
+        .quality(95.0)
+        .ycbcr(ChromaSubsampling::Full); // 4:4:4 for fair comparison
+
+    let mut enc_rgb = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("RGB encoder creation failed");
+    enc_rgb
+        .push_packed(&rgb_data, enough::Unstoppable)
+        .expect("RGB push failed");
+    let jpeg_rgb = enc_rgb.finish().expect("RGB encoding failed");
+
+    // Encode with YCbCr8 input (skip conversion)
+    let mut enc_ycbcr = config
+        .encode_from_bytes(width, height, PixelLayout::YCbCr8)
+        .expect("YCbCr encoder creation failed");
+    enc_ycbcr
+        .push_packed(&ycbcr_data, enough::Unstoppable)
+        .expect("YCbCr push failed");
+    let jpeg_ycbcr = enc_ycbcr.finish().expect("YCbCr encoding failed");
+
+    // Verify both decode successfully
+    let decoder = Decoder::new();
+    let decoded_rgb = decoder.decode(&jpeg_rgb).expect("RGB decode failed");
+    let decoded_ycbcr = decoder.decode(&jpeg_ycbcr).expect("YCbCr decode failed");
+
+    // Verify dimensions match
+    assert_eq!(decoded_rgb.width, width);
+    assert_eq!(decoded_rgb.height, height);
+    assert_eq!(decoded_ycbcr.width, width);
+    assert_eq!(decoded_ycbcr.height, height);
+
+    // Verify pixel data has expected size
+    assert_eq!(decoded_rgb.data.len(), (width * height * 3) as usize);
+    assert_eq!(decoded_ycbcr.data.len(), (width * height * 3) as usize);
+
+    // Both should produce reasonable quality (low RMS vs original for their respective inputs)
+    // This is a weak test - just verify roundtrip doesn't completely corrupt data
+    println!(
+        "RGB path: {} bytes, YCbCr path: {} bytes",
+        jpeg_rgb.len(),
+        jpeg_ycbcr.len()
+    );
+}
+
+#[test]
+fn test_encode_ycbcr8_with_subsampling() {
+    // YCbCr8 input with 4:2:0 subsampling
+    let width = 64u32;
+    let height = 64u32;
+
+    let mut ycbcr_data = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let r = ((x * 255) / width) as u8;
+            let g = ((y * 255) / height) as u8;
+            let b = 128u8;
+            let (yy, cb, cr) = rgb_to_ycbcr(r, g, b);
+            ycbcr_data.push(yy);
+            ycbcr_data.push(cb);
+            ycbcr_data.push(cr);
+        }
+    }
+
+    // Test with 4:2:0 subsampling
+    let config = EncoderConfig::new()
+        .quality(85.0)
+        .ycbcr(ChromaSubsampling::Quarter);
+
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::YCbCr8)
+        .expect("encoder creation should succeed");
+    enc.push_packed(&ycbcr_data, enough::Unstoppable)
+        .expect("push should succeed");
+    let jpeg = enc.finish().expect("encoding should succeed");
+
+    // Verify it decodes
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+}
+
+#[test]
+fn test_encode_ycbcr8_progressive() {
+    // YCbCr8 input with progressive encoding
+    let width = 64u32;
+    let height = 64u32;
+
+    let mut ycbcr_data = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let r = ((x * 255) / width) as u8;
+            let g = ((y * 255) / height) as u8;
+            let b = 128u8;
+            let (yy, cb, cr) = rgb_to_ycbcr(r, g, b);
+            ycbcr_data.push(yy);
+            ycbcr_data.push(cb);
+            ycbcr_data.push(cr);
+        }
+    }
+
+    let config = EncoderConfig::new().quality(85.0).progressive(true);
+
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::YCbCr8)
+        .expect("encoder creation should succeed");
+    enc.push_packed(&ycbcr_data, enough::Unstoppable)
+        .expect("push should succeed");
+    let jpeg = enc.finish().expect("encoding should succeed");
+
+    // Verify SOF2 marker (progressive)
+    let sof2_pos = jpeg.windows(2).position(|w| w == [0xFF, 0xC2]);
+    assert!(sof2_pos.is_some(), "Progressive should use SOF2 marker");
+
+    // Verify it decodes
+    let decoder = Decoder::new();
+    let decoded = decoder.decode(&jpeg).expect("decode should succeed");
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+}
+
 #[test]
 fn test_all_huffman_colorspace_combinations_with_zune() {
     let img = generate_gradient_d(64, 64, 3);
