@@ -15,6 +15,8 @@ use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::optimize::{FrequencyCounter, OptimizedHuffmanTables};
 use crate::huffman::HuffmanEncodeTable;
 use crate::types::Subsampling;
+use multiversed::multiversed;
+use wide::{i16x8, CmpEq};
 
 impl Encoder {
     pub(crate) fn build_optimized_tables(
@@ -387,45 +389,109 @@ impl Encoder {
     }
 
     /// Collects symbol frequencies from a block for Huffman optimization.
+    /// Uses SIMD to build a nonzero mask and skip zero coefficients.
     fn collect_block_frequencies(
         coeffs: &[i16; DCT_BLOCK_SIZE],
         prev_dc: i16,
         dc_freq: &mut FrequencyCounter,
         ac_freq: &mut FrequencyCounter,
     ) {
-        // DC coefficient - limit category to 11 for 8-bit JPEG compatibility
-        let dc_diff = coeffs[0] - prev_dc;
-        let dc_category = entropy::category(dc_diff).min(11);
-        dc_freq.count(dc_category);
+        collect_block_frequencies_simd(coeffs, prev_dc, dc_freq, ac_freq);
+    }
+}
 
-        // AC coefficients
-        let mut run = 0u8;
-        for i in 1..DCT_BLOCK_SIZE {
-            let ac = coeffs[i];
+/// SIMD-accelerated frequency collection using nonzero mask.
+#[multiversed]
+#[inline]
+fn collect_block_frequencies_simd(
+    coeffs: &[i16; DCT_BLOCK_SIZE],
+    prev_dc: i16,
+    dc_freq: &mut FrequencyCounter,
+    ac_freq: &mut FrequencyCounter,
+) {
+    // DC coefficient - limit category to 11 for 8-bit JPEG compatibility
+    let dc_diff = coeffs[0] - prev_dc;
+    let dc_category = entropy::category(dc_diff).min(11);
+    dc_freq.count(dc_category);
 
-            if ac == 0 {
-                run += 1;
-            } else {
-                // Encode runs of 16 zeros (ZRL)
-                while run >= 16 {
-                    ac_freq.count(0xF0);
-                    run -= 16;
-                }
+    // Build 64-bit mask of non-zero coefficients using SIMD
+    let nonzero_mask = build_nonzero_mask_for_freq(coeffs);
 
-                // Encode run/size symbol
-                let ac_category = entropy::category(ac);
-                let symbol = (run << 4) | ac_category;
-                ac_freq.count(symbol);
-                run = 0;
-            }
-        }
+    // Clear DC bit (bit 0), keep only AC bits (1-63)
+    let ac_mask = nonzero_mask & !1u64;
 
-        // EOB if trailing zeros
-        if run > 0 {
-            ac_freq.count(0x00);
-        }
+    // Fast path: all AC coefficients are zero
+    if ac_mask == 0 {
+        ac_freq.count(0x00); // EOB
+        return;
     }
 
+    // Find position of last non-zero AC coefficient (1-63)
+    let last_nonzero_idx = 63 - ac_mask.leading_zeros() as usize;
+
+    // Process each non-zero AC coefficient using bit manipulation
+    let mut remaining = ac_mask;
+    let mut prev_idx = 0usize;
+
+    while remaining != 0 {
+        let idx = remaining.trailing_zeros() as usize;
+        let run = (idx - prev_idx - 1) as u8;
+
+        // Encode runs of 16+ zeros (emit ZRL symbols)
+        let mut r = run;
+        while r >= 16 {
+            ac_freq.count(0xF0); // ZRL
+            r -= 16;
+        }
+
+        // Encode run/size symbol
+        let ac = coeffs[idx];
+        let ac_category = entropy::category(ac);
+        let symbol = (r << 4) | ac_category;
+        ac_freq.count(symbol);
+
+        prev_idx = idx;
+        remaining &= remaining - 1; // Clear lowest set bit
+    }
+
+    // EOB if there are trailing zeros
+    if last_nonzero_idx < 63 {
+        ac_freq.count(0x00); // EOB
+    }
+}
+
+/// Build a 64-bit mask of non-zero coefficients using SIMD.
+#[multiversed]
+#[inline]
+fn build_nonzero_mask_for_freq(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
+    let zero = i16x8::ZERO;
+    let mut nonzero_mask: u64 = 0;
+
+    // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
+    for chunk in 0..8 {
+        let start = chunk * 8;
+        let v = i16x8::new([
+            coeffs[start],
+            coeffs[start + 1],
+            coeffs[start + 2],
+            coeffs[start + 3],
+            coeffs[start + 4],
+            coeffs[start + 5],
+            coeffs[start + 6],
+            coeffs[start + 7],
+        ]);
+        // simd_eq returns all 1s (-1) for equal, 0 for not equal
+        let is_zero = v.simd_eq(zero);
+        // to_bitmask extracts the high bit of each lane
+        let zero_bits = is_zero.to_bitmask() as u8;
+        let nonzero_bits = !zero_bits;
+        nonzero_mask |= (nonzero_bits as u64) << start;
+    }
+
+    nonzero_mask
+}
+
+impl Encoder {
     /// Builds optimized Huffman tables for XYB mode with raster-ordered blocks.
     ///
     /// This function handles blocks that are stored in raster order (row by row),
