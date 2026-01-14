@@ -3,6 +3,8 @@
 //! This module provides token types for capturing symbols and extra bits
 //! during a first pass, then replaying them with optimized Huffman tables.
 
+#![allow(dead_code)]
+
 use super::frequency::FrequencyCounter;
 use crate::error::Result;
 use crate::huffman::HuffmanEncodeTable;

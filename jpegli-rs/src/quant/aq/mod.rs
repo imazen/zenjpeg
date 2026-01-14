@@ -46,6 +46,8 @@
 //! - `tests/aq_locked_tests.rs` for invariant tests
 //! - `simplified_quant.rs` for the simplified (non-C++) version
 
+#![allow(dead_code)]
+
 use std::f32::consts::PI;
 
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec, AllocError};

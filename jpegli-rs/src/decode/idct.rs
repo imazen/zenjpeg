@@ -5,6 +5,8 @@
 //!
 //! SIMD optimization via the `wide` crate is always enabled.
 
+#![allow(dead_code)]
+
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 
 use wide::f32x8;

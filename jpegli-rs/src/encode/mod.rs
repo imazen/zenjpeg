@@ -30,6 +30,8 @@
 //! let jpeg = enc.finish()?;
 //! ```
 
+#![allow(dead_code)]
+
 #![allow(deprecated)]
 
 // Internal implementation modules (pub for internal crate re-exports)
@@ -62,6 +64,7 @@ pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
 #[cfg(feature = "parallel")]
+#[allow(unused_imports)] // Public API re-export
 pub use v2::ParallelEncoding;
 pub use v2::Stop;
 

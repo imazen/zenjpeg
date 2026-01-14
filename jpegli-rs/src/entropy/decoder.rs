@@ -2,6 +2,8 @@
 //!
 //! Provides `EntropyDecoder` for baseline and progressive JPEG decoding.
 
+#![allow(dead_code)]
+
 use crate::error::{Error, Result};
 use crate::foundation::bitstream::BitReader;
 use crate::foundation::consts::DCT_BLOCK_SIZE;

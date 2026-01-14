@@ -35,6 +35,8 @@
 //! 2. Build optimized Huffman tables
 //! 3. Encode from stored i16 blocks
 
+#![allow(dead_code)]
+
 mod convert;
 
 use crate::error::Result;

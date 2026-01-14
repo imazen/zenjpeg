@@ -9,6 +9,8 @@
 //! - Output: 256 code lengths, all <= 16 bits
 //! - Kraft inequality guaranteed
 
+#![allow(dead_code)]
+
 use crate::error::Result;
 use crate::huffman::optimize::OptimizedTable;
 

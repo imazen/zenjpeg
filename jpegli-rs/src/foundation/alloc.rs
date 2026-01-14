@@ -7,6 +7,8 @@
 //! Based on patterns from libjpeg-turbo's memory management and Rust's
 //! `try_reserve` API (stabilized in Rust 1.57).
 
+#![allow(dead_code)] // Tracking utilities and optional alloc helpers
+
 use crate::error::{Error, Result};
 
 /// Maximum dimension for JPEG images (matches libjpeg-turbo's JPEG_MAX_DIMENSION).

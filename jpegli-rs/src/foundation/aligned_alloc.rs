@@ -4,6 +4,8 @@
 //! - 32-byte alignment for AVX SIMD operations
 //! - Fallible allocation (no panic on OOM)
 
+#![allow(dead_code)]
+
 use aligned_vec::{AVec, ConstAlign};
 
 /// 32-byte alignment for AVX SIMD (f32x8 requires 32-byte alignment)

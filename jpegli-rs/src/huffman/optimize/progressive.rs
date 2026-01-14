@@ -3,6 +3,8 @@
 //! This module provides `ProgressiveTokenBuffer` for two-pass progressive
 //! JPEG encoding with optimized Huffman tables.
 
+#![allow(dead_code)]
+
 use crate::error::Result;
 
 use super::cluster::cluster_histograms;

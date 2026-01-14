@@ -30,6 +30,8 @@
 //! let jpeg = encoder.finish()?;
 //! ```
 
+#![allow(dead_code)]
+
 #![allow(deprecated)] // Uses deprecated Encoder internally for progressive mode
 
 use crate::encode::strip::StripProcessor;

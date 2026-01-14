@@ -3,6 +3,8 @@
 //! This module contains all the fundamental constants used in JPEG encoding/decoding,
 //! including zigzag order tables, quantization matrices, and XYB color space parameters.
 
+#![allow(dead_code)] // Many constants defined for reference/completeness
+
 /// DCT block dimension (8x8)
 pub const DCT_SIZE: usize = 8;
 

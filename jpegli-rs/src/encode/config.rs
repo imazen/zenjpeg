@@ -2,6 +2,8 @@
 //!
 //! This module contains all configuration-related types for the JPEG encoder.
 
+#![allow(dead_code)]
+
 use crate::quant::Quality;
 use crate::types::{ChromaDownsampling, EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 

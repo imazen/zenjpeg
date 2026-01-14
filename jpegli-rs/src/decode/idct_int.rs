@@ -16,6 +16,8 @@
 //! - x86_64 AVX2: wide 1.64x faster than scalar
 //! - aarch64 NEON: wide 1.11x faster than scalar
 
+#![allow(dead_code)]
+
 /// Rounding and level-shift constants.
 /// SCALE_BITS = 512 + 65536 + (128 << 17)
 /// - 512 = rounding for first pass (>> 10)
