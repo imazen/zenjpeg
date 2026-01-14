@@ -5,9 +5,9 @@
 //!
 //! ## Precision
 //!
-//! The yuv crate uses 13-bit fixed-point integer math (Balanced mode):
-//! - Max Y error: 1.2 levels (out of 255)
-//! - Avg Y error: 0.3 levels
+//! The yuv crate uses 15-bit fixed-point integer math (Professional mode):
+//! - Max Y error: ~0.5 levels (out of 255)
+//! - Avg Y error: ~0.25 levels
 //! - This is invisible after JPEG DCT quantization (which loses 2-4 levels at Q85)
 //!
 //! ## Usage
@@ -60,7 +60,7 @@ pub fn rgb_to_ycbcr_fast(
         width as u32 * 3,
         YuvRange::Full,
         YuvStandardMatrix::Bt601,
-        YuvConversionMode::Balanced,
+        YuvConversionMode::Professional,
     )
     .expect("yuv conversion failed");
 
@@ -128,7 +128,7 @@ pub fn rgb_to_ycbcr_strided_fast(
         width as u32 * 3,
         YuvRange::Full,
         YuvStandardMatrix::Bt601,
-        YuvConversionMode::Balanced,
+        YuvConversionMode::Professional,
     )
     .expect("yuv conversion failed");
 
