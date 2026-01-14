@@ -882,7 +882,10 @@ pub fn ycbcr_to_rgb_i16_x16(
     rgb: &mut [u8],
     offset: &mut usize,
 ) {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(all(
+        feature = "unsafe_simd",
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
     {
         if is_x86_feature_detected!("avx2") {
             // Safety: we just checked for AVX2 support
@@ -926,7 +929,10 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 }
 
 /// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 #[target_feature(enable = "avx2")]
 unsafe fn ycbcr_to_rgb_i16_x16_avx2(
     y: &[i16; 16],

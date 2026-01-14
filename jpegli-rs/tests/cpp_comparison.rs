@@ -6,9 +6,7 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use test_utils::{
-    distance_rms, generate_gradient_d, get_test_data_path, read_test_data,
-};
+use test_utils::{distance_rms, generate_gradient_d, get_test_data_path, read_test_data};
 
 use jpegli::{
     decoder::Decoder,

@@ -59,7 +59,7 @@ fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
 /// Store f32x8 to slice. Panics if slice is too short.
 #[inline(always)]
 fn store_f32x8(slice: &mut [f32], offset: usize, value: f32x8) {
-    slice[offset..offset + 8].copy_from_slice(&value.to_array())
+    slice[offset..offset + 8].copy_from_slice(value.as_array())
 }
 
 // ============================================================================
@@ -268,15 +268,15 @@ unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
 
 /// Scalar fallback for gather_even_odd - used by non-AVX2 targets
 #[inline(always)]
-fn gather_even_odd_x8_scalar(ptr: *const f32) -> (f32x8, f32x8) {
-    // SAFETY: Caller guarantees 16 elements are available
-    unsafe {
-        let a: [f32; 8] = *(ptr as *const [f32; 8]);
-        let b: [f32; 8] = *(ptr.add(8) as *const [f32; 8]);
-        let evens = f32x8::from([a[0], a[2], a[4], a[6], b[0], b[2], b[4], b[6]]);
-        let odds = f32x8::from([a[1], a[3], a[5], a[7], b[1], b[3], b[5], b[7]]);
-        (evens, odds)
-    }
+fn gather_even_odd_x8_scalar(slice: &[f32]) -> (f32x8, f32x8) {
+    // Caller guarantees at least 16 elements are available
+    let evens = f32x8::from([
+        slice[0], slice[2], slice[4], slice[6], slice[8], slice[10], slice[12], slice[14],
+    ]);
+    let odds = f32x8::from([
+        slice[1], slice[3], slice[5], slice[7], slice[9], slice[11], slice[13], slice[15],
+    ]);
+    (evens, odds)
 }
 
 /// Boundary-safe gather with clamping for edge cases
@@ -333,23 +333,23 @@ fn gather_even_odd_x8_boundary(plane: &[f32], start_idx: usize) -> (f32x8, f32x8
 fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8, f32x8) {
     // Fast path: when we have at least 16 elements available
     if start_idx + 16 <= plane.len() {
-        let ptr = unsafe { plane.as_ptr().add(start_idx) };
+        let slice = &plane[start_idx..start_idx + 16];
 
         // Use runtime dispatch with inline function calls (no pointer indirection)
         // The branch is very predictable and intrinsics are inlined
         #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") {
-                // SAFETY: AVX2 is detected
-                return unsafe { gather_even_odd_x8_avx2(ptr) };
+                // SAFETY: AVX2 is detected, and we have a valid pointer from the slice
+                return unsafe { gather_even_odd_x8_avx2(slice.as_ptr()) };
             } else {
-                return gather_even_odd_x8_scalar(ptr);
+                return gather_even_odd_x8_scalar(slice);
             }
         }
 
         #[cfg(not(all(feature = "unsafe_simd", target_arch = "x86_64")))]
         {
-            return gather_even_odd_x8_scalar(ptr);
+            return gather_even_odd_x8_scalar(slice);
         }
     }
 
