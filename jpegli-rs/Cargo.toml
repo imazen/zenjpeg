@@ -139,6 +139,10 @@ harness = false
 name = "simd_load"
 harness = false
 
+[[bench]]
+name = "bitwriter_bench"
+harness = false
+
 [lints]
 workspace = true
 
