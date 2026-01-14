@@ -95,15 +95,20 @@ struct EncoderTest {
 struct TestResult {
     test: EncoderTest,
     estimated: usize,
+    ceiling: usize,
     actual_peak: usize,
     alloc_count: usize,
     output_size: usize,
     error_pct: f64,
+    ceiling_headroom_pct: f64,
+    ceiling_violated: bool,
 }
 
 impl TestResult {
     fn status(&self) -> &'static str {
-        if self.error_pct.abs() <= 10.0 {
+        if self.ceiling_violated {
+            "CEIL!"
+        } else if self.error_pct.abs() <= 10.0 {
             "OK"
         } else if self.error_pct.abs() <= 20.0 {
             "WARN"
@@ -142,8 +147,9 @@ fn run_test(test: EncoderTest) -> TestResult {
         config = config.ycbcr(test.subsampling);
     }
 
-    // Get estimate
+    // Get estimate and ceiling
     let estimated = config.estimate_memory(test.width, test.height);
+    let ceiling = config.estimate_memory_ceiling(test.width, test.height);
 
     // Reset peak tracking
     reset_stats();
@@ -164,14 +170,19 @@ fn run_test(test: EncoderTest) -> TestResult {
     drop(rgb_data);
 
     let error_pct = ((actual_peak as f64 - estimated as f64) / estimated as f64) * 100.0;
+    let ceiling_headroom_pct = ((ceiling as f64 - actual_peak as f64) / actual_peak as f64) * 100.0;
+    let ceiling_violated = actual_peak > ceiling;
 
     TestResult {
         test,
         estimated,
+        ceiling,
         actual_peak,
         alloc_count,
         output_size,
         error_pct,
+        ceiling_headroom_pct,
+        ceiling_violated,
     }
 }
 
@@ -263,10 +274,10 @@ fn main() {
     // Print results table
     println!();
     println!(
-        "{:<8} {:>10} {:<7} {:<4} {:<4} {:>12} {:>12} {:>8} {:>10} {:>6} {:>6}",
-        "Size", "Pixels", "Samp", "Huff", "XYB", "Estimated", "Actual", "Allocs", "Output", "Err%", "Status"
+        "{:<8} {:<7} {:>12} {:>12} {:>12} {:>7} {:>8} {:>6}",
+        "Size", "Samp", "Estimated", "Actual", "Ceiling", "Est%", "Headrm", "Status"
     );
-    println!("{}", "-".repeat(110));
+    println!("{}", "-".repeat(85));
 
     for r in &results {
         let subsamp = match r.test.subsampling {
@@ -276,20 +287,16 @@ fn main() {
             ChromaSubsampling::Full => "4:4:4",
             _ => "???",
         };
-        let pixels = r.test.width as u64 * r.test.height as u64;
 
         println!(
-            "{:<8} {:>10} {:<7} {:<4} {:<4} {:>12} {:>12} {:>8} {:>10} {:>+5.1}% {:>6}",
+            "{:<8} {:<7} {:>12} {:>12} {:>12} {:>+6.1}% {:>+6.0}% {:>6}",
             r.test.name,
-            format!("{}M", pixels / 1_000_000),
             if r.test.xyb_mode { "XYB" } else { subsamp },
-            if r.test.optimize_huffman { "Y" } else { "N" },
-            if r.test.xyb_mode { "Y" } else { "N" },
             format_bytes(r.estimated),
             format_bytes(r.actual_peak),
-            r.alloc_count,
-            format_bytes(r.output_size),
+            format_bytes(r.ceiling),
             r.error_pct,
+            r.ceiling_headroom_pct,
             r.status()
         );
     }
@@ -314,12 +321,41 @@ fn main() {
     let warn_count = results.iter().filter(|r| r.status() == "WARN").count();
     let high_count = results.iter().filter(|r| r.status() == "HIGH").count();
     let bad_count = results.iter().filter(|r| r.status() == "BAD").count();
+    let ceil_violations = results.iter().filter(|r| r.ceiling_violated).count();
 
-    println!("\nStatus breakdown:");
+    println!("\nEstimate accuracy breakdown:");
     println!("  OK (≤10%): {} tests", ok_count);
     println!("  WARN (10-20%): {} tests", warn_count);
     println!("  HIGH (20-50%): {} tests", high_count);
     println!("  BAD (>50%): {} tests", bad_count);
+
+    // Ceiling analysis
+    println!("\n=== Ceiling Analysis ===\n");
+
+    let headrooms: Vec<f64> = results.iter().map(|r| r.ceiling_headroom_pct).collect();
+    let min_headroom = headrooms.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_headroom = headrooms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let avg_headroom = headrooms.iter().sum::<f64>() / headrooms.len() as f64;
+
+    println!("Ceiling violations: {}/{} tests", ceil_violations, results.len());
+    if ceil_violations == 0 {
+        println!("  ✓ All tests passed - actual never exceeded ceiling");
+    } else {
+        println!("  ✗ CEILING VIOLATED - actual exceeded ceiling!");
+        for r in results.iter().filter(|r| r.ceiling_violated) {
+            println!("    {} {:?}: actual {} > ceiling {}",
+                r.test.name,
+                r.test.subsampling,
+                format_bytes(r.actual_peak),
+                format_bytes(r.ceiling)
+            );
+        }
+    }
+
+    println!("\nHeadroom (ceiling - actual) / actual:");
+    println!("  Min: {:.1}%", min_headroom);
+    println!("  Max: {:.1}%", max_headroom);
+    println!("  Avg: {:.1}%", avg_headroom);
 
     // Analyze patterns
     println!("\n=== Error Patterns ===\n");

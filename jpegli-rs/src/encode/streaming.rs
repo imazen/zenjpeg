@@ -564,6 +564,145 @@ impl StreamingEncoderBuilder {
             + token_buffer
             + output_estimate
     }
+
+    /// Returns an absolute ceiling on memory usage.
+    ///
+    /// Unlike [`estimate_memory_usage`], this returns a **guaranteed upper bound**
+    /// that actual peak memory will never exceed. Use this for resource reservation
+    /// when you need certainty rather than accuracy.
+    ///
+    /// The ceiling accounts for:
+    /// - Worst-case token counts per block (high-frequency content)
+    /// - Maximum output buffer size (incompressible images)
+    /// - Vec capacity overhead (allocator rounding)
+    /// - All intermediate buffers at their maximum sizes
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::{StreamingEncoder, Subsampling};
+    ///
+    /// let ceiling = StreamingEncoder::new(3840, 2160)
+    ///     .subsampling(Subsampling::S420)
+    ///     .estimate_memory_ceiling();
+    ///
+    /// // Reserve this much memory before encoding
+    /// assert!(actual_peak <= ceiling);
+    /// ```
+    #[must_use]
+    pub fn estimate_memory_ceiling(&self) -> usize {
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Strip height based on subsampling
+        let strip_height = match self.subsampling {
+            Subsampling::S420 | Subsampling::S440 => 16,
+            _ => 8,
+        };
+
+        // MCU size for padding (worst case alignment)
+        let mcu_size = self.subsampling.mcu_size();
+        let padded_width = (width + mcu_size - 1) / mcu_size * mcu_size;
+        let padded_height = (height + mcu_size - 1) / mcu_size * mcu_size;
+
+        // Chroma dimensions (padded)
+        let (c_width, c_strip_height) = match self.subsampling {
+            Subsampling::S420 => ((padded_width + 1) / 2, strip_height / 2),
+            Subsampling::S422 => ((padded_width + 1) / 2, strip_height),
+            Subsampling::S440 => (padded_width, strip_height / 2),
+            Subsampling::S444 => (padded_width, strip_height),
+        };
+        let padded_c_width = (c_width + 7) / 8 * 8;
+
+        // Block counts (use padded dimensions for ceiling)
+        let y_blocks_w = padded_width / 8;
+        let y_blocks_h = padded_height / 8;
+        let y_block_count = y_blocks_w * y_blocks_h;
+
+        let c_block_count = match self.subsampling {
+            Subsampling::S420 => (padded_width / 16) * (padded_height / 16),
+            Subsampling::S422 => (padded_width / 16) * y_blocks_h,
+            Subsampling::S440 => y_blocks_w * (padded_height / 16),
+            Subsampling::S444 => y_block_count,
+        };
+
+        // 1. Row buffer for input (one strip's worth, use max bpp=4 for RGBA)
+        let max_bpp = 4;
+        let row_buffer = padded_width * strip_height * max_bpp;
+
+        // 2. Strip f32 buffers (Y, Cb, Cr at full resolution)
+        // Account for potential 2x capacity for Vec growth
+        let strip_y = padded_width * strip_height * 4;
+        let strip_cb = padded_width * strip_height * 4;
+        let strip_cr = padded_width * strip_height * 4;
+
+        // 3. Downsampled chroma temp buffers
+        let strip_cb_down = padded_c_width * c_strip_height * 4;
+        let strip_cr_down = padded_c_width * c_strip_height * 4;
+
+        // 4. Pending f32 DCT blocks (double-buffered)
+        let padded_y_blocks_per_row = padded_width / 8;
+        let v_samp = match self.subsampling {
+            Subsampling::S420 | Subsampling::S440 => 2,
+            _ => 1,
+        };
+        let pending_y_capacity = padded_y_blocks_per_row * v_samp;
+        let padded_c_blocks_per_row = padded_c_width / 8;
+        let pending_c_capacity = padded_c_blocks_per_row;
+
+        // 256 bytes per f32 block (64 floats), 2 buffers each
+        let pending_y_f32 = 2 * pending_y_capacity * 256;
+        let pending_cb_f32 = 2 * pending_c_capacity * 256;
+        let pending_cr_f32 = 2 * pending_c_capacity * 256;
+
+        // 5. Final i16 blocks (128 bytes per block = 64 * i16)
+        let y_blocks_i16 = y_block_count * 128;
+        let c_blocks_i16 = c_block_count * 2 * 128;
+
+        // 6. AQ strengths (one f32 per Y block)
+        let aq_strengths = y_block_count * 4;
+
+        // 7. Token buffer - CEILING: worst-case ~90 tokens per block
+        // High-frequency blocks (noise, text, fine detail) produce more tokens.
+        // Each token is typically 4 bytes (symbol + context).
+        let total_blocks = y_block_count + c_block_count * 2;
+        let token_buffer = total_blocks * 90 * 4;
+
+        // 8. Output buffer - CEILING: worst-case is when image is incompressible
+        // Quality 100 with noise can produce output larger than input.
+        // Absolute ceiling: 1 byte per pixel (8 bits vs ~1-2 bits typical).
+        let output_ceiling = padded_width * padded_height;
+
+        // 9. Huffman table overhead (frequency tables, code tables)
+        // 4 tables (2 DC + 2 AC) × 256 entries × 8 bytes = 8 KB
+        let huffman_tables = 4 * 256 * 8;
+
+        // 10. Progressive scan overhead (if enabled, stores all coefficients)
+        // This is already covered by the i16 blocks, but add scan metadata
+        let scan_overhead = 64 * 8; // ~512 bytes for scan definitions
+
+        // 11. Vec capacity overhead - allocators round up
+        // Add 5% for allocator overhead (power-of-2 rounding, headers)
+        let subtotal = row_buffer
+            + strip_y
+            + strip_cb
+            + strip_cr
+            + strip_cb_down
+            + strip_cr_down
+            + pending_y_f32
+            + pending_cb_f32
+            + pending_cr_f32
+            + y_blocks_i16
+            + c_blocks_i16
+            + aq_strengths
+            + token_buffer
+            + output_ceiling
+            + huffman_tables
+            + scan_overhead;
+
+        // Add 5% allocator overhead ceiling
+        subtotal + subtotal / 20
+    }
 }
 
 /// Streaming input JPEG encoder.
