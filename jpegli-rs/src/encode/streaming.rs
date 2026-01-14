@@ -536,15 +536,14 @@ impl StreamingEncoderBuilder {
         // 6. AQ strengths (one f32 per Y block)
         let aq_strengths = y_block_count * 4;
 
-        // 7. Huffman optimization buffer (when optimize_huffman is true)
-        // Each block produces ~50 symbols on average, each symbol is ~4 bytes
-        // This dominates memory for large images with optimized Huffman
+        // 7. Token buffer (always allocated to store encoded coefficients)
+        // Each block produces ~50 symbols on average, each symbol is ~4 bytes.
+        // This buffer is used regardless of Huffman optimization setting because
+        // the encoder must buffer all coefficients before final output.
+        // Note: Huffman optimization may use slightly more memory for table building,
+        // but the token buffer dominates and is always needed.
         let total_blocks = y_block_count + c_block_count * 2;
-        let huffman_buffer = if self.optimize_huffman {
-            total_blocks * 50 * 4 // ~50 symbols per block, 4 bytes each
-        } else {
-            0
-        };
+        let token_buffer = total_blocks * 50 * 4; // ~50 symbols per block, 4 bytes each
 
         // 8. Output buffer estimate (grows during encoding)
         let output_estimate = width * height / 8; // ~1 bit per pixel rough estimate
@@ -562,7 +561,7 @@ impl StreamingEncoderBuilder {
             + y_blocks_i16
             + c_blocks_i16
             + aq_strengths
-            + huffman_buffer
+            + token_buffer
             + output_estimate
     }
 }

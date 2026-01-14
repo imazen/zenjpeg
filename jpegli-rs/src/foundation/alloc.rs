@@ -105,10 +105,49 @@ impl Default for MemoryTracker {
     }
 }
 
+/// Detailed allocation info captured with `#[track_caller]`.
+#[derive(Debug, Clone)]
+pub struct AllocationInfo {
+    /// Bytes allocated
+    pub bytes: usize,
+    /// Type name (if available)
+    pub type_name: &'static str,
+    /// Size of one element (for array allocations)
+    pub element_size: usize,
+    /// Number of elements (1 for single allocations)
+    pub count: usize,
+    /// Context string (e.g., "DCT blocks", "color plane")
+    pub context: &'static str,
+    /// Source location (file:line:column)
+    pub location: &'static std::panic::Location<'static>,
+}
+
+impl AllocationInfo {
+    /// Format as a single-line summary
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "{:>10} | {:<30} | {:<40} | {}:{}",
+            format_bytes(self.bytes),
+            self.context,
+            if self.count > 1 {
+                format!("{}[{}] × {}", self.type_name, self.count, self.element_size)
+            } else {
+                format!("{} ({}B)", self.type_name, self.element_size)
+            },
+            self.location.file().rsplit('/').next().unwrap_or(self.location.file()),
+            self.location.line()
+        )
+    }
+}
+
 /// Tracks allocation statistics during encoding/decoding operations.
 ///
 /// Unlike `MemoryTracker`, this doesn't enforce limits - it just records
 /// what was allocated for analysis and prediction purposes.
+///
+/// When the `detailed` field is `true`, stores full `AllocationInfo` for each
+/// allocation including source location via `#[track_caller]`.
 #[derive(Debug, Clone, Default)]
 pub struct AllocationStats {
     /// Number of allocations made
@@ -121,6 +160,10 @@ pub struct AllocationStats {
     current_bytes: usize,
     /// Per-allocation breakdown by context name
     pub by_context: Vec<(&'static str, usize)>,
+    /// Detailed allocation info (when enabled)
+    pub allocations: Vec<AllocationInfo>,
+    /// Whether to capture detailed allocation info
+    pub detailed: bool,
 }
 
 impl AllocationStats {
@@ -128,6 +171,15 @@ impl AllocationStats {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a new stats tracker with detailed tracking enabled.
+    #[must_use]
+    pub fn with_detailed_tracking() -> Self {
+        Self {
+            detailed: true,
+            ..Self::default()
+        }
     }
 
     /// Records an allocation.
@@ -148,6 +200,63 @@ impl AllocationStats {
         self.by_context.push((context, bytes));
     }
 
+    /// Records a typed allocation with full source location tracking.
+    ///
+    /// Uses `#[track_caller]` to capture the allocation site. When `detailed`
+    /// is true, stores full `AllocationInfo` for later analysis.
+    #[inline]
+    #[track_caller]
+    pub fn record_alloc_typed<T>(
+        &mut self,
+        count: usize,
+        context: &'static str,
+    ) {
+        let element_size = std::mem::size_of::<T>();
+        let bytes = count * element_size;
+
+        self.record_alloc(bytes);
+        self.by_context.push((context, bytes));
+
+        if self.detailed {
+            self.allocations.push(AllocationInfo {
+                bytes,
+                type_name: std::any::type_name::<T>(),
+                element_size,
+                count,
+                context,
+                location: std::panic::Location::caller(),
+            });
+        }
+    }
+
+    /// Records an allocation with explicit type info and source location.
+    ///
+    /// Use this when you have the type info but can't use generics.
+    #[inline]
+    #[track_caller]
+    pub fn record_alloc_explicit(
+        &mut self,
+        bytes: usize,
+        type_name: &'static str,
+        element_size: usize,
+        count: usize,
+        context: &'static str,
+    ) {
+        self.record_alloc(bytes);
+        self.by_context.push((context, bytes));
+
+        if self.detailed {
+            self.allocations.push(AllocationInfo {
+                bytes,
+                type_name,
+                element_size,
+                count,
+                context,
+                location: std::panic::Location::caller(),
+            });
+        }
+    }
+
     /// Records a deallocation (for peak tracking).
     #[inline]
     pub fn record_dealloc(&mut self, bytes: usize) {
@@ -160,12 +269,16 @@ impl AllocationStats {
         self.total_bytes = 0;
         self.peak_bytes = 0;
         self.current_bytes = 0;
+        self.by_context.clear();
+        self.allocations.clear();
     }
 
     /// Merges another stats tracker into this one.
     pub fn merge(&mut self, other: &AllocationStats) {
         self.count += other.count;
         self.total_bytes += other.total_bytes;
+        self.by_context.extend(other.by_context.iter().cloned());
+        self.allocations.extend(other.allocations.iter().cloned());
         // Peak is the max of either tracker's peak
         if other.peak_bytes > self.peak_bytes {
             self.peak_bytes = other.peak_bytes;
@@ -181,6 +294,65 @@ impl AllocationStats {
             format_bytes(self.total_bytes),
             format_bytes(self.peak_bytes)
         )
+    }
+
+    /// Returns a detailed breakdown of allocations by source location.
+    ///
+    /// Only available when `detailed` tracking is enabled.
+    #[must_use]
+    pub fn detailed_report(&self) -> String {
+        if !self.detailed || self.allocations.is_empty() {
+            return "Detailed tracking not enabled or no allocations recorded.".to_string();
+        }
+
+        let mut lines = Vec::with_capacity(self.allocations.len() + 4);
+        lines.push(format!(
+            "{:>10} | {:<30} | {:<40} | Location",
+            "Size", "Context", "Type"
+        ));
+        lines.push("-".repeat(100));
+
+        // Sort by size descending
+        let mut sorted: Vec<_> = self.allocations.iter().collect();
+        sorted.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+
+        for info in sorted {
+            lines.push(info.summary());
+        }
+
+        lines.push("-".repeat(100));
+        lines.push(format!(
+            "{:>10} | {} allocations, {} peak",
+            format_bytes(self.total_bytes),
+            self.count,
+            format_bytes(self.peak_bytes)
+        ));
+
+        lines.join("\n")
+    }
+
+    /// Returns allocations grouped by context, sorted by total size.
+    #[must_use]
+    pub fn by_context_summary(&self) -> String {
+        use std::collections::HashMap;
+
+        let mut by_ctx: HashMap<&'static str, usize> = HashMap::new();
+        for (ctx, bytes) in &self.by_context {
+            *by_ctx.entry(*ctx).or_default() += bytes;
+        }
+
+        let mut sorted: Vec<_> = by_ctx.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let mut lines = Vec::with_capacity(sorted.len() + 2);
+        lines.push(format!("{:>12} | Context", "Total Size"));
+        lines.push("-".repeat(50));
+
+        for (ctx, bytes) in &sorted {
+            lines.push(format!("{:>12} | {}", format_bytes(*bytes), ctx));
+        }
+
+        lines.join("\n")
     }
 }
 
@@ -200,7 +372,10 @@ fn format_bytes(bytes: usize) -> String {
 // ============================================================================
 
 /// Allocate a Vec with tracking.
+///
+/// When `stats.detailed` is true, captures the allocation site via `#[track_caller]`.
 #[inline]
+#[track_caller]
 pub fn try_alloc_vec_tracked<T: Default + Clone>(
     count: usize,
     context: &'static str,
@@ -218,12 +393,15 @@ pub fn try_alloc_vec_tracked<T: Default + Clone>(
         })?;
     v.resize(count, T::default());
 
-    stats.record_alloc_named(byte_size, context);
+    stats.record_alloc_typed::<T>(count, context);
     Ok(v)
 }
 
 /// Allocate a Vec of f32 zeros with tracking.
+///
+/// When `stats.detailed` is true, captures the allocation site via `#[track_caller]`.
 #[inline]
+#[track_caller]
 pub fn try_alloc_zeroed_f32_tracked(
     count: usize,
     context: &'static str,
@@ -241,12 +419,15 @@ pub fn try_alloc_zeroed_f32_tracked(
         })?;
     v.resize(count, 0.0f32);
 
-    stats.record_alloc_named(byte_size, context);
+    stats.record_alloc_typed::<f32>(count, context);
     Ok(v)
 }
 
 /// Allocate a Vec with specific capacity with tracking.
+///
+/// When `stats.detailed` is true, captures the allocation site via `#[track_caller]`.
 #[inline]
+#[track_caller]
 pub fn try_with_capacity_tracked<T>(
     capacity: usize,
     context: &'static str,
@@ -263,12 +444,15 @@ pub fn try_with_capacity_tracked<T>(
             context,
         })?;
 
-    stats.record_alloc_named(byte_size, context);
+    stats.record_alloc_typed::<T>(capacity, context);
     Ok(v)
 }
 
 /// Allocate a Vec of DCT blocks with tracking.
+///
+/// When `stats.detailed` is true, captures the allocation site via `#[track_caller]`.
 #[inline]
+#[track_caller]
 pub fn try_alloc_dct_blocks_tracked(
     count: usize,
     context: &'static str,
@@ -286,7 +470,7 @@ pub fn try_alloc_dct_blocks_tracked(
         })?;
     v.resize(count, [0i16; 64]);
 
-    stats.record_alloc_named(byte_size, context);
+    stats.record_alloc_typed::<[i16; 64]>(count, context);
     Ok(v)
 }
 
