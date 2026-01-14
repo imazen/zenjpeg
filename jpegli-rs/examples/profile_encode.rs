@@ -2,10 +2,11 @@
 //!
 //! Run with: cargo flamegraph --release --example profile_encode -o encode.svg
 
-use jpegli::{JpegEncoder, Quality};
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 
 fn main() {
-    let (width, height) = (2048, 2048);
+    let (width, height) = (2048usize, 2048usize);
 
     // Create test image
     let mut pixels = vec![0u8; width * height * 3];
@@ -15,12 +16,15 @@ fn main() {
         *p = (seed >> 33) as u8;
     }
 
+    let config = EncoderConfig::new().quality(85.0);
+
     // Run enough iterations for good sampling
     for _ in 0..50 {
-        let result = JpegEncoder::new(width as u32, height as u32)
-            .quality(Quality::from_quality(85.0))
-            .encode(&pixels)
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        let result = enc.finish().unwrap();
         std::hint::black_box(&result);
     }
 }

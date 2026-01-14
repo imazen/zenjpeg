@@ -1,6 +1,6 @@
 //! Test the new simplified API.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{
     decode, decode_f32, decode_to_format, encode_gray, encode_rgb, ChromaSubsampling, Decoder,
     EncoderConfig, PixelFormat, PixelLayout, Quality,

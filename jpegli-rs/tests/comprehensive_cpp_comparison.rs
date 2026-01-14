@@ -2,7 +2,7 @@
 //!
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;

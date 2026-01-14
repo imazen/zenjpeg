@@ -1,6 +1,6 @@
 //! Test that progressive mode requires Huffman optimization
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{EncoderConfig, PixelLayout};
 
 fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {

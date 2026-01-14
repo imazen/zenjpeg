@@ -15,7 +15,7 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::collections::HashMap;

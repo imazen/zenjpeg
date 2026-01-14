@@ -10,7 +10,7 @@
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout};
 use sha2::{Digest, Sha256};
 use std::fs;

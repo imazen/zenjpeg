@@ -6,7 +6,7 @@
 //! This measures encode time and file size for both methods to quantify the
 //! performance/quality tradeoff of Sharp YUV.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
@@ -42,7 +42,7 @@ fn benchmark_encode_std(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
-    enc.push_packed(data, Never).unwrap();
+    enc.push_packed(data, Unstoppable).unwrap();
     let _ = enc.finish().unwrap();
 
     let start = Instant::now();
@@ -51,7 +51,7 @@ fn benchmark_encode_std(
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(data, Never).unwrap();
+        enc.push_packed(data, Unstoppable).unwrap();
         let output = enc.finish().unwrap();
         output_size = output.len();
     }
@@ -82,7 +82,7 @@ fn benchmark_encode_sharp(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
-    enc.push_packed(data, Never).unwrap();
+    enc.push_packed(data, Unstoppable).unwrap();
     let _ = enc.finish().unwrap();
 
     let start = Instant::now();
@@ -91,7 +91,7 @@ fn benchmark_encode_sharp(
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(data, Never).unwrap();
+        enc.push_packed(data, Unstoppable).unwrap();
         let output = enc.finish().unwrap();
         output_size = output.len();
     }

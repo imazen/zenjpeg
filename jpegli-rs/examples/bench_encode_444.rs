@@ -1,5 +1,5 @@
 //! Benchmark 4:4:4 baseline encoding path
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::hint::black_box;
 use std::time::Instant;
@@ -48,7 +48,7 @@ fn main() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(black_box(&pixels), Never).unwrap();
+        enc.push_packed(black_box(&pixels), Unstoppable).unwrap();
         let _ = enc.finish().unwrap();
     }
 
@@ -57,7 +57,7 @@ fn main() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
-        enc.push_packed(black_box(&pixels), Never).unwrap();
+        enc.push_packed(black_box(&pixels), Unstoppable).unwrap();
         let result = enc.finish().unwrap();
         black_box(&result);
     }

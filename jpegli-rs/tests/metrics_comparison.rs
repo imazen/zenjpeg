@@ -4,7 +4,7 @@
 //! consistent results that match C++ implementations.
 
 use dssim::Dssim;
-use enough::Never;
+use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;

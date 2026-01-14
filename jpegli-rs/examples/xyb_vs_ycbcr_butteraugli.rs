@@ -10,6 +10,8 @@
 //! Run with: cargo run --release --example xyb_vs_ycbcr_butteraugli
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::path::Path;
 use std::process::Command;
 
@@ -52,19 +54,21 @@ fn main() {
 
     for &q in &qualities {
         // Encode XYB
-        let xyb_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
-            .quality(jpegli::quant::Quality::from_quality(q as f32))
-            .use_xyb(true)
-            .encode(pixels)
-            .expect("XYB encode");
+        let xyb_config = EncoderConfig::new().quality(q as f32).xyb();
+        let mut enc = xyb_config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(pixels, Unstoppable).expect("push");
+        let xyb_jpeg = enc.finish().expect("XYB encode");
         let xyb_bytes = xyb_jpeg.len();
 
         // Encode YCbCr
-        let ycbcr_jpeg = jpegli::JpegEncoder::new(width as u32, height as u32)
-            .quality(jpegli::quant::Quality::from_quality(q as f32))
-            .use_xyb(false)
-            .encode(pixels)
-            .expect("YCbCr encode");
+        let ycbcr_config = EncoderConfig::new().quality(q as f32);
+        let mut enc = ycbcr_config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
+            .expect("encoder setup");
+        enc.push_packed(pixels, Unstoppable).expect("push");
+        let ycbcr_jpeg = enc.finish().expect("YCbCr encode");
         let ycbcr_bytes = ycbcr_jpeg.len();
 
         // Decode both

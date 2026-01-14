@@ -5,6 +5,8 @@
 //! cargo run --release --example xyb_cpp_comparison --features experimental-hybrid-trellis
 //! ```
 
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::process::Command;
 
 fn main() {
@@ -69,21 +71,25 @@ fn main() {
         let rust_jpeg = {
             use jpegli::hybrid_config::HybridConfig;
 
-            jpegli::JpegEncoder::new(width, height)
-                .quality(jpegli::quant::Quality::from_quality(q as f32))
-                .use_xyb(true)
-                .hybrid_config(HybridConfig::default())
-                .encode(pixels)
-                .expect("Rust encode")
+            let config = EncoderConfig::new()
+                .quality(q as f32)
+                .xyb()
+                .hybrid_config(HybridConfig::default());
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .expect("encoder setup");
+            enc.push_packed(pixels, Unstoppable).expect("push");
+            enc.finish().expect("Rust encode")
         };
 
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let rust_jpeg = {
-            jpegli::JpegEncoder::new(width, height)
-                .quality(jpegli::quant::Quality::from_quality(q as f32))
-                .use_xyb(true)
-                .encode(pixels)
-                .expect("Rust encode")
+            let config = EncoderConfig::new().quality(q as f32).xyb();
+            let mut enc = config
+                .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+                .expect("encoder setup");
+            enc.push_packed(pixels, Unstoppable).expect("push");
+            enc.finish().expect("Rust encode")
         };
 
         let rust_path = format!("/tmp/rust_xyb_q{}.jpg", q);

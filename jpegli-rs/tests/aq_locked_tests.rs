@@ -8,7 +8,7 @@
 //! If these tests fail, the AQ implementation is BROKEN.
 //! Fix the implementation, not the tests.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::quant::{Quality, ZeroBiasParams};
 use jpegli::{EncoderConfig, PixelLayout};
 

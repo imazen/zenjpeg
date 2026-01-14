@@ -14,7 +14,7 @@
 //! The encoder applies sRGB gamma correction during encoding.
 //! Standard RGB (8-bit) is assumed to already be in sRGB space.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::decode::Decoder;
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 

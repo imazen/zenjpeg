@@ -11,7 +11,7 @@ use test_utils::{
     TestImage,
 };
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{
     decode::Decoder,
     EncoderConfig, PixelLayout,

@@ -5,9 +5,10 @@
 //! cargo run --release --example ssim2_comparison
 //! ```
 
+use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
-use jpegli::types::{JpegMode, PixelFormat, Subsampling};
-use jpegli::{JpegEncoder, Quality};
+use jpegli::types::Subsampling;
+use jpegli::{ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout};
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
@@ -29,20 +30,24 @@ fn encode_rust(
     subsampling: Subsampling,
     progressive: bool,
 ) -> Vec<u8> {
-    let mode = if progressive {
-        JpegMode::Progressive
-    } else {
-        JpegMode::Baseline
+    let sub = match subsampling {
+        Subsampling::S444 => JpegliSubsampling::Full,
+        Subsampling::S422 => JpegliSubsampling::HalfHorizontal,
+        Subsampling::S420 => JpegliSubsampling::Quarter,
+        Subsampling::S440 => JpegliSubsampling::HalfVertical,
+        _ => JpegliSubsampling::Quarter,
     };
-    JpegEncoder::new(image.width as u32, image.height as u32)
-        .pixel_format(PixelFormat::Rgb)
-        .quality(Quality::from_quality(quality as f32))
-        .mode(mode)
+    let config = JpegliEncoderConfig::new()
+        .quality(quality as f32)
+        .progressive(progressive)
         .optimize_huffman(true)
-        .subsampling(subsampling)
-        .use_xyb(false)
-        .encode(&image.pixels)
-        .expect("Rust encode failed")
+        .ycbcr(sub)
+        ;
+    let mut enc = config
+        .encode_from_bytes(image.width as u32, image.height as u32, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(&image.pixels, Unstoppable).expect("push");
+    enc.finish().expect("Rust encode failed")
 }
 
 fn encode_cpp_ffi(

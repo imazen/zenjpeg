@@ -3,7 +3,7 @@
 //! Usage: cargo run --release --example decode_profile
 //!        cargo run --release --example decode_profile -- --jpegli-only
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{Decoder, EncoderConfig, PixelFormat, PixelLayout};
 use std::env;
 use std::time::Instant;
@@ -26,7 +26,7 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();
-    enc.push_packed(&data, Never).unwrap();
+    enc.push_packed(&data, Unstoppable).unwrap();
     enc.finish().unwrap()
 }
 

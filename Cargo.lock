@@ -28,9 +28,9 @@ dependencies = [
 
 [[package]]
 name = "almost-enough"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f9316adbe71484a0f65bf10667e913c6c358924359e74dda31ff67a51d84dca"
+checksum = "02c3b8e7b82856f9595335259eaab3bbc2823f1cd7d8a2ba341b655cd10b0735"
 dependencies = [
  "enough",
 ]
@@ -437,9 +437,9 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "enough"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7458bc83b94a574edee34eeb90e34164d2f74277562dbcca2e7e354e00c7b2a"
+checksum = "bc8e31e0dd4ff8654643403ff6aa9adcfc5c3632e623187ca646fabf1c2c5252"
 
 [[package]]
 name = "equator"
@@ -743,6 +743,13 @@ dependencies = [
  "test-case",
  "wide 1.1.1",
  "zune-jpeg",
+]
+
+[[package]]
+name = "jpegli-wasm-bench"
+version = "0.1.0"
+dependencies = [
+ "jpegli-rs",
 ]
 
 [[package]]

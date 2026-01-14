@@ -9,7 +9,7 @@
 //!
 //! Run with: cargo test --test huffman_algorithm_comparison -- --nocapture
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::huffman_types::{compare_algorithms, SymbolFrequencies};
 use jpegli::types::HuffmanMethod;
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};

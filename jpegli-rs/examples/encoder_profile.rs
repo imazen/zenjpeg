@@ -2,13 +2,14 @@
 //!
 //! Run with: cargo run --release --example encoder_profile
 
-use jpegli::{JpegEncoder, Quality};
+use enough::Unstoppable;
+use jpegli::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn main() {
     println!("Encoder Stage Profiling\n");
 
-    let (width, height) = (2048, 2048);
+    let (width, height) = (2048usize, 2048usize);
     let megapixels = (width * height) as f64 / 1_000_000.0;
 
     // Create test image
@@ -19,14 +20,17 @@ fn main() {
         *p = (seed >> 33) as u8;
     }
 
+    let config = EncoderConfig::new().quality(85.0);
+
     // Full encode timing
     let iterations = 10;
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = JpegEncoder::new(width as u32, height as u32)
-            .quality(Quality::from_quality(85.0))
-            .encode(&pixels)
+        let mut enc = config
+            .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+        let _ = enc.finish().unwrap();
     }
     let total_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
 

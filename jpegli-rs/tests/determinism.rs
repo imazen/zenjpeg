@@ -3,7 +3,7 @@
 //! Verifies that encoding the same input multiple times produces identical output bytes.
 //! This is critical for caching, reproducible builds, and debugging.
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{Decoder, EncoderConfig, PixelLayout};
 
 /// Generate a gradient test image

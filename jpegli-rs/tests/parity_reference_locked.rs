@@ -10,7 +10,7 @@
 //!
 //! To regenerate values: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 
-use enough::Never;
+use enough::Unstoppable;
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashMap;
 use std::process::Command;

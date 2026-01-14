@@ -46,7 +46,7 @@ fn wide_simd_operations() {
 #[test]
 #[cfg(target_feature = "simd128")]
 fn idct_parity_with_simd128() {
-    use enough::Never;
+    use enough::Unstoppable;
 
     // Simple DCT coefficients (DC only)
     let mut input = [0i32; 64];

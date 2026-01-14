@@ -5,7 +5,7 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use enough::Never;
+use enough::Unstoppable;
 use test_utils::{generate_gradient_d, read_test_data, TestImage};
 
 use jpegli::{

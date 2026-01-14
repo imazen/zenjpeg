@@ -453,3 +453,47 @@ mod tests {
         assert_eq!(ChromaSubsampling::HalfHorizontal.v_factor(), 1);
     }
 }
+
+// =============================================================================
+// Parallel Encoding Configuration
+// =============================================================================
+
+/// Parallel encoding strategy.
+///
+/// Controls how the encoder uses multiple threads for improved throughput.
+/// Parallel encoding uses JPEG restart markers to enable independent encoding
+/// of image segments, which are then concatenated.
+///
+/// # Restart Marker Behavior
+///
+/// Parallel encoding requires restart markers between segments. When enabled:
+/// - If `restart_interval` is 0 or too small, it will be **increased** to an
+///   optimal value based on thread count and image size
+/// - If `restart_interval` is already set to a reasonable value, it will be
+///   preserved (parallel encoding respects user-specified intervals)
+///
+/// Restart markers add ~2 bytes per interval but enable:
+/// - Parallel encoding/decoding
+/// - Error recovery in corrupted streams
+/// - Random access to image regions
+///
+/// # Performance
+///
+/// Parallel encoding is most beneficial for larger images (512x512+):
+/// - 2 threads: ~1.2-1.6x speedup
+/// - 4 threads: ~1.3-1.7x speedup
+/// - Diminishing returns beyond 4 threads for typical images
+///
+/// Small images (<256x256) may see no benefit or slight overhead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+#[cfg(feature = "parallel")]
+pub enum ParallelEncoding {
+    /// Automatically configure parallel encoding.
+    ///
+    /// Uses available CPU cores and selects an optimal restart interval
+    /// based on image dimensions. The restart interval will be increased
+    /// if needed, but never decreased below the user-specified value.
+    #[default]
+    Auto,
+}

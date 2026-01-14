@@ -2,6 +2,7 @@
 //!
 //! Run with: cargo run --release --example streaming_vs_encoder
 
+#[allow(deprecated)]
 use jpegli::{JpegEncoder, Quality, Subsampling};
 use std::time::{Duration, Instant};
 

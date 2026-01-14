@@ -10,7 +10,7 @@
 //!
 //! ```ignore
 //! use jpegli::encode::v2::{EncoderConfig, PixelLayout};
-//! use enough::Never;
+//! use enough::Unstoppable;
 //!
 //! // Create reusable config
 //! let config = EncoderConfig::new()
@@ -19,7 +19,7 @@
 //!
 //! // Encode from raw bytes
 //! let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
-//! enc.push_packed(&rgb_bytes, Never)?;
+//! enc.push_packed(&rgb_bytes, Unstoppable)?;
 //! let jpeg = enc.finish()?;
 //! ```
 //!
@@ -36,11 +36,11 @@
 //! All `push*` methods accept an `impl Stop` parameter for cancellation:
 //!
 //! ```ignore
-//! use enough::Never;
+//! use enough::Unstoppable;
 //! use std::sync::atomic::AtomicBool;
 //!
 //! // No cancellation
-//! enc.push_packed(&data, Never)?;
+//! enc.push_packed(&data, Unstoppable)?;
 //!
 //! // With AtomicBool
 //! let cancel = AtomicBool::new(false);
@@ -57,6 +57,8 @@ pub use types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, YCbCrPlanes,
 };
+#[cfg(feature = "parallel")]
+pub use types::ParallelEncoding;
 
 // Re-export edge padding types from crate::types
 pub use crate::types::{EdgePadding, EdgePaddingConfig};

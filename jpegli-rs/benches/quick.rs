@@ -34,8 +34,10 @@ fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
 }
 
 fn quick_bench(c: &mut Criterion) {
-    let image = generate_test_image(512, 512);
-    let pixels = 512u64 * 512;
+    const WIDTH: u32 = 512;
+    const HEIGHT: u32 = 512;
+    let image = generate_test_image(WIDTH as usize, HEIGHT as usize);
+    let pixels = WIDTH as u64 * HEIGHT as u64;
 
     let mut group = c.benchmark_group("quick");
     group.throughput(Throughput::Elements(pixels));
@@ -46,9 +48,9 @@ fn quick_bench(c: &mut Criterion) {
     // Core path: progressive + optimized huffman + 420 (most common)
     group.bench_function("prog-opt-420", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
+            JpegEncoder::new(WIDTH, HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
+                .quality(Quality::from(90.0))
                 .mode(JpegMode::Progressive)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S420)
@@ -59,9 +61,9 @@ fn quick_bench(c: &mut Criterion) {
     // Baseline (simpler path)
     group.bench_function("base-opt-420", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
+            JpegEncoder::new(WIDTH, HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
+                .quality(Quality::from(90.0))
                 .mode(JpegMode::Baseline)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S420)
@@ -72,9 +74,9 @@ fn quick_bench(c: &mut Criterion) {
     // 444 subsampling (no chroma downsampling)
     group.bench_function("prog-opt-444", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
+            JpegEncoder::new(WIDTH, HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
+                .quality(Quality::from(90.0))
                 .mode(JpegMode::Progressive)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S444)
@@ -85,9 +87,9 @@ fn quick_bench(c: &mut Criterion) {
     // XYB color space
     group.bench_function("prog-opt-444-xyb", |b| {
         b.iter(|| {
-            JpegEncoder::new(width, height)
+            JpegEncoder::new(WIDTH, HEIGHT)
                 .pixel_format(PixelFormat::Rgb)
-                .quality(Quality::from_quality(90.0))
+                .quality(Quality::from(90.0))
                 .mode(JpegMode::Progressive)
                 .optimize_huffman(true)
                 .subsampling(Subsampling::S444)

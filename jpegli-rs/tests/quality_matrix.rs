@@ -14,7 +14,7 @@
 //! cargo test --release --test quality_matrix --features ffi-tests -- --nocapture
 //! ```
 
-use enough::Never;
+use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
