@@ -15,10 +15,13 @@
 //! }
 //! ```
 
-mod error;
+// Note: Currently re-exporting internal error types since the encoder
+// types we re-export from crate::encode::v2 use them internally.
+// TODO: Create wrapper types or unified error type in the future.
 
-// === Error types (encoder-specific) ===
-pub use error::{Error, Result};
+// === Error types ===
+// Re-export internal error types since the v2 encoder types use them
+pub use crate::error::{Error, Result};
 
 // === Main encoder types ===
 pub use crate::encode::v2::{
