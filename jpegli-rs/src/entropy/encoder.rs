@@ -16,8 +16,7 @@ use super::{additional_bits_with_cat, category};
 
 /// Build a 64-bit mask of non-zero coefficients using SIMD.
 /// Each bit i is set if coeffs[i] != 0.
-#[multiversed]
-#[inline]
+#[inline(always)]
 fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
     let zero = i16x8::ZERO;
     let mut nonzero_mask: u64 = 0;
@@ -44,6 +43,86 @@ fn build_nonzero_mask(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
     }
 
     nonzero_mask
+}
+
+/// Inner implementation of block encoding with SIMD optimizations.
+/// This is a free function so it can be multiversed for different CPU targets.
+/// All inner functions are force-inlined for maximum performance.
+#[multiversed]
+#[inline]
+fn encode_block_simd_impl(
+    coeffs: &[i16; DCT_BLOCK_SIZE],
+    dc_table: &HuffmanEncodeTable,
+    ac_table: &HuffmanEncodeTable,
+    prev_dc: i16,
+    writer: &mut BitWriter,
+) -> (bool, i16) {
+    // Encode DC coefficient
+    let dc = coeffs[0];
+    let dc_diff = dc - prev_dc;
+
+    let dc_cat = category(dc_diff);
+    let (code, len) = dc_table.encode(dc_cat);
+
+    // Combined write: Huffman code + extra bits in one operation
+    if dc_cat > 0 {
+        let additional = additional_bits_with_cat(dc_diff, dc_cat);
+        writer.write_code_and_extra(code, len, additional, dc_cat);
+    } else {
+        writer.write_bits(code, len);
+    }
+
+    // Build 64-bit mask of non-zero coefficients using SIMD
+    let nonzero_mask = build_nonzero_mask(coeffs);
+
+    // Clear DC bit (bit 0), keep only AC bits (1-63)
+    let ac_mask = nonzero_mask & !1u64;
+
+    // Fast path: all AC coefficients are zero
+    if ac_mask == 0 {
+        let (code, len) = ac_table.encode(0x00); // EOB
+        writer.write_bits(code, len);
+        return (true, dc);
+    }
+
+    // Find position of last non-zero AC coefficient (1-63)
+    let last_nonzero_idx = 63 - ac_mask.leading_zeros() as usize;
+
+    // Process each non-zero AC coefficient
+    let mut remaining = ac_mask;
+    let mut prev_idx = 0usize;
+
+    while remaining != 0 {
+        let idx = remaining.trailing_zeros() as usize;
+        let run = (idx - prev_idx - 1) as u8;
+
+        // Handle runs of 16+ zeros (emit ZRL symbols)
+        let mut r = run;
+        while r >= 16 {
+            let (code, len) = ac_table.encode(0xF0); // ZRL
+            writer.write_bits(code, len);
+            r -= 16;
+        }
+
+        // Encode the coefficient with combined write
+        let ac = coeffs[idx];
+        let ac_cat = category(ac);
+        let symbol = (r << 4) | ac_cat;
+        let (code, len) = ac_table.encode(symbol);
+        let additional = additional_bits_with_cat(ac, ac_cat);
+        writer.write_code_and_extra(code, len, additional, ac_cat);
+
+        prev_idx = idx;
+        remaining &= remaining - 1; // Clear lowest set bit
+    }
+
+    // EOB if there are trailing zeros
+    if last_nonzero_idx < 63 {
+        let (code, len) = ac_table.encode(0x00); // EOB
+        writer.write_bits(code, len);
+    }
+
+    (true, dc)
 }
 
 /// Entropy encoder for a single scan.
@@ -220,6 +299,8 @@ impl<'a> EntropyEncoder<'a> {
     /// Uses SIMD comparison to build a bitmask of non-zero positions,
     /// then iterates only through non-zero coefficients using bit manipulation.
     /// This reduces branching overhead when blocks have many zeros.
+    ///
+    /// Delegates to a multiversioned free function for CPU-specific optimizations.
     #[inline]
     pub fn encode_block_simd(
         &mut self,
@@ -239,73 +320,10 @@ impl<'a> EntropyEncoder<'a> {
                 reason: "AC table not set",
             })?;
 
-        // Encode DC coefficient (same as scalar version)
-        let dc = coeffs[0];
-        let dc_diff = dc - self.prev_dc[component];
-        self.prev_dc[component] = dc;
-
-        let dc_cat = category(dc_diff);
-        let (code, len) = dc_table.encode(dc_cat);
-
-        // Combined write: Huffman code + extra bits in one operation
-        if dc_cat > 0 {
-            let additional = additional_bits_with_cat(dc_diff, dc_cat);
-            self.writer
-                .write_code_and_extra(code, len, additional, dc_cat);
-        } else {
-            self.writer.write_bits(code, len);
-        }
-
-        // Build 64-bit mask of non-zero coefficients using SIMD helper
-        let nonzero_mask = build_nonzero_mask(coeffs);
-
-        // Clear DC bit (bit 0), keep only AC bits (1-63)
-        let ac_mask = nonzero_mask & !1u64;
-
-        // Fast path: all AC coefficients are zero
-        if ac_mask == 0 {
-            let (code, len) = ac_table.encode(0x00); // EOB
-            self.writer.write_bits(code, len);
-            return Ok(());
-        }
-
-        // Find position of last non-zero AC coefficient (1-63)
-        let last_nonzero_idx = 63 - ac_mask.leading_zeros() as usize;
-
-        // Process each non-zero AC coefficient
-        let mut remaining = ac_mask;
-        let mut prev_idx = 0usize; // Index of last processed position
-
-        while remaining != 0 {
-            let idx = remaining.trailing_zeros() as usize; // Index of next non-zero (1-63)
-            let run = (idx - prev_idx - 1) as u8; // Zeros between prev and this
-
-            // Handle runs of 16+ zeros (emit ZRL symbols)
-            let mut r = run;
-            while r >= 16 {
-                let (code, len) = ac_table.encode(0xF0); // ZRL
-                self.writer.write_bits(code, len);
-                r -= 16;
-            }
-
-            // Encode the coefficient with combined write
-            let ac = coeffs[idx];
-            let ac_cat = category(ac);
-            let symbol = (r << 4) | ac_cat;
-            let (code, len) = ac_table.encode(symbol);
-            let additional = additional_bits_with_cat(ac, ac_cat);
-            self.writer
-                .write_code_and_extra(code, len, additional, ac_cat);
-
-            prev_idx = idx;
-            remaining &= remaining - 1; // Clear lowest set bit
-        }
-
-        // EOB if there are trailing zeros
-        if last_nonzero_idx < 63 {
-            let (code, len) = ac_table.encode(0x00); // EOB
-            self.writer.write_bits(code, len);
-        }
+        let prev_dc = self.prev_dc[component];
+        let (_, new_dc) =
+            encode_block_simd_impl(coeffs, dc_table, ac_table, prev_dc, &mut self.writer);
+        self.prev_dc[component] = new_dc;
 
         Ok(())
     }
