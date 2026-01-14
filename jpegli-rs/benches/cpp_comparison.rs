@@ -218,7 +218,7 @@ fn bench_sizes(c: &mut Criterion) {
     group.warm_up_time(Duration::from_millis(300));
     group.measurement_time(Duration::from_secs(2));
 
-    for size in [256, 512, 1024] {
+    for size in [1024, 2048, 4096] {
         let image = create_test_image(size, size);
         group.throughput(Throughput::Elements((image.width * image.height) as u64));
 
