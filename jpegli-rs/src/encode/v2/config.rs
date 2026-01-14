@@ -6,7 +6,7 @@ use super::types::{
 };
 use super::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use crate::error::Result;
-use crate::types::{EdgePadding, EdgePaddingConfig};
+use crate::types::EdgePaddingConfig;
 
 /// JPEG encoder configuration. Dimension-independent, reusable across images.
 #[derive(Clone, Debug)]

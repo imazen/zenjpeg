@@ -31,7 +31,7 @@ use parser::JpegParser;
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
 // Re-export types used in public struct fields so users can access them
-pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsampling};
+pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 
 use crate::error::{Error, Result};
 
@@ -308,9 +308,7 @@ impl Decoder {
             scan_info.data_start,
             parser.restart_interval,
             is_xyb,
-        )
-        .map_err(Into::into)
-    }
+        )}
 
     /// Decodes a JPEG image.
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {

@@ -144,8 +144,10 @@ fn butteraugli_to_internal(dist: f32) -> f32 {
 /// Quantization table configuration.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
+#[derive(Default)]
 pub enum QuantTableConfig {
     /// Jpegli's perceptual tables, scaled by Quality. (default)
+    #[default]
     Perceptual,
 
     /// Custom base matrices, scaled by Quality.
@@ -156,11 +158,6 @@ pub enum QuantTableConfig {
     Exact { luma: [u16; 64], chroma: [u16; 64] },
 }
 
-impl Default for QuantTableConfig {
-    fn default() -> Self {
-        QuantTableConfig::Perceptual
-    }
-}
 
 /// Output color space with bundled subsampling options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
