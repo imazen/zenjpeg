@@ -1,4 +1,4 @@
-//! JPEG Decoder API.
+//! JPEG Decoder - Public API.
 //!
 //! This module provides everything needed for JPEG decoding.
 //!
@@ -24,32 +24,17 @@
 //!     Ok(image.into_pixels())
 //! }
 //! ```
-//!
-//! # Decode to f32
-//!
-//! ```rust,ignore
-//! use jpegli::decoder::{Decoder, DecodedImageF32, Result};
-//!
-//! fn decode_hdr(data: &[u8]) -> Result<DecodedImageF32> {
-//!     Decoder::new().decode_f32(data)
-//! }
-//! ```
 
 mod error;
 
-// === Error types ===
+// === Error types (decoder-specific) ===
 pub use error::{Error, Result};
 
 // === Main decoder types ===
 pub use crate::decode::{
     DecodedImage, DecodedImageF32, DecodedYCbCr, Decoder, DecoderConfig, JpegInfo,
+    ScanlineInfo, ScanlineReader,
 };
 
-// === Pixel formats (for output) ===
-pub use crate::types::PixelFormat;
-
-// === Color space (from decoded image) ===
-pub use crate::types::ColorSpace;
-
-// === JPEG mode (from decoded image info) ===
-pub use crate::types::JpegMode;
+// === Types used in public structs ===
+pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsampling};

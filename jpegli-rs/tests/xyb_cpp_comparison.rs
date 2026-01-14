@@ -46,9 +46,9 @@ fn test_xyb_cpp_comparison() {
     println!("C++ JPEG size: {} bytes", cpp_jpeg.len());
 
     // Encode with Rust in XYB mode
-    let config = jpegli::EncoderConfig::new().quality(90.0).xyb();
+    let config = jpegli::encoder::EncoderConfig::new().quality(90.0).xyb();
     let mut enc = config
-        .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
+        .encode_from_bytes(width as u32, height as u32, jpegli::encoder::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
     enc.push_packed(&rgb_data, enough::Unstoppable).expect("push");
     let rust_jpeg = enc.finish().expect("Rust encoding failed");
@@ -322,9 +322,9 @@ fn test_icc_profile_embedding() {
     let height = 8;
     let rgb_data = vec![128u8; width * height * 3];
 
-    let config = jpegli::EncoderConfig::new().quality(90.0).xyb();
+    let config = jpegli::encoder::EncoderConfig::new().quality(90.0).xyb();
     let mut enc = config
-        .encode_from_bytes(width as u32, height as u32, jpegli::PixelLayout::Rgb8Srgb)
+        .encode_from_bytes(width as u32, height as u32, jpegli::encoder::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
     enc.push_packed(&rgb_data, enough::Unstoppable).expect("push");
     let jpeg = enc.finish().expect("Encoding failed");

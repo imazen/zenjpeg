@@ -11,7 +11,7 @@
 //! To regenerate values: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashMap;
 use std::process::Command;
 
@@ -221,7 +221,7 @@ fn encode_rust(
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, Never).expect("push data");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push data");
     enc.finish().expect("Rust encode failed")
 }
 

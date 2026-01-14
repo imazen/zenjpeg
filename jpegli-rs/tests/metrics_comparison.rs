@@ -6,7 +6,7 @@
 use dssim::Dssim;
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::Path;
@@ -73,7 +73,7 @@ fn encode_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(rgb, Never).expect("push data");
+    enc.push_packed(rgb, enough::Unstoppable).expect("push data");
     enc.finish().expect("jpegli encode")
 }
 

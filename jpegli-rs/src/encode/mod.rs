@@ -56,26 +56,35 @@ pub mod streaming;
 #[doc(hidden)]
 pub mod strip;
 
-// v2 is the primary public API - re-exported at crate root
+// v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
 pub mod v2;
 
-// Internal config types
-pub use config::EncoderConfig;
+// Re-export v2 types at encode:: level for cleaner imports
+pub use v2::{
+    BytesEncoder, ChromaSubsampling, ColorMode, DownsamplingMethod, EncoderConfig, PixelLayout,
+    Quality, QuantTableConfig, RgbEncoder, Stop, XybSubsampling, YCbCrPlanarEncoder, YCbCrPlanes,
+};
+#[cfg(feature = "parallel")]
+pub use v2::ParallelEncoding;
+
+use crate::error::{Error, Result};
+
+// Internal config types (v2::EncoderConfig is re-exported above, legacy one is used internally)
 pub(crate) use config::ProgressiveScan;
+use config::EncoderConfig as LegacyEncoderConfig;
 
 use crate::alloc::{
     checked_size_2d, try_alloc_zeroed_f32, try_clone_slice, validate_dimensions, DEFAULT_MAX_PIXELS,
 };
 #[cfg(feature = "experimental-hybrid-trellis")]
 use crate::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
-use crate::error::{Error, Result};
 use crate::quant::{self, Quality as LegacyQuality, QuantTable};
 use crate::types::{
     ChromaDownsampling as LegacyChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig,
     JpegMode, PixelFormat as LegacyPixelFormat, Subsampling as LegacySubsampling,
 };
-use enough::{Stop, Unstoppable};
+use enough::Unstoppable;
 
 /// JPEG encoder.
 ///
@@ -103,7 +112,7 @@ use enough::{Stop, Unstoppable};
 )]
 pub struct Encoder {
     /// Encoder configuration (accessible within crate for streaming encoder).
-    pub(crate) config: EncoderConfig,
+    pub(crate) config: LegacyEncoderConfig,
 }
 
 impl Encoder {
@@ -111,13 +120,13 @@ impl Encoder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            config: EncoderConfig::default(),
+            config: LegacyEncoderConfig::default(),
         }
     }
 
     /// Creates an encoder from configuration.
     #[must_use]
-    pub fn from_config(config: EncoderConfig) -> Self {
+    pub fn from_config(config: LegacyEncoderConfig) -> Self {
         Self { config }
     }
 
@@ -545,7 +554,7 @@ impl Encoder {
             builder = builder.custom_quant_matrices(custom.clone());
         }
 
-        builder.encode_with_stop(data, stop)
+        builder.encode_with_stop(data, stop).map_err(Into::into)
     }
 
     /// Generate a quantization table, using custom matrices if configured.

@@ -13,7 +13,7 @@ use test_utils::{
 };
 
 use enough::Unstoppable;
-use jpegli::{decode::Decoder, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
 use test_case::test_case;
 
 // ============================================================================
@@ -28,7 +28,7 @@ fn roundtrip_metrics(img: &TestImage, quality: f32, progressive: bool) -> (f64, 
     let mut enc = config
         .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&img.pixels, Never).expect("push");
+    enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
@@ -293,7 +293,7 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&img.pixels, Never).expect("push");
+    enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
@@ -326,13 +326,13 @@ fn test_encode_deterministic() {
         .clone()
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup 1");
-    enc1.push_packed(&img.pixels, Never).expect("push 1");
+    enc1.push_packed(&img.pixels, enough::Unstoppable).expect("push 1");
     let jpeg1 = enc1.finish().expect("encode 1");
 
     let mut enc2 = config
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup 2");
-    enc2.push_packed(&img.pixels, Never).expect("push 2");
+    enc2.push_packed(&img.pixels, enough::Unstoppable).expect("push 2");
     let jpeg2 = enc2.finish().expect("encode 2");
 
     assert_eq!(jpeg1, jpeg2, "Encoding should be deterministic");
@@ -345,7 +345,7 @@ fn test_decode_deterministic() {
     let mut enc = config
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&img.pixels, Never).expect("push");
+    enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 
     let decoder = Decoder::new();
@@ -380,7 +380,7 @@ fn test_compression_ratio() {
         let mut enc = config
             .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&img.pixels, Never).expect("push");
+        enc.push_packed(&img.pixels, enough::Unstoppable).expect("push");
         let jpeg = enc.finish().expect("encode");
 
         let ratio = raw_size as f64 / jpeg.len() as f64;

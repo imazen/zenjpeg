@@ -7,9 +7,9 @@
 //! Thresholds are intentionally tight to catch regressions.
 
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -199,7 +199,7 @@ fn test_file_size_parity() {
             let config = EncoderConfig::new().quality(point.quality as f32);
             let rust_jpeg = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
                 Ok(mut enc) => {
-                    if let Err(e) = enc.push_packed(&pixels, Never) {
+                    if let Err(e) = enc.push_packed(&pixels, enough::Unstoppable) {
                         failures.push(format!(
                             "{} Q{}: push failed: {:?}",
                             img_ref.name, point.quality, e
@@ -300,7 +300,7 @@ fn test_dssim_parity() {
             let config = EncoderConfig::new().quality(point.quality as f32);
             let rust_jpeg = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
                 Ok(mut enc) => {
-                    if enc.push_packed(&pixels, Never).is_err() {
+                    if enc.push_packed(&pixels, enough::Unstoppable).is_err() {
                         continue;
                     }
                     match enc.finish() {

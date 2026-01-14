@@ -9,34 +9,34 @@ mod test_utils;
 use enough::Unstoppable;
 use test_utils::{generate_gradient_d, TestImage};
 
-use jpegli::{Decoder, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
 
 // Helper to encode RGB data with v2 API
-fn encode_rgb(width: u32, height: u32, data: &[u8]) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8]) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new();
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_rgb_q(width: u32, height: u32, data: &[u8], quality: impl Into<jpegli::Quality>) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb_q(width: u32, height: u32, data: &[u8], quality: impl Into<jpegli::encoder::Quality>) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new().quality(quality);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8]) -> jpegli::Result<Vec<u8>> {
+fn encode_gray(width: u32, height: u32, data: &[u8]) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new().grayscale();
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_progressive(width: u32, height: u32, data: &[u8]) -> jpegli::Result<Vec<u8>> {
+fn encode_progressive(width: u32, height: u32, data: &[u8]) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new().progressive(true);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

@@ -1,7 +1,7 @@
 //! Compare XYB output quality and size against C jpegli.
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::process::Command;
 
 fn main() {

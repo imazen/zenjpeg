@@ -22,7 +22,7 @@ use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharact
 use enough::Unstoppable;
 use jpegli::test_utils::find_cjpegli;
 use jpegli::types::{JpegMode, Subsampling};
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;

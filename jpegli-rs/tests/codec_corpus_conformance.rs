@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 
 // ============================================================================
 // Corpus Discovery

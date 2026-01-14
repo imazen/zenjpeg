@@ -1,5 +1,5 @@
 use enough::Unstoppable;
-use jpegli::{Decoder, EncoderConfig, PixelLayout};
+use jpegli::{encoder::{EncoderConfig, PixelLayout}, decoder::Decoder};
 
 #[test]
 fn test_progressive_xyb_all_quality_levels() {
@@ -24,7 +24,7 @@ fn test_progressive_xyb_all_quality_levels() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&rgb, Never).expect("push");
+        enc.push_packed(&rgb, enough::Unstoppable).expect("push");
         let jpeg = enc
             .finish()
             .expect(&format!("encode Q{} failed", quality));
@@ -71,7 +71,7 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&rgb, Never).expect("push");
+    enc.push_packed(&rgb, enough::Unstoppable).expect("push");
     let jpeg = enc
         .finish()
         .expect(&format!("encode Q{} failed", quality));
@@ -139,7 +139,7 @@ fn test_progressive_ycbcr_non_aligned_dimensions() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&rgb, Never).expect("push");
+        enc.push_packed(&rgb, enough::Unstoppable).expect("push");
         let jpeg = enc
             .finish()
             .expect(&format!("encode Q{} failed", quality));

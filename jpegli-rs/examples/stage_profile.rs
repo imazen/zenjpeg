@@ -4,7 +4,7 @@ use enough::Unstoppable;
 use std::hint::black_box;
 use std::time::Instant;
 
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     let width = 2048u32;

@@ -268,6 +268,34 @@ ninja cjpegli djpegli
 cargo test --release --features ffi-tests
 ```
 
+## Color Space Constraints
+
+### RGB→YCbCr Matrix: BT.601 Only
+
+**CRITICAL**: The RGB→YCbCr conversion matrix MUST remain BT.601 for cross-decoder compatibility.
+
+When encoding wide-gamut images (Display P3, Adobe RGB, etc.):
+- The ICC profile tells decoders how to interpret the *decoded* RGB values
+- The YCbCr encoding uses the **same standard BT.601 matrix** as sRGB
+- Do NOT use colorspace-specific RGB→YCbCr matrices
+
+**Correct P3 encoding pipeline:**
+```
+sRGB u8 → linearize → f32 linear sRGB
+                          ↓
+              gamut expansion (f32 linear)
+                          ↓
+                   f32 linear P3
+                          ↓
+              apply P3 gamma → f32 gamma P3
+                          ↓
+         jpegli (standard BT.601 RGB→YCbCr)  ← NOT a P3-specific matrix
+                          ↓
+                 JPEG + P3 ICC profile
+```
+
+The ICC profile is metadata only - it doesn't change the YCbCr encoding math.
+
 ## Quality Metrics
 
 **Use DSSIM or SSIMULACRA2, never PSNR.** PSNR doesn't correlate with perceptual quality.

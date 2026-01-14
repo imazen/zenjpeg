@@ -3,19 +3,19 @@
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
-fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new()
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

@@ -133,11 +133,11 @@ fn test_xyb_buffer_roundtrip() {
 #[test]
 fn test_xyb_encode_decode() {
     use enough::Unstoppable;
-    use jpegli::{EncoderConfig, PixelLayout};
+    use jpegli::encoder::{EncoderConfig, PixelLayout};
 
-    fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
         let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-        enc.push_packed(data, Never)?;
+        enc.push_packed(data, enough::Unstoppable)?;
         enc.finish()
     }
 
@@ -209,15 +209,15 @@ fn test_srgb_linear_precision() {
 fn test_xyb_roundtrip_loss_vs_cpp() {
     use dssim::Dssim;
     use enough::Unstoppable;
-    use jpegli::{EncoderConfig, PixelLayout};
+    use jpegli::encoder::{EncoderConfig, PixelLayout};
     use rgb::RGBA8;
     use std::fs;
     use std::io::Write;
     use std::process::Command;
 
-    fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+    fn encode_rgb_xyb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
         let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-        enc.push_packed(data, Never)?;
+        enc.push_packed(data, enough::Unstoppable)?;
         enc.finish()
     }
 
@@ -285,12 +285,12 @@ fn test_xyb_roundtrip_loss_vs_cpp() {
     println!("Rust JPEG size: {} bytes", rust_jpeg.len());
 
     // Decode both with our decoder (which applies ICC transform)
-    let cpp_decoded = jpegli::Decoder::new()
+    let cpp_decoded = jpegli::decoder::Decoder::new()
         .apply_icc(true)
         .decode(&cpp_jpeg)
         .expect("C++ JPEG decode failed");
 
-    let rust_decoded = jpegli::Decoder::new()
+    let rust_decoded = jpegli::decoder::Decoder::new()
         .apply_icc(true)
         .decode(&rust_jpeg)
         .expect("Rust JPEG decode failed");

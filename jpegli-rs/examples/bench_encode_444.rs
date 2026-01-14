@@ -1,6 +1,6 @@
 //! Benchmark 4:4:4 baseline encoding path
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::hint::black_box;
 use std::time::Instant;
 

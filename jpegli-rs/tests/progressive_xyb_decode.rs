@@ -108,7 +108,7 @@ fn zune_jpeg_decodes_progressive_xyb() {
 /// to avoid failing when scan data ends before all blocks are decoded.
 #[test]
 fn jpegli_decodes_progressive_xyb() {
-    let result = jpegli::Decoder::new().decode(PROGRESSIVE_XYB_JPEG);
+    let result = jpegli::decoder::Decoder::new().decode(PROGRESSIVE_XYB_JPEG);
 
     assert!(
         result.is_ok(),
@@ -130,9 +130,9 @@ fn jpegli_decodes_baseline_xyb() {
     let height = 8u32;
     let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    let config = jpegli::EncoderConfig::new().xyb();
+    let config = jpegli::encoder::EncoderConfig::new().xyb();
     let mut enc = config
-        .encode_from_bytes(width, height, jpegli::PixelLayout::Rgb8Srgb)
+        .encode_from_bytes(width, height, jpegli::encoder::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
     enc.push_packed(&pixels, enough::Unstoppable).expect("push");
     let jpeg_data = enc.finish().expect("encode");
@@ -144,7 +144,7 @@ fn jpegli_decodes_baseline_xyb() {
     );
 
     // Decode with jpegli-rs
-    let result = jpegli::Decoder::new().decode(&jpeg_data);
+    let result = jpegli::decoder::Decoder::new().decode(&jpeg_data);
     assert!(
         result.is_ok(),
         "jpegli-rs should decode baseline XYB: {:?}",

@@ -3,7 +3,7 @@
 //! Run with: cargo run --release --features parallel --example parallel_encoder_bench
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn main() {

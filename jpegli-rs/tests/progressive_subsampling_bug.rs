@@ -9,9 +9,9 @@
 //! and all subsampled progressive modes produce the same file size as 4:4:4.
 
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Test that progressive + subsampling produces files that can be decoded
 /// by multiple external decoders without corruption errors.
@@ -46,7 +46,7 @@ fn test_progressive_subsampling_external_decoder_compat() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap_or_else(|e| panic!("Progressive {} encoder setup failed: {:?}", name, e));
-        enc.push_packed(&rgb, Never)
+        enc.push_packed(&rgb, enough::Unstoppable)
             .unwrap_or_else(|e| panic!("Progressive {} push failed: {:?}", name, e));
         let jpeg = enc
             .finish()
@@ -102,7 +102,7 @@ fn test_progressive_subsampling_file_sizes() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&rgb, Never).expect("push data");
+        enc.push_packed(&rgb, enough::Unstoppable).expect("push data");
         enc.finish().expect("encode failed").len()
     };
 
@@ -180,7 +180,7 @@ fn test_baseline_subsampling_works() {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(&rgb, Never).expect("push data");
+        enc.push_packed(&rgb, enough::Unstoppable).expect("push data");
         enc.finish().expect("encode failed").len()
     };
 

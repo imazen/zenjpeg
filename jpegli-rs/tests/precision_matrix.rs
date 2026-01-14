@@ -5,9 +5,9 @@
 //! through jpegli for each input/output format combination?"
 
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 use jpegli::types::PixelFormat;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashSet;
 
 /// Test image dimensions
@@ -266,7 +266,7 @@ fn test_combination(
     let mut enc = config
         .encode_from_bytes(WIDTH as u32, HEIGHT as u32, layout)
         .expect(&format!("encoder setup {} failed", encode_name));
-    enc.push_packed(input_data, Never)
+    enc.push_packed(input_data, enough::Unstoppable)
         .expect(&format!("push {} failed", encode_name));
     let jpeg = enc.finish().expect(&format!("encode {} failed", encode_name));
 
@@ -637,7 +637,7 @@ fn test_precision_improvement_summary() {
     let mut enc = config
         .encode_from_bytes(WIDTH as u32, HEIGHT as u32, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&input, Never).expect("push data");
+    enc.push_packed(&input, enough::Unstoppable).expect("push data");
     let jpeg = enc.finish().expect("encode failed");
 
     let decoder = Decoder::new();
@@ -721,7 +721,7 @@ fn test_10plus_bit_demonstration() {
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&input, Never).expect("push data");
+    enc.push_packed(&input, enough::Unstoppable).expect("push data");
     let jpeg = enc.finish().expect("encode failed");
 
     println!("JPEG size: {} bytes", jpeg.len());

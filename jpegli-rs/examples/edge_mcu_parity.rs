@@ -11,7 +11,7 @@
 //! ```
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig as JpegliEncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig as JpegliEncoderConfig, PixelLayout};
 use jpegli_bench_utils::{
     create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
     EncoderConfig, EncoderImpl, ImageData, McuEdgeInfo, ScanMode,

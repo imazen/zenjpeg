@@ -1,13 +1,13 @@
 //! Debug test for Gray16 linear encoding issue
 
 use enough::Unstoppable;
-use jpegli::decode::Decoder;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::decoder::Decoder;
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::collections::HashSet;
 
-fn encode(width: u32, height: u32, data: &[u8], config: &EncoderConfig, layout: PixelLayout) -> jpegli::Result<Vec<u8>> {
+fn encode(width: u32, height: u32, data: &[u8], config: &EncoderConfig, layout: PixelLayout) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, layout)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

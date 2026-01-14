@@ -5,7 +5,7 @@
 //!
 //! The kCompressed0 test data is a minimal valid 1x1 grayscale JPEG.
 
-use jpegli::decode::Decoder;
+use jpegli::decoder::Decoder;
 
 // ============================================================================
 // Test Data (from C++ error_handling_test.cc lines 1005-1054)

@@ -30,11 +30,14 @@ use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
+// Re-export types used in public struct fields so users can access them
+pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsampling};
+
+use crate::error::{Error, Result};
+
 use crate::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 #[cfg(any(feature = "cms-lcms2", feature = "cms-moxcms"))]
 use crate::color::icc::apply_icc_transform;
-use crate::error::{Error, Result};
-use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 
 /// Decoder configuration.
 #[derive(Debug, Clone)]
@@ -306,6 +309,7 @@ impl Decoder {
             parser.restart_interval,
             is_xyb,
         )
+        .map_err(Into::into)
     }
 
     /// Decodes a JPEG image.

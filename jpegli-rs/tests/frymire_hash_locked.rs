@@ -11,7 +11,7 @@
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout};
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -125,7 +125,7 @@ impl EncoderTestConfig {
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
-        enc.push_packed(rgb, Never).expect("push data");
+        enc.push_packed(rgb, enough::Unstoppable).expect("push data");
         enc.finish().expect("Encoding failed")
     }
 
@@ -354,7 +354,7 @@ fn print_single_hash() {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&rgb, Never).expect("push data");
+    enc.push_packed(&rgb, enough::Unstoppable).expect("push data");
     let jpeg = enc.finish().expect("Encoding failed");
 
     println!("Size: {} bytes", jpeg.len());

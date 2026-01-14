@@ -1399,12 +1399,12 @@ impl ChromaSubsampling {
 
     /// Convert to v2 API ChromaSubsampling type.
     #[must_use]
-    pub fn to_v2(&self) -> jpegli::ChromaSubsampling {
+    pub fn to_v2(&self) -> jpegli::encode::ChromaSubsampling {
         match self {
-            Self::S444 => jpegli::ChromaSubsampling::Full,
-            Self::S422 => jpegli::ChromaSubsampling::HalfHorizontal,
-            Self::S420 => jpegli::ChromaSubsampling::Quarter,
-            Self::S440 => jpegli::ChromaSubsampling::HalfVertical,
+            Self::S444 => jpegli::encode::ChromaSubsampling::Full,
+            Self::S422 => jpegli::encode::ChromaSubsampling::HalfHorizontal,
+            Self::S420 => jpegli::encode::ChromaSubsampling::Quarter,
+            Self::S440 => jpegli::encode::ChromaSubsampling::HalfVertical,
         }
     }
 }
@@ -1528,7 +1528,7 @@ impl EncoderConfig {
     }
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        use jpegli::{EncoderConfig, PixelLayout};
+        use jpegli::encode::{EncoderConfig, PixelLayout};
 
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         if self.hybrid {

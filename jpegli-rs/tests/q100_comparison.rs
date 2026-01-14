@@ -3,7 +3,7 @@
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
 
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -91,7 +91,7 @@ fn test_q100_rust_vs_cpp() {
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&rgb, Never).expect("push");
+    enc.push_packed(&rgb, enough::Unstoppable).expect("push");
     let rust_jpeg = enc.finish().expect("encode");
     let rust_time = rust_start.elapsed();
 

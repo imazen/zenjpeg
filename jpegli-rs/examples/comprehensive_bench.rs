@@ -5,7 +5,7 @@
 //! Run with: cargo run --release --example comprehensive_bench [image.png]
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use png::Decoder;
 use std::fs::File;
 use std::io::BufReader;

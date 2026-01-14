@@ -1,5 +1,5 @@
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::process::Command;
 
 fn test_pattern(name: &str, data: &[u8], width: u32, height: u32, quality: f32) {

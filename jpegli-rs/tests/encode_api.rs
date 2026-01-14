@@ -12,7 +12,8 @@ use test_utils::{
 };
 
 use jpegli::{
-    decode::Decoder, ChromaSubsampling, EncoderConfig, PixelLayout, Quality,
+    decoder::Decoder,
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
 };
 use test_case::test_case;
 
@@ -20,21 +21,21 @@ use test_case::test_case;
 // Helper Functions
 // ============================================================================
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_rgba(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgba(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgbx8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

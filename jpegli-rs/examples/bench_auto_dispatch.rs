@@ -1,6 +1,6 @@
 //! Benchmark showing encoding performance at different image sizes
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn bench(width: usize, height: usize) -> (f64, usize) {

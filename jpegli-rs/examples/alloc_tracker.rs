@@ -87,7 +87,7 @@ fn locked_expectation(width: usize, height: usize, subsampling: &str) -> Option<
 
 fn main() {
     use enough::Unstoppable;
-    use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+    use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
     println!("=== Memory Usage Validation ===\n");
     println!(

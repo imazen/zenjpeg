@@ -3,7 +3,7 @@
 //! Run with: cargo run --release --example quick_parity
 
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     let w = 256;

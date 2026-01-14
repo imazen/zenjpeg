@@ -14,10 +14,8 @@ mod test_utils;
 
 use enough::Unstoppable;
 use jpegli::{
-    decode::{Decoder, DecoderConfig},
-    error::Error,
-    types::PixelFormat,
-    ChromaSubsampling, EncoderConfig, PixelLayout, Quality,
+    decoder::{Decoder, DecoderConfig, PixelFormat},
+    encoder::{ChromaSubsampling, EncoderConfig, Error, PixelLayout, Quality},
 };
 use test_utils::{
     generate_checkerboard, generate_color_bars, generate_gradient_d, generate_gradient_h,
@@ -28,33 +26,33 @@ use test_utils::{
 // HELPER FUNCTIONS
 // ============================================================================
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_rgba(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgba(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgbx8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_bgr(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_bgr(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Bgr8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_bgra(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_bgra(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Bgrx8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
@@ -358,7 +356,7 @@ mod encode_coverage {
         // Buffer too small
         let config = EncoderConfig::new();
         let mut enc = config.encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).unwrap();
-        let result = enc.push_packed(&[0u8; 100], Never);
+        let result = enc.push_packed(&[0u8; 100], enough::Unstoppable);
         assert!(result.is_err());
     }
 

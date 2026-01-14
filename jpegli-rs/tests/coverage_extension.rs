@@ -8,9 +8,10 @@ mod test_utils;
 
 use enough::Unstoppable;
 use jpegli::{
-    decode::{Decoder, DecoderConfig},
-    types::{ColorSpace, Component, Dimensions, HuffmanTable},
-    ChromaSubsampling, EncoderConfig, PixelLayout, Quality, QuantTable,
+    decoder::{ColorSpace, Decoder, DecoderConfig, Dimensions},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
+    types::{Component, HuffmanTable},
+    quant::QuantTable,
 };
 use test_utils::{generate_gradient_d, generate_noise};
 
@@ -18,27 +19,27 @@ use test_utils::{generate_gradient_d, generate_noise};
 // HELPER FUNCTIONS
 // ============================================================================
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_gray(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_bgr(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_bgr(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Bgr8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_bgra(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_bgra(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Bgrx8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

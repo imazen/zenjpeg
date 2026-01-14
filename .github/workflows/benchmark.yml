@@ -16,40 +16,83 @@ permissions:
 
 jobs:
   benchmark:
-    name: Performance Benchmarks
-    runs-on: ubuntu-latest
+    name: Benchmark (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64-linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64-linux
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - arch: x86_64-macos
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - arch: aarch64-macos
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - arch: wasm32-simd
+            os: ubuntu-latest
+            target: wasm32-wasip1
+            wasm: true
+
     steps:
       - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: benchmark
+          key: bench-${{ matrix.arch }}
 
-      - name: Run encode benchmarks
+      # WASM: Install wasmtime
+      - name: Install wasmtime
+        if: matrix.wasm
         run: |
-          cargo bench --bench encode -p jpegli-rs -- --noplot --save-baseline main 2>&1 | tee encode_bench.txt
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
 
-      - name: Run decode benchmarks
+      # Native benchmarks
+      - name: Run encode benchmarks (native)
+        if: ${{ !matrix.wasm }}
         run: |
-          cargo bench --bench decode -p jpegli-rs -- --noplot --save-baseline main 2>&1 | tee decode_bench.txt
+          cargo bench --bench encode -p jpegli-rs --target ${{ matrix.target }} -- --noplot --save-baseline main 2>&1 | tee bench_output.txt
+
+      - name: Run decode benchmarks (native)
+        if: ${{ !matrix.wasm }}
+        run: |
+          cargo bench --bench decode -p jpegli-rs --target ${{ matrix.target }} -- --noplot --save-baseline main 2>&1 | tee -a bench_output.txt
+
+      # WASM benchmarks using wasmtime
+      - name: Build WASM benchmark
+        if: matrix.wasm
+        run: |
+          RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-wasip1 -p jpegli-wasm-bench
+
+      - name: Run WASM benchmarks
+        if: matrix.wasm
+        run: |
+          wasmtime run --wasm simd target/wasm32-wasip1/release/wasm_bench.wasm 2>&1 | tee bench_output.txt
 
       - name: Parse benchmark results
         id: parse
         run: |
-          # Extract benchmark results into a format for github-action-benchmark
           mkdir -p benchmark-results
 
-          # Parse criterion output to JSON format
           python3 << 'EOF'
           import json
           import re
           import os
 
+          arch = "${{ matrix.arch }}"
           results = []
 
-          def parse_criterion_output(filename, prefix):
+          def parse_criterion_output(filename):
               with open(filename, 'r') as f:
                   content = f.read()
 
@@ -69,21 +112,20 @@ jobs:
                   elif unit == 's':
                       value *= 1_000_000_000
 
+                  # Prefix with architecture for separate tracking
                   results.append({
-                      'name': f'{prefix}/{name}',
+                      'name': f'{arch}/{name}',
                       'unit': 'ns',
                       'value': value
                   })
 
-          if os.path.exists('encode_bench.txt'):
-              parse_criterion_output('encode_bench.txt', 'encode')
-          if os.path.exists('decode_bench.txt'):
-              parse_criterion_output('decode_bench.txt', 'decode')
+          if os.path.exists('bench_output.txt'):
+              parse_criterion_output('bench_output.txt')
 
           with open('benchmark-results/results.json', 'w') as f:
               json.dump(results, f, indent=2)
 
-          print(f"Parsed {len(results)} benchmark results")
+          print(f"Parsed {len(results)} benchmark results for {arch}")
           EOF
 
           cat benchmark-results/results.json
@@ -93,84 +135,61 @@ jobs:
         with:
           tool: 'customSmallerIsBetter'
           output-file-path: benchmark-results/results.json
-          # Store results in gh-pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          # Alert if performance regresses by more than 10%
-          alert-threshold: '110%'
-          # Comment on PR with performance comparison
+          alert-threshold: '115%'
           comment-on-alert: true
           fail-on-alert: false
-          # Only keep last 100 data points
           max-items-in-chart: 100
+          # Separate benchmark data per architecture
+          benchmark-data-dir-path: dev/bench/${{ matrix.arch }}
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: benchmark-results
+          name: benchmark-${{ matrix.arch }}
           path: |
-            encode_bench.txt
-            decode_bench.txt
+            bench_output.txt
             benchmark-results/
 
-  benchmark-comparison:
-    name: PR Benchmark Comparison
-    if: github.event_name == 'pull_request'
+  benchmark-summary:
+    name: Benchmark Summary
+    needs: benchmark
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v5
         with:
-          key: benchmark-pr
+          pattern: benchmark-*
+          merge-multiple: false
 
-      - name: Checkout base branch
+      - name: Generate cross-platform comparison
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git checkout origin/${{ github.base_ref }}
+          echo "## Cross-Platform Benchmark Results" > summary.md
+          echo "" >> summary.md
 
-      - name: Run base branch benchmarks
-        run: |
-          cargo bench --bench encode -p jpegli-rs -- --noplot --save-baseline base 2>&1 | tee base_encode.txt
-          cargo bench --bench decode -p jpegli-rs -- --noplot --save-baseline base 2>&1 | tee base_decode.txt
+          for dir in benchmark-*/; do
+            arch=$(basename "$dir" | sed 's/benchmark-//')
+            echo "### $arch" >> summary.md
+            echo '```' >> summary.md
+            if [ -f "$dir/bench_output.txt" ]; then
+              grep -E "time:" "$dir/bench_output.txt" | head -20 >> summary.md || echo "No results" >> summary.md
+            else
+              echo "No benchmark data" >> summary.md
+            fi
+            echo '```' >> summary.md
+            echo "" >> summary.md
+          done
 
-      - name: Checkout PR branch
-        run: |
-          git checkout ${{ github.sha }}
-
-      - name: Run PR branch benchmarks and compare
-        run: |
-          cargo bench --bench encode -p jpegli-rs -- --noplot --baseline base 2>&1 | tee pr_encode.txt
-          cargo bench --bench decode -p jpegli-rs -- --noplot --baseline base 2>&1 | tee pr_decode.txt
-
-      - name: Generate comparison report
-        id: report
-        run: |
-          echo "## Benchmark Comparison" > comparison.md
-          echo "" >> comparison.md
-          echo "### Encode Benchmarks" >> comparison.md
-          echo '```' >> comparison.md
-          # Extract comparison lines (those with change percentages)
-          grep -E "(faster|slower|change)" pr_encode.txt >> comparison.md || echo "No significant changes" >> comparison.md
-          echo '```' >> comparison.md
-          echo "" >> comparison.md
-          echo "### Decode Benchmarks" >> comparison.md
-          echo '```' >> comparison.md
-          grep -E "(faster|slower|change)" pr_decode.txt >> comparison.md || echo "No significant changes" >> comparison.md
-          echo '```' >> comparison.md
-
-          cat comparison.md
+          cat summary.md
 
       - name: Comment on PR
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('comparison.md', 'utf8');
+            const report = fs.readFileSync('summary.md', 'utf8');
 
-            // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -178,7 +197,7 @@ jobs:
             });
 
             const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('## Benchmark Comparison')
+              c.user.type === 'Bot' && c.body.includes('## Cross-Platform Benchmark')
             );
 
             const body = report + '\n\n*Updated: ' + new Date().toISOString() + '*';
@@ -198,14 +217,3 @@ jobs:
                 body: body
               });
             }
-
-      - name: Upload comparison artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: benchmark-comparison
-          path: |
-            base_encode.txt
-            base_decode.txt
-            pr_encode.txt
-            pr_decode.txt
-            comparison.md

@@ -13,15 +13,15 @@ use test_utils::{
 
 use enough::Unstoppable;
 use jpegli::{
-    decode::Decoder,
-    EncoderConfig, PixelLayout,
+    decoder::Decoder,
+    encoder::{EncoderConfig, PixelLayout},
 };
 use std::path::Path;
 use test_case::test_case;
 
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 

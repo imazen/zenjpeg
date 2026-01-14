@@ -16,7 +16,7 @@
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
 use enough::Unstoppable;
-use jpegli::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::collections::HashMap;
 
@@ -30,9 +30,9 @@ struct TestEncodingConfig {
 }
 
 /// Helper to encode RGB data with v2 encoder API
-fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> jpegli::encoder::Result<Vec<u8>> {
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
@@ -105,7 +105,7 @@ fn max_pixel_diff(a: &[u8], b: &[u8]) -> u8 {
 
 fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
     let start = std::time::Instant::now();
-    let decoder = jpegli::Decoder::new();
+    let decoder = jpegli::decoder::Decoder::new();
     match decoder.decode(data) {
         Ok(img) => Some(DecoderResult {
             decoder_name: "jpegli-rs".to_string(),

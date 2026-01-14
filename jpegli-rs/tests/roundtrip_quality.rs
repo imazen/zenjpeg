@@ -5,7 +5,7 @@
 
 use dssim::Dssim;
 use enough::Unstoppable;
-use jpegli::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::Path;
@@ -15,10 +15,10 @@ use std::path::Path;
 const MAX_DSSIM_Q90: f64 = 0.005;
 
 /// Helper function to encode RGB data with given config
-fn encode_rgb(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::Result<Vec<u8>> {
+fn encode_rgb(width: u32, height: u32, data: &[u8], quality: f32) -> jpegli::encoder::Result<Vec<u8>> {
     let config = EncoderConfig::new().quality(quality);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
-    enc.push_packed(data, Never)?;
+    enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
