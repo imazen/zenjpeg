@@ -54,13 +54,13 @@ libloading = "0.8"
 
 # Runtime CPU feature detection and dispatch
 multiversion = "0.8"
-multiversed = { path = "../multiversed" }
+multiversed = "0.1"
 
 # no_std compatible lazy initialization
 spin = "0.9"
 
 # Fast linear-sRGB conversion
-linear-srgb = { path = "../linear-srgb" }
+linear-srgb = "0.2"
 
 # Cooperative cancellation
 enough = { version = "0.3", features = ["std"] }
