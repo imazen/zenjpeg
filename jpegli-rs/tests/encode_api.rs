@@ -618,7 +618,9 @@ fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let gf = g as f32;
     let bf = b as f32;
 
-    let y = (0.299 * rf + 0.587 * gf + 0.114 * bf).round().clamp(0.0, 255.0) as u8;
+    let y = (0.299 * rf + 0.587 * gf + 0.114 * bf)
+        .round()
+        .clamp(0.0, 255.0) as u8;
     let cb = (128.0 - 0.168736 * rf - 0.331264 * gf + 0.5 * bf)
         .round()
         .clamp(0.0, 255.0) as u8;
