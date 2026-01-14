@@ -9,22 +9,22 @@ A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
 ## Heritage and Divergence
 
-This project was originally inspired by [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. The initial implementation aimed for bit-exact parity with the C++ reference.
+This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. After **six complete rewrites**, it's no longer really "jpegli" — it's an independent JPEG encoder that draws from the best ideas in jpegli and elsewhere.
 
-However, jpegli-rs has been **rewritten from scratch multiple times** and is now **diverging significantly** from the original. While it retains the core concepts (adaptive quantization, XYB color space support, smart zero-biasing), the implementation details, API design, and optimizations are increasingly our own.
+The name persists for historical reasons, but the codebase shares little with the C++ original beyond core concepts.
 
-**What we kept from jpegli:**
-- Adaptive quantization philosophy (content-aware bit allocation)
-- XYB color space support with ICC profiles
+**Ideas we adopted from jpegli:**
+- Adaptive quantization (content-aware bit allocation)
+- XYB color space with ICC profiles
 - Perceptually-tuned quantization tables
 - Zero-bias strategies for coefficient rounding
 
-**Where we're diverging:**
-- Pure Rust implementation with no C/C++ dependencies
-- New streaming encoder API optimized for memory efficiency
-- Different SIMD strategy (portable `wide` crate vs platform intrinsics)
+**Where we went our own way:**
+- Pure Rust, `#![forbid(unsafe_code)]` by default (unsafe SIMD is opt-in)
+- Streaming encoder API for memory efficiency
+- Portable SIMD via `wide` crate instead of platform intrinsics
 - Parallel encoding support
-- Ongoing encoder optimizations independent of upstream
+- Independent optimizations and bug fixes
 
 ## Features
 
@@ -317,7 +317,7 @@ Quality is identical; file sizes within 0.5%.
 | `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
 | `test-utils` | Yes | Testing utilities |
 
-SIMD via the `wide` crate is always enabled (portable, safe).
+By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the safe, portable `wide` crate. Enable `unsafe_simd` for raw intrinsics on x86_64.
 
 ```toml
 [dependencies]
@@ -388,10 +388,9 @@ A commercial license is available from https://imageresizing.net/pricing
 
 ## Acknowledgments
 
-Originally inspired by [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
-from the JPEG XL project by Google (BSD-3-Clause). This Rust implementation has
-been rewritten multiple times and is now an independent project with its own
-development trajectory.
+Originally a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli)
+from the JPEG XL project by Google (BSD-3-Clause). After six rewrites, this is now
+an independent project that shares ideas but little code with the original.
 
 ## AI Disclosure
 
