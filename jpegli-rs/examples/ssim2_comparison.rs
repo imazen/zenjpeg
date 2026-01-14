@@ -7,10 +7,10 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
-use jpegli::types::Subsampling;
-use jpegli::{
+use jpegli::encoder::{
     ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
 };
+use jpegli::types::Subsampling;
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };

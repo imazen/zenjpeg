@@ -137,7 +137,7 @@ fn write_ppm(path: &str, rgb: &[u8], width: usize, height: usize) -> std::io::Re
 /// This test uses the actual C++ jpegli code to compute expected values.
 #[test]
 fn test_xyb_color_conversion_values() {
-    use jpegli::xyb::{srgb_to_scaled_xyb, SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
+    use jpegli::color::xyb::{srgb_to_scaled_xyb, SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
 
     // Test colors: sRGB values
     let test_colors: &[(u8, u8, u8)] = &[
@@ -237,8 +237,8 @@ fn test_xyb_color_conversion_values() {
 /// Test that XYB constants match C++.
 #[test]
 fn test_xyb_constants_match_cpp() {
-    use jpegli::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
-    use jpegli::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
+    use jpegli::foundation::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
+    use jpegli::color::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
 
     // Get C++ constants via FFI
     let (cpp_matrix, cpp_bias, cpp_offset, cpp_scale) =

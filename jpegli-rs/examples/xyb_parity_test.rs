@@ -55,7 +55,7 @@ fn main() {
             // Rust XYB with hybrid trellis (matches C jpegli's AQ)
             #[cfg(feature = "experimental-hybrid-trellis")]
             let rust_jpeg = {
-                use jpegli::hybrid_config::HybridConfig;
+                use jpegli::hybrid::HybridConfig;
                 let config = EncoderConfig::new()
                     .quality(q as f32)
                     .xyb()

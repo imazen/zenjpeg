@@ -2,8 +2,8 @@
 //!
 //! Usage: cargo run --release --example compare_xyb_constants
 
-use jpegli::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
-use jpegli::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
+use jpegli::foundation::consts::{XYB_OPSIN_ABSORBANCE_BIAS, XYB_OPSIN_ABSORBANCE_MATRIX};
+use jpegli::color::xyb::{SCALED_XYB_OFFSET, SCALED_XYB_SCALE};
 
 fn main() {
     println!("=== XYB Constants Comparison ===\n");
@@ -68,7 +68,7 @@ fn main() {
 
     for (r, g, b, name) in &test_colors {
         // Rust conversion
-        let (rust_x, rust_y, rust_b) = jpegli::xyb::srgb_to_scaled_xyb(*r, *g, *b);
+        let (rust_x, rust_y, rust_b) = jpegli::color::xyb::srgb_to_scaled_xyb(*r, *g, *b);
 
         // C++ conversion
         let srgb = vec![*r, *g, *b];
@@ -114,7 +114,7 @@ fn main() {
     // Convert entire image with both implementations
     let mut rust_xyb = vec![0.0f32; width * height * 3];
     for i in 0..width * height {
-        let (x, y, b) = jpegli::xyb::srgb_to_scaled_xyb(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+        let (x, y, b) = jpegli::color::xyb::srgb_to_scaled_xyb(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
         rust_xyb[i * 3] = x;
         rust_xyb[i * 3 + 1] = y;
         rust_xyb[i * 3 + 2] = b;

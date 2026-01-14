@@ -2,7 +2,7 @@
 //!
 //! Compares sequential vs parallel entropy encoding performance.
 
-use jpegli::consts::DCT_BLOCK_SIZE;
+use jpegli::foundation::consts::DCT_BLOCK_SIZE;
 use jpegli::entropy::encoder::EntropyEncoder;
 use jpegli::huffman::HuffmanEncodeTable;
 use std::time::Instant;

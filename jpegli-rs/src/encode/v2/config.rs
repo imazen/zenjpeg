@@ -23,6 +23,9 @@ pub struct EncoderConfig {
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: Option<super::types::ParallelEncoding>,
+    /// Hybrid quantization configuration (requires `experimental-hybrid-trellis` feature)
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
 }
 
 impl Default for EncoderConfig {
@@ -39,6 +42,8 @@ impl Default for EncoderConfig {
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            hybrid_config: crate::hybrid::config::HybridConfig::default(),
         }
     }
 }
@@ -152,6 +157,19 @@ impl EncoderConfig {
     #[must_use]
     pub fn parallel(mut self, mode: super::types::ParallelEncoding) -> Self {
         self.parallel = Some(mode);
+        self
+    }
+
+    /// Configure hybrid quantization (jpegli AQ + mozjpeg trellis).
+    ///
+    /// Allows fine-tuning all hybrid AQ+trellis parameters.
+    /// See [`HybridConfig`](crate::hybrid::config::HybridConfig) for available options.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
+        self.hybrid_config = config;
         self
     }
 

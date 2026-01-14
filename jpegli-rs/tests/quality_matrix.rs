@@ -1,5 +1,9 @@
 //! Quality matrix tests comparing Rust vs C++ jpegli across all configurations.
 //!
+//! Requires `ffi-tests` feature due to libjpeg FFI linkage requirements.
+
+#![cfg(feature = "ffi-tests")]
+//!
 //! Tests SSIMULACRA2 scores for each encoder configuration:
 //! - Color spaces: YCbCr, XYB
 //! - Subsampling: 444, 422, 420, 440

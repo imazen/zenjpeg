@@ -131,23 +131,49 @@ pub mod decoder;
 // Internal Implementation Modules
 // ============================================================================
 
-// Internal encoder implementation
+// Internal encoder implementation (exposed via test-utils for benchmarks)
+#[cfg(feature = "test-utils")]
+pub mod encode;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod encode;
 
 // Internal decoder implementation
-#[cfg(feature = "decoder")]
+#[cfg(all(feature = "decoder", feature = "test-utils"))]
+pub mod decode;
+#[cfg(all(feature = "decoder", not(feature = "test-utils")))]
 pub(crate) mod decode;
 
 // Internal shared error type (encoder/decoder have their own public errors)
 pub(crate) mod error;
 
-// Internal modules
+// Internal modules (exposed via test-utils for debugging tools and benchmarks)
+#[cfg(feature = "test-utils")]
+pub mod color;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod color;
+
 pub(crate) mod encode_simd;
+
+#[cfg(feature = "test-utils")]
+pub mod entropy;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod entropy;
+
+#[cfg(feature = "test-utils")]
+pub mod foundation;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod foundation;
+
+#[cfg(feature = "test-utils")]
+pub mod huffman;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod huffman;
+
 pub(crate) mod quant;
+
+#[cfg(feature = "test-utils")]
+pub mod types;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod types;
 
 // Test utilities - public when feature enabled for external test crates
