@@ -828,9 +828,11 @@ impl StreamingEncoder {
                     builder.use_xyb,
                     is_420,
                 ),
+                // Use Cr matrix (component 2) for BOTH Cb and Cr - matches C++ jpegli_set_quality
+                // (add_two_chroma_tables=false). Only XYB mode uses separate Cb/Cr tables.
                 quant::generate_quant_table(
                     builder.quality,
-                    1,
+                    2, // Cr matrix for Cb (matches C++ jpegli)
                     color_space,
                     builder.use_xyb,
                     is_420,
