@@ -53,7 +53,7 @@ impl EncoderConfig {
     ///
     /// Defaults:
     /// - Quality: 90 (ApproxJpegli)
-    /// - Color mode: YCbCr 4:2:0
+    /// - Color mode: YCbCr 4:4:4 (Full, no chroma subsampling)
     /// - Optimized Huffman: enabled
     /// - Progressive: disabled
     /// - Downsampling: Box
@@ -231,8 +231,8 @@ impl EncoderConfig {
     /// Set YCbCr color mode with specified chroma subsampling.
     ///
     /// Common values:
-    /// - `ChromaSubsampling::Quarter` (4:2:0) - default, good compression
-    /// - `ChromaSubsampling::Full` (4:4:4) - best quality, larger files
+    /// - `ChromaSubsampling::Full` (4:4:4) - default, best quality
+    /// - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
     /// - `ChromaSubsampling::HalfHorizontal` (4:2:2) - horizontal subsampling only
     #[must_use]
     pub fn ycbcr(self, subsampling: ChromaSubsampling) -> Self {
@@ -494,7 +494,7 @@ mod tests {
         assert!(matches!(
             config.color_mode,
             ColorMode::YCbCr {
-                subsampling: ChromaSubsampling::Quarter
+                subsampling: ChromaSubsampling::Full
             }
         ));
     }
