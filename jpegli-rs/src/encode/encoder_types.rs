@@ -287,12 +287,12 @@ impl Default for ColorMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum ChromaSubsampling {
-    /// 4:4:4 - Full chroma resolution
+    /// 4:4:4 - Full chroma resolution (no subsampling, best quality)
+    #[default]
     Full,
     /// 4:2:2 - Half horizontal resolution
     HalfHorizontal,
     /// 4:2:0 - Quarter resolution (half each direction)
-    #[default]
     Quarter,
     /// 4:4:0 - Half vertical resolution
     HalfVertical,

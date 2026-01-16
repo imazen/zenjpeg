@@ -69,7 +69,7 @@
 //!     .quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
 //!     .quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
 //!     .progressive(true)                        // Progressive JPEG (~3% smaller)
-//!     .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default)
+//!     .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default is 4:4:4)
 //!     .xyb()                                    // XYB perceptual color space
 //!     .grayscale()                              // Single-channel output
 //!     .sharp_yuv(true)                          // Better color edges (~3x slower)
