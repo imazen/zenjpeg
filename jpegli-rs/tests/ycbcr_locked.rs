@@ -37,43 +37,43 @@ use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 // =============================================================================
 
 /// Sequential S444 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
-    (50, 329966),
-    (70, 438942),
-    (85, 600510),
-    (90, 717812),
-    (95, 937285),
+    (50, 329833),
+    (70, 438877),
+    (85, 600464),
+    (90, 717969),
+    (95, 937419),
 ];
 
 /// Sequential S422 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
-    (50, 293489),
-    (70, 386804),
-    (85, 520481),
-    (90, 613614),
-    (95, 783905),
+    (50, 293349),
+    (70, 386838),
+    (85, 520431),
+    (90, 613771),
+    (95, 784128),
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 269852),
-    (70, 362495),
-    (85, 494934),
-    (90, 584347),
-    (95, 743542),
+    (50, 269794),
+    (70, 362383),
+    (85, 494876),
+    (90, 584245),
+    (95, 743740),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 293693),
-    (70, 387335),
-    (85, 521798),
-    (90, 615445),
-    (95, 785234),
+    (50, 293586),
+    (70, 387314),
+    (85, 521772),
+    (90, 615697),
+    (95, 785471),
 ];
 
 // =============================================================================
@@ -81,58 +81,58 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 // =============================================================================
 
 /// Progressive S444 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 320773),
-    (70, 425798),
-    (85, 582010),
-    (90, 696599),
-    (95, 908011),
+    (50, 320726),
+    (70, 425849),
+    (85, 582218),
+    (90, 696683),
+    (95, 907984),
 ];
 
 /// Progressive S422 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 286032),
-    (70, 375822),
-    (85, 505529),
-    (90, 595625),
-    (95, 760319),
+    (50, 285950),
+    (70, 375939),
+    (85, 505593),
+    (90, 595739),
+    (95, 760406),
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 261089),
-    (70, 350463),
-    (85, 478048),
-    (90, 564225),
-    (95, 717850),
+    (50, 261177),
+    (70, 350443),
+    (85, 477905),
+    (90, 564241),
+    (95, 717866),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
-/// Regenerated 2026-01-13 after API cleanup
+/// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 284211),
-    (70, 374255),
-    (85, 504817),
-    (90, 595055),
-    (95, 759332),
+    (50, 284121),
+    (70, 374321),
+    (85, 504828),
+    (90, 595188),
+    (95, 759472),
 ];
 
 // =============================================================================
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-// Regenerated 2026-01-13 after API cleanup
-const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x388e7b1a6777de58;
-const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x979f7c080ce24b0f;
-const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x67793e9a1ec07f6e;
-const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0xe1d28667900cb6eb;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x8cd0dde2c892dccf;
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x37a97faeb510feba;
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x8f52016b6174dbf4;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x13160a47c10f39f4;
+// Regenerated 2026-01-16 after revert of incorrect Cb/Cr table sharing fix
+const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x616ba0d75e7258ba;
+const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0xe835b9d262d476e2;
+const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x550e0ad4fc873998;
+const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x2b90180753df0b91;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x040db43f7d8aa6dc;
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x649683600b3b8aea;
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0xda9b6f162dc6c14f;
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x0c8400b65422f685;
 
 // =============================================================================
 // Helper functions
