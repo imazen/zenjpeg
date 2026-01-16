@@ -130,6 +130,7 @@ fn compare_image(
             "-q",
             &quality.to_string(),
             "--progressive_level=2",
+            "--chroma_subsampling=420", // Match Rust default (4:2:0)
         ])
         .output()
         .ok()?;
