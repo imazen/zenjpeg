@@ -484,7 +484,7 @@ impl Encoder {
     /// Encodes the image data with cooperative cancellation support.
     ///
     /// The encoding can be cancelled at MCU row boundaries by signalling the `stop` source.
-    /// Returns `Error::Cancelled` if cancellation is requested.
+    /// Returns `Error::cancelled()` if cancellation is requested.
     ///
     /// # Example
     ///
@@ -508,17 +508,14 @@ impl Encoder {
             checked_size_2d(expected_size, self.config.pixel_format.bytes_per_pixel())?;
 
         if data.len() != expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: data.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
 
         // Validate mode is supported
         if self.config.mode != JpegMode::Baseline && self.config.mode != JpegMode::Progressive {
-            return Err(Error::UnsupportedFeature {
-                feature: "only baseline and progressive modes are supported",
-            });
+            return Err(Error::unsupported_feature(
+                "only baseline and progressive modes are supported",
+            ));
         }
 
         // Both YCbCr and XYB use strip-based encoding (low memory)

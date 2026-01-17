@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ScanRead, ScanResult};
 
 /// Bit writer for JPEG encoding.
 ///
@@ -317,17 +317,20 @@ impl<'a> BitReader<'a> {
 
     /// Reads a single byte with byte unstuffing (slow path).
     /// Used when fast 4-byte path can't be used (has 0xFF or not enough bytes).
+    ///
+    /// Returns `None` when:
+    /// - A marker was previously found
+    /// - A marker is found during this read
+    /// - End of data is reached
     #[inline]
-    fn read_byte_slow(&mut self) -> Result<u8> {
+    fn read_byte_slow(&mut self) -> Option<u8> {
         if self.marker_found.is_some() {
-            return Err(Error::EndOfScanData);
+            return None;
         }
 
         if self.position >= self.data.len() {
             self.overread_by += 1;
-            return Err(Error::TruncatedData {
-                context: "reading entropy data",
-            });
+            return None;
         }
 
         let byte = self.data[self.position];
@@ -341,9 +344,7 @@ impl<'a> BitReader<'a> {
 
             if self.position >= self.data.len() {
                 self.overread_by += 1;
-                return Err(Error::TruncatedData {
-                    context: "after 0xFF marker prefix",
-                });
+                return None;
             }
 
             let next = self.data[self.position];
@@ -354,11 +355,11 @@ impl<'a> BitReader<'a> {
                 // Found a marker
                 self.position -= 1;
                 self.marker_found = Some(next);
-                return Err(Error::EndOfScanData);
+                return None;
             }
         }
 
-        Ok(byte)
+        Some(byte)
     }
 
     /// Sync aligned_buffer from bit_buffer.
@@ -417,11 +418,11 @@ impl<'a> BitReader<'a> {
         // Slow path: read byte by byte with byte stuffing
         while self.bits_in_buffer <= 56 {
             match self.read_byte_slow() {
-                Ok(byte) => {
+                Some(byte) => {
                     self.bit_buffer = (self.bit_buffer << 8) | (byte as u64);
                     self.bits_in_buffer += 8;
                 }
-                Err(_) => break,
+                None => break,
             }
             if self.bits_in_buffer >= 32 {
                 break;
@@ -442,15 +443,19 @@ impl<'a> BitReader<'a> {
 
     /// Peeks at the next `count` bits without consuming them.
     /// Uses fast top-aligned buffer for O(1) peek.
+    ///
+    /// Returns:
+    /// - `Ok(ScanRead::EndOfScan)` if a marker was encountered
+    /// - `Ok(ScanRead::Truncated)` if data ended without a marker
     #[inline]
-    pub fn peek_bits(&mut self, count: u8) -> Result<u32> {
+    pub fn peek_bits(&mut self, count: u8) -> ScanResult<u32> {
         debug_assert!(count <= 32);
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
-            return Err(Error::EndOfScanData);
+            return Ok(self.end_state());
         }
         // Fast peek using top-aligned buffer - just right shift
-        Ok((self.aligned_buffer >> (64 - count)) as u32)
+        Ok(ScanRead::Value((self.aligned_buffer >> (64 - count)) as u32))
     }
 
     /// Fast peek that refills first. Returns None if not enough bits after refill.
@@ -484,16 +489,20 @@ impl<'a> BitReader<'a> {
     }
 
     /// Reads `count` bits from the stream.
+    ///
+    /// Returns:
+    /// - `Ok(ScanRead::EndOfScan)` if a marker was encountered
+    /// - `Ok(ScanRead::Truncated)` if data ended without a marker
     #[inline]
-    pub fn read_bits(&mut self, count: u8) -> Result<u32> {
+    pub fn read_bits(&mut self, count: u8) -> ScanResult<u32> {
         self.fill_buffer(count)?;
         if self.bits_in_buffer < count {
-            return Err(Error::EndOfScanData);
+            return Ok(self.end_state());
         }
         // Use aligned buffer for fast read
         let bits = (self.aligned_buffer >> (64 - count)) as u32;
         self.drop_bits(count);
-        Ok(bits)
+        Ok(ScanRead::Value(bits))
     }
 
     /// Drops `count` bits from the buffer (fast path).
@@ -519,25 +528,33 @@ impl<'a> BitReader<'a> {
 
     /// Reads a single bit.
     #[inline]
-    pub fn read_bit(&mut self) -> Result<bool> {
-        Ok(self.read_bits(1)? != 0)
+    pub fn read_bit(&mut self) -> ScanResult<bool> {
+        match self.read_bits(1)? {
+            ScanRead::Value(v) => Ok(ScanRead::Value(v != 0)),
+            ScanRead::EndOfScan => Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => Ok(ScanRead::Truncated),
+        }
     }
 
     /// Reads a signed value with sign extension.
     ///
     /// JPEG encodes signed values where values < 2^(bits-1) are negative.
-    pub fn read_signed(&mut self, bits: u8) -> Result<i16> {
+    pub fn read_signed(&mut self, bits: u8) -> ScanResult<i16> {
         if bits == 0 {
-            return Ok(0);
+            return Ok(ScanRead::Value(0));
         }
 
-        let value = self.read_bits(bits)? as i16;
+        let value = match self.read_bits(bits)? {
+            ScanRead::Value(v) => v as i16,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
         let half = 1i16 << (bits - 1);
 
         if value < half {
-            Ok(value - (2 * half - 1))
+            Ok(ScanRead::Value(value - (2 * half - 1)))
         } else {
-            Ok(value)
+            Ok(ScanRead::Value(value))
         }
     }
 
@@ -583,36 +600,32 @@ impl<'a> BitReader<'a> {
 
         // Read first byte - should be 0xFF
         if self.position >= self.data.len() {
-            return Err(Error::InvalidJpegData {
-                reason: "unexpected end of data before restart marker",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "unexpected end of data before restart marker",
+            ));
         }
         let first = self.data[self.position];
         if first != 0xFF {
-            return Err(Error::InvalidJpegData {
-                reason: "expected 0xFF for restart marker",
-            });
+            return Err(Error::invalid_jpeg_data("expected 0xFF for restart marker"));
         }
         self.position += 1;
 
         // Read second byte - should be 0xD0 + expected_num
         if self.position >= self.data.len() {
-            return Err(Error::InvalidJpegData {
-                reason: "unexpected end of data in restart marker",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "unexpected end of data in restart marker",
+            ));
         }
         let second = self.data[self.position];
         let expected_marker = 0xD0 + (expected_num & 7);
         if second != expected_marker {
             // Check if it's a different restart marker (resync case)
             if (0xD0..=0xD7).contains(&second) {
-                return Err(Error::InvalidJpegData {
-                    reason: "restart marker sequence mismatch",
-                });
+                return Err(Error::invalid_jpeg_data("restart marker sequence mismatch"));
             }
-            return Err(Error::InvalidJpegData {
-                reason: "expected restart marker not found",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "expected restart marker not found",
+            ));
         }
         self.position += 1;
 
@@ -622,9 +635,7 @@ impl<'a> BitReader<'a> {
     /// Reads a raw byte (assumes byte-aligned).
     pub fn read_byte_raw(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(Error::TruncatedData {
-                context: "reading raw byte",
-            });
+            return Err(Error::truncated_data("reading raw byte"));
         }
         let byte = self.data[self.position];
         self.position += 1;
@@ -667,6 +678,19 @@ impl<'a> BitReader<'a> {
     pub fn bits_available(&self) -> u8 {
         self.bits_in_buffer
     }
+
+    /// Returns the appropriate end state based on why we stopped reading.
+    ///
+    /// - `EndOfScan` if a marker was found (legitimate end of entropy-coded segment)
+    /// - `Truncated` if data ended without finding a marker
+    #[inline]
+    fn end_state<T>(&self) -> ScanRead<T> {
+        if self.marker_found.is_some() {
+            ScanRead::EndOfScan
+        } else {
+            ScanRead::Truncated
+        }
+    }
 }
 
 #[cfg(test)]
@@ -682,9 +706,9 @@ mod tests {
         let bytes = writer.into_bytes();
 
         let mut reader = BitReader::new(&bytes);
-        assert_eq!(reader.read_bits(3).unwrap(), 0b101);
-        assert_eq!(reader.read_bits(4).unwrap(), 0b1100);
-        assert_eq!(reader.read_bits(1).unwrap(), 0b1);
+        assert_eq!(reader.read_bits(3).unwrap(), ScanRead::Value(0b101));
+        assert_eq!(reader.read_bits(4).unwrap(), ScanRead::Value(0b1100));
+        assert_eq!(reader.read_bits(1).unwrap(), ScanRead::Value(0b1));
     }
 
     #[test]
@@ -704,8 +728,8 @@ mod tests {
         let data = [0xFF, 0x00, 0xAB];
         let mut reader = BitReader::new(&data);
 
-        assert_eq!(reader.read_bits(8).unwrap(), 0xFF);
-        assert_eq!(reader.read_bits(8).unwrap(), 0xAB);
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xFF));
+        assert_eq!(reader.read_bits(8).unwrap(), ScanRead::Value(0xAB));
     }
 
     #[test]
@@ -716,7 +740,7 @@ mod tests {
         let mut reader = BitReader::new(&data);
 
         // 1-bit category: 0 -> -1, 1 -> 1
-        assert_eq!(reader.read_signed(1).unwrap(), -1);
-        assert_eq!(reader.read_signed(1).unwrap(), 1);
+        assert_eq!(reader.read_signed(1).unwrap(), ScanRead::Value(-1));
+        assert_eq!(reader.read_signed(1).unwrap(), ScanRead::Value(1));
     }
 }

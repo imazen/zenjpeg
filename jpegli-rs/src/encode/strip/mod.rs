@@ -647,9 +647,9 @@ impl StripProcessor {
     ) -> Result<usize> {
         // XYB mode requires RGB input for conversion
         if self.use_xyb {
-            return Err(crate::error::Error::UnsupportedFeature {
-                feature: "YCbCr input not supported for XYB mode",
-            });
+            return Err(crate::error::Error::unsupported_feature(
+                "YCbCr input not supported for XYB mode",
+            ));
         }
 
         let actual_strip_height = self.strip_height.min(self.height - strip_y);
@@ -723,9 +723,9 @@ impl StripProcessor {
     ) -> Result<usize> {
         // XYB mode requires RGB input for conversion
         if self.use_xyb {
-            return Err(crate::error::Error::UnsupportedFeature {
-                feature: "YCbCr input not supported for XYB mode",
-            });
+            return Err(crate::error::Error::unsupported_feature(
+                "YCbCr input not supported for XYB mode",
+            ));
         }
 
         let actual_strip_height = self.strip_height.min(self.height - strip_y);

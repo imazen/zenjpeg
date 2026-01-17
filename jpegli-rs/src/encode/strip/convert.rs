@@ -31,17 +31,15 @@ impl StripProcessor {
         // Validate input sizes
         let expected_y_size = strip_height * width;
         if y_row.len() < expected_y_size {
-            return Err(crate::error::Error::InternalError {
-                reason: "Y plane too small for strip",
-            });
+            return Err(crate::error::Error::internal("Y plane too small for strip"));
         }
 
         if !self.pixel_format.is_grayscale()
             && (cb_row.len() < expected_y_size || cr_row.len() < expected_y_size)
         {
-            return Err(crate::error::Error::InternalError {
-                reason: "Cb/Cr planes too small for strip",
-            });
+            return Err(crate::error::Error::internal(
+                "Cb/Cr planes too small for strip",
+            ));
         }
 
         // Copy Y with level shift and padded stride
@@ -100,18 +98,16 @@ impl StripProcessor {
         // Validate input sizes
         let expected_y_size = strip_height * width;
         if y_row.len() < expected_y_size {
-            return Err(crate::error::Error::InternalError {
-                reason: "Y plane too small for strip",
-            });
+            return Err(crate::error::Error::internal("Y plane too small for strip"));
         }
 
         let expected_chroma_size = chroma_width * chroma_height;
         if !self.pixel_format.is_grayscale()
             && (cb_row.len() < expected_chroma_size || cr_row.len() < expected_chroma_size)
         {
-            return Err(crate::error::Error::InternalError {
-                reason: "Cb/Cr planes too small for subsampled strip",
-            });
+            return Err(crate::error::Error::internal(
+                "Cb/Cr planes too small for subsampled strip",
+            ));
         }
 
         // Copy Y with level shift and padded stride
@@ -453,9 +449,9 @@ impl StripProcessor {
             | PixelFormat::RgbF32
             | PixelFormat::RgbaF32 => {}
             PixelFormat::Gray | PixelFormat::Gray16 | PixelFormat::GrayF32 | PixelFormat::Cmyk => {
-                return Err(crate::error::Error::UnsupportedFeature {
-                    feature: "XYB mode only supports RGB/RGBA pixel formats",
-                });
+                return Err(crate::error::Error::unsupported_feature(
+                    "XYB mode only supports RGB/RGBA pixel formats",
+                ));
             }
         }
 

@@ -102,7 +102,7 @@ pub fn apply_icc_transform(
     use lcms2::{Intent, PixelFormat, Profile, Transform};
 
     let input_profile =
-        Profile::new_icc(icc_profile).map_err(|e| Error::IccError(format!("lcms2: {e}")))?;
+        Profile::new_icc(icc_profile).map_err(|e| Error::icc_error(format!("lcms2: {e}")))?;
 
     let srgb = Profile::new_srgb();
 
@@ -115,7 +115,7 @@ pub fn apply_icc_transform(
         PixelFormat::RGB_8,
         Intent::RelativeColorimetric,
     )
-    .map_err(|e| Error::IccError(format!("lcms2 transform: {e}")))?;
+    .map_err(|e| Error::icc_error(format!("lcms2 transform: {e}")))?;
 
     let pixels: Vec<[u8; 3]> = rgb_data
         .chunks_exact(3)
@@ -139,18 +139,18 @@ pub fn apply_icc_transform(
     use moxcms::{ColorProfile, Layout, TransformOptions};
 
     let input_profile = ColorProfile::new_from_slice(icc_profile)
-        .map_err(|e| Error::IccError(format!("moxcms: {e:?}")))?;
+        .map_err(|e| Error::icc_error(format!("moxcms: {e:?}")))?;
 
     let srgb = ColorProfile::new_srgb();
 
     let transform = input_profile
         .create_transform_8bit(Layout::Rgb, &srgb, Layout::Rgb, TransformOptions::default())
-        .map_err(|e| Error::IccError(format!("moxcms transform: {e:?}")))?;
+        .map_err(|e| Error::icc_error(format!("moxcms transform: {e:?}")))?;
 
     let mut output = vec![0u8; rgb_data.len()];
     transform
         .transform(rgb_data, &mut output)
-        .map_err(|e| Error::IccError(format!("moxcms transform execution: {e:?}")))?;
+        .map_err(|e| Error::icc_error(format!("moxcms transform execution: {e:?}")))?;
 
     Ok(output)
 }
@@ -189,11 +189,11 @@ pub fn decode_jpeg_with_icc(jpeg_data: &[u8]) -> Result<(Vec<u8>, usize, usize)>
     let mut decoder = JpegDecoder::new(cursor);
     let pixels = decoder
         .decode()
-        .map_err(|e| Error::DecodeError(format!("jpeg decode: {e:?}")))?;
+        .map_err(|e| Error::decode_error(format!("jpeg decode: {e:?}")))?;
 
     let (width, height) = decoder
         .dimensions()
-        .ok_or_else(|| Error::DecodeError("no image dimensions".to_string()))?;
+        .ok_or_else(|| Error::decode_error("no image dimensions".to_string()))?;
 
     // Apply ICC if present
     let output = if let Some(ref profile) = icc_profile {

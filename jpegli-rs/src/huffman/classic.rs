@@ -159,9 +159,7 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
             }
             if j == 0 {
                 // Can't limit further - this shouldn't happen with valid input.
-                return Err(Error::InternalError {
-                    reason: "Huffman code length overflow",
-                });
+                return Err(Error::internal("Huffman code length overflow"));
             }
 
             // Move two symbols from level i to i-1, and split one at j.
@@ -217,9 +215,9 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
     // Verify we found and excluded symbol 256
     // (This should always be true since we set freq[256] = 1 at the start)
     if symbol_256_length.is_none() {
-        return Err(Error::InternalError {
-            reason: "Pseudo-symbol 256 not found in Huffman tree",
-        });
+        return Err(Error::internal(
+            "Pseudo-symbol 256 not found in Huffman tree",
+        ));
     }
 
     Ok(lengths)
