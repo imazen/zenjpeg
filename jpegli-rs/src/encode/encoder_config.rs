@@ -287,7 +287,7 @@ impl EncoderConfig {
     /// - Progressive mode with disabled Huffman optimization
     pub fn validate(&self) -> Result<()> {
         if self.progressive && !self.optimize_huffman {
-            return Err(crate::error::Error::InvalidConfig(
+            return Err(crate::error::Error::invalid_config(
                 "progressive mode requires optimized Huffman tables".into(),
             ));
         }
@@ -370,7 +370,7 @@ impl EncoderConfig {
 
         // Validate color mode
         if !matches!(self.color_mode, ColorMode::YCbCr { .. }) {
-            return Err(crate::error::Error::InvalidConfig(
+            return Err(crate::error::Error::invalid_config(
                 "planar YCbCr input requires YCbCr color mode".into(),
             ));
         }

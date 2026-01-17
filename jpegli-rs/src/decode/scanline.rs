@@ -27,7 +27,7 @@
 use super::idct_int::idct_int_tiered;
 use crate::color::{ycbcr_planes_i16_to_rgb_u8, ycbcr_to_rgb};
 use crate::entropy::{EntropyDecoder, EntropyDecoderState};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::try_alloc_maybeuninit;
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MAX_HUFFMAN_TABLES};
 use crate::huffman::HuffmanDecodeTable;
@@ -322,15 +322,17 @@ impl<'a> ScanlineReader<'a> {
                 let quant_idx = self.quant_indices[comp_idx];
                 let quant = self.quant_tables[quant_idx]
                     .as_ref()
-                    .ok_or(Error::InternalError {
-                        reason: "missing quantization table",
-                    })?;
+                    .ok_or(Error::internal("missing quantization table"))?;
 
                 // Decode h_blocks * v_blocks blocks for this component
                 for v in 0..v_blocks {
                     for h in 0..h_blocks {
-                        let (coeffs, coeff_count) =
-                            decoder.decode_block_with_count(comp_idx, dc_idx, ac_idx)?;
+                        let (coeffs, coeff_count) = match decoder
+                            .decode_block_with_count(comp_idx, dc_idx, ac_idx)?
+                        {
+                            ScanRead::Value(v) => v,
+                            ScanRead::EndOfScan | ScanRead::Truncated => continue, // End of scan mid-block
+                        };
 
                         dequantize_unzigzag_i32_into(&coeffs, quant, &mut self.dequant_buf);
 
@@ -544,9 +546,7 @@ impl<'a> ScanlineReader<'a> {
         let width = self.width as usize;
 
         if output.width() < width * 3 {
-            return Err(Error::InternalError {
-                reason: "output buffer too narrow for RGB8",
-            });
+            return Err(Error::internal("output buffer too narrow for RGB8"));
         }
 
         let mut rows_written = 0;
@@ -604,9 +604,7 @@ impl<'a> ScanlineReader<'a> {
         let width = self.width as usize;
 
         if output.width() < width * 4 {
-            return Err(Error::InternalError {
-                reason: "output buffer too narrow for RGBX8",
-            });
+            return Err(Error::internal("output buffer too narrow for RGBX8"));
         }
 
         let mut rows_written = 0;
@@ -663,9 +661,7 @@ impl<'a> ScanlineReader<'a> {
         let width = self.width as usize;
 
         if output.width() < width * 4 {
-            return Err(Error::InternalError {
-                reason: "output buffer too narrow for RGBA f32",
-            });
+            return Err(Error::internal("output buffer too narrow for RGBA f32"));
         }
 
         let mut rows_written = 0;
@@ -731,9 +727,7 @@ impl<'a> ScanlineReader<'a> {
         let width = self.width as usize;
 
         if stride < width {
-            return Err(Error::InternalError {
-                reason: "stride too small for image width",
-            });
+            return Err(Error::internal("stride too small for image width"));
         }
 
         let mut rows_written = 0;

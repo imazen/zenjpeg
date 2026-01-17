@@ -12,7 +12,7 @@ use crate::color::{
     ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
 };
 use crate::entropy::EntropyDecoder;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ScanRead};
 use crate::foundation::alloc::{
     checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit, validate_dimensions,
 };
@@ -88,9 +88,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn new(data: &'a [u8], max_pixels: u64) -> Result<Self> {
         // Check for SOI
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
-            return Err(Error::InvalidJpegData {
-                reason: "missing SOI marker",
-            });
+            return Err(Error::invalid_jpeg_data("missing SOI marker"));
         }
 
         // Extract ICC profile from raw data upfront
@@ -153,9 +151,7 @@ impl<'a> JpegParser<'a> {
 
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(Error::TruncatedData {
-                context: "reading marker data",
-            });
+            return Err(Error::truncated_data("reading marker data"));
         }
         let byte = self.data[self.position];
         self.position += 1;
@@ -214,9 +210,9 @@ impl<'a> JpegParser<'a> {
                 MARKER_DRI => self.parse_restart_interval()?,
                 MARKER_APP0..=0xEF | MARKER_COM => self.skip_segment()?,
                 MARKER_EOI => {
-                    return Err(Error::InvalidJpegData {
-                        reason: "unexpected EOI before frame header",
-                    });
+                    return Err(Error::invalid_jpeg_data(
+                        "unexpected EOI before frame header",
+                    ));
                 }
                 _ => self.skip_segment()?,
             }
@@ -236,9 +232,9 @@ impl<'a> JpegParser<'a> {
                     let num_components = self.read_u8()?;
 
                     if num_components != 3 {
-                        return Err(Error::UnsupportedFeature {
-                            feature: "scanline reader requires 3 components in scan",
-                        });
+                        return Err(Error::unsupported_feature(
+                            "scanline reader requires 3 components in scan",
+                        ));
                     }
 
                     let mut table_mapping = [(0usize, 0usize); 3];
@@ -253,9 +249,7 @@ impl<'a> JpegParser<'a> {
                         let comp_idx = self.components[..self.num_components as usize]
                             .iter()
                             .position(|c| c.id == component_id)
-                            .ok_or(Error::InvalidJpegData {
-                                reason: "unknown component in scan",
-                            })?;
+                            .ok_or(Error::invalid_jpeg_data("unknown component in scan"))?;
 
                         table_mapping[comp_idx] = (dc_table, ac_table);
                     }
@@ -275,9 +269,7 @@ impl<'a> JpegParser<'a> {
                 MARKER_DRI => self.parse_restart_interval()?,
                 MARKER_APP0..=0xEF | MARKER_COM => self.skip_segment()?,
                 MARKER_EOI => {
-                    return Err(Error::InvalidJpegData {
-                        reason: "unexpected EOI before SOS",
-                    });
+                    return Err(Error::invalid_jpeg_data("unexpected EOI before SOS"));
                 }
                 _ => self.skip_segment()?,
             }
@@ -287,17 +279,15 @@ impl<'a> JpegParser<'a> {
     fn parse_frame_header(&mut self) -> Result<()> {
         let length = self.read_u16()?;
         if length < 8 {
-            return Err(Error::InvalidJpegData {
-                reason: "frame header too short",
-            });
+            return Err(Error::invalid_jpeg_data("frame header too short"));
         }
 
         self.precision = self.read_u8()?;
         // Validate precision: must be 8 for baseline JPEG, 8 or 12 for extended
         if self.precision != 8 && self.precision != 12 {
-            return Err(Error::InvalidJpegData {
-                reason: "invalid data precision (must be 8 or 12)",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "invalid data precision (must be 8 or 12)",
+            ));
         }
 
         self.height = self.read_u16()? as u32;
@@ -316,22 +306,16 @@ impl<'a> JpegParser<'a> {
 
         // Validate num_components
         if self.num_components == 0 {
-            return Err(Error::InvalidJpegData {
-                reason: "number of components is zero",
-            });
+            return Err(Error::invalid_jpeg_data("number of components is zero"));
         }
         if self.num_components > MAX_COMPONENTS as u8 {
-            return Err(Error::UnsupportedFeature {
-                feature: "more than 4 components",
-            });
+            return Err(Error::unsupported_feature("more than 4 components"));
         }
 
         // Validate marker length matches expected size
         let expected_length = 8 + 3 * self.num_components as u16;
         if length != expected_length {
-            return Err(Error::InvalidJpegData {
-                reason: "SOF marker length mismatch",
-            });
+            return Err(Error::invalid_jpeg_data("SOF marker length mismatch"));
         }
 
         for i in 0..self.num_components as usize {
@@ -342,14 +326,12 @@ impl<'a> JpegParser<'a> {
 
             // Validate sampling factors are non-zero and <= 4
             if h_samp == 0 || v_samp == 0 {
-                return Err(Error::InvalidJpegData {
-                    reason: "sampling factor is zero",
-                });
+                return Err(Error::invalid_jpeg_data("sampling factor is zero"));
             }
             if h_samp > 4 || v_samp > 4 {
-                return Err(Error::InvalidJpegData {
-                    reason: "sampling factor exceeds maximum (4)",
-                });
+                return Err(Error::invalid_jpeg_data(
+                    "sampling factor exceeds maximum (4)",
+                ));
             }
 
             self.components[i].h_samp_factor = h_samp;
@@ -358,9 +340,9 @@ impl<'a> JpegParser<'a> {
             let quant_idx = self.read_u8()?;
             // Validate quant table index
             if quant_idx as usize >= MAX_QUANT_TABLES {
-                return Err(Error::InvalidJpegData {
-                    reason: "quantization table index out of range",
-                });
+                return Err(Error::invalid_jpeg_data(
+                    "quantization table index out of range",
+                ));
             }
             self.components[i].quant_table_idx = quant_idx;
         }
@@ -378,17 +360,17 @@ impl<'a> JpegParser<'a> {
 
             // Validate precision (0 = 8-bit, 1 = 16-bit)
             if precision > 1 {
-                return Err(Error::InvalidQuantTable {
-                    table_idx: table_idx as u8,
-                    reason: "invalid precision (must be 0 or 1)",
-                });
+                return Err(Error::invalid_quant_table(
+                    table_idx as u8,
+                    "invalid precision (must be 0 or 1)",
+                ));
             }
 
             if table_idx >= MAX_QUANT_TABLES {
-                return Err(Error::InvalidQuantTable {
-                    table_idx: table_idx as u8,
-                    reason: "table index out of range",
-                });
+                return Err(Error::invalid_quant_table(
+                    table_idx as u8,
+                    "table index out of range",
+                ));
             }
 
             // Read values in zigzag order (as stored in JPEG)
@@ -399,10 +381,10 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u8()? as u16;
                     if val == 0 {
-                        return Err(Error::InvalidQuantTable {
-                            table_idx: table_idx as u8,
-                            reason: "quantization value is zero",
-                        });
+                        return Err(Error::invalid_quant_table(
+                            table_idx as u8,
+                            "quantization value is zero",
+                        ));
                     }
                     zigzag_values[i] = val;
                 }
@@ -412,10 +394,10 @@ impl<'a> JpegParser<'a> {
                 for i in 0..DCT_BLOCK_SIZE {
                     let val = self.read_u16()?;
                     if val == 0 {
-                        return Err(Error::InvalidQuantTable {
-                            table_idx: table_idx as u8,
-                            reason: "quantization value is zero",
-                        });
+                        return Err(Error::invalid_quant_table(
+                            table_idx as u8,
+                            "quantization value is zero",
+                        ));
                     }
                     zigzag_values[i] = val;
                 }
@@ -424,9 +406,7 @@ impl<'a> JpegParser<'a> {
 
             // Validate DQT marker length consistency
             if length < 0 {
-                return Err(Error::InvalidJpegData {
-                    reason: "DQT marker length mismatch",
-                });
+                return Err(Error::invalid_jpeg_data("DQT marker length mismatch"));
             }
 
             // Convert from zigzag order to natural order for dequantization
@@ -451,17 +431,17 @@ impl<'a> JpegParser<'a> {
 
             // Validate table class (must be 0 for DC or 1 for AC)
             if table_class > 1 {
-                return Err(Error::InvalidHuffmanTable {
-                    table_idx: table_idx as u8,
-                    reason: "invalid table class (must be 0 or 1)",
-                });
+                return Err(Error::invalid_huffman_table(
+                    table_idx as u8,
+                    "invalid table class (must be 0 or 1)",
+                ));
             }
 
             if table_idx >= MAX_HUFFMAN_TABLES {
-                return Err(Error::InvalidHuffmanTable {
-                    table_idx: table_idx as u8,
-                    reason: "table index out of range",
-                });
+                return Err(Error::invalid_huffman_table(
+                    table_idx as u8,
+                    "table index out of range",
+                ));
             }
 
             let mut bits = [0u8; 16];
@@ -479,9 +459,7 @@ impl<'a> JpegParser<'a> {
 
             // Validate that we didn't read past the marker length
             if length < 0 {
-                return Err(Error::InvalidJpegData {
-                    reason: "DHT marker length mismatch",
-                });
+                return Err(Error::invalid_jpeg_data("DHT marker length mismatch"));
             }
 
             if table_class == 0 {
@@ -507,9 +485,7 @@ impl<'a> JpegParser<'a> {
     fn skip_segment(&mut self) -> Result<()> {
         let length = self.read_u16()? as usize;
         if length < 2 {
-            return Err(Error::InvalidJpegData {
-                reason: "segment length too short",
-            });
+            return Err(Error::invalid_jpeg_data("segment length too short"));
         }
         self.position += length - 2;
         Ok(())
@@ -547,19 +523,15 @@ impl<'a> JpegParser<'a> {
 
         // Validate num_components in scan
         if num_components == 0 {
-            return Err(Error::InvalidJpegData {
-                reason: "SOS num_components is zero",
-            });
+            return Err(Error::invalid_jpeg_data("SOS num_components is zero"));
         }
         if num_components > self.num_components {
-            return Err(Error::InvalidJpegData {
-                reason: "SOS num_components exceeds frame components",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "SOS num_components exceeds frame components",
+            ));
         }
         if num_components > MAX_COMPONENTS as u8 {
-            return Err(Error::InvalidJpegData {
-                reason: "SOS num_components too large",
-            });
+            return Err(Error::invalid_jpeg_data("SOS num_components too large"));
         }
 
         let mut scan_components = Vec::with_capacity(num_components as usize);
@@ -572,23 +544,21 @@ impl<'a> JpegParser<'a> {
 
             // Validate Huffman table indexes
             if dc_table as usize >= MAX_HUFFMAN_TABLES {
-                return Err(Error::InvalidJpegData {
-                    reason: "SOS DC Huffman table index out of range",
-                });
+                return Err(Error::invalid_jpeg_data(
+                    "SOS DC Huffman table index out of range",
+                ));
             }
             if ac_table as usize >= MAX_HUFFMAN_TABLES {
-                return Err(Error::InvalidJpegData {
-                    reason: "SOS AC Huffman table index out of range",
-                });
+                return Err(Error::invalid_jpeg_data(
+                    "SOS AC Huffman table index out of range",
+                ));
             }
 
             // Find component index
             let comp_idx = self.components[..self.num_components as usize]
                 .iter()
                 .position(|c| c.id == component_id)
-                .ok_or(Error::InvalidJpegData {
-                    reason: "unknown component in scan",
-                })?;
+                .ok_or(Error::invalid_jpeg_data("unknown component in scan"))?;
 
             scan_components.push((comp_idx, dc_table, ac_table));
         }
@@ -601,14 +571,14 @@ impl<'a> JpegParser<'a> {
 
         // Validate spectral selection (must be 0-63)
         if ss > 63 {
-            return Err(Error::InvalidJpegData {
-                reason: "SOS Ss (spectral start) out of range",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "SOS Ss (spectral start) out of range",
+            ));
         }
         if se > 63 {
-            return Err(Error::InvalidJpegData {
-                reason: "SOS Se (spectral end) out of range",
-            });
+            return Err(Error::invalid_jpeg_data(
+                "SOS Se (spectral end) out of range",
+            ));
         }
 
         // Decode entropy-coded segment based on mode
@@ -763,12 +733,12 @@ impl<'a> JpegParser<'a> {
                                     *dc_table as usize,
                                     *ac_table as usize,
                                 ) {
-                                    Ok((coeffs, count)) => {
+                                    Ok(ScanRead::Value((coeffs, count))) => {
                                         // Encoder included padding block
                                         self.coeffs[*comp_idx][block_idx] = coeffs;
                                         self.coeff_counts[*comp_idx][block_idx] = count;
                                     }
-                                    Err(Error::EndOfScanData) => {
+                                    Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
                                         // Encoder omitted padding block - restore state and fill zeros
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
@@ -788,11 +758,19 @@ impl<'a> JpegParser<'a> {
                                     }
                                 }
                             } else {
-                                let (coeffs, count) = decoder.decode_block_with_count(
+                                let (coeffs, count) = match decoder.decode_block_with_count(
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
-                                )?;
+                                )? {
+                                    ScanRead::Value(v) => v,
+                                    // EndOfScan/Truncated mid-decode is unusual but not fatal - fill with zeros
+                                    ScanRead::EndOfScan | ScanRead::Truncated => {
+                                        self.coeffs[*comp_idx][block_idx] = [0i16; 64];
+                                        self.coeff_counts[*comp_idx][block_idx] = 1;
+                                        continue;
+                                    }
+                                };
                                 self.coeffs[*comp_idx][block_idx] = coeffs;
                                 self.coeff_counts[*comp_idx][block_idx] = count;
                             }
@@ -852,19 +830,13 @@ impl<'a> JpegParser<'a> {
         // Get quantization tables
         let quant_y = self.quant_tables[self.components[0].quant_table_idx as usize]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "missing Y quantization table",
-            })?;
+            .ok_or(Error::internal("missing Y quantization table"))?;
         let quant_cb = self.quant_tables[self.components[1].quant_table_idx as usize]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "missing Cb quantization table",
-            })?;
+            .ok_or(Error::internal("missing Cb quantization table"))?;
         let quant_cr = self.quant_tables[self.components[2].quant_table_idx as usize]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "missing Cr quantization table",
-            })?;
+            .ok_or(Error::internal("missing Cr quantization table"))?;
 
         // Set up entropy decoder
         let scan_data = &self.data[self.position..];
@@ -933,11 +905,14 @@ impl<'a> JpegParser<'a> {
 
                 // Decode, dequantize, and IDCT each component's block directly to strip
                 for (comp_idx, dc_table, ac_table) in scan_components {
-                    let (coeffs, coeff_count) = decoder.decode_block_with_count(
+                    let (coeffs, coeff_count) = match decoder.decode_block_with_count(
                         *comp_idx,
                         *dc_table as usize,
                         *ac_table as usize,
-                    )?;
+                    )? {
+                        ScanRead::Value(v) => v,
+                        ScanRead::EndOfScan | ScanRead::Truncated => continue, // End of scan mid-block, skip remaining
+                    };
 
                     let quant = match *comp_idx {
                         0 => quant_y,
@@ -1112,22 +1087,20 @@ impl<'a> JpegParser<'a> {
                     }
 
                     if is_first_scan {
-                        match decoder.decode_dc_first(comp_idx, dc_table as usize, al) {
-                            Ok(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
-                            Err(Error::EndOfScanData) => {
+                        match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
+                            ScanRead::Value(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
                                 // End of scan data - remaining blocks have DC=0
                                 break;
                             }
-                            Err(e) => return Err(e),
                         }
                     } else {
-                        match decoder.decode_dc_refine(al) {
-                            Ok(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
-                            Err(Error::EndOfScanData) => {
+                        match decoder.decode_dc_refine(al)? {
+                            ScanRead::Value(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
                                 // End of scan data - remaining blocks unchanged
                                 break;
                             }
-                            Err(e) => return Err(e),
                         }
                     }
 
@@ -1169,27 +1142,25 @@ impl<'a> JpegParser<'a> {
                                             *comp_idx,
                                             *dc_table as usize,
                                             al,
-                                        ) {
-                                            Ok(dc) => {
+                                        )? {
+                                            ScanRead::Value(dc) => {
                                                 self.coeffs[*comp_idx][block_idx][0] = dc;
                                             }
-                                            Err(Error::EndOfScanData) => {
+                                            ScanRead::EndOfScan | ScanRead::Truncated => {
                                                 // End of scan data - remaining blocks have DC=0
                                                 break 'dc_scan;
                                             }
-                                            Err(e) => return Err(e),
                                         }
                                     } else {
                                         // DC refinement scan
-                                        match decoder.decode_dc_refine(al) {
-                                            Ok(bit) => {
+                                        match decoder.decode_dc_refine(al)? {
+                                            ScanRead::Value(bit) => {
                                                 self.coeffs[*comp_idx][block_idx][0] |= bit;
                                             }
-                                            Err(Error::EndOfScanData) => {
+                                            ScanRead::EndOfScan | ScanRead::Truncated => {
                                                 // End of scan data - remaining blocks unchanged
                                                 break 'dc_scan;
                                             }
-                                            Err(e) => return Err(e),
                                         }
                                     }
                                 }
@@ -1204,9 +1175,9 @@ impl<'a> JpegParser<'a> {
             // AC scan (single component only for progressive)
             // Progressive AC scans can only have one component
             if scan_components.len() != 1 {
-                return Err(Error::InvalidJpegData {
-                    reason: "progressive AC scan must have single component",
-                });
+                return Err(Error::invalid_jpeg_data(
+                    "progressive AC scan must have single component",
+                ));
             }
 
             let (comp_idx, _dc_table, ac_table) = scan_components[0];
@@ -1246,15 +1217,14 @@ impl<'a> JpegParser<'a> {
                         se,
                         al,
                         &mut eob_run,
-                    ) {
-                        Ok(()) => {}
-                        Err(Error::EndOfScanData) => {
+                    )? {
+                        ScanRead::Value(()) => {}
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
                             // End of scan data - remaining blocks have zeros (implicit EOB)
                             // This is normal in progressive JPEG when encoder uses
                             // implicit EOB at end of scan
                             break;
                         }
-                        Err(e) => return Err(e),
                     }
                 } else {
                     // AC refinement scan
@@ -1265,13 +1235,12 @@ impl<'a> JpegParser<'a> {
                         se,
                         al,
                         &mut eob_run,
-                    ) {
-                        Ok(()) => {}
-                        Err(Error::EndOfScanData) => {
+                    )? {
+                        ScanRead::Value(()) => {}
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
                             // End of scan data - remaining blocks unchanged
                             break;
                         }
-                        Err(e) => return Err(e),
                     }
                 }
 
@@ -1398,12 +1367,9 @@ impl<'a> JpegParser<'a> {
             // IDCT all blocks in this MCU row for all 3 components
             for comp_idx in 0..3 {
                 let info = &comp_infos[comp_idx];
-                let quant =
-                    self.quant_tables[info.quant_idx]
-                        .as_ref()
-                        .ok_or(Error::InternalError {
-                            reason: "missing quantization table",
-                        })?;
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
 
                 let strip = match comp_idx {
                     0 => &mut y_strip,
@@ -1481,9 +1447,7 @@ impl<'a> JpegParser<'a> {
         }
 
         if self.coeffs.is_empty() {
-            return Err(Error::InternalError {
-                reason: "no decoded data",
-            });
+            return Err(Error::internal("no decoded data"));
         }
 
         // Try fast integer path for non-XYB 4:4:4 RGB images
@@ -1534,12 +1498,9 @@ impl<'a> JpegParser<'a> {
             // For each component in this MCU row
             for comp_idx in 0..self.num_components as usize {
                 let info = &comp_infos[comp_idx];
-                let quant =
-                    self.quant_tables[info.quant_idx]
-                        .as_ref()
-                        .ok_or(Error::InternalError {
-                            reason: "missing quantization table",
-                        })?;
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
 
                 // Phase 1: Gather stats for full-res components
                 if info.is_full_res {
@@ -1748,9 +1709,7 @@ impl<'a> JpegParser<'a> {
                 }
                 Ok(rgb)
             }
-            _ => Err(Error::UnsupportedFeature {
-                feature: "unsupported color conversion",
-            }),
+            _ => Err(Error::unsupported_feature("unsupported color conversion")),
         }
     }
 
@@ -1763,9 +1722,7 @@ impl<'a> JpegParser<'a> {
         fancy_upsampling: bool,
     ) -> Result<Vec<f32>> {
         if self.coeffs.is_empty() {
-            return Err(Error::InternalError {
-                reason: "no decoded data",
-            });
+            return Err(Error::internal("no decoded data"));
         }
 
         let width = self.width as usize;
@@ -1810,12 +1767,9 @@ impl<'a> JpegParser<'a> {
         for imcu_row in 0..mcu_rows {
             for comp_idx in 0..self.num_components as usize {
                 let info = &comp_infos[comp_idx];
-                let quant =
-                    self.quant_tables[info.quant_idx]
-                        .as_ref()
-                        .ok_or(Error::InternalError {
-                            reason: "missing quantization table",
-                        })?;
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
 
                 // Gather stats for full-res components
                 if info.is_full_res {
@@ -1979,9 +1933,7 @@ impl<'a> JpegParser<'a> {
                 }
                 Ok(rgb)
             }
-            _ => Err(Error::UnsupportedFeature {
-                feature: "unsupported color conversion",
-            }),
+            _ => Err(Error::unsupported_feature("unsupported color conversion")),
         }
     }
 
@@ -1995,15 +1947,13 @@ impl<'a> JpegParser<'a> {
         fancy_upsampling: bool,
     ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         if self.coeffs.is_empty() {
-            return Err(Error::InternalError {
-                reason: "no decoded data",
-            });
+            return Err(Error::internal("no decoded data"));
         }
 
         if self.num_components != 3 {
-            return Err(Error::UnsupportedFeature {
-                feature: "YCbCr planes require 3-component image",
-            });
+            return Err(Error::unsupported_feature(
+                "YCbCr planes require 3-component image",
+            ));
         }
 
         let width = self.width as usize;
@@ -2048,12 +1998,9 @@ impl<'a> JpegParser<'a> {
         for imcu_row in 0..mcu_rows {
             for comp_idx in 0..self.num_components as usize {
                 let info = &comp_infos[comp_idx];
-                let quant =
-                    self.quant_tables[info.quant_idx]
-                        .as_ref()
-                        .ok_or(Error::InternalError {
-                            reason: "missing quantization table",
-                        })?;
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing quantization table"))?;
 
                 // Phase 1: Gather stats for full-res components
                 if info.is_full_res {

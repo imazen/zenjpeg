@@ -114,6 +114,9 @@
 
 extern crate alloc;
 
+// Error tracing with location tracking
+whereat::define_at_crate_info!(path = "jpegli-rs/");
+
 // ============================================================================
 // Public API Modules
 // ============================================================================

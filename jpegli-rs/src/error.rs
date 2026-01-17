@@ -2,14 +2,97 @@
 
 use alloc::string::String;
 use core::fmt;
+use whereat::{AtTrace, AtTraceBoxed, AtTraceable};
 
 /// Result type for jpegli operations.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// Result of reading from an entropy-coded scan.
+///
+/// This distinguishes between successful reads, normal end-of-scan conditions,
+/// and truncated data. End-of-scan is not an error - it's the expected signal
+/// that a marker was encountered and the current scan is complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanRead<T> {
+    /// Successfully read the value.
+    Value(T),
+    /// Reached end of entropy-coded segment (marker encountered).
+    /// This is normal during progressive JPEG decoding between scans.
+    EndOfScan,
+    /// Data was truncated (end of input without finding a marker).
+    /// Caller can choose to treat this as an error or attempt partial decode.
+    Truncated,
+}
+
+impl<T> ScanRead<T> {
+    /// Returns the value if `Value`, otherwise returns the provided default.
+    #[inline]
+    pub fn unwrap_or(self, default: T) -> T {
+        match self {
+            Self::Value(v) => v,
+            Self::EndOfScan | Self::Truncated => default,
+        }
+    }
+
+    /// Returns the value if `Value`, otherwise computes it from a closure.
+    #[inline]
+    pub fn unwrap_or_else<F: FnOnce() -> T>(self, f: F) -> T {
+        match self {
+            Self::Value(v) => v,
+            Self::EndOfScan | Self::Truncated => f(),
+        }
+    }
+
+    /// Returns `true` if this is `EndOfScan`.
+    #[inline]
+    pub fn is_end_of_scan(&self) -> bool {
+        matches!(self, Self::EndOfScan)
+    }
+
+    /// Returns `true` if this is `Truncated`.
+    #[inline]
+    pub fn is_truncated(&self) -> bool {
+        matches!(self, Self::Truncated)
+    }
+
+    /// Returns `true` if this is `Value`.
+    #[inline]
+    pub fn is_value(&self) -> bool {
+        matches!(self, Self::Value(_))
+    }
+
+    /// Maps the value if `Value`, passes through `EndOfScan` and `Truncated`.
+    #[inline]
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> ScanRead<U> {
+        match self {
+            Self::Value(v) => ScanRead::Value(f(v)),
+            Self::EndOfScan => ScanRead::EndOfScan,
+            Self::Truncated => ScanRead::Truncated,
+        }
+    }
+}
+
+/// Result type for entropy-coded scan reads.
+///
+/// - `Ok(ScanRead::Value(v))` - Successfully read a value
+/// - `Ok(ScanRead::EndOfScan)` - Normal end of scan (marker found)
+/// - `Ok(ScanRead::Truncated)` - Data ended without marker (caller decides how to handle)
+/// - `Err(e)` - Actual error (corruption, internal error, etc.)
+pub type ScanResult<T> = Result<ScanRead<T>>;
+
 /// Errors that can occur during JPEG encoding/decoding.
+///
+/// Use [`Error::kind()`] to match on the specific error variant.
+#[derive(Debug)]
+pub struct Error {
+    kind: ErrorKind,
+    trace: AtTraceBoxed,
+}
+
+/// The specific kind of error that occurred.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum Error {
+pub enum ErrorKind {
     /// Invalid input dimensions (zero or too large).
     InvalidDimensions {
         /// Width provided
@@ -43,9 +126,6 @@ pub enum Error {
         /// Description of the issue
         reason: &'static str,
     },
-    /// End of entropy-coded scan data (marker found).
-    /// This is expected during progressive JPEG decoding between scans.
-    EndOfScanData,
     /// Input data is truncated or corrupted.
     TruncatedData {
         /// Context where truncation was detected
@@ -151,7 +231,215 @@ pub enum Error {
     },
 }
 
+impl Error {
+    /// Create a new error with the given kind, capturing the current location.
+    #[track_caller]
+    pub fn new(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            trace: AtTraceBoxed::capture(),
+        }
+    }
+
+    /// Create a new error without capturing a trace (for hot paths).
+    #[inline]
+    pub const fn new_untraced(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            trace: AtTraceBoxed::new(),
+        }
+    }
+
+    /// Get the kind of error.
+    #[inline]
+    pub fn kind(&self) -> &ErrorKind {
+        &self.kind
+    }
+
+    /// Convert into the error kind, discarding the trace.
+    #[inline]
+    pub fn into_kind(self) -> ErrorKind {
+        self.kind
+    }
+
+    // Convenience constructors for common errors
+
+    /// Create an invalid dimensions error.
+    #[track_caller]
+    pub fn invalid_dimensions(width: u32, height: u32, reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidDimensions {
+            width,
+            height,
+            reason,
+        })
+    }
+
+    /// Create an invalid quality error.
+    #[track_caller]
+    pub fn invalid_quality(value: f32, valid_range: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidQuality { value, valid_range })
+    }
+
+    /// Create an invalid color format error.
+    #[track_caller]
+    pub fn invalid_color_format(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidColorFormat { reason })
+    }
+
+    /// Create an invalid buffer size error.
+    #[track_caller]
+    pub fn invalid_buffer_size(expected: usize, actual: usize) -> Self {
+        Self::new(ErrorKind::InvalidBufferSize { expected, actual })
+    }
+
+    /// Create an invalid JPEG data error.
+    #[track_caller]
+    pub fn invalid_jpeg_data(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidJpegData { reason })
+    }
+
+    /// Create a truncated data error.
+    #[track_caller]
+    pub fn truncated_data(context: &'static str) -> Self {
+        Self::new(ErrorKind::TruncatedData { context })
+    }
+
+    /// Create an invalid marker error.
+    #[track_caller]
+    pub fn invalid_marker(marker: u8, context: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidMarker { marker, context })
+    }
+
+    /// Create an invalid Huffman table error.
+    #[track_caller]
+    pub fn invalid_huffman_table(table_idx: u8, reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidHuffmanTable { table_idx, reason })
+    }
+
+    /// Create an invalid quantization table error.
+    #[track_caller]
+    pub fn invalid_quant_table(table_idx: u8, reason: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidQuantTable { table_idx, reason })
+    }
+
+    /// Create an unsupported feature error.
+    #[track_caller]
+    pub fn unsupported_feature(feature: &'static str) -> Self {
+        Self::new(ErrorKind::UnsupportedFeature { feature })
+    }
+
+    /// Create an internal error.
+    #[track_caller]
+    pub fn internal(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InternalError { reason })
+    }
+
+    /// Create an I/O error.
+    #[track_caller]
+    pub fn io_error(reason: String) -> Self {
+        Self::new(ErrorKind::IoError { reason })
+    }
+
+    /// Create an ICC error.
+    #[track_caller]
+    pub fn icc_error(reason: String) -> Self {
+        Self::new(ErrorKind::IccError(reason))
+    }
+
+    /// Create a decode error.
+    #[track_caller]
+    pub fn decode_error(reason: String) -> Self {
+        Self::new(ErrorKind::DecodeError(reason))
+    }
+
+    /// Create an invalid scan script error.
+    #[track_caller]
+    pub fn invalid_scan_script(reason: String) -> Self {
+        Self::new(ErrorKind::InvalidScanScript(reason))
+    }
+
+    /// Create an allocation failed error.
+    #[track_caller]
+    pub fn allocation_failed(bytes: usize, context: &'static str) -> Self {
+        Self::new(ErrorKind::AllocationFailed { bytes, context })
+    }
+
+    /// Create a size overflow error.
+    #[track_caller]
+    pub fn size_overflow(context: &'static str) -> Self {
+        Self::new(ErrorKind::SizeOverflow { context })
+    }
+
+    /// Create an image too large error.
+    #[track_caller]
+    pub fn image_too_large(pixels: u64, limit: u64) -> Self {
+        Self::new(ErrorKind::ImageTooLarge { pixels, limit })
+    }
+
+    /// Create a too many scans error.
+    #[track_caller]
+    pub fn too_many_scans(count: usize, limit: usize) -> Self {
+        Self::new(ErrorKind::TooManyScans { count, limit })
+    }
+
+    /// Create a cancelled error.
+    #[track_caller]
+    pub fn cancelled() -> Self {
+        Self::new(ErrorKind::Cancelled)
+    }
+
+    /// Create an unsupported pixel format error.
+    #[track_caller]
+    pub fn unsupported_pixel_format(format: crate::types::PixelFormat) -> Self {
+        Self::new(ErrorKind::UnsupportedPixelFormat { format })
+    }
+
+    /// Create an invalid config error.
+    #[track_caller]
+    pub fn invalid_config(reason: String) -> Self {
+        Self::new(ErrorKind::InvalidConfig(reason))
+    }
+
+    /// Create a stride too small error.
+    #[track_caller]
+    pub fn stride_too_small(width: u32, stride: usize) -> Self {
+        Self::new(ErrorKind::StrideTooSmall { width, stride })
+    }
+
+    /// Create a too many rows error.
+    #[track_caller]
+    pub fn too_many_rows(height: u32, pushed: u32) -> Self {
+        Self::new(ErrorKind::TooManyRows { height, pushed })
+    }
+
+    /// Create an incomplete image error.
+    #[track_caller]
+    pub fn incomplete_image(height: u32, pushed: u32) -> Self {
+        Self::new(ErrorKind::IncompleteImage { height, pushed })
+    }
+}
+
+impl AtTraceable for Error {
+    fn trace_mut(&mut self) -> &mut AtTrace {
+        self.trace.get_or_insert_mut()
+    }
+
+    fn trace(&self) -> Option<&AtTrace> {
+        self.trace.as_ref()
+    }
+
+    fn fmt_message(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.kind, f)
+    }
+}
+
 impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.kind, f)
+    }
+}
+
+impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidDimensions {
@@ -176,9 +464,6 @@ impl fmt::Display for Error {
             }
             Self::InvalidJpegData { reason } => {
                 write!(f, "invalid JPEG data: {}", reason)
-            }
-            Self::EndOfScanData => {
-                write!(f, "end of scan data")
             }
             Self::TruncatedData { context } => {
                 write!(f, "truncated data while {}", context)
@@ -261,8 +546,9 @@ impl fmt::Display for Error {
 }
 
 impl From<enough::StopReason> for Error {
+    #[track_caller]
     fn from(_: enough::StopReason) -> Self {
-        Self::Cancelled
+        Self::cancelled()
     }
 }
 
@@ -271,31 +557,47 @@ impl std::error::Error for Error {}
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
+    #[track_caller]
     fn from(err: std::io::Error) -> Self {
-        Self::IoError {
-            reason: err.to_string(),
-        }
+        Self::io_error(err.to_string())
     }
 }
 
 impl From<crate::foundation::aligned_alloc::AllocError> for Error {
+    #[track_caller]
     fn from(err: crate::foundation::aligned_alloc::AllocError) -> Self {
         match err {
-            crate::foundation::aligned_alloc::AllocError::OutOfMemory => Self::AllocationFailed {
-                bytes: 0, // Size not tracked in AllocError
-                context: "adaptive quantization",
-            },
-            crate::foundation::aligned_alloc::AllocError::Overflow => Self::SizeOverflow {
-                context: "adaptive quantization size calculation",
-            },
+            crate::foundation::aligned_alloc::AllocError::OutOfMemory => {
+                Self::allocation_failed(0, "adaptive quantization")
+            }
+            crate::foundation::aligned_alloc::AllocError::Overflow => {
+                Self::size_overflow("adaptive quantization size calculation")
+            }
         }
+    }
+}
+
+// Implement Clone manually since AtTrace doesn't implement Clone
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        Self {
+            kind: self.kind.clone(),
+            trace: AtTraceBoxed::new(), // Don't clone the trace
+        }
+    }
+}
+
+// Implement PartialEq based on kind only (trace is not compared)
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::boxed::Box;
+    use whereat::ResultAtTraceableExt;
 
     #[test]
     fn test_error_size() {
@@ -312,23 +614,41 @@ mod tests {
             core::mem::size_of::<core::result::Result<(), Error>>()
         );
         println!("Box<Error>: {} bytes", core::mem::size_of::<Box<Error>>());
-        // Error should ideally be <= 32 bytes for efficient Result types
-        // Current size is larger due to String variants
-        assert!(
-            size <= 64,
-            "Error is {} bytes, consider boxing large variants",
-            size
-        );
+        println!("ErrorKind: {} bytes", core::mem::size_of::<ErrorKind>());
+        // Error = ErrorKind (~32 bytes: String payload + discriminant) + AtTraceBoxed (8 bytes)
+        // Expected: ~40 bytes on 64-bit platforms
+        assert!(size <= 48, "Error is {} bytes, consider optimizing", size);
     }
 
     #[test]
     fn test_error_display() {
-        let err = Error::InvalidDimensions {
-            width: 0,
-            height: 100,
-            reason: "width cannot be zero",
-        };
+        let err = Error::invalid_dimensions(0, 100, "width cannot be zero");
         assert!(err.to_string().contains("width cannot be zero"));
+    }
+
+    #[test]
+    fn test_error_has_trace() {
+        let err = Error::invalid_dimensions(0, 100, "width cannot be zero");
+        assert!(!err.trace.is_empty());
+    }
+
+    #[test]
+    fn test_error_trace_propagation() {
+        fn inner() -> Result<()> {
+            Err(Error::invalid_dimensions(0, 100, "width cannot be zero"))
+        }
+
+        fn outer() -> Result<()> {
+            inner().at()?;
+            Ok(())
+        }
+
+        let err = outer().unwrap_err();
+        // Should have 2 trace entries: one from inner, one from outer's .at()
+        assert!(
+            err.trace.frame_count() >= 1,
+            "trace should have at least 1 entry"
+        );
     }
 
     #[cfg(feature = "std")]
@@ -336,6 +656,124 @@ mod tests {
     fn test_io_error_conversion() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err: Error = io_err.into();
-        assert!(matches!(err, Error::IoError { .. }));
+        assert!(matches!(err.kind(), ErrorKind::IoError { .. }));
+    }
+
+    /// Test translating jpegli errors into a different At-style error type
+    /// while preserving the full stack trace.
+    #[test]
+    fn test_trace_preservation_across_error_types() {
+        use whereat::At;
+
+        // A different application-level error type using whereat::At
+        #[derive(Debug)]
+        enum AppErrorKind {
+            ImageProcessing(ErrorKind),
+            Other(&'static str),
+        }
+
+        // Simulate a call chain that creates and propagates a jpegli error
+        fn jpegli_inner() -> Result<()> {
+            Err(Error::invalid_dimensions(0, 100, "width cannot be zero"))
+        }
+
+        fn jpegli_outer() -> Result<()> {
+            jpegli_inner().at_str("processing user upload")?;
+            Ok(())
+        }
+
+        // Convert jpegli::Error to At<AppErrorKind>, preserving the trace
+        fn to_app_error(mut err: Error) -> At<AppErrorKind> {
+            // Take the trace from jpegli error
+            let trace = err.trace.take().unwrap_or_default();
+
+            // Create new At<AppErrorKind> with the transferred trace
+            At::from_parts(AppErrorKind::ImageProcessing(err.into_kind()), trace)
+        }
+
+        // Run the chain and convert
+        let jpegli_err = jpegli_outer().unwrap_err();
+        let original_frame_count = jpegli_err.trace.frame_count();
+
+        // Verify we have trace frames before conversion
+        assert!(
+            original_frame_count >= 1,
+            "jpegli error should have trace frames"
+        );
+
+        // Convert to app error
+        let app_err = to_app_error(jpegli_err);
+
+        // Verify trace was preserved
+        assert_eq!(
+            app_err.frame_count(),
+            original_frame_count,
+            "trace frames should be preserved after conversion"
+        );
+
+        // Verify we can still iterate the trace
+        let frames: Vec<_> = app_err.frames().collect();
+        assert!(
+            !frames.is_empty(),
+            "should be able to iterate trace frames"
+        );
+
+        // Verify the error kind was preserved
+        assert!(
+            matches!(app_err.error(), AppErrorKind::ImageProcessing(_)),
+            "error kind should be ImageProcessing"
+        );
+
+        // Verify context string is accessible via frames
+        let mut found_context = false;
+        for frame in app_err.frames() {
+            for ctx in frame.contexts() {
+                if ctx.as_text() == Some("processing user upload") {
+                    found_context = true;
+                }
+            }
+        }
+        assert!(found_context, "context string should be preserved in trace");
+    }
+
+    /// Test using AtTraceable::into_at() for cleaner error conversion
+    #[test]
+    fn test_into_at_conversion() {
+        use whereat::At;
+
+        #[derive(Debug)]
+        struct WrapperError {
+            kind: ErrorKind,
+        }
+
+        fn create_error() -> Result<()> {
+            Err(Error::invalid_quality(150.0, "0.0-100.0"))
+        }
+
+        fn propagate() -> Result<()> {
+            create_error().at_str("in propagate")?;
+            Ok(())
+        }
+
+        let jpegli_err = propagate().unwrap_err();
+        let original_frames = jpegli_err.trace.frame_count();
+
+        // Use into_at() to convert while preserving trace
+        let wrapper: At<WrapperError> = jpegli_err.into_at(|e| WrapperError {
+            kind: e.into_kind(),
+        });
+
+        // Verify trace preserved
+        assert_eq!(
+            wrapper.frame_count(),
+            original_frames,
+            "into_at should preserve all trace frames"
+        );
+
+        // Verify error content
+        assert!(
+            matches!(wrapper.error().kind, ErrorKind::InvalidQuality { .. }),
+            "error kind should be preserved"
+        );
     }
 }

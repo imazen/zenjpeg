@@ -96,7 +96,7 @@ impl ScanInfo {
 pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()> {
     // Rule 1: At least one scan required
     if scans.is_empty() {
-        return Err(Error::InvalidScanScript(
+        return Err(Error::invalid_scan_script(
             "Scan script must contain at least one scan".into(),
         ));
     }
@@ -111,14 +111,14 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
     for (scan_idx, scan) in scans.iter().enumerate() {
         // Rule 3: comps_in_scan must be valid
         if scan.comps_in_scan == 0 || scan.comps_in_scan > 4 {
-            return Err(Error::InvalidScanScript(format!(
+            return Err(Error::invalid_scan_script(format!(
                 "Scan {}: comps_in_scan {} must be 1-4",
                 scan_idx, scan.comps_in_scan
             )));
         }
 
         if scan.comps_in_scan > num_components {
-            return Err(Error::InvalidScanScript(format!(
+            return Err(Error::invalid_scan_script(format!(
                 "Scan {}: comps_in_scan {} exceeds num_components {}",
                 scan_idx, scan.comps_in_scan, num_components
             )));
@@ -126,7 +126,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
 
         // Rule 6: Se must be <= 63
         if scan.se > 63 {
-            return Err(Error::InvalidScanScript(format!(
+            return Err(Error::invalid_scan_script(format!(
                 "Scan {}: Se {} must be <= 63",
                 scan_idx, scan.se
             )));
@@ -134,7 +134,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
 
         // Rule 7: Ss must be <= Se
         if scan.ss > scan.se {
-            return Err(Error::InvalidScanScript(format!(
+            return Err(Error::invalid_scan_script(format!(
                 "Scan {}: Ss {} must be <= Se {}",
                 scan_idx, scan.ss, scan.se
             )));
@@ -147,7 +147,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
 
             // Rule 2: Component index must be valid
             if c >= num_components {
-                return Err(Error::InvalidScanScript(format!(
+                return Err(Error::invalid_scan_script(format!(
                     "Scan {}: component index {} >= num_components {}",
                     scan_idx, c, num_components
                 )));
@@ -155,7 +155,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
 
             // Rule 4: No duplicate components
             if seen_components[c as usize] {
-                return Err(Error::InvalidScanScript(format!(
+                return Err(Error::invalid_scan_script(format!(
                     "Scan {}: duplicate component index {}",
                     scan_idx, c
                 )));
@@ -164,7 +164,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
 
             // Rule 5: Components in ascending order
             if i > 0 && scan.component_index[i] <= scan.component_index[i - 1] {
-                return Err(Error::InvalidScanScript(format!(
+                return Err(Error::invalid_scan_script(format!(
                     "Scan {}: components must be in ascending order",
                     scan_idx
                 )));
@@ -173,7 +173,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
 
         // Rule 9: AC scans must have exactly one component
         if scan.ss > 0 && scan.comps_in_scan > 1 {
-            return Err(Error::InvalidScanScript(format!(
+            return Err(Error::invalid_scan_script(format!(
                 "Scan {}: AC scans (Ss={}) must have exactly one component, got {}",
                 scan_idx, scan.ss, scan.comps_in_scan
             )));
@@ -190,7 +190,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
                 if scan.is_first_pass() {
                     // Rule 12: First DC pass must have Ah=0
                     if first_done {
-                        return Err(Error::InvalidScanScript(format!(
+                        return Err(Error::invalid_scan_script(format!(
                             "Scan {}: DC first pass for component {} already done",
                             scan_idx, c
                         )));
@@ -200,20 +200,20 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
                     // Rule 13: Refinement Ah must match previous Al
                     if let Some(prev_al) = last_al {
                         if scan.ah != prev_al {
-                            return Err(Error::InvalidScanScript(format!(
+                            return Err(Error::invalid_scan_script(format!(
                                 "Scan {}: DC refinement Ah {} must match previous Al {}",
                                 scan_idx, scan.ah, prev_al
                             )));
                         }
                     } else {
-                        return Err(Error::InvalidScanScript(format!(
+                        return Err(Error::invalid_scan_script(format!(
                             "Scan {}: DC refinement before first pass for component {}",
                             scan_idx, c
                         )));
                     }
                     // Rule 12: Al must be less than Ah
                     if scan.al >= scan.ah {
-                        return Err(Error::InvalidScanScript(format!(
+                        return Err(Error::invalid_scan_script(format!(
                             "Scan {}: DC refinement Al {} must be < Ah {}",
                             scan_idx, scan.al, scan.ah
                         )));
@@ -226,7 +226,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
             if scan.se > 0 {
                 // For AC-only scans (Ss > 0), DC must be encoded first
                 if scan.ss > 0 && !dc_encoded[c].0 {
-                    return Err(Error::InvalidScanScript(format!(
+                    return Err(Error::invalid_scan_script(format!(
                         "Scan {}: AC scan before DC for component {}",
                         scan_idx, c
                     )));
@@ -242,7 +242,7 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
                     if scan.is_first_pass() {
                         // Rule 11: Spectral bands must not overlap
                         if first_done {
-                            return Err(Error::InvalidScanScript(format!(
+                            return Err(Error::invalid_scan_script(format!(
                                 "Scan {}: AC coefficient {} for component {} already encoded",
                                 scan_idx, k, c
                             )));
@@ -252,13 +252,13 @@ pub fn validate_scan_script(scans: &[ScanInfo], num_components: u8) -> Result<()
                         // Rule 13: Refinement Ah must match previous Al
                         if let Some(prev_al) = last_al {
                             if scan.ah != prev_al {
-                                return Err(Error::InvalidScanScript(format!(
+                                return Err(Error::invalid_scan_script(format!(
                                     "Scan {}: AC refinement Ah {} must match previous Al {} for coef {}",
                                     scan_idx, scan.ah, prev_al, k
                                 )));
                             }
                         } else {
-                            return Err(Error::InvalidScanScript(format!(
+                            return Err(Error::invalid_scan_script(format!(
                                 "Scan {}: AC refinement before first pass for coef {}",
                                 scan_idx, k
                             )));
@@ -308,12 +308,12 @@ pub fn parse_scan_script_text(text: &str) -> Result<Vec<ScanInfo>> {
 
         for part in line.split_whitespace() {
             if count >= 4 {
-                return Err(Error::InvalidScanScript(
+                return Err(Error::invalid_scan_script(
                     "Too many components in scan (max 4)".into(),
                 ));
             }
             components[count] = part.parse().map_err(|_| {
-                Error::InvalidScanScript(format!("Invalid component index: {}", part))
+                Error::invalid_scan_script(format!("Invalid component index: {}", part))
             })?;
             count += 1;
         }

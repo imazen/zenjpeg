@@ -76,9 +76,7 @@ impl Encoder {
         let scan_info = token_buffer
             .scan_info
             .get(scan_idx)
-            .ok_or(Error::InternalError {
-                reason: "Scan info not found",
-            })?;
+            .ok_or(Error::internal("Scan info not found"))?;
 
         if scan.ss == 0 && scan.se == 0 {
             // DC scan: replay DC tokens
@@ -305,11 +303,7 @@ impl Encoder {
                     0 => y_blocks,
                     1 => cb_blocks,
                     2 => cr_blocks,
-                    _ => {
-                        return Err(Error::InternalError {
-                            reason: "Invalid component",
-                        })
-                    }
+                    _ => return Err(Error::internal("Invalid component")),
                 };
                 token_buffer.tokenize_ac_first_scan(blocks, context, scan.ss, scan.se, scan.al);
             } else {
@@ -318,11 +312,7 @@ impl Encoder {
                     0 => y_blocks,
                     1 => cb_blocks,
                     2 => cr_blocks,
-                    _ => {
-                        return Err(Error::InternalError {
-                            reason: "Invalid component",
-                        })
-                    }
+                    _ => return Err(Error::internal("Invalid component")),
                 };
                 token_buffer.tokenize_ac_refinement_scan(
                     blocks, context, scan.ss, scan.se, scan.ah, scan.al,

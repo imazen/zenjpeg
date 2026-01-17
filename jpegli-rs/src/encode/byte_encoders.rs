@@ -40,21 +40,21 @@ impl BytesEncoder {
     ) -> Result<Self> {
         // Validate dimensions
         if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions {
+            return Err(Error::invalid_dimensions(
                 width,
                 height,
-                reason: "dimensions cannot be zero",
-            });
+                "dimensions cannot be zero",
+            ));
         }
 
         // Check for overflow
         let pixel_count = (width as u64) * (height as u64);
         if pixel_count > u32::MAX as u64 {
-            return Err(Error::InvalidDimensions {
+            return Err(Error::invalid_dimensions(
                 width,
                 height,
-                reason: "dimensions too large",
-            });
+                "dimensions too large",
+            ));
         }
 
         // Build and start the streaming encoder with config from v2
@@ -131,7 +131,7 @@ impl BytesEncoder {
     ) -> Result<()> {
         // Check cancellation
         if stop.should_stop() {
-            return Err(Error::Cancelled);
+            return Err(Error::cancelled());
         }
 
         let bpp = self.layout.bytes_per_pixel();
@@ -139,29 +139,20 @@ impl BytesEncoder {
 
         // Validate stride
         if stride_bytes < min_stride {
-            return Err(Error::StrideTooSmall {
-                width: self.width,
-                stride: stride_bytes,
-            });
+            return Err(Error::stride_too_small(self.width, stride_bytes));
         }
 
         // Validate row count
         let current_rows = self.inner.rows_pushed() as u32;
         let new_total = current_rows + rows as u32;
         if new_total > self.height {
-            return Err(Error::TooManyRows {
-                height: self.height,
-                pushed: new_total,
-            });
+            return Err(Error::too_many_rows(self.height, new_total));
         }
 
         // Validate buffer size
         let expected_size = rows * stride_bytes;
         if data.len() < expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: data.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
 
         // Push rows to streaming encoder
@@ -173,7 +164,7 @@ impl BytesEncoder {
             // Strided data - push row by row
             for row in 0..rows {
                 if stop.should_stop() {
-                    return Err(Error::Cancelled);
+                    return Err(Error::cancelled());
                 }
 
                 let src_start = row * stride_bytes;
@@ -195,19 +186,16 @@ impl BytesEncoder {
         let row_bytes = self.width as usize * bpp;
 
         if row_bytes == 0 {
-            return Err(Error::InvalidDimensions {
-                width: self.width,
-                height: self.height,
-                reason: "row size is zero",
-            });
+            return Err(Error::invalid_dimensions(
+                self.width,
+                self.height,
+                "row size is zero",
+            ));
         }
 
         let rows = data.len() / row_bytes;
         if rows == 0 && !data.is_empty() {
-            return Err(Error::InvalidBufferSize {
-                expected: row_bytes,
-                actual: data.len(),
-            });
+            return Err(Error::invalid_buffer_size(row_bytes, data.len()));
         }
 
         self.push(data, rows, row_bytes, stop)
@@ -251,10 +239,7 @@ impl BytesEncoder {
     pub fn finish(self) -> Result<Vec<u8>> {
         let rows_pushed = self.inner.rows_pushed() as u32;
         if rows_pushed != self.height {
-            return Err(Error::IncompleteImage {
-                height: self.height,
-                pushed: rows_pushed,
-            });
+            return Err(Error::incomplete_image(self.height, rows_pushed));
         }
 
         // Finish streaming encoder
@@ -525,11 +510,11 @@ impl YCbCrPlanarEncoder {
     pub(crate) fn new(config: EncoderConfig, width: u32, height: u32) -> Result<Self> {
         // Validate dimensions
         if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions {
+            return Err(Error::invalid_dimensions(
                 width,
                 height,
-                reason: "dimensions cannot be zero",
-            });
+                "dimensions cannot be zero",
+            ));
         }
 
         Ok(Self {
@@ -550,30 +535,24 @@ impl YCbCrPlanarEncoder {
     /// - `stop`: Cancellation token
     pub fn push(&mut self, planes: &YCbCrPlanes<'_>, rows: usize, stop: impl Stop) -> Result<()> {
         if stop.should_stop() {
-            return Err(Error::Cancelled);
+            return Err(Error::cancelled());
         }
 
         // Validate row count
         let new_total = self.rows_pushed + rows as u32;
         if new_total > self.height {
-            return Err(Error::TooManyRows {
-                height: self.height,
-                pushed: new_total,
-            });
+            return Err(Error::too_many_rows(self.height, new_total));
         }
 
         // Copy Y plane
         for row in 0..rows {
             if stop.should_stop() {
-                return Err(Error::Cancelled);
+                return Err(Error::cancelled());
             }
             let src_start = row * planes.y_stride;
             let src_end = src_start + self.width as usize;
             if src_end > planes.y.len() {
-                return Err(Error::InvalidBufferSize {
-                    expected: src_end,
-                    actual: planes.y.len(),
-                });
+                return Err(Error::invalid_buffer_size(src_end, planes.y.len()));
             }
             self.y_plane
                 .extend_from_slice(&planes.y[src_start..src_end]);
@@ -584,10 +563,7 @@ impl YCbCrPlanarEncoder {
             let src_start = row * planes.cb_stride;
             let src_end = src_start + self.width as usize;
             if src_end > planes.cb.len() {
-                return Err(Error::InvalidBufferSize {
-                    expected: src_end,
-                    actual: planes.cb.len(),
-                });
+                return Err(Error::invalid_buffer_size(src_end, planes.cb.len()));
             }
             self.cb_plane
                 .extend_from_slice(&planes.cb[src_start..src_end]);
@@ -598,10 +574,7 @@ impl YCbCrPlanarEncoder {
             let src_start = row * planes.cr_stride;
             let src_end = src_start + self.width as usize;
             if src_end > planes.cr.len() {
-                return Err(Error::InvalidBufferSize {
-                    expected: src_end,
-                    actual: planes.cr.len(),
-                });
+                return Err(Error::invalid_buffer_size(src_end, planes.cr.len()));
             }
             self.cr_plane
                 .extend_from_slice(&planes.cr[src_start..src_end]);
@@ -657,17 +630,14 @@ impl YCbCrPlanarEncoder {
     /// Finish encoding, return JPEG bytes.
     pub fn finish(self) -> Result<Vec<u8>> {
         if self.rows_pushed != self.height {
-            return Err(Error::IncompleteImage {
-                height: self.height,
-                pushed: self.rows_pushed,
-            });
+            return Err(Error::incomplete_image(self.height, self.rows_pushed));
         }
 
         // TODO: Implement actual planar YCbCr encoding
         // For now, return an error indicating this is not yet implemented
-        Err(Error::UnsupportedFeature {
-            feature: "planar YCbCr encoding not yet implemented in v2 API",
-        })
+        Err(Error::unsupported_feature(
+            "planar YCbCr encoding not yet implemented in v2 API",
+        ))
     }
 
     /// Finish encoding to Write destination.
@@ -691,6 +661,7 @@ impl YCbCrPlanarEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use enough::Unstoppable;
     use rgb::RGB;
 
@@ -733,7 +704,10 @@ mod tests {
 
         // Stride too small (less than width * 3)
         let result = enc.push(&[0u8; 100], 1, 100, Unstoppable);
-        assert!(matches!(result, Err(Error::StrideTooSmall { .. })));
+        assert!(matches!(
+            result.as_ref().map_err(|e| e.kind()),
+            Err(ErrorKind::StrideTooSmall { .. })
+        ));
     }
 
     #[test]
@@ -752,7 +726,10 @@ mod tests {
 
         // Try to push one more
         let result = enc.push_packed(&row_data, Unstoppable);
-        assert!(matches!(result, Err(Error::TooManyRows { .. })));
+        assert!(matches!(
+            result.as_ref().map_err(|e| e.kind()),
+            Err(ErrorKind::TooManyRows { .. })
+        ));
     }
 
     #[test]
@@ -768,7 +745,10 @@ mod tests {
 
         // Try to finish
         let result = enc.finish();
-        assert!(matches!(result, Err(Error::IncompleteImage { .. })));
+        assert!(matches!(
+            result.as_ref().map_err(|e| e.kind()),
+            Err(ErrorKind::IncompleteImage { .. })
+        ));
     }
 
     #[test]

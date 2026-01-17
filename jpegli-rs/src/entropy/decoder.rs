@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ScanRead, ScanResult};
 use crate::foundation::bitstream::BitReader;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::HuffmanDecodeTable;
@@ -14,7 +14,7 @@ use super::decode_value;
 /// Decodes a Huffman symbol from the bit reader using the provided table.
 /// This is a standalone function to avoid borrow conflicts in decode_block.
 #[inline]
-fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> Result<u8> {
+fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> ScanResult<u8> {
     // Try fast lookup first (most common path)
     if let Some(bits) = reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
         let lookup = table.fast_lookup[bits as usize];
@@ -22,19 +22,23 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
             let symbol = (lookup & 0xFF) as u8;
             let len = (lookup >> 8) as u8;
             reader.skip_bits_fast(len);
-            return Ok(symbol);
+            return Ok(ScanRead::Value(symbol));
         }
     }
 
     // Slow path for longer codes
     let mut code = 0u32;
     for len in 1..=16 {
-        let bit = reader.read_bits(1)?;
+        let bit = match reader.read_bits(1)? {
+            ScanRead::Value(b) => b,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
         code = (code << 1) | bit;
         if (code as i32) <= table.maxcode[len] {
             let idx = (code as i32 + table.valoffset[len]) as usize;
             if idx < table.values.len() {
-                return Ok(table.values[idx]);
+                return Ok(ScanRead::Value(table.values[idx]));
             }
         }
     }
@@ -42,13 +46,14 @@ fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> 
     // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
     // This happens when fill bits at end of scan don't form a valid Huffman code.
     if reader.is_exhausted() {
-        return Err(Error::EndOfScanData);
+        return Ok(if reader.marker_found().is_some() {
+            ScanRead::EndOfScan
+        } else {
+            ScanRead::Truncated
+        });
     }
 
-    Err(Error::InvalidHuffmanTable {
-        table_idx: 0,
-        reason: "invalid code",
-    })
+    Err(Error::invalid_huffman_table(0, "invalid code"))
 }
 
 /// Entropy decoder for a single scan.
@@ -114,7 +119,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
     /// Decodes a Huffman symbol.
     #[inline]
-    fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> Result<u8> {
+    fn decode_huffman(&mut self, table: &HuffmanDecodeTable) -> ScanResult<u8> {
         // Try fast lookup first
         if let Some(bits) = self
             .reader
@@ -125,25 +130,23 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 let symbol = (lookup & 0xFF) as u8;
                 let len = (lookup >> 8) as u8;
                 self.reader.skip_bits_fast(len);
-                return Ok(symbol);
+                return Ok(ScanRead::Value(symbol));
             }
         }
 
         // Slow path for longer codes
         let mut code = 0u32;
         for len in 1..=16 {
-            match self.reader.read_bits(1) {
-                Ok(bit) => {
-                    code = (code << 1) | bit;
-                    if (code as i32) <= table.maxcode[len] {
-                        let idx = (code as i32 + table.valoffset[len]) as usize;
-                        if idx < table.values.len() {
-                            return Ok(table.values[idx]);
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(e);
+            let bit = match self.reader.read_bits(1)? {
+                ScanRead::Value(b) => b,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
+            code = (code << 1) | bit;
+            if (code as i32) <= table.maxcode[len] {
+                let idx = (code as i32 + table.valoffset[len]) as usize;
+                if idx < table.values.len() {
+                    return Ok(ScanRead::Value(table.values[idx]));
                 }
             }
         }
@@ -151,13 +154,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // If we've exhausted real data (hit marker or past end), treat invalid code as end of scan.
         // This happens when fill bits at end of scan don't form a valid Huffman code.
         if self.reader.is_exhausted() {
-            return Err(Error::EndOfScanData);
+            return Ok(if self.reader.marker_found().is_some() {
+                ScanRead::EndOfScan
+            } else {
+                ScanRead::Truncated
+            });
         }
 
-        Err(Error::InvalidHuffmanTable {
-            table_idx: 0,
-            reason: "invalid code",
-        })
+        Err(Error::invalid_huffman_table(0, "invalid code"))
     }
 
     /// Safely gets a DC table reference, handling out-of-bounds indices.
@@ -166,9 +170,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.dc_tables
             .get(idx)
             .and_then(|&t| t)
-            .ok_or(Error::InternalError {
-                reason: "DC table not set or invalid index",
-            })
+            .ok_or(Error::internal("DC table not set or invalid index"))
     }
 
     /// Safely gets an AC table reference, handling out-of-bounds indices.
@@ -177,9 +179,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.ac_tables
             .get(idx)
             .and_then(|&t| t)
-            .ok_or(Error::InternalError {
-                reason: "AC table not set or invalid index",
-            })
+            .ok_or(Error::internal("AC table not set or invalid index"))
     }
 
     /// Decodes a block of DCT coefficients with fast AC path.
@@ -188,24 +188,28 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         component: usize,
         dc_table_idx: usize,
         ac_table_idx: usize,
-    ) -> Result<[i16; DCT_BLOCK_SIZE]> {
+    ) -> ScanResult<[i16; DCT_BLOCK_SIZE]> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::InternalError {
-            reason: "DC table not set",
-        })?;
-        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::InternalError {
-            reason: "AC table not set",
-        })?;
+        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::internal("DC table not set"))?;
+        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::internal("AC table not set"))?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
         // Decode DC coefficient using standalone function
-        let dc_cat = decode_huffman_symbol(&mut self.reader, dc_table)?;
+        let dc_cat = match decode_huffman_symbol(&mut self.reader, dc_table)? {
+            ScanRead::Value(v) => v,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
 
         let dc_diff = if dc_cat == 0 {
             0
         } else {
-            let bits = self.reader.read_bits(dc_cat)? as u16;
+            let bits = match self.reader.read_bits(dc_cat)? {
+                ScanRead::Value(v) => v as u16,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
             decode_value(dc_cat, bits)
         };
 
@@ -260,12 +264,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run as usize;
                         if i >= DCT_BLOCK_SIZE {
-                            return Err(Error::InvalidJpegData {
-                                reason: "AC coefficient index out of bounds",
-                            });
+                            return Err(Error::invalid_jpeg_data(
+                                "AC coefficient index out of bounds",
+                            ));
                         }
 
-                        let bits = self.reader.read_bits(ac_cat)? as u16;
+                        let bits = match self.reader.read_bits(ac_cat)? {
+                            ScanRead::Value(v) => v as u16,
+                            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                        };
                         coeffs[i] = decode_value(ac_cat, bits);
                         i += 1;
                     }
@@ -274,7 +282,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes or when not enough bits
-            let symbol = decode_huffman_symbol(&mut self.reader, ac_table)?;
+            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
 
             if symbol == 0 {
                 // EOB - remaining coefficients are zero
@@ -295,18 +307,22 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run as usize;
                 if i >= DCT_BLOCK_SIZE {
-                    return Err(Error::InvalidJpegData {
-                        reason: "AC coefficient index out of bounds",
-                    });
+                    return Err(Error::invalid_jpeg_data(
+                        "AC coefficient index out of bounds",
+                    ));
                 }
 
-                let bits = self.reader.read_bits(ac_cat)? as u16;
+                let bits = match self.reader.read_bits(ac_cat)? {
+                    ScanRead::Value(v) => v as u16,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                };
                 coeffs[i] = decode_value(ac_cat, bits);
                 i += 1;
             }
         }
 
-        Ok(coeffs)
+        Ok(ScanRead::Value(coeffs))
     }
 
     /// Decode a single 8x8 block of DCT coefficients, returning coefficient count.
@@ -322,24 +338,28 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         component: usize,
         dc_table_idx: usize,
         ac_table_idx: usize,
-    ) -> Result<([i16; DCT_BLOCK_SIZE], u8)> {
+    ) -> ScanResult<([i16; DCT_BLOCK_SIZE], u8)> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::InternalError {
-            reason: "DC table not set",
-        })?;
-        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::InternalError {
-            reason: "AC table not set",
-        })?;
+        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::internal("DC table not set"))?;
+        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::internal("AC table not set"))?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
         // Decode DC coefficient using standalone function
-        let dc_cat = decode_huffman_symbol(&mut self.reader, dc_table)?;
+        let dc_cat = match decode_huffman_symbol(&mut self.reader, dc_table)? {
+            ScanRead::Value(v) => v,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
 
         let dc_diff = if dc_cat == 0 {
             0
         } else {
-            let bits = self.reader.read_bits(dc_cat)? as u16;
+            let bits = match self.reader.read_bits(dc_cat)? {
+                ScanRead::Value(v) => v as u16,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
             decode_value(dc_cat, bits)
         };
 
@@ -398,12 +418,16 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     } else {
                         i += run as usize;
                         if i >= DCT_BLOCK_SIZE {
-                            return Err(Error::InvalidJpegData {
-                                reason: "AC coefficient index out of bounds",
-                            });
+                            return Err(Error::invalid_jpeg_data(
+                                "AC coefficient index out of bounds",
+                            ));
                         }
 
-                        let bits = self.reader.read_bits(ac_cat)? as u16;
+                        let bits = match self.reader.read_bits(ac_cat)? {
+                            ScanRead::Value(v) => v as u16,
+                            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                        };
                         coeffs[i] = decode_value(ac_cat, bits);
                         last_nonzero = (i + 1) as u8;
                         i += 1;
@@ -413,7 +437,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
 
             // Slow path for long codes or when not enough bits
-            let symbol = decode_huffman_symbol(&mut self.reader, ac_table)?;
+            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
 
             if symbol == 0 {
                 // EOB - remaining coefficients are zero
@@ -434,19 +462,23 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             } else {
                 i += run as usize;
                 if i >= DCT_BLOCK_SIZE {
-                    return Err(Error::InvalidJpegData {
-                        reason: "AC coefficient index out of bounds",
-                    });
+                    return Err(Error::invalid_jpeg_data(
+                        "AC coefficient index out of bounds",
+                    ));
                 }
 
-                let bits = self.reader.read_bits(ac_cat)? as u16;
+                let bits = match self.reader.read_bits(ac_cat)? {
+                    ScanRead::Value(v) => v as u16,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                };
                 coeffs[i] = decode_value(ac_cat, bits);
                 last_nonzero = (i + 1) as u8;
                 i += 1;
             }
         }
 
-        Ok((coeffs, last_nonzero))
+        Ok(ScanRead::Value((coeffs, last_nonzero)))
     }
 
     /// Returns the underlying bit reader position.
@@ -494,14 +526,22 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         component: usize,
         dc_table_idx: usize,
         al: u8,
-    ) -> Result<i16> {
+    ) -> ScanResult<i16> {
         let dc_table = self.get_dc_table(dc_table_idx)?;
 
-        let dc_cat = self.decode_huffman(dc_table)?;
+        let dc_cat = match self.decode_huffman(dc_table)? {
+            ScanRead::Value(v) => v,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
         let dc_diff = if dc_cat == 0 {
             0
         } else {
-            let bits = self.reader.read_bits(dc_cat)? as u16;
+            let bits = match self.reader.read_bits(dc_cat)? {
+                ScanRead::Value(v) => v as u16,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
             decode_value(dc_cat, bits)
         };
 
@@ -509,14 +549,18 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.prev_dc[component] = shifted_dc;
 
         // Return the unshifted value (shift left by al)
-        Ok(shifted_dc << al)
+        Ok(ScanRead::Value(shifted_dc << al))
     }
 
     /// Decodes DC refinement bit (ah>0).
     /// Returns the bit to add at position al.
-    pub fn decode_dc_refine(&mut self, al: u8) -> Result<i16> {
-        let bit = self.reader.read_bits(1)? as i16;
-        Ok(bit << al)
+    pub fn decode_dc_refine(&mut self, al: u8) -> ScanResult<i16> {
+        let bit = match self.reader.read_bits(1)? {
+            ScanRead::Value(v) => v as i16,
+            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+        };
+        Ok(ScanRead::Value(bit << al))
     }
 
     /// Decodes AC coefficients for progressive first scan (ah=0).
@@ -530,18 +574,22 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         se: u8,
         al: u8,
         eob_run: &mut u16,
-    ) -> Result<()> {
+    ) -> ScanResult<()> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
 
         // If we have a pending EOB run, decrement and skip this block
         if *eob_run > 0 {
             *eob_run -= 1;
-            return Ok(());
+            return Ok(ScanRead::Value(()));
         }
 
         let mut k = ss as usize;
         while k <= se as usize {
-            let symbol = self.decode_huffman(ac_table)?;
+            let symbol = match self.decode_huffman(ac_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
             let run = symbol >> 4;
             let size = symbol & 0x0F;
 
@@ -555,30 +603,38 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     // run=1-14 means 2^run + extra bits count of EOBs
                     if run == 0 {
                         // Single EOB, we're done with this block
-                        return Ok(());
+                        return Ok(ScanRead::Value(()));
                     } else {
                         // EOB run: 2^run + extra_bits
-                        let extra = self.reader.read_bits(run)? as u16;
+                        let extra = match self.reader.read_bits(run)? {
+                            ScanRead::Value(v) => v as u16,
+                            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                        };
                         *eob_run = (1 << run) + extra - 1; // -1 because this block counts as one
-                        return Ok(());
+                        return Ok(ScanRead::Value(()));
                     }
                 }
             } else {
                 k += run as usize;
                 if k > se as usize {
-                    return Err(Error::InvalidJpegData {
-                        reason: "AC coefficient index out of bounds",
-                    });
+                    return Err(Error::invalid_jpeg_data(
+                        "AC coefficient index out of bounds",
+                    ));
                 }
 
-                let bits = self.reader.read_bits(size)? as u16;
+                let bits = match self.reader.read_bits(size)? {
+                    ScanRead::Value(v) => v as u16,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                };
                 let value = decode_value(size, bits);
                 coeffs[k] = value << al;
                 k += 1;
             }
         }
 
-        Ok(())
+        Ok(ScanRead::Value(()))
     }
 
     /// Decodes AC refinement for progressive scan (ah>0).
@@ -591,32 +647,51 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         se: u8,
         al: u8,
         eob_run: &mut u16,
-    ) -> Result<()> {
+    ) -> ScanResult<()> {
         let ac_table = self.get_ac_table(ac_table_idx)?;
         let bit_val = 1i16 << al;
+
+        /// Helper macro to read a refinement bit, handling EndOfScan
+        macro_rules! read_refine_bit {
+            ($self:expr) => {
+                match $self.reader.read_bits(1)? {
+                    ScanRead::Value(v) => v as i16,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                }
+            };
+        }
+
+        /// Helper to apply refinement bit to a coefficient
+        fn apply_refine(coeff: &mut i16, bit: i16, bit_val: i16) {
+            if bit != 0 && (*coeff & bit_val) == 0 {
+                if *coeff > 0 {
+                    *coeff = coeff.saturating_add(bit_val);
+                } else {
+                    *coeff = coeff.saturating_sub(bit_val);
+                }
+            }
+        }
 
         // If we have a pending EOB run, apply refinement bits to nonzero coeffs and return
         if *eob_run > 0 {
             for k in ss as usize..=se as usize {
                 if coeffs[k] != 0 {
-                    let bit = self.reader.read_bits(1)? as i16;
-                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                        // Use saturating arithmetic to prevent overflow on malformed input
-                        if coeffs[k] > 0 {
-                            coeffs[k] = coeffs[k].saturating_add(bit_val);
-                        } else {
-                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
-                        }
-                    }
+                    let bit = read_refine_bit!(self);
+                    apply_refine(&mut coeffs[k], bit, bit_val);
                 }
             }
             *eob_run -= 1;
-            return Ok(());
+            return Ok(ScanRead::Value(()));
         }
 
         let mut k = ss as usize;
         while k <= se as usize {
-            let symbol = self.decode_huffman(ac_table)?;
+            let symbol = match self.decode_huffman(ac_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            };
             let run = symbol >> 4;
             let size = symbol & 0x0F;
 
@@ -625,8 +700,6 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             if size == 0 {
                 if run == 15 {
                     // ZRL in refinement - skip 16 zeros (not 15!)
-                    // The run nibble is 15, but ZRL means 16 zeros.
-                    // We need to add 1 to account for this.
                     num_zeros_to_skip = 16;
                 } else {
                     // EOB run
@@ -634,37 +707,27 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         // Single EOB - apply refinement to remaining nonzero coeffs
                         for j in k..=se as usize {
                             if coeffs[j] != 0 {
-                                let bit = self.reader.read_bits(1)? as i16;
-                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
-                                    // Use saturating arithmetic to prevent overflow on malformed input
-                                    if coeffs[j] > 0 {
-                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
-                                    } else {
-                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
-                                    }
-                                }
+                                let bit = read_refine_bit!(self);
+                                apply_refine(&mut coeffs[j], bit, bit_val);
                             }
                         }
-                        return Ok(());
+                        return Ok(ScanRead::Value(()));
                     } else {
                         // EOB run
-                        let extra = self.reader.read_bits(run)? as u16;
+                        let extra = match self.reader.read_bits(run)? {
+                            ScanRead::Value(v) => v as u16,
+                            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                        };
                         *eob_run = (1 << run) + extra - 1;
                         // Apply refinement to remaining nonzero coeffs in this block
                         for j in k..=se as usize {
                             if coeffs[j] != 0 {
-                                let bit = self.reader.read_bits(1)? as i16;
-                                if bit != 0 && (coeffs[j] & bit_val) == 0 {
-                                    // Use saturating arithmetic to prevent overflow on malformed input
-                                    if coeffs[j] > 0 {
-                                        coeffs[j] = coeffs[j].saturating_add(bit_val);
-                                    } else {
-                                        coeffs[j] = coeffs[j].saturating_sub(bit_val);
-                                    }
-                                }
+                                let bit = read_refine_bit!(self);
+                                apply_refine(&mut coeffs[j], bit, bit_val);
                             }
                         }
-                        return Ok(());
+                        return Ok(ScanRead::Value(()));
                     }
                 }
             }
@@ -672,7 +735,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // For NEW_NZ (size=1), read sign bit FIRST, before refinement bits
             // This matches the JPEG spec bit order: [Huffman] [sign] [refinement bits]
             let new_val = if size != 0 {
-                let sign_bit = self.reader.read_bits(1)? as i16;
+                let sign_bit = read_refine_bit!(self);
                 Some(if sign_bit != 0 { bit_val } else { -bit_val })
             } else {
                 None
@@ -681,23 +744,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // Skip zeros and apply refinement bits to nonzero coefficients
             while k <= se as usize {
                 // For ZRL (size=0), stop immediately after skipping all 16 zeros.
-                // Don't continue reading refinement bits for subsequent nonzeros -
-                // those belong to the next symbol.
                 if size == 0 && num_zeros_to_skip == 0 {
                     break;
                 }
 
                 if coeffs[k] != 0 {
                     // Apply refinement bit for previously-nonzero coefficient
-                    let bit = self.reader.read_bits(1)? as i16;
-                    if bit != 0 && (coeffs[k] & bit_val) == 0 {
-                        // Use saturating arithmetic to prevent overflow on malformed input
-                        if coeffs[k] > 0 {
-                            coeffs[k] = coeffs[k].saturating_add(bit_val);
-                        } else {
-                            coeffs[k] = coeffs[k].saturating_sub(bit_val);
-                        }
-                    }
+                    let bit = read_refine_bit!(self);
+                    apply_refine(&mut coeffs[k], bit, bit_val);
                 } else if num_zeros_to_skip > 0 {
                     num_zeros_to_skip -= 1;
                 } else {
@@ -717,7 +771,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // For ZRL (size==0), k already points past the 16 zeros we skipped
         }
 
-        Ok(())
+        Ok(ScanRead::Value(()))
     }
 }
 

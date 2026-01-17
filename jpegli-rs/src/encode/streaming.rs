@@ -401,10 +401,7 @@ impl StreamingEncoderBuilder {
         let expected_size = width * height * bpp;
 
         if data.len() != expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: data.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
 
         let mut encoder = self.start()?;
@@ -428,10 +425,7 @@ impl StreamingEncoderBuilder {
         let expected_size = width * height * bpp;
 
         if data.len() != expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: data.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_size, data.len()));
         }
 
         let mut encoder = self.start()?;
@@ -781,11 +775,11 @@ impl StreamingEncoder {
         let height = builder.height as usize;
 
         if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions {
-                width: builder.width,
-                height: builder.height,
-                reason: "dimensions must be non-zero",
-            });
+            return Err(Error::invalid_dimensions(
+                builder.width,
+                builder.height,
+                "dimensions must be non-zero",
+            ));
         }
 
         // Create strip processor
@@ -951,24 +945,22 @@ impl StreamingEncoder {
     /// Pushes a single row with cancellation support.
     ///
     /// The `stop` source is checked before processing each strip.
-    /// Returns `Error::Cancelled` if cancellation is requested.
+    /// Returns `Error::cancelled()` if cancellation is requested.
     pub fn push_row_with_stop(&mut self, row: &[u8], stop: impl Stop) -> Result<()> {
         // Check cancellation
         stop.check()?;
 
         // Validate row size
         if row.len() != self.bytes_per_row {
-            return Err(Error::InvalidBufferSize {
-                expected: self.bytes_per_row,
-                actual: row.len(),
-            });
+            return Err(Error::invalid_buffer_size(self.bytes_per_row, row.len()));
         }
 
         // Check if we've already received all rows
         if self.current_y + self.rows_buffered >= self.height {
-            return Err(Error::IoError {
-                reason: format!("already received all {} rows", self.height),
-            });
+            return Err(Error::io_error(format!(
+                "already received all {} rows",
+                self.height
+            )));
         }
 
         // Copy row into buffer
@@ -1008,10 +1000,7 @@ impl StreamingEncoder {
     ) -> Result<()> {
         let expected_len = num_rows * self.bytes_per_row;
         if data.len() != expected_len {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_len,
-                actual: data.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_len, data.len()));
         }
 
         // Push rows one at a time (this handles strip flushing correctly)
@@ -1056,16 +1045,17 @@ impl StreamingEncoder {
     ) -> Result<()> {
         // Can't mix RGB and YCbCr input
         if self.rows_buffered > 0 {
-            return Err(Error::InternalError {
-                reason: "cannot mix RGB and YCbCr input (RGB rows buffered)",
-            });
+            return Err(Error::internal(
+                "cannot mix RGB and YCbCr input (RGB rows buffered)",
+            ));
         }
 
         // Validate we haven't received all rows yet
         if self.current_y >= self.height {
-            return Err(Error::IoError {
-                reason: format!("already received all {} rows", self.height),
-            });
+            return Err(Error::io_error(format!(
+                "already received all {} rows",
+                self.height
+            )));
         }
 
         // Clamp to remaining rows
@@ -1074,16 +1064,13 @@ impl StreamingEncoder {
         // Validate plane sizes
         let expected_size = self.width * actual_rows;
         if y.len() < expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: y.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_size, y.len()));
         }
         if cb.len() < expected_size || cr.len() < expected_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_size,
-                actual: cb.len().min(cr.len()),
-            });
+            return Err(Error::invalid_buffer_size(
+                expected_size,
+                cb.len().min(cr.len()),
+            ));
         }
 
         // Process in chunks of strip_height rows
@@ -1136,16 +1123,17 @@ impl StreamingEncoder {
     ) -> Result<()> {
         // Can't mix RGB and YCbCr input
         if self.rows_buffered > 0 {
-            return Err(Error::InternalError {
-                reason: "cannot mix RGB and YCbCr input (RGB rows buffered)",
-            });
+            return Err(Error::internal(
+                "cannot mix RGB and YCbCr input (RGB rows buffered)",
+            ));
         }
 
         // Validate we haven't received all rows yet
         if self.current_y >= self.height {
-            return Err(Error::IoError {
-                reason: format!("already received all {} rows", self.height),
-            });
+            return Err(Error::io_error(format!(
+                "already received all {} rows",
+                self.height
+            )));
         }
 
         // Clamp to remaining rows
@@ -1154,10 +1142,7 @@ impl StreamingEncoder {
         // Validate Y plane size
         let expected_y_size = self.width * actual_rows;
         if y.len() < expected_y_size {
-            return Err(Error::InvalidBufferSize {
-                expected: expected_y_size,
-                actual: y.len(),
-            });
+            return Err(Error::invalid_buffer_size(expected_y_size, y.len()));
         }
 
         // Get subsampling info for chroma slicing
@@ -1241,9 +1226,10 @@ impl StreamingEncoder {
 
         // Validate all rows were pushed before trying to process
         if total_rows < self.height {
-            return Err(Error::IoError {
-                reason: format!("only {} of {} rows were pushed", total_rows, self.height),
-            });
+            return Err(Error::io_error(format!(
+                "only {} of {} rows were pushed",
+                total_rows, self.height
+            )));
         }
 
         // Flush any remaining rows
@@ -1293,10 +1279,9 @@ impl StreamingEncoder {
             JpegMode::Progressive => {
                 // Progressive mode requires optimized Huffman tables
                 if !encoder.config.optimize_huffman {
-                    return Err(Error::UnsupportedFeature {
-                        feature:
-                            "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
-                    });
+                    return Err(Error::unsupported_feature(
+                        "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                    ));
                 }
                 // Use progressive encoding path
                 encoder.encode_progressive_from_blocks(

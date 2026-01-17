@@ -234,14 +234,10 @@ impl<'a> EntropyEncoder<'a> {
     ) -> Result<()> {
         let dc_table = self.dc_tables[dc_table_idx]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "DC table not set",
-            })?;
+            .ok_or(Error::internal("DC table not set"))?;
         let ac_table = self.ac_tables[ac_table_idx]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+            .ok_or(Error::internal("AC table not set"))?;
 
         // Encode DC coefficient
         let dc = coeffs[0];
@@ -311,14 +307,10 @@ impl<'a> EntropyEncoder<'a> {
     ) -> Result<()> {
         let dc_table = self.dc_tables[dc_table_idx]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "DC table not set",
-            })?;
+            .ok_or(Error::internal("DC table not set"))?;
         let ac_table = self.ac_tables[ac_table_idx]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+            .ok_or(Error::internal("AC table not set"))?;
 
         let prev_dc = self.prev_dc[component];
         let (_, new_dc) =
@@ -381,16 +373,12 @@ impl<'a> EntropyEncoder<'a> {
 
             let dc_table = self.dc_tables[table_idx]
                 .as_ref()
-                .ok_or(Error::InternalError {
-                    reason: "DC table not set",
-                })?;
+                .ok_or(Error::internal("DC table not set"))?;
 
             let dc_cat = category(dc_diff);
             let (code, len) = dc_table.encode(dc_cat);
             if len == 0 {
-                return Err(Error::InternalError {
-                    reason: "DC symbol not in Huffman table",
-                });
+                return Err(Error::internal("DC symbol not in Huffman table"));
             }
             self.writer.write_bits(code, len);
 
@@ -452,9 +440,7 @@ impl<'a> EntropyEncoder<'a> {
 
         let ac_table = self.ac_tables[table_idx]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+            .ok_or(Error::internal("AC table not set"))?;
 
         // Encode non-zero coefficients
         let mut r = 0u8; // Run of zeros
@@ -480,9 +466,7 @@ impl<'a> EntropyEncoder<'a> {
 
             let (code, len) = ac_table.encode(symbol as u8);
             if len == 0 {
-                return Err(Error::InternalError {
-                    reason: "AC symbol not in Huffman table",
-                });
+                return Err(Error::internal("AC symbol not in Huffman table"));
             }
             self.writer.write_bits(code, len);
 
@@ -518,9 +502,7 @@ impl<'a> EntropyEncoder<'a> {
 
         let ac_table = self.ac_tables[table_idx]
             .as_ref()
-            .ok_or(Error::InternalError {
-                reason: "AC table not set",
-            })?;
+            .ok_or(Error::internal("AC table not set"))?;
 
         // EOB run encoding:
         // - eob_run=1: symbol=0x00 (EOB), no extra bits
@@ -577,9 +559,8 @@ impl<'a> EntropyEncoder<'a> {
         al: u8,
         eob_run: &mut u16,
     ) -> Result<()> {
-        let ac_table = self.ac_tables[table_idx].ok_or(Error::InternalError {
-            reason: "AC table not set for refinement",
-        })?;
+        let ac_table =
+            self.ac_tables[table_idx].ok_or(Error::internal("AC table not set for refinement"))?;
 
         let mut k = ss;
         let mut run = 0u32;
@@ -671,9 +652,7 @@ impl<'a> EntropyEncoder<'a> {
                 // Emit single EOB for this block
                 let ac_table = self.ac_tables[table_idx]
                     .as_ref()
-                    .ok_or(Error::InternalError {
-                        reason: "AC table not set for refinement EOB",
-                    })?;
+                    .ok_or(Error::internal("AC table not set for refinement EOB"))?;
                 let (eob_code, eob_len) = ac_table.encode(0x00);
                 self.writer.write_bits(eob_code, eob_len);
 
@@ -718,9 +697,7 @@ impl<'a> EntropyEncoder<'a> {
 
             let dc_table = self.dc_tables[table_idx]
                 .as_ref()
-                .ok_or(Error::InternalError {
-                    reason: "DC table not set for token replay",
-                })?;
+                .ok_or(Error::internal("DC table not set for token replay"))?;
 
             // Write the Huffman code for the symbol
             let (code, len) = dc_table.encode(token.symbol);
@@ -731,10 +708,9 @@ impl<'a> EntropyEncoder<'a> {
                 // Fall back to encoding using a longer code that's guaranteed to exist.
                 // For DC, category 0 always exists, so we can't encode missing categories.
                 // This is a limitation - the tokenization should ensure all used symbols exist.
-                return Err(Error::InternalError {
-                    reason:
-                        "DC symbol not in Huffman table during replay - histogram may be incomplete",
-                });
+                return Err(Error::internal(
+                    "DC symbol not in Huffman table during replay - histogram may be incomplete",
+                ));
             }
             self.writer.write_bits(code, len);
 
@@ -754,9 +730,8 @@ impl<'a> EntropyEncoder<'a> {
     /// * `tokens` - Slice of tokens to replay
     /// * `table_idx` - AC Huffman table index to use
     pub fn write_ac_first_tokens(&mut self, tokens: &[Token], table_idx: usize) -> Result<()> {
-        let ac_table = self.ac_tables[table_idx].ok_or(Error::InternalError {
-            reason: "AC table not set for token replay",
-        })?;
+        let ac_table = self.ac_tables[table_idx]
+            .ok_or(Error::internal("AC table not set for token replay"))?;
 
         for token in tokens {
             // Write the Huffman code for the symbol
@@ -766,9 +741,9 @@ impl<'a> EntropyEncoder<'a> {
             let is_eob_run = (token.symbol & 0x0F) == 0 && token.symbol != 0xF0;
 
             if len == 0 && !is_eob_run && token.symbol != 0x00 {
-                return Err(Error::InternalError {
-                    reason: "AC symbol not in Huffman table during replay",
-                });
+                return Err(Error::internal(
+                    "AC symbol not in Huffman table during replay",
+                ));
             }
 
             // For missing EOB run symbols, fall back to individual EOBs
@@ -808,9 +783,8 @@ impl<'a> EntropyEncoder<'a> {
         scan_info: &ScanTokenInfo,
         table_idx: usize,
     ) -> Result<()> {
-        let ac_table = self.ac_tables[table_idx].ok_or(Error::InternalError {
-            reason: "AC table not set for refinement replay",
-        })?;
+        let ac_table = self.ac_tables[table_idx]
+            .ok_or(Error::internal("AC table not set for refinement replay"))?;
 
         let mut refbit_idx = 0;
         let mut eobrun_idx = 0;
@@ -847,9 +821,7 @@ impl<'a> EntropyEncoder<'a> {
                         self.writer.write_bits(eob_code, eob_len);
                     }
                 } else {
-                    return Err(Error::InternalError {
-                        reason: "AC refinement symbol not in Huffman table",
-                    });
+                    return Err(Error::internal("AC refinement symbol not in Huffman table"));
                 }
             } else {
                 self.writer.write_bits(code, len);

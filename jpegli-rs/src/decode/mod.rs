@@ -248,15 +248,15 @@ impl Decoder {
 
         // Only baseline supported for scanline reading
         if parser.mode != JpegMode::Baseline {
-            return Err(Error::UnsupportedFeature {
-                feature: "scanline reader only supports baseline JPEG",
-            });
+            return Err(Error::unsupported_feature(
+                "scanline reader only supports baseline JPEG",
+            ));
         }
 
         if parser.num_components != 3 {
-            return Err(Error::UnsupportedFeature {
-                feature: "scanline reader requires 3-component YCbCr image",
-            });
+            return Err(Error::unsupported_feature(
+                "scanline reader requires 3-component YCbCr image",
+            ));
         }
 
         // Extract sampling factors
@@ -275,9 +275,9 @@ impl Decoder {
         let max_h = h_samp.iter().copied().max().unwrap_or(1);
         let max_v = v_samp.iter().copied().max().unwrap_or(1);
         if max_h > 2 || max_v > 2 {
-            return Err(Error::UnsupportedFeature {
-                feature: "scanline reader only supports sampling factors up to 2x2",
-            });
+            return Err(Error::unsupported_feature(
+                "scanline reader only supports sampling factors up to 2x2",
+            ));
         }
 
         // Extract quant table indices
@@ -446,16 +446,16 @@ impl Decoder {
 
         // XYB images store data differently - not actual YCbCr
         if info.is_xyb {
-            return Err(Error::UnsupportedFeature {
-                feature: "YCbCr output not available for XYB images",
-            });
+            return Err(Error::unsupported_feature(
+                "YCbCr output not available for XYB images",
+            ));
         }
 
         // Grayscale images have only Y component
         if info.color_space == ColorSpace::Grayscale {
-            return Err(Error::UnsupportedFeature {
-                feature: "YCbCr output requires 3-component image",
-            });
+            return Err(Error::unsupported_feature(
+                "YCbCr output requires 3-component image",
+            ));
         }
 
         // Get the YCbCr planes directly

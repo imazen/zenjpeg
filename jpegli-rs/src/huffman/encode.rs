@@ -134,10 +134,7 @@ impl HuffmanEncodeTable {
         // Count total symbols
         let total_symbols: usize = bits.iter().map(|&b| b as usize).sum();
         if total_symbols > MAX_SYMBOLS || total_symbols != values.len() {
-            return Err(Error::InvalidHuffmanTable {
-                table_idx: 0,
-                reason: "symbol count mismatch",
-            });
+            return Err(Error::invalid_huffman_table(0, "symbol count mismatch"));
         }
         table.num_symbols = total_symbols;
 
@@ -149,10 +146,7 @@ impl HuffmanEncodeTable {
             let length = (length_minus_1 + 1) as u8;
             for _ in 0..count {
                 if symbol_idx >= values.len() {
-                    return Err(Error::InvalidHuffmanTable {
-                        table_idx: 0,
-                        reason: "too many codes for values",
-                    });
+                    return Err(Error::invalid_huffman_table(0, "too many codes for values"));
                 }
                 let symbol = values[symbol_idx] as usize;
                 table.codes[symbol] = code;
