@@ -744,6 +744,7 @@ dependencies = [
  "sha2",
  "spin",
  "test-case",
+ "thiserror",
  "whereat",
  "wide 1.1.1",
  "yuv",

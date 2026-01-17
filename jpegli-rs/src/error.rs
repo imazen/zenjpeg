@@ -1,11 +1,22 @@
 //! Error types for jpegli.
+//!
+//! Errors are organized hierarchically:
+//! - [`ArgumentError`] - Invalid arguments from the user
+//! - [`ResourceError`] - Memory/IO failures
+//! - Decoder-specific errors in [`crate::decoder::error`]
+//! - Encoder-specific errors in [`crate::encoder::error`]
 
 use alloc::string::String;
 use core::fmt;
+use thiserror::Error;
 use whereat::{AtTrace, AtTraceBoxed, AtTraceable};
 
 /// Result type for jpegli operations.
 pub type Result<T> = core::result::Result<T, Error>;
+
+// ============================================================================
+// ScanRead - Control flow for entropy-coded scan reading
+// ============================================================================
 
 /// Result of reading from an entropy-coded scan.
 ///
@@ -80,6 +91,333 @@ impl<T> ScanRead<T> {
 /// - `Err(e)` - Actual error (corruption, internal error, etc.)
 pub type ScanResult<T> = Result<ScanRead<T>>;
 
+// ============================================================================
+// Shared Error Types - Used by both encoder and decoder
+// ============================================================================
+
+/// Errors caused by invalid arguments from the caller.
+///
+/// These indicate bugs in the calling code, not runtime failures.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum ArgumentError {
+    /// Invalid image dimensions (zero or exceeds limits).
+    #[error("invalid dimensions {width}x{height}: {reason}")]
+    InvalidDimensions {
+        width: u32,
+        height: u32,
+        reason: &'static str,
+    },
+
+    /// Invalid color space or pixel format combination.
+    #[error("invalid color format: {reason}")]
+    InvalidColorFormat { reason: &'static str },
+
+    /// Buffer size doesn't match expected size.
+    #[error("invalid buffer size: expected {expected} bytes, got {actual}")]
+    InvalidBufferSize { expected: usize, actual: usize },
+
+    /// Feature not supported by this codec.
+    #[error("unsupported feature: {feature}")]
+    UnsupportedFeature { feature: &'static str },
+
+    /// Pixel format not supported for this operation.
+    #[error("pixel format {format:?} not supported")]
+    UnsupportedPixelFormat { format: crate::types::PixelFormat },
+}
+
+/// Errors caused by resource exhaustion or I/O failures.
+///
+/// These are runtime failures, not bugs in calling code.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum ResourceError {
+    /// Memory allocation failed.
+    #[error("allocation of {bytes} bytes failed while {context}")]
+    AllocationFailed { bytes: usize, context: &'static str },
+
+    /// Size calculation overflowed.
+    #[error("size calculation overflow while {context}")]
+    SizeOverflow { context: &'static str },
+
+    /// Image exceeds maximum pixel limit.
+    #[error("image too large: {pixels} pixels exceeds limit of {limit}")]
+    ImageTooLarge { pixels: u64, limit: u64 },
+
+    /// I/O operation failed.
+    #[error("I/O error: {reason}")]
+    IoError { reason: String },
+}
+
+// ============================================================================
+// Internal ErrorKind - Flat enum for internal use
+// ============================================================================
+
+/// The specific kind of error that occurred (internal flat enum).
+///
+/// This is used internally and by the `From` implementations.
+/// Public APIs use [`decoder::ErrorKind`](crate::decoder::ErrorKind) or
+/// [`encoder::ErrorKind`](crate::encoder::ErrorKind).
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    // === Shared: Argument errors ===
+    /// Invalid input dimensions (zero or too large).
+    InvalidDimensions {
+        width: u32,
+        height: u32,
+        reason: &'static str,
+    },
+    /// Invalid color space or pixel format combination.
+    InvalidColorFormat { reason: &'static str },
+    /// Input buffer has wrong size.
+    InvalidBufferSize { expected: usize, actual: usize },
+    /// Unsupported JPEG feature.
+    UnsupportedFeature { feature: &'static str },
+    /// Pixel format not yet supported for this operation.
+    UnsupportedPixelFormat { format: crate::types::PixelFormat },
+
+    // === Shared: Resource errors ===
+    /// Memory allocation failed (OOM or limit exceeded).
+    AllocationFailed { bytes: usize, context: &'static str },
+    /// Size calculation overflowed.
+    SizeOverflow { context: &'static str },
+    /// Image exceeds maximum pixel limit.
+    ImageTooLarge { pixels: u64, limit: u64 },
+    /// I/O error during encoding/decoding.
+    IoError { reason: String },
+
+    // === Shared: Other ===
+    /// ICC color management error.
+    IccError(String),
+    /// Internal error (should not happen in correct usage).
+    InternalError { reason: &'static str },
+    /// Operation was cancelled via Stop trait.
+    Cancelled,
+
+    // === Decoder-specific: Datastream errors ===
+    /// Invalid JPEG data (corrupted or not a JPEG).
+    InvalidJpegData { reason: &'static str },
+    /// Input data is truncated or corrupted.
+    TruncatedData { context: &'static str },
+    /// Invalid marker or segment in JPEG stream.
+    InvalidMarker { marker: u8, context: &'static str },
+    /// Invalid Huffman table.
+    InvalidHuffmanTable { table_idx: u8, reason: &'static str },
+    /// Invalid quantization table.
+    InvalidQuantTable { table_idx: u8, reason: &'static str },
+    /// Too many progressive scans.
+    TooManyScans { count: usize, limit: usize },
+    /// Decode error from JPEG decoder.
+    DecodeError(String),
+
+    // === Encoder-specific: Argument errors ===
+    /// Invalid quality parameter.
+    InvalidQuality { value: f32, valid_range: &'static str },
+    /// Invalid scan script for progressive encoding.
+    InvalidScanScript(String),
+    /// Invalid encoder configuration.
+    InvalidConfig(String),
+    /// Stride too small for image width.
+    StrideTooSmall { width: u32, stride: usize },
+
+    // === Encoder-specific: State errors ===
+    /// Pushed more rows than image height.
+    TooManyRows { height: u32, pushed: u32 },
+    /// Encoding finished without all rows pushed.
+    IncompleteImage { height: u32, pushed: u32 },
+}
+
+impl ErrorKind {
+    /// Convert to ArgumentError if this is an argument error variant.
+    pub fn as_argument_error(&self) -> Option<ArgumentError> {
+        match self {
+            Self::InvalidDimensions {
+                width,
+                height,
+                reason,
+            } => Some(ArgumentError::InvalidDimensions {
+                width: *width,
+                height: *height,
+                reason,
+            }),
+            Self::InvalidColorFormat { reason } => {
+                Some(ArgumentError::InvalidColorFormat { reason })
+            }
+            Self::InvalidBufferSize { expected, actual } => {
+                Some(ArgumentError::InvalidBufferSize {
+                    expected: *expected,
+                    actual: *actual,
+                })
+            }
+            Self::UnsupportedFeature { feature } => {
+                Some(ArgumentError::UnsupportedFeature { feature })
+            }
+            Self::UnsupportedPixelFormat { format } => {
+                Some(ArgumentError::UnsupportedPixelFormat { format: *format })
+            }
+            _ => None,
+        }
+    }
+
+    /// Convert to ResourceError if this is a resource error variant.
+    pub fn as_resource_error(&self) -> Option<ResourceError> {
+        match self {
+            Self::AllocationFailed { bytes, context } => Some(ResourceError::AllocationFailed {
+                bytes: *bytes,
+                context,
+            }),
+            Self::SizeOverflow { context } => Some(ResourceError::SizeOverflow { context }),
+            Self::ImageTooLarge { pixels, limit } => Some(ResourceError::ImageTooLarge {
+                pixels: *pixels,
+                limit: *limit,
+            }),
+            Self::IoError { reason } => Some(ResourceError::IoError {
+                reason: reason.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Argument errors
+            Self::InvalidDimensions {
+                width,
+                height,
+                reason,
+            } => write!(f, "invalid dimensions {}x{}: {}", width, height, reason),
+            Self::InvalidColorFormat { reason } => write!(f, "invalid color format: {}", reason),
+            Self::InvalidBufferSize { expected, actual } => {
+                write!(
+                    f,
+                    "invalid buffer size: expected {} bytes, got {}",
+                    expected, actual
+                )
+            }
+            Self::UnsupportedFeature { feature } => write!(f, "unsupported feature: {}", feature),
+            Self::UnsupportedPixelFormat { format } => {
+                write!(f, "pixel format {:?} not supported", format)
+            }
+
+            // Resource errors
+            Self::AllocationFailed { bytes, context } => {
+                write!(f, "allocation of {} bytes failed while {}", bytes, context)
+            }
+            Self::SizeOverflow { context } => {
+                write!(f, "size calculation overflow while {}", context)
+            }
+            Self::ImageTooLarge { pixels, limit } => {
+                write!(
+                    f,
+                    "image too large: {} pixels exceeds limit of {}",
+                    pixels, limit
+                )
+            }
+            Self::IoError { reason } => write!(f, "I/O error: {}", reason),
+
+            // Other shared
+            Self::IccError(reason) => write!(f, "ICC error: {}", reason),
+            Self::InternalError { reason } => write!(f, "internal error: {}", reason),
+            Self::Cancelled => write!(f, "operation cancelled"),
+
+            // Decoder-specific
+            Self::InvalidJpegData { reason } => write!(f, "invalid JPEG data: {}", reason),
+            Self::TruncatedData { context } => write!(f, "truncated data while {}", context),
+            Self::InvalidMarker { marker, context } => {
+                write!(f, "invalid marker 0x{:02X} while {}", marker, context)
+            }
+            Self::InvalidHuffmanTable { table_idx, reason } => {
+                write!(f, "invalid Huffman table {}: {}", table_idx, reason)
+            }
+            Self::InvalidQuantTable { table_idx, reason } => {
+                write!(f, "invalid quantization table {}: {}", table_idx, reason)
+            }
+            Self::TooManyScans { count, limit } => {
+                write!(f, "too many scans: {} exceeds limit of {}", count, limit)
+            }
+            Self::DecodeError(reason) => write!(f, "decode error: {}", reason),
+
+            // Encoder-specific
+            Self::InvalidQuality { value, valid_range } => {
+                write!(f, "invalid quality {}: must be in {}", value, valid_range)
+            }
+            Self::InvalidScanScript(reason) => write!(f, "invalid scan script: {}", reason),
+            Self::InvalidConfig(reason) => write!(f, "invalid encoder configuration: {}", reason),
+            Self::StrideTooSmall { width, stride } => {
+                write!(
+                    f,
+                    "stride {} is too small for width {} pixels",
+                    stride, width
+                )
+            }
+            Self::TooManyRows { height, pushed } => {
+                write!(
+                    f,
+                    "pushed {} rows but image height is only {}",
+                    pushed, height
+                )
+            }
+            Self::IncompleteImage { height, pushed } => {
+                write!(
+                    f,
+                    "encoding finished after {} rows but image height is {}",
+                    pushed, height
+                )
+            }
+        }
+    }
+}
+
+// ============================================================================
+// From implementations for ErrorKind
+// ============================================================================
+
+impl From<ArgumentError> for ErrorKind {
+    fn from(err: ArgumentError) -> Self {
+        match err {
+            ArgumentError::InvalidDimensions {
+                width,
+                height,
+                reason,
+            } => Self::InvalidDimensions {
+                width,
+                height,
+                reason,
+            },
+            ArgumentError::InvalidColorFormat { reason } => Self::InvalidColorFormat { reason },
+            ArgumentError::InvalidBufferSize { expected, actual } => {
+                Self::InvalidBufferSize { expected, actual }
+            }
+            ArgumentError::UnsupportedFeature { feature } => Self::UnsupportedFeature { feature },
+            ArgumentError::UnsupportedPixelFormat { format } => {
+                Self::UnsupportedPixelFormat { format }
+            }
+        }
+    }
+}
+
+impl From<ResourceError> for ErrorKind {
+    fn from(err: ResourceError) -> Self {
+        match err {
+            ResourceError::AllocationFailed { bytes, context } => {
+                Self::AllocationFailed { bytes, context }
+            }
+            ResourceError::SizeOverflow { context } => Self::SizeOverflow { context },
+            ResourceError::ImageTooLarge { pixels, limit } => {
+                Self::ImageTooLarge { pixels, limit }
+            }
+            ResourceError::IoError { reason } => Self::IoError { reason },
+        }
+    }
+}
+
+// ============================================================================
+// Error - Main error type with location tracking
+// ============================================================================
+
 /// Errors that can occur during JPEG encoding/decoding.
 ///
 /// Use [`Error::kind()`] to match on the specific error variant.
@@ -87,148 +425,6 @@ pub type ScanResult<T> = Result<ScanRead<T>>;
 pub struct Error {
     kind: ErrorKind,
     trace: AtTraceBoxed,
-}
-
-/// The specific kind of error that occurred.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ErrorKind {
-    /// Invalid input dimensions (zero or too large).
-    InvalidDimensions {
-        /// Width provided
-        width: u32,
-        /// Height provided
-        height: u32,
-        /// Reason for invalidity
-        reason: &'static str,
-    },
-    /// Invalid quality parameter.
-    InvalidQuality {
-        /// Value provided
-        value: f32,
-        /// Valid range description
-        valid_range: &'static str,
-    },
-    /// Invalid color space or pixel format combination.
-    InvalidColorFormat {
-        /// Description of the issue
-        reason: &'static str,
-    },
-    /// Input buffer has wrong size.
-    InvalidBufferSize {
-        /// Expected size in bytes
-        expected: usize,
-        /// Actual size in bytes
-        actual: usize,
-    },
-    /// Invalid JPEG data (corrupted or not a JPEG).
-    InvalidJpegData {
-        /// Description of the issue
-        reason: &'static str,
-    },
-    /// Input data is truncated or corrupted.
-    TruncatedData {
-        /// Context where truncation was detected
-        context: &'static str,
-    },
-    /// Invalid marker or segment in JPEG stream.
-    InvalidMarker {
-        /// The marker byte encountered
-        marker: u8,
-        /// Context
-        context: &'static str,
-    },
-    /// Invalid Huffman table.
-    InvalidHuffmanTable {
-        /// Table index
-        table_idx: u8,
-        /// Description of the issue
-        reason: &'static str,
-    },
-    /// Invalid quantization table.
-    InvalidQuantTable {
-        /// Table index
-        table_idx: u8,
-        /// Description of the issue
-        reason: &'static str,
-    },
-    /// Unsupported JPEG feature.
-    UnsupportedFeature {
-        /// Description of unsupported feature
-        feature: &'static str,
-    },
-    /// Internal error (should not happen in correct usage).
-    InternalError {
-        /// Description
-        reason: &'static str,
-    },
-    /// I/O error during encoding/decoding.
-    IoError {
-        /// Description
-        reason: String,
-    },
-    /// ICC color management error.
-    IccError(String),
-    /// Decode error from JPEG decoder.
-    DecodeError(String),
-    /// Invalid scan script for progressive encoding.
-    InvalidScanScript(String),
-    /// Memory allocation failed (OOM or limit exceeded).
-    AllocationFailed {
-        /// Number of bytes requested
-        bytes: usize,
-        /// Context where allocation failed
-        context: &'static str,
-    },
-    /// Size calculation overflowed.
-    SizeOverflow {
-        /// Context where overflow occurred
-        context: &'static str,
-    },
-    /// Image exceeds maximum pixel limit.
-    ImageTooLarge {
-        /// Total pixels in image
-        pixels: u64,
-        /// Maximum allowed pixels
-        limit: u64,
-    },
-    /// Too many progressive scans.
-    TooManyScans {
-        /// Number of scans encountered
-        count: usize,
-        /// Maximum allowed
-        limit: usize,
-    },
-    /// Operation was cancelled via Stop trait.
-    Cancelled,
-    /// Pixel format not yet supported for this operation.
-    UnsupportedPixelFormat {
-        /// The pixel format that was attempted
-        format: crate::types::PixelFormat,
-    },
-    /// Invalid encoder configuration.
-    InvalidConfig(String),
-    /// Stride too small for image width.
-    StrideTooSmall {
-        /// Image width
-        width: u32,
-        /// Stride provided
-        stride: usize,
-    },
-    /// Pushed more rows than image height.
-    TooManyRows {
-        /// Image height
-        height: u32,
-        /// Rows already pushed
-        pushed: u32,
-    },
-    /// Encoding finished without all rows pushed.
-    IncompleteImage {
-        /// Image height
-        height: u32,
-        /// Rows actually pushed
-        pushed: u32,
-    },
 }
 
 impl Error {
@@ -262,7 +458,9 @@ impl Error {
         self.kind
     }
 
-    // Convenience constructors for common errors
+    // ========================================================================
+    // Convenience constructors - Argument errors
+    // ========================================================================
 
     /// Create an invalid dimensions error.
     #[track_caller]
@@ -272,12 +470,6 @@ impl Error {
             height,
             reason,
         })
-    }
-
-    /// Create an invalid quality error.
-    #[track_caller]
-    pub fn invalid_quality(value: f32, valid_range: &'static str) -> Self {
-        Self::new(ErrorKind::InvalidQuality { value, valid_range })
     }
 
     /// Create an invalid color format error.
@@ -291,6 +483,72 @@ impl Error {
     pub fn invalid_buffer_size(expected: usize, actual: usize) -> Self {
         Self::new(ErrorKind::InvalidBufferSize { expected, actual })
     }
+
+    /// Create an unsupported feature error.
+    #[track_caller]
+    pub fn unsupported_feature(feature: &'static str) -> Self {
+        Self::new(ErrorKind::UnsupportedFeature { feature })
+    }
+
+    /// Create an unsupported pixel format error.
+    #[track_caller]
+    pub fn unsupported_pixel_format(format: crate::types::PixelFormat) -> Self {
+        Self::new(ErrorKind::UnsupportedPixelFormat { format })
+    }
+
+    // ========================================================================
+    // Convenience constructors - Resource errors
+    // ========================================================================
+
+    /// Create an allocation failed error.
+    #[track_caller]
+    pub fn allocation_failed(bytes: usize, context: &'static str) -> Self {
+        Self::new(ErrorKind::AllocationFailed { bytes, context })
+    }
+
+    /// Create a size overflow error.
+    #[track_caller]
+    pub fn size_overflow(context: &'static str) -> Self {
+        Self::new(ErrorKind::SizeOverflow { context })
+    }
+
+    /// Create an image too large error.
+    #[track_caller]
+    pub fn image_too_large(pixels: u64, limit: u64) -> Self {
+        Self::new(ErrorKind::ImageTooLarge { pixels, limit })
+    }
+
+    /// Create an I/O error.
+    #[track_caller]
+    pub fn io_error(reason: String) -> Self {
+        Self::new(ErrorKind::IoError { reason })
+    }
+
+    // ========================================================================
+    // Convenience constructors - Other shared errors
+    // ========================================================================
+
+    /// Create an ICC error.
+    #[track_caller]
+    pub fn icc_error(reason: String) -> Self {
+        Self::new(ErrorKind::IccError(reason))
+    }
+
+    /// Create an internal error.
+    #[track_caller]
+    pub fn internal(reason: &'static str) -> Self {
+        Self::new(ErrorKind::InternalError { reason })
+    }
+
+    /// Create a cancelled error.
+    #[track_caller]
+    pub fn cancelled() -> Self {
+        Self::new(ErrorKind::Cancelled)
+    }
+
+    // ========================================================================
+    // Convenience constructors - Decoder-specific errors
+    // ========================================================================
 
     /// Create an invalid JPEG data error.
     #[track_caller]
@@ -322,28 +580,10 @@ impl Error {
         Self::new(ErrorKind::InvalidQuantTable { table_idx, reason })
     }
 
-    /// Create an unsupported feature error.
+    /// Create a too many scans error.
     #[track_caller]
-    pub fn unsupported_feature(feature: &'static str) -> Self {
-        Self::new(ErrorKind::UnsupportedFeature { feature })
-    }
-
-    /// Create an internal error.
-    #[track_caller]
-    pub fn internal(reason: &'static str) -> Self {
-        Self::new(ErrorKind::InternalError { reason })
-    }
-
-    /// Create an I/O error.
-    #[track_caller]
-    pub fn io_error(reason: String) -> Self {
-        Self::new(ErrorKind::IoError { reason })
-    }
-
-    /// Create an ICC error.
-    #[track_caller]
-    pub fn icc_error(reason: String) -> Self {
-        Self::new(ErrorKind::IccError(reason))
+    pub fn too_many_scans(count: usize, limit: usize) -> Self {
+        Self::new(ErrorKind::TooManyScans { count, limit })
     }
 
     /// Create a decode error.
@@ -352,46 +592,20 @@ impl Error {
         Self::new(ErrorKind::DecodeError(reason))
     }
 
+    // ========================================================================
+    // Convenience constructors - Encoder-specific errors
+    // ========================================================================
+
+    /// Create an invalid quality error.
+    #[track_caller]
+    pub fn invalid_quality(value: f32, valid_range: &'static str) -> Self {
+        Self::new(ErrorKind::InvalidQuality { value, valid_range })
+    }
+
     /// Create an invalid scan script error.
     #[track_caller]
     pub fn invalid_scan_script(reason: String) -> Self {
         Self::new(ErrorKind::InvalidScanScript(reason))
-    }
-
-    /// Create an allocation failed error.
-    #[track_caller]
-    pub fn allocation_failed(bytes: usize, context: &'static str) -> Self {
-        Self::new(ErrorKind::AllocationFailed { bytes, context })
-    }
-
-    /// Create a size overflow error.
-    #[track_caller]
-    pub fn size_overflow(context: &'static str) -> Self {
-        Self::new(ErrorKind::SizeOverflow { context })
-    }
-
-    /// Create an image too large error.
-    #[track_caller]
-    pub fn image_too_large(pixels: u64, limit: u64) -> Self {
-        Self::new(ErrorKind::ImageTooLarge { pixels, limit })
-    }
-
-    /// Create a too many scans error.
-    #[track_caller]
-    pub fn too_many_scans(count: usize, limit: usize) -> Self {
-        Self::new(ErrorKind::TooManyScans { count, limit })
-    }
-
-    /// Create a cancelled error.
-    #[track_caller]
-    pub fn cancelled() -> Self {
-        Self::new(ErrorKind::Cancelled)
-    }
-
-    /// Create an unsupported pixel format error.
-    #[track_caller]
-    pub fn unsupported_pixel_format(format: crate::types::PixelFormat) -> Self {
-        Self::new(ErrorKind::UnsupportedPixelFormat { format })
     }
 
     /// Create an invalid config error.
@@ -439,109 +653,21 @@ impl fmt::Display for Error {
     }
 }
 
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDimensions {
-                width,
-                height,
-                reason,
-            } => {
-                write!(f, "invalid dimensions {}x{}: {}", width, height, reason)
-            }
-            Self::InvalidQuality { value, valid_range } => {
-                write!(f, "invalid quality {}: must be in {}", value, valid_range)
-            }
-            Self::InvalidColorFormat { reason } => {
-                write!(f, "invalid color format: {}", reason)
-            }
-            Self::InvalidBufferSize { expected, actual } => {
-                write!(
-                    f,
-                    "invalid buffer size: expected {} bytes, got {}",
-                    expected, actual
-                )
-            }
-            Self::InvalidJpegData { reason } => {
-                write!(f, "invalid JPEG data: {}", reason)
-            }
-            Self::TruncatedData { context } => {
-                write!(f, "truncated data while {}", context)
-            }
-            Self::InvalidMarker { marker, context } => {
-                write!(f, "invalid marker 0x{:02X} while {}", marker, context)
-            }
-            Self::InvalidHuffmanTable { table_idx, reason } => {
-                write!(f, "invalid Huffman table {}: {}", table_idx, reason)
-            }
-            Self::InvalidQuantTable { table_idx, reason } => {
-                write!(f, "invalid quantization table {}: {}", table_idx, reason)
-            }
-            Self::UnsupportedFeature { feature } => {
-                write!(f, "unsupported feature: {}", feature)
-            }
-            Self::InternalError { reason } => {
-                write!(f, "internal error: {}", reason)
-            }
-            Self::IoError { reason } => {
-                write!(f, "I/O error: {}", reason)
-            }
-            Self::IccError(reason) => {
-                write!(f, "ICC error: {}", reason)
-            }
-            Self::DecodeError(reason) => {
-                write!(f, "decode error: {}", reason)
-            }
-            Self::InvalidScanScript(reason) => {
-                write!(f, "invalid scan script: {}", reason)
-            }
-            Self::AllocationFailed { bytes, context } => {
-                write!(f, "allocation of {} bytes failed while {}", bytes, context)
-            }
-            Self::SizeOverflow { context } => {
-                write!(f, "size calculation overflow while {}", context)
-            }
-            Self::ImageTooLarge { pixels, limit } => {
-                write!(
-                    f,
-                    "image too large: {} pixels exceeds limit of {}",
-                    pixels, limit
-                )
-            }
-            Self::TooManyScans { count, limit } => {
-                write!(f, "too many scans: {} exceeds limit of {}", count, limit)
-            }
-            Self::Cancelled => {
-                write!(f, "operation cancelled")
-            }
-            Self::UnsupportedPixelFormat { format } => {
-                write!(f, "pixel format {:?} not yet supported", format)
-            }
-            Self::InvalidConfig(reason) => {
-                write!(f, "invalid encoder configuration: {}", reason)
-            }
-            Self::StrideTooSmall { width, stride } => {
-                write!(
-                    f,
-                    "stride {} is too small for width {} pixels",
-                    stride, width
-                )
-            }
-            Self::TooManyRows { height, pushed } => {
-                write!(
-                    f,
-                    "pushed {} rows but image height is only {}",
-                    pushed, height
-                )
-            }
-            Self::IncompleteImage { height, pushed } => {
-                write!(
-                    f,
-                    "encoding finished after {} rows but image height is {}",
-                    pushed, height
-                )
-            }
-        }
+// ============================================================================
+// From implementations for Error
+// ============================================================================
+
+impl From<ArgumentError> for Error {
+    #[track_caller]
+    fn from(err: ArgumentError) -> Self {
+        Self::new(err.into())
+    }
+}
+
+impl From<ResourceError> for Error {
+    #[track_caller]
+    fn from(err: ResourceError) -> Self {
+        Self::new(err.into())
     }
 }
 
@@ -577,7 +703,10 @@ impl From<crate::foundation::aligned_alloc::AllocError> for Error {
     }
 }
 
-// Implement Clone manually since AtTrace doesn't implement Clone
+// ============================================================================
+// Clone and PartialEq for Error
+// ============================================================================
+
 impl Clone for Error {
     fn clone(&self) -> Self {
         Self {
@@ -587,12 +716,15 @@ impl Clone for Error {
     }
 }
 
-// Implement PartialEq based on kind only (trace is not compared)
 impl PartialEq for Error {
     fn eq(&self, other: &Self) -> bool {
         self.kind == other.kind
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -604,26 +736,46 @@ mod tests {
         let size = core::mem::size_of::<Error>();
         println!("\n=== ERROR SIZES ===");
         println!("Error: {} bytes", size);
-        println!(
-            "Option<Error>: {} bytes",
-            core::mem::size_of::<Option<Error>>()
-        );
-        println!("Result<()>: {} bytes", core::mem::size_of::<Result<()>>());
-        println!(
-            "core::result::Result<(), Error>: {} bytes",
-            core::mem::size_of::<core::result::Result<(), Error>>()
-        );
-        println!("Box<Error>: {} bytes", core::mem::size_of::<Box<Error>>());
         println!("ErrorKind: {} bytes", core::mem::size_of::<ErrorKind>());
-        // Error = ErrorKind (~32 bytes: String payload + discriminant) + AtTraceBoxed (8 bytes)
-        // Expected: ~40 bytes on 64-bit platforms
+        println!(
+            "ArgumentError: {} bytes",
+            core::mem::size_of::<ArgumentError>()
+        );
+        println!(
+            "ResourceError: {} bytes",
+            core::mem::size_of::<ResourceError>()
+        );
         assert!(size <= 48, "Error is {} bytes, consider optimizing", size);
     }
 
     #[test]
-    fn test_error_display() {
-        let err = Error::invalid_dimensions(0, 100, "width cannot be zero");
+    fn test_argument_error_display() {
+        let err = ArgumentError::InvalidDimensions {
+            width: 0,
+            height: 100,
+            reason: "width cannot be zero",
+        };
         assert!(err.to_string().contains("width cannot be zero"));
+    }
+
+    #[test]
+    fn test_resource_error_display() {
+        let err = ResourceError::AllocationFailed {
+            bytes: 1024,
+            context: "allocating buffer",
+        };
+        assert!(err.to_string().contains("1024 bytes"));
+    }
+
+    #[test]
+    fn test_error_from_argument_error() {
+        let arg_err = ArgumentError::InvalidDimensions {
+            width: 0,
+            height: 100,
+            reason: "width cannot be zero",
+        };
+        let err: Error = arg_err.into();
+        assert!(matches!(err.kind(), ErrorKind::InvalidDimensions { .. }));
     }
 
     #[test]
@@ -644,7 +796,6 @@ mod tests {
         }
 
         let err = outer().unwrap_err();
-        // Should have 2 trace entries: one from inner, one from outer's .at()
         assert!(
             err.trace.frame_count() >= 1,
             "trace should have at least 1 entry"
@@ -657,123 +808,5 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err: Error = io_err.into();
         assert!(matches!(err.kind(), ErrorKind::IoError { .. }));
-    }
-
-    /// Test translating jpegli errors into a different At-style error type
-    /// while preserving the full stack trace.
-    #[test]
-    fn test_trace_preservation_across_error_types() {
-        use whereat::At;
-
-        // A different application-level error type using whereat::At
-        #[derive(Debug)]
-        enum AppErrorKind {
-            ImageProcessing(ErrorKind),
-            Other(&'static str),
-        }
-
-        // Simulate a call chain that creates and propagates a jpegli error
-        fn jpegli_inner() -> Result<()> {
-            Err(Error::invalid_dimensions(0, 100, "width cannot be zero"))
-        }
-
-        fn jpegli_outer() -> Result<()> {
-            jpegli_inner().at_str("processing user upload")?;
-            Ok(())
-        }
-
-        // Convert jpegli::Error to At<AppErrorKind>, preserving the trace
-        fn to_app_error(mut err: Error) -> At<AppErrorKind> {
-            // Take the trace from jpegli error
-            let trace = err.trace.take().unwrap_or_default();
-
-            // Create new At<AppErrorKind> with the transferred trace
-            At::from_parts(AppErrorKind::ImageProcessing(err.into_kind()), trace)
-        }
-
-        // Run the chain and convert
-        let jpegli_err = jpegli_outer().unwrap_err();
-        let original_frame_count = jpegli_err.trace.frame_count();
-
-        // Verify we have trace frames before conversion
-        assert!(
-            original_frame_count >= 1,
-            "jpegli error should have trace frames"
-        );
-
-        // Convert to app error
-        let app_err = to_app_error(jpegli_err);
-
-        // Verify trace was preserved
-        assert_eq!(
-            app_err.frame_count(),
-            original_frame_count,
-            "trace frames should be preserved after conversion"
-        );
-
-        // Verify we can still iterate the trace
-        let frames: Vec<_> = app_err.frames().collect();
-        assert!(
-            !frames.is_empty(),
-            "should be able to iterate trace frames"
-        );
-
-        // Verify the error kind was preserved
-        assert!(
-            matches!(app_err.error(), AppErrorKind::ImageProcessing(_)),
-            "error kind should be ImageProcessing"
-        );
-
-        // Verify context string is accessible via frames
-        let mut found_context = false;
-        for frame in app_err.frames() {
-            for ctx in frame.contexts() {
-                if ctx.as_text() == Some("processing user upload") {
-                    found_context = true;
-                }
-            }
-        }
-        assert!(found_context, "context string should be preserved in trace");
-    }
-
-    /// Test using AtTraceable::into_at() for cleaner error conversion
-    #[test]
-    fn test_into_at_conversion() {
-        use whereat::At;
-
-        #[derive(Debug)]
-        struct WrapperError {
-            kind: ErrorKind,
-        }
-
-        fn create_error() -> Result<()> {
-            Err(Error::invalid_quality(150.0, "0.0-100.0"))
-        }
-
-        fn propagate() -> Result<()> {
-            create_error().at_str("in propagate")?;
-            Ok(())
-        }
-
-        let jpegli_err = propagate().unwrap_err();
-        let original_frames = jpegli_err.trace.frame_count();
-
-        // Use into_at() to convert while preserving trace
-        let wrapper: At<WrapperError> = jpegli_err.into_at(|e| WrapperError {
-            kind: e.into_kind(),
-        });
-
-        // Verify trace preserved
-        assert_eq!(
-            wrapper.frame_count(),
-            original_frames,
-            "into_at should preserve all trace frames"
-        );
-
-        // Verify error content
-        assert!(
-            matches!(wrapper.error().kind, ErrorKind::InvalidQuality { .. }),
-            "error kind should be preserved"
-        );
     }
 }

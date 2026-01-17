@@ -1,11 +1,115 @@
 //! Encoder error types.
+//!
+//! The encoder uses a hierarchical error structure:
+//! - [`ArgumentError`](crate::error::ArgumentError) - Invalid arguments
+//! - [`ResourceError`](crate::error::ResourceError) - Memory/IO failures
+//! - [`EncoderArgError`] - Invalid encoder-specific arguments
+//! - [`EncoderStateError`] - Encoder state/usage errors
 
 use alloc::string::String;
 use core::fmt;
+use thiserror::Error;
 use whereat::{AtTrace, AtTraceBoxed, AtTraceable};
+
+// Re-export shared error types
+pub use crate::error::{ArgumentError, ResourceError};
 
 /// Result type for encoder operations.
 pub type Result<T> = core::result::Result<T, Error>;
+
+// ============================================================================
+// Encoder-specific: Argument errors
+// ============================================================================
+
+/// Encoder-specific argument errors.
+///
+/// These indicate invalid encoder configuration, not runtime failures.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum EncoderArgError {
+    /// Invalid quality parameter.
+    #[error("invalid quality {value}: must be in {valid_range}")]
+    InvalidQuality { value: f32, valid_range: &'static str },
+
+    /// Invalid scan script for progressive encoding.
+    #[error("invalid scan script: {0}")]
+    InvalidScanScript(String),
+
+    /// Invalid encoder configuration.
+    #[error("invalid encoder configuration: {0}")]
+    InvalidConfig(String),
+
+    /// Stride too small for image width.
+    #[error("stride {stride} is too small for width {width} pixels")]
+    StrideTooSmall { width: u32, stride: usize },
+}
+
+// ============================================================================
+// Encoder-specific: State errors
+// ============================================================================
+
+/// Encoder state/usage errors.
+///
+/// These indicate incorrect API usage sequence, not invalid input.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum EncoderStateError {
+    /// Pushed more rows than image height.
+    #[error("pushed {pushed} rows but image height is only {height}")]
+    TooManyRows { height: u32, pushed: u32 },
+
+    /// Encoding finished without all rows pushed.
+    #[error("encoding finished after {pushed} rows but image height is {height}")]
+    IncompleteImage { height: u32, pushed: u32 },
+}
+
+// ============================================================================
+// Encoder ErrorKind - Composed from shared + encoder-specific
+// ============================================================================
+
+/// The specific kind of encoder error.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    /// Invalid shared argument from caller.
+    Argument(ArgumentError),
+
+    /// Invalid encoder-specific argument.
+    EncoderArg(EncoderArgError),
+
+    /// Resource exhaustion or I/O failure.
+    Resource(ResourceError),
+
+    /// Encoder state/usage error.
+    State(EncoderStateError),
+
+    /// ICC color management error.
+    Icc(String),
+
+    /// Internal error (should not happen in correct usage).
+    Internal { reason: &'static str },
+
+    /// Operation was cancelled.
+    Cancelled,
+}
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Argument(e) => write!(f, "{}", e),
+            Self::EncoderArg(e) => write!(f, "{}", e),
+            Self::Resource(e) => write!(f, "{}", e),
+            Self::State(e) => write!(f, "{}", e),
+            Self::Icc(reason) => write!(f, "ICC error: {}", reason),
+            Self::Internal { reason } => write!(f, "internal error: {}", reason),
+            Self::Cancelled => write!(f, "operation cancelled"),
+        }
+    }
+}
+
+// ============================================================================
+// Encoder Error - Main error type with location tracking
+// ============================================================================
 
 /// Errors that can occur during JPEG encoding.
 ///
@@ -14,55 +118,6 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub struct Error {
     kind: ErrorKind,
     trace: AtTraceBoxed,
-}
-
-/// The specific kind of encoder error.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ErrorKind {
-    /// Invalid input dimensions (zero or too large).
-    InvalidDimensions {
-        width: u32,
-        height: u32,
-        reason: &'static str,
-    },
-    /// Invalid quality parameter.
-    InvalidQuality {
-        value: f32,
-        valid_range: &'static str,
-    },
-    /// Invalid color space or pixel format combination.
-    InvalidColorFormat { reason: &'static str },
-    /// Input buffer has wrong size.
-    InvalidBufferSize { expected: usize, actual: usize },
-    /// Unsupported JPEG feature.
-    UnsupportedFeature { feature: &'static str },
-    /// Internal error (should not happen in correct usage).
-    InternalError { reason: &'static str },
-    /// I/O error during encoding.
-    IoError { reason: String },
-    /// ICC color management error.
-    IccError(String),
-    /// Invalid scan script for progressive encoding.
-    InvalidScanScript(String),
-    /// Memory allocation failed.
-    AllocationFailed { bytes: usize, context: &'static str },
-    /// Size calculation overflowed.
-    SizeOverflow { context: &'static str },
-    /// Image exceeds maximum pixel limit.
-    ImageTooLarge { pixels: u64, limit: u64 },
-    /// Operation was cancelled.
-    Cancelled,
-    /// Pixel format not supported.
-    UnsupportedPixelFormat { format: crate::types::PixelFormat },
-    /// Invalid encoder configuration.
-    InvalidConfig(String),
-    /// Stride too small for image width.
-    StrideTooSmall { width: u32, stride: usize },
-    /// Pushed more rows than image height.
-    TooManyRows { height: u32, pushed: u32 },
-    /// Encoding finished without all rows pushed.
-    IncompleteImage { height: u32, pushed: u32 },
 }
 
 impl Error {
@@ -96,100 +151,149 @@ impl Error {
         self.kind
     }
 
-    // Convenience constructors
+    // ========================================================================
+    // Convenience constructors - Shared argument errors
+    // ========================================================================
 
     #[track_caller]
     pub fn invalid_dimensions(width: u32, height: u32, reason: &'static str) -> Self {
-        Self::new(ErrorKind::InvalidDimensions {
+        Self::new(ErrorKind::Argument(ArgumentError::InvalidDimensions {
             width,
             height,
             reason,
-        })
-    }
-
-    #[track_caller]
-    pub fn invalid_quality(value: f32, valid_range: &'static str) -> Self {
-        Self::new(ErrorKind::InvalidQuality { value, valid_range })
+        }))
     }
 
     #[track_caller]
     pub fn invalid_color_format(reason: &'static str) -> Self {
-        Self::new(ErrorKind::InvalidColorFormat { reason })
+        Self::new(ErrorKind::Argument(ArgumentError::InvalidColorFormat {
+            reason,
+        }))
     }
 
     #[track_caller]
     pub fn invalid_buffer_size(expected: usize, actual: usize) -> Self {
-        Self::new(ErrorKind::InvalidBufferSize { expected, actual })
+        Self::new(ErrorKind::Argument(ArgumentError::InvalidBufferSize {
+            expected,
+            actual,
+        }))
     }
 
     #[track_caller]
     pub fn unsupported_feature(feature: &'static str) -> Self {
-        Self::new(ErrorKind::UnsupportedFeature { feature })
+        Self::new(ErrorKind::Argument(ArgumentError::UnsupportedFeature {
+            feature,
+        }))
     }
 
     #[track_caller]
-    pub fn internal(reason: &'static str) -> Self {
-        Self::new(ErrorKind::InternalError { reason })
+    pub fn unsupported_pixel_format(format: crate::types::PixelFormat) -> Self {
+        Self::new(ErrorKind::Argument(ArgumentError::UnsupportedPixelFormat {
+            format,
+        }))
     }
 
-    #[track_caller]
-    pub fn io_error(reason: String) -> Self {
-        Self::new(ErrorKind::IoError { reason })
-    }
+    // ========================================================================
+    // Convenience constructors - Encoder argument errors
+    // ========================================================================
 
     #[track_caller]
-    pub fn icc_error(reason: String) -> Self {
-        Self::new(ErrorKind::IccError(reason))
+    pub fn invalid_quality(value: f32, valid_range: &'static str) -> Self {
+        Self::new(ErrorKind::EncoderArg(EncoderArgError::InvalidQuality {
+            value,
+            valid_range,
+        }))
     }
 
     #[track_caller]
     pub fn invalid_scan_script(reason: String) -> Self {
-        Self::new(ErrorKind::InvalidScanScript(reason))
+        Self::new(ErrorKind::EncoderArg(EncoderArgError::InvalidScanScript(
+            reason,
+        )))
     }
 
     #[track_caller]
+    pub fn invalid_config(reason: String) -> Self {
+        Self::new(ErrorKind::EncoderArg(EncoderArgError::InvalidConfig(
+            reason,
+        )))
+    }
+
+    #[track_caller]
+    pub fn stride_too_small(width: u32, stride: usize) -> Self {
+        Self::new(ErrorKind::EncoderArg(EncoderArgError::StrideTooSmall {
+            width,
+            stride,
+        }))
+    }
+
+    // ========================================================================
+    // Convenience constructors - Resource errors
+    // ========================================================================
+
+    #[track_caller]
     pub fn allocation_failed(bytes: usize, context: &'static str) -> Self {
-        Self::new(ErrorKind::AllocationFailed { bytes, context })
+        Self::new(ErrorKind::Resource(ResourceError::AllocationFailed {
+            bytes,
+            context,
+        }))
     }
 
     #[track_caller]
     pub fn size_overflow(context: &'static str) -> Self {
-        Self::new(ErrorKind::SizeOverflow { context })
+        Self::new(ErrorKind::Resource(ResourceError::SizeOverflow { context }))
     }
 
     #[track_caller]
     pub fn image_too_large(pixels: u64, limit: u64) -> Self {
-        Self::new(ErrorKind::ImageTooLarge { pixels, limit })
+        Self::new(ErrorKind::Resource(ResourceError::ImageTooLarge {
+            pixels,
+            limit,
+        }))
+    }
+
+    #[track_caller]
+    pub fn io_error(reason: String) -> Self {
+        Self::new(ErrorKind::Resource(ResourceError::IoError { reason }))
+    }
+
+    // ========================================================================
+    // Convenience constructors - State errors
+    // ========================================================================
+
+    #[track_caller]
+    pub fn too_many_rows(height: u32, pushed: u32) -> Self {
+        Self::new(ErrorKind::State(EncoderStateError::TooManyRows {
+            height,
+            pushed,
+        }))
+    }
+
+    #[track_caller]
+    pub fn incomplete_image(height: u32, pushed: u32) -> Self {
+        Self::new(ErrorKind::State(EncoderStateError::IncompleteImage {
+            height,
+            pushed,
+        }))
+    }
+
+    // ========================================================================
+    // Convenience constructors - Other errors
+    // ========================================================================
+
+    #[track_caller]
+    pub fn icc_error(reason: String) -> Self {
+        Self::new(ErrorKind::Icc(reason))
+    }
+
+    #[track_caller]
+    pub fn internal(reason: &'static str) -> Self {
+        Self::new(ErrorKind::Internal { reason })
     }
 
     #[track_caller]
     pub fn cancelled() -> Self {
         Self::new(ErrorKind::Cancelled)
-    }
-
-    #[track_caller]
-    pub fn unsupported_pixel_format(format: crate::types::PixelFormat) -> Self {
-        Self::new(ErrorKind::UnsupportedPixelFormat { format })
-    }
-
-    #[track_caller]
-    pub fn invalid_config(reason: String) -> Self {
-        Self::new(ErrorKind::InvalidConfig(reason))
-    }
-
-    #[track_caller]
-    pub fn stride_too_small(width: u32, stride: usize) -> Self {
-        Self::new(ErrorKind::StrideTooSmall { width, stride })
-    }
-
-    #[track_caller]
-    pub fn too_many_rows(height: u32, pushed: u32) -> Self {
-        Self::new(ErrorKind::TooManyRows { height, pushed })
-    }
-
-    #[track_caller]
-    pub fn incomplete_image(height: u32, pushed: u32) -> Self {
-        Self::new(ErrorKind::IncompleteImage { height, pushed })
     }
 }
 
@@ -210,89 +314,6 @@ impl AtTraceable for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.kind, f)
-    }
-}
-
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDimensions {
-                width,
-                height,
-                reason,
-            } => {
-                write!(f, "invalid dimensions {}x{}: {}", width, height, reason)
-            }
-            Self::InvalidQuality { value, valid_range } => {
-                write!(f, "invalid quality {}: must be in {}", value, valid_range)
-            }
-            Self::InvalidColorFormat { reason } => {
-                write!(f, "invalid color format: {}", reason)
-            }
-            Self::InvalidBufferSize { expected, actual } => {
-                write!(
-                    f,
-                    "invalid buffer size: expected {} bytes, got {}",
-                    expected, actual
-                )
-            }
-            Self::UnsupportedFeature { feature } => {
-                write!(f, "unsupported feature: {}", feature)
-            }
-            Self::InternalError { reason } => {
-                write!(f, "internal error: {}", reason)
-            }
-            Self::IoError { reason } => {
-                write!(f, "I/O error: {}", reason)
-            }
-            Self::IccError(reason) => {
-                write!(f, "ICC error: {}", reason)
-            }
-            Self::InvalidScanScript(reason) => {
-                write!(f, "invalid scan script: {}", reason)
-            }
-            Self::AllocationFailed { bytes, context } => {
-                write!(f, "allocation of {} bytes failed while {}", bytes, context)
-            }
-            Self::SizeOverflow { context } => {
-                write!(f, "size calculation overflow while {}", context)
-            }
-            Self::ImageTooLarge { pixels, limit } => {
-                write!(
-                    f,
-                    "image too large: {} pixels exceeds limit of {}",
-                    pixels, limit
-                )
-            }
-            Self::Cancelled => write!(f, "operation cancelled"),
-            Self::UnsupportedPixelFormat { format } => {
-                write!(f, "pixel format {:?} not supported", format)
-            }
-            Self::InvalidConfig(reason) => {
-                write!(f, "invalid encoder configuration: {}", reason)
-            }
-            Self::StrideTooSmall { width, stride } => {
-                write!(
-                    f,
-                    "stride {} is too small for width {} pixels",
-                    stride, width
-                )
-            }
-            Self::TooManyRows { height, pushed } => {
-                write!(
-                    f,
-                    "pushed {} rows but image height is only {}",
-                    pushed, height
-                )
-            }
-            Self::IncompleteImage { height, pushed } => {
-                write!(
-                    f,
-                    "encoding finished after {} rows but image height is {}",
-                    pushed, height
-                )
-            }
-        }
     }
 }
 
@@ -320,43 +341,73 @@ impl From<crate::error::Error> for Error {
     fn from(err: crate::error::Error) -> Self {
         use crate::error::ErrorKind as EK;
         let kind = match err.into_kind() {
+            // Shared argument errors
             EK::InvalidDimensions {
                 width,
                 height,
                 reason,
-            } => ErrorKind::InvalidDimensions {
+            } => ErrorKind::Argument(ArgumentError::InvalidDimensions {
                 width,
                 height,
                 reason,
-            },
-            EK::InvalidQuality { value, valid_range } => {
-                ErrorKind::InvalidQuality { value, valid_range }
+            }),
+            EK::InvalidColorFormat { reason } => {
+                ErrorKind::Argument(ArgumentError::InvalidColorFormat { reason })
             }
-            EK::InvalidColorFormat { reason } => ErrorKind::InvalidColorFormat { reason },
             EK::InvalidBufferSize { expected, actual } => {
-                ErrorKind::InvalidBufferSize { expected, actual }
+                ErrorKind::Argument(ArgumentError::InvalidBufferSize { expected, actual })
             }
-            EK::UnsupportedFeature { feature } => ErrorKind::UnsupportedFeature { feature },
-            EK::InternalError { reason } => ErrorKind::InternalError { reason },
-            EK::IoError { reason } => ErrorKind::IoError { reason },
-            EK::IccError(reason) => ErrorKind::IccError(reason),
-            EK::InvalidScanScript(reason) => ErrorKind::InvalidScanScript(reason),
+            EK::UnsupportedFeature { feature } => {
+                ErrorKind::Argument(ArgumentError::UnsupportedFeature { feature })
+            }
+            EK::UnsupportedPixelFormat { format } => {
+                ErrorKind::Argument(ArgumentError::UnsupportedPixelFormat { format })
+            }
+
+            // Encoder-specific argument errors
+            EK::InvalidQuality { value, valid_range } => {
+                ErrorKind::EncoderArg(EncoderArgError::InvalidQuality { value, valid_range })
+            }
+            EK::InvalidScanScript(reason) => {
+                ErrorKind::EncoderArg(EncoderArgError::InvalidScanScript(reason))
+            }
+            EK::InvalidConfig(reason) => {
+                ErrorKind::EncoderArg(EncoderArgError::InvalidConfig(reason))
+            }
+            EK::StrideTooSmall { width, stride } => {
+                ErrorKind::EncoderArg(EncoderArgError::StrideTooSmall { width, stride })
+            }
+
+            // Resource errors
             EK::AllocationFailed { bytes, context } => {
-                ErrorKind::AllocationFailed { bytes, context }
+                ErrorKind::Resource(ResourceError::AllocationFailed { bytes, context })
             }
-            EK::SizeOverflow { context } => ErrorKind::SizeOverflow { context },
-            EK::ImageTooLarge { pixels, limit } => ErrorKind::ImageTooLarge { pixels, limit },
+            EK::SizeOverflow { context } => {
+                ErrorKind::Resource(ResourceError::SizeOverflow { context })
+            }
+            EK::ImageTooLarge { pixels, limit } => {
+                ErrorKind::Resource(ResourceError::ImageTooLarge { pixels, limit })
+            }
+            EK::IoError { reason } => ErrorKind::Resource(ResourceError::IoError { reason }),
+
+            // State errors
+            EK::TooManyRows { height, pushed } => {
+                ErrorKind::State(EncoderStateError::TooManyRows { height, pushed })
+            }
+            EK::IncompleteImage { height, pushed } => {
+                ErrorKind::State(EncoderStateError::IncompleteImage { height, pushed })
+            }
+
+            // Other shared
+            EK::IccError(reason) => ErrorKind::Icc(reason),
+            EK::InternalError { reason } => ErrorKind::Internal { reason },
             EK::Cancelled => ErrorKind::Cancelled,
-            EK::UnsupportedPixelFormat { format } => ErrorKind::UnsupportedPixelFormat { format },
-            EK::InvalidConfig(reason) => ErrorKind::InvalidConfig(reason),
-            EK::StrideTooSmall { width, stride } => ErrorKind::StrideTooSmall { width, stride },
-            EK::TooManyRows { height, pushed } => ErrorKind::TooManyRows { height, pushed },
-            EK::IncompleteImage { height, pushed } => ErrorKind::IncompleteImage { height, pushed },
+
             // Decoder-specific errors should not occur in encoder - convert to internal error
             EK::InvalidJpegData { reason } | EK::TruncatedData { context: reason } => {
-                ErrorKind::InternalError { reason }
+                ErrorKind::Internal { reason }
             }
-            EK::InvalidMarker { marker, context } => ErrorKind::InternalError {
+            EK::InvalidMarker { marker, context } => ErrorKind::Internal {
                 reason: if marker == 0 {
                     context
                 } else {
@@ -364,16 +415,16 @@ impl From<crate::error::Error> for Error {
                 },
             },
             EK::InvalidHuffmanTable { reason, .. } | EK::InvalidQuantTable { reason, .. } => {
-                ErrorKind::InternalError { reason }
+                ErrorKind::Internal { reason }
             }
-            EK::DecodeError(reason) => ErrorKind::InternalError {
+            EK::DecodeError(reason) => ErrorKind::Internal {
                 reason: if reason.is_empty() {
                     "decode error"
                 } else {
                     "unexpected decode error"
                 },
             },
-            EK::TooManyScans { .. } => ErrorKind::InternalError {
+            EK::TooManyScans { .. } => ErrorKind::Internal {
                 reason: "too many scans",
             },
         };

@@ -68,6 +68,9 @@ linear-srgb = "0.2"
 # Error tracing with location tracking
 whereat = { path = "/home/lilith/work/whereat", features = ["_tinyvec-128-bytes"] }
 
+# Error derive macros (no_std compatible)
+thiserror = { version = "2.0", default-features = false }
+
 # Cooperative cancellation
 enough = { version = "0.3", features = ["std"] }
 almost-enough = { version = "0.3", features = ["std"] }
