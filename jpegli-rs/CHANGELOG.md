@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-01-18
+
+### Performance
+
+- **59% faster linear RGB encoding** (RgbF32Linear, Rgb16Linear, etc.)
+  - SIMD-accelerated linear→sRGB conversion using `linear-srgb` crate
+  - 8-wide f32x8 processing with `#[inline(always)]` for hot paths
+  - Optimized memory loads with `bytemuck::pod_read_unaligned`
+  - 1024×1024 RgbF32Linear: 41ms → 17ms (2.4x faster)
+
+### Changed
+
+- Updated `linear-srgb` to 0.3.1 (improved SIMD performance)
+- Updated `whereat` to 0.1.3
+
 ## [0.7.0] - 2026-01-18
 
 ### Breaking Changes
