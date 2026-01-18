@@ -11,6 +11,16 @@ Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 3. **No changes to existing function signatures**
 4. **Doc links use full paths** - `[`encoder::EncoderConfig`]` not `[`EncoderConfig`]`
 
+## Performance Rules (CRITICAL)
+
+**Never compromise sequential performance for parallel gains:**
+
+1. Sequential encoding is the default and most common path
+2. Parallel refactors must not add overhead to the sequential path
+3. Use `#[cfg(feature = "parallel")]` to isolate parallel-only code
+4. Benchmark both paths before and after changes
+5. Frequency counting and other setup work can be parallelized separately from encoding
+
 ## Context Preservation (CRITICAL)
 
 **You may lose context at any time.** Always record findings immediately:
@@ -143,12 +153,41 @@ cargo run --release --example xyb_cpp_comparison
 cargo run --release --example xyb_vs_ycbcr_butteraugli
 ```
 
+## Profiling Results (8K image, 2026-01-17)
+
+Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile -- 8k`
+
+| Function | % Time | Notes |
+|----------|--------|-------|
+| `encode_block_simd` | 14.0% | Entropy encoding - parallelizable |
+| `forward_dct_8x8_wide` | 11.4% | DCT - parallelizable |
+| `finalize_imcu_aq` | 10.6% | AQ finalization - parallelizable |
+| `per_block_modulations_row` | 9.3% | AQ calculation - parallelizable |
+| `memmove_avx512` | 8.4% | Memory ops |
+| `collect_block_frequencies_simd` | 6.3% | Huffman freq counting |
+| `quantize_block_zigzag` | 6.2% | Quantization - parallelizable |
+| `pre_erosion_row` | 6.0% | AQ pre-erosion - parallelizable |
+| `BitWriter::flush_bytes` | 3.2% | Bit packing |
+
+**Parallelization priorities** (by % time):
+1. AQ calculation (10.6% + 9.3% + 6.0% = 25.9%) - biggest opportunity
+2. Entropy encoding (14.0%) - already has parallel path
+3. DCT (11.4%) - already has parallel path
+4. Quantization (6.2%) - parallelizable with DCT
+5. Frequency counting (6.3%) - sequential (DC prediction dependency)
+
 ## Known Bugs
 
 0. **Debug env var in hot loop (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:798`
    `std::env::var("DEBUG_HUFFMAN_LOOKUP")` was called on every token write.
    Even though the debug code only ran when the env var existed, the syscall
    overhead consumed ~12% of total encode time. Removed entirely.
+
+4. **Eager error evaluation in hot path (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:308-313`
+   `ok_or(Error::internal(...))` eagerly evaluates the error argument on every call.
+   `Error::new()` → `AtTraceBoxed::capture()` → malloc per call.
+   For 8K: ~4M blocks × 2 lookups = 8M unnecessary allocations (11.4% of encode time).
+   **Fix**: Changed to `ok_or_else(|| ...)` for lazy evaluation. **13% speedup.**
 
 1. **Progressive XYB decode (FIXED)** - `jpegli-rs/src/decode/mod.rs:1187-1275`
    Progressive DC scans now handle `EndOfScanData` gracefully (same as AC scans).
