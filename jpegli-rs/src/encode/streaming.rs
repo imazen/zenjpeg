@@ -992,6 +992,10 @@ impl StreamingEncoder {
     }
 
     /// Pushes multiple rows with cancellation support.
+    ///
+    /// This method is optimized to process complete strips directly from the input
+    /// buffer without intermediate copies. Only partial strips at the beginning
+    /// and end require buffering.
     pub fn push_rows_with_stop(
         &mut self,
         data: &[u8],
@@ -1003,11 +1007,82 @@ impl StreamingEncoder {
             return Err(Error::invalid_buffer_size(expected_len, data.len()));
         }
 
-        // Push rows one at a time (this handles strip flushing correctly)
-        for i in 0..num_rows {
-            let start = i * self.bytes_per_row;
-            let end = start + self.bytes_per_row;
-            self.push_row_with_stop(&data[start..end], &stop)?;
+        if num_rows == 0 {
+            return Ok(());
+        }
+
+        // Check if we've already received all rows
+        if self.current_y + self.rows_buffered >= self.height {
+            return Err(Error::io_error(format!(
+                "already received all {} rows",
+                self.height
+            )));
+        }
+
+        let mut data_offset = 0usize;
+        let mut rows_remaining = num_rows;
+
+        // Step 1: Complete any partial strip in buffer
+        if self.rows_buffered > 0 {
+            let rows_to_complete =
+                (self.strip_height - self.rows_buffered).min(rows_remaining);
+            let rows_to_complete = rows_to_complete.min(self.height - self.current_y - self.rows_buffered);
+
+            // Copy rows to buffer to complete the strip
+            let buf_offset = self.rows_buffered * self.bytes_per_row;
+            let src_bytes = rows_to_complete * self.bytes_per_row;
+            self.row_buffer[buf_offset..buf_offset + src_bytes]
+                .copy_from_slice(&data[data_offset..data_offset + src_bytes]);
+
+            self.rows_buffered += rows_to_complete;
+            data_offset += src_bytes;
+            rows_remaining -= rows_to_complete;
+
+            // Flush if strip is complete
+            let remaining_height = self.height - self.current_y;
+            if self.rows_buffered >= self.strip_height || self.rows_buffered >= remaining_height {
+                self.flush_strip_with_stop(&stop)?;
+            }
+        }
+
+        // Step 2: Process complete strips directly from input (no copy!)
+        while rows_remaining >= self.strip_height {
+            stop.check()?;
+
+            let remaining_height = self.height - self.current_y;
+            let strip_rows = self.strip_height.min(remaining_height);
+
+            if strip_rows == 0 {
+                break;
+            }
+
+            let strip_bytes = strip_rows * self.bytes_per_row;
+            let strip_data = &data[data_offset..data_offset + strip_bytes];
+
+            // Process directly from input buffer
+            self.processor.process_strip(strip_data, self.current_y)?;
+            self.current_y += strip_rows;
+
+            data_offset += strip_bytes;
+            rows_remaining -= strip_rows;
+        }
+
+        // Step 3: Buffer any remaining partial rows
+        if rows_remaining > 0 {
+            let remaining_height = self.height - self.current_y;
+            let rows_to_buffer = rows_remaining.min(remaining_height);
+
+            if rows_to_buffer > 0 {
+                let src_bytes = rows_to_buffer * self.bytes_per_row;
+                self.row_buffer[..src_bytes]
+                    .copy_from_slice(&data[data_offset..data_offset + src_bytes]);
+                self.rows_buffered = rows_to_buffer;
+
+                // Check if this is the final partial strip
+                if rows_to_buffer >= remaining_height {
+                    self.flush_strip_with_stop(&stop)?;
+                }
+            }
         }
 
         Ok(())

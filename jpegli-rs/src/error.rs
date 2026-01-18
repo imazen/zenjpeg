@@ -35,6 +35,9 @@ pub enum ScanRead<T> {
     Truncated,
 }
 
+// These helper methods are part of the prerelease decoder API.
+// Some are unused internally but provided for external callers.
+#[allow(dead_code)]
 impl<T> ScanRead<T> {
     /// Returns the value if `Value`, otherwise returns the provided default.
     #[inline]
