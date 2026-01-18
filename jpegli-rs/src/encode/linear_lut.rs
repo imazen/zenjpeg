@@ -7,7 +7,7 @@ use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
 };
-use linear_srgb::linear_to_srgb;
+use linear_srgb::default::linear_to_srgb;
 
 /// Cb/Cr offset (128.0 for 8-bit JPEG)
 const CHROMA_OFFSET: f32 = 128.0;
@@ -101,13 +101,14 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 // SIMD implementations (8-wide)
 // ============================================================================
 
-use linear_srgb::simd::linear_to_srgb_x8;
+// Use inline variant from linear-srgb - no dispatch overhead, pure SIMD
+use linear_srgb::default::inline::linear_to_srgb_x8;
 use wide::{f32x8, CmpGt};
 
 /// Convert 8 linear f32 values [0,1] to sRGB [0, 255] using SIMD.
 ///
 /// Values > 1.0 are tone-mapped with Reinhard.
-#[inline]
+#[inline(always)]
 pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
     // Clamp negatives to zero
     let x = x.max(f32x8::ZERO);
@@ -124,7 +125,7 @@ pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
 }
 
 /// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255] using SIMD.
-#[inline]
+#[inline(always)]
 pub fn linear_u16_to_srgb_255_x8(values: [u16; 8]) -> f32x8 {
     let scale = f32x8::splat(1.0 / 65535.0);
     let linear = f32x8::new([
@@ -146,7 +147,7 @@ pub fn linear_u16_to_srgb_255_x8(values: [u16; 8]) -> f32x8 {
 ///
 /// Takes R, G, B as separate arrays of 8 u16 values.
 /// Returns (Y, Cb, Cr) as f32x8 vectors.
-#[inline]
+#[inline(always)]
 pub fn linear_rgb16_to_ycbcr_x8(r: [u16; 8], g: [u16; 8], b: [u16; 8]) -> (f32x8, f32x8, f32x8) {
     // Convert linear u16 to sRGB [0, 255]
     let r = linear_u16_to_srgb_255_x8(r);
@@ -176,7 +177,7 @@ pub fn linear_rgb16_to_ycbcr_x8(r: [u16; 8], g: [u16; 8], b: [u16; 8]) -> (f32x8
 ///
 /// Takes R, G, B as separate f32x8 vectors (structure-of-arrays layout).
 /// Returns (Y, Cb, Cr) as f32x8 vectors.
-#[inline]
+#[inline(always)]
 pub fn linear_rgbf32_to_ycbcr_x8(r: f32x8, g: f32x8, b: f32x8) -> (f32x8, f32x8, f32x8) {
     // Convert linear to sRGB [0, 255]
     let r = linear_to_srgb_255_x8(r);
