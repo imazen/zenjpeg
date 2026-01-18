@@ -50,6 +50,9 @@
 //!
 //!     // Metadata
 //!     .icc_profile(bytes)                       // Attach ICC profile
+//!     .exif(Exif::build()                       // EXIF orientation/copyright
+//!         .orientation(Orientation::Rotate90)
+//!         .copyright("© 2024 Corp"))
 //!     .restart_interval(64);                    // MCUs between restart markers
 //! ```
 //!
@@ -123,6 +126,7 @@ pub use crate::encode::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, YCbCrPlanes,
 };
+pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::Stop;
 
 #[cfg(feature = "parallel")]

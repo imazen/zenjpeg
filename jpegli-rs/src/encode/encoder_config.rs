@@ -19,7 +19,7 @@ pub struct EncoderConfig {
     pub(crate) downsampling_method: DownsamplingMethod,
     pub(crate) restart_interval: u16,
     pub(crate) icc_profile: Option<Vec<u8>>,
-    pub(crate) exif_data: Option<Vec<u8>>,
+    pub(crate) exif_data: Option<super::exif::Exif>,
     pub(crate) xmp_data: Option<Vec<u8>>,
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
@@ -219,18 +219,40 @@ impl EncoderConfig {
 
     /// Attach EXIF metadata to the output JPEG.
     ///
-    /// The data will be written as an APP1 marker segment with the standard
-    /// "Exif\0\0" signature. The provided bytes should be the raw EXIF data
-    /// (TIFF structure) without the APP1 marker or "Exif\0\0" prefix.
+    /// Use [`Exif::raw`][super::exif::Exif::raw] for raw EXIF bytes, or
+    /// [`Exif::build`][super::exif::Exif::build] to construct from common fields.
     ///
-    /// EXIF is placed immediately after SOI, before any other markers.
+    /// The two modes are mutually exclusive at compile time - you cannot
+    /// mix raw bytes with field-based building.
     ///
-    /// # Maximum Size
-    /// EXIF data is limited to 65527 bytes (65535 - 2 length - 6 signature).
-    /// Larger data will be truncated.
+    /// # Examples
+    ///
+    /// Build from fields (orientation and copyright):
+    /// ```ignore
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
+    ///
+    /// let config = EncoderConfig::new(85, ChromaSubsampling::Quarter)
+    ///     .exif(Exif::build()
+    ///         .orientation(Orientation::Rotate90)
+    ///         .copyright("© 2024 Example Corp"));
+    /// ```
+    ///
+    /// Use raw EXIF bytes:
+    /// ```ignore
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, Exif};
+    ///
+    /// let config = EncoderConfig::new(85, ChromaSubsampling::Quarter)
+    ///     .exif(Exif::raw(my_exif_bytes));
+    /// ```
+    ///
+    /// # Notes
+    ///
+    /// - EXIF is placed immediately after SOI, before any other markers
+    /// - Raw bytes should be TIFF data without the "Exif\0\0" prefix (added automatically)
+    /// - Maximum size: 65527 bytes (larger data will be truncated)
     #[must_use]
-    pub fn exif(mut self, data: impl Into<Vec<u8>>) -> Self {
-        self.exif_data = Some(data.into());
+    pub fn exif(mut self, exif: impl Into<super::exif::Exif>) -> Self {
+        self.exif_data = Some(exif.into());
         self
     }
 
@@ -527,8 +549,8 @@ impl EncoderConfig {
 
     /// Get the EXIF data, if set.
     #[must_use]
-    pub fn get_exif(&self) -> Option<&[u8]> {
-        self.exif_data.as_deref()
+    pub fn get_exif(&self) -> Option<&super::exif::Exif> {
+        self.exif_data.as_ref()
     }
 
     /// Get the XMP data, if set.

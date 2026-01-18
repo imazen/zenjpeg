@@ -5,7 +5,7 @@
 //! - `img-parts`: JPEG segment manipulation (ICC profile extraction/injection)
 //! - `ultrahdr`: Ultra HDR JPEG encoding (using jpegli as base encoder)
 
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation};
 use rgb::RGB;
 
 /// Create a test image with a gradient pattern.
@@ -43,7 +43,8 @@ fn encode_with_icc_profile(width: u32, height: u32, quality: f32, icc: &[u8]) ->
 /// Encode with EXIF data attached using native API.
 fn encode_with_exif(width: u32, height: u32, quality: f32, exif: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).exif(exif);
+    let config =
+        EncoderConfig::new(quality, ChromaSubsampling::Quarter).exif(Exif::raw(exif.to_vec()));
     let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
@@ -69,7 +70,7 @@ fn encode_with_all_metadata(
 ) -> Vec<u8> {
     let pixels = create_test_image(width, height);
     let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter)
-        .exif(exif)
+        .exif(Exif::raw(exif.to_vec()))
         .xmp(xmp)
         .icc_profile(icc);
     let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
@@ -268,6 +269,160 @@ mod native_metadata_tests {
             .iter()
             .any(|s| s.marker == 0xE2 && s.data.starts_with(b"ICC_PROFILE\0"));
         assert!(has_icc, "ICC APP2 should be present");
+    }
+
+    // ========================================================================
+    // Exif builder API tests
+    // ========================================================================
+
+    #[test]
+    fn exif_builder_orientation_embeds_correctly() {
+        use std::io::Cursor;
+
+        let pixels = create_test_image(128, 128);
+        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter)
+            .exif(Exif::build().orientation(Orientation::Rotate90));
+        let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
+        encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+        let jpeg_data = encoder.finish().unwrap();
+
+        // Parse with kamadak-exif
+        let mut cursor = Cursor::new(&jpeg_data);
+        let reader = exif::Reader::new();
+        let exif_data = reader
+            .read_from_container(&mut cursor)
+            .expect("kamadak-exif should parse orientation EXIF");
+
+        // Verify orientation field
+        let orientation = exif_data
+            .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+            .expect("Orientation tag should be present");
+
+        match &orientation.value {
+            exif::Value::Short(vals) => {
+                assert_eq!(vals[0], 6, "Orientation should be Rotate90 (6)");
+            }
+            _ => panic!("Orientation should be a SHORT value"),
+        }
+    }
+
+    #[test]
+    fn exif_builder_copyright_embeds_correctly() {
+        use std::io::Cursor;
+
+        let pixels = create_test_image(128, 128);
+        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter)
+            .exif(Exif::build().copyright("© 2026 Test Corp"));
+        let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
+        encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+        let jpeg_data = encoder.finish().unwrap();
+
+        // Parse with kamadak-exif
+        let mut cursor = Cursor::new(&jpeg_data);
+        let reader = exif::Reader::new();
+        let exif_data = reader
+            .read_from_container(&mut cursor)
+            .expect("kamadak-exif should parse copyright EXIF");
+
+        // Verify copyright field
+        let copyright = exif_data
+            .get_field(exif::Tag::Copyright, exif::In::PRIMARY)
+            .expect("Copyright tag should be present");
+
+        let copyright_str = copyright.display_value().to_string();
+        assert!(
+            copyright_str.contains("2026 Test Corp"),
+            "Copyright should contain our text: {copyright_str}"
+        );
+    }
+
+    #[test]
+    fn exif_builder_orientation_and_copyright_both_work() {
+        use std::io::Cursor;
+
+        let pixels = create_test_image(128, 128);
+        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter).exif(
+            Exif::build()
+                .orientation(Orientation::Rotate270)
+                .copyright("© 2026 Example"),
+        );
+        let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
+        encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+        let jpeg_data = encoder.finish().unwrap();
+
+        // Parse with kamadak-exif
+        let mut cursor = Cursor::new(&jpeg_data);
+        let reader = exif::Reader::new();
+        let exif_data = reader
+            .read_from_container(&mut cursor)
+            .expect("kamadak-exif should parse combined EXIF");
+
+        // Verify orientation
+        let orientation = exif_data
+            .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+            .expect("Orientation tag should be present");
+        match &orientation.value {
+            exif::Value::Short(vals) => {
+                assert_eq!(vals[0], 8, "Orientation should be Rotate270 (8)");
+            }
+            _ => panic!("Orientation should be a SHORT value"),
+        }
+
+        // Verify copyright
+        let copyright = exif_data
+            .get_field(exif::Tag::Copyright, exif::In::PRIMARY)
+            .expect("Copyright tag should be present");
+        let copyright_str = copyright.display_value().to_string();
+        assert!(
+            copyright_str.contains("2026 Example"),
+            "Copyright should contain our text: {copyright_str}"
+        );
+    }
+
+    #[test]
+    fn all_orientation_values_encode_correctly() {
+        use std::io::Cursor;
+
+        let orientations = [
+            (Orientation::Normal, 1u16),
+            (Orientation::FlipHorizontal, 2),
+            (Orientation::Rotate180, 3),
+            (Orientation::FlipVertical, 4),
+            (Orientation::Transpose, 5),
+            (Orientation::Rotate90, 6),
+            (Orientation::Transverse, 7),
+            (Orientation::Rotate270, 8),
+        ];
+
+        for (orient, expected_value) in orientations {
+            let pixels = create_test_image(64, 64);
+            let config = EncoderConfig::new(75.0, ChromaSubsampling::Quarter)
+                .exif(Exif::build().orientation(orient));
+            let mut encoder = config.encode_from_rgb::<RGB<u8>>(64, 64).unwrap();
+            encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+            let jpeg_data = encoder.finish().unwrap();
+
+            // Parse with kamadak-exif
+            let mut cursor = Cursor::new(&jpeg_data);
+            let reader = exif::Reader::new();
+            let exif_data = reader
+                .read_from_container(&mut cursor)
+                .expect("kamadak-exif should parse");
+
+            let orientation = exif_data
+                .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+                .expect("Orientation tag should be present");
+
+            match &orientation.value {
+                exif::Value::Short(vals) => {
+                    assert_eq!(
+                        vals[0], expected_value,
+                        "{orient:?} should encode as {expected_value}"
+                    );
+                }
+                _ => panic!("Orientation should be a SHORT value"),
+            }
+        }
     }
 }
 
