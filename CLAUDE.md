@@ -159,22 +159,43 @@ Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile 
 
 | Function | % Time | Notes |
 |----------|--------|-------|
-| `encode_block_simd` | 14.0% | Entropy encoding - parallelizable |
-| `forward_dct_8x8_wide` | 11.4% | DCT - parallelizable |
-| `finalize_imcu_aq` | 10.6% | AQ finalization - parallelizable |
-| `per_block_modulations_row` | 9.3% | AQ calculation - parallelizable |
+| `encode_block_simd` | 14.0% | Entropy encoding - parallel path exists |
+| `forward_dct_8x8_wide` | 11.4% | DCT - parallel path exists |
+| `finalize_imcu_aq` | 10.6% | AQ finalization - NOT parallelizable (too fine-grained) |
+| `per_block_modulations_row` | 9.3% | AQ calculation - NOT parallelizable (too fine-grained) |
 | `memmove_avx512` | 8.4% | Memory ops |
 | `collect_block_frequencies_simd` | 6.3% | Huffman freq counting |
-| `quantize_block_zigzag` | 6.2% | Quantization - parallelizable |
-| `pre_erosion_row` | 6.0% | AQ pre-erosion - parallelizable |
+| `quantize_block_zigzag` | 6.2% | Quantization - parallel path exists |
+| `pre_erosion_row` | 6.0% | AQ pre-erosion - sequential (row dependency) |
 | `BitWriter::flush_bytes` | 3.2% | Bit packing |
 
-**Parallelization priorities** (by % time):
-1. AQ calculation (10.6% + 9.3% + 6.0% = 25.9%) - biggest opportunity
+**Parallelization status** (by % time):
+1. AQ calculation (25.9%) - **NOT parallelizable** (see Failed Explorations below)
 2. Entropy encoding (14.0%) - already has parallel path
 3. DCT (11.4%) - already has parallel path
 4. Quantization (6.2%) - parallelizable with DCT
 5. Frequency counting (6.3%) - sequential (DC prediction dependency)
+
+## Failed Explorations
+
+### Parallel AQ (2026-01-17)
+
+**Attempted:** Parallelize `per_block_modulations_row` using rayon.
+
+**Why it failed:**
+- Per-block AQ computation takes ~0.2 microseconds
+- Far too small for rayon thread pool overhead to be worthwhile
+- 4K benchmark with threshold=256: **5x slower** than sequential
+- Even 8K (33M pixels, 518K blocks) wouldn't benefit
+
+**Analysis:**
+- AQ takes 26% of 8K encode time, but only ~15% is parallelizable
+- `pre_erosion_row` (6%) has row-to-row accumulation dependency
+- `fuzzy_erosion` (5%) needs 3x3 neighborhood lookahead
+- Max theoretical speedup with 4 threads: ~10% overall
+- After rayon overhead: ~6% realistic gain - not worth complexity
+
+**Conclusion:** The SIMD-optimized sequential path is already efficient. Thread-level parallelism would need coarser granularity (e.g., multiple iMCU rows buffered) to overcome overhead, which conflicts with the streaming architecture.
 
 ## Known Bugs
 
