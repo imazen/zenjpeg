@@ -176,6 +176,45 @@ Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile 
 4. Quantization (6.2%) - parallelizable with DCT
 5. Frequency counting (6.3%) - sequential (DC prediction dependency)
 
+## C++ Performance Gap (2026-01-17)
+
+Run with: `cargo bench --bench cpp_comparison`
+
+### Summary
+
+Rust is consistently **1.5-1.7x slower** than C++ jpegli:
+
+| Size | Rust | C++ | Gap |
+|------|------|-----|-----|
+| 512x512 | 3.02ms | 1.79ms | 1.69x |
+| 1024x1024 | 11.1ms | 6.8ms | 1.63x |
+| 2048x2048 | 42.1ms | 25.8ms | 1.64x |
+| 4096x4096 | 196ms | 132ms | 1.48x |
+
+Gap is proportional to image size, pointing to per-block operations.
+
+### Root Causes
+
+1. **AQ computation (35% of time)** - Biggest contributor
+   - C++ uses Highway SIMD with AVX-512 for all AQ functions
+   - Rust uses `wide` crate (AVX2-level, f32x8)
+   - Rust has more boundary checks for edge handling
+   - `fuzzy_erosion` uses 9-point stencil with nested loops
+
+2. **Entropy encoding (14.2%)**
+   - Both use similar algorithms
+   - Needs assembly comparison
+
+3. **DCT (4.6% in Rust, faster in C++)**
+   - Highway has better AVX-512 DCT optimizations
+
+### Potential Optimizations
+
+1. **Highway port** - Use highway-rs for AVX-512 AQ
+2. **Reduce boundary checks** - Specialize paths for full blocks vs edge blocks
+3. **Fuse operations** - Combine fuzzy_erosion 9-point stencil passes
+4. **Profile-guided** - Use `#[inline(always)]` more aggressively in hot paths
+
 ## Failed Explorations
 
 ### Parallel AQ (2026-01-17)
