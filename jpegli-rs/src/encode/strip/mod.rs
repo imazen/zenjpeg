@@ -809,6 +809,12 @@ impl StripProcessor {
 
         #[cfg(not(feature = "parallel"))]
         {
+            // Pre-allocate and write directly to avoid push overhead
+            let start_idx = self.pending_y_blocks[pending_idx].len();
+            self.pending_y_blocks[pending_idx]
+                .resize(start_idx + blocks_added, Block8x8f::default());
+            let output = &mut self.pending_y_blocks[pending_idx][start_idx..];
+            let mut idx = 0;
             for local_by in 0..actual_strip_blocks_h {
                 for bx in 0..blocks_w {
                     // Extract 8x8 block from Y strip and DCT (wide-native path)
@@ -818,8 +824,8 @@ impl StripProcessor {
                         local_by,
                         padded_width,
                     );
-                    let dct = crate::encode::dct::simd::forward_dct_8x8_wide(&block);
-                    self.pending_y_blocks[pending_idx].push(dct);
+                    output[idx] = crate::encode::dct::simd::forward_dct_8x8_wide(&block);
+                    idx += 1;
                 }
             }
         }
@@ -891,11 +897,21 @@ impl StripProcessor {
 
                 let c_blocks_w = (c_width + 7) / 8;
                 let c_strip_blocks_h = (c_strip_height + 7) / 8;
+                let c_blocks_total = c_blocks_w * c_strip_blocks_h;
 
                 // cb_down/cr_down are in padded layout (padded_c_width pixels per row)
                 let padded_c_width = self.padded_c_width;
                 let c_size = c_strip_height * padded_c_width;
 
+                // Pre-allocate chroma buffers
+                let cb_start = self.pending_cb_blocks[pending_idx].len();
+                let cr_start = self.pending_cr_blocks[pending_idx].len();
+                self.pending_cb_blocks[pending_idx]
+                    .resize(cb_start + c_blocks_total, Block8x8f::default());
+                self.pending_cr_blocks[pending_idx]
+                    .resize(cr_start + c_blocks_total, Block8x8f::default());
+
+                let mut idx = 0;
                 for local_by in 0..c_strip_blocks_h {
                     for bx in 0..c_blocks_w {
                         // Cb block - DCT only (wide-native path)
@@ -905,8 +921,8 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        let cb_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
-                        self.pending_cb_blocks[pending_idx].push(cb_dct);
+                        self.pending_cb_blocks[pending_idx][cb_start + idx] =
+                            crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
 
                         // Cr block - DCT only (wide-native path)
                         let cr_block = extract_block_from_strip_wide(
@@ -915,8 +931,9 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        let cr_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
-                        self.pending_cr_blocks[pending_idx].push(cr_dct);
+                        self.pending_cr_blocks[pending_idx][cr_start + idx] =
+                            crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
+                        idx += 1;
                     }
                 }
             }
