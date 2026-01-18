@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-01-18
+
+### Breaking Changes
+
+- **`EncoderConfig::new()` now requires quality and subsampling parameters**
+  - Before: `EncoderConfig::new().quality(85)`
+  - After: `EncoderConfig::new(85, ChromaSubsampling::Quarter)`
+  - This makes quality and subsampling explicit required choices
+
+- **Error type restructured with hierarchical categories**
+  - Errors now use `thiserror` with location tracking (`#[track_caller]`)
+  - Error variants reorganized into logical groups
+  - No longer `Clone` or `PartialEq` (now contains stack traces)
+
+- **`.exif()` method signature changed**
+  - Before: `.exif(raw_bytes)` accepting `impl Into<Vec<u8>>`
+  - After: `.exif(Exif::raw(bytes))` or `.exif(Exif::build().orientation(...))`
+  - Compile-time separation between raw bytes and field-based building
+
+### Added
+
+- **Type-safe EXIF builder** with compile-time separation of raw vs field modes
+  - `Exif::raw(bytes)` - use raw TIFF bytes
+  - `Exif::build().orientation(Orientation::Rotate90).copyright("© 2024")` - build from fields
+  - `Orientation` enum with all 8 EXIF orientation values
+  - `ExifFields` builder for orientation and copyright tags
+
+- **XMP metadata support**
+  - `.xmp(data)` method on `EncoderConfig` for embedding XMP metadata
+  - Proper APP1 marker with Adobe XMP namespace
+
+- **Performance improvements**
+  - Optimized Huffman encoding hot path (SIMD frequency collection)
+  - Reduced memcpy overhead in streaming encoder
+  - Lazy error evaluation in entropy encoder (13% speedup)
+
+### Fixed
+
+- Dead code warning for prerelease decoder API
+- Build failures across targets and features
+- Quality formula alignment with C++ jpegli
+
+## [0.6.0] - 2026-01-15
+
+_Internal refactoring release - no public API changes_
+
+## [0.5.0] - 2026-01-14
+
+_Internal refactoring release - no public API changes_
+
 ## [0.4.1] - 2026-01-11
 
 ### Added
