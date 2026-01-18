@@ -327,12 +327,11 @@ impl<'a> ScanlineReader<'a> {
                 // Decode h_blocks * v_blocks blocks for this component
                 for v in 0..v_blocks {
                     for h in 0..h_blocks {
-                        let (coeffs, coeff_count) = match decoder
-                            .decode_block_with_count(comp_idx, dc_idx, ac_idx)?
-                        {
-                            ScanRead::Value(v) => v,
-                            ScanRead::EndOfScan | ScanRead::Truncated => continue, // End of scan mid-block
-                        };
+                        let (coeffs, coeff_count) =
+                            match decoder.decode_block_with_count(comp_idx, dc_idx, ac_idx)? {
+                                ScanRead::Value(v) => v,
+                                ScanRead::EndOfScan | ScanRead::Truncated => continue, // End of scan mid-block
+                            };
 
                         dequantize_unzigzag_i32_into(&coeffs, quant, &mut self.dequant_buf);
 

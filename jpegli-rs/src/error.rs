@@ -216,7 +216,10 @@ pub enum ErrorKind {
 
     // === Encoder-specific: Argument errors ===
     /// Invalid quality parameter.
-    InvalidQuality { value: f32, valid_range: &'static str },
+    InvalidQuality {
+        value: f32,
+        valid_range: &'static str,
+    },
     /// Invalid scan script for progressive encoding.
     InvalidScanScript(String),
     /// Invalid encoder configuration.
@@ -409,9 +412,7 @@ impl From<ResourceError> for ErrorKind {
                 Self::AllocationFailed { bytes, context }
             }
             ResourceError::SizeOverflow { context } => Self::SizeOverflow { context },
-            ResourceError::ImageTooLarge { pixels, limit } => {
-                Self::ImageTooLarge { pixels, limit }
-            }
+            ResourceError::ImageTooLarge { pixels, limit } => Self::ImageTooLarge { pixels, limit },
             ResourceError::IoError { reason } => Self::IoError { reason },
         }
     }
