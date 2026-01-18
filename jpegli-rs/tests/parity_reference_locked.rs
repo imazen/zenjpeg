@@ -233,7 +233,7 @@ fn encode_cpp(png_path: &str, quality: u8, subsampling: &str) -> Option<Vec<u8>>
 
     let output = format!("/tmp/cpp_{}_{}.jpg", subsampling, quality);
     let status = Command::new(cjpegli)
-        .args(&[
+        .args([
             &format!("--chroma_subsampling={}", subsampling),
             "-p",
             "0",
@@ -583,7 +583,7 @@ fn exhaustive_parity() {
                 entries.push((q, rust_size, cpp_size, diff_pct));
 
                 // Verify within acceptable range
-                let max_diff = match ss_name.as_ref() {
+                let max_diff = match *ss_name {
                     "444" => MAX_DIFF_S444,
                     "420" => MAX_DIFF_S420,
                     "422" => MAX_DIFF_S422,

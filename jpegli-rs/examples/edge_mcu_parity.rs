@@ -65,7 +65,7 @@ fn encode_cpp(image: &ImageData, quality: u8) -> Vec<u8> {
     let config = EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Progressive)
-        .subsampling(ChromaSubsampling::Quarter)
+        .subsampling(ChromaSubsampling::S420)
         .quality(quality);
     config.encode(image).expect("C++ encode failed")
 }

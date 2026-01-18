@@ -47,7 +47,7 @@ impl ScanMode {
         }
     }
 
-    fn to_jpegli(&self) -> JpegMode {
+    fn to_jpegli(self) -> JpegMode {
         match self {
             Self::Baseline => JpegMode::Baseline,
             Self::Progressive => JpegMode::Progressive,
@@ -98,7 +98,7 @@ impl ChromaSampling {
         }
     }
 
-    fn to_jpegli(&self) -> Subsampling {
+    fn to_jpegli(self) -> Subsampling {
         match self {
             Self::S444 => Subsampling::S444,
             Self::S420 => Subsampling::S420,

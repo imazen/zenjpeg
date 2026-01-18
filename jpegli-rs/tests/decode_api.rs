@@ -351,10 +351,8 @@ fn test_decode_pixel_range() {
     let decoder = Decoder::new();
     let decoded = decoder.decode(&jpeg).expect("decode failed");
 
-    // All pixel values should be in valid range
-    for &pixel in &decoded.data {
-        assert!(pixel <= 255, "Pixel value out of range: {}", pixel);
-    }
+    // Ensure there's actual data
+    assert!(!decoded.data.is_empty(), "Decoded data should not be empty");
 }
 
 // ============================================================================

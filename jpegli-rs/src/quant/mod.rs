@@ -1553,8 +1553,8 @@ mod tests {
         assert!((FREQUENCY_EXPONENT[0] - 1.0).abs() < 1e-6);
 
         // Low frequencies (top-left) should have lower exponents
-        assert!(FREQUENCY_EXPONENT[1] < 1.0); // 0.51
-        assert!(FREQUENCY_EXPONENT[8] < 1.0); // 0.51
+        const { assert!(FREQUENCY_EXPONENT[1] < 1.0) }; // 0.51
+        const { assert!(FREQUENCY_EXPONENT[8] < 1.0) }; // 0.51
 
         // High frequencies (bottom-right) should have exponent 1.0
         assert!((FREQUENCY_EXPONENT[63] - 1.0).abs() < 1e-6);

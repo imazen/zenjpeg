@@ -696,7 +696,7 @@ mod quant_coverage {
     fn quality_distance_conversion() {
         // Test quality to distance and back
         for q in [10.0, 30.0, 50.0, 70.0, 90.0, 95.0, 99.0] {
-            let quality = Quality::Traditional(q);
+            let quality = Quality::ApproxJpegli(q);
             let distance = quality.to_distance();
             assert!(distance > 0.0, "Distance should be positive for Q{}", q);
         }

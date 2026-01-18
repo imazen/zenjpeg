@@ -4,7 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use enough::Unstoppable;
 use jpegli::decode::Decoder;
 use jpegli::decoder::PixelFormat;
-use jpegli::encode::{EncoderConfig, PixelLayout};
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];
@@ -17,7 +17,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
         }
     }
 
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation should succeed");

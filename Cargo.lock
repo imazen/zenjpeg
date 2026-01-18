@@ -209,6 +209,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -272,6 +273,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "codec-eval"
+version = "0.2.0"
+dependencies = [
+ "butteraugli",
+ "chrono",
+ "csv",
+ "dssim-core",
+ "imgref",
+ "jpeg-decoder",
+ "moxcms 0.7.11",
+ "rayon",
+ "rgb",
+ "serde",
+ "serde_json",
+ "ssimulacra2",
+ "thiserror",
 ]
 
 [[package]]
@@ -382,6 +402,27 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "csv"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
+dependencies = [
+ "csv-core",
+ "itoa",
+ "ryu",
+ "serde_core",
+]
+
+[[package]]
+name = "csv-core"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -696,7 +737,7 @@ dependencies = [
  "jpegli-internals-sys",
  "jpegli-rs",
  "libc",
- "moxcms",
+ "moxcms 0.6.4",
  "png",
  "rgb",
  "zune-jpeg",
@@ -722,6 +763,7 @@ dependencies = [
  "butteraugli",
  "bytemuck",
  "chrono",
+ "codec-eval",
  "criterion",
  "dssim",
  "enough",
@@ -731,7 +773,7 @@ dependencies = [
  "jpegli-internals-sys",
  "lcms2",
  "linear-srgb",
- "moxcms",
+ "moxcms 0.6.4",
  "mozjpeg-rs",
  "multiversed",
  "multiversion",
@@ -890,6 +932,16 @@ checksum = "154cecde340309c40d67acd50e4f4a0ba99960ff13e786cf211ebcc6aa490085"
 dependencies = [
  "chrono",
  "num-traits",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
+dependencies = [
+ "num-traits",
+ "pxfm",
 ]
 
 [[package]]
@@ -1090,6 +1142,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pxfm"
+version = "0.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7186d3822593aa4393561d186d1393b3923e9d6163d3fbfd6e825e3e6cf3e6a8"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1250,6 +1311,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ryu"
+version = "1.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
+
+[[package]]
 name = "safe_arch"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1361,6 +1428,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "ssimulacra2"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "700cb4e17f98c3f36756815b18dbec2b2e3c4f5028e9cdee3e23dd8c285e736c"
+dependencies = [
+ "num-traits",
+ "rayon",
+ "thiserror",
+ "yuvxyb",
+ "yuvxyb-math",
 ]
 
 [[package]]
@@ -1597,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "whereat"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "tinyvec",
 ]

@@ -196,14 +196,14 @@ fn parse_encoder(name: &str) -> EncoderConfig {
         "cjpegli" => EncoderConfig::new(EncoderImpl::CJpegli).color(ColorMode::YCbCr),
         "jpegli-rs-ycbcr-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::YCbCr)
-            .subsampling(ChromaSubsampling::None),
+            .subsampling(ChromaSubsampling::S444),
         "jpegli-rs-ycbcr-hybrid-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::YCbCr)
-            .subsampling(ChromaSubsampling::None)
+            .subsampling(ChromaSubsampling::S444)
             .hybrid(true),
         "jpegli-rs-xyb-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::Xyb)
-            .subsampling(ChromaSubsampling::None),
+            .subsampling(ChromaSubsampling::S444),
         _ => {
             eprintln!("Unknown encoder: {}. Using jpegli-rs-ycbcr", name);
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::YCbCr)

@@ -263,7 +263,7 @@ mod tests {
         let y_stride = 64; // Padded
         let num_pixels = width * height;
 
-        let mut rgb = vec![128u8; num_pixels * 3];
+        let rgb = vec![128u8; num_pixels * 3];
         let mut y_plane = vec![0.0f32; y_stride * height];
         let mut cb_plane = vec![0.0f32; num_pixels];
         let mut cr_plane = vec![0.0f32; num_pixels];
