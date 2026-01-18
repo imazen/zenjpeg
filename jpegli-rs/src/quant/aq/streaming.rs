@@ -60,6 +60,8 @@ pub struct StreamingAQ {
     // Image dimensions
     width: usize,
     height: usize,
+    /// MCU-aligned width (blocks_w * 8) - used for internal buffers to avoid boundary checks
+    padded_width: usize,
     /// Row stride in input data (may be larger than width for padded strips)
     strip_stride: usize,
 
@@ -137,6 +139,7 @@ impl StreamingAQ {
 
         let blocks_w = (width + 7) / 8;
         let blocks_h = (height + 7) / 8;
+        let padded_width = blocks_w * 8; // MCU-aligned width for SIMD-friendly access
         let pre_erosion_w = (width + 3) / 4;
         let pre_erosion_h = (height + 3) / 4;
 
@@ -156,7 +159,8 @@ impl StreamingAQ {
         Ok(Self {
             width,
             height,
-            strip_stride: width, // Default: stride equals width
+            padded_width,
+            strip_stride: padded_width, // Default: stride equals padded_width
             blocks_w,
             blocks_h,
             pre_erosion_w,
@@ -170,8 +174,9 @@ impl StreamingAQ {
             pre_erosion_accum: try_alloc_zeroed(width)?,
             pre_erosion_temp: try_alloc_zeroed(width)?,
             y_imcu_buffers: [
-                try_alloc_zeroed(width * imcu_height)?,
-                try_alloc_zeroed(width * imcu_height)?,
+                // Use padded_width for SIMD-friendly aligned access
+                try_alloc_zeroed(padded_width * imcu_height)?,
+                try_alloc_zeroed(padded_width * imcu_height)?,
             ],
             y_imcu_current: 0,
             y_imcu_height: imcu_height,
@@ -199,6 +204,7 @@ impl StreamingAQ {
         Self {
             width: 0,
             height: 0,
+            padded_width: 0,
             strip_stride: 0,
             blocks_w: 0,
             blocks_h: 0,
@@ -248,8 +254,9 @@ impl StreamingAQ {
             return None;
         }
 
-        // Use strip_stride for indexing input data, width for actual pixel count
+        // Use strip_stride for indexing input data
         let stride = self.strip_stride;
+        let padded_width = self.padded_width;
 
         // Process each row in the strip
         for local_y in 0..strip_height {
@@ -258,18 +265,18 @@ impl StreamingAQ {
                 break;
             }
 
-            // Input uses strip_stride, we only read width pixels
             let row_start = local_y * stride;
-            let row_end = row_start + self.width;
-            let row = &y_strip[row_start..row_end];
 
-            // Store in current Y iMCU buffer
+            // Store padded row in Y iMCU buffer (includes replicated edge pixels for SIMD)
+            // The input strip is expected to have stride >= padded_width with edge replication
             let imcu_local_y = global_y % self.y_imcu_height;
-            let dest_start = imcu_local_y * self.width;
-            self.y_imcu_buffers[self.y_imcu_current][dest_start..dest_start + self.width]
-                .copy_from_slice(row);
+            let dest_start = imcu_local_y * padded_width;
+            let padded_row = &y_strip[row_start..row_start + padded_width];
+            self.y_imcu_buffers[self.y_imcu_current][dest_start..dest_start + padded_width]
+                .copy_from_slice(padded_row);
 
-            // Process pre-erosion for this row
+            // Process pre-erosion using only actual width pixels (not padding)
+            let row = &y_strip[row_start..row_start + self.width];
             self.process_pre_erosion_row(row, global_y);
 
             self.rows_received = global_y + 1;
@@ -283,12 +290,13 @@ impl StreamingAQ {
             // Edge clamp: fill remaining rows of the iMCU buffer with copies of the last valid row
             // This is needed for partial iMCU rows at the bottom of the image
             let valid_rows_in_imcu = self.rows_received - self.current_imcu_row * imcu_height;
+            let padded_width = self.padded_width;
             if valid_rows_in_imcu < imcu_height && valid_rows_in_imcu > 0 {
                 let last_valid_row = valid_rows_in_imcu - 1;
-                let src_start = last_valid_row * self.width;
-                let src_end = src_start + self.width;
+                let src_start = last_valid_row * padded_width;
+                let src_end = src_start + padded_width;
                 for fill_row in valid_rows_in_imcu..imcu_height {
-                    let dest_start = fill_row * self.width;
+                    let dest_start = fill_row * padded_width;
                     self.y_imcu_buffers[self.y_imcu_current]
                         .copy_within(src_start..src_end, dest_start);
                 }
@@ -439,15 +447,6 @@ impl StreamingAQ {
         let v_samp = self.y_imcu_height / 8;
         let blocks_w = self.blocks_w;
 
-        // Compute actual valid pixel height in this iMCU buffer
-        // For partial iMCU rows at the bottom, this may be less than y_imcu_height
-        let imcu_start_row = imcu_row * self.y_imcu_height;
-        let valid_pixel_height = if imcu_start_row + self.y_imcu_height <= self.height {
-            self.y_imcu_height
-        } else {
-            self.height.saturating_sub(imcu_start_row)
-        };
-
         // Damping calculation (from per_block_modulations_simd)
         const K_AC_QUANT: f32 = 0.841;
         const K_DAMPEN_RAMP_START: f32 = 9.0;
@@ -482,12 +481,12 @@ impl StreamingAQ {
             }
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
-            // Per-block modulations
-            // Use valid_pixel_height instead of y_imcu_height for proper boundary handling
+            // Per-block modulations with padded buffer
+            // Buffer has padded_width stride and edge-clamped rows for full SIMD access
             per_block_modulations_row(
                 &self.y_imcu_buffers[y_buffer_idx],
-                self.width,
-                valid_pixel_height,
+                self.padded_width,
+                self.y_imcu_height,
                 by_offset,
                 blocks_w,
                 &mut self.fuzzy_erosion_out[row_start..row_end],
