@@ -49,11 +49,10 @@ use jpegli::encoder::{
 #### Quick Start
 
 ```rust
-use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+use jpegli::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-// Create reusable config
-let config = EncoderConfig::new()
-    .quality(85)
+// Create reusable config (quality and subsampling are required)
+let config = EncoderConfig::new(85, ChromaSubsampling::Quarter)
     .progressive(true);
 
 // Encode from raw bytes
@@ -73,9 +72,9 @@ let jpeg = enc.finish()?;
 #### Examples
 
 ```rust
-use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+use jpegli::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-let config = EncoderConfig::new().quality(85);
+let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
 
 // From raw RGB bytes
 let mut enc = config.encode_from_bytes(800, 600, PixelLayout::Rgb8Srgb)?;
@@ -96,32 +95,36 @@ let jpeg = enc.finish()?;
 
 #### EncoderConfig Builder Methods
 
+`EncoderConfig::new(quality, subsampling)` requires quality (0-100) and subsampling mode.
+
 | Method | Description | Default |
 |--------|-------------|---------|
-| `.quality(q)` | Quality 0-100 or `Quality` enum | 90 |
 | `.progressive(bool)` | Progressive JPEG (~3% smaller) | `false` |
 | `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
-| `.ycbcr(sub)` | YCbCr with subsampling | `Quarter` (4:2:0) |
 | `.xyb()` | XYB perceptual color space | - |
 | `.grayscale()` | Single-channel output | - |
 | `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |
 | `.icc_profile(bytes)` | Attach ICC profile | None |
+| `.exif(exif)` | Embed EXIF metadata | None |
+| `.xmp(data)` | Embed XMP metadata | None |
 | `.restart_interval(n)` | MCUs between restart markers | 0 |
 
 #### Quality Options
 
 ```rust
-use jpegli::encoder::{EncoderConfig, Quality};
+use jpegli::encoder::{EncoderConfig, Quality, ChromaSubsampling};
 
 // Simple quality scale (0-100)
-let config = EncoderConfig::new().quality(85);
+let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
 
 // Quality enum variants
-let config = EncoderConfig::new()
-    .quality(Quality::ApproxJpegli(85.0))     // Default scale
-    .quality(Quality::ApproxMozjpeg(80))      // Match mozjpeg output
-    .quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
-    .quality(Quality::ApproxButteraugli(1.0)); // Target butteraugli distance
+let config = EncoderConfig::new(
+    Quality::ApproxJpegli(85.0),  // Default scale
+    ChromaSubsampling::Quarter
+);
+// Or: Quality::ApproxMozjpeg(80)      - Match mozjpeg output
+// Or: Quality::ApproxSsim2(90.0)      - Target SSIMULACRA2 score
+// Or: Quality::ApproxButteraugli(1.0) - Target butteraugli distance
 ```
 
 #### Pixel Layouts
@@ -141,19 +144,19 @@ let config = EncoderConfig::new()
 ```rust
 use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
 
-let config = EncoderConfig::new()
-    .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default, best compression)
-    .ycbcr(ChromaSubsampling::Full)           // 4:4:4 (best quality)
-    .ycbcr(ChromaSubsampling::HalfHorizontal) // 4:2:2
-    .ycbcr(ChromaSubsampling::HalfVertical);  // 4:4:0
+// Subsampling is specified in the constructor
+let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);  // 4:2:0 (best compression)
+let config = EncoderConfig::new(85, ChromaSubsampling::Full);     // 4:4:4 (best quality)
+let config = EncoderConfig::new(85, ChromaSubsampling::HalfHorizontal); // 4:2:2
+let config = EncoderConfig::new(85, ChromaSubsampling::HalfVertical);   // 4:4:0
 ```
 
 #### Resource Estimation
 
 ```rust
-use jpegli::encoder::EncoderConfig;
+use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
 
-let config = EncoderConfig::new().quality(85);
+let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
 
 // Typical memory estimate
 let estimate = config.estimate_memory(1920, 1080);
@@ -319,13 +322,13 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-jpegli-rs = "0.5"
+jpegli-rs = "0.7"
 
 # Minimal (no CMS):
-jpegli-rs = { version = "0.5", default-features = false }
+jpegli-rs = { version = "0.7", default-features = false }
 
 # With unsafe SIMD (x86_64 only):
-jpegli-rs = { version = "0.5", features = ["unsafe_simd"] }
+jpegli-rs = { version = "0.7", features = ["unsafe_simd"] }
 ```
 
 ## Encoder Status
