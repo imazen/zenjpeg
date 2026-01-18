@@ -895,9 +895,9 @@ dependencies = [
 
 [[package]]
 name = "linear-srgb"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9720a973a417304f73ee87759934ba07b5645680f3add4312cc819370e211a7"
+checksum = "ecd8c8b117b8a9c2da1081ea0c600d069d9ea5ae485c6bd116a0f62bd3bcc34e"
 dependencies = [
  "bytemuck",
  "multiversed",
