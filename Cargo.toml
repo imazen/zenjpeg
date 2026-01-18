@@ -79,6 +79,17 @@ almost-enough = { version = "0.3", features = ["std"] }
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }
 mozjpeg-rs = "0.2.5"
 
+# Metadata crates (for integration testing)
+kamadak-exif = "0.6"
+img-parts = "0.4"
+
+# Our ultrahdr crate (for integration testing)
+ultrahdr = { path = "/home/lilith/work/ultrahdr" }
+
+# Patch ultrahdr's jpegli-rs dependency to use local version
+[patch.crates-io]
+jpegli-rs = { path = "jpegli-rs" }
+
 
 [profile.release]
 debug = true

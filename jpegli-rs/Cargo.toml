@@ -67,6 +67,10 @@ yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy tes
 codec-eval = { workspace = true }
 # Note: turbojpeg conflicts with mozjpeg (duplicate libjpeg symbols)
 # turbojpeg = { workspace = true }
+# Metadata crates (for integration testing)
+kamadak-exif = { workspace = true }
+img-parts = { workspace = true }
+ultrahdr = { workspace = true }
 
 [features]
 default = ["std", "yuv"]
