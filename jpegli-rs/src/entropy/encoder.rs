@@ -234,10 +234,10 @@ impl<'a> EntropyEncoder<'a> {
     ) -> Result<()> {
         let dc_table = self.dc_tables[dc_table_idx]
             .as_ref()
-            .ok_or(Error::internal("DC table not set"))?;
+            .ok_or_else(|| Error::internal("DC table not set"))?;
         let ac_table = self.ac_tables[ac_table_idx]
             .as_ref()
-            .ok_or(Error::internal("AC table not set"))?;
+            .ok_or_else(|| Error::internal("AC table not set"))?;
 
         // Encode DC coefficient
         let dc = coeffs[0];
@@ -307,10 +307,10 @@ impl<'a> EntropyEncoder<'a> {
     ) -> Result<()> {
         let dc_table = self.dc_tables[dc_table_idx]
             .as_ref()
-            .ok_or(Error::internal("DC table not set"))?;
+            .ok_or_else(|| Error::internal("DC table not set"))?;
         let ac_table = self.ac_tables[ac_table_idx]
             .as_ref()
-            .ok_or(Error::internal("AC table not set"))?;
+            .ok_or_else(|| Error::internal("AC table not set"))?;
 
         let prev_dc = self.prev_dc[component];
         let (_, new_dc) =
@@ -373,7 +373,7 @@ impl<'a> EntropyEncoder<'a> {
 
             let dc_table = self.dc_tables[table_idx]
                 .as_ref()
-                .ok_or(Error::internal("DC table not set"))?;
+                .ok_or_else(|| Error::internal("DC table not set"))?;
 
             let dc_cat = category(dc_diff);
             let (code, len) = dc_table.encode(dc_cat);
@@ -440,7 +440,7 @@ impl<'a> EntropyEncoder<'a> {
 
         let ac_table = self.ac_tables[table_idx]
             .as_ref()
-            .ok_or(Error::internal("AC table not set"))?;
+            .ok_or_else(|| Error::internal("AC table not set"))?;
 
         // Encode non-zero coefficients
         let mut r = 0u8; // Run of zeros
@@ -502,7 +502,7 @@ impl<'a> EntropyEncoder<'a> {
 
         let ac_table = self.ac_tables[table_idx]
             .as_ref()
-            .ok_or(Error::internal("AC table not set"))?;
+            .ok_or_else(|| Error::internal("AC table not set"))?;
 
         // EOB run encoding:
         // - eob_run=1: symbol=0x00 (EOB), no extra bits
@@ -560,7 +560,7 @@ impl<'a> EntropyEncoder<'a> {
         eob_run: &mut u16,
     ) -> Result<()> {
         let ac_table =
-            self.ac_tables[table_idx].ok_or(Error::internal("AC table not set for refinement"))?;
+            self.ac_tables[table_idx].ok_or_else(|| Error::internal("AC table not set for refinement"))?;
 
         let mut k = ss;
         let mut run = 0u32;
@@ -652,7 +652,7 @@ impl<'a> EntropyEncoder<'a> {
                 // Emit single EOB for this block
                 let ac_table = self.ac_tables[table_idx]
                     .as_ref()
-                    .ok_or(Error::internal("AC table not set for refinement EOB"))?;
+                    .ok_or_else(|| Error::internal("AC table not set for refinement EOB"))?;
                 let (eob_code, eob_len) = ac_table.encode(0x00);
                 self.writer.write_bits(eob_code, eob_len);
 
@@ -697,7 +697,7 @@ impl<'a> EntropyEncoder<'a> {
 
             let dc_table = self.dc_tables[table_idx]
                 .as_ref()
-                .ok_or(Error::internal("DC table not set for token replay"))?;
+                .ok_or_else(|| Error::internal("DC table not set for token replay"))?;
 
             // Write the Huffman code for the symbol
             let (code, len) = dc_table.encode(token.symbol);
@@ -731,7 +731,7 @@ impl<'a> EntropyEncoder<'a> {
     /// * `table_idx` - AC Huffman table index to use
     pub fn write_ac_first_tokens(&mut self, tokens: &[Token], table_idx: usize) -> Result<()> {
         let ac_table = self.ac_tables[table_idx]
-            .ok_or(Error::internal("AC table not set for token replay"))?;
+            .ok_or_else(|| Error::internal("AC table not set for token replay"))?;
 
         for token in tokens {
             // Write the Huffman code for the symbol
@@ -784,7 +784,7 @@ impl<'a> EntropyEncoder<'a> {
         table_idx: usize,
     ) -> Result<()> {
         let ac_table = self.ac_tables[table_idx]
-            .ok_or(Error::internal("AC table not set for refinement replay"))?;
+            .ok_or_else(|| Error::internal("AC table not set for refinement replay"))?;
 
         let mut refbit_idx = 0;
         let mut eobrun_idx = 0;
