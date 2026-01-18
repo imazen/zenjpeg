@@ -13,7 +13,6 @@ fn main() {
     #[cfg(not(feature = "parallel"))]
     {
         println!("ERROR: Run with --features parallel");
-        return;
     }
 
     #[cfg(feature = "parallel")]

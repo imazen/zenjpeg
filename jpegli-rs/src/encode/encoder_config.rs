@@ -19,6 +19,8 @@ pub struct EncoderConfig {
     pub(crate) downsampling_method: DownsamplingMethod,
     pub(crate) restart_interval: u16,
     pub(crate) icc_profile: Option<Vec<u8>>,
+    pub(crate) exif_data: Option<Vec<u8>>,
+    pub(crate) xmp_data: Option<Vec<u8>>,
     pub(crate) edge_padding: EdgePaddingConfig,
     /// Parallel encoding configuration (requires `parallel` feature)
     #[cfg(feature = "parallel")]
@@ -66,6 +68,8 @@ impl EncoderConfig {
             downsampling_method: DownsamplingMethod::default(),
             restart_interval: 0,
             icc_profile: None,
+            exif_data: None,
+            xmp_data: None,
             edge_padding: EdgePaddingConfig::default(),
             #[cfg(feature = "parallel")]
             parallel: None,
@@ -208,6 +212,42 @@ impl EncoderConfig {
     #[must_use]
     pub fn icc_profile(mut self, profile: impl Into<Vec<u8>>) -> Self {
         self.icc_profile = Some(profile.into());
+        self
+    }
+
+    // === EXIF/XMP Metadata ===
+
+    /// Attach EXIF metadata to the output JPEG.
+    ///
+    /// The data will be written as an APP1 marker segment with the standard
+    /// "Exif\0\0" signature. The provided bytes should be the raw EXIF data
+    /// (TIFF structure) without the APP1 marker or "Exif\0\0" prefix.
+    ///
+    /// EXIF is placed immediately after SOI, before any other markers.
+    ///
+    /// # Maximum Size
+    /// EXIF data is limited to 65527 bytes (65535 - 2 length - 6 signature).
+    /// Larger data will be truncated.
+    #[must_use]
+    pub fn exif(mut self, data: impl Into<Vec<u8>>) -> Self {
+        self.exif_data = Some(data.into());
+        self
+    }
+
+    /// Attach XMP metadata to the output JPEG.
+    ///
+    /// The data will be written as an APP1 marker segment with the standard
+    /// Adobe XMP namespace signature. The provided bytes should be the raw XMP
+    /// XML data without the APP1 marker or namespace prefix.
+    ///
+    /// XMP is placed after EXIF (if present) but before ICC profile.
+    ///
+    /// # Maximum Size
+    /// Standard XMP is limited to 65502 bytes (65535 - 2 length - 29 namespace - 2 padding).
+    /// For larger XMP data, use Extended XMP (not yet supported).
+    #[must_use]
+    pub fn xmp(mut self, data: impl Into<Vec<u8>>) -> Self {
+        self.xmp_data = Some(data.into());
         self
     }
 
@@ -483,6 +523,18 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_icc_profile(&self) -> Option<&[u8]> {
         self.icc_profile.as_deref()
+    }
+
+    /// Get the EXIF data, if set.
+    #[must_use]
+    pub fn get_exif(&self) -> Option<&[u8]> {
+        self.exif_data.as_deref()
+    }
+
+    /// Get the XMP data, if set.
+    #[must_use]
+    pub fn get_xmp(&self) -> Option<&[u8]> {
+        self.xmp_data.as_deref()
     }
 
     /// Internal: Get the configured edge padding.
