@@ -61,6 +61,7 @@ pub mod strip;
 pub mod byte_encoders;
 pub mod encoder_config;
 pub mod encoder_types;
+pub mod exif;
 
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
@@ -81,6 +82,8 @@ pub use encoder_types::{
     XybSubsampling, YCbCrPlanes,
 };
 pub use enough::Stop;
+#[allow(unused_imports)] // Public API re-exports
+pub use exif::{Exif, ExifFields, Orientation};
 
 use crate::error::{Error, Result};
 

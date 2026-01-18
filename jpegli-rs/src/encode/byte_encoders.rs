@@ -247,8 +247,10 @@ impl BytesEncoder {
 
         // Inject metadata in order: EXIF first (right after SOI), then XMP, then ICC
         // This matches standard JPEG metadata ordering
-        if let Some(ref exif_data) = self.config.exif_data {
-            jpeg = inject_exif(jpeg, exif_data);
+        if let Some(ref exif) = self.config.exif_data {
+            if let Some(exif_bytes) = exif.to_bytes() {
+                jpeg = inject_exif(jpeg, &exif_bytes);
+            }
         }
 
         if let Some(ref xmp_data) = self.config.xmp_data {
