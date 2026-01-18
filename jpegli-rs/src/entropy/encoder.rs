@@ -559,8 +559,8 @@ impl<'a> EntropyEncoder<'a> {
         al: u8,
         eob_run: &mut u16,
     ) -> Result<()> {
-        let ac_table =
-            self.ac_tables[table_idx].ok_or_else(|| Error::internal("AC table not set for refinement"))?;
+        let ac_table = self.ac_tables[table_idx]
+            .ok_or_else(|| Error::internal("AC table not set for refinement"))?;
 
         let mut k = ss;
         let mut run = 0u32;

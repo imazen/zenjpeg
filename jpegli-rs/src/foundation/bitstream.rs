@@ -455,7 +455,9 @@ impl<'a> BitReader<'a> {
             return Ok(self.end_state());
         }
         // Fast peek using top-aligned buffer - just right shift
-        Ok(ScanRead::Value((self.aligned_buffer >> (64 - count)) as u32))
+        Ok(ScanRead::Value(
+            (self.aligned_buffer >> (64 - count)) as u32,
+        ))
     }
 
     /// Fast peek that refills first. Returns None if not enough bits after refill.
