@@ -36,12 +36,9 @@ fn find_codec_corpus() -> Option<PathBuf> {
         PathBuf::from("./codec-corpus"),
     ];
 
-    for path in candidates {
-        if path.exists() && path.is_dir() {
-            return Some(path);
-        }
-    }
-    None
+    candidates
+        .into_iter()
+        .find(|path| path.exists() && path.is_dir())
 }
 
 /// Collect all JPEG files from a directory recursively.
@@ -212,9 +209,10 @@ fn test_zune_progressive() {
         println!("{}: {:?}", filename, result.is_ok());
 
         // Progressive grayscale should decode
-        if filename.contains("grayscale") && result.is_ok() {
-            let img = result.unwrap();
-            assert!(img.width > 0 && img.height > 0);
+        if filename.contains("grayscale") {
+            if let Ok(img) = result {
+                assert!(img.width > 0 && img.height > 0);
+            }
         }
     }
 }

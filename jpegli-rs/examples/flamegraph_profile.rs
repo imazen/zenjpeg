@@ -39,7 +39,7 @@ fn main() {
 
     let (width, height, iterations) = match mode {
         "8k" => (7680usize, 4320usize, 3),
-        "4k" | _ => (3840usize, 2160usize, 10),
+        _ => (3840usize, 2160usize, 10),
     };
 
     eprintln!("Creating {}x{} test image...", width, height);

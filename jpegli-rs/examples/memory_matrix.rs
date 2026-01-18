@@ -123,7 +123,9 @@ impl TestResult {
 
 fn run_test(test: EncoderTest) -> TestResult {
     use enough::Unstoppable;
-    use jpegli::encoder::{ColorMode, EncoderConfig, PixelLayout, XybSubsampling};
+    use jpegli::encoder::{
+        ChromaSubsampling, ColorMode, EncoderConfig, PixelLayout, XybSubsampling,
+    };
 
     // Create test image (gradient)
     let input_size = test.width as usize * test.height as usize * 3;
@@ -138,8 +140,7 @@ fn run_test(test: EncoderTest) -> TestResult {
     }
 
     // Build config
-    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(test.quality)
+    let mut config = EncoderConfig::new(test.quality, ChromaSubsampling::Quarter)
         .optimize_huffman(test.optimize_huffman);
 
     if test.xyb_mode {

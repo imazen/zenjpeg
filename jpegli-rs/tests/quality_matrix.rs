@@ -393,6 +393,7 @@ fn encode_cpp_ffi(
         let row_stride = (width as usize) * 3;
         let mut row_pointer: [JSAMPROW; 1] = [ptr::null_mut()];
 
+        #[allow(clippy::while_immutable_condition)] // jpeg_write_scanlines updates next_scanline
         while (*cinfo_ptr).next_scanline < (*cinfo_ptr).image_height {
             let row_idx = (*cinfo_ptr).next_scanline as usize;
             let row_start = row_idx * row_stride;

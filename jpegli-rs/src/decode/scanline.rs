@@ -839,6 +839,7 @@ mod tests {
     }
 
     /// Compare two f32 slices and return (max_diff, diff_count, first_diff_idx)
+    #[allow(dead_code)]
     fn compare_f32_slices(a: &[f32], b: &[f32]) -> (f32, usize, Option<usize>) {
         assert_eq!(a.len(), b.len(), "slice length mismatch");
         let mut max_diff: f32 = 0.0;
@@ -875,6 +876,7 @@ mod tests {
     }
 
     /// Assert f32 slices are equal, with detailed diff info on failure
+    #[allow(dead_code)]
     fn assert_slices_equal_f32(actual: &[f32], expected: &[f32], context: &str) {
         let (max_diff, diff_count, first_diff_idx) = compare_f32_slices(actual, expected);
         if diff_count > 0 {

@@ -58,6 +58,7 @@ fn encode_rgba(
     enc.finish()
 }
 
+#[allow(dead_code)]
 fn encode_bgr(
     width: u32,
     height: u32,
@@ -69,6 +70,7 @@ fn encode_bgr(
     enc.finish()
 }
 
+#[allow(dead_code)]
 fn encode_bgra(
     width: u32,
     height: u32,
@@ -689,10 +691,8 @@ mod decode_coverage {
         let decoder = Decoder::new();
         let decoded = decoder.decode(&jpeg).expect("decode failed");
 
-        // All pixels should be in valid range [0, 255]
-        for &pixel in &decoded.data {
-            assert!(pixel <= 255);
-        }
+        // Ensure we got actual pixel data
+        assert!(!decoded.data.is_empty(), "Decoded data should not be empty");
     }
 }
 
@@ -814,7 +814,7 @@ mod quality_coverage {
     #[test]
     fn quality_from_quality() {
         for q in [0.0, 25.0, 50.0, 75.0, 100.0] {
-            let quality = Quality::Traditional(q);
+            let quality = Quality::ApproxJpegli(q);
             // Just verify it doesn't panic
             let _ = quality;
         }
@@ -830,7 +830,7 @@ mod quality_coverage {
 
     #[test]
     fn quality_to_distance() {
-        let q = Quality::Traditional(90.0);
+        let q = Quality::ApproxJpegli(90.0);
         let d = q.to_distance();
         assert!(d > 0.0, "Distance should be positive");
     }
@@ -838,8 +838,8 @@ mod quality_coverage {
     #[test]
     fn quality_roundtrip() {
         // Higher quality -> lower distance
-        let q90 = Quality::Traditional(90.0);
-        let q50 = Quality::Traditional(50.0);
+        let q90 = Quality::ApproxJpegli(90.0);
+        let q50 = Quality::ApproxJpegli(50.0);
         assert!(
             q90.to_distance() < q50.to_distance(),
             "Q90 should have lower distance than Q50"
@@ -857,48 +857,19 @@ mod encoder_error_coverage {
     #[test]
     fn encoder_error_display() {
         let errors: Vec<Error> = vec![
-            Error::InvalidDimensions {
-                width: 0,
-                height: 100,
-                reason: "width cannot be zero",
-            },
-            Error::InvalidQuality {
-                value: -1.0,
-                valid_range: "0-100",
-            },
-            Error::InvalidColorFormat {
-                reason: "unsupported format",
-            },
-            Error::InvalidBufferSize {
-                expected: 1000,
-                actual: 100,
-            },
-            Error::UnsupportedFeature {
-                feature: "arithmetic coding",
-            },
-            Error::InternalError {
-                reason: "unexpected state",
-            },
-            Error::IoError {
-                reason: "disk full".to_string(),
-            },
-            Error::IccError("invalid profile".to_string()),
-            Error::InvalidScanScript("overlapping scans".to_string()),
-            Error::AllocationFailed {
-                bytes: 1_000_000_000,
-                context: "allocating DCT blocks",
-            },
-            Error::SizeOverflow {
-                context: "computing buffer size",
-            },
-            Error::ImageTooLarge {
-                pixels: 200_000_000,
-                limit: 100_000_000,
-            },
-            Error::TooManyRows {
-                height: 100,
-                pushed: 200,
-            },
+            Error::invalid_dimensions(0, 100, "width cannot be zero"),
+            Error::invalid_quality(-1.0, "0-100"),
+            Error::invalid_color_format("unsupported format"),
+            Error::invalid_buffer_size(1000, 100),
+            Error::unsupported_feature("arithmetic coding"),
+            Error::internal("unexpected state"),
+            Error::io_error("disk full".to_string()),
+            Error::icc_error("invalid profile".to_string()),
+            Error::invalid_scan_script("overlapping scans".to_string()),
+            Error::allocation_failed(1_000_000_000, "allocating DCT blocks"),
+            Error::size_overflow("computing buffer size"),
+            Error::image_too_large(200_000_000, 100_000_000),
+            Error::too_many_rows(100, 200),
         ];
 
         for err in errors {
@@ -911,24 +882,14 @@ mod encoder_error_coverage {
 
     #[test]
     fn encoder_error_equality() {
-        let err1 = Error::InvalidDimensions {
-            width: 0,
-            height: 0,
-            reason: "zero dimensions",
-        };
-        let err2 = Error::InvalidDimensions {
-            width: 0,
-            height: 0,
-            reason: "zero dimensions",
-        };
+        let err1 = Error::invalid_dimensions(0, 0, "zero dimensions");
+        let err2 = Error::invalid_dimensions(0, 0, "zero dimensions");
         assert_eq!(err1, err2);
     }
 
     #[test]
     fn encoder_error_clone() {
-        let err = Error::InternalError {
-            reason: "test error",
-        };
+        let err = Error::internal("test error");
         let cloned = err.clone();
         assert_eq!(err, cloned);
     }
@@ -940,51 +901,20 @@ mod decoder_error_coverage {
     #[test]
     fn decoder_error_display() {
         let errors: Vec<Error> = vec![
-            Error::InvalidJpegData {
-                reason: "not a valid JPEG",
-            },
-            Error::TruncatedData {
-                context: "reading header",
-            },
-            Error::EndOfScanData,
-            Error::InvalidMarker {
-                marker: 0xFF,
-                context: "parsing markers",
-            },
-            Error::InvalidHuffmanTable {
-                table_idx: 0,
-                reason: "invalid code lengths",
-            },
-            Error::InvalidQuantTable {
-                table_idx: 0,
-                reason: "zero values",
-            },
-            Error::UnsupportedFeature {
-                feature: "arithmetic coding",
-            },
-            Error::InternalError {
-                reason: "unexpected state",
-            },
-            Error::IoError {
-                reason: "disk full".to_string(),
-            },
-            Error::IccError("invalid profile".to_string()),
-            Error::DecodeError("truncated data".to_string()),
-            Error::AllocationFailed {
-                bytes: 1_000_000_000,
-                context: "allocating DCT blocks",
-            },
-            Error::SizeOverflow {
-                context: "computing buffer size",
-            },
-            Error::ImageTooLarge {
-                pixels: 200_000_000,
-                limit: 100_000_000,
-            },
-            Error::TooManyScans {
-                count: 200,
-                limit: 100,
-            },
+            Error::invalid_jpeg_data("not a valid JPEG"),
+            Error::truncated_data("reading header"),
+            Error::invalid_marker(0xFF, "parsing markers"),
+            Error::invalid_huffman_table(0, "invalid code lengths"),
+            Error::invalid_quant_table(0, "zero values"),
+            Error::unsupported_feature("arithmetic coding"),
+            Error::internal("unexpected state"),
+            Error::io_error("disk full".to_string()),
+            Error::icc_error("invalid profile".to_string()),
+            Error::decode_error("truncated data".to_string()),
+            Error::allocation_failed(1_000_000_000, "allocating DCT blocks"),
+            Error::size_overflow("computing buffer size"),
+            Error::image_too_large(200_000_000, 100_000_000),
+            Error::too_many_scans(200, 100),
         ];
 
         for err in errors {
@@ -997,20 +927,14 @@ mod decoder_error_coverage {
 
     #[test]
     fn decoder_error_equality() {
-        let err1 = Error::InvalidJpegData {
-            reason: "truncated",
-        };
-        let err2 = Error::InvalidJpegData {
-            reason: "truncated",
-        };
+        let err1 = Error::invalid_jpeg_data("truncated");
+        let err2 = Error::invalid_jpeg_data("truncated");
         assert_eq!(err1, err2);
     }
 
     #[test]
     fn decoder_error_clone() {
-        let err = Error::InvalidJpegData {
-            reason: "test error",
-        };
+        let err = Error::invalid_jpeg_data("test error");
         let cloned = err.clone();
         assert_eq!(err, cloned);
     }

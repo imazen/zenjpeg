@@ -5,7 +5,6 @@
 #![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
-use enough::Unstoppable;
 use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::path::{Path, PathBuf};
@@ -258,7 +257,7 @@ fn test_corpus_comparison() {
     let images: Vec<_> = std::fs::read_dir(corpus_path)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
 
     let max_images = std::env::var("MAX_IMAGES")
@@ -278,7 +277,7 @@ fn test_corpus_comparison() {
         .report_dir(PathBuf::from("/tmp/jpegli-corpus-comparison"))
         .viewing(ViewingCondition::desktop())
         .quality_levels(vec![60.0, 80.0, 90.0])
-        .start();
+        .build();
 
     let mut session = EvalSession::new(config);
 

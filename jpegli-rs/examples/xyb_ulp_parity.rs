@@ -249,6 +249,7 @@ fn cpp_linear_rgb_to_xyb(_linear_rgb: &[[f32; 3]], _intensity_target: f32) -> Ve
 // Test data generation
 // ============================================================================
 
+#[allow(clippy::vec_init_then_push)]
 fn generate_test_linear_rgb() -> Vec<[f32; 3]> {
     let mut pixels = Vec::new();
 
