@@ -176,44 +176,60 @@ Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile 
 4. Quantization (6.2%) - parallelizable with DCT
 5. Frequency counting (6.3%) - sequential (DC prediction dependency)
 
-## C++ Performance Gap (2026-01-17)
+## C++ Performance Gap (2026-01-18)
 
-Run with: `cargo bench --bench cpp_comparison`
+Run with: `cargo bench -p jpegli-rs@0.6.0 --bench cpp_comparison`
+
+**WARNING**: The `comprehensive_cpp_comparison` test uses subprocess timing (unfair).
+Use the FFI benchmark above for accurate library-to-library comparison.
 
 ### Summary
 
-Rust is consistently **1.5-1.7x slower** than C++ jpegli:
+Rust is consistently **1.6x slower** than C++ jpegli (FFI benchmark, 512x512):
 
-| Size | Rust | C++ | Gap |
-|------|------|-----|-----|
-| 512x512 | 3.02ms | 1.79ms | 1.69x |
-| 1024x1024 | 11.1ms | 6.8ms | 1.63x |
-| 2048x2048 | 42.1ms | 25.8ms | 1.64x |
-| 4096x4096 | 196ms | 132ms | 1.48x |
-
-Gap is proportional to image size, pointing to per-block operations.
+| Quality | Rust | C++ FFI | Ratio |
+|---------|------|---------|-------|
+| q50 | 2.8ms | 1.74ms | 1.6x |
+| q75 | 3.0ms | 1.86ms | 1.6x |
+| q90 | 3.4ms | 2.05ms | 1.6x |
+| q95 | 3.8ms | 2.40ms | 1.6x |
 
 ### Root Causes
 
 1. **AQ computation (35% of time)** - Biggest contributor
    - C++ uses Highway SIMD with AVX-512 for all AQ functions
    - Rust uses `wide` crate (AVX2-level, f32x8)
-   - Rust has more boundary checks for edge handling
-   - `fuzzy_erosion` uses 9-point stencil with nested loops
+   - `hf_modulation_sum_8x8` still has scalar fallback for rightmost block column
 
-2. **Entropy encoding (14.2%)**
+2. **Entropy encoding (14%)**
    - Both use similar algorithms
    - Needs assembly comparison
 
-3. **DCT (4.6% in Rust, faster in C++)**
-   - Highway has better AVX-512 DCT optimizations
+3. **DCT** - Highway has better AVX-512 optimizations
 
-### Potential Optimizations
+### Padded AQ Buffers Optimization (2026-01-18)
 
-1. **Highway port** - Use highway-rs for AVX-512 AQ
-2. **Reduce boundary checks** - Specialize paths for full blocks vs edge blocks
-3. **Fuse operations** - Combine fuzzy_erosion 9-point stencil passes
-4. **Profile-guided** - Use `#[inline(always)]` more aggressively in hot paths
+**Problem**: StreamingAQ was discarding MCU-aligned padding from input strips.
+
+**Solution** (`jpegli-rs/src/quant/aq/streaming.rs`):
+- Added `padded_width` field (blocks_w × 8) for MCU-aligned buffer stride
+- y_imcu_buffers now allocated with padded_width instead of width
+- Pass padded_width to per_block_modulations_row for aligned SIMD access
+
+**Quick benchmark results** (vs previous Rust baseline):
+- prog-opt-420: 24-27% faster
+- base-opt-420: 46-49% faster
+- prog-opt-444: 47-50% faster
+
+Note: These gains are vs previous Rust, NOT vs C++. The 1.6x gap to C++ remains.
+
+### Remaining SIMD Edge Cases
+
+`hf_modulation_sum_8x8` (line 539) still uses scalar fallback for horizontal
+differences in rightmost block column due to `block_x + 8 < img_width` check.
+This affects ~1.5% of blocks.
+
+To eliminate: would need 1 extra pixel of buffer padding for wraparound reads.
 
 ## Failed Explorations
 
