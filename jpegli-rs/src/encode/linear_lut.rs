@@ -98,6 +98,62 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 }
 
 // ============================================================================
+// SIMD implementations (8-wide)
+// ============================================================================
+
+use linear_srgb::simd::linear_to_srgb_x8;
+use wide::{f32x8, CmpGt};
+
+/// Convert 8 linear f32 values [0,1] to sRGB [0, 255] using SIMD.
+///
+/// Values > 1.0 are tone-mapped with Reinhard.
+#[inline]
+pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
+    // Clamp negatives to zero
+    let x = x.max(f32x8::ZERO);
+
+    // Reinhard tone mapping for HDR: x / (1 + x)
+    // Only apply where x > 1.0
+    let one = f32x8::ONE;
+    let needs_tonemap = x.simd_gt(one);
+    let tonemapped = x / (one + x);
+    let x = needs_tonemap.blend(tonemapped, x);
+
+    // Apply sRGB transfer function and scale to [0, 255]
+    linear_to_srgb_x8(x) * f32x8::splat(255.0)
+}
+
+/// Convert 8 linear RGB pixels to 8 Y, 8 Cb, 8 Cr values using SIMD.
+///
+/// Takes R, G, B as separate f32x8 vectors (structure-of-arrays layout).
+/// Returns (Y, Cb, Cr) as f32x8 vectors.
+#[inline]
+pub fn linear_rgbf32_to_ycbcr_x8(r: f32x8, g: f32x8, b: f32x8) -> (f32x8, f32x8, f32x8) {
+    // Convert linear to sRGB [0, 255]
+    let r = linear_to_srgb_255_x8(r);
+    let g = linear_to_srgb_255_x8(g);
+    let b = linear_to_srgb_255_x8(b);
+
+    // RGB to YCbCr matrix multiplication
+    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let chroma_offset = f32x8::splat(CHROMA_OFFSET);
+
+    let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
+    let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb * b)) + chroma_offset;
+    let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr * b)) + chroma_offset;
+
+    (y, cb, cr)
+}
+
+// ============================================================================
 // Reference implementation (accurate, slow)
 // ============================================================================
 
