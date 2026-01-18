@@ -338,12 +338,78 @@ impl StripProcessor {
                 }
             }
             PixelFormat::GrayF32 => {
-                use super::super::linear_lut::linear_f32_to_srgb_255_fast;
+                use super::super::linear_lut::{
+                    linear_f32_to_srgb_255_fast, linear_to_srgb_255_x8,
+                };
+                use wide::f32x8;
+
                 // GrayF32: 4 bytes per pixel, linear
                 for row in 0..strip_height {
                     let src_start = row * width * 4;
                     let dst_start = row * padded_width;
-                    for x in 0..width {
+
+                    // Process 8 pixels at a time with SIMD
+                    let simd_width = width / 8 * 8;
+                    for x in (0..simd_width).step_by(8) {
+                        let idx = src_start + x * 4;
+                        // Load 8 f32 values (32 bytes)
+                        let v = f32x8::new([
+                            f32::from_ne_bytes([
+                                rgb_strip[idx],
+                                rgb_strip[idx + 1],
+                                rgb_strip[idx + 2],
+                                rgb_strip[idx + 3],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 4],
+                                rgb_strip[idx + 5],
+                                rgb_strip[idx + 6],
+                                rgb_strip[idx + 7],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 8],
+                                rgb_strip[idx + 9],
+                                rgb_strip[idx + 10],
+                                rgb_strip[idx + 11],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 12],
+                                rgb_strip[idx + 13],
+                                rgb_strip[idx + 14],
+                                rgb_strip[idx + 15],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 16],
+                                rgb_strip[idx + 17],
+                                rgb_strip[idx + 18],
+                                rgb_strip[idx + 19],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 20],
+                                rgb_strip[idx + 21],
+                                rgb_strip[idx + 22],
+                                rgb_strip[idx + 23],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 24],
+                                rgb_strip[idx + 25],
+                                rgb_strip[idx + 26],
+                                rgb_strip[idx + 27],
+                            ]),
+                            f32::from_ne_bytes([
+                                rgb_strip[idx + 28],
+                                rgb_strip[idx + 29],
+                                rgb_strip[idx + 30],
+                                rgb_strip[idx + 31],
+                            ]),
+                        ]);
+                        let srgb = linear_to_srgb_255_x8(v);
+                        let arr = srgb.to_array();
+                        self.y_strip[dst_start + x..dst_start + x + 8].copy_from_slice(&arr);
+                    }
+
+                    // Handle remainder with scalar
+                    for x in simd_width..width {
                         let idx = src_start + x * 4;
                         let linear = f32::from_ne_bytes([
                             rgb_strip[idx],
@@ -351,9 +417,9 @@ impl StripProcessor {
                             rgb_strip[idx + 2],
                             rgb_strip[idx + 3],
                         ]);
-                        // LUT-optimized: linear f32 -> sRGB [0-255]
                         self.y_strip[dst_start + x] = linear_f32_to_srgb_255_fast(linear);
                     }
+
                     // Edge-pad Y row
                     if width < padded_width {
                         let edge_val = self.y_strip[dst_start + width - 1];
@@ -364,18 +430,71 @@ impl StripProcessor {
                 }
             }
             PixelFormat::RgbF32 | PixelFormat::RgbaF32 => {
-                use super::super::linear_lut::linear_rgbf32_to_ycbcr_fast;
+                use super::super::linear_lut::{
+                    linear_rgbf32_to_ycbcr_fast, linear_rgbf32_to_ycbcr_x8,
+                };
+                use wide::f32x8;
+
                 // RgbF32/RgbaF32: 12/16 bytes per pixel, linear
-                // Uses LUT with interpolation for fast linear -> YCbCr conversion
+                // Uses SIMD for fast linear -> YCbCr conversion
                 let bpp = self.pixel_format.bytes_per_pixel();
 
                 for row in 0..strip_height {
                     let y_row_start = row * padded_width;
                     let cbcr_row_start = row * width;
-                    for x in 0..width {
-                        let base = (row * width + x) * bpp;
+                    let row_base = row * width * bpp;
 
-                        // Read f32 values
+                    // Process 8 pixels at a time with SIMD
+                    let simd_width = width / 8 * 8;
+                    for x in (0..simd_width).step_by(8) {
+                        // Deinterleave 8 RGB pixels into separate R, G, B vectors
+                        let mut r_arr = [0.0f32; 8];
+                        let mut g_arr = [0.0f32; 8];
+                        let mut b_arr = [0.0f32; 8];
+
+                        for i in 0..8 {
+                            let base = row_base + (x + i) * bpp;
+                            r_arr[i] = f32::from_ne_bytes([
+                                rgb_strip[base],
+                                rgb_strip[base + 1],
+                                rgb_strip[base + 2],
+                                rgb_strip[base + 3],
+                            ]);
+                            g_arr[i] = f32::from_ne_bytes([
+                                rgb_strip[base + 4],
+                                rgb_strip[base + 5],
+                                rgb_strip[base + 6],
+                                rgb_strip[base + 7],
+                            ]);
+                            b_arr[i] = f32::from_ne_bytes([
+                                rgb_strip[base + 8],
+                                rgb_strip[base + 9],
+                                rgb_strip[base + 10],
+                                rgb_strip[base + 11],
+                            ]);
+                        }
+
+                        let r = f32x8::new(r_arr);
+                        let g = f32x8::new(g_arr);
+                        let b = f32x8::new(b_arr);
+
+                        let (y, cb, cr) = linear_rgbf32_to_ycbcr_x8(r, g, b);
+
+                        let y_arr = y.to_array();
+                        let cb_arr = cb.to_array();
+                        let cr_arr = cr.to_array();
+
+                        self.y_strip[y_row_start + x..y_row_start + x + 8].copy_from_slice(&y_arr);
+                        self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
+                            .copy_from_slice(&cb_arr);
+                        self.cr_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
+                            .copy_from_slice(&cr_arr);
+                    }
+
+                    // Handle remainder with scalar
+                    for x in simd_width..width {
+                        let base = row_base + x * bpp;
+
                         let r_linear = f32::from_ne_bytes([
                             rgb_strip[base],
                             rgb_strip[base + 1],
@@ -395,12 +514,12 @@ impl StripProcessor {
                             rgb_strip[base + 11],
                         ]);
 
-                        // LUT-optimized: linear RGB -> YCbCr in one step
                         let (y, cb, cr) = linear_rgbf32_to_ycbcr_fast(r_linear, g_linear, b_linear);
                         self.y_strip[y_row_start + x] = y;
                         self.cb_strip[cbcr_row_start + x] = cb;
                         self.cr_strip[cbcr_row_start + x] = cr;
                     }
+
                     // Edge-pad Y row
                     if width < padded_width {
                         let edge_val = self.y_strip[y_row_start + width - 1];
