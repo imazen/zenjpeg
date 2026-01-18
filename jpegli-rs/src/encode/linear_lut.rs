@@ -123,6 +123,55 @@ pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
     linear_to_srgb_x8(x) * f32x8::splat(255.0)
 }
 
+/// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255] using SIMD.
+#[inline]
+pub fn linear_u16_to_srgb_255_x8(values: [u16; 8]) -> f32x8 {
+    let scale = f32x8::splat(1.0 / 65535.0);
+    let linear = f32x8::new([
+        values[0] as f32,
+        values[1] as f32,
+        values[2] as f32,
+        values[3] as f32,
+        values[4] as f32,
+        values[5] as f32,
+        values[6] as f32,
+        values[7] as f32,
+    ]) * scale;
+
+    // No HDR tone mapping needed for u16 (max is 1.0)
+    linear_to_srgb_x8(linear) * f32x8::splat(255.0)
+}
+
+/// Convert 8 linear RGB16 pixels to 8 Y, 8 Cb, 8 Cr values using SIMD.
+///
+/// Takes R, G, B as separate arrays of 8 u16 values.
+/// Returns (Y, Cb, Cr) as f32x8 vectors.
+#[inline]
+pub fn linear_rgb16_to_ycbcr_x8(r: [u16; 8], g: [u16; 8], b: [u16; 8]) -> (f32x8, f32x8, f32x8) {
+    // Convert linear u16 to sRGB [0, 255]
+    let r = linear_u16_to_srgb_255_x8(r);
+    let g = linear_u16_to_srgb_255_x8(g);
+    let b = linear_u16_to_srgb_255_x8(b);
+
+    // RGB to YCbCr matrix multiplication
+    let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+    let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+    let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+    let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
+    let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
+    let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+    let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
+    let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
+    let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+    let chroma_offset = f32x8::splat(CHROMA_OFFSET);
+
+    let y = r_to_y.mul_add(r, g_to_y.mul_add(g, b_to_y * b));
+    let cb = r_to_cb.mul_add(r, g_to_cb.mul_add(g, b_to_cb * b)) + chroma_offset;
+    let cr = r_to_cr.mul_add(r, g_to_cr.mul_add(g, b_to_cr * b)) + chroma_offset;
+
+    (y, cb, cr)
+}
+
 /// Convert 8 linear RGB pixels to 8 Y, 8 Cb, 8 Cr values using SIMD.
 ///
 /// Takes R, G, B as separate f32x8 vectors (structure-of-arrays layout).

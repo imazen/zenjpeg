@@ -285,17 +285,39 @@ impl StripProcessor {
             // Uses optimized LUT conversion: linear -> sRGB -> YCbCr
             // For HDR (values > 1.0), applies Reinhard tone mapping
             PixelFormat::Gray16 => {
-                use super::super::linear_lut::linear_u16_to_srgb_255;
+                use super::super::linear_lut::{linear_u16_to_srgb_255, linear_u16_to_srgb_255_x8};
+
                 // Gray16: 2 bytes per pixel, native endian, linear
                 for row in 0..strip_height {
                     let src_start = row * width * 2;
                     let dst_start = row * padded_width;
-                    for x in 0..width {
+
+                    // Process 8 pixels at a time with SIMD
+                    let simd_width = width / 8 * 8;
+                    for x in (0..simd_width).step_by(8) {
+                        let idx = src_start + x * 2;
+                        let values = [
+                            u16::from_ne_bytes([rgb_strip[idx], rgb_strip[idx + 1]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 2], rgb_strip[idx + 3]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 4], rgb_strip[idx + 5]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 6], rgb_strip[idx + 7]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 8], rgb_strip[idx + 9]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 10], rgb_strip[idx + 11]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 12], rgb_strip[idx + 13]]),
+                            u16::from_ne_bytes([rgb_strip[idx + 14], rgb_strip[idx + 15]]),
+                        ];
+                        let srgb = linear_u16_to_srgb_255_x8(values);
+                        let arr = srgb.to_array();
+                        self.y_strip[dst_start + x..dst_start + x + 8].copy_from_slice(&arr);
+                    }
+
+                    // Handle remainder with scalar
+                    for x in simd_width..width {
                         let idx = src_start + x * 2;
                         let value = u16::from_ne_bytes([rgb_strip[idx], rgb_strip[idx + 1]]);
-                        // Direct LUT lookup: linear u16 -> sRGB [0-255]
                         self.y_strip[dst_start + x] = linear_u16_to_srgb_255(value);
                     }
+
                     // Edge-pad Y row
                     if width < padded_width {
                         let edge_val = self.y_strip[dst_start + width - 1];
@@ -306,28 +328,61 @@ impl StripProcessor {
                 }
             }
             PixelFormat::Rgb16 | PixelFormat::Rgba16 => {
-                use super::super::linear_lut::linear_rgb16_to_ycbcr;
+                use super::super::linear_lut::{linear_rgb16_to_ycbcr, linear_rgb16_to_ycbcr_x8};
+
                 // RGB16/RGBA16: 6/8 bytes per pixel, native endian, linear
-                // Uses optimized LUT: direct u16 -> YCbCr conversion
+                // Uses SIMD for fast linear -> YCbCr conversion
                 let bpp = self.pixel_format.bytes_per_pixel();
 
                 for row in 0..strip_height {
                     let y_row_start = row * padded_width;
                     let cbcr_row_start = row * width;
-                    for x in 0..width {
-                        let base = (row * width + x) * bpp;
+                    let row_base = row * width * bpp;
 
-                        // Read 16-bit values directly
+                    // Process 8 pixels at a time with SIMD
+                    let simd_width = width / 8 * 8;
+                    for x in (0..simd_width).step_by(8) {
+                        // Deinterleave 8 RGB pixels into separate R, G, B arrays
+                        let mut r_arr = [0u16; 8];
+                        let mut g_arr = [0u16; 8];
+                        let mut b_arr = [0u16; 8];
+
+                        for i in 0..8 {
+                            let base = row_base + (x + i) * bpp;
+                            r_arr[i] = u16::from_ne_bytes([rgb_strip[base], rgb_strip[base + 1]]);
+                            g_arr[i] =
+                                u16::from_ne_bytes([rgb_strip[base + 2], rgb_strip[base + 3]]);
+                            b_arr[i] =
+                                u16::from_ne_bytes([rgb_strip[base + 4], rgb_strip[base + 5]]);
+                        }
+
+                        let (y, cb, cr) = linear_rgb16_to_ycbcr_x8(r_arr, g_arr, b_arr);
+
+                        let y_arr = y.to_array();
+                        let cb_arr = cb.to_array();
+                        let cr_arr = cr.to_array();
+
+                        self.y_strip[y_row_start + x..y_row_start + x + 8].copy_from_slice(&y_arr);
+                        self.cb_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
+                            .copy_from_slice(&cb_arr);
+                        self.cr_strip[cbcr_row_start + x..cbcr_row_start + x + 8]
+                            .copy_from_slice(&cr_arr);
+                    }
+
+                    // Handle remainder with scalar
+                    for x in simd_width..width {
+                        let base = row_base + x * bpp;
+
                         let r = u16::from_ne_bytes([rgb_strip[base], rgb_strip[base + 1]]);
                         let g = u16::from_ne_bytes([rgb_strip[base + 2], rgb_strip[base + 3]]);
                         let b = u16::from_ne_bytes([rgb_strip[base + 4], rgb_strip[base + 5]]);
 
-                        // LUT-optimized: linear RGB16 -> YCbCr in one step
                         let (y, cb, cr) = linear_rgb16_to_ycbcr(r, g, b);
                         self.y_strip[y_row_start + x] = y;
                         self.cb_strip[cbcr_row_start + x] = cb;
                         self.cr_strip[cbcr_row_start + x] = cr;
                     }
+
                     // Edge-pad Y row
                     if width < padded_width {
                         let edge_val = self.y_strip[y_row_start + width - 1];
