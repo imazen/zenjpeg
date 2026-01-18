@@ -752,7 +752,7 @@ dependencies = [
  "fast-ssim2",
  "imgref",
  "jpegli-internals-sys",
- "jpegli-rs 0.6.0",
+ "jpegli-rs 0.7.0",
  "libc",
  "moxcms 0.6.4",
  "png",
@@ -788,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "jpegli-rs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aligned-vec",
  "almost-enough",

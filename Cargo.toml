@@ -66,7 +66,7 @@ spin = "0.9"
 linear-srgb = "0.2"
 
 # Error tracing with location tracking
-whereat = { path = "/home/lilith/work/whereat", features = ["_tinyvec-128-bytes"] }
+whereat = { version = "0.1", path = "/home/lilith/work/whereat", features = ["_tinyvec-128-bytes"] }
 
 # Error derive macros (no_std compatible)
 thiserror = { version = "2.0", default-features = false }
