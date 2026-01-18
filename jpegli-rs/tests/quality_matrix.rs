@@ -247,14 +247,14 @@ fn encode_rust(
 ) -> Vec<u8> {
     // Convert old Subsampling to new ChromaSubsampling
     let chroma = match subsampling {
-        Subsampling::S444 => ChromaSubsampling::Full,
+        Subsampling::S444 => ChromaSubsampling::None,
         Subsampling::S422 => ChromaSubsampling::HalfHorizontal,
         Subsampling::S420 => ChromaSubsampling::Quarter,
         Subsampling::S440 => ChromaSubsampling::HalfVertical,
-        _ => ChromaSubsampling::Full,
+        _ => ChromaSubsampling::None,
     };
 
-    let mut config = EncoderConfig::new()
+    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .ycbcr(chroma)
         .progressive(progressive);

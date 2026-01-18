@@ -43,7 +43,7 @@ fn roundtrip_with_subsampling(
     quality: f32,
     subsampling: ChromaSubsampling,
 ) -> (f64, u8, usize) {
-    let config = EncoderConfig::new().quality(quality).ycbcr(subsampling);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).ycbcr(subsampling);
     let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config);
 
     let decoder = Decoder::new();
@@ -62,7 +62,7 @@ fn roundtrip_with_subsampling(
 #[test]
 fn test_444_subsampling() {
     let img = generate_gradient_d(256, 256, 3);
-    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::Full);
+    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::None);
 
     println!(
         "4:4:4: RMS={:.2}, max_diff={}, size={}",
@@ -107,7 +107,7 @@ fn test_subsampling_quality_size_tradeoff() {
     let img = generate_gradient_d(256, 256, 3);
 
     // Currently only test 4:4:4
-    let (rms_444, _, size_444) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::Full);
+    let (rms_444, _, size_444) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::None);
 
     println!("Subsampling comparison:");
     println!("  4:4:4: RMS={:.2}, size={}", rms_444, size_444);
@@ -248,7 +248,7 @@ fn test_decode_cpp_444_1x2() {
 fn test_color_bars_subsampling() {
     // Color bars have sharp color transitions - sensitive to subsampling
     let img = generate_color_bars(256, 128);
-    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::Full);
+    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::None);
 
     println!(
         "Color bars 4:4:4: RMS={:.2}, max_diff={}, size={}",
@@ -282,7 +282,7 @@ fn test_saturated_colors_subsampling() {
         }
 
         let (rms, max_diff, _size) =
-            roundtrip_with_subsampling(&img, 95.0, ChromaSubsampling::Full);
+            roundtrip_with_subsampling(&img, 95.0, ChromaSubsampling::None);
 
         assert!(
             rms < 5.0,
@@ -325,7 +325,7 @@ fn test_color_edge_444() {
         }
     }
 
-    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 95.0, ChromaSubsampling::Full);
+    let (rms, max_diff, size) = roundtrip_with_subsampling(&img, 95.0, ChromaSubsampling::None);
 
     println!(
         "Color edge 4:4:4: RMS={:.2}, max_diff={}, size={}",
@@ -343,7 +343,7 @@ fn test_color_edge_444() {
 #[test]
 fn test_grayscale_no_subsampling() {
     let img = test_utils::generate_gradient_h(128, 128, 1);
-    let config = EncoderConfig::new().quality(90.0).grayscale();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg = encode_gray(128, 128, &img.pixels, &config);
 
     println!("Grayscale JPEG: {} bytes", jpeg.len());
@@ -363,7 +363,7 @@ fn test_grayscale_no_subsampling() {
 fn test_mcu_aligned_444() {
     // 4:4:4 with image size that is MCU-aligned (8x8)
     let img = generate_gradient_d(64, 64, 3);
-    let (rms, _, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::Full);
+    let (rms, _, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::None);
 
     println!("64x64 4:4:4: RMS={:.2}, size={}", rms, size);
     assert!(rms < 5.0, "MCU-aligned RMS too high");
@@ -373,7 +373,7 @@ fn test_mcu_aligned_444() {
 fn test_mcu_unaligned_444() {
     // 4:4:4 with image size that is NOT MCU-aligned
     let img = generate_gradient_d(67, 71, 3);
-    let (rms, _, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::Full);
+    let (rms, _, size) = roundtrip_with_subsampling(&img, 90.0, ChromaSubsampling::None);
 
     println!("67x71 4:4:4: RMS={:.2}, size={}", rms, size);
     assert!(rms < 5.0, "MCU-unaligned RMS too high");
@@ -386,7 +386,7 @@ fn test_mcu_unaligned_444() {
 #[test]
 fn test_444_filesize_reasonable() {
     let img = generate_gradient_d(256, 256, 3);
-    let (_, _, size_444) = roundtrip_with_subsampling(&img, 85.0, ChromaSubsampling::Full);
+    let (_, _, size_444) = roundtrip_with_subsampling(&img, 85.0, ChromaSubsampling::None);
 
     // Calculate bits per pixel
     let bpp = (size_444 as f64 * 8.0) / (256.0 * 256.0);
@@ -421,7 +421,7 @@ fn count_components_in_sof(jpeg: &[u8]) -> Option<u8> {
 #[test]
 fn test_rgb_has_three_components() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new().quality(85.0);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config);
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");
@@ -431,7 +431,7 @@ fn test_rgb_has_three_components() {
 #[test]
 fn test_grayscale_has_one_component() {
     let img = test_utils::generate_gradient_h(64, 64, 1);
-    let config = EncoderConfig::new().quality(85.0).grayscale();
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg = encode_gray(64, 64, &img.pixels, &config);
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");

@@ -3,7 +3,7 @@
 //! Run with: cargo run --release --example encoder_profile
 
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn main() {
@@ -20,7 +20,7 @@ fn main() {
         *p = (seed >> 33) as u8;
     }
 
-    let config = EncoderConfig::new().quality(85.0);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
 
     // Full encode timing
     let iterations = 10;

@@ -44,7 +44,7 @@ struct EncodeConfig {
 impl EncodeConfig {
     fn name(&self) -> String {
         let sub = match self.subsampling {
-            ChromaSubsampling::Full => "444",
+            ChromaSubsampling::None => "444",
             ChromaSubsampling::Quarter => "420",
             _ => "other",
         };
@@ -65,22 +65,22 @@ fn bench_encode_matrix(c: &mut Criterion) {
     let configs = [
         // YCbCr 4:4:4 configurations
         EncodeConfig {
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: false,
             optimize_huffman: false,
         },
         EncodeConfig {
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: false,
             optimize_huffman: true,
         },
         EncodeConfig {
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: true,
             optimize_huffman: false,
         },
         EncodeConfig {
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: true,
             optimize_huffman: true,
         },
@@ -153,7 +153,7 @@ fn bench_encode_quick(c: &mut Criterion) {
     // Most common production configurations
     let configs = [
         ("420_prog_opt", ChromaSubsampling::Quarter, true, true),
-        ("444_baseline_opt", ChromaSubsampling::Full, false, true),
+        ("444_baseline_opt", ChromaSubsampling::None, false, true),
     ];
 
     for (name, subsampling, progressive, optimize_huffman) in configs {

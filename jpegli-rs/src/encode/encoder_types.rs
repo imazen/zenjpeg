@@ -278,21 +278,20 @@ pub enum ColorMode {
 impl Default for ColorMode {
     fn default() -> Self {
         ColorMode::YCbCr {
-            subsampling: ChromaSubsampling::default(),
+            subsampling: ChromaSubsampling::None, // 4:4:4 - no subsampling
         }
     }
 }
 
 /// YCbCr chroma subsampling (spatial resolution).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ChromaSubsampling {
-    /// 4:4:4 - Full chroma resolution (no subsampling, best quality)
-    #[default]
-    Full,
+    /// 4:4:4 - No subsampling (full chroma resolution, best quality, largest files)
+    None,
     /// 4:2:2 - Half horizontal resolution
     HalfHorizontal,
-    /// 4:2:0 - Quarter resolution (half each direction)
+    /// 4:2:0 - Quarter resolution (half each direction, most common)
     Quarter,
     /// 4:4:0 - Half vertical resolution
     HalfVertical,
@@ -303,7 +302,7 @@ impl ChromaSubsampling {
     #[must_use]
     pub fn to_legacy(&self) -> crate::types::Subsampling {
         match self {
-            ChromaSubsampling::Full => crate::types::Subsampling::S444,
+            ChromaSubsampling::None => crate::types::Subsampling::S444,
             ChromaSubsampling::HalfHorizontal => crate::types::Subsampling::S422,
             ChromaSubsampling::Quarter => crate::types::Subsampling::S420,
             ChromaSubsampling::HalfVertical => crate::types::Subsampling::S440,
@@ -314,7 +313,7 @@ impl ChromaSubsampling {
     #[must_use]
     pub const fn h_factor(&self) -> u8 {
         match self {
-            ChromaSubsampling::Full | ChromaSubsampling::HalfVertical => 1,
+            ChromaSubsampling::None | ChromaSubsampling::HalfVertical => 1,
             ChromaSubsampling::HalfHorizontal | ChromaSubsampling::Quarter => 2,
         }
     }
@@ -323,7 +322,7 @@ impl ChromaSubsampling {
     #[must_use]
     pub const fn v_factor(&self) -> u8 {
         match self {
-            ChromaSubsampling::Full | ChromaSubsampling::HalfHorizontal => 1,
+            ChromaSubsampling::None | ChromaSubsampling::HalfHorizontal => 1,
             ChromaSubsampling::HalfVertical | ChromaSubsampling::Quarter => 2,
         }
     }
@@ -549,8 +548,8 @@ mod tests {
 
     #[test]
     fn test_chroma_subsampling_factors() {
-        assert_eq!(ChromaSubsampling::Full.h_factor(), 1);
-        assert_eq!(ChromaSubsampling::Full.v_factor(), 1);
+        assert_eq!(ChromaSubsampling::None.h_factor(), 1);
+        assert_eq!(ChromaSubsampling::None.v_factor(), 1);
         assert_eq!(ChromaSubsampling::Quarter.h_factor(), 2);
         assert_eq!(ChromaSubsampling::Quarter.v_factor(), 2);
         assert_eq!(ChromaSubsampling::HalfHorizontal.h_factor(), 2);

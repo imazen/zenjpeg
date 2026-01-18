@@ -40,7 +40,7 @@
 //!     .optimize_huffman(true)                   // Optimal Huffman tables (default)
 //!
 //!     // Color mode (default is 4:4:4)
-//!     .ycbcr(ChromaSubsampling::Full)           // 4:4:4 (default, best quality)
+//!     .ycbcr(ChromaSubsampling::None)           // 4:4:4 (default, best quality)
 //!     .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (good compression)
 //!     .xyb()                                    // XYB perceptual color space
 //!     .grayscale()                              // Single-channel output

@@ -11,7 +11,7 @@ use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, 
 
 use jpegli::{
     decoder::Decoder,
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 use test_case::test_case;
 
@@ -36,7 +36,7 @@ fn roundtrip_quality(
 ) -> (f64, u8, usize) {
     let img = generate_test_image(width, height, pattern, 3);
 
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
 
     let jpeg_data = encode_rgb(width, height, &img.pixels, &config).expect("encode failed");
     let decoder = Decoder::new();

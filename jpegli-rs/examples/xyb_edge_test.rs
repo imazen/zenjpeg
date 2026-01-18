@@ -18,9 +18,9 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
 }
 
 fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
-        .ycbcr(ChromaSubsampling::Full) // XYB uses custom subsampling internally
+        .ycbcr(ChromaSubsampling::None) // XYB uses custom subsampling internally
         .optimize_huffman(true)
         .xyb();
     let mut enc = config

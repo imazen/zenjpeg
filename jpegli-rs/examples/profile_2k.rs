@@ -25,11 +25,11 @@ fn main() {
     let rgb = generate_test_image(width as usize, height as usize);
 
     eprintln!("Running 50 encode iterations (q90 4:4:4 YCbCr for profiling...");
-    let config_444 = EncoderConfig::new()
+    let config_444 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(false)
         .optimize_huffman(true)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
     for i in 0..50 {
         let mut enc = config_444
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -41,7 +41,7 @@ fn main() {
         }
     }
     eprintln!("Running 50 encode iterations (q70 4:2:0 YCbCr for profiling...");
-    let config_420 = EncoderConfig::new()
+    let config_420 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(70.0)
         .progressive(true)
         .ycbcr(ChromaSubsampling::Quarter);

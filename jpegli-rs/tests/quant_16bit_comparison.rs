@@ -20,6 +20,7 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use test_utils::generate_gradient_d;
 
@@ -193,7 +194,7 @@ fn test_16bit_quant_threshold_calculation() {
 
 /// Helper to encode with v2 API
 fn encode_test_image(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

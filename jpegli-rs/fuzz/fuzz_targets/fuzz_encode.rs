@@ -43,7 +43,7 @@ fuzz_target!(|input: EncodeInput| {
 
     // Select subsampling
     let subsampling = match input.subsampling % 4 {
-        0 => ChromaSubsampling::Full,
+        0 => ChromaSubsampling::None,
         1 => ChromaSubsampling::HalfHorizontal,
         2 => ChromaSubsampling::Quarter,
         _ => ChromaSubsampling::HalfVertical,
@@ -64,7 +64,7 @@ fuzz_target!(|input: EncodeInput| {
     pixels.resize(pixel_count, 128);
 
     // Build encoder config with various options
-    let mut config = EncoderConfig::new()
+    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality_val)
         .progressive(input.progressive)
         .optimize_huffman(input.optimize_huffman);

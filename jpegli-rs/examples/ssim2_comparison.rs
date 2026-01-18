@@ -8,7 +8,8 @@
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
 use jpegli::encoder::{
-    ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
+    ChromaSubsampling, ChromaSubsampling as JpegliSubsampling,
+    EncoderConfig as JpegliEncoderConfig, PixelLayout,
 };
 use jpegli::types::Subsampling;
 use jpegli_bench_utils::{
@@ -39,7 +40,7 @@ fn encode_rust(
         Subsampling::S440 => JpegliSubsampling::HalfVertical,
         _ => JpegliSubsampling::Quarter,
     };
-    let config = JpegliEncoderConfig::new()
+    let config = JpegliEncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .progressive(progressive)
         .optimize_huffman(true)
@@ -69,11 +70,11 @@ fn encode_cpp_ffi(
             ScanMode::Baseline
         })
         .subsampling(match subsampling {
-            Subsampling::S444 => ChromaSubsampling::S444,
-            Subsampling::S422 => ChromaSubsampling::S422,
-            Subsampling::S420 => ChromaSubsampling::S420,
-            Subsampling::S440 => ChromaSubsampling::S440,
-            _ => ChromaSubsampling::S420,
+            Subsampling::S444 => ChromaSubsampling::None,
+            Subsampling::S422 => ChromaSubsampling::HalfHorizontal,
+            Subsampling::S420 => ChromaSubsampling::Quarter,
+            Subsampling::S440 => ChromaSubsampling::HalfVertical,
+            _ => ChromaSubsampling::Quarter,
         })
         .quality(quality);
 

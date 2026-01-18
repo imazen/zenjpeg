@@ -85,7 +85,7 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
                 .quality(90.0)
                 .progressive(true)
                 .optimize_huffman(true)
-                .ycbcr(ChromaSubsampling::Full);
+                .ycbcr(ChromaSubsampling::None);
             let mut enc = config
                 .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                 .unwrap();
@@ -116,7 +116,7 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
                 .quality(90.0)
                 .progressive(false)
                 .optimize_huffman(true)
-                .ycbcr(ChromaSubsampling::Full);
+                .ycbcr(ChromaSubsampling::None);
             let mut enc = config
                 .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                 .unwrap();

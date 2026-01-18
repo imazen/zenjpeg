@@ -100,7 +100,7 @@ fn main() {
 
     let subsamplings = [
         (ChromaSubsampling::Quarter, "4:2:0"),
-        (ChromaSubsampling::Full, "4:4:4"),
+        (ChromaSubsampling::None, "4:4:4"),
     ];
 
     let mut all_passed = true;
@@ -120,7 +120,7 @@ fn main() {
             }
 
             // Get estimate before encoding
-            let config = EncoderConfig::new()
+            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(85.0)
                 .ycbcr(*subsampling)
                 .optimize_huffman(true);

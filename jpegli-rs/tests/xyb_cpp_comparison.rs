@@ -1,6 +1,8 @@
 //! Test XYB mode output against C++ jpegli reference.
 #![cfg(feature = "ffi-tests")]
 
+use jpegli::encoder::ChromaSubsampling;
+
 use std::fs;
 use std::process::Command;
 
@@ -46,7 +48,7 @@ fn test_xyb_cpp_comparison() {
     println!("C++ JPEG size: {} bytes", cpp_jpeg.len());
 
     // Encode with Rust in XYB mode
-    let config = jpegli::encoder::EncoderConfig::new().quality(90.0).xyb();
+    let config = jpegli::encoder::EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
     let mut enc = config
         .encode_from_bytes(
             width as u32,
@@ -327,7 +329,7 @@ fn test_icc_profile_embedding() {
     let height = 8;
     let rgb_data = vec![128u8; width * height * 3];
 
-    let config = jpegli::encoder::EncoderConfig::new().quality(90.0).xyb();
+    let config = jpegli::encoder::EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
     let mut enc = config
         .encode_from_bytes(
             width as u32,

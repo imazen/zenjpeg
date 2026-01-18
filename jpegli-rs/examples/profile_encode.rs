@@ -3,7 +3,7 @@
 //! Run with: cargo flamegraph --release --example profile_encode -o encode.svg
 
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     let (width, height) = (2048usize, 2048usize);
@@ -16,7 +16,7 @@ fn main() {
         *p = (seed >> 33) as u8;
     }
 
-    let config = EncoderConfig::new().quality(85.0);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
 
     // Run enough iterations for good sampling
     for _ in 0..50 {

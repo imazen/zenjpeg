@@ -5,6 +5,7 @@
 
 use dssim::Dssim;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
@@ -67,7 +68,7 @@ fn compute_ssimulacra2(original: &[u8], distorted: &[u8], width: usize, height: 
 }
 
 fn encode_jpegli(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let config = EncoderConfig::new().quality(quality as f32);
+    let config = EncoderConfig::new(quality as f32, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

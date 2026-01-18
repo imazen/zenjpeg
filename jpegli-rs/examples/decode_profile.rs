@@ -6,7 +6,7 @@
 use enough::Unstoppable;
 use jpegli::{
     decoder::{Decoder, PixelFormat},
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 use std::env;
 use std::time::Instant;
@@ -25,7 +25,7 @@ fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();

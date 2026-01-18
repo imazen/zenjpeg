@@ -2,6 +2,7 @@
 //!
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
 
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;
@@ -83,7 +84,7 @@ fn test_q100_rust_vs_cpp() {
 
     // Rust Q100 encoding - BASELINE (sequential) mode
     let rust_start = Instant::now();
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(100.0)
         .optimize_huffman(true)
         .progressive(false); // Baseline

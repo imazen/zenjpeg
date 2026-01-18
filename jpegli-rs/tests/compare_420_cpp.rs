@@ -46,7 +46,7 @@ fn compare_rust_cpp_420() {
     println!("Image: {}x{}", width, height);
 
     // Encode with Rust 4:2:0
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Quarter);
     let rust_jpeg = encode_rgb(width, height, &pixels, &config).expect("encode");
@@ -91,9 +91,9 @@ fn compare_rust_cpp_420() {
     }
 
     // Also compare 4:4:4
-    let config444 = EncoderConfig::new()
+    let config444 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
     let rust_444 = encode_rgb(width, height, &pixels, &config444).expect("encode");
     println!("Rust 4:4:4: {} bytes", rust_444.len());
 

@@ -492,7 +492,7 @@ pub(crate) struct ScanInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::{EncoderConfig, PixelLayout};
+    use crate::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use enough::Unstoppable;
 
     #[test]
@@ -518,7 +518,7 @@ mod tests {
         }
 
         // Encode using v2 API
-        let config = EncoderConfig::new().quality(95.0).grayscale();
+        let config = EncoderConfig::new(95.0, ChromaSubsampling::None).grayscale();
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
             .expect("encoder creation should succeed");
@@ -566,7 +566,7 @@ mod tests {
         }
 
         // Encode using v2 API
-        let config = EncoderConfig::new().quality(95.0);
+        let config = EncoderConfig::new(95.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder creation should succeed");
@@ -608,7 +608,7 @@ mod tests {
         }
 
         // Encode using v2 API
-        let config = EncoderConfig::new().quality(95.0);
+        let config = EncoderConfig::new(95.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder creation should succeed");
@@ -667,7 +667,7 @@ mod tests {
         }
 
         // Encode at high quality using v2 API
-        let config = EncoderConfig::new().quality(98.0);
+        let config = EncoderConfig::new(98.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder creation should succeed");

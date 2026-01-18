@@ -276,13 +276,13 @@ fn compute_ssim2(orig_rgb: &[u8], decoded_rgb: &[u8], width: usize, height: usiz
 
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, config: &Config) -> Vec<u8> {
     let sub = match config.chroma.to_jpegli() {
-        Subsampling::S444 => ChromaSubsampling::Full,
+        Subsampling::S444 => ChromaSubsampling::None,
         Subsampling::S422 => ChromaSubsampling::HalfHorizontal,
         Subsampling::S420 => ChromaSubsampling::Quarter,
         Subsampling::S440 => ChromaSubsampling::HalfVertical,
         _ => ChromaSubsampling::Quarter,
     };
-    let mut enc_config = EncoderConfig::new()
+    let mut enc_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .progressive(config.scan.to_jpegli() == JpegMode::Progressive)
         .optimize_huffman(config.huffman == HuffmanMode::Optimized)

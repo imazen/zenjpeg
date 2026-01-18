@@ -84,7 +84,7 @@ fn quick_bench(c: &mut Criterion) {
                 .quality(90.0)
                 .progressive(true)
                 .optimize_huffman(true)
-                .ycbcr(ChromaSubsampling::Full);
+                .ycbcr(ChromaSubsampling::None);
             let mut enc = config
                 .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
                 .unwrap();

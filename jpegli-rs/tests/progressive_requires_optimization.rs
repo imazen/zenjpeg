@@ -1,5 +1,6 @@
 //! Test that progressive mode requires Huffman optimization
 
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 
 fn encode_rgb(
@@ -18,7 +19,7 @@ fn test_progressive_requires_huffman_optimization() {
     let data = vec![128u8; 64 * 64 * 3];
 
     // Progressive + Fixed Huffman should error
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(true)
         .optimize_huffman(false); // Fixed Huffman
@@ -43,7 +44,7 @@ fn test_progressive_xyb_requires_huffman_optimization() {
     let data = vec![128u8; 64 * 64 * 3];
 
     // XYB Progressive + Fixed Huffman should also error
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(true)
         .xyb()
@@ -69,7 +70,7 @@ fn test_baseline_with_fixed_huffman_works() {
     let data = vec![128u8; 64 * 64 * 3];
 
     // Baseline + Fixed Huffman should work fine
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(false)
         .optimize_huffman(false); // Fixed Huffman is OK for baseline
@@ -84,7 +85,7 @@ fn test_progressive_with_optimized_huffman_works() {
     let data = vec![128u8; 64 * 64 * 3];
 
     // Progressive + Optimized Huffman should work
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(true)
         .optimize_huffman(true); // Optimized Huffman

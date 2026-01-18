@@ -1,6 +1,6 @@
 //! Benchmark showing encoding performance at different image sizes
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn bench(width: usize, height: usize) -> (f64, usize) {
@@ -14,7 +14,7 @@ fn bench(width: usize, height: usize) -> (f64, usize) {
         }
     }
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
 
     // Warmup
     for _ in 0..3 {

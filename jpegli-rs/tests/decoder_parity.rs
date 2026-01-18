@@ -15,11 +15,11 @@ use std::process::Command;
 #[allow(dead_code)] // May be used in future test configurations
 fn subsampling_from_name(name: &str) -> ChromaSubsampling {
     match name {
-        "444" => ChromaSubsampling::Full,
+        "444" => ChromaSubsampling::None,
         "420" => ChromaSubsampling::Quarter,
         "422" => ChromaSubsampling::HalfHorizontal,
         "440" => ChromaSubsampling::HalfVertical,
-        _ => ChromaSubsampling::Full,
+        _ => ChromaSubsampling::None,
     }
 }
 
@@ -73,7 +73,7 @@ fn encode_rust(
     quality: u8,
     subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .ycbcr(subsampling);
     let mut enc = config
@@ -154,7 +154,7 @@ const QUALITY_LEVELS: &[u8] = &[50, 75, 90, 100];
 
 /// Subsampling modes to test
 const SUBSAMPLING_MODES: &[(ChromaSubsampling, &str)] = &[
-    (ChromaSubsampling::Full, "444"),
+    (ChromaSubsampling::None, "444"),
     (ChromaSubsampling::Quarter, "420"),
     (ChromaSubsampling::HalfHorizontal, "422"),
     (ChromaSubsampling::HalfVertical, "440"),
@@ -186,7 +186,7 @@ fn test_decoder_vs_reference_444() {
         let pixels = generate_gradient_image(width, height);
 
         for &quality in QUALITY_LEVELS {
-            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::Full);
+            let jpeg = encode_rust(&pixels, width, height, quality, ChromaSubsampling::None);
 
             let (rust_decoded, rw, rh) = decode_rust(&jpeg).expect("Rust decode failed");
             let (ref_decoded, ref_w, ref_h) =

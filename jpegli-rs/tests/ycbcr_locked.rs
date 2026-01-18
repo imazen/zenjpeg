@@ -169,7 +169,7 @@ fn encode_jpeg(
     progressive: bool,
     subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .ycbcr(subsampling)
         .optimize_huffman(true)
@@ -249,7 +249,7 @@ fn test_frymire_s444_sequential_sizes() {
         w,
         h,
         false,
-        ChromaSubsampling::Full,
+        ChromaSubsampling::None,
         FRYMIRE_S444_SEQ,
         "Seq",
         "4:4:4",
@@ -310,7 +310,7 @@ fn test_frymire_s444_sequential_hash() {
         h,
         85,
         false,
-        ChromaSubsampling::Full,
+        ChromaSubsampling::None,
         FRYMIRE_S444_SEQ_Q85_HASH,
         "Seq",
         "4:4:4",
@@ -377,7 +377,7 @@ fn test_frymire_s444_progressive_sizes() {
         w,
         h,
         true,
-        ChromaSubsampling::Full,
+        ChromaSubsampling::None,
         FRYMIRE_S444_PROG,
         "Prog",
         "4:4:4",
@@ -438,7 +438,7 @@ fn test_frymire_s444_progressive_hash() {
         h,
         85,
         true,
-        ChromaSubsampling::Full,
+        ChromaSubsampling::None,
         FRYMIRE_S444_PROG_Q85_HASH,
         "Prog",
         "4:4:4",
@@ -507,7 +507,7 @@ fn print_current_values() {
 
     let quality_levels = [50, 70, 85, 90, 95];
     let subsampling_modes = [
-        (ChromaSubsampling::Full, "S444"),
+        (ChromaSubsampling::None, "S444"),
         (ChromaSubsampling::HalfHorizontal, "S422"),
         (ChromaSubsampling::Quarter, "S420"),
         (ChromaSubsampling::HalfVertical, "S440"),

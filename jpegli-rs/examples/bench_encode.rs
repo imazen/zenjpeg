@@ -1,5 +1,5 @@
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn benchmark(
@@ -23,9 +23,8 @@ fn benchmark(
         }
     }
 
-    let config = EncoderConfig::new()
-        .quality(85.0)
-        .restart_interval(restart_interval);
+    let config =
+        EncoderConfig::new(85.0, ChromaSubsampling::Quarter).restart_interval(restart_interval);
 
     // Warmup
     for _ in 0..3 {

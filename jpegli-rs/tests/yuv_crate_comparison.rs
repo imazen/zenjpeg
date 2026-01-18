@@ -9,6 +9,9 @@
 //!
 //! Run with: cargo test --release --test yuv_crate_comparison -- --nocapture
 
+#[allow(unused_imports)]
+use jpegli::encoder::ChromaSubsampling;
+
 use jpegli::color::rgb_to_ycbcr_f32;
 use yuv::{
     rgb_to_sharp_yuv420, rgb_to_yuv420, SharpYuvGammaTransfer, YuvChromaSubsampling,

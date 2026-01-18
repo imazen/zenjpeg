@@ -2,7 +2,7 @@
 //!
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
 
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -14,8 +14,7 @@ fn encode_rgb_progressive(
     data: &[u8],
     quality: f32,
 ) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::new()
-        .quality(quality)
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter) // 4:2:0 to match C++
         .progressive(true)
         .optimize_huffman(true);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;

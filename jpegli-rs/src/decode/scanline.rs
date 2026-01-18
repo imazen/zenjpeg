@@ -790,9 +790,7 @@ mod tests {
         use crate::encode::v2::{ChromaSubsampling, EncoderConfig, PixelLayout};
         use enough::Unstoppable;
         // Use 4:4:4 to ensure streaming decode path is used (same IDCT as scanline reader)
-        let config = EncoderConfig::new()
-            .quality(quality)
-            .ycbcr(ChromaSubsampling::Full);
+        let config = EncoderConfig::new(quality, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -810,7 +808,7 @@ mod tests {
     ) -> Vec<u8> {
         use crate::encode::v2::{EncoderConfig, PixelLayout};
         use enough::Unstoppable;
-        let config = EncoderConfig::new().quality(quality).ycbcr(subsampling);
+        let config = EncoderConfig::new(quality, subsampling);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();

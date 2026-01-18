@@ -28,8 +28,35 @@ pub struct EncoderConfig {
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
 }
 
-impl Default for EncoderConfig {
-    fn default() -> Self {
+// Note: No Default impl - quality and subsampling are required via new()
+
+impl EncoderConfig {
+    /// Create a new encoder configuration with required quality and chroma subsampling.
+    ///
+    /// # Arguments
+    /// - `quality`: Quality level (0-100 for jpegli scale, or use `Quality::*` variants)
+    /// - `subsampling`: Chroma subsampling mode
+    ///   - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
+    ///   - `ChromaSubsampling::None` (4:4:4) - best quality, larger files
+    ///
+    /// # Example
+    /// ```ignore
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+    ///
+    /// let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter)
+    ///     .progressive(true);
+    /// ```
+    #[must_use]
+    pub fn new(quality: impl Into<Quality>, subsampling: ChromaSubsampling) -> Self {
+        Self {
+            quality: quality.into(),
+            color_mode: ColorMode::YCbCr { subsampling },
+            ..Self::default_internal()
+        }
+    }
+
+    /// Internal default for non-required fields only.
+    fn default_internal() -> Self {
         Self {
             quality: Quality::default(),
             quant_tables: QuantTableConfig::default(),
@@ -46,25 +73,10 @@ impl Default for EncoderConfig {
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
         }
     }
-}
-
-impl EncoderConfig {
-    /// Create a new encoder configuration with default settings.
-    ///
-    /// Defaults:
-    /// - Quality: 90 (ApproxJpegli)
-    /// - Color mode: YCbCr 4:4:4 (Full, no chroma subsampling)
-    /// - Optimized Huffman: enabled
-    /// - Progressive: disabled
-    /// - Downsampling: Box
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
 
     // === Quality & Quantization ===
 
-    /// Set the quality level.
+    /// Override the quality level.
     ///
     /// Accepts any type that converts to `Quality`:
     /// - `f32` or `u8` for ApproxJpegli scale
@@ -231,7 +243,7 @@ impl EncoderConfig {
     /// Set YCbCr color mode with specified chroma subsampling.
     ///
     /// Common values:
-    /// - `ChromaSubsampling::Full` (4:4:4) - default, best quality
+    /// - `ChromaSubsampling::None` (4:4:4) - default, best quality
     /// - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
     /// - `ChromaSubsampling::HalfHorizontal` (4:2:2) - horizontal subsampling only
     #[must_use]
@@ -487,24 +499,22 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = EncoderConfig::new();
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
         assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
         assert!(!config.progressive);
         assert!(config.optimize_huffman);
         assert!(matches!(
             config.color_mode,
             ColorMode::YCbCr {
-                subsampling: ChromaSubsampling::Full
+                subsampling: ChromaSubsampling::None
             }
         ));
     }
 
     #[test]
     fn test_builder_pattern() {
-        let config = EncoderConfig::new()
-            .quality(85)
+        let config = EncoderConfig::new(85, ChromaSubsampling::None)
             .progressive(true)
-            .ycbcr(ChromaSubsampling::Full)
             .sharp_yuv(true);
 
         assert!(matches!(config.quality, Quality::ApproxJpegli(85.0)));
@@ -513,7 +523,7 @@ mod tests {
         assert!(matches!(
             config.color_mode,
             ColorMode::YCbCr {
-                subsampling: ChromaSubsampling::Full
+                subsampling: ChromaSubsampling::None
             }
         ));
         assert!(matches!(
@@ -524,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_progressive_enables_huffman() {
-        let config = EncoderConfig::new()
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None)
             .optimize_huffman(false)
             .progressive(true);
 
@@ -533,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_validation_progressive_huffman() {
-        let mut config = EncoderConfig::new();
+        let mut config = EncoderConfig::new(90.0, ChromaSubsampling::None);
         config.progressive = true;
         config.optimize_huffman = false;
 
@@ -542,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_xyb_shortcuts() {
-        let config = EncoderConfig::new().xyb();
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None).xyb();
         assert!(matches!(
             config.color_mode,
             ColorMode::Xyb {
@@ -550,7 +560,7 @@ mod tests {
             }
         ));
 
-        let config = EncoderConfig::new().xyb_full();
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None).xyb_full();
         assert!(matches!(
             config.color_mode,
             ColorMode::Xyb {

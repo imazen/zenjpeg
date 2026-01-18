@@ -96,7 +96,7 @@ fn encode_rust(
     subsampling: ChromaSubsampling,
     quality: f32,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
         .ycbcr(subsampling)
         .optimize_huffman(true)
@@ -136,7 +136,7 @@ fn encode_cpp(
     fs::write(&ppm_path, &ppm).ok()?;
 
     let sample_arg = match subsampling {
-        ChromaSubsampling::Full => "444",
+        ChromaSubsampling::None => "444",
         ChromaSubsampling::HalfHorizontal => "422",
         ChromaSubsampling::Quarter => "420",
         ChromaSubsampling::HalfVertical => "440",
@@ -306,7 +306,7 @@ fn test_strip_edge_real_images() {
     println!("Settings: Progressive, Q85, S444, optimized Huffman\n");
 
     let quality = 85u8;
-    let subsampling = ChromaSubsampling::Full;
+    let subsampling = ChromaSubsampling::None;
 
     // Test partial MCU dimensions (1-7 for 8x8 MCU)
     let remainders = [1, 2, 3, 4, 5, 6, 7];
@@ -546,7 +546,7 @@ fn test_strip_edge_synthetic_quick() {
     println!("\n=== SYNTHETIC EDGE TEST (Quick) ===\n");
 
     let quality = 85u8;
-    let subsampling = ChromaSubsampling::Full;
+    let subsampling = ChromaSubsampling::None;
     let base_width = 256usize;
     let height = 128usize;
 
