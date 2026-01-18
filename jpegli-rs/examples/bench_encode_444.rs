@@ -37,11 +37,11 @@ fn main() {
 
     let iterations = 20;
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(false) // Baseline
         .optimize_huffman(false) // Fixed tables for consistency
-        .ycbcr(ChromaSubsampling::Full); // 4:4:4
+        .ycbcr(ChromaSubsampling::None); // 4:4:4
 
     // Warmup
     for _ in 0..3 {

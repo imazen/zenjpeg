@@ -34,10 +34,10 @@ fn main() {
     let iterations = 5;
 
     for (name, progressive, subsampling, optimize) in [
-        ("Baseline/Fixed/444", false, ChromaSubsampling::Full, false),
-        ("Baseline/Opt/444", false, ChromaSubsampling::Full, true),
+        ("Baseline/Fixed/444", false, ChromaSubsampling::None, false),
+        ("Baseline/Opt/444", false, ChromaSubsampling::None, true),
         ("Baseline/Opt/420", false, ChromaSubsampling::Quarter, true),
-        ("Progressive/Opt/444", true, ChromaSubsampling::Full, true),
+        ("Progressive/Opt/444", true, ChromaSubsampling::None, true),
     ] {
         let mut total_time = std::time::Duration::ZERO;
         let mut output_size = 0;
@@ -45,7 +45,7 @@ fn main() {
         for _ in 0..iterations {
             let start = Instant::now();
 
-            let config = EncoderConfig::new()
+            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(85.0)
                 .progressive(progressive)
                 .ycbcr(subsampling)

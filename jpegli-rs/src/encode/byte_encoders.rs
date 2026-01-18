@@ -661,13 +661,14 @@ impl YCbCrPlanarEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encode::ChromaSubsampling;
     use crate::error::ErrorKind;
     use enough::Unstoppable;
     use rgb::RGB;
 
     #[test]
     fn test_bytes_encoder_basic() {
-        let config = EncoderConfig::new().quality(85);
+        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -683,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_rgb_encoder_basic() {
-        let config = EncoderConfig::new().quality(85);
+        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         // Create 8x8 green image
@@ -697,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_stride_validation() {
-        let config = EncoderConfig::new();
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(100, 10, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -712,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_too_many_rows() {
-        let config = EncoderConfig::new();
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(8, 4, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -734,7 +735,7 @@ mod tests {
 
     #[test]
     fn test_incomplete_image() {
-        let config = EncoderConfig::new();
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -756,9 +757,8 @@ mod tests {
         // Small fake ICC profile (just for testing structure)
         let fake_icc = vec![0u8; 1000];
 
-        let config = EncoderConfig::new()
-            .quality(85)
-            .icc_profile(fake_icc.clone());
+        let config =
+            EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(fake_icc.clone());
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -800,7 +800,7 @@ mod tests {
         // Large ICC profile that requires multiple chunks
         let large_icc = vec![0xABu8; 100_000]; // > 65519 bytes
 
-        let config = EncoderConfig::new().quality(85).icc_profile(large_icc);
+        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(large_icc);
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -837,7 +837,7 @@ mod tests {
 
     #[test]
     fn test_finish_to_vec() {
-        let config = EncoderConfig::new().quality(85);
+        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_finish_to_vec_append() {
-        let config = EncoderConfig::new().quality(85);
+        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
@@ -875,9 +875,8 @@ mod tests {
         // Test that we can extract the same ICC profile we injected
         let original_icc: Vec<u8> = (0..=255).cycle().take(3000).collect();
 
-        let config = EncoderConfig::new()
-            .quality(85)
-            .icc_profile(original_icc.clone());
+        let config =
+            EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(original_icc.clone());
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();

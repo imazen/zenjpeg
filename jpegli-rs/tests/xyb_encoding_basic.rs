@@ -4,12 +4,12 @@
 
 use jpegli::{
     decoder::Decoder,
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 
 /// Encode with XYB color mode
 fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new().quality(quality).xyb();
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).xyb();
 
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

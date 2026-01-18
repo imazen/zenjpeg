@@ -1,7 +1,7 @@
 //! Compare XYB output quality and size against C jpegli.
 
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::process::Command;
 
 fn main() {
@@ -56,7 +56,7 @@ fn main() {
             #[cfg(feature = "experimental-hybrid-trellis")]
             let rust_jpeg = {
                 use jpegli::hybrid::HybridConfig;
-                let config = EncoderConfig::new()
+                let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                     .quality(q as f32)
                     .xyb()
                     .hybrid_config(HybridConfig::default());
@@ -68,7 +68,7 @@ fn main() {
             };
             #[cfg(not(feature = "experimental-hybrid-trellis"))]
             let rust_jpeg = {
-                let config = EncoderConfig::new().quality(q as f32).xyb();
+                let config = EncoderConfig::new(q as f32, ChromaSubsampling::Quarter).xyb();
                 let mut enc = config
                     .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                     .expect("encoder setup");

@@ -316,7 +316,7 @@ fn encode_jpeg(
 ) -> Vec<u8> {
     // Note: progressive mode requires optimized huffman, so we enable progressive
     // when optimize_huffman=true to match C++ cjpegli --progressive_level=2
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
         .ycbcr(subsampling)
         .progressive(optimize_huffman) // progressive when optimized
@@ -344,7 +344,7 @@ fn test_cpp_parity_s444_optimized() {
             width,
             height,
             quality as f32,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             true,
         );
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
@@ -378,7 +378,7 @@ fn test_cpp_parity_s444_fixed() {
             width,
             height,
             quality as f32,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             false,
         );
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
@@ -467,7 +467,7 @@ fn test_regression_s444_optimized() {
             width,
             height,
             quality as f32,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             true,
         );
 
@@ -523,7 +523,7 @@ fn test_regression_s444_fixed() {
             width,
             height,
             quality as f32,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             false,
         );
 
@@ -687,8 +687,8 @@ fn print_current_values() {
     println!("Image: {}x{}", width, height);
 
     let configs = [
-        (ChromaSubsampling::Full, true, "S444_OPT"),
-        (ChromaSubsampling::Full, false, "S444_FIXED"),
+        (ChromaSubsampling::None, true, "S444_OPT"),
+        (ChromaSubsampling::None, false, "S444_FIXED"),
         (ChromaSubsampling::Quarter, true, "S420_OPT"),
         (ChromaSubsampling::HalfHorizontal, true, "S422_OPT"),
     ];
@@ -752,7 +752,7 @@ fn print_summary() {
     println!("4:4:4 Optimized Huffman:");
     println!("{:>5} {:>10} {:>10} {:>10}", "Q", "C++", "Rust", "Diff");
     for &(q, cpp_size) in CPP_S444_OPT {
-        let jpeg = encode_jpeg(&rgb, width, height, q as f32, ChromaSubsampling::Full, true);
+        let jpeg = encode_jpeg(&rgb, width, height, q as f32, ChromaSubsampling::None, true);
         let diff_pct = 100.0 * (jpeg.len() as f64 - cpp_size as f64) / cpp_size as f64;
         println!(
             "{:>5} {:>10} {:>10} {:>+9.2}%",

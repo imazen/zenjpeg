@@ -43,7 +43,7 @@ fuzz_target!(|input: RoundtripInput| {
 
     // Select subsampling
     let subsampling = match input.subsampling % 4 {
-        0 => ChromaSubsampling::Full,
+        0 => ChromaSubsampling::None,
         1 => ChromaSubsampling::HalfHorizontal,
         2 => ChromaSubsampling::Quarter,
         _ => ChromaSubsampling::HalfVertical,
@@ -55,7 +55,7 @@ fuzz_target!(|input: RoundtripInput| {
     pixels.resize(pixel_count, 128); // Pad with gray if too short
 
     // Build encoder config
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality_val)
         .progressive(input.progressive)
         .ycbcr(subsampling);

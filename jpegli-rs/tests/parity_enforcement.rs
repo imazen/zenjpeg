@@ -9,6 +9,7 @@
 //! 3. Fail loudly when parity regresses
 //! 4. Document expected gaps until they're fixed
 
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;
@@ -156,7 +157,7 @@ fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
 
 /// Encode with Rust jpegli
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

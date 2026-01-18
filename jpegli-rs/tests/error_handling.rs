@@ -10,12 +10,12 @@ use test_utils::{generate_gradient_d, TestImage};
 
 use jpegli::{
     decoder::Decoder,
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 
 // Helper to encode RGB data with v2 API
 fn encode_rgb(width: u32, height: u32, data: &[u8]) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -27,21 +27,21 @@ fn encode_rgb_q(
     data: &[u8],
     quality: impl Into<jpegli::encoder::Quality>,
 ) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
 fn encode_gray(width: u32, height: u32, data: &[u8]) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::new().grayscale();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
 fn encode_progressive(width: u32, height: u32, data: &[u8]) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::new().progressive(true);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(true);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()

@@ -1,6 +1,7 @@
 //! Debug test for Gray16 linear encoding issue
 
 use jpegli::decoder::Decoder;
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::collections::HashSet;
 
@@ -82,7 +83,7 @@ fn debug_gray_linear_encoding() {
     }
 
     // Encode Gray8
-    let config = EncoderConfig::new().quality(98.0).grayscale();
+    let config = EncoderConfig::new(98.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg8 = encode(
         width as u32,
         height as u32,

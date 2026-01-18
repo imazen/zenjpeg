@@ -27,7 +27,7 @@ use std::time::Instant;
 type ChromaDownsampling = DownsamplingMethod;
 
 // Subsampling constants for old-style S* names
-const S444: ChromaSubsampling = ChromaSubsampling::Full;
+const S444: ChromaSubsampling = ChromaSubsampling::None;
 const S420: ChromaSubsampling = ChromaSubsampling::Quarter;
 const S422: ChromaSubsampling = ChromaSubsampling::HalfHorizontal;
 const S440: ChromaSubsampling = ChromaSubsampling::HalfVertical;
@@ -198,7 +198,7 @@ fn encode_with_method(
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
-    let mut config = EncoderConfig::new().quality(90.0).ycbcr(subsampling);
+    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).ycbcr(subsampling);
 
     if let Some(m) = method {
         config = config.downsampling_method(m);

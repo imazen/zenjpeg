@@ -108,7 +108,7 @@ fn test_config(
         "Baseline"
     };
     let sub_name = match subsampling {
-        ChromaSubsampling::Full => "444",
+        ChromaSubsampling::None => "444",
         ChromaSubsampling::HalfHorizontal => "422",
         ChromaSubsampling::Quarter => "420",
         ChromaSubsampling::HalfVertical => "440",
@@ -125,7 +125,7 @@ fn test_config(
         quality as u32
     );
 
-    let mut config = EncoderConfig::new()
+    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
         .progressive(progressive)
         .optimize_huffman(optimize_huffman);
@@ -195,7 +195,7 @@ fn test_encoder_matrix() {
     // Define test matrix
     let progressives = [false, true];
     let subsamplings = [
-        ChromaSubsampling::Full,
+        ChromaSubsampling::None,
         ChromaSubsampling::HalfHorizontal,
         ChromaSubsampling::Quarter,
         ChromaSubsampling::HalfVertical,
@@ -214,7 +214,7 @@ fn test_encoder_matrix() {
 
                 for &use_xyb in &xyb_opts {
                     // Skip XYB with subsampling (XYB should use 4:4:4)
-                    if use_xyb && subsampling != ChromaSubsampling::Full {
+                    if use_xyb && subsampling != ChromaSubsampling::None {
                         continue;
                     }
 
@@ -247,7 +247,7 @@ fn test_encoder_matrix() {
                 height,
                 true, // grayscale
                 progressive,
-                ChromaSubsampling::Full, // Grayscale ignores subsampling
+                ChromaSubsampling::None, // Grayscale ignores subsampling
                 optimize_huffman,
                 false, // No XYB for grayscale
                 quality,
@@ -320,14 +320,14 @@ fn test_common_configurations() {
         (
             "baseline_444_fixed",
             false,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             false,
             false,
         ),
         (
             "baseline_444_opt",
             false,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             true,
             false,
         ),
@@ -341,7 +341,7 @@ fn test_common_configurations() {
         (
             "progressive_444_opt",
             true,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             true,
             false,
         ),
@@ -355,14 +355,14 @@ fn test_common_configurations() {
         (
             "xyb_baseline_opt",
             false,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             true,
             true,
         ),
         (
             "xyb_progressive_opt",
             true,
-            ChromaSubsampling::Full,
+            ChromaSubsampling::None,
             true,
             true,
         ),
@@ -371,7 +371,7 @@ fn test_common_configurations() {
     println!("\n=== Common Configuration Smoke Test ===\n");
 
     for (name, progressive, subsampling, optimize_huffman, use_xyb) in configs {
-        let mut config = EncoderConfig::new()
+        let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(85.0)
             .progressive(progressive)
             .optimize_huffman(optimize_huffman);
@@ -411,7 +411,7 @@ fn test_common_configurations() {
 fn test_progressive_fixed_huffman_errors() {
     let data = vec![128u8; 64 * 64 * 3];
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(false); // Fixed Huffman

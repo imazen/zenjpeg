@@ -292,7 +292,7 @@ struct EncoderTestConfig {
 
 impl EncoderTestConfig {
     fn encode(&self, rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-        let mut config = EncoderConfig::new()
+        let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(quality)
             .progressive(self.progressive)
             .ycbcr(self.subsampling)
@@ -311,7 +311,7 @@ impl EncoderTestConfig {
 
     fn mcu_size(&self) -> usize {
         match self.subsampling {
-            ChromaSubsampling::Full => 8,
+            ChromaSubsampling::None => 8,
             _ => 16, // All subsampled modes have MCU size of 16
         }
     }
@@ -324,7 +324,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
         EncoderTestConfig {
             name: "baseline_444_opt",
             progressive: false,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             optimize_huffman: true,
             downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
@@ -332,7 +332,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
         EncoderTestConfig {
             name: "baseline_444_fixed",
             progressive: false,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             optimize_huffman: false,
             downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
@@ -381,7 +381,7 @@ fn test_configs() -> Vec<EncoderTestConfig> {
         EncoderTestConfig {
             name: "progressive_444_opt",
             progressive: true,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             optimize_huffman: true,
             downsampling_method: DownsamplingMethod::Box,
             use_xyb: false,
@@ -539,9 +539,9 @@ fn print_all_hashes() {
 fn print_single_hash() {
     let (rgb, width, height) = load_frymire();
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
-        .ycbcr(ChromaSubsampling::Full)
+        .ycbcr(ChromaSubsampling::None)
         .optimize_huffman(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

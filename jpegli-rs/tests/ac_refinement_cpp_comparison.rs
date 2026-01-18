@@ -4,6 +4,7 @@
 //! The C++ output is generated using instrumentation in entropy_coding.cc with
 //! the DUMP_AC_REFINEMENT environment variable.
 
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
@@ -517,7 +518,7 @@ fn test_progressive_filesize_comparison() {
                 let is_progressive = args.windows(2).any(|w| w[0] == "-p" && w[1] == "2");
 
                 // Note: Rust encoder always uses AQ, so we can only test with-AQ case for comparison
-                let config = EncoderConfig::new()
+                let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                     .quality(quality as f32)
                     .progressive(is_progressive);
                 let rust_jpeg = encode_rgb(info.width, info.height, &rgb, &config);

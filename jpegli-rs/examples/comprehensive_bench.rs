@@ -57,7 +57,7 @@ fn bench_encode(
     quality: f32,
     iterations: usize,
 ) -> BenchResult {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
         .ycbcr(subsampling)
         .progressive(progressive);
@@ -129,7 +129,7 @@ fn main() {
         let data = load_and_resize(&source_path, w, h);
 
         for &(subsampling, sub_name) in &[
-            (ChromaSubsampling::Full, "444"),
+            (ChromaSubsampling::None, "444"),
             (ChromaSubsampling::Quarter, "420"),
         ] {
             // Baseline

@@ -254,11 +254,11 @@ fn test_combination(
     // Encode
     let layout = pixel_format_to_layout(encode_format);
     let config = if is_gray {
-        EncoderConfig::new().quality(QUALITY).grayscale()
+        EncoderConfig::new(QUALITY, ChromaSubsampling::Quarter).grayscale()
     } else {
-        EncoderConfig::new()
+        EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(QUALITY)
-            .ycbcr(ChromaSubsampling::Full)
+            .ycbcr(ChromaSubsampling::None)
     };
     let mut enc = config
         .encode_from_bytes(WIDTH as u32, HEIGHT as u32, layout)
@@ -630,9 +630,9 @@ fn test_precision_improvement_summary() {
 
     let input = create_test_pattern_rgb8();
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(QUALITY)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
     let mut enc = config
         .encode_from_bytes(WIDTH as u32, HEIGHT as u32, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
@@ -715,7 +715,7 @@ fn test_10plus_bit_demonstration() {
     println!("Input: {}×{} grayscale", width, height);
     println!("Input unique values: {}", unique_input);
 
-    let config = EncoderConfig::new().quality(QUALITY).grayscale();
+    let config = EncoderConfig::new(QUALITY, ChromaSubsampling::Quarter).grayscale();
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, PixelLayout::Gray8Srgb)
         .expect("encoder setup");

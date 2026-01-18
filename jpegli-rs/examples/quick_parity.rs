@@ -21,7 +21,7 @@ fn main() {
     }
 
     // Encode
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .ycbcr(ChromaSubsampling::Quarter);
     let mut enc = config

@@ -31,7 +31,7 @@ fn encode_rgb(
 fn test_size(size: u32) {
     let pixels = create_gradient(size);
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .ycbcr(ChromaSubsampling::Quarter);
     let jpeg = match encode_rgb(size, size, &pixels, &config) {

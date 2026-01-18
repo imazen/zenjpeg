@@ -5,7 +5,7 @@
 //! Default is 4K. Use "8k" argument for 8K profiling.
 
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::env;
 use std::hint::black_box;
 
@@ -25,7 +25,7 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
 }
 
 fn encode_image(data: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();

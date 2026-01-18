@@ -48,10 +48,10 @@ impl BenchConfig {
     fn name(&self) -> String {
         let mode = if self.progressive { "prog" } else { "base" };
         let sub = match self.subsampling {
-            ChromaSubsampling::S444 => "444",
-            ChromaSubsampling::S422 => "422",
-            ChromaSubsampling::S420 => "420",
-            ChromaSubsampling::S440 => "440",
+            ChromaSubsampling::None => "444",
+            ChromaSubsampling::HalfHorizontal => "422",
+            ChromaSubsampling::Quarter => "420",
+            ChromaSubsampling::HalfVertical => "440",
         };
         let color = if self.use_xyb { "xyb" } else { "ycbcr" };
         format!("{}-{}-{}-q{}", mode, sub, color, self.quality)
@@ -75,10 +75,10 @@ impl BenchConfig {
 
     fn to_rust_subsampling(&self) -> RustSubsampling {
         match self.subsampling {
-            ChromaSubsampling::S444 => RustSubsampling::Full,
-            ChromaSubsampling::S422 => RustSubsampling::HalfHorizontal,
-            ChromaSubsampling::S420 => RustSubsampling::Quarter,
-            ChromaSubsampling::S440 => RustSubsampling::HalfVertical,
+            ChromaSubsampling::None => RustSubsampling::Full,
+            ChromaSubsampling::HalfHorizontal => RustSubsampling::HalfHorizontal,
+            ChromaSubsampling::Quarter => RustSubsampling::Quarter,
+            ChromaSubsampling::HalfVertical => RustSubsampling::HalfVertical,
         }
     }
 }
@@ -148,26 +148,26 @@ fn bench_rust_vs_cpp(c: &mut Criterion) {
         // Baseline YCbCr
         BenchConfig {
             progressive: false,
-            subsampling: ChromaSubsampling::S420,
+            subsampling: ChromaSubsampling::Quarter,
             use_xyb: false,
             quality: 90,
         },
         BenchConfig {
             progressive: false,
-            subsampling: ChromaSubsampling::S444,
+            subsampling: ChromaSubsampling::None,
             use_xyb: false,
             quality: 90,
         },
         // Progressive YCbCr
         BenchConfig {
             progressive: true,
-            subsampling: ChromaSubsampling::S420,
+            subsampling: ChromaSubsampling::Quarter,
             use_xyb: false,
             quality: 90,
         },
         BenchConfig {
             progressive: true,
-            subsampling: ChromaSubsampling::S444,
+            subsampling: ChromaSubsampling::None,
             use_xyb: false,
             quality: 90,
         },
@@ -209,7 +209,7 @@ fn bench_sizes(c: &mut Criterion) {
 
     let config = BenchConfig {
         progressive: true,
-        subsampling: ChromaSubsampling::S420,
+        subsampling: ChromaSubsampling::Quarter,
         use_xyb: false,
         quality: 90,
     };
@@ -258,7 +258,7 @@ fn bench_quality_levels(c: &mut Criterion) {
     for quality in [50, 75, 90, 95] {
         let config = BenchConfig {
             progressive: true,
-            subsampling: ChromaSubsampling::S420,
+            subsampling: ChromaSubsampling::Quarter,
             use_xyb: false,
             quality,
         };
@@ -300,7 +300,7 @@ fn verify_outputs_match(c: &mut Criterion) {
     let image = create_test_image(512, 512);
     let config = BenchConfig {
         progressive: true,
-        subsampling: ChromaSubsampling::S420,
+        subsampling: ChromaSubsampling::Quarter,
         use_xyb: false,
         quality: 90,
     };

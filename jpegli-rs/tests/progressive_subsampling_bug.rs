@@ -30,14 +30,14 @@ fn test_progressive_subsampling_external_decoder_compat() {
     }
 
     let configs = [
-        (ChromaSubsampling::Full, "S444"),
+        (ChromaSubsampling::None, "S444"),
         (ChromaSubsampling::HalfHorizontal, "S422"),
         (ChromaSubsampling::Quarter, "S420"),
         (ChromaSubsampling::HalfVertical, "S440"),
     ];
 
     for (subsampling, name) in configs {
-        let config = EncoderConfig::new()
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(85.0)
             .progressive(true)
             .ycbcr(subsampling)
@@ -93,7 +93,7 @@ fn test_progressive_subsampling_file_sizes() {
     }
 
     let encode = |sub: ChromaSubsampling| -> usize {
-        let config = EncoderConfig::new()
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(85.0)
             .progressive(true)
             .ycbcr(sub)
@@ -106,7 +106,7 @@ fn test_progressive_subsampling_file_sizes() {
         enc.finish().expect("encode failed").len()
     };
 
-    let size_444 = encode(ChromaSubsampling::Full);
+    let size_444 = encode(ChromaSubsampling::None);
     let size_422 = encode(ChromaSubsampling::HalfHorizontal);
     let size_420 = encode(ChromaSubsampling::Quarter);
     let size_440 = encode(ChromaSubsampling::HalfVertical);
@@ -173,7 +173,7 @@ fn test_baseline_subsampling_works() {
     }
 
     let encode = |sub: ChromaSubsampling| -> usize {
-        let config = EncoderConfig::new()
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(85.0)
             .ycbcr(sub)
             .optimize_huffman(true);
@@ -185,7 +185,7 @@ fn test_baseline_subsampling_works() {
         enc.finish().expect("encode failed").len()
     };
 
-    let size_444 = encode(ChromaSubsampling::Full);
+    let size_444 = encode(ChromaSubsampling::None);
     let size_420 = encode(ChromaSubsampling::Quarter);
 
     eprintln!("Baseline file sizes: S444={}, S420={}", size_444, size_420);

@@ -1401,7 +1401,7 @@ impl ChromaSubsampling {
     #[must_use]
     pub fn to_v2(&self) -> jpegli::encoder::ChromaSubsampling {
         match self {
-            Self::S444 => jpegli::encoder::ChromaSubsampling::Full,
+            Self::S444 => jpegli::encoder::ChromaSubsampling::None,
             Self::S422 => jpegli::encoder::ChromaSubsampling::HalfHorizontal,
             Self::S420 => jpegli::encoder::ChromaSubsampling::Quarter,
             Self::S440 => jpegli::encoder::ChromaSubsampling::HalfVertical,
@@ -1535,15 +1535,12 @@ impl EncoderConfig {
             return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
         }
 
-        let mut config = EncoderConfig::new()
-            .quality(self.quality as f32)
+        let mut config = EncoderConfig::new(self.quality as f32, self.subsampling.to_v2())
             .progressive(self.scan == ScanMode::Progressive);
 
-        // Set color mode and subsampling
+        // Set color mode if XYB
         if self.color == ColorMode::Xyb {
             config = config.xyb();
-        } else {
-            config = config.ycbcr(self.subsampling.to_v2());
         }
 
         let mut enc = config

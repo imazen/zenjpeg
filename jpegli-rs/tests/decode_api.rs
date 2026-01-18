@@ -9,7 +9,7 @@ use test_utils::{generate_gradient_d, read_test_data, TestImage};
 
 use jpegli::{
     decoder::{Decoder, PixelFormat},
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 use test_case::test_case;
 
@@ -41,7 +41,7 @@ fn encode_gray(
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let img = generate_gradient_d(width, height, 3);
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     encode_rgb(width, height, &img.pixels, &config).expect("encode failed")
 }
 
@@ -65,7 +65,7 @@ fn test_decode_basic() {
 fn test_decode_grayscale() {
     // Create grayscale JPEG
     let img = test_utils::generate_gradient_h(64, 64, 1);
-    let config = EncoderConfig::new().grayscale();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -149,7 +149,7 @@ fn test_decode_various_qualities(quality: f32) {
 #[test]
 fn test_decode_progressive() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new().progressive(true);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(true);
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode progressive failed");
 
     let decoder = Decoder::new();
@@ -345,7 +345,7 @@ fn test_decode_pixel_range() {
         }
     }
 
-    let config = EncoderConfig::new().quality(100.0);
+    let config = EncoderConfig::new(100.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -396,7 +396,7 @@ fn test_decode_deterministic() {
 #[test]
 fn test_decode_1x1_pixel() {
     let img = TestImage::from_pixels(1, 1, 3, vec![100, 150, 200]);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(1, 1, &img.pixels, &config).expect("encode 1x1 failed");
 
     let decoder = Decoder::new();

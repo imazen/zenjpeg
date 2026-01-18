@@ -141,9 +141,9 @@ fn test_rgb16_encoding() {
     let height = 64;
     let pixels = create_gradient_rgb16(width, height);
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
     let jpeg = encode(
         width as u32,
         height as u32,
@@ -164,7 +164,7 @@ fn test_rgba16_encoding() {
     let height = 64;
     let pixels = create_gradient_rgba16(width, height);
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Quarter);
     let jpeg = encode(
@@ -186,7 +186,7 @@ fn test_gray16_encoding() {
     let height = 64;
     let pixels = create_gradient_gray16(width, height);
 
-    let config = EncoderConfig::new().quality(85.0).grayscale();
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg = encode(
         width as u32,
         height as u32,
@@ -206,9 +206,9 @@ fn test_rgbf32_encoding() {
     let height = 64;
     let pixels = create_gradient_rgbf32(width, height);
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
     let jpeg = encode(
         width as u32,
         height as u32,
@@ -228,7 +228,7 @@ fn test_rgbaf32_encoding() {
     let height = 64;
     let pixels = create_gradient_rgbaf32(width, height);
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Quarter);
     let jpeg = encode(
@@ -250,7 +250,7 @@ fn test_grayf32_encoding() {
     let height = 64;
     let pixels = create_gradient_grayf32(width, height);
 
-    let config = EncoderConfig::new().quality(85.0).grayscale();
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg = encode(
         width as u32,
         height as u32,
@@ -266,9 +266,9 @@ fn test_grayf32_encoding() {
 
 #[test]
 fn test_linear_formats_different_sizes() {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(75.0)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
 
     // Test non-MCU-aligned sizes
     for (width, height) in [(63, 65), (17, 33), (100, 100), (1, 1)] {
@@ -293,9 +293,9 @@ fn test_linear_format_quality_range() {
     let pixels = create_gradient_rgb16(width, height);
 
     for quality in [10.0, 50.0, 85.0, 95.0] {
-        let config = EncoderConfig::new()
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(quality)
-            .ycbcr(ChromaSubsampling::Full);
+            .ycbcr(ChromaSubsampling::None);
         let jpeg = encode(
             width as u32,
             height as u32,
@@ -317,12 +317,12 @@ fn test_linear_format_subsampling_modes() {
     let pixels = create_gradient_rgbf32(width, height);
 
     for subsampling in [
-        ChromaSubsampling::Full,
+        ChromaSubsampling::None,
         ChromaSubsampling::HalfHorizontal,
         ChromaSubsampling::Quarter,
         ChromaSubsampling::HalfVertical,
     ] {
-        let config = EncoderConfig::new().quality(85.0).ycbcr(subsampling);
+        let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).ycbcr(subsampling);
         let jpeg = encode(
             width as u32,
             height as u32,
@@ -350,7 +350,7 @@ fn test_xyb_with_linear_formats() {
 
     // Test RgbF32 with XYB
     let pixels_f32 = create_gradient_rgbf32(width, height);
-    let config_f32 = EncoderConfig::new()
+    let config_f32 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(Quality::ApproxButteraugli(1.0))
         .xyb();
     let jpeg_f32 = encode(
@@ -367,7 +367,7 @@ fn test_xyb_with_linear_formats() {
 
     // Test Rgb16 with XYB
     let pixels_16 = create_gradient_rgb16(width, height);
-    let config_16 = EncoderConfig::new()
+    let config_16 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(Quality::ApproxButteraugli(1.0))
         .xyb();
     let jpeg_16 = encode(
@@ -404,9 +404,9 @@ fn test_gamma_correction_applied() {
     let srgb_gray = 186u8;
     let pixels_8bit: Vec<u8> = vec![srgb_gray; width * height * 3];
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(100.0)
-        .ycbcr(ChromaSubsampling::Full);
+        .ycbcr(ChromaSubsampling::None);
 
     let jpeg_f32 = encode(
         width as u32,

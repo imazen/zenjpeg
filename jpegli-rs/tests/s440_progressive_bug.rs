@@ -23,7 +23,7 @@ fn test_s440_progressive_roundtrip() {
     // Generate test pixels
     let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .ycbcr(ChromaSubsampling::HalfVertical) // S440
         .progressive(true);
@@ -50,7 +50,7 @@ fn test_s440_progressive_roundtrip() {
 #[test]
 fn test_all_subsampling_progressive() {
     let test_cases = [
-        (ChromaSubsampling::Full, "S444"),
+        (ChromaSubsampling::None, "S444"),
         (ChromaSubsampling::HalfHorizontal, "S422"),
         (ChromaSubsampling::Quarter, "S420"),
         (ChromaSubsampling::HalfVertical, "S440"),
@@ -62,7 +62,7 @@ fn test_all_subsampling_progressive() {
 
         let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-        let config = EncoderConfig::new()
+        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(90.0)
             .ycbcr(subsampling)
             .progressive(true);
@@ -108,7 +108,7 @@ fn test_progressive_subsampling_various_sizes() {
                 .map(|i| ((i * 7) % 256) as u8)
                 .collect();
 
-            let config = EncoderConfig::new()
+            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(85.0)
                 .ycbcr(*subsampling)
                 .progressive(true);

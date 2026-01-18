@@ -273,19 +273,19 @@ fn test_multi_decoder_compatibility() {
     let configs = vec![
         TestEncodingConfig {
             quality: 95,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: false,
             name: "Q95_444_baseline".to_string(),
         },
         TestEncodingConfig {
             quality: 90,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: false,
             name: "Q90_444_baseline".to_string(),
         },
         TestEncodingConfig {
             quality: 80,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: false,
             name: "Q80_444_baseline".to_string(),
         },
@@ -303,7 +303,7 @@ fn test_multi_decoder_compatibility() {
         },
         TestEncodingConfig {
             quality: 90,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: true,
             name: "Q90_444_progressive".to_string(),
         },
@@ -329,7 +329,7 @@ fn test_multi_decoder_compatibility() {
 
     for config in &configs {
         // Encode with jpegli-rs
-        let encoder_config = EncoderConfig::new()
+        let encoder_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(config.quality as f32)
             .ycbcr(config.subsampling)
             .progressive(config.progressive);
@@ -398,7 +398,7 @@ fn test_multi_decoder_complex_image() {
     let configs = vec![
         TestEncodingConfig {
             quality: 90,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             progressive: false,
             name: "complex_Q90_444".to_string(),
         },
@@ -411,7 +411,7 @@ fn test_multi_decoder_complex_image() {
     ];
 
     for config in &configs {
-        let encoder_config = EncoderConfig::new()
+        let encoder_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
             .quality(config.quality as f32)
             .ycbcr(config.subsampling)
             .progressive(config.progressive);
@@ -454,7 +454,7 @@ fn benchmark_decoders() {
     let original = generate_test_image(width, height);
 
     // Encode at Q85
-    let encoder_config = EncoderConfig::new().quality(85.0);
+    let encoder_config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
     let jpeg_data =
         encode_rgb(width as u32, height as u32, &original, &encoder_config).expect("encode failed");
 
@@ -506,7 +506,7 @@ fn test_grayscale_compatibility() {
         }
     }
 
-    let encoder_config = EncoderConfig::new().quality(90.0);
+    let encoder_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg_data =
         encode_rgb(width as u32, height as u32, &original, &encoder_config).expect("encode failed");
 

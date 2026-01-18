@@ -138,7 +138,7 @@ fn run_test(test: EncoderTest) -> TestResult {
     }
 
     // Build config
-    let mut config = EncoderConfig::new()
+    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(test.quality)
         .optimize_huffman(test.optimize_huffman);
 
@@ -209,7 +209,7 @@ fn main() {
     let subsamplings = [
         (ChromaSubsampling::Quarter, "4:2:0"),
         (ChromaSubsampling::HalfHorizontal, "4:2:2"),
-        (ChromaSubsampling::Full, "4:4:4"),
+        (ChromaSubsampling::None, "4:4:4"),
     ];
 
     let mut tests: Vec<EncoderTest> = Vec::new();
@@ -246,7 +246,7 @@ fn main() {
             name,
             width: *w,
             height: *h,
-            subsampling: ChromaSubsampling::Full,
+            subsampling: ChromaSubsampling::None,
             optimize_huffman: true,
             xyb_mode: true,
             quality: 85.0,
@@ -287,7 +287,7 @@ fn main() {
             ChromaSubsampling::Quarter => "4:2:0",
             ChromaSubsampling::HalfHorizontal => "4:2:2",
             ChromaSubsampling::HalfVertical => "4:4:0",
-            ChromaSubsampling::Full => "4:4:4",
+            ChromaSubsampling::None => "4:4:4",
             _ => "???",
         };
 
@@ -378,7 +378,7 @@ fn main() {
                 ChromaSubsampling::Quarter => "4:2:0",
                 ChromaSubsampling::HalfHorizontal => "4:2:2",
                 ChromaSubsampling::HalfVertical => "4:4:0",
-                ChromaSubsampling::Full => "4:4:4",
+                ChromaSubsampling::None => "4:4:4",
                 _ => "???",
             };
             by_samp.entry(s).or_default().push(r.error_pct);
@@ -434,7 +434,7 @@ fn main() {
                     ChromaSubsampling::Quarter => "4:2:0",
                     ChromaSubsampling::HalfHorizontal => "4:2:2",
                     ChromaSubsampling::HalfVertical => "4:4:0",
-                    ChromaSubsampling::Full => "4:4:4",
+                    ChromaSubsampling::None => "4:4:4",
                     _ => "???",
                 }
             };
@@ -467,7 +467,7 @@ fn main() {
                 ChromaSubsampling::Quarter => "4:2:0",
                 ChromaSubsampling::HalfHorizontal => "4:2:2",
                 ChromaSubsampling::HalfVertical => "4:4:0",
-                ChromaSubsampling::Full => "4:4:4",
+                ChromaSubsampling::None => "4:4:4",
                 _ => "???",
             }
         };

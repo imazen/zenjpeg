@@ -5,7 +5,7 @@
 
 use jpegli::{
     decoder::Decoder,
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 
 /// Generate a gradient test image
@@ -46,7 +46,7 @@ fn test_baseline_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
 
     let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
     let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
@@ -64,7 +64,7 @@ fn test_progressive_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let config = EncoderConfig::new().quality(90.0).progressive(true);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(true);
 
     let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
     let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
@@ -79,7 +79,7 @@ fn test_optimized_huffman_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let config = EncoderConfig::new().quality(85.0).optimize_huffman(true);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).optimize_huffman(true);
 
     let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
     let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
@@ -96,7 +96,7 @@ fn test_xyb_encoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let config = EncoderConfig::new().quality(90.0).xyb();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
 
     let jpeg1 = encode_rgb(width as u32, height as u32, &rgb, &config);
     let jpeg2 = encode_rgb(width as u32, height as u32, &rgb, &config);
@@ -110,7 +110,7 @@ fn test_grayscale_encoder_determinism() {
     let height = 64;
     let gray: Vec<u8> = (0..width * height).map(|i| (i % 256) as u8).collect();
 
-    let config = EncoderConfig::new().quality(90.0).grayscale();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
 
     let jpeg1 = encode_gray(width as u32, height as u32, &gray, &config);
     let jpeg2 = encode_gray(width as u32, height as u32, &gray, &config);
@@ -124,7 +124,7 @@ fn test_decoder_determinism() {
     let height = 128;
     let rgb = generate_gradient(width, height);
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width as u32, height as u32, &rgb, &config);
 
     // Decode multiple times

@@ -5,7 +5,7 @@
 
 use jpegli::{
     decoder::Decoder,
-    encoder::{EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 
 /// Generate a gradient test image
@@ -46,7 +46,7 @@ fn test_baseline_roundtrip_consistency() {
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
 
     // First encode
     let jpeg1 = encode_rgb(width, height, &rgb, &config);
@@ -86,7 +86,7 @@ fn test_progressive_roundtrip_consistency() {
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
-    let config = EncoderConfig::new().quality(90.0).progressive(true);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(true);
 
     // First encode
     let jpeg1 = encode_rgb(width, height, &rgb, &config);
@@ -111,7 +111,7 @@ fn test_progressive_roundtrip_consistency() {
 
 #[test]
 fn test_decoder_produces_correct_dimensions() {
-    let config = EncoderConfig::new().quality(85.0);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
 
     for (width, height) in [(64, 64), (100, 75), (256, 128), (17, 33)] {
         let rgb = generate_gradient(width, height);
@@ -144,7 +144,7 @@ fn test_multiple_roundtrips_converge() {
     let height = 64u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
 
     let mut current_pixels = rgb.clone();
     let mut previous_diff = u8::MAX;
@@ -178,7 +178,7 @@ fn test_high_quality_roundtrip_low_error() {
     let height = 128u32;
     let rgb = generate_gradient(width as usize, height as usize);
 
-    let config = EncoderConfig::new().quality(100.0);
+    let config = EncoderConfig::new(100.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(width, height, &rgb, &config);
 
     let decoded = Decoder::new().decode(&jpeg).expect("decode failed");

@@ -3,7 +3,7 @@
 //! Run with: cargo run --release --features parallel --example parallel_encoder_bench
 
 use enough::Unstoppable;
-use jpegli::encoder::{EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
 
 fn main() {
@@ -50,7 +50,7 @@ fn benchmark_encode(width: usize, height: usize) -> BenchResult {
         *p = (seed >> 33) as u8;
     }
 
-    let config = EncoderConfig::new().quality(85.0);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
 
     // Warm up
     {

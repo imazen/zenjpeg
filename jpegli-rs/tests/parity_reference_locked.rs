@@ -213,7 +213,7 @@ fn encode_rust(
     subsampling: ChromaSubsampling,
     optimize_huffman: bool,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .ycbcr(subsampling)
         .optimize_huffman(optimize_huffman);
@@ -276,7 +276,7 @@ fn test_s444_opt_parity() {
     let (rgb, width, height) = load_test_image();
 
     for &(q, expected_rust, expected_cpp, _, _) in S444_OPT {
-        let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::Full, true);
+        let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::None, true);
         let rust_size = jpeg.len();
 
         let diff_pct = 100.0 * (rust_size as f64 - expected_rust as f64) / expected_rust as f64;
@@ -307,7 +307,7 @@ fn test_s444_fixed_parity() {
     let (rgb, width, height) = load_test_image();
 
     for &(q, expected_rust, _expected_cpp, _, _) in S444_FIXED {
-        let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::Full, false);
+        let jpeg = encode_rust(&rgb, width, height, q, ChromaSubsampling::None, false);
         let rust_size = jpeg.len();
 
         let diff_pct = 100.0 * (rust_size as f64 - expected_rust as f64) / expected_rust as f64;
@@ -430,7 +430,7 @@ fn print_summary() {
     println!("Test image: {}x{}\n", width, height);
 
     let configs = [
-        ("4:4:4 OPT", ChromaSubsampling::Full, true, "444", S444_OPT),
+        ("4:4:4 OPT", ChromaSubsampling::None, true, "444", S444_OPT),
         (
             "4:2:0 OPT",
             ChromaSubsampling::Quarter,
@@ -479,8 +479,8 @@ fn generate_all_values() {
     let png_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/1.png");
 
     let configs = [
-        ("S444_OPT", ChromaSubsampling::Full, true, "444"),
-        ("S444_FIXED", ChromaSubsampling::Full, false, "444"),
+        ("S444_OPT", ChromaSubsampling::None, true, "444"),
+        ("S444_FIXED", ChromaSubsampling::None, false, "444"),
         ("S420_OPT", ChromaSubsampling::Quarter, true, "420"),
         ("S422_OPT", ChromaSubsampling::HalfHorizontal, true, "422"),
         ("S440_OPT", ChromaSubsampling::HalfVertical, true, "440"),
@@ -545,7 +545,7 @@ fn exhaustive_parity() {
     let mut results: HashMap<String, Vec<(u8, usize, usize, f64)>> = HashMap::new();
 
     let subsampling_modes = [
-        (ChromaSubsampling::Full, "444"),
+        (ChromaSubsampling::None, "444"),
         (ChromaSubsampling::Quarter, "420"),
         (ChromaSubsampling::HalfHorizontal, "422"),
         (ChromaSubsampling::HalfVertical, "440"),

@@ -3,6 +3,7 @@
 //! This test encodes jpegli/tests/images/1.png at various quality levels
 //! and writes the results to jpegli/tests/outputs/ for visual inspection.
 
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::PathBuf;
@@ -92,7 +93,7 @@ fn test_visual_encoding_quality_levels() {
     let quality_levels = [30, 50, 70, 85, 95];
 
     for &q in &quality_levels {
-        let config = EncoderConfig::new().quality(q as f32);
+        let config = EncoderConfig::new(q as f32, ChromaSubsampling::Quarter);
 
         match encode_rgb(width, height, &rgb_data, &config) {
             Ok(jpeg_data) => {
@@ -135,7 +136,7 @@ fn test_visual_encoding_with_aq() {
     let output_dir = get_output_dir();
 
     // Encode at Q70 (good balance of quality and size)
-    let config = EncoderConfig::new().quality(70.0);
+    let config = EncoderConfig::new(70.0, ChromaSubsampling::Quarter);
 
     match encode_rgb(width, height, &rgb_data, &config) {
         Ok(jpeg_data) => {

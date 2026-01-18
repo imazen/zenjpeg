@@ -72,7 +72,7 @@ fn generate_solid_rgb(width: u32, height: u32, r: u8, g: u8, b: u8) -> TestImage
 #[test]
 fn test_encode_basic_rgb() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // Verify JPEG structure
@@ -84,7 +84,7 @@ fn test_encode_basic_rgb() {
 #[test]
 fn test_encode_basic_grayscale() {
     let img = generate_gradient_h(64, 64, 1);
-    let config = EncoderConfig::new().grayscale();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
     let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("encode failed");
 
     assert!(jpeg.len() > 50, "JPEG too small");
@@ -104,7 +104,7 @@ fn test_encode_rgba_input() {
         }
     }
 
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgba(32, 32, &img.pixels, &config).expect("encode failed");
     assert!(jpeg.len() > 100, "JPEG too small");
 }
@@ -123,7 +123,7 @@ fn test_encode_rgba_input() {
 #[test_case(100.0 ; "Q100")]
 fn test_encode_quality_levels(quality: f32) {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
 
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
     assert!(jpeg.len() > 100, "Q{} JPEG too small", quality);
@@ -142,7 +142,7 @@ fn test_encode_quality_affects_size() {
     let sizes: Vec<usize> = [30.0, 50.0, 70.0, 90.0]
         .iter()
         .map(|&q| {
-            let config = EncoderConfig::new().quality(q);
+            let config = EncoderConfig::new(q, ChromaSubsampling::Quarter);
             encode_rgb(256, 256, &img.pixels, &config).unwrap().len()
         })
         .collect();
@@ -170,7 +170,7 @@ fn test_encode_quality_affects_size() {
 #[test_case(4.0 ; "distance_4_0")]
 fn test_encode_distance_quality(distance: f32) {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new().quality(Quality::ApproxJpegli(distance));
+    let config = EncoderConfig::new(Quality::ApproxJpegli(distance), ChromaSubsampling::Quarter);
 
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
     assert!(jpeg.len() > 100, "Distance {} JPEG too small", distance);
@@ -191,7 +191,7 @@ fn test_encode_distance_quality(distance: f32) {
 #[test_case(640, 480 ; "640x480_vga")]
 fn test_encode_various_sizes(width: u32, height: u32) {
     let img = generate_gradient_d(width, height, 3);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
 
     let jpeg = encode_rgb(width, height, &img.pixels, &config).expect("encode failed");
     assert!(jpeg.len() > 50, "{}x{} JPEG too small", width, height);
@@ -207,7 +207,7 @@ fn test_encode_various_sizes(width: u32, height: u32) {
 fn test_encode_non_square() {
     // Wide image
     let wide = generate_gradient_h(256, 64, 3);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(256, 64, &wide.pixels, &config).expect("encode wide failed");
 
     let decoder = Decoder::new();
@@ -231,7 +231,7 @@ fn test_encode_non_square() {
 #[test]
 fn test_encode_baseline_mode() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new().progressive(false);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(false);
 
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
@@ -246,7 +246,7 @@ fn test_encode_baseline_mode() {
 #[test]
 fn test_encode_progressive_mode() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new().progressive(true);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(true);
 
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
@@ -259,11 +259,15 @@ fn test_encode_progressive_mode() {
 fn test_encode_progressive_smaller_than_baseline() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let baseline_config = EncoderConfig::new().progressive(false).quality(85.0);
+    let baseline_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        .progressive(false)
+        .quality(85.0);
     let baseline_jpeg =
         encode_rgb(256, 256, &img.pixels, &baseline_config).expect("baseline failed");
 
-    let progressive_config = EncoderConfig::new().progressive(true).quality(85.0);
+    let progressive_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        .progressive(true)
+        .quality(85.0);
     let progressive_jpeg =
         encode_rgb(256, 256, &img.pixels, &progressive_config).expect("progressive failed");
 
@@ -284,10 +288,10 @@ fn test_encode_progressive_smaller_than_baseline() {
 fn test_encode_optimized_huffman() {
     let img = generate_gradient_d(256, 256, 3);
 
-    let config_opt = EncoderConfig::new().optimize_huffman(true);
+    let config_opt = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).optimize_huffman(true);
     let jpeg_opt = encode_rgb(256, 256, &img.pixels, &config_opt).expect("optimized failed");
 
-    let config_fixed = EncoderConfig::new().optimize_huffman(false);
+    let config_fixed = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).optimize_huffman(false);
     let jpeg_fixed = encode_rgb(256, 256, &img.pixels, &config_fixed).expect("fixed failed");
 
     // Optimized should be smaller or equal
@@ -308,7 +312,7 @@ fn test_encode_optimized_huffman() {
 
 #[test]
 fn test_encode_reuse_encoder() {
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
 
     // Encode multiple different images with same encoder config
     for i in 0..5u8 {
@@ -349,7 +353,7 @@ fn test_encode_solid_color() {
 
     for (r, g, b) in colors {
         let img = generate_solid_rgb(64, 64, r, g, b);
-        let config = EncoderConfig::new().quality(95.0);
+        let config = EncoderConfig::new(95.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         let decoder = Decoder::new();
@@ -364,7 +368,7 @@ fn test_encode_solid_color() {
 #[test]
 fn test_encode_checkerboard() {
     let img = generate_checkerboard(128, 128, 8, 3);
-    let config = EncoderConfig::new().quality(95.0);
+    let config = EncoderConfig::new(95.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -381,7 +385,7 @@ fn test_encode_checkerboard() {
 #[test]
 fn test_encode_color_bars() {
     let img = generate_color_bars(128, 64);
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(128, 64, &img.pixels, &config).expect("encode failed");
 
     let decoder = Decoder::new();
@@ -405,7 +409,7 @@ fn test_encode_color_bars() {
 fn test_encode_minimum_dimensions() {
     // Smallest possible JPEG
     let img = TestImage::from_pixels(1, 1, 3, vec![128, 64, 192]);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(1, 1, &img.pixels, &config).expect("encode 1x1 failed");
     assert!(!jpeg.is_empty(), "1x1 JPEG should not be empty");
 
@@ -419,7 +423,7 @@ fn test_encode_minimum_dimensions() {
 fn test_encode_large_image() {
     // Test larger image (but not too large for CI)
     let img = generate_gradient_d(1024, 768, 3);
-    let config = EncoderConfig::new().quality(85.0);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
 
     let jpeg = encode_rgb(1024, 768, &img.pixels, &config).expect("encode large failed");
     // Gradients compress very well - 5KB is reasonable for Q85
@@ -444,7 +448,7 @@ fn test_encode_no_jfif_header() {
     // jpegli-rs intentionally omits the JFIF APP0 marker to match C++ jpegli behavior.
     // This saves 18 bytes per file.
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // Should NOT have APP0 JFIF marker (matches C++ jpegli)
@@ -462,7 +466,7 @@ fn test_encode_no_jfif_header() {
 #[test]
 fn test_encode_dqt_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // Look for DQT marker
@@ -477,7 +481,7 @@ fn test_encode_dqt_present() {
 #[test]
 fn test_encode_dht_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // Look for DHT marker
@@ -492,7 +496,7 @@ fn test_encode_dht_present() {
 #[test]
 fn test_xyb_has_app14_adobe_marker() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new().xyb();
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // Look for APP14 marker (0xFF 0xEE)
@@ -527,7 +531,8 @@ fn test_xyb_has_app14_adobe_marker() {
 #[test]
 fn test_ycbcr_no_app14_marker() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new().ycbcr(ChromaSubsampling::Full);
+    let config =
+        EncoderConfig::new(90.0, ChromaSubsampling::Quarter).ycbcr(ChromaSubsampling::None);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // YCbCr mode should NOT have APP14 marker (JFIF is sufficient)
@@ -545,7 +550,7 @@ fn test_ycbcr_no_app14_marker() {
 #[test]
 fn test_xyb_optimized_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .xyb()
         .optimize_huffman(true);
@@ -561,7 +566,7 @@ fn test_xyb_optimized_huffman_decodable() {
 #[test]
 fn test_xyb_standard_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .xyb()
         .optimize_huffman(false);
@@ -577,9 +582,9 @@ fn test_xyb_standard_huffman_decodable() {
 #[test]
 fn test_ycbcr_optimized_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
-        .ycbcr(ChromaSubsampling::Full)
+        .ycbcr(ChromaSubsampling::None)
         .optimize_huffman(true);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
@@ -595,9 +600,9 @@ fn test_ycbcr_optimized_huffman_decodable() {
 #[test]
 fn test_ycbcr_standard_huffman_decodable() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
-        .ycbcr(ChromaSubsampling::Full)
+        .ycbcr(ChromaSubsampling::None)
         .optimize_huffman(false);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
@@ -664,7 +669,7 @@ fn test_encode_ycbcr8_input() {
         }
     }
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::YCbCr8)
         .expect("encoder creation should succeed");
@@ -709,7 +714,7 @@ fn test_encode_ycbcr_f32_input() {
         }
     }
 
-    let config = EncoderConfig::new().quality(90.0);
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::YCbCrF32)
         .expect("encoder creation should succeed");
@@ -758,9 +763,9 @@ fn test_encode_ycbcr8_vs_rgb_both_valid() {
     }
 
     // Encode with RGB input (internal YCbCr conversion)
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(95.0)
-        .ycbcr(ChromaSubsampling::Full); // 4:4:4 for fair comparison
+        .ycbcr(ChromaSubsampling::None); // 4:4:4 for fair comparison
 
     let mut enc_rgb = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -823,7 +828,7 @@ fn test_encode_ycbcr8_with_subsampling() {
     }
 
     // Test with 4:2:0 subsampling
-    let config = EncoderConfig::new()
+    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .ycbcr(ChromaSubsampling::Quarter);
 
@@ -860,7 +865,7 @@ fn test_encode_ycbcr8_progressive() {
         }
     }
 
-    let config = EncoderConfig::new().quality(85.0).progressive(true);
+    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).progressive(true);
 
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::YCbCr8)
@@ -886,30 +891,30 @@ fn test_all_huffman_colorspace_combinations_with_zune() {
 
     let configs: Vec<(EncoderConfig, &str)> = vec![
         (
-            EncoderConfig::new()
+            EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(90.0)
                 .xyb()
                 .optimize_huffman(true),
             "XYB + optimized",
         ),
         (
-            EncoderConfig::new()
+            EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(90.0)
                 .xyb()
                 .optimize_huffman(false),
             "XYB + standard",
         ),
         (
-            EncoderConfig::new()
+            EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(90.0)
-                .ycbcr(ChromaSubsampling::Full)
+                .ycbcr(ChromaSubsampling::None)
                 .optimize_huffman(true),
             "YCbCr + optimized",
         ),
         (
-            EncoderConfig::new()
+            EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
                 .quality(90.0)
-                .ycbcr(ChromaSubsampling::Full)
+                .ycbcr(ChromaSubsampling::None)
                 .optimize_huffman(false),
             "YCbCr + standard",
         ),

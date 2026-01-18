@@ -8,6 +8,7 @@
 
 use jpegli::decoder::Decoder;
 use jpegli::decoder::PixelFormat;
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -197,7 +198,7 @@ fn test_file_size_parity() {
         };
 
         for point in &img_ref.points {
-            let config = EncoderConfig::new().quality(point.quality as f32);
+            let config = EncoderConfig::new(point.quality as f32, ChromaSubsampling::Quarter);
             let rust_jpeg = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
                 Ok(mut enc) => {
                     if let Err(e) = enc.push_packed(&pixels, enough::Unstoppable) {
@@ -298,7 +299,7 @@ fn test_dssim_parity() {
         };
 
         for point in &img_ref.points {
-            let config = EncoderConfig::new().quality(point.quality as f32);
+            let config = EncoderConfig::new(point.quality as f32, ChromaSubsampling::Quarter);
             let rust_jpeg = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {
                 Ok(mut enc) => {
                     if enc.push_packed(&pixels, enough::Unstoppable).is_err() {

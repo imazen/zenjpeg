@@ -4,6 +4,7 @@
 //! then verify quality using DSSIM.
 
 use dssim::Dssim;
+use jpegli::encoder::ChromaSubsampling;
 use jpegli::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
@@ -20,7 +21,7 @@ fn encode_rgb(
     data: &[u8],
     quality: f32,
 ) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::new().quality(quality);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
