@@ -841,6 +841,14 @@ impl StripProcessor {
 
                 // Process Y component (full res from cb_strip which is now in padded layout)
                 let y_size = strip_height * padded_width;
+
+                // Calculate actual Cb block count (same as Y - uses actual_strip_blocks_h)
+                let cb_blocks_total = actual_strip_blocks_h * blocks_w;
+                let cb_start = self.pending_cb_blocks[pending_idx].len();
+                self.pending_cb_blocks[pending_idx]
+                    .resize(cb_start + cb_blocks_total, Block8x8f::default());
+
+                let mut cb_idx = 0;
                 for local_by in 0..strip_blocks_h {
                     let global_by = start_block_y + local_by;
                     if global_by >= (height + 7) / 8 {
@@ -853,8 +861,9 @@ impl StripProcessor {
                             local_by,
                             padded_width,
                         );
-                        let cb_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
-                        self.pending_cb_blocks[pending_idx].push(cb_dct);
+                        self.pending_cb_blocks[pending_idx][cb_start + cb_idx] =
+                            crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
+                        cb_idx += 1;
                     }
                 }
 
@@ -864,6 +873,7 @@ impl StripProcessor {
                 let b_strip_height = (strip_height + 1) / 2;
                 let b_blocks_w = (b_width + 7) / 8;
                 let b_strip_blocks_h = (b_strip_height + 7) / 8;
+                let b_blocks_total = b_blocks_w * b_strip_blocks_h;
                 let padded_c_width = self.padded_c_width;
 
                 // cr_down is sized for c_strip_height rows based on the subsampling mode,
@@ -874,6 +884,11 @@ impl StripProcessor {
                 };
                 let c_size = c_strip_height_for_buf * padded_c_width;
 
+                let cr_start = self.pending_cr_blocks[pending_idx].len();
+                self.pending_cr_blocks[pending_idx]
+                    .resize(cr_start + b_blocks_total, Block8x8f::default());
+
+                let mut cr_idx = 0;
                 for local_by in 0..b_strip_blocks_h {
                     for bx in 0..b_blocks_w {
                         let cr_block = extract_block_from_strip_wide(
@@ -882,8 +897,9 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        let cr_dct = crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
-                        self.pending_cr_blocks[pending_idx].push(cr_dct);
+                        self.pending_cr_blocks[pending_idx][cr_start + cr_idx] =
+                            crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
+                        cr_idx += 1;
                     }
                 }
             } else {
