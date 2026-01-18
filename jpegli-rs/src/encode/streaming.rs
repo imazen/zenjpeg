@@ -1024,9 +1024,9 @@ impl StreamingEncoder {
 
         // Step 1: Complete any partial strip in buffer
         if self.rows_buffered > 0 {
+            let rows_to_complete = (self.strip_height - self.rows_buffered).min(rows_remaining);
             let rows_to_complete =
-                (self.strip_height - self.rows_buffered).min(rows_remaining);
-            let rows_to_complete = rows_to_complete.min(self.height - self.current_y - self.rows_buffered);
+                rows_to_complete.min(self.height - self.current_y - self.rows_buffered);
 
             // Copy rows to buffer to complete the strip
             let buf_offset = self.rows_buffered * self.bytes_per_row;
