@@ -40,6 +40,237 @@ fn encode_with_icc_profile(width: u32, height: u32, quality: f32, icc: &[u8]) ->
     encoder.finish().unwrap()
 }
 
+/// Encode with EXIF data attached using native API.
+fn encode_with_exif(width: u32, height: u32, quality: f32, exif: &[u8]) -> Vec<u8> {
+    let pixels = create_test_image(width, height);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).exif(exif);
+    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+    encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// Encode with XMP data attached using native API.
+fn encode_with_xmp(width: u32, height: u32, quality: f32, xmp: &[u8]) -> Vec<u8> {
+    let pixels = create_test_image(width, height);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).xmp(xmp);
+    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+    encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// Encode with all metadata types attached.
+fn encode_with_all_metadata(
+    width: u32,
+    height: u32,
+    quality: f32,
+    exif: &[u8],
+    xmp: &[u8],
+    icc: &[u8],
+) -> Vec<u8> {
+    let pixels = create_test_image(width, height);
+    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter)
+        .exif(exif)
+        .xmp(xmp)
+        .icc_profile(icc);
+    let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
+    encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
+    encoder.finish().unwrap()
+}
+
+// ============================================================================
+// Native EXIF/XMP API tests
+// ============================================================================
+
+mod native_metadata_tests {
+    use super::*;
+    use img_parts::{jpeg::Jpeg, ImageEXIF, ImageICC};
+
+    /// Create minimal EXIF TIFF structure (without the Exif\0\0 prefix).
+    fn create_minimal_exif_tiff() -> Vec<u8> {
+        let mut tiff = Vec::new();
+        // TIFF header (little-endian)
+        tiff.extend_from_slice(&[0x49, 0x49]); // II = little-endian
+        tiff.extend_from_slice(&[0x2A, 0x00]); // Magic number
+        tiff.extend_from_slice(&[0x08, 0x00, 0x00, 0x00]); // Offset to first IFD
+                                                           // Minimal IFD0 with 0 entries
+        tiff.extend_from_slice(&[0x00, 0x00]); // Number of entries
+        tiff.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Offset to next IFD (none)
+        tiff
+    }
+
+    #[test]
+    fn native_exif_embeds_correctly() {
+        let exif_tiff = create_minimal_exif_tiff();
+        let jpeg_data = encode_with_exif(128, 128, 80.0, &exif_tiff);
+
+        // Parse with img-parts
+        let jpeg = Jpeg::from_bytes(jpeg_data.clone().into()).expect("Should parse JPEG");
+
+        // Extract EXIF - img-parts includes the Exif\0\0 prefix in extracted data
+        let extracted = jpeg.exif().expect("EXIF should be present");
+
+        // img-parts may or may not include the Exif\0\0 prefix depending on version
+        // Check that our TIFF data is present somewhere in the extracted data
+        let tiff_start = if extracted.starts_with(b"Exif\0\0") {
+            &extracted[6..]
+        } else {
+            extracted.as_ref()
+        };
+
+        assert_eq!(
+            tiff_start,
+            exif_tiff.as_slice(),
+            "EXIF TIFF data should match"
+        );
+
+        // Also verify by scanning raw JPEG bytes for our TIFF header
+        let tiff_header = &[0x49, 0x49, 0x2A, 0x00]; // II + magic
+        let has_tiff = jpeg_data.windows(4).any(|w| w == tiff_header);
+        assert!(has_tiff, "TIFF header should be present in JPEG");
+    }
+
+    #[test]
+    fn native_xmp_embeds_correctly() {
+        let xmp = br#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <dc:creator>jpegli-rs test</dc:creator>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#;
+
+        let jpeg_data = encode_with_xmp(128, 128, 80.0, xmp);
+
+        // Check that XMP APP1 marker is present
+        // XMP uses http://ns.adobe.com/xap/1.0/\0 namespace
+        let xmp_namespace = b"http://ns.adobe.com/xap/1.0/\0";
+
+        let has_xmp = jpeg_data
+            .windows(xmp_namespace.len())
+            .any(|w| w == xmp_namespace);
+        assert!(has_xmp, "XMP namespace should be present in JPEG");
+
+        // Verify the XMP content is embedded
+        let xmp_content_start = br#"<?xpacket begin"#;
+        let has_content = jpeg_data
+            .windows(xmp_content_start.len())
+            .any(|w| w == xmp_content_start);
+        assert!(has_content, "XMP content should be present");
+    }
+
+    #[test]
+    fn all_metadata_in_correct_order() {
+        let exif_tiff = create_minimal_exif_tiff();
+        let xmp = b"<xmp>test</xmp>";
+        let icc = vec![0x42u8; 128];
+
+        let jpeg_data = encode_with_all_metadata(128, 128, 80.0, &exif_tiff, xmp, &icc);
+
+        // Find positions of each marker type
+        let exif_pos = jpeg_data.windows(6).position(|w| w == b"Exif\0\0");
+        let xmp_pos = jpeg_data
+            .windows(29)
+            .position(|w| w == b"http://ns.adobe.com/xap/1.0/\0");
+        let icc_pos = jpeg_data.windows(12).position(|w| w == b"ICC_PROFILE\0");
+
+        assert!(exif_pos.is_some(), "EXIF should be present");
+        assert!(xmp_pos.is_some(), "XMP should be present");
+        assert!(icc_pos.is_some(), "ICC should be present");
+
+        // Verify order: EXIF < XMP < ICC
+        let exif_pos = exif_pos.unwrap();
+        let xmp_pos = xmp_pos.unwrap();
+        let icc_pos = icc_pos.unwrap();
+
+        assert!(
+            exif_pos < xmp_pos,
+            "EXIF ({exif_pos}) should come before XMP ({xmp_pos})"
+        );
+        assert!(
+            xmp_pos < icc_pos,
+            "XMP ({xmp_pos}) should come before ICC ({icc_pos})"
+        );
+    }
+
+    #[test]
+    fn native_exif_compatible_with_kamadak_exif() {
+        use std::io::Cursor;
+
+        let exif_tiff = create_minimal_exif_tiff();
+        let jpeg_data = encode_with_exif(128, 128, 80.0, &exif_tiff);
+
+        // kamadak-exif should be able to read it
+        let mut cursor = Cursor::new(&jpeg_data);
+        let reader = exif::Reader::new();
+
+        // We're embedding minimal/empty EXIF, so it might parse with 0 fields
+        // The important thing is it doesn't error with "invalid JPEG"
+        match reader.read_from_container(&mut cursor) {
+            Ok(_exif) => {
+                // Successfully parsed - may have 0 fields (our test data is minimal)
+                // This is fine - the parse succeeded
+            }
+            Err(e) => {
+                // Should not be a JPEG structure error
+                let err_str = format!("{e}");
+                assert!(
+                    !err_str.contains("invalid") && !err_str.contains("malformed"),
+                    "Should not have JPEG structure error: {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_metadata_compatible_with_img_parts() {
+        let exif_tiff = create_minimal_exif_tiff();
+        let icc = vec![0x42u8; 256];
+
+        // Use native API to embed both
+        let jpeg_data = encode_with_all_metadata(128, 128, 80.0, &exif_tiff, b"", &icc);
+
+        let jpeg = Jpeg::from_bytes(jpeg_data.into()).expect("Should parse");
+
+        // Both should be extractable
+        assert!(jpeg.exif().is_some(), "EXIF should be extractable");
+        assert!(jpeg.icc_profile().is_some(), "ICC should be extractable");
+    }
+
+    #[test]
+    fn native_metadata_compatible_with_ultrahdr() {
+        use ultrahdr::jpeg::parse_jpeg_segments;
+
+        let exif_tiff = create_minimal_exif_tiff();
+        let xmp = b"<xmp>test</xmp>";
+        let icc = vec![0x42u8; 64];
+
+        let jpeg_data = encode_with_all_metadata(128, 128, 80.0, &exif_tiff, xmp, &icc);
+
+        // Parse with ultrahdr
+        let segments = parse_jpeg_segments(&jpeg_data).expect("Should parse");
+
+        // Check for APP1 EXIF
+        let has_exif = segments
+            .iter()
+            .any(|s| s.marker == 0xE1 && s.data.starts_with(b"Exif\0\0"));
+        assert!(has_exif, "EXIF APP1 should be present");
+
+        // Check for APP1 XMP
+        let has_xmp = segments
+            .iter()
+            .any(|s| s.marker == 0xE1 && s.data.starts_with(b"http://ns.adobe.com/xap/1.0/\0"));
+        assert!(has_xmp, "XMP APP1 should be present");
+
+        // Check for APP2 ICC
+        let has_icc = segments
+            .iter()
+            .any(|s| s.marker == 0xE2 && s.data.starts_with(b"ICC_PROFILE\0"));
+        assert!(has_icc, "ICC APP2 should be present");
+    }
+}
+
 // ============================================================================
 // kamadak-exif integration tests
 // ============================================================================

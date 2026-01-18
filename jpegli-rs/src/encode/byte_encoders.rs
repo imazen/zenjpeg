@@ -245,7 +245,16 @@ impl BytesEncoder {
         // Finish streaming encoder
         let mut jpeg = self.inner.finish()?;
 
-        // Inject ICC profile if present
+        // Inject metadata in order: EXIF first (right after SOI), then XMP, then ICC
+        // This matches standard JPEG metadata ordering
+        if let Some(ref exif_data) = self.config.exif_data {
+            jpeg = inject_exif(jpeg, exif_data);
+        }
+
+        if let Some(ref xmp_data) = self.config.xmp_data {
+            jpeg = inject_xmp(jpeg, xmp_data);
+        }
+
         if let Some(ref icc_data) = self.config.icc_profile {
             jpeg = inject_icc_profile(jpeg, icc_data);
         }
@@ -359,6 +368,121 @@ fn build_icc_markers(icc_data: &[u8]) -> Vec<u8> {
     }
 
     markers
+}
+
+/// EXIF signature for APP1 marker.
+const EXIF_SIGNATURE: &[u8; 6] = b"Exif\0\0";
+
+/// Maximum EXIF data bytes per APP1 marker segment.
+/// APP1 max length is 65535, minus 2 (length) - 6 (signature) = 65527.
+const MAX_EXIF_BYTES: usize = 65527;
+
+/// XMP namespace signature for APP1 marker.
+const XMP_NAMESPACE: &[u8; 29] = b"http://ns.adobe.com/xap/1.0/\0";
+
+/// Maximum XMP data bytes per APP1 marker segment.
+/// APP1 max length is 65535, minus 2 (length) - 29 (namespace) = 65504.
+const MAX_XMP_BYTES: usize = 65504;
+
+/// Inject EXIF data into a JPEG as APP1 marker, right after SOI.
+fn inject_exif(jpeg: Vec<u8>, exif_data: &[u8]) -> Vec<u8> {
+    if exif_data.is_empty() {
+        return jpeg;
+    }
+
+    // Truncate if too large
+    let exif_len = exif_data.len().min(MAX_EXIF_BYTES);
+
+    // Build EXIF APP1 marker
+    let mut marker = Vec::with_capacity(4 + 6 + exif_len);
+    marker.push(0xFF);
+    marker.push(0xE1); // APP1
+
+    // Length: 2 (length field) + 6 (signature) + data
+    let segment_length = 2 + 6 + exif_len;
+    marker.push((segment_length >> 8) as u8);
+    marker.push(segment_length as u8);
+
+    // EXIF signature
+    marker.extend_from_slice(EXIF_SIGNATURE);
+
+    // EXIF data
+    marker.extend_from_slice(&exif_data[..exif_len]);
+
+    // Insert after SOI (2 bytes)
+    let mut result = Vec::with_capacity(jpeg.len() + marker.len());
+    result.extend_from_slice(&jpeg[..2]); // SOI
+    result.extend_from_slice(&marker);
+    result.extend_from_slice(&jpeg[2..]);
+
+    result
+}
+
+/// Inject XMP data into a JPEG as APP1 marker.
+///
+/// Inserts after SOI and any existing APP1 (EXIF) markers.
+fn inject_xmp(jpeg: Vec<u8>, xmp_data: &[u8]) -> Vec<u8> {
+    if xmp_data.is_empty() {
+        return jpeg;
+    }
+
+    // Truncate if too large
+    let xmp_len = xmp_data.len().min(MAX_XMP_BYTES);
+
+    // Build XMP APP1 marker
+    let mut marker = Vec::with_capacity(4 + 29 + xmp_len);
+    marker.push(0xFF);
+    marker.push(0xE1); // APP1
+
+    // Length: 2 (length field) + 29 (namespace) + data
+    let segment_length = 2 + 29 + xmp_len;
+    marker.push((segment_length >> 8) as u8);
+    marker.push(segment_length as u8);
+
+    // XMP namespace
+    marker.extend_from_slice(XMP_NAMESPACE);
+
+    // XMP data
+    marker.extend_from_slice(&xmp_data[..xmp_len]);
+
+    // Find insertion point: after SOI and any existing EXIF APP1 markers
+    let insert_pos = find_xmp_insert_position(&jpeg);
+
+    // Construct new JPEG with XMP marker inserted
+    let mut result = Vec::with_capacity(jpeg.len() + marker.len());
+    result.extend_from_slice(&jpeg[..insert_pos]);
+    result.extend_from_slice(&marker);
+    result.extend_from_slice(&jpeg[insert_pos..]);
+
+    result
+}
+
+/// Find the position to insert XMP marker (after SOI and EXIF APP1).
+fn find_xmp_insert_position(jpeg: &[u8]) -> usize {
+    // Start after SOI marker (2 bytes)
+    let mut pos = 2;
+
+    // Skip any existing EXIF APP1 markers
+    while pos + 4 <= jpeg.len() {
+        if jpeg[pos] != 0xFF {
+            break;
+        }
+
+        let marker = jpeg[pos + 1];
+        // APP1 = 0xE1
+        if marker == 0xE1 {
+            // Check if it's EXIF (not XMP)
+            if pos + 10 <= jpeg.len() && &jpeg[pos + 4..pos + 10] == b"Exif\0\0" {
+                // Get segment length (big-endian, includes length bytes)
+                let length = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + length;
+                continue;
+            }
+        }
+        break;
+    }
+
+    pos
 }
 
 /// Marker trait for supported rgb crate pixel types.

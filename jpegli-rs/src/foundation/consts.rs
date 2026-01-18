@@ -77,6 +77,8 @@ pub const MARKER_COM: u8 = 0xFE;
 pub const ICC_PROFILE_TAG: &[u8; 12] = b"ICC_PROFILE\0";
 /// EXIF marker tag
 pub const EXIF_TAG: &[u8; 6] = b"Exif\0\0";
+/// XMP marker namespace (Adobe XAP)
+pub const XMP_NAMESPACE: &[u8; 29] = b"http://ns.adobe.com/xap/1.0/\0";
 
 // =============================================================================
 // Zigzag Order Tables
