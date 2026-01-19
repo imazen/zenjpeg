@@ -156,7 +156,7 @@ fn main() {
         }
 
         // Rust YCbCr
-        let config = jpegli::encoder::EncoderConfig::new(
+        let config = jpegli::encoder::EncoderConfig::ycbcr(
             q as f32,
             jpegli::encoder::ChromaSubsampling::Quarter,
         );
@@ -227,9 +227,10 @@ fn main() {
         }
 
         // Rust XYB
-        let xyb_config =
-            jpegli::encoder::EncoderConfig::new(q as f32, jpegli::encoder::ChromaSubsampling::None)
-                .xyb();
+        let xyb_config = jpegli::encoder::EncoderConfig::xyb(
+            q as f32,
+            jpegli::encoder::XybSubsampling::Full,
+        );
         let xyb_enc = xyb_config.encode_from_bytes(
             width as u32,
             height as u32,

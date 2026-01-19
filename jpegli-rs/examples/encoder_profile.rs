@@ -20,7 +20,7 @@ fn main() {
         *p = (seed >> 33) as u8;
     }
 
-    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 
     // Full encode timing
     let iterations = 10;

@@ -23,7 +23,7 @@ use test_case::test_case;
 
 /// Encode and decode an image, returning quality metrics.
 fn roundtrip_metrics(img: &TestImage, quality: f32, progressive: bool) -> (f64, u8, usize, usize) {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
         .progressive(progressive);
     let mut enc = config
@@ -292,7 +292,7 @@ fn test_progressive_vs_baseline_quality() {
 #[test_case(256, 256 ; "256x256")]
 fn test_grayscale_roundtrip(width: u32, height: u32) {
     let img = generate_gradient_h(width, height, 1);
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
@@ -324,7 +324,7 @@ fn test_grayscale_roundtrip(width: u32, height: u32) {
 #[test]
 fn test_encode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 
     let mut enc1 = config
         .clone()
@@ -347,7 +347,7 @@ fn test_encode_deterministic() {
 #[test]
 fn test_decode_deterministic() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(128, 128, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
@@ -383,7 +383,7 @@ fn test_compression_ratio() {
 
     for (name, img) in &test_cases {
         let raw_size = img.pixels.len();
-        let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_bytes(img.width, img.height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");

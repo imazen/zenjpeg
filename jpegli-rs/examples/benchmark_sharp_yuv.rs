@@ -34,7 +34,7 @@ fn benchmark_encode_std(
     data: &[u8],
     iterations: u32,
 ) -> (f64, usize) {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).ycbcr(subsampling);
+    let config = EncoderConfig::ycbcr(90.0, subsampling);
 
     // Warmup
     let mut enc = config
@@ -71,9 +71,7 @@ fn benchmark_encode_sharp(
     data: &[u8],
     iterations: u32,
 ) -> (f64, usize) {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(90.0)
-        .ycbcr(subsampling)
+    let config = EncoderConfig::ycbcr(90.0, subsampling)
         .sharp_yuv(true);
 
     // Warmup

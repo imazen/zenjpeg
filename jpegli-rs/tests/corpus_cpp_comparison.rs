@@ -95,7 +95,7 @@ fn register_rust_jpegli(session: &mut EvalSession) {
 
             let quality = request.quality as f32;
 
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                 .quality(quality)
                 .optimize_huffman(false); // Match C++ --fixed_code
             let mut enc = config

@@ -316,9 +316,7 @@ fn encode_jpeg(
 ) -> Vec<u8> {
     // Note: progressive mode requires optimized huffman, so we enable progressive
     // when optimize_huffman=true to match C++ cjpegli --progressive_level=2
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality)
-        .ycbcr(subsampling)
+    let config = EncoderConfig::ycbcr(quality, subsampling)
         .progressive(optimize_huffman) // progressive when optimized
         .optimize_huffman(optimize_huffman);
     let mut enc = config

@@ -7,7 +7,7 @@
 
 use arbitrary::Arbitrary;
 use enough::Unstoppable;
-use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use libfuzzer_sys::fuzz_target;
 
 /// Structured input for encoder fuzzing.
@@ -64,22 +64,17 @@ fuzz_target!(|input: EncodeInput| {
     pixels.resize(pixel_count, 128);
 
     // Build encoder config with various options
-    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality_val)
-        .progressive(input.progressive)
-        .optimize_huffman(input.optimize_huffman);
-
-    // XYB only works with RGB/RGBX
-    if input.use_xyb && matches!(pixel_layout, PixelLayout::Rgb8Srgb | PixelLayout::Rgbx8Srgb) {
-        config = config.xyb();
+    // Grayscale has highest priority, then XYB (only for RGB), then YCbCr
+    let config = if matches!(pixel_layout, PixelLayout::Gray8Srgb) {
+        EncoderConfig::grayscale(quality_val)
+    } else if input.use_xyb && matches!(pixel_layout, PixelLayout::Rgb8Srgb | PixelLayout::Rgbx8Srgb)
+    {
+        EncoderConfig::xyb(quality_val, XybSubsampling::BQuarter)
     } else {
-        config = config.ycbcr(subsampling);
+        EncoderConfig::ycbcr(quality_val, subsampling)
     }
-
-    // Handle grayscale separately
-    if matches!(pixel_layout, PixelLayout::Gray8Srgb) {
-        config = config.grayscale();
-    }
+    .progressive(input.progressive)
+    .optimize_huffman(input.optimize_huffman);
 
     // Create encoder and encode - we just want to ensure no panics
     let enc = config.encode_from_bytes(width, height, pixel_layout);

@@ -44,7 +44,7 @@
 //! cb[0] *= 0.5;
 //! cr[0] *= 0.5;
 //!
-//! let config = EncoderConfig::new(85, ChromaSubsampling::None)
+//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
 //!     .quant_tables(QuantTableConfig::CustomBase { luma, cb, cr });
 //! ```
 

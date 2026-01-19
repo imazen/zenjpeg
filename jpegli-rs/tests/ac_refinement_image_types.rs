@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).progressive(true);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");

@@ -45,10 +45,8 @@ fn main() {
         for _ in 0..iterations {
             let start = Instant::now();
 
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-                .quality(85.0)
+            let config = EncoderConfig::ycbcr(85.0, subsampling)
                 .progressive(progressive)
-                .ycbcr(subsampling)
                 .optimize_huffman(optimize);
             let mut enc = config
                 .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

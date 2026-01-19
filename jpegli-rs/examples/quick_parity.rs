@@ -21,9 +21,7 @@ fn main() {
     }
 
     // Encode
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(90.0)
-        .ycbcr(ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(w as u32, h as u32, PixelLayout::Rgb8Srgb)
         .unwrap();

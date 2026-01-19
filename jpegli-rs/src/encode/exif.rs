@@ -9,13 +9,13 @@
 //! use jpegli::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
 //!
 //! // Build from fields (compile-time safe - can't mix with raw)
-//! let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter)
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 //!     .exif(Exif::build()
 //!         .orientation(Orientation::Rotate90)
 //!         .copyright("© 2024 Example Corp"));
 //!
 //! // Or use raw EXIF bytes
-//! let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter)
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 //!     .exif(Exif::raw(my_exif_bytes));
 //! ```
 

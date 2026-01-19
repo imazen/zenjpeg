@@ -15,7 +15,7 @@ fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
 }
 
 fn encode_rust_ycbcr(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");

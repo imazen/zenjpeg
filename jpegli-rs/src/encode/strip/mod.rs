@@ -1183,7 +1183,7 @@ mod tests {
             }
 
             // Encode with strip encoder (current default)
-            let config = EncoderConfig::new(85.0, crate::encode::ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(85.0, crate::encode::ChromaSubsampling::Quarter)
                 .optimize_huffman(true);
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)

@@ -163,15 +163,11 @@ fn test_16bit_input_preserves_good_precision() {
     let input_8 = create_slow_gradient_rgb8(width, height);
 
     // Encode both at high quality with 4:4:4 (no chroma subsampling)
-    let config_16 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(98.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config_16 = EncoderConfig::ycbcr(98.0, ChromaSubsampling::None);
     let jpeg_16 = encode_rgb16(width as u32, height as u32, &input_16, &config_16)
         .expect("16-bit encode should succeed");
 
-    let config_8 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(98.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config_8 = EncoderConfig::ycbcr(98.0, ChromaSubsampling::None);
     let jpeg_8 = encode_rgb(width as u32, height as u32, &input_8, &config_8)
         .expect("8-bit encode should succeed");
 
@@ -240,9 +236,7 @@ fn test_f32_decode_recovers_sub_sample_precision() {
     let input = create_precision_test_rgb8(width, height);
 
     // Encode at high quality with 4:4:4
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(99.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config = EncoderConfig::ycbcr(99.0, ChromaSubsampling::None);
     let jpeg =
         encode_rgb(width as u32, height as u32, &input, &config).expect("encode should succeed");
 
@@ -296,9 +290,7 @@ fn test_to_u16_conversion_preserves_precision() {
     let height = 64;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(98.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config = EncoderConfig::ycbcr(98.0, ChromaSubsampling::None);
     let jpeg =
         encode_rgb16(width as u32, height as u32, &input, &config).expect("encode should succeed");
 
@@ -353,9 +345,7 @@ fn test_gradient_banding_reduced() {
     let height = 8;
     let input = create_slow_gradient_rgb16(width, height);
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(95.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
     let jpeg =
         encode_rgb16(width as u32, height as u32, &input, &config).expect("encode should succeed");
 
@@ -448,9 +438,7 @@ fn test_full_pipeline_8bit_to_f32_precision() {
     }
 
     // Encode at very high quality
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(99.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config = EncoderConfig::ycbcr(99.0, ChromaSubsampling::None);
     let jpeg = encode_rgb(width as u32, height as u32, &input_bytes, &config)
         .expect("encode should succeed");
 
@@ -529,9 +517,7 @@ fn test_quality_affects_precision() {
     let mut prev_bits = f64::MAX;
 
     for quality in [70.0, 85.0, 95.0, 99.0] {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(quality)
-            .ycbcr(ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None);
         let jpeg = encode_rgb16(width as u32, height as u32, &input, &config)
             .expect("encode should succeed");
 
@@ -580,15 +566,11 @@ fn test_subsampling_comparison() {
 
     let decoder = Decoder::new();
 
-    let config_444 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(95.0)
-        .ycbcr(ChromaSubsampling::None);
+    let config_444 = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
     let jpeg_444 =
         encode_rgb(width as u32, height as u32, &input, &config_444).expect("444 encode failed");
 
-    let config_420 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(95.0)
-        .ycbcr(ChromaSubsampling::Quarter);
+    let config_420 = EncoderConfig::ycbcr(95.0, ChromaSubsampling::Quarter);
     let jpeg_420 =
         encode_rgb(width as u32, height as u32, &input, &config_420).expect("420 encode failed");
 

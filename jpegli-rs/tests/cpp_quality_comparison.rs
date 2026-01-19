@@ -6,7 +6,7 @@ use std::fs;
 use std::process::Command;
 
 fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true);

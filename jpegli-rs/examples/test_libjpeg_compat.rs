@@ -3,8 +3,7 @@ use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::process::Command;
 
 fn test_pattern(name: &str, data: &[u8], width: u32, height: u32, quality: f32) {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality)
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
         .optimize_huffman(true)
         .progressive(true);
     let mut enc = config
@@ -109,8 +108,7 @@ fn main() {
         .flat_map(|y| (0..64).map(move |x| (((x * 17) ^ (y * 31)) % 256) as u8))
         .collect();
 
-    let gray_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(50.0)
+    let gray_config = EncoderConfig::grayscale(50.0)
         .optimize_huffman(true)
         .progressive(true);
     let mut gray_enc = gray_config

@@ -73,9 +73,7 @@ fn encode_rust(
     quality: u8,
     subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality as f32)
-        .ycbcr(subsampling);
+    let config = EncoderConfig::ycbcr(quality as f32, subsampling);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");

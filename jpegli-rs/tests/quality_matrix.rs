@@ -254,7 +254,7 @@ fn encode_rust(
         _ => ChromaSubsampling::None,
     };
 
-    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(quality as f32)
         .ycbcr(chroma)
         .progressive(progressive);
@@ -1189,7 +1189,7 @@ fn benchmark_rust_vs_cpp() {
 
         for &quality in &BENCH_QUALITIES {
             // Warmup using EncoderConfig
-            let rust_config = EncoderConfig::new(EncoderImpl::JpegliRs)
+            let rust_config = EncoderConfig::ycbcr(EncoderImpl::JpegliRs)
                 .quality(quality)
                 .color(ColorMode::YCbCr)
                 .subsampling(subsampling)

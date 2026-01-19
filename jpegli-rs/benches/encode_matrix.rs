@@ -119,7 +119,7 @@ fn bench_encode_matrix(c: &mut Criterion) {
 
             group.bench_with_input(BenchmarkId::new("encode", &bench_name), &data, |b, data| {
                 b.iter(|| {
-                    let encoder_config = EncoderConfig::new(90.0, config.subsampling)
+                    let encoder_config = EncoderConfig::ycbcr(90.0, config.subsampling)
                         .progressive(config.progressive)
                         .optimize_huffman(config.optimize_huffman);
                     let mut enc = encoder_config
@@ -157,7 +157,7 @@ fn bench_encode_quick(c: &mut Criterion) {
     for (name, subsampling, progressive, optimize_huffman) in configs {
         group.bench_with_input(BenchmarkId::new("4k", name), &data, |b, data| {
             b.iter(|| {
-                let config = EncoderConfig::new(90.0, subsampling)
+                let config = EncoderConfig::ycbcr(90.0, subsampling)
                     .progressive(progressive)
                     .optimize_huffman(optimize_huffman);
                 let mut enc = config

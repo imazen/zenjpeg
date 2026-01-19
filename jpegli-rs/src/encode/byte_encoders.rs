@@ -1121,7 +1121,7 @@ mod tests {
 
     #[test]
     fn test_bytes_encoder_basic() {
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[test]
     fn test_rgb_encoder_basic() {
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         // Create 8x8 green image
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_stride_validation() {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(100, 10, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1166,7 +1166,7 @@ mod tests {
 
     #[test]
     fn test_too_many_rows() {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(8, 4, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn test_incomplete_image() {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1211,7 +1211,7 @@ mod tests {
         let fake_icc = vec![0u8; 1000];
 
         let config =
-            EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(fake_icc.clone());
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(fake_icc.clone());
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1253,7 +1253,7 @@ mod tests {
         // Large ICC profile that requires multiple chunks
         let large_icc = vec![0xABu8; 100_000]; // > 65519 bytes
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(large_icc);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(large_icc);
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1290,7 +1290,7 @@ mod tests {
 
     #[test]
     fn test_finish_to_vec() {
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
@@ -1306,7 +1306,7 @@ mod tests {
 
     #[test]
     fn test_finish_to_vec_append() {
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
@@ -1329,7 +1329,7 @@ mod tests {
         let original_icc: Vec<u8> = (0..=255).cycle().take(3000).collect();
 
         let config =
-            EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(original_icc.clone());
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(original_icc.clone());
         let mut enc = config
             .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -1395,7 +1395,7 @@ mod tests {
             cr_stride: width,
         };
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1440,7 +1440,7 @@ mod tests {
         };
 
         // Test with 4:4:4 subsampling
-        let config = EncoderConfig::new(90, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(90, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1485,7 +1485,7 @@ mod tests {
             cr_stride: stride,
         };
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1530,7 +1530,7 @@ mod tests {
         }
 
         // Use 4:4:4 subsampling which has 8-row strip height
-        let config = EncoderConfig::new(85, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1583,7 +1583,7 @@ mod tests {
         };
 
         // Use 4:4:4 subsampling which has 8-row strip height
-        let config = EncoderConfig::new(85, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1620,7 +1620,7 @@ mod tests {
             cr_stride: width,
         };
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1655,7 +1655,7 @@ mod tests {
             cr_stride: chroma_width,
         };
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1670,7 +1670,7 @@ mod tests {
     #[test]
     fn test_ycbcr_planar_encoder_requires_ycbcr_mode() {
         // Try to create planar encoder with XYB mode - should fail
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter).xyb();
+        let config = EncoderConfig::xyb(85, crate::encode::encoder_types::XybSubsampling::BQuarter);
         let result = config.encode_from_ycbcr_planar(8, 8);
         assert!(result.is_err());
     }
@@ -1682,7 +1682,7 @@ mod tests {
         let width = 16u32;
         let height = 32u32;
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let enc = config.encode_from_ycbcr_planar(width, height).unwrap();
 
         assert_eq!(enc.width(), width);
@@ -1733,7 +1733,7 @@ mod tests {
 
         // Create config with ICC profile
         let fake_icc = vec![0xABu8; 1000];
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter).icc_profile(fake_icc);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).icc_profile(fake_icc);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1786,7 +1786,7 @@ mod tests {
         };
 
         // Test with 4:4:4 (strip height 8)
-        let config = EncoderConfig::new(85, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1811,7 +1811,7 @@ mod tests {
         let cr_plane = vec![0.0f32; width * height];
 
         // Use 4:4:4 (strip height 8)
-        let config = EncoderConfig::new(85, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();
@@ -1848,7 +1848,7 @@ mod tests {
         let cb_plane = vec![0.0f32; width * height];
         let cr_plane = vec![0.0f32; width * height];
 
-        let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_ycbcr_planar(width as u32, height as u32)
             .unwrap();

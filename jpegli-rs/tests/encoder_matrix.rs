@@ -13,7 +13,7 @@
 
 use jpegli::{
     decoder::Decoder,
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling},
 };
 
 /// Result of testing one encoder configuration
@@ -125,18 +125,15 @@ fn test_config(
         quality as u32
     );
 
-    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality)
-        .progressive(progressive)
-        .optimize_huffman(optimize_huffman);
-
-    if is_grayscale {
-        config = config.grayscale();
+    let config = if is_grayscale {
+        EncoderConfig::grayscale(quality)
     } else if use_xyb {
-        config = config.xyb();
+        EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
     } else {
-        config = config.ycbcr(subsampling);
+        EncoderConfig::ycbcr(quality, subsampling)
     }
+    .progressive(progressive)
+    .optimize_huffman(optimize_huffman);
 
     let encode_result = if is_grayscale {
         encode_gray(width, height, &data, &config)
@@ -371,16 +368,13 @@ fn test_common_configurations() {
     println!("\n=== Common Configuration Smoke Test ===\n");
 
     for (name, progressive, subsampling, optimize_huffman, use_xyb) in configs {
-        let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(85.0)
-            .progressive(progressive)
-            .optimize_huffman(optimize_huffman);
-
-        if use_xyb {
-            config = config.xyb();
+        let config = if use_xyb {
+            EncoderConfig::xyb(85.0, XybSubsampling::BQuarter)
         } else {
-            config = config.ycbcr(subsampling);
+            EncoderConfig::ycbcr(85.0, subsampling)
         }
+        .progressive(progressive)
+        .optimize_huffman(optimize_huffman);
 
         let result = encode_rgb(width as u32, height as u32, &data, &config);
 
@@ -411,8 +405,7 @@ fn test_common_configurations() {
 fn test_progressive_fixed_huffman_errors() {
     let data = vec![128u8; 64 * 64 * 3];
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(85.0)
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
         .progressive(true)
         .optimize_huffman(false); // Fixed Huffman
 

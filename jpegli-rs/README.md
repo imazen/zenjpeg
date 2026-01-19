@@ -51,8 +51,8 @@ use jpegli::encoder::{
 ```rust
 use jpegli::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-// Create reusable config (quality and subsampling are required)
-let config = EncoderConfig::new(85, ChromaSubsampling::Quarter)
+// Create reusable config (quality and color mode set in constructor)
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     .progressive(true);
 
 // Encode from raw bytes
@@ -74,7 +74,7 @@ let jpeg = enc.finish()?;
 ```rust
 use jpegli::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
 
-let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
 
 // From raw RGB bytes
 let mut enc = config.encode_from_bytes(800, 600, PixelLayout::Rgb8Srgb)?;
@@ -93,16 +93,22 @@ enc.push(&planes, num_rows, Unstoppable)?;
 let jpeg = enc.finish()?;
 ```
 
-#### EncoderConfig Builder Methods
+#### EncoderConfig Constructors
 
-`EncoderConfig::new(quality, subsampling)` requires quality (0-100) and subsampling mode.
+Choose one constructor based on desired color mode:
+
+| Constructor | Color Mode | Use Case |
+|-------------|------------|----------|
+| `EncoderConfig::ycbcr(q, sub)` | YCbCr | Standard JPEG (most compatible) |
+| `EncoderConfig::xyb(q, b_sub)` | XYB | Perceptual color space (better quality) |
+| `EncoderConfig::grayscale(q)` | Grayscale | Single-channel output |
+
+#### Builder Methods
 
 | Method | Description | Default |
 |--------|-------------|---------|
 | `.progressive(bool)` | Progressive JPEG (~3% smaller) | `false` |
 | `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
-| `.xyb()` | XYB perceptual color space | - |
-| `.grayscale()` | Single-channel output | - |
 | `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |
 | `.icc_profile(bytes)` | Attach ICC profile | None |
 | `.exif(exif)` | Embed EXIF metadata | None |
@@ -115,10 +121,10 @@ let jpeg = enc.finish()?;
 use jpegli::encoder::{EncoderConfig, Quality, ChromaSubsampling};
 
 // Simple quality scale (0-100)
-let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
 
 // Quality enum variants
-let config = EncoderConfig::new(
+let config = EncoderConfig::ycbcr(
     Quality::ApproxJpegli(85.0),  // Default scale
     ChromaSubsampling::Quarter
 );
@@ -142,13 +148,17 @@ let config = EncoderConfig::new(
 #### Chroma Subsampling
 
 ```rust
-use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+use jpegli::encoder::{EncoderConfig, ChromaSubsampling, XybSubsampling};
 
-// Subsampling is specified in the constructor
-let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);  // 4:2:0 (best compression)
-let config = EncoderConfig::new(85, ChromaSubsampling::Full);     // 4:4:4 (best quality)
-let config = EncoderConfig::new(85, ChromaSubsampling::HalfHorizontal); // 4:2:2
-let config = EncoderConfig::new(85, ChromaSubsampling::HalfVertical);   // 4:4:0
+// YCbCr subsampling
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);  // 4:2:0 (best compression)
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);     // 4:4:4 (best quality)
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::HalfHorizontal); // 4:2:2
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::HalfVertical);   // 4:4:0
+
+// XYB B-channel subsampling
+let config = EncoderConfig::xyb(85, XybSubsampling::BQuarter); // B at 4:2:0
+let config = EncoderConfig::xyb(85, XybSubsampling::Full);    // No subsampling
 ```
 
 #### Resource Estimation
@@ -156,7 +166,7 @@ let config = EncoderConfig::new(85, ChromaSubsampling::HalfVertical);   // 4:4:0
 ```rust
 use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
 
-let config = EncoderConfig::new(85, ChromaSubsampling::Quarter);
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
 
 // Typical memory estimate
 let estimate = config.estimate_memory(1920, 1080);
@@ -296,6 +306,204 @@ let decoder = Decoder::from_config(config);
 
 The decoder prioritizes precision over speed, matching C++ jpegli's 12-bit pipeline.
 
+## Table Optimization
+
+The `EncodingTables` API provides fine-grained control over quantization and zero-bias
+tables for researching better encoding parameters.
+
+### Quick Start
+
+```rust
+use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+use jpegli::encoder::tuning::{EncodingTables, ScalingParams, dct};
+
+// Start from defaults and modify
+let mut tables = EncodingTables::default_ycbcr();
+
+// Scale a specific coefficient (component 0 = Y, k = coefficient index)
+tables.scale_quant(0, 5, 1.2);  // 20% higher quantization at position 5
+
+// Or use exact quantization values (no quality scaling)
+tables.scaling = ScalingParams::Exact;
+tables.quant.c0[0] = 16.0;  // DC quantization for Y
+
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    .tables(Box::new(tables));
+```
+
+### Understanding the Parameters
+
+**Quantization Tables** (`quant`): 64 coefficients per component (Y/Cb/Cr or X/Y/B)
+- Lower values = more precision = larger file
+- Higher values = more compression = smaller file
+- DC (index 0) affects brightness uniformity
+- Low frequencies (indices 1, 8, 9, 16, 17) affect gradients
+- High frequencies affect edges and texture
+
+**Zero-Bias Tables** (`zero_bias_mul`, `zero_bias_offset_*`):
+- Control rounding behavior during quantization
+- `zero_bias_mul[k]` multiplies the dead zone around zero
+- Higher values = more aggressive zeroing of small coefficients = smaller files
+- `zero_bias_offset_dc/ac` add to the threshold before zeroing
+
+**Scaling Params**:
+- `ScalingParams::Scaled { global_scale, frequency_exponents }` - quality-dependent scaling
+- `ScalingParams::Exact` - use raw values (must be valid u16 range)
+
+### DCT Coefficient Layout
+
+```
+Position in 8x8 block (row-major index k):
+ 0  1  2  3  4  5  6  7
+ 8  9 10 11 12 13 14 15
+16 17 18 19 20 21 22 23
+24 25 26 27 28 29 30 31
+32 33 34 35 36 37 38 39
+40 41 42 43 44 45 46 47
+48 49 50 51 52 53 54 55
+56 57 58 59 60 61 62 63
+
+k=0 is DC (average brightness)
+k=1,8 are lowest AC frequencies (horizontal/vertical gradients)
+k=63 is highest frequency (diagonal detail)
+```
+
+Use `dct::freq_distance(k)` to get Manhattan distance from DC (0-14).
+Use `dct::IMPORTANCE_ORDER` for coefficients sorted by perceptual impact.
+
+### Research Methodology
+
+#### 1. Corpus-Based Optimization
+
+```rust
+use jpegli::encoder::tuning::{EncodingTables, dct};
+
+fn evaluate_tables(tables: &EncodingTables, corpus: &[Image]) -> f64 {
+    let mut total_score = 0.0;
+    for image in corpus {
+        let jpeg = encode_with_tables(image, tables);
+        let score = ssimulacra2_per_byte(&jpeg, image);  // quality/size
+        total_score += score;
+    }
+    total_score / corpus.len() as f64
+}
+
+// Grid search over coefficient k
+fn optimize_coefficient(k: usize, component: usize, corpus: &[Image]) {
+    let mut best_score = f64::MIN;
+    let mut best_value = 1.0;
+
+    for scale in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] {
+        let mut tables = EncodingTables::default_ycbcr();
+        tables.scale_quant(component, k, scale);
+
+        let score = evaluate_tables(&tables, corpus);
+        if score > best_score {
+            best_score = score;
+            best_value = scale;
+        }
+    }
+    println!("Coefficient {} best scale: {}", k, best_value);
+}
+```
+
+#### 2. Gradient-Free Optimization
+
+For automated discovery, use derivative-free optimizers:
+
+```rust
+// Using argmin crate with Nelder-Mead
+use argmin::solver::neldermead::NelderMead;
+
+fn objective(params: &[f64], corpus: &[Image]) -> f64 {
+    let mut tables = EncodingTables::default_ycbcr();
+
+    // Map params to table modifications (e.g., first 10 most impactful coefficients)
+    for (i, &scale) in params.iter().enumerate() {
+        let k = dct::IMPORTANCE_ORDER[i + 1]; // Skip DC
+        tables.scale_quant(0, k, scale as f32); // Y component
+    }
+
+    -evaluate_tables(&tables, corpus) // Negative because we minimize
+}
+```
+
+**Recommended optimizers:**
+- **CMA-ES** (Covariance Matrix Adaptation): Best for 10-50 parameters
+- **Nelder-Mead**: Good for quick exploration, 5-20 parameters
+- **Differential Evolution**: Robust, handles constraints well
+- **Bayesian Optimization**: Sample-efficient when evaluations are expensive
+
+#### 3. Image-Adaptive Tables
+
+Different image categories may benefit from different tables:
+
+| Content Type | Strategy |
+|--------------|----------|
+| Photographs | Lower DC/low-freq quant, preserve gradients |
+| Graphics/UI | Higher high-freq quant, preserve edges |
+| Text on photos | Balance - preserve both |
+| Skin tones | Lower Cb/Cr quant in mid frequencies |
+
+```rust
+fn classify_and_encode(image: &Image) -> Vec<u8> {
+    let tables = match classify_content(image) {
+        ContentType::Photo => tables_optimized_for_photos(),
+        ContentType::Graphic => tables_optimized_for_graphics(),
+        ContentType::Mixed => EncodingTables::default_ycbcr(),
+    };
+    encode_with_tables(image, &tables)
+}
+```
+
+#### 4. Perceptual Weighting
+
+Use quality metrics to weight optimization:
+
+```rust
+// SSIMULACRA2 weights certain frequencies more than others
+// Butteraugli penalizes different artifacts
+
+fn multi_metric_score(jpeg: &[u8], original: &Image) -> f64 {
+    let ssim2 = ssimulacra2(jpeg, original);
+    let butteraugli = butteraugli_distance(jpeg, original);
+    let size = jpeg.len() as f64;
+
+    // Combine: higher quality, lower butteraugli, smaller size
+    (ssim2 * 100.0 - butteraugli * 10.0) / (size / 1000.0)
+}
+```
+
+### Ideas for Research
+
+1. **Content-aware table selection**: Train a classifier to select optimal tables
+2. **Quality-dependent tables**: Different tables for Q50 vs Q90
+3. **Resolution-dependent**: High-res images may need different high-freq handling
+4. **Per-block adaptive**: Use AQ to modulate per-block quantization
+5. **Machine learning**: Use differentiable JPEG approximations to train tables
+6. **Genetic algorithms**: Evolve table populations over a corpus
+7. **Transfer learning**: Start from optimized tables for similar content
+
+### Available Helpers
+
+```rust
+use jpegli::encoder::tuning::dct;
+
+// Coefficient analysis
+dct::freq_distance(k)       // Manhattan distance from DC (0-14)
+dct::row_col(k)             // (row, col) in 8x8 block
+dct::to_zigzag(k)           // Row-major to zigzag order
+dct::from_zigzag(z)         // Zigzag to row-major
+dct::IMPORTANCE_ORDER       // Coefficients by perceptual impact
+
+// Table manipulation
+tables.scale_quant(c, k, factor)    // Scale one coefficient
+tables.perturb_quant(c, k, delta)   // Add delta to coefficient
+tables.blend(&other, t)              // Linear interpolation (0.0-1.0)
+tables.quant.scale_component(c, f)   // Scale entire component
+tables.quant.scale_all(f)            // Scale all coefficients
+```
+
 ## C++ Parity Status
 
 Tested against C++ jpegli on frymire.png (1118x1105):
@@ -322,13 +530,13 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-jpegli-rs = "0.8"
+jpegli-rs = "0.9"
 
 # Minimal (no CMS):
-jpegli-rs = { version = "0.8", default-features = false }
+jpegli-rs = { version = "0.9", default-features = false }
 
 # With unsafe SIMD (x86_64 only):
-jpegli-rs = { version = "0.8", features = ["unsafe_simd"] }
+jpegli-rs = { version = "0.9", features = ["unsafe_simd"] }
 ```
 
 ## Encoder Status

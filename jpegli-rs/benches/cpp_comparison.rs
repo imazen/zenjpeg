@@ -84,7 +84,7 @@ impl BenchConfig {
 }
 
 fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
-    let rust_config = RustConfig::new(config.quality, config.to_rust_subsampling())
+    let rust_config = RustConfig::ycbcr(config.quality, config.to_rust_subsampling())
         .progressive(config.progressive);
 
     let mut enc = rust_config

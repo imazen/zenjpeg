@@ -43,7 +43,7 @@ fn roundtrip_with_subsampling(
     quality: f32,
     subsampling: ChromaSubsampling,
 ) -> (f64, u8, usize) {
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).ycbcr(subsampling);
+    let config = EncoderConfig::ycbcr(quality, subsampling);
     let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config);
 
     let decoder = Decoder::new();
@@ -343,7 +343,7 @@ fn test_color_edge_444() {
 #[test]
 fn test_grayscale_no_subsampling() {
     let img = test_utils::generate_gradient_h(128, 128, 1);
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
+    let config = EncoderConfig::grayscale(90.0);
     let jpeg = encode_gray(128, 128, &img.pixels, &config);
 
     println!("Grayscale JPEG: {} bytes", jpeg.len());
@@ -421,7 +421,7 @@ fn count_components_in_sof(jpeg: &[u8]) -> Option<u8> {
 #[test]
 fn test_rgb_has_three_components() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config);
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");
@@ -431,7 +431,7 @@ fn test_rgb_has_three_components() {
 #[test]
 fn test_grayscale_has_one_component() {
     let img = test_utils::generate_gradient_h(64, 64, 1);
-    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).grayscale();
+    let config = EncoderConfig::grayscale(85.0);
     let jpeg = encode_gray(64, 64, &img.pixels, &config);
 
     let components = count_components_in_sof(&jpeg).expect("SOF not found");

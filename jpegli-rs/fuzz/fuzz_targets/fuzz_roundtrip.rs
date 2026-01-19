@@ -55,10 +55,8 @@ fuzz_target!(|input: RoundtripInput| {
     pixels.resize(pixel_count, 128); // Pad with gray if too short
 
     // Build encoder config
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality_val)
-        .progressive(input.progressive)
-        .ycbcr(subsampling);
+    let config = EncoderConfig::ycbcr(quality_val, subsampling)
+        .progressive(input.progressive);
 
     // Create encoder and encode
     let mut enc = match config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb) {

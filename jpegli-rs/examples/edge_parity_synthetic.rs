@@ -81,10 +81,8 @@ fn main() {
     println!("{}", "-".repeat(35));
 
     for quality in [50, 75, 90, 95] {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(quality as f32)
+        let config = EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::None)
             .progressive(false)
-            .ycbcr(ChromaSubsampling::None)
             .optimize_huffman(true);
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
@@ -120,10 +118,8 @@ fn main() {
     println!("{}", "-".repeat(35));
 
     for quality in [50, 75, 90, 95] {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(quality as f32)
+        let config = EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::Quarter)
             .progressive(false)
-            .ycbcr(ChromaSubsampling::Quarter)
             .optimize_huffman(true);
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
@@ -144,10 +140,8 @@ fn main() {
 
     println!("\n=== Progressive Mode ===");
     for quality in [50, 75, 90, 95] {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(quality as f32)
+        let config = EncoderConfig::ycbcr(quality as f32, ChromaSubsampling::None)
             .progressive(true)
-            .ycbcr(ChromaSubsampling::None)
             .optimize_huffman(true);
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)

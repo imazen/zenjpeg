@@ -123,9 +123,7 @@ impl TestResult {
 
 fn run_test(test: EncoderTest) -> TestResult {
     use enough::Unstoppable;
-    use jpegli::encoder::{
-        ChromaSubsampling, ColorMode, EncoderConfig, PixelLayout, XybSubsampling,
-    };
+    use jpegli::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
     // Create test image (gradient)
     let input_size = test.width as usize * test.height as usize * 3;
@@ -140,16 +138,13 @@ fn run_test(test: EncoderTest) -> TestResult {
     }
 
     // Build config
-    let mut config = EncoderConfig::new(test.quality, ChromaSubsampling::Quarter)
-        .optimize_huffman(test.optimize_huffman);
-
-    if test.xyb_mode {
-        config = config.color_mode(ColorMode::Xyb {
-            subsampling: XybSubsampling::Full,
-        });
+    let config = if test.xyb_mode {
+        EncoderConfig::xyb(test.quality, XybSubsampling::Full)
+            .optimize_huffman(test.optimize_huffman)
     } else {
-        config = config.ycbcr(test.subsampling);
-    }
+        EncoderConfig::ycbcr(test.quality, test.subsampling)
+            .optimize_huffman(test.optimize_huffman)
+    };
 
     // Get estimate and ceiling
     let estimated = config.estimate_memory(test.width, test.height);

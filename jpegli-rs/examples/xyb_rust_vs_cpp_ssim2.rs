@@ -6,7 +6,7 @@
 use enough::Unstoppable;
 use fast_ssim2::compute_ssimulacra2;
 use imgref::ImgVec;
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 use std::process::Command;
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
@@ -20,8 +20,7 @@ fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
 }
 
 fn encode_rust_xyb(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(quality, ChromaSubsampling::None)
-        .xyb() // B-quarter subsampling (matches C++)
+    let config = EncoderConfig::xyb(quality, XybSubsampling::Full)
         .progressive(true); // Match C++ cjpegli's default progressive mode
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

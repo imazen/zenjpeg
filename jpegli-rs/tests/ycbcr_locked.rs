@@ -169,9 +169,7 @@ fn encode_jpeg(
     progressive: bool,
     subsampling: ChromaSubsampling,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality as f32)
-        .ycbcr(subsampling)
+    let config = EncoderConfig::ycbcr(quality as f32, subsampling)
         .optimize_huffman(true)
         .progressive(progressive);
     let mut enc = config

@@ -518,7 +518,7 @@ fn test_progressive_filesize_comparison() {
                 let is_progressive = args.windows(2).any(|w| w[0] == "-p" && w[1] == "2");
 
                 // Note: Rust encoder always uses AQ, so we can only test with-AQ case for comparison
-                let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+                let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                     .quality(quality as f32)
                     .progressive(is_progressive);
                 let rust_jpeg = encode_rgb(info.width, info.height, &rgb, &config);

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-01-19
+
+### Breaking Changes
+
+- **`EncoderConfig` API redesigned with separate constructors per color mode**
+  - New constructors: `EncoderConfig::ycbcr(quality, subsampling)`, `EncoderConfig::xyb(quality, b_subsampling)`, `EncoderConfig::grayscale(quality)`
+  - `EncoderConfig::new()` is deprecated (still works, calls `ycbcr()` internally)
+  - Removed `.xyb()`, `.grayscale()`, `.quality()`, and `.ycbcr(subsampling)` builder methods
+  - **Migration**: Replace `EncoderConfig::new(q, sub)` with `EncoderConfig::ycbcr(q, sub)`
+  - **Migration**: Replace `EncoderConfig::new(q, sub).xyb()` with `EncoderConfig::xyb(q, XybSubsampling::BQuarter)`
+  - **Migration**: Replace `EncoderConfig::new(q, sub).grayscale()` with `EncoderConfig::grayscale(q)`
+
+- **New `XybSubsampling` enum for XYB B-channel subsampling**
+  - `XybSubsampling::Full` - No B-channel subsampling (4:4:4)
+  - `XybSubsampling::BQuarter` - B-channel at 2x2 downsampled (matches C++ default)
+
+### Added
+
+- **`EncodingTables` struct for quantization table experimentation**
+  - `PerComponent<T>` wrapper with named accessors for YCbCr (Y/Cb/Cr) and XYB (X/Y/B)
+  - `ScalingParams` enum: `Exact` (no scaling) or `Scaled { global_scale, frequency_exponents }`
+  - `EncodingTables::default_ycbcr()` and `::default_xyb()` factory methods
+  - Helper methods: `scale_quant()`, `blend()`, `to_quant_config()`, `to_zero_bias_config()`
+  - `dct` module with `freq_distance()`, `IMPORTANCE_ORDER`, `to_zigzag()` helpers
+  - Use via `EncoderConfig::ycbcr(...).tables(my_tables)` for custom tables
+  - See README "Table Optimization" section for research methodology
+
 ## [0.8.1] - 2026-01-19
 
 ### Added

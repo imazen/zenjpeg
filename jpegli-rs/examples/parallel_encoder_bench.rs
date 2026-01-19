@@ -50,7 +50,7 @@ fn benchmark_encode(width: usize, height: usize) -> BenchResult {
         *p = (seed >> 33) as u8;
     }
 
-    let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 
     // Warm up
     {

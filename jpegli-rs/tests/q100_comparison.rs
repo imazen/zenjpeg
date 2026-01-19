@@ -84,7 +84,7 @@ fn test_q100_rust_vs_cpp() {
 
     // Rust Q100 encoding - BASELINE (sequential) mode
     let rust_start = Instant::now();
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(100.0)
         .optimize_huffman(true)
         .progressive(false); // Baseline

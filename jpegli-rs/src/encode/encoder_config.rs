@@ -5,6 +5,7 @@ use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, ZeroBiasConfig,
 };
+use super::tuning::EncodingTables;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
 
@@ -31,29 +32,113 @@ pub struct EncoderConfig {
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
 }
 
-// Note: No Default impl - quality and subsampling are required via new()
+// Note: No Default impl - quality and color mode are required via constructors
 
 impl EncoderConfig {
     /// Create a new encoder configuration with required quality and chroma subsampling.
+    ///
+    /// # Deprecated
+    ///
+    /// Use [`EncoderConfig::ycbcr`], [`EncoderConfig::xyb`], or [`EncoderConfig::grayscale`]
+    /// instead for clearer intent.
     ///
     /// # Arguments
     /// - `quality`: Quality level (0-100 for jpegli scale, or use `Quality::*` variants)
     /// - `subsampling`: Chroma subsampling mode
     ///   - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
     ///   - `ChromaSubsampling::None` (4:4:4) - best quality, larger files
+    #[must_use]
+    #[deprecated(
+        since = "0.9.0",
+        note = "Use EncoderConfig::ycbcr(), ::xyb(), or ::grayscale() instead"
+    )]
+    pub fn new(quality: impl Into<Quality>, subsampling: ChromaSubsampling) -> Self {
+        Self::ycbcr(quality, subsampling)
+    }
+
+    /// Create a YCbCr encoder configuration.
+    ///
+    /// YCbCr is the standard JPEG color space, compatible with all decoders.
+    ///
+    /// # Arguments
+    /// - `quality`: Quality level (0-100 for jpegli scale, or use `Quality::*` variants)
+    /// - `subsampling`: Chroma subsampling mode
+    ///   - `ChromaSubsampling::None` (4:4:4) - best quality, larger files
+    ///   - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
+    ///   - `ChromaSubsampling::HalfHorizontal` (4:2:2) - horizontal only
+    ///   - `ChromaSubsampling::HalfVertical` (4:4:0) - vertical only
     ///
     /// # Example
     /// ```ignore
     /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
     ///
-    /// let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter)
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .progressive(true);
     /// ```
     #[must_use]
-    pub fn new(quality: impl Into<Quality>, subsampling: ChromaSubsampling) -> Self {
+    pub fn ycbcr(quality: impl Into<Quality>, subsampling: ChromaSubsampling) -> Self {
         Self {
             quality: quality.into(),
             color_mode: ColorMode::YCbCr { subsampling },
+            ..Self::default_internal()
+        }
+    }
+
+    /// Create an XYB encoder configuration.
+    ///
+    /// XYB is a perceptual color space that can achieve better quality at the same
+    /// file size for some images. The B (blue-yellow) channel can optionally be
+    /// subsampled since it's less perceptually important.
+    ///
+    /// # Arguments
+    /// - `quality`: Quality level (0-100 for jpegli scale, or use `Quality::*` variants)
+    /// - `b_subsampling`: B channel subsampling
+    ///   - `XybSubsampling::Full` - all channels at full resolution
+    ///   - `XybSubsampling::BQuarter` - B channel at quarter resolution (default, recommended)
+    ///
+    /// # Notes
+    /// - Requires linear RGB input (f32 or u16 pixel formats)
+    /// - Embeds an ICC profile for proper color reproduction
+    /// - Not all decoders support XYB JPEGs correctly
+    ///
+    /// # Example
+    /// ```ignore
+    /// use jpegli::encoder::{EncoderConfig, XybSubsampling};
+    ///
+    /// let config = EncoderConfig::xyb(85, XybSubsampling::BQuarter)
+    ///     .progressive(true);
+    /// ```
+    #[must_use]
+    pub fn xyb(quality: impl Into<Quality>, b_subsampling: XybSubsampling) -> Self {
+        Self {
+            quality: quality.into(),
+            color_mode: ColorMode::Xyb {
+                subsampling: b_subsampling,
+            },
+            ..Self::default_internal()
+        }
+    }
+
+    /// Create a grayscale encoder configuration.
+    ///
+    /// Only the luminance channel is encoded. Works with any input format;
+    /// color inputs are converted to grayscale.
+    ///
+    /// # Arguments
+    /// - `quality`: Quality level (0-100 for jpegli scale, or use `Quality::*` variants)
+    ///
+    /// # Example
+    /// ```ignore
+    /// use jpegli::encoder::EncoderConfig;
+    ///
+    /// let config = EncoderConfig::grayscale(85)
+    ///     .progressive(true);
+    /// ```
+    #[must_use]
+    pub fn grayscale(quality: impl Into<Quality>) -> Self {
+        Self {
+            quality: quality.into(),
+            color_mode: ColorMode::Grayscale,
             ..Self::default_internal()
         }
     }
@@ -122,7 +207,7 @@ impl EncoderConfig {
     /// use jpegli::encoder::{EncoderConfig, ZeroBiasConfig};
     ///
     /// // Disable zero-bias for standard JPEG behavior
-    /// let config = EncoderConfig::new(85, ChromaSubsampling::None)
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
     ///     .zero_bias(ZeroBiasConfig::Disabled);
     /// ```
     #[must_use]
@@ -192,10 +277,9 @@ impl EncoderConfig {
     /// # Example
     ///
     /// ```ignore
-    /// use jpegli::{EncoderConfig, ParallelEncoding};
+    /// use jpegli::{EncoderConfig, ChromaSubsampling, ParallelEncoding};
     ///
-    /// let config = EncoderConfig::new()
-    ///     .quality(85)
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
     ///     .parallel(ParallelEncoding::Auto);
     /// ```
     ///
@@ -235,9 +319,9 @@ impl EncoderConfig {
     ///
     /// # Example
     /// ```ignore
+    /// use jpegli::{EncoderConfig, ChromaSubsampling};
     /// let srgb_profile = std::fs::read("sRGB.icc")?;
-    /// let config = EncoderConfig::new()
-    ///     .quality(85)
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
     ///     .icc_profile(srgb_profile);
     /// ```
     #[must_use]
@@ -262,7 +346,7 @@ impl EncoderConfig {
     /// ```ignore
     /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, Exif, Orientation};
     ///
-    /// let config = EncoderConfig::new(85, ChromaSubsampling::Quarter)
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .exif(Exif::build()
     ///         .orientation(Orientation::Rotate90)
     ///         .copyright("© 2024 Example Corp"));
@@ -272,7 +356,7 @@ impl EncoderConfig {
     /// ```ignore
     /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, Exif};
     ///
-    /// let config = EncoderConfig::new(85, ChromaSubsampling::Quarter)
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .exif(Exif::raw(my_exif_bytes));
     /// ```
     ///
@@ -331,44 +415,39 @@ impl EncoderConfig {
         self
     }
 
-    // === Convenience Shortcuts ===
+    // === Tuning API (doc hidden) ===
 
-    /// Set YCbCr color mode with specified chroma subsampling.
+    /// Apply custom encoding tables for experimentation.
     ///
-    /// Common values:
-    /// - `ChromaSubsampling::None` (4:4:4) - default, best quality
-    /// - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
-    /// - `ChromaSubsampling::HalfHorizontal` (4:2:2) - horizontal subsampling only
-    #[must_use]
-    pub fn ycbcr(self, subsampling: ChromaSubsampling) -> Self {
-        self.color_mode(ColorMode::YCbCr { subsampling })
-    }
-
-    /// Set XYB color mode with B-quarter subsampling (default, perceptually optimized).
+    /// This replaces both quantization tables and zero-bias configuration
+    /// with values from the provided `EncodingTables`.
     ///
-    /// XYB is a perceptual color space that can achieve better quality at the same
-    /// file size for some images. Requires linear RGB input (f32 or u16).
-    #[must_use]
-    pub fn xyb(self) -> Self {
-        self.color_mode(ColorMode::Xyb {
-            subsampling: XybSubsampling::BQuarter,
-        })
-    }
-
-    /// Set XYB color mode with full resolution (no subsampling).
-    #[must_use]
-    pub fn xyb_full(self) -> Self {
-        self.color_mode(ColorMode::Xyb {
-            subsampling: XybSubsampling::Full,
-        })
-    }
-
-    /// Set grayscale output mode.
+    /// Takes `Box<EncodingTables>` since custom tables are rarely used and
+    /// the struct is ~1.5KB. This keeps `EncoderConfig` small by default.
     ///
-    /// Only the luminance channel is encoded. Works with any input format.
+    /// # Notes
+    /// - Tables must match the color mode (YCbCr or XYB)
+    /// - When using `ScalingParams::Exact`, quality scaling is bypassed
+    /// - When using `ScalingParams::Scaled`, tables are scaled by quality
+    ///
+    /// # Example
+    /// ```
+    /// use jpegli::encode::{EncoderConfig, ChromaSubsampling};
+    /// use jpegli::encode::tuning::EncodingTables;
+    ///
+    /// let mut tables = EncodingTables::default_ycbcr();
+    /// tables.scale_quant(0, 0, 0.8);  // Reduce DC quantization
+    ///
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .tables(Box::new(tables));
+    /// ```
     #[must_use]
-    pub fn grayscale(self) -> Self {
-        self.color_mode(ColorMode::Grayscale)
+    pub fn tables(self, tables: Box<EncodingTables>) -> Self {
+        // Convert EncodingTables to internal representations
+        let quant_config = tables.to_quant_config();
+        let zero_bias_config = tables.to_zero_bias_config();
+
+        self.quant_tables(quant_config).zero_bias(zero_bias_config)
     }
 
     /// Enable or disable SharpYUV (GammaAwareIterative) downsampling.
@@ -412,7 +491,8 @@ impl EncoderConfig {
     ///
     /// # Example
     /// ```ignore
-    /// let config = EncoderConfig::new().quality(85);
+    /// use jpegli::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     /// let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
     /// enc.push_packed(&rgb_bytes, Unstoppable)?;
     /// let jpeg = enc.finish()?;
@@ -438,8 +518,9 @@ impl EncoderConfig {
     /// # Example
     /// ```ignore
     /// use rgb::RGB;
+    /// use jpegli::{EncoderConfig, ChromaSubsampling, Unstoppable};
     ///
-    /// let config = EncoderConfig::new().quality(85);
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     /// let mut enc = config.encode_from_rgb::<RGB<u8>>(1920, 1080)?;
     /// enc.push_packed(&pixels, Unstoppable)?;
     /// let jpeg = enc.finish()?;
@@ -462,10 +543,9 @@ impl EncoderConfig {
     ///
     /// # Example
     /// ```ignore
-    /// let config = EncoderConfig::new()
-    ///     .quality(85)
-    ///     .ycbcr(ChromaSubsampling::Quarter);
+    /// use jpegli::{EncoderConfig, ChromaSubsampling, Unstoppable};
     ///
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     /// let mut enc = config.encode_from_ycbcr_planar(1920, 1080)?;
     /// enc.push(&planes, height, Unstoppable)?;
     /// let jpeg = enc.finish()?;
@@ -522,9 +602,9 @@ impl EncoderConfig {
     /// # Example
     ///
     /// ```rust,ignore
-    /// use jpegli::encoder::EncoderConfig;
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
     ///
-    /// let config = EncoderConfig::new().quality(85);
+    /// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     /// let ceiling = config.estimate_memory_ceiling(1920, 1080);
     ///
     /// // Reserve this much memory - actual usage guaranteed to be less
@@ -603,8 +683,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_config() {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None);
+    fn test_ycbcr_config() {
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
         assert!(!config.progressive);
         assert!(config.optimize_huffman);
@@ -617,8 +697,35 @@ mod tests {
     }
 
     #[test]
+    fn test_xyb_config() {
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
+        assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
+        assert!(matches!(
+            config.color_mode,
+            ColorMode::Xyb {
+                subsampling: XybSubsampling::BQuarter
+            }
+        ));
+
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::Full);
+        assert!(matches!(
+            config.color_mode,
+            ColorMode::Xyb {
+                subsampling: XybSubsampling::Full
+            }
+        ));
+    }
+
+    #[test]
+    fn test_grayscale_config() {
+        let config = EncoderConfig::grayscale(85);
+        assert!(matches!(config.quality, Quality::ApproxJpegli(85.0)));
+        assert!(matches!(config.color_mode, ColorMode::Grayscale));
+    }
+
+    #[test]
     fn test_builder_pattern() {
-        let config = EncoderConfig::new(85, ChromaSubsampling::None)
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
             .progressive(true)
             .sharp_yuv(true);
 
@@ -639,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_progressive_enables_huffman() {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
             .optimize_huffman(false)
             .progressive(true);
 
@@ -648,28 +755,23 @@ mod tests {
 
     #[test]
     fn test_validation_progressive_huffman() {
-        let mut config = EncoderConfig::new(90.0, ChromaSubsampling::None);
+        let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         config.progressive = true;
         config.optimize_huffman = false;
 
         assert!(config.validate().is_err());
     }
 
+    #[allow(deprecated)]
     #[test]
-    fn test_xyb_shortcuts() {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None).xyb();
+    fn test_deprecated_new_still_works() {
+        // Ensure backward compatibility during migration
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+        assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
         assert!(matches!(
             config.color_mode,
-            ColorMode::Xyb {
-                subsampling: XybSubsampling::BQuarter
-            }
-        ));
-
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::None).xyb_full();
-        assert!(matches!(
-            config.color_mode,
-            ColorMode::Xyb {
-                subsampling: XybSubsampling::Full
+            ColorMode::YCbCr {
+                subsampling: ChromaSubsampling::Quarter
             }
         ));
     }

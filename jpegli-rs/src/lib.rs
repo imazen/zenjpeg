@@ -12,11 +12,10 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+//! use jpegli::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
 //!
-//! // Create reusable config
-//! let config = EncoderConfig::new()
-//!     .quality(85)
+//! // Create reusable config (quality + color mode in constructor)
+//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 //!     .progressive(true);
 //!
 //! // Encode from raw bytes
@@ -64,16 +63,22 @@
 //! ### Configuration Options
 //!
 //! ```rust,ignore
-//! let config = EncoderConfig::new()
-//!     .quality(85)                              // 0-100 scale
-//!     .quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
-//!     .quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
+//! // YCbCr mode (standard JPEG - most compatible)
+//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 //!     .progressive(true)                        // Progressive JPEG (~3% smaller)
-//!     .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (default is 4:4:4)
-//!     .xyb()                                    // XYB perceptual color space
-//!     .grayscale()                              // Single-channel output
 //!     .sharp_yuv(true)                          // Better color edges (~3x slower)
 //!     .icc_profile(bytes);                      // Attach ICC profile
+//!
+//! // XYB mode (perceptual color space - better quality)
+//! let config = EncoderConfig::xyb(85, XybSubsampling::BQuarter)
+//!     .progressive(true);
+//!
+//! // Grayscale mode
+//! let config = EncoderConfig::grayscale(85);
+//!
+//! // Quality can also use enum variants:
+//! let config = EncoderConfig::ycbcr(Quality::ApproxSsim2(90.0), ChromaSubsampling::None);
+//! let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(1.0), ChromaSubsampling::Quarter);
 //! ```
 //!
 //! ## Decoder API
