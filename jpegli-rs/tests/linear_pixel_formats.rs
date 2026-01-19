@@ -338,8 +338,7 @@ fn test_xyb_with_linear_formats() {
 
     // Test RgbF32 with XYB
     let pixels_f32 = create_gradient_rgbf32(width, height);
-    let config_f32 =
-        EncoderConfig::xyb(Quality::ApproxButteraugli(1.0), XybSubsampling::BQuarter);
+    let config_f32 = EncoderConfig::xyb(Quality::ApproxButteraugli(1.0), XybSubsampling::BQuarter);
     let jpeg_f32 = encode(
         width as u32,
         height as u32,

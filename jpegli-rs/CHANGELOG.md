@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Overshoot deringing (enabled by default)**
+  - Eliminates ringing artifacts on documents, screenshots, and graphics
+  - No quality penalty for photographic content
+  - Algorithm pioneered by [@kornel](https://github.com/kornelski) in [mozjpeg](https://github.com/mozilla/mozjpeg)
+  - Uses Catmull-Rom spline interpolation to smooth hard edges
+  - Disable with `.deringing(false)` if needed (not recommended)
+  - See README "Overshoot Deringing" section for technical details
+
 - **`EncodingTables` struct for quantization table experimentation**
   - `PerComponent<T>` wrapper with named accessors for YCbCr (Y/Cb/Cr) and XYB (X/Y/B)
   - `ScalingParams` enum: `Exact` (no scaling) or `Scaled { global_scale, frequency_exponents }`

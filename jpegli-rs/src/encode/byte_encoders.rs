@@ -127,7 +127,6 @@ impl BytesEncoder {
             builder = builder.use_xyb(true);
         }
 
-        #[cfg(feature = "mozjpeg-deringing")]
         if config.deringing {
             builder = builder.deringing(true);
         }

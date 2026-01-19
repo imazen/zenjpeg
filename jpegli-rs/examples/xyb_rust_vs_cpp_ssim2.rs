@@ -20,8 +20,7 @@ fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
 }
 
 fn encode_rust_xyb(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::xyb(quality, XybSubsampling::Full)
-        .progressive(true); // Match C++ cjpegli's default progressive mode
+    let config = EncoderConfig::xyb(quality, XybSubsampling::Full).progressive(true); // Match C++ cjpegli's default progressive mode
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");

@@ -39,8 +39,7 @@ fn main() {
         }
     }
     eprintln!("Running 50 encode iterations (q70 4:2:0 YCbCr for profiling...");
-    let config_420 = EncoderConfig::ycbcr(70.0, ChromaSubsampling::Quarter)
-        .progressive(true);
+    let config_420 = EncoderConfig::ycbcr(70.0, ChromaSubsampling::Quarter).progressive(true);
     for i in 0..50 {
         let mut enc = config_420
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

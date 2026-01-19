@@ -30,8 +30,7 @@ pub struct EncoderConfig {
     /// Hybrid quantization configuration (requires `experimental-hybrid-trellis` feature)
     #[cfg(feature = "experimental-hybrid-trellis")]
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
-    /// Enable overshoot deringing (requires `mozjpeg-deringing` feature)
-    #[cfg(feature = "mozjpeg-deringing")]
+    /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
 }
 
@@ -165,8 +164,7 @@ impl EncoderConfig {
             parallel: None,
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
-            #[cfg(feature = "mozjpeg-deringing")]
-            deringing: false,
+            deringing: true,
         }
     }
 
@@ -468,19 +466,24 @@ impl EncoderConfig {
         })
     }
 
-    /// Enable overshoot deringing to reduce ringing artifacts on white backgrounds.
+    /// Enable or disable overshoot deringing (enabled by default).
     ///
-    /// Deringing smooths hard edges (like text on white) by allowing values to
-    /// "overshoot" beyond the maximum. Since JPEG decoders clamp values to 0-255,
-    /// the overshoot is invisible but the smoother curve compresses better.
+    /// Deringing reduces ringing artifacts on white backgrounds by smoothing hard
+    /// edges. It allows pixel values to "overshoot" beyond the displayable range.
+    /// Since JPEG decoders clamp values to 0-255, the overshoot is invisible but
+    /// the smoother curve compresses better with fewer artifacts.
     ///
-    /// This is particularly effective for:
-    /// - Images with white backgrounds
+    /// This technique was pioneered by [@kornel](https://github.com/kornelski) in
+    /// [mozjpeg](https://github.com/mozilla/mozjpeg) and significantly improves
+    /// quality for documents, graphics, and text without degrading photographic
+    /// content.
+    ///
+    /// Particularly effective for:
+    /// - Documents and screenshots with white backgrounds
     /// - Text and graphics with hard edges
     /// - Any image with saturated regions (pixels at 0 or 255)
     ///
-    /// Requires the `mozjpeg-deringing` feature.
-    #[cfg(feature = "mozjpeg-deringing")]
+    /// There is no quality downside to leaving this enabled for photos.
     #[must_use]
     pub fn deringing(mut self, enable: bool) -> Self {
         self.deringing = enable;
