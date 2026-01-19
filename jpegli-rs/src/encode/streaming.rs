@@ -83,6 +83,9 @@ pub struct StreamingEncoderBuilder {
     custom_quant_matrices: Option<CustomQuantMatrices>,
     custom_zero_bias: CustomZeroBias,
     use_xyb: bool,
+    /// Enable mozjpeg-style overshoot deringing (requires `mozjpeg-deringing` feature)
+    #[cfg(feature = "mozjpeg-deringing")]
+    deringing: bool,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     parallel: bool,
@@ -110,6 +113,8 @@ impl StreamingEncoderBuilder {
             custom_quant_matrices: None,
             custom_zero_bias: CustomZeroBias::Default,
             use_xyb: false,
+            #[cfg(feature = "mozjpeg-deringing")]
+            deringing: false,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -323,6 +328,21 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn use_xyb(mut self, enable: bool) -> Self {
         self.use_xyb = enable;
+        self
+    }
+
+    /// Enables mozjpeg-style overshoot deringing.
+    ///
+    /// This reduces visible ringing artifacts near sharp edges, particularly
+    /// on white backgrounds. Works by allowing pixel values to "overshoot"
+    /// beyond the displayable range, which gets clamped on decode but produces
+    /// smoother DCT coefficients.
+    ///
+    /// Requires the `mozjpeg-deringing` feature.
+    #[cfg(feature = "mozjpeg-deringing")]
+    #[must_use]
+    pub fn deringing(mut self, enable: bool) -> Self {
+        self.deringing = enable;
         self
     }
 
@@ -827,6 +847,12 @@ impl StreamingEncoder {
         // Enable XYB mode if requested
         if builder.use_xyb {
             processor.set_xyb_mode(true);
+        }
+
+        // Enable deringing if requested
+        #[cfg(feature = "mozjpeg-deringing")]
+        if builder.deringing {
+            processor.set_deringing(true);
         }
 
         // Generate quantization tables (use custom matrices if provided)
