@@ -193,6 +193,74 @@ mod simd {
         )
     }
 
+    /// Process 8 RGB pixels to YCbCr using SIMD (f32x8).
+    /// Returns (Y[8], Cb[8], Cr[8]) as u8 arrays.
+    /// 2x throughput compared to rgb_to_ycbcr_x4.
+    #[inline]
+    pub fn rgb_to_ycbcr_x8(r: [u8; 8], g: [u8; 8], b: [u8; 8]) -> ([u8; 8], [u8; 8], [u8; 8]) {
+        // Convert to f32 vectors
+        let rf = f32x8::from([
+            r[0] as f32, r[1] as f32, r[2] as f32, r[3] as f32,
+            r[4] as f32, r[5] as f32, r[6] as f32, r[7] as f32,
+        ]);
+        let gf = f32x8::from([
+            g[0] as f32, g[1] as f32, g[2] as f32, g[3] as f32,
+            g[4] as f32, g[5] as f32, g[6] as f32, g[7] as f32,
+        ]);
+        let bf = f32x8::from([
+            b[0] as f32, b[1] as f32, b[2] as f32, b[3] as f32,
+            b[4] as f32, b[5] as f32, b[6] as f32, b[7] as f32,
+        ]);
+
+        // YCbCr coefficients as vectors
+        let r_to_y = f32x8::splat(YCBCR_R_TO_Y);
+        let g_to_y = f32x8::splat(YCBCR_G_TO_Y);
+        let b_to_y = f32x8::splat(YCBCR_B_TO_Y);
+
+        let r_to_cb = f32x8::splat(YCBCR_R_TO_CB);
+        let g_to_cb = f32x8::splat(YCBCR_G_TO_CB);
+        let b_to_cb = f32x8::splat(YCBCR_B_TO_CB);
+
+        let r_to_cr = f32x8::splat(YCBCR_R_TO_CR);
+        let g_to_cr = f32x8::splat(YCBCR_G_TO_CR);
+        let b_to_cr = f32x8::splat(YCBCR_B_TO_CR);
+
+        let offset_128 = f32x8::splat(128.0);
+
+        // Compute Y, Cb, Cr using FMA chain pattern
+        // Compiles to: vmulps + vfmadd213ps + vfmadd231ps on AVX2+FMA
+        let y = r_to_y.mul_add(rf, g_to_y.mul_add(gf, b_to_y * bf));
+        let cb = r_to_cb.mul_add(rf, g_to_cb.mul_add(gf, b_to_cb.mul_add(bf, offset_128)));
+        let cr = r_to_cr.mul_add(rf, g_to_cr.mul_add(gf, b_to_cr.mul_add(bf, offset_128)));
+
+        // SIMD round, clamp, and convert to u8
+        let zero = f32x8::splat(0.0);
+        let max = f32x8::splat(255.0);
+
+        let y_clamped = y.round().max(zero).min(max);
+        let cb_clamped = cb.round().max(zero).min(max);
+        let cr_clamped = cr.round().max(zero).min(max);
+
+        let y_arr = y_clamped.to_array();
+        let cb_arr = cb_clamped.to_array();
+        let cr_arr = cr_clamped.to_array();
+
+        (
+            [
+                y_arr[0] as u8, y_arr[1] as u8, y_arr[2] as u8, y_arr[3] as u8,
+                y_arr[4] as u8, y_arr[5] as u8, y_arr[6] as u8, y_arr[7] as u8,
+            ],
+            [
+                cb_arr[0] as u8, cb_arr[1] as u8, cb_arr[2] as u8, cb_arr[3] as u8,
+                cb_arr[4] as u8, cb_arr[5] as u8, cb_arr[6] as u8, cb_arr[7] as u8,
+            ],
+            [
+                cr_arr[0] as u8, cr_arr[1] as u8, cr_arr[2] as u8, cr_arr[3] as u8,
+                cr_arr[4] as u8, cr_arr[5] as u8, cr_arr[6] as u8, cr_arr[7] as u8,
+            ],
+        )
+    }
+
     /// Process 4 YCbCr pixels to RGB using SIMD.
     #[inline]
     pub fn ycbcr_to_rgb_x4(y: [u8; 4], cb: [u8; 4], cr: [u8; 4]) -> ([u8; 4], [u8; 4], [u8; 4]) {
@@ -271,10 +339,55 @@ pub fn rgb_to_ycbcr_planes(
     let mut cb_plane = try_alloc_zeroed(num_pixels, "YCbCr Cb plane")?;
     let mut cr_plane = try_alloc_zeroed(num_pixels, "YCbCr Cr plane")?;
 
-    // Process 4 pixels at a time with SIMD
-    let chunks = num_pixels / 4;
-    for chunk in 0..chunks {
-        let base = chunk * 4;
+    // Process 8 pixels at a time with SIMD (f32x8) - 2x throughput vs f32x4
+    let chunks_8 = num_pixels / 8;
+    for chunk in 0..chunks_8 {
+        let base = chunk * 8;
+        let rgb_base = base * 3;
+
+        let r = [
+            rgb[rgb_base],
+            rgb[rgb_base + 3],
+            rgb[rgb_base + 6],
+            rgb[rgb_base + 9],
+            rgb[rgb_base + 12],
+            rgb[rgb_base + 15],
+            rgb[rgb_base + 18],
+            rgb[rgb_base + 21],
+        ];
+        let g = [
+            rgb[rgb_base + 1],
+            rgb[rgb_base + 4],
+            rgb[rgb_base + 7],
+            rgb[rgb_base + 10],
+            rgb[rgb_base + 13],
+            rgb[rgb_base + 16],
+            rgb[rgb_base + 19],
+            rgb[rgb_base + 22],
+        ];
+        let b = [
+            rgb[rgb_base + 2],
+            rgb[rgb_base + 5],
+            rgb[rgb_base + 8],
+            rgb[rgb_base + 11],
+            rgb[rgb_base + 14],
+            rgb[rgb_base + 17],
+            rgb[rgb_base + 20],
+            rgb[rgb_base + 23],
+        ];
+
+        let (y, cb, cr) = simd::rgb_to_ycbcr_x8(r, g, b);
+
+        y_plane[base..base + 8].copy_from_slice(&y);
+        cb_plane[base..base + 8].copy_from_slice(&cb);
+        cr_plane[base..base + 8].copy_from_slice(&cr);
+    }
+
+    // Handle 4-7 remaining pixels with x4 SIMD
+    let remainder_start = chunks_8 * 8;
+    let remaining = num_pixels - remainder_start;
+    if remaining >= 4 {
+        let base = remainder_start;
         let rgb_base = base * 3;
 
         let r = [
@@ -303,8 +416,9 @@ pub fn rgb_to_ycbcr_planes(
         cr_plane[base..base + 4].copy_from_slice(&cr);
     }
 
-    // Handle remaining pixels with scalar code
-    for i in (chunks * 4)..num_pixels {
+    // Handle remaining 0-3 pixels with scalar code
+    let scalar_start = remainder_start + if remaining >= 4 { 4 } else { 0 };
+    for i in scalar_start..num_pixels {
         let (y, cb, cr) = rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
         y_plane[i] = y;
         cb_plane[i] = cb;
@@ -1244,6 +1358,61 @@ mod tests {
                 assert_eq!(cb_simd[i], cb_scalar, "Cb mismatch at {}", i);
                 assert_eq!(cr_simd[i], cr_scalar, "Cr mismatch at {}", i);
             }
+        }
+    }
+
+    #[test]
+    fn test_simd_rgb_to_ycbcr_x8_matches_scalar() {
+        // Test that f32x8 SIMD version produces same results as scalar
+        let test_colors = [
+            (0u8, 0u8, 0u8),
+            (255u8, 255u8, 255u8),
+            (255u8, 0u8, 0u8),
+            (0u8, 255u8, 0u8),
+            (0u8, 0u8, 255u8),
+            (128u8, 128u8, 128u8),
+            (100u8, 150u8, 200u8),
+            (33u8, 66u8, 99u8),
+        ];
+
+        let r = [
+            test_colors[0].0,
+            test_colors[1].0,
+            test_colors[2].0,
+            test_colors[3].0,
+            test_colors[4].0,
+            test_colors[5].0,
+            test_colors[6].0,
+            test_colors[7].0,
+        ];
+        let g = [
+            test_colors[0].1,
+            test_colors[1].1,
+            test_colors[2].1,
+            test_colors[3].1,
+            test_colors[4].1,
+            test_colors[5].1,
+            test_colors[6].1,
+            test_colors[7].1,
+        ];
+        let b = [
+            test_colors[0].2,
+            test_colors[1].2,
+            test_colors[2].2,
+            test_colors[3].2,
+            test_colors[4].2,
+            test_colors[5].2,
+            test_colors[6].2,
+            test_colors[7].2,
+        ];
+
+        let (y_simd, cb_simd, cr_simd) = simd::rgb_to_ycbcr_x8(r, g, b);
+
+        for i in 0..8 {
+            let (y_scalar, cb_scalar, cr_scalar) = rgb_to_ycbcr(r[i], g[i], b[i]);
+            assert_eq!(y_simd[i], y_scalar, "Y mismatch at {}", i);
+            assert_eq!(cb_simd[i], cb_scalar, "Cb mismatch at {}", i);
+            assert_eq!(cr_simd[i], cr_scalar, "Cr mismatch at {}", i);
         }
     }
 
