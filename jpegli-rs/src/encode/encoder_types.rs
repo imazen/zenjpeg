@@ -290,22 +290,26 @@ pub enum QuantTableConfig {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)] // Custom tables are rarely used
 pub enum ZeroBiasConfig {
-    /// Use quality-adaptive YCbCr perceptual tables (default).
+    /// Auto-select based on color mode (default).
     ///
-    /// These blend between HQ and LQ tables based on the effective
-    /// butteraugli distance. Used for both YCbCr and XYB modes.
+    /// - **YCbCr mode**: Uses quality-adaptive perceptual tables that blend
+    ///   between HQ and LQ tables based on the effective butteraugli distance.
+    /// - **XYB mode**: Uses simple 0.5/0.5 mul/offset for all AC coefficients.
+    ///
+    /// This matches C++ jpegli behavior exactly.
     #[default]
     Default,
 
-    /// Alias for Default - use YCbCr perceptual tables.
+    /// Force YCbCr quality-adaptive perceptual tables.
     ///
-    /// Provided for explicit clarity when you want YCbCr tables.
+    /// Blends between HQ and LQ tables based on the effective butteraugli
+    /// distance. Use this to force YCbCr tables even in XYB mode.
     YCbCr,
 
-    /// Use XYB zero-bias (0.5 multiplier, 0.5 offset for all coefficients).
+    /// Force XYB zero-bias (0.5 multiplier, 0.5 offset for all AC coefficients).
     ///
-    /// This matches what C++ jpegli uses internally for XYB mode.
-    /// Use this if you want to experiment with XYB-specific zero-bias.
+    /// DC coefficients use 0.0/0.0. This matches what C++ jpegli uses
+    /// internally for XYB mode. Use this to force XYB tables even in YCbCr mode.
     Xyb,
 
     /// Disable zero-bias (all multipliers = 0, all offsets = 0).
@@ -371,13 +375,16 @@ impl ZeroBiasConfig {
     ) -> crate::quant::ZeroBiasParams {
         use crate::quant::ZeroBiasParams;
 
-        // Note: is_xyb parameter reserved for future use
-        let _ = is_xyb;
-
         match self {
-            ZeroBiasConfig::Default | ZeroBiasConfig::YCbCr => {
-                ZeroBiasParams::for_ycbcr(distance, component)
+            ZeroBiasConfig::Default => {
+                // Auto-select based on color mode (matches C++ jpegli behavior)
+                if is_xyb {
+                    ZeroBiasParams::for_xyb()
+                } else {
+                    ZeroBiasParams::for_ycbcr(distance, component)
+                }
             }
+            ZeroBiasConfig::YCbCr => ZeroBiasParams::for_ycbcr(distance, component),
             ZeroBiasConfig::Xyb => ZeroBiasParams::for_xyb(),
             ZeroBiasConfig::Disabled => ZeroBiasParams::default(),
             ZeroBiasConfig::Custom { luma, cb, cr } => {

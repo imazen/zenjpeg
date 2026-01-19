@@ -874,8 +874,24 @@ impl StreamingEncoder {
         // Compute zero bias params based on config and color mode
         let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
         let (y_zero_bias, cb_zero_bias, cr_zero_bias) = match &builder.custom_zero_bias {
-            CustomZeroBias::Default | CustomZeroBias::YCbCr => {
-                // Use quality-adaptive YCbCr perceptual tables
+            CustomZeroBias::Default => {
+                // Auto-select based on color mode (matches C++ jpegli behavior)
+                if builder.use_xyb {
+                    (
+                        ZeroBiasParams::for_xyb(),
+                        ZeroBiasParams::for_xyb(),
+                        ZeroBiasParams::for_xyb(),
+                    )
+                } else {
+                    (
+                        ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                        ZeroBiasParams::for_ycbcr(effective_distance, 1),
+                        ZeroBiasParams::for_ycbcr(effective_distance, 2),
+                    )
+                }
+            }
+            CustomZeroBias::YCbCr => {
+                // Force YCbCr perceptual tables
                 (
                     ZeroBiasParams::for_ycbcr(effective_distance, 0),
                     ZeroBiasParams::for_ycbcr(effective_distance, 1),
