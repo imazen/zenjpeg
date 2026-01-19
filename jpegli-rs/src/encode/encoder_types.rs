@@ -254,10 +254,125 @@ pub enum QuantTableConfig {
 
     /// Custom base matrices, scaled by Quality.
     /// Provide f32 matrices (typically 1.0–255.0 range).
-    CustomBase { luma: [f32; 64], chroma: [f32; 64] },
+    /// These are multiplied by the quality-derived scale factor.
+    CustomBase {
+        /// Luma (Y) base matrix - 64 coefficients in row-major order
+        luma: [f32; 64],
+        /// Blue chroma (Cb) base matrix - 64 coefficients in row-major order
+        cb: [f32; 64],
+        /// Red chroma (Cr) base matrix - 64 coefficients in row-major order
+        cr: [f32; 64],
+    },
 
     /// Exact quantization tables. **Quality is ignored.**
-    Exact { luma: [u16; 64], chroma: [u16; 64] },
+    /// Values should be in range 1-255 for baseline JPEG compatibility.
+    Exact {
+        /// Luma (Y) quantization table - 64 coefficients in row-major order
+        luma: [u16; 64],
+        /// Blue chroma (Cb) quantization table - 64 coefficients in row-major order
+        cb: [u16; 64],
+        /// Red chroma (Cr) quantization table - 64 coefficients in row-major order
+        cr: [u16; 64],
+    },
+}
+
+/// Zero-bias configuration for quantization.
+///
+/// Zero-bias controls how coefficients are rounded toward zero during quantization.
+/// Higher multipliers mean more aggressive zeroing of small coefficients, which
+/// improves compression but may reduce quality.
+///
+/// The jpegli defaults are perceptually optimized and vary by:
+/// - Quality level (blends between HQ and LQ tables based on butteraugli distance)
+/// - Component (Y, Cb, Cr have different optimal bias values)
+/// - Coefficient position (different DCT frequencies have different biases)
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+#[allow(clippy::large_enum_variant)] // Custom tables are rarely used
+pub enum ZeroBiasConfig {
+    /// Use jpegli's perceptual zero-bias tables (default).
+    /// These are quality-adaptive: they blend between HQ and LQ tables
+    /// based on the effective butteraugli distance.
+    #[default]
+    Perceptual,
+
+    /// Disable zero-bias (all multipliers = 0, all offsets = 0).
+    /// This matches standard JPEG behavior without adaptive quantization.
+    Disabled,
+
+    /// Custom zero-bias tables.
+    /// Each component has 64 multiplier values and 64 offset values.
+    Custom {
+        /// Luma (Y) zero-bias: (multipliers[64], offsets[64])
+        luma: ([f32; 64], [f32; 64]),
+        /// Blue chroma (Cb) zero-bias: (multipliers[64], offsets[64])
+        cb: ([f32; 64], [f32; 64]),
+        /// Red chroma (Cr) zero-bias: (multipliers[64], offsets[64])
+        cr: ([f32; 64], [f32; 64]),
+    },
+}
+
+impl QuantTableConfig {
+    /// Convert to internal CustomQuantMatrices format.
+    ///
+    /// Returns `None` for `Perceptual` (use defaults), or `Some` with the
+    /// appropriate internal representation.
+    #[must_use]
+    pub(crate) fn to_custom_matrices(&self) -> Option<crate::quant::CustomQuantMatrices> {
+        use crate::quant::CustomQuantMatrices;
+
+        match self {
+            QuantTableConfig::Perceptual => None,
+            QuantTableConfig::CustomBase { luma, cb, cr } => {
+                // Pack into 192-element array: Y[64], Cb[64], Cr[64]
+                let mut matrix = [0.0f32; 192];
+                matrix[..64].copy_from_slice(luma);
+                matrix[64..128].copy_from_slice(cb);
+                matrix[128..192].copy_from_slice(cr);
+                Some(CustomQuantMatrices::new().with_ycbcr(matrix))
+            }
+            QuantTableConfig::Exact { luma, cb, cr } => {
+                // Pack into 192-element array: Y[64], Cb[64], Cr[64]
+                let mut tables = [0u16; 192];
+                tables[..64].copy_from_slice(luma);
+                tables[64..128].copy_from_slice(cb);
+                tables[128..192].copy_from_slice(cr);
+                Some(CustomQuantMatrices::new().with_direct_tables(tables))
+            }
+        }
+    }
+}
+
+impl ZeroBiasConfig {
+    /// Convert to internal ZeroBiasParams for a specific component.
+    ///
+    /// # Arguments
+    /// * `component` - 0 for Y, 1 for Cb, 2 for Cr
+    /// * `distance` - Butteraugli distance (only used for `Perceptual` mode)
+    #[must_use]
+    pub(crate) fn to_zero_bias_params(
+        &self,
+        component: usize,
+        distance: f32,
+    ) -> crate::quant::ZeroBiasParams {
+        use crate::quant::ZeroBiasParams;
+
+        match self {
+            ZeroBiasConfig::Perceptual => ZeroBiasParams::for_ycbcr(distance, component),
+            ZeroBiasConfig::Disabled => ZeroBiasParams::default(),
+            ZeroBiasConfig::Custom { luma, cb, cr } => {
+                let (mul, offset) = match component {
+                    0 => luma,
+                    1 => cb,
+                    _ => cr,
+                };
+                ZeroBiasParams {
+                    mul: *mul,
+                    offset: *offset,
+                }
+            }
+        }
+    }
 }
 
 /// Output color space with bundled subsampling options.

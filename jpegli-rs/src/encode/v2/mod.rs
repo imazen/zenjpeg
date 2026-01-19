@@ -58,7 +58,7 @@ pub use super::encoder_types::ParallelEncoding;
 #[allow(unused_imports)] // Public API re-exports
 pub use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
-    XybSubsampling, YCbCrPlanes,
+    XybSubsampling, YCbCrPlanes, ZeroBiasConfig,
 };
 
 // Re-export Stop trait for convenience

@@ -76,7 +76,7 @@ impl BytesEncoder {
         height: u32,
         layout: PixelLayout,
     ) -> Result<StreamingEncoder> {
-        use crate::encode::streaming::StreamingEncoder as SE;
+        use crate::encode::streaming::{CustomZeroBias, StreamingEncoder as SE};
         use crate::quant::Quality as LegacyQuality;
 
         let quality = LegacyQuality::from_quality(config.quality.to_internal());
@@ -94,6 +94,25 @@ impl BytesEncoder {
             .optimize_huffman(config.optimize_huffman)
             .chroma_downsampling(config.downsampling_method.to_legacy())
             .restart_interval(config.restart_interval);
+
+        // Apply custom quant tables if configured
+        if let Some(custom_matrices) = config.quant_tables.to_custom_matrices() {
+            builder = builder.custom_quant_matrices(custom_matrices);
+        }
+
+        // Apply custom zero bias if configured
+        let zero_bias = match &config.zero_bias {
+            super::encoder_types::ZeroBiasConfig::Perceptual => CustomZeroBias::Perceptual,
+            super::encoder_types::ZeroBiasConfig::Disabled => CustomZeroBias::Disabled,
+            super::encoder_types::ZeroBiasConfig::Custom { luma, cb, cr } => {
+                CustomZeroBias::Custom {
+                    luma: *luma,
+                    cb: *cb,
+                    cr: *cr,
+                }
+            }
+        };
+        builder = builder.custom_zero_bias(zero_bias);
 
         if config.progressive {
             builder = builder.progressive(true);

@@ -124,10 +124,17 @@ pub use crate::encode::byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPla
 pub use crate::encode::encoder_config::EncoderConfig;
 pub use crate::encode::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
-    XybSubsampling, YCbCrPlanes,
+    XybSubsampling, YCbCrPlanes, ZeroBiasConfig,
 };
 pub use crate::encode::exif::{Exif, ExifFields, Orientation};
 pub use crate::encode::Stop;
+
+// === Default tables for customization ===
+/// Default quantization and zero-bias tables.
+///
+/// Use these as starting points when creating custom tables.
+#[doc(hidden)]
+pub use crate::encode::tables;
 
 #[cfg(feature = "parallel")]
 pub use crate::encode::encoder_types::ParallelEncoding;

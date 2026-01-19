@@ -159,6 +159,18 @@ pub const ZERO_BIAS_OFFSET_YCBCR_DC: [f32; 3] = [0.0, 0.0, 0.0];
 /// From C++ jpegli quant.cc kZeroBiasOffsetYCbCrAC
 pub const ZERO_BIAS_OFFSET_YCBCR_AC: [f32; 3] = [0.59082, 0.58146, 0.57988];
 
+/// XYB zero-bias multiplier (same for all components, all AC coefficients).
+///
+/// C++ jpegli uses 0.5 for all AC coefficients in XYB mode (no quality blending).
+/// DC coefficients use 0.0.
+pub const ZERO_BIAS_MUL_XYB: f32 = 0.5;
+
+/// XYB zero-bias offset (same for all components, all AC coefficients).
+///
+/// C++ jpegli uses 0.5 for all AC coefficients in XYB mode.
+/// DC coefficients use 0.0.
+pub const ZERO_BIAS_OFFSET_XYB: f32 = 0.5;
+
 /// Zero-bias parameters for a single DCT block.
 ///
 /// Zero-bias controls how coefficients are rounded toward zero during quantization.
@@ -237,6 +249,25 @@ impl ZeroBiasParams {
                 ZERO_BIAS_OFFSET_YCBCR_AC[c]
             };
         }
+
+        Self { mul, offset }
+    }
+
+    /// Compute zero-bias parameters for XYB color space.
+    ///
+    /// XYB uses simple 0.5 defaults for all AC coefficients (no quality blending).
+    /// This matches C++ jpegli behavior exactly.
+    ///
+    /// Unlike YCbCr which has component-specific and quality-dependent tables,
+    /// XYB uses the same values for all components at all quality levels.
+    #[must_use]
+    pub fn for_xyb() -> Self {
+        let mut mul = [ZERO_BIAS_MUL_XYB; DCT_BLOCK_SIZE];
+        let mut offset = [ZERO_BIAS_OFFSET_XYB; DCT_BLOCK_SIZE];
+
+        // DC coefficient uses 0.0 for both mul and offset
+        mul[0] = 0.0;
+        offset[0] = 0.0;
 
         Self { mul, offset }
     }
