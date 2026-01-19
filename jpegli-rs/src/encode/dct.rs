@@ -1246,6 +1246,141 @@ pub fn aan_forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZ
     data
 }
 
+// ============================================================================
+// SIMD-Optimized AAN DCT (f32x8)
+// ============================================================================
+
+/// Vectorized 1D AAN DCT on 8 rows in parallel using f32x8.
+///
+/// Each f32x8 contains the same position from 8 different rows.
+/// After processing, each f32x8 contains the same DCT coefficient from 8 rows.
+/// Uses only 5 multiplies + 29 adds per 1D transform (vs ~11 in naive approach).
+#[inline(always)]
+fn aan_dct_1d_vec(d: &mut [f32x8; 8]) {
+    // Stage 1: Butterfly - split into even/odd symmetric pairs
+    let tmp0 = d[0] + d[7];
+    let tmp7 = d[0] - d[7];
+    let tmp1 = d[1] + d[6];
+    let tmp6 = d[1] - d[6];
+    let tmp2 = d[2] + d[5];
+    let tmp5 = d[2] - d[5];
+    let tmp3 = d[3] + d[4];
+    let tmp4 = d[3] - d[4];
+
+    // Stage 2: Even part (produces coefficients at positions 0, 2, 4, 6)
+    let tmp10 = tmp0 + tmp3;
+    let tmp13 = tmp0 - tmp3;
+    let tmp11 = tmp1 + tmp2;
+    let tmp12 = tmp1 - tmp2;
+
+    // Broadcast constants
+    let c4 = f32x8::splat(aan::C4);
+    let c6 = f32x8::splat(aan::C6);
+    let c2_m_c6 = f32x8::splat(aan::C2_M_C6);
+    let c2_p_c6 = f32x8::splat(aan::C2_P_C6);
+
+    d[0] = tmp10 + tmp11; // DC coefficient
+    d[4] = tmp10 - tmp11;
+
+    // MULTIPLY #1: z1 = (tmp12 + tmp13) * cos(π/4)
+    let z1 = (tmp12 + tmp13) * c4;
+    d[2] = tmp13 + z1;
+    d[6] = tmp13 - z1;
+
+    // Stage 3: Odd part (produces coefficients at positions 1, 3, 5, 7)
+    let tmp10 = tmp4 + tmp5;
+    let tmp11 = tmp5 + tmp6;
+    let tmp12 = tmp6 + tmp7;
+
+    // MULTIPLY #2: z5 = (tmp10 - tmp12) * sin(π/8)
+    let z5 = (tmp10 - tmp12) * c6;
+    // MULTIPLY #3: z2 = (cos(π/8) - cos(3π/8)) * tmp10 + z5  (using FMA)
+    let z2 = tmp10.mul_add(c2_m_c6, z5);
+    // MULTIPLY #4: z4 = (cos(π/8) + cos(3π/8)) * tmp12 + z5  (using FMA)
+    let z4 = tmp12.mul_add(c2_p_c6, z5);
+    // MULTIPLY #5: z3 = tmp11 * cos(π/4)
+    let z3 = tmp11 * c4;
+
+    let z11 = tmp7 + z3;
+    let z13 = tmp7 - z3;
+
+    d[5] = z13 + z2;
+    d[3] = z13 - z2;
+    d[1] = z11 + z4;
+    d[7] = z11 - z4;
+
+    // Descale to match standard DCT normalization
+    let scales: [f32x8; 8] = [
+        f32x8::splat(aan::INV_SCALES[0]),
+        f32x8::splat(aan::INV_SCALES[1]),
+        f32x8::splat(aan::INV_SCALES[2]),
+        f32x8::splat(aan::INV_SCALES[3]),
+        f32x8::splat(aan::INV_SCALES[4]),
+        f32x8::splat(aan::INV_SCALES[5]),
+        f32x8::splat(aan::INV_SCALES[6]),
+        f32x8::splat(aan::INV_SCALES[7]),
+    ];
+    for i in 0..8 {
+        d[i] *= scales[i];
+    }
+}
+
+/// SIMD-optimized 2D AAN DCT using f32x8 register chaining.
+///
+/// Keeps data in SIMD registers throughout for maximum throughput:
+/// 1. Load rows as f32x8 vectors
+/// 2. Transpose (rows -> columns in registers)
+/// 3. Row DCT (processes 8 rows in parallel)
+/// 4. Transpose (intermediate -> columns)
+/// 5. Column DCT (processes 8 columns in parallel)
+/// 6. Apply 1/8 scaling and store
+///
+/// Expected 2-3x speedup over scalar AAN for batch processing.
+#[multiversed]
+#[must_use]
+pub fn aan_forward_dct_8x8_simd(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
+    // Load rows as f32x8 vectors
+    let rows: [f32x8; 8] = [
+        f32x8::from(<[f32; 8]>::try_from(&input[0..8]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[8..16]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[16..24]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[24..32]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[32..40]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[40..48]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[48..56]).unwrap()),
+        f32x8::from(<[f32; 8]>::try_from(&input[56..64]).unwrap()),
+    ];
+
+    // Transpose: rows[i] -> cols where cols[j] contains element j from each row
+    let cols = f32x8::transpose(rows);
+
+    // Row DCT: each vector position processes a different row
+    let mut cols_after_row = cols;
+    aan_dct_1d_vec(&mut cols_after_row);
+
+    // Transpose back for column DCT
+    let rows_for_col = f32x8::transpose(cols_after_row);
+
+    // Column DCT
+    let mut final_rows = rows_for_col;
+    aan_dct_1d_vec(&mut final_rows);
+
+    // Apply 1/8 scaling and store
+    let scale = f32x8::splat(1.0 / 8.0);
+    let mut output = [0.0f32; DCT_BLOCK_SIZE];
+
+    output[0..8].copy_from_slice(&(final_rows[0] * scale).to_array());
+    output[8..16].copy_from_slice(&(final_rows[1] * scale).to_array());
+    output[16..24].copy_from_slice(&(final_rows[2] * scale).to_array());
+    output[24..32].copy_from_slice(&(final_rows[3] * scale).to_array());
+    output[32..40].copy_from_slice(&(final_rows[4] * scale).to_array());
+    output[40..48].copy_from_slice(&(final_rows[5] * scale).to_array());
+    output[48..56].copy_from_slice(&(final_rows[6] * scale).to_array());
+    output[56..64].copy_from_slice(&(final_rows[7] * scale).to_array());
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1637,6 +1772,72 @@ mod tests {
                 "Pattern {}: wide DCT differs from array DCT by {}",
                 idx,
                 max_error
+            );
+        }
+    }
+
+    #[test]
+    fn test_aan_simd_matches_scalar() {
+        // Test SIMD AAN DCT against scalar AAN implementation with various patterns
+        let patterns: Vec<[f32; 64]> = vec![
+            // Constant block
+            [64.0; 64],
+            // Gradient
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = i as f32;
+                }
+                arr
+            },
+            // Sinusoidal pattern
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = (i as f32 * 0.3).sin() * 100.0;
+                }
+                arr
+            },
+            // Checkerboard
+            {
+                let mut arr = [0.0f32; 64];
+                for row in 0..8 {
+                    for col in 0..8 {
+                        arr[row * 8 + col] = if (row + col) % 2 == 0 { 100.0 } else { -100.0 };
+                    }
+                }
+                arr
+            },
+            // Random-ish pattern (like JPEG image data)
+            {
+                let mut arr = [0.0f32; 64];
+                for i in 0..64 {
+                    arr[i] = ((i * 17 + 31) % 256) as f32 - 128.0;
+                }
+                arr
+            },
+        ];
+
+        for (pattern_idx, input) in patterns.iter().enumerate() {
+            let scalar_output = aan_forward_dct_8x8(input);
+            let simd_output = aan_forward_dct_8x8_simd(input);
+
+            let mut max_error = 0.0f32;
+            for i in 0..64 {
+                let error = (scalar_output[i] - simd_output[i]).abs();
+                max_error = max_error.max(error);
+            }
+
+            // SIMD and scalar should produce nearly identical results
+            assert!(
+                max_error < 1e-4,
+                "Pattern {}: AAN SIMD vs scalar max error {} exceeds threshold.\n\
+                 Scalar[0..8]: {:?}\n\
+                 SIMD[0..8]: {:?}",
+                pattern_idx,
+                max_error,
+                &scalar_output[0..8],
+                &simd_output[0..8]
             );
         }
     }
