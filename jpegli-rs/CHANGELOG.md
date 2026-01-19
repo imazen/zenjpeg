@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-01-18
+
+### Breaking Changes
+
+- **`ZeroBiasConfig` enum redesigned for clarity**
+  - `Perceptual` renamed to `Default` - uses YCbCr perceptual tables
+  - New `YCbCr` variant - alias for Default (explicit clarity)
+  - New `Xyb` variant - use XYB 0.5 tables (for experimentation)
+  - `Disabled` and `Custom` remain unchanged
+  - **Migration**: Replace `ZeroBiasConfig::Perceptual` with `ZeroBiasConfig::Default`
+
 ## [0.7.3] - 2026-01-18
 
 ### Fixed

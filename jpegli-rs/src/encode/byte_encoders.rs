@@ -102,7 +102,9 @@ impl BytesEncoder {
 
         // Apply custom zero bias if configured
         let zero_bias = match &config.zero_bias {
-            super::encoder_types::ZeroBiasConfig::Perceptual => CustomZeroBias::Perceptual,
+            super::encoder_types::ZeroBiasConfig::Default => CustomZeroBias::Default,
+            super::encoder_types::ZeroBiasConfig::YCbCr => CustomZeroBias::YCbCr,
+            super::encoder_types::ZeroBiasConfig::Xyb => CustomZeroBias::Xyb,
             super::encoder_types::ZeroBiasConfig::Disabled => CustomZeroBias::Disabled,
             super::encoder_types::ZeroBiasConfig::Custom { luma, cb, cr } => {
                 CustomZeroBias::Custom {

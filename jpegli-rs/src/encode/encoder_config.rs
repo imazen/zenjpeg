@@ -105,12 +105,14 @@ impl EncoderConfig {
     /// Set zero-bias configuration.
     ///
     /// Zero-bias controls how DCT coefficients are rounded toward zero during
-    /// quantization. The default `Perceptual` mode uses jpegli's quality-adaptive
-    /// tables which are optimized for visual quality.
+    /// quantization. The default mode auto-selects between YCbCr and XYB tables
+    /// based on the color mode.
     ///
     /// # Options
     ///
-    /// - `ZeroBiasConfig::Perceptual` (default) - quality-adaptive tables
+    /// - `ZeroBiasConfig::Default` (default) - auto-select based on color mode
+    /// - `ZeroBiasConfig::YCbCr` - force YCbCr quality-adaptive tables
+    /// - `ZeroBiasConfig::Xyb` - force XYB 0.5 tables
     /// - `ZeroBiasConfig::Disabled` - no zero-bias (standard JPEG behavior)
     /// - `ZeroBiasConfig::Custom { .. }` - provide custom per-component tables
     ///
