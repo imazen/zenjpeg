@@ -207,6 +207,11 @@ pub struct StripProcessor {
     // === Allocation tracking ===
     /// Tracks all allocations made by this processor
     alloc_stats: crate::foundation::alloc::AllocationStats,
+
+    // === Optional preprocessing ===
+    /// Enable overshoot deringing (requires `mozjpeg-deringing` feature)
+    #[cfg(feature = "mozjpeg-deringing")]
+    deringing: bool,
 }
 
 impl StripProcessor {
@@ -472,6 +477,10 @@ impl StripProcessor {
 
             // Allocation tracking
             alloc_stats,
+
+            // Optional preprocessing
+            #[cfg(feature = "mozjpeg-deringing")]
+            deringing: false,
         })
     }
 
@@ -488,6 +497,16 @@ impl StripProcessor {
     /// the subsampling setting.
     pub fn set_xyb_mode(&mut self, enable: bool) {
         self.use_xyb = enable;
+    }
+
+    /// Enables or disables overshoot deringing.
+    ///
+    /// When enabled, hard edges (like text on white) are smoothed by allowing
+    /// values to overshoot beyond the maximum. This reduces ringing artifacts
+    /// while maintaining visual fidelity (overshoots are clamped on decode).
+    #[cfg(feature = "mozjpeg-deringing")]
+    pub fn set_deringing(&mut self, enable: bool) {
+        self.deringing = enable;
     }
 
     /// Returns whether XYB mode is enabled.
@@ -814,16 +833,32 @@ impl StripProcessor {
             self.pending_y_blocks[pending_idx]
                 .resize(start_idx + blocks_added, Block8x8f::default());
             let output = &mut self.pending_y_blocks[pending_idx][start_idx..];
+
+            // Get DC quant value for deringing (if enabled)
+            #[cfg(feature = "mozjpeg-deringing")]
+            let y_dc_quant = self
+                .quant
+                .as_ref()
+                .map(|q| q.y_quant.values[0])
+                .unwrap_or(16);
+
             let mut idx = 0;
             for local_by in 0..actual_strip_blocks_h {
                 for bx in 0..blocks_w {
                     // Extract 8x8 block from Y strip and DCT (wide-native path)
-                    let block = extract_block_from_strip_wide(
+                    let mut block = extract_block_from_strip_wide(
                         &self.y_strip[..y_size],
                         bx,
                         local_by,
                         padded_width,
                     );
+
+                    // Apply deringing if enabled
+                    #[cfg(feature = "mozjpeg-deringing")]
+                    if self.deringing {
+                        super::deringing::preprocess_deringing_block(&mut block, y_dc_quant);
+                    }
+
                     output[idx] = crate::encode::dct::simd::forward_dct_8x8_wide(&block);
                     idx += 1;
                 }

@@ -109,6 +109,9 @@ experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 # Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
 # Uses 15-bit fixed-point Professional mode (max error: 0.5 levels, invisible after JPEG quantization)
 yuv = ["dep:yuv"]
+# Mozjpeg-style overshoot deringing - reduces ringing artifacts on white backgrounds
+# Ported from mozjpeg's jcdctmgr.c overshoot algorithm
+mozjpeg-deringing = []
 
 [[bench]]
 name = "encode"
