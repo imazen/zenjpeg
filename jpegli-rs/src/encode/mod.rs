@@ -63,6 +63,13 @@ pub mod encoder_config;
 pub mod encoder_types;
 pub mod exif;
 
+/// Default quantization and zero-bias tables for customization.
+///
+/// This module exposes the internal default tables so users can modify them
+/// rather than creating tables from scratch.
+#[doc(hidden)]
+pub mod tables;
+
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
 pub mod v2;
@@ -79,7 +86,7 @@ pub use encoder_types::ParallelEncoding;
 #[allow(unused_imports)] // Public API re-exports
 pub use encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
-    XybSubsampling, YCbCrPlanes,
+    XybSubsampling, YCbCrPlanes, ZeroBiasConfig,
 };
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports

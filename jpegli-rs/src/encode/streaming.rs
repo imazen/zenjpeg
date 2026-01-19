@@ -40,6 +40,22 @@ use crate::quant::{self, CustomQuantMatrices, Quality, QuantTable, ZeroBiasParam
 use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
 use enough::{Stop, Unstoppable};
 
+/// Custom zero-bias configuration for streaming encoder.
+#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Custom tables are rarely used
+pub(crate) enum CustomZeroBias {
+    /// Use perceptual defaults (quality-adaptive)
+    Perceptual,
+    /// Disable zero-bias entirely
+    Disabled,
+    /// Custom per-component tables: (Y, Cb, Cr) where each is (mul[64], offset[64])
+    Custom {
+        luma: ([f32; 64], [f32; 64]),
+        cb: ([f32; 64], [f32; 64]),
+        cr: ([f32; 64], [f32; 64]),
+    },
+}
+
 /// Builder for creating a streaming encoder.
 ///
 /// Use [`StreamingEncoder::new()`] to start building.
@@ -61,6 +77,7 @@ pub struct StreamingEncoderBuilder {
     chroma_downsampling: ChromaDownsampling,
     restart_interval: u16,
     custom_quant_matrices: Option<CustomQuantMatrices>,
+    custom_zero_bias: CustomZeroBias,
     use_xyb: bool,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
@@ -87,6 +104,7 @@ impl StreamingEncoderBuilder {
             chroma_downsampling: ChromaDownsampling::Box,
             restart_interval: 0,
             custom_quant_matrices: None,
+            custom_zero_bias: CustomZeroBias::Perceptual,
             use_xyb: false,
             #[cfg(feature = "parallel")]
             parallel: false,
@@ -274,6 +292,16 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn custom_quant_matrices(mut self, custom: CustomQuantMatrices) -> Self {
         self.custom_quant_matrices = Some(custom);
+        self
+    }
+
+    /// Sets custom zero-bias configuration.
+    ///
+    /// Zero-bias controls how DCT coefficients are rounded toward zero during
+    /// quantization. This is an internal method used by the v2 encoder API.
+    #[must_use]
+    pub(crate) fn custom_zero_bias(mut self, config: CustomZeroBias) -> Self {
+        self.custom_zero_bias = config;
         self
     }
 
@@ -839,12 +867,40 @@ impl StreamingEncoder {
             )
         };
 
-        // Compute zero bias params
-        // Note: XYB uses YCbCr tables as approximation (see baseline.rs)
+        // Compute zero bias params based on config
         let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
-        let y_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 0);
-        let cb_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 1);
-        let cr_zero_bias = ZeroBiasParams::for_ycbcr(effective_distance, 2);
+        let (y_zero_bias, cb_zero_bias, cr_zero_bias) = match &builder.custom_zero_bias {
+            CustomZeroBias::Perceptual => {
+                // Use YCbCr zero bias tables for both YCbCr and XYB.
+                // Note: C++ uses 0.5 defaults for XYB, but our XYB pipeline has other
+                // differences that make YCbCr tables produce better results (smaller
+                // files, same quality). TODO: investigate XYB pipeline differences.
+                (
+                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                    ZeroBiasParams::for_ycbcr(effective_distance, 1),
+                    ZeroBiasParams::for_ycbcr(effective_distance, 2),
+                )
+            }
+            CustomZeroBias::Disabled => (
+                ZeroBiasParams::default(),
+                ZeroBiasParams::default(),
+                ZeroBiasParams::default(),
+            ),
+            CustomZeroBias::Custom { luma, cb, cr } => (
+                ZeroBiasParams {
+                    mul: luma.0,
+                    offset: luma.1,
+                },
+                ZeroBiasParams {
+                    mul: cb.0,
+                    offset: cb.1,
+                },
+                ZeroBiasParams {
+                    mul: cr.0,
+                    offset: cr.1,
+                },
+            ),
+        };
 
         processor.set_quant_tables(
             y_quant.clone(),

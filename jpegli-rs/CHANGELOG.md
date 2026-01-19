@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-01-18
+
+### Breaking Changes
+
+- **`QuantTableConfig` now has separate `cb` and `cr` fields** instead of shared `chroma`
+  - `CustomBase { luma, chroma }` → `CustomBase { luma, cb, cr }`
+  - `Exact { luma, chroma }` → `Exact { luma, cb, cr }`
+  - Allows independent control of blue and red chroma quantization
+
+### Added
+
+- **`ZeroBiasConfig` API** for controlling coefficient rounding during quantization
+  - `ZeroBiasConfig::Perceptual` (default) - quality-aware perceptual tuning
+  - `ZeroBiasConfig::Disabled` - no zero biasing
+  - `ZeroBiasConfig::Custom { luma, cb, cr }` - full control with per-component (mul, offset) arrays
+  - New `.zero_bias(config)` builder method on `EncoderConfig`
+
+- **`encoder::tables` module** exposing default quantization and zero-bias tables
+  - `BASE_QUANT_YCBCR`, `BASE_QUANT_XYB`, `BASE_QUANT_STD` - base quantization matrices
+  - `ZERO_BIAS_MUL_YCBCR_LQ/HQ`, `ZERO_BIAS_OFFSET_*` - zero-bias tables
+  - Helper functions: `luma_from_192()`, `cb_from_192()`, `cr_from_192()`, `pack_192()`
+  - Enables users to modify defaults rather than starting from scratch
+
 ## [0.7.1] - 2026-01-18
 
 ### Performance
