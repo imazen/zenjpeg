@@ -7,7 +7,7 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use jpegli::encode::dct::{aan_forward_dct_8x8, forward_dct_8x8};
+use jpegli::encode::dct::{aan_forward_dct_8x8, aan_forward_dct_8x8_simd, forward_dct_8x8};
 use std::time::Duration;
 
 /// Generate test blocks with realistic patterns
@@ -51,11 +51,20 @@ fn dct_bench(c: &mut Criterion) {
         })
     });
 
-    // Benchmark AAN DCT
-    group.bench_function("aan", |b| {
+    // Benchmark AAN DCT (scalar)
+    group.bench_function("aan_scalar", |b| {
         b.iter(|| {
             for block in &blocks {
                 black_box(aan_forward_dct_8x8(black_box(block)));
+            }
+        })
+    });
+
+    // Benchmark AAN DCT (SIMD f32x8)
+    group.bench_function("aan_simd", |b| {
+        b.iter(|| {
+            for block in &blocks {
+                black_box(aan_forward_dct_8x8_simd(black_box(block)));
             }
         })
     });
@@ -75,8 +84,12 @@ fn dct_single_block_bench(c: &mut Criterion) {
         b.iter(|| black_box(forward_dct_8x8(black_box(&block))))
     });
 
-    group.bench_function("aan", |b| {
+    group.bench_function("aan_scalar", |b| {
         b.iter(|| black_box(aan_forward_dct_8x8(black_box(&block))))
+    });
+
+    group.bench_function("aan_simd", |b| {
+        b.iter(|| black_box(aan_forward_dct_8x8_simd(black_box(&block))))
     });
 
     group.finish();
