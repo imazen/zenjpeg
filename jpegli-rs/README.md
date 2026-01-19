@@ -322,13 +322,13 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-jpegli-rs = "0.7"
+jpegli-rs = "0.8"
 
 # Minimal (no CMS):
-jpegli-rs = { version = "0.7", default-features = false }
+jpegli-rs = { version = "0.8", default-features = false }
 
 # With unsafe SIMD (x86_64 only):
-jpegli-rs = { version = "0.7", features = ["unsafe_simd"] }
+jpegli-rs = { version = "0.8", features = ["unsafe_simd"] }
 ```
 
 ## Encoder Status

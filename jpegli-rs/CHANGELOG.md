@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.1] - 2026-01-19
 
+### Added
+
+- **`YCbCrPlanarEncoder` now fully implemented** for video pipeline integration
+  - Previously `finish()` returned an error - was a stub
+  - Uses streaming architecture with internal partial strip buffering
+  - Push any number of rows - buffers internally until MCU-aligned (8 rows for 4:4:4, 16 for 4:2:0)
+  - Automatic chroma downsampling when pushing full-resolution Cb/Cr planes
+  - Supports ICC profile, EXIF, and XMP metadata injection
+  - 13 comprehensive tests added
+
 ### Fixed
 
 - **`ZeroBiasConfig::Default` now properly auto-selects based on color mode**
