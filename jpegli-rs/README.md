@@ -28,6 +28,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 
 - **Pure Rust** - No C/C++ dependencies, builds anywhere Rust does
 - **Perceptual optimization** - Adaptive quantization for better visual quality at smaller sizes
+- **Overshoot deringing** - Eliminates ringing artifacts on documents and graphics (enabled by default)
 - **Backward compatible** - Produces standard JPEG files readable by any decoder
 - **SIMD accelerated** - Portable SIMD via `wide` crate
 - **Streaming API** - Memory-efficient row-by-row encoding
@@ -109,6 +110,7 @@ Choose one constructor based on desired color mode:
 |--------|-------------|---------|
 | `.progressive(bool)` | Progressive JPEG (~3% smaller) | `false` |
 | `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
+| `.deringing(bool)` | Overshoot deringing for documents/graphics | `true` |
 | `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |
 | `.icc_profile(bytes)` | Attach ICC profile | None |
 | `.exif(exif)` | Embed EXIF metadata | None |
@@ -502,6 +504,51 @@ tables.perturb_quant(c, k, delta)   // Add delta to coefficient
 tables.blend(&other, t)              // Linear interpolation (0.0-1.0)
 tables.quant.scale_component(c, f)   // Scale entire component
 tables.quant.scale_all(f)            // Scale all coefficients
+```
+
+## Overshoot Deringing
+
+**Enabled by default.** This technique was pioneered by [@kornel](https://github.com/kornelski)
+in [mozjpeg](https://github.com/mozilla/mozjpeg) and significantly improves quality for
+documents, screenshots, and graphics without any quality penalty for photographic content.
+
+### The Problem
+
+JPEG uses DCT (Discrete Cosine Transform) which represents pixel blocks as sums of cosine
+waves. Hard edges—like text on a white background—create high-frequency components that
+are difficult to represent accurately. The result is "ringing": oscillating artifacts that
+look like halos or waves emanating from sharp transitions.
+
+### The Insight
+
+JPEG decoders clamp output values to 0-255. This means to display white (255), any encoded
+value ≥255 works identically after clamping. The encoder can exploit this "headroom" above
+the displayable range.
+
+### The Solution
+
+Instead of encoding a flat plateau at the maximum value, deringing creates a smooth curve
+that "overshoots" above the maximum:
+- The peak (above 255) gets clamped to 255 on decode
+- The result looks identical to the original
+- But the smooth curve compresses much better with fewer artifacts!
+
+This is analogous to "anti-clipping" in audio processing.
+
+### When It Helps Most
+
+- Documents and screenshots with white backgrounds
+- Text and graphics with hard edges
+- Any image with saturated regions (pixels at 0 or 255)
+- UI elements with sharp corners
+
+### Usage
+
+Deringing is **on by default**. To disable it (not recommended):
+
+```rust
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    .deringing(false);  // Disable deringing
 ```
 
 ## C++ Parity Status

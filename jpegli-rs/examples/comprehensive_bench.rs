@@ -57,8 +57,7 @@ fn bench_encode(
     quality: f32,
     iterations: usize,
 ) -> BenchResult {
-    let config = EncoderConfig::ycbcr(quality, subsampling)
-        .progressive(progressive);
+    let config = EncoderConfig::ycbcr(quality, subsampling).progressive(progressive);
 
     // Warmup
     for _ in 0..2 {

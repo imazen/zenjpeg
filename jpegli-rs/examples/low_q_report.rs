@@ -227,10 +227,8 @@ fn main() {
         }
 
         // Rust XYB
-        let xyb_config = jpegli::encoder::EncoderConfig::xyb(
-            q as f32,
-            jpegli::encoder::XybSubsampling::Full,
-        );
+        let xyb_config =
+            jpegli::encoder::EncoderConfig::xyb(q as f32, jpegli::encoder::XybSubsampling::Full);
         let xyb_enc = xyb_config.encode_from_bytes(
             width as u32,
             height as u32,

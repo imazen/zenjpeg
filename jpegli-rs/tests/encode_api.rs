@@ -291,7 +291,8 @@ fn test_encode_optimized_huffman() {
     let config_opt = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).optimize_huffman(true);
     let jpeg_opt = encode_rgb(256, 256, &img.pixels, &config_opt).expect("optimized failed");
 
-    let config_fixed = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).optimize_huffman(false);
+    let config_fixed =
+        EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).optimize_huffman(false);
     let jpeg_fixed = encode_rgb(256, 256, &img.pixels, &config_fixed).expect("fixed failed");
 
     // Optimized should be smaller or equal
@@ -531,8 +532,7 @@ fn test_xyb_has_app14_adobe_marker() {
 #[test]
 fn test_ycbcr_no_app14_marker() {
     let img = generate_gradient_d(64, 64, 3);
-    let config =
-        EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     // YCbCr mode should NOT have APP14 marker (JFIF is sufficient)
