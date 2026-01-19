@@ -1,14 +1,13 @@
 //! Tests that deringing improves quality on synthetic edge images.
 //!
-//! These tests verify that mozjpeg-style deringing reduces artifacts on images
-//! with sharp black/white transitions.
-
-#![cfg(feature = "mozjpeg-deringing")]
+//! These tests verify that the deringing algorithm (pioneered by @kornel in mozjpeg)
+//! reduces artifacts on images with sharp black/white transitions.
+//! Deringing is enabled by default in jpegli-rs.
 
 use dssim::Dssim;
 use jpegli::{
     decoder::Decoder,
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+    encoder::{EncoderConfig, PixelLayout},
     types::PixelFormat,
 };
 
@@ -46,8 +45,8 @@ fn encode_gray_with_deringing(
     quality: f32,
     deringing: bool,
 ) -> Vec<u8> {
-    let mut config = EncoderConfig::new(quality, ChromaSubsampling::None);
-    config = config.deringing(deringing);
+    let config = EncoderConfig::grayscale(quality)
+        .deringing(deringing);
 
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)

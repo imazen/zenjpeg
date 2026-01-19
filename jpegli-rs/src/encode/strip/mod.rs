@@ -209,8 +209,7 @@ pub struct StripProcessor {
     alloc_stats: crate::foundation::alloc::AllocationStats,
 
     // === Optional preprocessing ===
-    /// Enable overshoot deringing (requires `mozjpeg-deringing` feature)
-    #[cfg(feature = "mozjpeg-deringing")]
+    /// Enable overshoot deringing (on by default)
     deringing: bool,
 }
 
@@ -478,9 +477,8 @@ impl StripProcessor {
             // Allocation tracking
             alloc_stats,
 
-            // Optional preprocessing
-            #[cfg(feature = "mozjpeg-deringing")]
-            deringing: false,
+            // Optional preprocessing (deringing on by default)
+            deringing: true,
         })
     }
 
@@ -499,12 +497,13 @@ impl StripProcessor {
         self.use_xyb = enable;
     }
 
-    /// Enables or disables overshoot deringing.
+    /// Enables or disables overshoot deringing (on by default).
     ///
     /// When enabled, hard edges (like text on white) are smoothed by allowing
     /// values to overshoot beyond the maximum. This reduces ringing artifacts
     /// while maintaining visual fidelity (overshoots are clamped on decode).
-    #[cfg(feature = "mozjpeg-deringing")]
+    ///
+    /// This technique was pioneered by @kornel in mozjpeg.
     pub fn set_deringing(&mut self, enable: bool) {
         self.deringing = enable;
     }
@@ -835,7 +834,6 @@ impl StripProcessor {
             let output = &mut self.pending_y_blocks[pending_idx][start_idx..];
 
             // Get DC quant value for deringing (if enabled)
-            #[cfg(feature = "mozjpeg-deringing")]
             let y_dc_quant = self
                 .quant
                 .as_ref()
@@ -853,8 +851,7 @@ impl StripProcessor {
                         padded_width,
                     );
 
-                    // Apply deringing if enabled
-                    #[cfg(feature = "mozjpeg-deringing")]
+                    // Apply deringing if enabled (on by default)
                     if self.deringing {
                         super::deringing::preprocess_deringing_block(&mut block, y_dc_quant);
                     }

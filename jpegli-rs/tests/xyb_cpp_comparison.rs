@@ -1,7 +1,7 @@
 //! Test XYB mode output against C++ jpegli reference.
 #![cfg(feature = "ffi-tests")]
 
-use jpegli::encoder::{ChromaSubsampling, XybSubsampling};
+use jpegli::encoder::XybSubsampling;
 
 use std::fs;
 use std::process::Command;

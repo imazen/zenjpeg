@@ -540,8 +540,7 @@ fn print_all_hashes() {
 fn print_single_hash() {
     let (rgb, width, height) = load_frymire();
 
-    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
-        .optimize_huffman(true);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None).optimize_huffman(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

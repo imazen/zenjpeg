@@ -51,10 +51,9 @@ pub(crate) mod linear_lut;
 
 /// Overshoot deringing for reducing ringing artifacts on white backgrounds.
 ///
-/// This module implements mozjpeg's deringing algorithm which smooths hard edges
-/// to reduce visible ringing artifacts, especially on white backgrounds.
-/// Requires the `mozjpeg-deringing` feature.
-#[cfg(feature = "mozjpeg-deringing")]
+/// This module implements the deringing algorithm pioneered by @kornel in mozjpeg.
+/// It smooths hard edges to reduce visible ringing artifacts, especially on white
+/// backgrounds. Enabled by default with no quality penalty for photographic content.
 pub mod deringing;
 #[cfg(feature = "parallel")]
 #[doc(hidden)]

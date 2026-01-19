@@ -60,8 +60,7 @@ fn test_all_subsampling_progressive() {
 
         let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-        let config = EncoderConfig::ycbcr(90.0, subsampling)
-            .progressive(true);
+        let config = EncoderConfig::ycbcr(90.0, subsampling).progressive(true);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
@@ -104,8 +103,7 @@ fn test_progressive_subsampling_various_sizes() {
                 .map(|i| ((i * 7) % 256) as u8)
                 .collect();
 
-            let config = EncoderConfig::ycbcr(85.0, *subsampling)
-                .progressive(true);
+            let config = EncoderConfig::ycbcr(85.0, *subsampling).progressive(true);
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
                 .expect("encoder setup");

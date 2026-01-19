@@ -142,8 +142,7 @@ fn run_test(test: EncoderTest) -> TestResult {
         EncoderConfig::xyb(test.quality, XybSubsampling::Full)
             .optimize_huffman(test.optimize_huffman)
     } else {
-        EncoderConfig::ycbcr(test.quality, test.subsampling)
-            .optimize_huffman(test.optimize_huffman)
+        EncoderConfig::ycbcr(test.quality, test.subsampling).optimize_huffman(test.optimize_huffman)
     };
 
     // Get estimate and ceiling

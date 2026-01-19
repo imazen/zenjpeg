@@ -334,7 +334,11 @@ impl EncodingTables {
             quant,
             zero_bias_mul,
             zero_bias_offset_dc: [0.0, 0.0, 0.0],
-            zero_bias_offset_ac: [ZERO_BIAS_OFFSET_XYB, ZERO_BIAS_OFFSET_XYB, ZERO_BIAS_OFFSET_XYB],
+            zero_bias_offset_ac: [
+                ZERO_BIAS_OFFSET_XYB,
+                ZERO_BIAS_OFFSET_XYB,
+                ZERO_BIAS_OFFSET_XYB,
+            ],
             scaling: ScalingParams::default_xyb(),
         }
     }
@@ -504,7 +508,7 @@ pub mod dct {
     /// DC first, then low frequencies (diagonals), then high frequencies.
     /// Useful for prioritizing search over the most impactful coefficients.
     pub const IMPORTANCE_ORDER: [usize; 64] = [
-        0,  // DC - most important
+        0, // DC - most important
         1, 8, // First diagonal (AC01, AC10)
         16, 9, 2, // Second diagonal
         3, 10, 17, 24, // Third diagonal
@@ -563,7 +567,10 @@ pub mod dct {
                 assert!(!seen[k], "Duplicate index {} in IMPORTANCE_ORDER", k);
                 seen[k] = true;
             }
-            assert!(seen.iter().all(|&s| s), "Missing indices in IMPORTANCE_ORDER");
+            assert!(
+                seen.iter().all(|&s| s),
+                "Missing indices in IMPORTANCE_ORDER"
+            );
         }
     }
 }
