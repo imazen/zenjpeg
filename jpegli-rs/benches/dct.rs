@@ -4,10 +4,13 @@
 //!
 //! ```bash
 //! cargo bench --bench dct
+//! cargo bench --bench dct --features pulp  # Include pulp implementation
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use jpegli::encode::dct::{aan_forward_dct_8x8, aan_forward_dct_8x8_simd, forward_dct_8x8};
+#[cfg(feature = "pulp")]
+use jpegli::encode::pulp_kernels::aan_dct_2d_pulp;
 use std::time::Duration;
 
 /// Generate test blocks with realistic patterns
@@ -69,6 +72,16 @@ fn dct_bench(c: &mut Criterion) {
         })
     });
 
+    // Benchmark AAN DCT (pulp - proper runtime dispatch)
+    #[cfg(feature = "pulp")]
+    group.bench_function("aan_pulp", |b| {
+        b.iter(|| {
+            for block in &blocks {
+                black_box(aan_dct_2d_pulp(black_box(block)));
+            }
+        })
+    });
+
     group.finish();
 }
 
@@ -90,6 +103,11 @@ fn dct_single_block_bench(c: &mut Criterion) {
 
     group.bench_function("aan_simd", |b| {
         b.iter(|| black_box(aan_forward_dct_8x8_simd(black_box(&block))))
+    });
+
+    #[cfg(feature = "pulp")]
+    group.bench_function("aan_pulp", |b| {
+        b.iter(|| black_box(aan_dct_2d_pulp(black_box(&block))))
     });
 
     group.finish();

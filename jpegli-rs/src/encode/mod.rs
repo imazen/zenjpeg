@@ -39,6 +39,9 @@ mod blocks;
 pub mod chroma;
 #[doc(hidden)]
 pub mod dct;
+#[cfg(feature = "pulp")]
+#[doc(hidden)]
+pub mod pulp_kernels;
 mod progressive;
 #[doc(hidden)]
 pub mod scan_script;

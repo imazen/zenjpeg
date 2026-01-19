@@ -58,6 +58,7 @@ libloading = "0.8"
 # Runtime CPU feature detection and dispatch
 multiversion = "0.8"
 multiversed = "0.1"
+pulp = { version = "0.22.2", features = ["macro"] }
 
 # no_std compatible lazy initialization
 spin = "0.9"

@@ -23,6 +23,7 @@ rgb = { workspace = true }
 imgref = { workspace = true }
 multiversion = { workspace = true }
 multiversed = { workspace = true }
+pulp = { workspace = true, optional = true }  # Generic SIMD with runtime dispatch
 enough = { workspace = true }
 spin = { workspace = true }  # no_std lazy initialization (for huffman tables)
 linear-srgb = { workspace = true }  # Fast linear↔sRGB conversion
