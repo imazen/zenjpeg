@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-01-19
+
+### Fixed
+
+- **`ZeroBiasConfig::Default` now properly auto-selects based on color mode**
+  - Previously always used YCbCr perceptual tables even in XYB mode
+  - Now correctly uses: YCbCr tables for YCbCr mode, XYB tables (0.5/0.5) for XYB mode
+  - This matches C++ jpegli behavior exactly
+
 ## [0.8.0] - 2026-01-18
 
 ### Breaking Changes
