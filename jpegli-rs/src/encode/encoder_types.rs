@@ -290,11 +290,23 @@ pub enum QuantTableConfig {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)] // Custom tables are rarely used
 pub enum ZeroBiasConfig {
-    /// Use jpegli's perceptual zero-bias tables (default).
+    /// Auto-select zero-bias based on color mode (default).
+    ///
+    /// - YCbCr mode: uses quality-adaptive perceptual tables
+    /// - XYB mode: uses 0.5 for all coefficients (matches C++ jpegli)
+    #[default]
+    Default,
+
+    /// Force YCbCr perceptual tables regardless of color mode.
+    ///
     /// These are quality-adaptive: they blend between HQ and LQ tables
     /// based on the effective butteraugli distance.
-    #[default]
-    Perceptual,
+    YCbCr,
+
+    /// Force XYB zero-bias (0.5 multiplier, 0.5 offset for all coefficients).
+    ///
+    /// This is what C++ jpegli uses for XYB mode.
+    Xyb,
 
     /// Disable zero-bias (all multipliers = 0, all offsets = 0).
     /// This matches standard JPEG behavior without adaptive quantization.
@@ -348,17 +360,27 @@ impl ZeroBiasConfig {
     ///
     /// # Arguments
     /// * `component` - 0 for Y, 1 for Cb, 2 for Cr
-    /// * `distance` - Butteraugli distance (only used for `Perceptual` mode)
+    /// * `distance` - Butteraugli distance (used for YCbCr perceptual tables)
+    /// * `is_xyb` - Whether encoding in XYB mode (used for `Default` variant)
     #[must_use]
     pub(crate) fn to_zero_bias_params(
         &self,
         component: usize,
         distance: f32,
+        is_xyb: bool,
     ) -> crate::quant::ZeroBiasParams {
         use crate::quant::ZeroBiasParams;
 
         match self {
-            ZeroBiasConfig::Perceptual => ZeroBiasParams::for_ycbcr(distance, component),
+            ZeroBiasConfig::Default => {
+                if is_xyb {
+                    ZeroBiasParams::for_xyb()
+                } else {
+                    ZeroBiasParams::for_ycbcr(distance, component)
+                }
+            }
+            ZeroBiasConfig::YCbCr => ZeroBiasParams::for_ycbcr(distance, component),
+            ZeroBiasConfig::Xyb => ZeroBiasParams::for_xyb(),
             ZeroBiasConfig::Disabled => ZeroBiasParams::default(),
             ZeroBiasConfig::Custom { luma, cb, cr } => {
                 let (mul, offset) = match component {

@@ -44,8 +44,12 @@ use enough::{Stop, Unstoppable};
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)] // Custom tables are rarely used
 pub(crate) enum CustomZeroBias {
-    /// Use perceptual defaults (quality-adaptive)
-    Perceptual,
+    /// Auto-select based on color mode (YCbCr or XYB)
+    Default,
+    /// Force YCbCr perceptual tables (quality-adaptive)
+    YCbCr,
+    /// Force XYB 0.5 tables
+    Xyb,
     /// Disable zero-bias entirely
     Disabled,
     /// Custom per-component tables: (Y, Cb, Cr) where each is (mul[64], offset[64])
@@ -104,7 +108,7 @@ impl StreamingEncoderBuilder {
             chroma_downsampling: ChromaDownsampling::Box,
             restart_interval: 0,
             custom_quant_matrices: None,
-            custom_zero_bias: CustomZeroBias::Perceptual,
+            custom_zero_bias: CustomZeroBias::Default,
             use_xyb: false,
             #[cfg(feature = "parallel")]
             parallel: false,
@@ -867,20 +871,36 @@ impl StreamingEncoder {
             )
         };
 
-        // Compute zero bias params based on config
+        // Compute zero bias params based on config and color mode
         let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
         let (y_zero_bias, cb_zero_bias, cr_zero_bias) = match &builder.custom_zero_bias {
-            CustomZeroBias::Perceptual => {
-                // Use YCbCr zero bias tables for both YCbCr and XYB.
-                // Note: C++ uses 0.5 defaults for XYB, but our XYB pipeline has other
-                // differences that make YCbCr tables produce better results (smaller
-                // files, same quality). TODO: investigate XYB pipeline differences.
-                (
-                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
-                    ZeroBiasParams::for_ycbcr(effective_distance, 1),
-                    ZeroBiasParams::for_ycbcr(effective_distance, 2),
-                )
+            CustomZeroBias::Default => {
+                if builder.use_xyb {
+                    // XYB mode: use C++ jpegli's 0.5 defaults for all components
+                    (
+                        ZeroBiasParams::for_xyb(),
+                        ZeroBiasParams::for_xyb(),
+                        ZeroBiasParams::for_xyb(),
+                    )
+                } else {
+                    // YCbCr mode: use quality-adaptive perceptual tables
+                    (
+                        ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                        ZeroBiasParams::for_ycbcr(effective_distance, 1),
+                        ZeroBiasParams::for_ycbcr(effective_distance, 2),
+                    )
+                }
             }
+            CustomZeroBias::YCbCr => (
+                ZeroBiasParams::for_ycbcr(effective_distance, 0),
+                ZeroBiasParams::for_ycbcr(effective_distance, 1),
+                ZeroBiasParams::for_ycbcr(effective_distance, 2),
+            ),
+            CustomZeroBias::Xyb => (
+                ZeroBiasParams::for_xyb(),
+                ZeroBiasParams::for_xyb(),
+                ZeroBiasParams::for_xyb(),
+            ),
             CustomZeroBias::Disabled => (
                 ZeroBiasParams::default(),
                 ZeroBiasParams::default(),

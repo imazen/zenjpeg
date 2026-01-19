@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-01-18
+
+### Breaking Changes
+
+- **`ZeroBiasConfig` enum redesigned for clarity**
+  - `Perceptual` renamed to `Default` - auto-selects based on color mode
+  - New `YCbCr` variant - force YCbCr perceptual tables regardless of mode
+  - New `Xyb` variant - force XYB 0.5 tables regardless of mode
+  - `Disabled` and `Custom` remain unchanged
+  - **Migration**: Replace `ZeroBiasConfig::Perceptual` with `ZeroBiasConfig::Default`
+
+### Fixed
+
+- **XYB mode now uses correct zero-bias (0.5) by default**
+  - Previously `Perceptual` (now `Default`) always used YCbCr tables even in XYB mode
+  - Now `Default` automatically uses XYB 0.5 tables when encoding in XYB mode
+  - Matches C++ jpegli behavior
+
 ## [0.7.3] - 2026-01-18
 
 ### Fixed
