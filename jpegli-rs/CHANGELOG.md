@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-01-18
+
+### Fixed
+
+- **Critical XYB color conversion bug in SIMD inplace functions**
+  - Three SIMD inplace functions had incorrect scaling formulas causing severe color distortion
+  - Affected: `srgb_to_scaled_xyb_planes_simd_inplace`, `srgb_to_scaled_xyb_planes_simd_rgba_inplace`, `srgb_to_scaled_xyb_planes_simd_bgra_inplace`
+  - Bug: Used `val * scale + offset` instead of correct `(val + offset) * scale`
+  - B channel additionally missing `- y` term: used `b * scale + offset` instead of `(b - y + offset) * scale`
+  - Impact: X channel error up to 33%, B channel (blue) significantly darkened
+  - Non-inplace SIMD functions (`srgb_to_scaled_xyb_planes_simd`, etc.) were already correct
+
+### Added
+
+- Unit tests for B channel scaling verification (`test_b_channel_*`)
+  - `test_b_channel_scaling_formula` - verifies correct scaling math
+  - `test_b_channel_simd_inplace_vs_scalar` - SIMD matches scalar reference
+  - `test_b_channel_rgba_bgra_inplace_vs_scalar` - RGBA/BGRA variants
+  - `test_b_channel_blue_heavy_colors` - tests where bug was most visible
+
 ## [0.7.2] - 2026-01-18
 
 ### Breaking Changes

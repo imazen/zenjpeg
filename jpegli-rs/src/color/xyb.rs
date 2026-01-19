@@ -765,10 +765,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_inplace(
         let y_out = half * (gamma0 + gamma1);
         let b_out = gamma2;
 
-        // Apply scaling to [0, 1] range
-        let scaled_x = x_out * scale_x + offset_x;
-        let scaled_y = y_out * scale_y + offset_y;
-        let scaled_b = b_out * scale_b + offset_b;
+        // Apply XYB scaling: X/Y use (val + offset) * scale, B uses (b - y + offset) * scale
+        let scaled_x = (x_out + offset_x) * scale_x;
+        let scaled_y = (y_out + offset_y) * scale_y;
+        let scaled_b = (b_out - y_out + offset_b) * scale_b;
 
         // Store results
         let x_arr: [f32; 8] = scaled_x.into();
@@ -886,9 +886,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_rgba_inplace(
         let y_out = half * (gamma0 + gamma1);
         let b_out = gamma2;
 
-        let scaled_x = x_out * scale_x + offset_x;
-        let scaled_y = y_out * scale_y + offset_y;
-        let scaled_b = b_out * scale_b + offset_b;
+        // Apply XYB scaling: X/Y use (val + offset) * scale, B uses (b - y + offset) * scale
+        let scaled_x = (x_out + offset_x) * scale_x;
+        let scaled_y = (y_out + offset_y) * scale_y;
+        let scaled_b = (b_out - y_out + offset_b) * scale_b;
 
         let x_arr: [f32; 8] = scaled_x.into();
         let y_arr: [f32; 8] = scaled_y.into();
@@ -1006,9 +1007,10 @@ pub fn srgb_to_scaled_xyb_planes_simd_bgra_inplace(
         let y_out = half * (gamma0 + gamma1);
         let b_out = gamma2;
 
-        let scaled_x = x_out * scale_x + offset_x;
-        let scaled_y = y_out * scale_y + offset_y;
-        let scaled_b = b_out * scale_b + offset_b;
+        // Apply XYB scaling: X/Y use (val + offset) * scale, B uses (b - y + offset) * scale
+        let scaled_x = (x_out + offset_x) * scale_x;
+        let scaled_y = (y_out + offset_y) * scale_y;
+        let scaled_b = (b_out - y_out + offset_b) * scale_b;
 
         let x_arr: [f32; 8] = scaled_x.into();
         let y_arr: [f32; 8] = scaled_y.into();
@@ -2356,6 +2358,269 @@ mod tests {
                 i,
                 ref_b[i],
                 bgra_b[i]
+            );
+        }
+    }
+
+    // ========================================================================
+    // B Channel Scaling Tests
+    // ========================================================================
+    // These tests specifically verify the B channel scaling formula:
+    // scaled_b = (b - y + offset) * scale
+    // NOT: scaled_b = b * scale + offset (which was a bug in SIMD inplace functions)
+
+    #[test]
+    fn test_b_channel_scaling_formula() {
+        // Test that B channel scaling uses the correct formula: (b - y + offset) * scale
+        // This catches the bug where SIMD used: b * scale + offset
+        let test_cases = [
+            // (x, y, b) values in XYB space
+            (0.0f32, 0.5f32, 0.3f32), // B < Y: should give negative component
+            (0.0, 0.3, 0.5),          // B > Y: should give positive component
+            (0.0, 0.5, 0.5),          // B == Y: offset only
+            (0.0, 0.8, 0.2),          // Large Y-B difference
+            (0.0, 0.1, 0.9),          // Large B-Y difference
+        ];
+
+        for (x, y, b) in test_cases {
+            let (scaled_x, scaled_y, scaled_b) = scale_xyb(x, y, b);
+
+            // Manual calculation using the correct formula
+            let expected_b = (b - y + SCALED_XYB_OFFSET[2]) * SCALED_XYB_SCALE[2];
+            let expected_x = (x + SCALED_XYB_OFFSET[0]) * SCALED_XYB_SCALE[0];
+            let expected_y = (y + SCALED_XYB_OFFSET[1]) * SCALED_XYB_SCALE[1];
+
+            assert!(
+                (scaled_x - expected_x).abs() < 1e-6,
+                "X mismatch for ({},{},{}): got {}, expected {}",
+                x,
+                y,
+                b,
+                scaled_x,
+                expected_x
+            );
+            assert!(
+                (scaled_y - expected_y).abs() < 1e-6,
+                "Y mismatch for ({},{},{}): got {}, expected {}",
+                x,
+                y,
+                b,
+                scaled_y,
+                expected_y
+            );
+            assert!(
+                (scaled_b - expected_b).abs() < 1e-6,
+                "B mismatch for ({},{},{}): got {}, expected {}",
+                x,
+                y,
+                b,
+                scaled_b,
+                expected_b
+            );
+        }
+    }
+
+    #[test]
+    fn test_b_channel_simd_inplace_vs_scalar() {
+        // Test that SIMD inplace functions match scalar for B channel
+        // This specifically catches the bug where inplace functions used wrong formula
+
+        // Create test data with 16 pixels to ensure SIMD path is used
+        let rgb_data: Vec<u8> = vec![
+            255, 0, 0, // Red: high Y, low B
+            0, 255, 0, // Green: high Y, medium B
+            0, 0, 255, // Blue: low Y, high B
+            128, 128, 128, // Gray
+            255, 255, 255, // White
+            0, 0, 0, // Black
+            200, 100, 50, // Orange-ish
+            50, 100, 200, // Blue-ish
+            // 8 more for SIMD
+            255, 128, 0, 0, 128, 255, 64, 64, 64, 192, 192, 192, 100, 200, 100, 200, 100, 200, 50,
+            150, 250, 250, 150, 50,
+        ];
+        let num_pixels = 16;
+
+        // Get reference from scalar path
+        let mut ref_x = vec![0.0f32; num_pixels];
+        let mut ref_y = vec![0.0f32; num_pixels];
+        let mut ref_b = vec![0.0f32; num_pixels];
+        for i in 0..num_pixels {
+            let (x, y, b) =
+                srgb_to_scaled_xyb(rgb_data[i * 3], rgb_data[i * 3 + 1], rgb_data[i * 3 + 2]);
+            ref_x[i] = x;
+            ref_y[i] = y;
+            ref_b[i] = b;
+        }
+
+        // Test RGB inplace
+        let mut x_plane = vec![0.0f32; num_pixels];
+        let mut y_plane = vec![0.0f32; num_pixels];
+        let mut b_plane = vec![0.0f32; num_pixels];
+        srgb_to_scaled_xyb_planes_simd_inplace(
+            &rgb_data,
+            &mut x_plane,
+            &mut y_plane,
+            &mut b_plane,
+            num_pixels,
+        );
+
+        for i in 0..num_pixels {
+            let x_err = (ref_x[i] - x_plane[i]).abs();
+            let y_err = (ref_y[i] - y_plane[i]).abs();
+            let b_err = (ref_b[i] - b_plane[i]).abs();
+
+            assert!(
+                x_err < 1e-5,
+                "RGB inplace X mismatch at pixel {}: ref={}, got={}, err={}",
+                i,
+                ref_x[i],
+                x_plane[i],
+                x_err
+            );
+            assert!(
+                y_err < 1e-5,
+                "RGB inplace Y mismatch at pixel {}: ref={}, got={}, err={}",
+                i,
+                ref_y[i],
+                y_plane[i],
+                y_err
+            );
+            assert!(
+                b_err < 1e-5,
+                "RGB inplace B mismatch at pixel {}: ref={}, got={}, err={}",
+                i,
+                ref_b[i],
+                b_plane[i],
+                b_err
+            );
+        }
+    }
+
+    #[test]
+    fn test_b_channel_rgba_bgra_inplace_vs_scalar() {
+        // Test RGBA and BGRA inplace functions for B channel correctness
+
+        let num_pixels = 16;
+
+        // Create RGB data
+        let rgb_data: Vec<u8> = (0..num_pixels * 3)
+            .map(|i| ((i * 17) % 256) as u8)
+            .collect();
+
+        // Create RGBA and BGRA from RGB
+        let mut rgba_data = Vec::with_capacity(num_pixels * 4);
+        let mut bgra_data = Vec::with_capacity(num_pixels * 4);
+        for i in 0..num_pixels {
+            let r = rgb_data[i * 3];
+            let g = rgb_data[i * 3 + 1];
+            let b = rgb_data[i * 3 + 2];
+            rgba_data.extend_from_slice(&[r, g, b, 255]);
+            bgra_data.extend_from_slice(&[b, g, r, 255]);
+        }
+
+        // Get reference from scalar
+        let mut ref_x = vec![0.0f32; num_pixels];
+        let mut ref_y = vec![0.0f32; num_pixels];
+        let mut ref_b = vec![0.0f32; num_pixels];
+        for i in 0..num_pixels {
+            let (x, y, b) =
+                srgb_to_scaled_xyb(rgb_data[i * 3], rgb_data[i * 3 + 1], rgb_data[i * 3 + 2]);
+            ref_x[i] = x;
+            ref_y[i] = y;
+            ref_b[i] = b;
+        }
+
+        // Test RGBA inplace
+        let mut x_plane = vec![0.0f32; num_pixels];
+        let mut y_plane = vec![0.0f32; num_pixels];
+        let mut b_plane = vec![0.0f32; num_pixels];
+        srgb_to_scaled_xyb_planes_simd_rgba_inplace(
+            &rgba_data,
+            &mut x_plane,
+            &mut y_plane,
+            &mut b_plane,
+            num_pixels,
+        );
+
+        for i in 0..num_pixels {
+            assert!(
+                (ref_b[i] - b_plane[i]).abs() < 1e-5,
+                "RGBA inplace B mismatch at {}: ref={}, got={}",
+                i,
+                ref_b[i],
+                b_plane[i]
+            );
+        }
+
+        // Test BGRA inplace
+        let mut x_plane = vec![0.0f32; num_pixels];
+        let mut y_plane = vec![0.0f32; num_pixels];
+        let mut b_plane = vec![0.0f32; num_pixels];
+        srgb_to_scaled_xyb_planes_simd_bgra_inplace(
+            &bgra_data,
+            &mut x_plane,
+            &mut y_plane,
+            &mut b_plane,
+            num_pixels,
+        );
+
+        for i in 0..num_pixels {
+            assert!(
+                (ref_b[i] - b_plane[i]).abs() < 1e-5,
+                "BGRA inplace B mismatch at {}: ref={}, got={}",
+                i,
+                ref_b[i],
+                b_plane[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_b_channel_blue_heavy_colors() {
+        // Test colors where B channel should be significantly different from Y
+        // These would expose the bug most clearly
+        let blue_heavy_colors = [
+            [0u8, 0, 255], // Pure blue: low Y, high B
+            [50, 50, 200], // Blue-ish gray
+            [0, 100, 255], // Cyan-blue
+            [100, 0, 255], // Purple-blue
+        ];
+
+        for [r, g, b] in blue_heavy_colors {
+            // Get scalar reference
+            let (_ref_x, _ref_y, ref_b) = srgb_to_scaled_xyb(r, g, b);
+
+            // Get intermediate XYB (unscaled) to verify the relationship
+            let (_, y_xyb, b_xyb) = srgb_to_xyb(r, g, b);
+
+            // For blue-heavy colors, B should be > Y in XYB space
+            // This means (b - y) is positive, giving larger scaled_b
+
+            // Verify scaling produces different result than wrong formula
+            let wrong_b = b_xyb * SCALED_XYB_SCALE[2] + SCALED_XYB_OFFSET[2];
+            let correct_b = (b_xyb - y_xyb + SCALED_XYB_OFFSET[2]) * SCALED_XYB_SCALE[2];
+
+            // The wrong formula should give different results
+            assert!(
+                (wrong_b - correct_b).abs() > 0.1,
+                "Test case [{},{},{}] doesn't differentiate formulas well: wrong={}, correct={}",
+                r,
+                g,
+                b,
+                wrong_b,
+                correct_b
+            );
+
+            // Verify scalar gives correct result
+            assert!(
+                (ref_b - correct_b).abs() < 1e-5,
+                "Scalar B mismatch for [{},{},{}]: got {}, expected {}",
+                r,
+                g,
+                b,
+                ref_b,
+                correct_b
             );
         }
     }
