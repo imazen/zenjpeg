@@ -663,16 +663,17 @@ impl XybSimdConstants {
     /// Takes 8 linear RGB values and produces 8 scaled XYB values.
     /// This is the shared core that all SIMD converters use.
     #[inline(always)]
-    fn linear_rgb_to_scaled_xyb(
-        &self,
-        r: f32x8,
-        g: f32x8,
-        b_in: f32x8,
-    ) -> (f32x8, f32x8, f32x8) {
+    fn linear_rgb_to_scaled_xyb(&self, r: f32x8, g: f32x8, b_in: f32x8) -> (f32x8, f32x8, f32x8) {
         // Step 1: Opsin absorbance matrix
-        let mixed0 = self.m00.mul_add(r, self.m01.mul_add(g, self.m02.mul_add(b_in, self.bias)));
-        let mixed1 = self.m10.mul_add(r, self.m11.mul_add(g, self.m12.mul_add(b_in, self.bias)));
-        let mixed2 = self.m20.mul_add(r, self.m21.mul_add(g, self.m22.mul_add(b_in, self.bias)));
+        let mixed0 = self
+            .m00
+            .mul_add(r, self.m01.mul_add(g, self.m02.mul_add(b_in, self.bias)));
+        let mixed1 = self
+            .m10
+            .mul_add(r, self.m11.mul_add(g, self.m12.mul_add(b_in, self.bias)));
+        let mixed2 = self
+            .m20
+            .mul_add(r, self.m21.mul_add(g, self.m22.mul_add(b_in, self.bias)));
 
         // Step 2: Clamp negatives
         let mixed0 = mixed0.max(self.zero);
@@ -701,9 +702,15 @@ impl XybSimdConstants {
     /// Core SIMD XYB transform without scaling: linear RGB → XYB.
     #[inline(always)]
     fn linear_rgb_to_xyb(&self, r: f32x8, g: f32x8, b_in: f32x8) -> (f32x8, f32x8, f32x8) {
-        let mixed0 = self.m00.mul_add(r, self.m01.mul_add(g, self.m02.mul_add(b_in, self.bias)));
-        let mixed1 = self.m10.mul_add(r, self.m11.mul_add(g, self.m12.mul_add(b_in, self.bias)));
-        let mixed2 = self.m20.mul_add(r, self.m21.mul_add(g, self.m22.mul_add(b_in, self.bias)));
+        let mixed0 = self
+            .m00
+            .mul_add(r, self.m01.mul_add(g, self.m02.mul_add(b_in, self.bias)));
+        let mixed1 = self
+            .m10
+            .mul_add(r, self.m11.mul_add(g, self.m12.mul_add(b_in, self.bias)));
+        let mixed2 = self
+            .m20
+            .mul_add(r, self.m21.mul_add(g, self.m22.mul_add(b_in, self.bias)));
 
         let mixed0 = mixed0.max(self.zero);
         let mixed1 = mixed1.max(self.zero);
@@ -1376,14 +1383,24 @@ mod tests {
         for &v in &test_values {
             let fast = srgb_to_linear_fast(v);
             let error = (fast - srgb_to_linear(v)).abs();
-            assert!(error < 0.002, "srgb_to_linear_fast error for {}: {}", v, error);
+            assert!(
+                error < 0.002,
+                "srgb_to_linear_fast error for {}: {}",
+                v,
+                error
+            );
         }
 
         for &v in &test_values {
             let exact = linear_to_srgb(v);
             let fast = linear_to_srgb_fast(v);
             let error = (fast - exact).abs();
-            assert!(error < 0.002, "linear_to_srgb_fast error for {}: {}", v, error);
+            assert!(
+                error < 0.002,
+                "linear_to_srgb_fast error for {}: {}",
+                v,
+                error
+            );
         }
     }
 
@@ -1420,9 +1437,27 @@ mod tests {
             let (x, y, b_xyb) = srgb_to_xyb(r, g, b);
             let (r2, g2, b2) = xyb_to_srgb(x, y, b_xyb);
 
-            assert!((r as i16 - r2 as i16).abs() <= 2, "R mismatch for ({},{},{})", r, g, b);
-            assert!((g as i16 - g2 as i16).abs() <= 2, "G mismatch for ({},{},{})", r, g, b);
-            assert!((b as i16 - b2 as i16).abs() <= 2, "B mismatch for ({},{},{})", r, g, b);
+            assert!(
+                (r as i16 - r2 as i16).abs() <= 2,
+                "R mismatch for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                (g as i16 - g2 as i16).abs() <= 2,
+                "G mismatch for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                (b as i16 - b2 as i16).abs() <= 2,
+                "B mismatch for ({},{},{})",
+                r,
+                g,
+                b
+            );
         }
     }
 
@@ -1492,9 +1527,27 @@ mod tests {
             assert!(b_xyb.is_finite(), "B not finite for ({},{},{})", r, g, b);
 
             let (sx, sy, sb) = scale_xyb(x, y, b_xyb);
-            assert!(sx.is_finite(), "Scaled X not finite for ({},{},{})", r, g, b);
-            assert!(sy.is_finite(), "Scaled Y not finite for ({},{},{})", r, g, b);
-            assert!(sb.is_finite(), "Scaled B not finite for ({},{},{})", r, g, b);
+            assert!(
+                sx.is_finite(),
+                "Scaled X not finite for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                sy.is_finite(),
+                "Scaled Y not finite for ({},{},{})",
+                r,
+                g,
+                b
+            );
+            assert!(
+                sb.is_finite(),
+                "Scaled B not finite for ({},{},{})",
+                r,
+                g,
+                b
+            );
         }
     }
 
@@ -1596,7 +1649,13 @@ mod tests {
                     .abs()
                     .max((scalar[i][1] - simd[i][1]).abs())
                     .max((scalar[i][2] - simd[i][2]).abs());
-                assert!(err < 1e-6, "Mismatch at len={}, idx={}: err={}", len, i, err);
+                assert!(
+                    err < 1e-6,
+                    "Mismatch at len={}, idx={}: err={}",
+                    len,
+                    i,
+                    err
+                );
             }
         }
     }
@@ -1621,12 +1680,36 @@ mod tests {
         let (bgra_x, bgra_y, bgra_b) = srgb_to_scaled_xyb_planes_simd_bgra(&bgra_data, num_pixels);
 
         for i in 0..num_pixels {
-            assert!((ref_x[i] - rgba_x[i]).abs() < 1e-6, "RGBA X mismatch at {}", i);
-            assert!((ref_y[i] - rgba_y[i]).abs() < 1e-6, "RGBA Y mismatch at {}", i);
-            assert!((ref_b[i] - rgba_b[i]).abs() < 1e-6, "RGBA B mismatch at {}", i);
-            assert!((ref_x[i] - bgra_x[i]).abs() < 1e-6, "BGRA X mismatch at {}", i);
-            assert!((ref_y[i] - bgra_y[i]).abs() < 1e-6, "BGRA Y mismatch at {}", i);
-            assert!((ref_b[i] - bgra_b[i]).abs() < 1e-6, "BGRA B mismatch at {}", i);
+            assert!(
+                (ref_x[i] - rgba_x[i]).abs() < 1e-6,
+                "RGBA X mismatch at {}",
+                i
+            );
+            assert!(
+                (ref_y[i] - rgba_y[i]).abs() < 1e-6,
+                "RGBA Y mismatch at {}",
+                i
+            );
+            assert!(
+                (ref_b[i] - rgba_b[i]).abs() < 1e-6,
+                "RGBA B mismatch at {}",
+                i
+            );
+            assert!(
+                (ref_x[i] - bgra_x[i]).abs() < 1e-6,
+                "BGRA X mismatch at {}",
+                i
+            );
+            assert!(
+                (ref_y[i] - bgra_y[i]).abs() < 1e-6,
+                "BGRA Y mismatch at {}",
+                i
+            );
+            assert!(
+                (ref_b[i] - bgra_b[i]).abs() < 1e-6,
+                "BGRA B mismatch at {}",
+                i
+            );
         }
     }
 
@@ -1702,7 +1785,9 @@ mod tests {
     #[test]
     fn test_b_channel_rgba_bgra_inplace_vs_scalar() {
         let num_pixels = 16;
-        let rgb_data: Vec<u8> = (0..num_pixels * 3).map(|i| ((i * 17) % 256) as u8).collect();
+        let rgb_data: Vec<u8> = (0..num_pixels * 3)
+            .map(|i| ((i * 17) % 256) as u8)
+            .collect();
 
         let mut rgba_data = Vec::with_capacity(num_pixels * 4);
         let mut bgra_data = Vec::with_capacity(num_pixels * 4);
@@ -1734,7 +1819,11 @@ mod tests {
             num_pixels,
         );
         for i in 0..num_pixels {
-            assert!((ref_b[i] - b_plane[i]).abs() < 1e-5, "RGBA B mismatch at {}", i);
+            assert!(
+                (ref_b[i] - b_plane[i]).abs() < 1e-5,
+                "RGBA B mismatch at {}",
+                i
+            );
         }
 
         // Test BGRA inplace
@@ -1749,18 +1838,17 @@ mod tests {
             num_pixels,
         );
         for i in 0..num_pixels {
-            assert!((ref_b[i] - b_plane[i]).abs() < 1e-5, "BGRA B mismatch at {}", i);
+            assert!(
+                (ref_b[i] - b_plane[i]).abs() < 1e-5,
+                "BGRA B mismatch at {}",
+                i
+            );
         }
     }
 
     #[test]
     fn test_b_channel_blue_heavy_colors() {
-        let blue_heavy_colors = [
-            [0u8, 0, 255],
-            [50, 50, 200],
-            [0, 100, 255],
-            [100, 0, 255],
-        ];
+        let blue_heavy_colors = [[0u8, 0, 255], [50, 50, 200], [0, 100, 255], [100, 0, 255]];
 
         for [r, g, b] in blue_heavy_colors {
             let (_ref_x, _ref_y, ref_b) = srgb_to_scaled_xyb(r, g, b);
