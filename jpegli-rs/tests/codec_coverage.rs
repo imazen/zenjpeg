@@ -247,8 +247,7 @@ mod encode_coverage {
     #[test]
     fn encode_ycbcr_mode() {
         let img = generate_gradient_d(64, 64, 3);
-        let config =
-            EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("YCbCr failed");
         verify_jpeg_structure(&jpeg);
     }

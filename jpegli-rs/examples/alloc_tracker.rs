@@ -120,8 +120,7 @@ fn main() {
             }
 
             // Get estimate before encoding
-            let config = EncoderConfig::ycbcr(85.0, *subsampling)
-                .optimize_huffman(true);
+            let config = EncoderConfig::ycbcr(85.0, *subsampling).optimize_huffman(true);
 
             let estimated = config.estimate_memory(*width as u32, *height as u32);
 

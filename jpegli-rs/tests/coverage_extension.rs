@@ -356,8 +356,7 @@ mod decode_coverage {
     #[test]
     fn decode_with_fancy_upsampling() {
         let img = generate_gradient_d(128, 128, 3);
-        let config =
-            EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
         let decode_config = DecoderConfig {

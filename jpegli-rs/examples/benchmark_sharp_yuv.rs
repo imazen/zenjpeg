@@ -71,8 +71,7 @@ fn benchmark_encode_sharp(
     data: &[u8],
     iterations: u32,
 ) -> (f64, usize) {
-    let config = EncoderConfig::ycbcr(90.0, subsampling)
-        .sharp_yuv(true);
+    let config = EncoderConfig::ycbcr(90.0, subsampling).sharp_yuv(true);
 
     // Warmup
     let mut enc = config
