@@ -48,6 +48,14 @@ pub mod config;
 #[cfg(feature = "experimental-hybrid-trellis")]
 mod hybrid;
 pub(crate) mod linear_lut;
+
+/// Overshoot deringing for reducing ringing artifacts on white backgrounds.
+///
+/// This module implements mozjpeg's deringing algorithm which smooths hard edges
+/// to reduce visible ringing artifacts, especially on white backgrounds.
+/// Requires the `mozjpeg-deringing` feature.
+#[cfg(feature = "mozjpeg-deringing")]
+pub mod deringing;
 #[cfg(feature = "parallel")]
 #[doc(hidden)]
 pub mod parallel;
