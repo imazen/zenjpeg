@@ -329,9 +329,7 @@ fn test_multi_decoder_compatibility() {
 
     for config in &configs {
         // Encode with jpegli-rs
-        let encoder_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(config.quality as f32)
-            .ycbcr(config.subsampling)
+        let encoder_config = EncoderConfig::ycbcr(config.quality as f32, config.subsampling)
             .progressive(config.progressive);
         let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
             .expect("jpegli encode failed");
@@ -411,9 +409,7 @@ fn test_multi_decoder_complex_image() {
     ];
 
     for config in &configs {
-        let encoder_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(config.quality as f32)
-            .ycbcr(config.subsampling)
+        let encoder_config = EncoderConfig::ycbcr(config.quality as f32, config.subsampling)
             .progressive(config.progressive);
         let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
             .expect("jpegli encode failed");
@@ -454,7 +450,7 @@ fn benchmark_decoders() {
     let original = generate_test_image(width, height);
 
     // Encode at Q85
-    let encoder_config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+    let encoder_config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
     let jpeg_data =
         encode_rgb(width as u32, height as u32, &original, &encoder_config).expect("encode failed");
 
@@ -506,7 +502,7 @@ fn test_grayscale_compatibility() {
         }
     }
 
-    let encoder_config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+    let encoder_config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
     let jpeg_data =
         encode_rgb(width as u32, height as u32, &original, &encoder_config).expect("encode failed");
 

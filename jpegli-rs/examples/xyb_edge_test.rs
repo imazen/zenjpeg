@@ -2,7 +2,7 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; width * height * 3];
@@ -18,11 +18,7 @@ fn create_test_image(width: usize, height: usize) -> Vec<u8> {
 }
 
 fn encode_xyb(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality)
-        .ycbcr(ChromaSubsampling::None) // XYB uses custom subsampling internally
-        .optimize_huffman(true)
-        .xyb();
+    let config = EncoderConfig::xyb(quality, XybSubsampling::Full).optimize_huffman(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

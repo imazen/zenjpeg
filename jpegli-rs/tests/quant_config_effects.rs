@@ -40,12 +40,12 @@ fn test_custom_quant_tables_change_output() {
     let pixels = generate_test_image(width as usize, height as usize);
 
     // Encode with default (Perceptual) tables
-    let config_default = EncoderConfig::new(75.0, ChromaSubsampling::None);
+    let config_default = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
     // Encode with custom tables (all 16s - uniform quantization)
     let uniform_table = [16.0f32; 64];
-    let config_custom = EncoderConfig::new(75.0, ChromaSubsampling::None).quant_tables(
+    let config_custom = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(
         QuantTableConfig::CustomBase {
             luma: uniform_table,
             cb: uniform_table,
@@ -81,13 +81,13 @@ fn test_exact_quant_tables_change_output() {
     let pixels = generate_test_image(width as usize, height as usize);
 
     // Encode with default tables
-    let config_default = EncoderConfig::new(75.0, ChromaSubsampling::None);
+    let config_default = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
     // Encode with exact tables (very coarse quantization)
     let coarse_table = [32u16; 64];
     let config_exact =
-        EncoderConfig::new(75.0, ChromaSubsampling::None).quant_tables(QuantTableConfig::Exact {
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(QuantTableConfig::Exact {
             luma: coarse_table,
             cb: coarse_table,
             cr: coarse_table,
@@ -117,7 +117,7 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
     let shared_chroma = [20.0f32; 64];
     let luma = [16.0f32; 64];
 
-    let config_shared = EncoderConfig::new(75.0, ChromaSubsampling::None).quant_tables(
+    let config_shared = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(
         QuantTableConfig::CustomBase {
             luma,
             cb: shared_chroma,
@@ -134,7 +134,7 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
         cr_table[i] *= 2.0;
     }
 
-    let config_separate = EncoderConfig::new(75.0, ChromaSubsampling::None).quant_tables(
+    let config_separate = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(
         QuantTableConfig::CustomBase {
             luma,
             cb: cb_table,
@@ -165,12 +165,12 @@ fn test_zero_bias_disabled_changes_output() {
     let pixels = generate_test_image(width as usize, height as usize);
 
     // Encode with default (Perceptual) zero bias
-    let config_perceptual = EncoderConfig::new(75.0, ChromaSubsampling::None);
+    let config_perceptual = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_perceptual = encode_with_config(&config_perceptual, &pixels, width, height);
 
     // Encode with disabled zero bias
     let config_disabled =
-        EncoderConfig::new(75.0, ChromaSubsampling::None).zero_bias(ZeroBiasConfig::Disabled);
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).zero_bias(ZeroBiasConfig::Disabled);
     let jpeg_disabled = encode_with_config(&config_disabled, &pixels, width, height);
 
     // Outputs should differ
@@ -193,7 +193,7 @@ fn test_custom_zero_bias_changes_output() {
     let pixels = generate_test_image(width as usize, height as usize);
 
     // Encode with default zero bias
-    let config_default = EncoderConfig::new(75.0, ChromaSubsampling::None);
+    let config_default = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
     // Encode with aggressive custom zero bias (high multipliers = more zeroing)
@@ -201,7 +201,7 @@ fn test_custom_zero_bias_changes_output() {
     let zero_offset = [0.5f32; 64]; // Moderate offset
 
     let config_aggressive =
-        EncoderConfig::new(75.0, ChromaSubsampling::None).zero_bias(ZeroBiasConfig::Custom {
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).zero_bias(ZeroBiasConfig::Custom {
             luma: (aggressive_mul, zero_offset),
             cb: (aggressive_mul, zero_offset),
             cr: (aggressive_mul, zero_offset),
@@ -257,7 +257,7 @@ fn test_modified_default_tables_change_output() {
     let pixels = generate_test_image(width as usize, height as usize);
 
     // Encode with perceptual defaults
-    let config_default = EncoderConfig::new(75.0, ChromaSubsampling::None);
+    let config_default = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
     // Start with defaults and modify
@@ -268,7 +268,7 @@ fn test_modified_default_tables_change_output() {
     // Modify: double the DC quantization (makes image blockier but smaller)
     luma[0] *= 2.0;
 
-    let config_modified = EncoderConfig::new(75.0, ChromaSubsampling::None)
+    let config_modified = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
         .quant_tables(QuantTableConfig::CustomBase { luma, cb, cr });
     let jpeg_modified = encode_with_config(&config_modified, &pixels, width, height);
 

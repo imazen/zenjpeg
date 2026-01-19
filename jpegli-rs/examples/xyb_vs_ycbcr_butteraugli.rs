@@ -11,7 +11,7 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use enough::Unstoppable;
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use std::path::Path;
 
 fn main() {
@@ -53,7 +53,7 @@ fn main() {
 
     for &q in &qualities {
         // Encode XYB
-        let xyb_config = EncoderConfig::new(q as f32, ChromaSubsampling::Quarter).xyb();
+        let xyb_config = EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter);
         let mut enc = xyb_config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
@@ -62,7 +62,7 @@ fn main() {
         let xyb_bytes = xyb_jpeg.len();
 
         // Encode YCbCr
-        let ycbcr_config = EncoderConfig::new(q as f32, ChromaSubsampling::Quarter);
+        let ycbcr_config = EncoderConfig::ycbcr(q as f32, ChromaSubsampling::Quarter);
         let mut enc = ycbcr_config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");

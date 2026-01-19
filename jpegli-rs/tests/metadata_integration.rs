@@ -25,7 +25,7 @@ fn create_test_image(width: u32, height: u32) -> Vec<RGB<u8>> {
 /// Encode a test image to JPEG bytes.
 fn encode_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
     let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
@@ -34,7 +34,7 @@ fn encode_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
 /// Encode with an ICC profile attached.
 fn encode_with_icc_profile(width: u32, height: u32, quality: f32, icc: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).icc_profile(icc);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).icc_profile(icc);
     let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
@@ -44,7 +44,7 @@ fn encode_with_icc_profile(width: u32, height: u32, quality: f32, icc: &[u8]) ->
 fn encode_with_exif(width: u32, height: u32, quality: f32, exif: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
     let config =
-        EncoderConfig::new(quality, ChromaSubsampling::Quarter).exif(Exif::raw(exif.to_vec()));
+        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).exif(Exif::raw(exif.to_vec()));
     let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
@@ -53,7 +53,7 @@ fn encode_with_exif(width: u32, height: u32, quality: f32, exif: &[u8]) -> Vec<u
 /// Encode with XMP data attached using native API.
 fn encode_with_xmp(width: u32, height: u32, quality: f32, xmp: &[u8]) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter).xmp(xmp);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).xmp(xmp);
     let mut encoder = config.encode_from_rgb::<RGB<u8>>(width, height).unwrap();
     encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
     encoder.finish().unwrap()
@@ -69,7 +69,7 @@ fn encode_with_all_metadata(
     icc: &[u8],
 ) -> Vec<u8> {
     let pixels = create_test_image(width, height);
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
         .exif(Exif::raw(exif.to_vec()))
         .xmp(xmp)
         .icc_profile(icc);
@@ -280,7 +280,7 @@ mod native_metadata_tests {
         use std::io::Cursor;
 
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
             .exif(Exif::build().orientation(Orientation::Rotate90));
         let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
@@ -311,7 +311,7 @@ mod native_metadata_tests {
         use std::io::Cursor;
 
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter)
             .exif(Exif::build().copyright("© 2026 Test Corp"));
         let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
@@ -341,7 +341,7 @@ mod native_metadata_tests {
         use std::io::Cursor;
 
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter).exif(
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter).exif(
             Exif::build()
                 .orientation(Orientation::Rotate270)
                 .copyright("© 2026 Example"),
@@ -396,7 +396,7 @@ mod native_metadata_tests {
 
         for (orient, expected_value) in orientations {
             let pixels = create_test_image(64, 64);
-            let config = EncoderConfig::new(75.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(75.0, ChromaSubsampling::Quarter)
                 .exif(Exif::build().orientation(orient));
             let mut encoder = config.encode_from_rgb::<RGB<u8>>(64, 64).unwrap();
             encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
@@ -468,7 +468,7 @@ mod kamadak_exif_tests {
     fn progressive_jpegli_parseable() {
         // Progressive JPEGs have different structure
         let pixels = create_test_image(128, 128);
-        let config = EncoderConfig::new(80.0, ChromaSubsampling::Quarter).progressive(true);
+        let config = EncoderConfig::ycbcr(80.0, ChromaSubsampling::Quarter).progressive(true);
         let mut encoder = config.encode_from_rgb::<RGB<u8>>(128, 128).unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg_data = encoder.finish().unwrap();
@@ -498,7 +498,7 @@ mod kamadak_exif_tests {
             ChromaSubsampling::HalfVertical,
         ] {
             let pixels = create_test_image(64, 64);
-            let config = EncoderConfig::new(75.0, subsampling);
+            let config = EncoderConfig::ycbcr(75.0, subsampling);
             let mut encoder = config.encode_from_rgb::<RGB<u8>>(64, 64).unwrap();
             encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
             let jpeg_data = encoder.finish().unwrap();
@@ -622,7 +622,7 @@ mod img_parts_tests {
     #[test]
     fn progressive_jpegli_compatible_with_img_parts() {
         let pixels = create_test_image(256, 256);
-        let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).progressive(true);
+        let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
         let mut encoder = config.encode_from_rgb::<RGB<u8>>(256, 256).unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg_data = encoder.finish().unwrap();
@@ -805,7 +805,7 @@ mod ultrahdr_tests {
     #[test]
     fn progressive_jpegli_usable_as_ultrahdr_base() {
         let pixels = create_test_image(256, 256);
-        let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter).progressive(true);
+        let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(true);
         let mut encoder = config.encode_from_rgb::<RGB<u8>>(256, 256).unwrap();
         encoder.push_packed(&pixels, enough::Unstoppable).unwrap();
         let jpeg_data = encoder.finish().unwrap();

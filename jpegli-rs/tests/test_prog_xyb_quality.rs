@@ -1,6 +1,6 @@
 use jpegli::{
     decoder::Decoder,
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling},
 };
 
 #[test]
@@ -19,10 +19,7 @@ fn test_progressive_xyb_all_quality_levels() {
 
     for &quality in &[10u8, 30, 50, 70, 85, 95] {
         // Encode progressive XYB
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .xyb()
-            .progressive(true)
-            .quality(quality as f32);
+        let config = EncoderConfig::xyb(quality as f32, XybSubsampling::BQuarter).progressive(true);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
@@ -66,10 +63,7 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     );
 
     // Encode progressive XYB
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .xyb()
-        .progressive(true)
-        .quality(quality as f32);
+    let config = EncoderConfig::xyb(quality as f32, XybSubsampling::BQuarter).progressive(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
@@ -135,7 +129,7 @@ fn test_progressive_ycbcr_non_aligned_dimensions() {
         );
 
         // Encode progressive YCbCr
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
             .quality(quality as f32);
         let mut enc = config

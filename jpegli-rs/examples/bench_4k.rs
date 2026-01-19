@@ -23,7 +23,7 @@ fn main() {
 
     println!("Warming up...");
     for _ in 0..2 {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let mut enc = config
             .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
             .unwrap();
@@ -36,7 +36,7 @@ fn main() {
     for (name, quality) in [("q75", 75.0), ("q90", 90.0), ("q95", 95.0)] {
         let mut times = Vec::new();
         let iterations = 5;
-        let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
 
         for _ in 0..iterations {
             let start = Instant::now();

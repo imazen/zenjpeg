@@ -96,9 +96,7 @@ fn encode_rust(
     subsampling: ChromaSubsampling,
     quality: f32,
 ) -> Vec<u8> {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality)
-        .ycbcr(subsampling)
+    let config = EncoderConfig::ycbcr(quality, subsampling)
         .optimize_huffman(true)
         .progressive(true);
     let mut enc = config

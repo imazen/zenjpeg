@@ -37,10 +37,8 @@ fn test_progressive_subsampling_external_decoder_compat() {
     ];
 
     for (subsampling, name) in configs {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(85.0)
+        let config = EncoderConfig::ycbcr(85.0, subsampling)
             .progressive(true)
-            .ycbcr(subsampling)
             .optimize_huffman(true);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -93,10 +91,8 @@ fn test_progressive_subsampling_file_sizes() {
     }
 
     let encode = |sub: ChromaSubsampling| -> usize {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(85.0)
+        let config = EncoderConfig::ycbcr(85.0, sub)
             .progressive(true)
-            .ycbcr(sub)
             .optimize_huffman(true);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -173,10 +169,7 @@ fn test_baseline_subsampling_works() {
     }
 
     let encode = |sub: ChromaSubsampling| -> usize {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(85.0)
-            .ycbcr(sub)
-            .optimize_huffman(true);
+        let config = EncoderConfig::ycbcr(85.0, sub).optimize_huffman(true);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");

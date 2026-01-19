@@ -23,9 +23,7 @@ fn test_s440_progressive_roundtrip() {
     // Generate test pixels
     let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(90.0)
-        .ycbcr(ChromaSubsampling::HalfVertical) // S440
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::HalfVertical) // S440
         .progressive(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -62,9 +60,7 @@ fn test_all_subsampling_progressive() {
 
         let pixels: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(90.0)
-            .ycbcr(subsampling)
+        let config = EncoderConfig::ycbcr(90.0, subsampling)
             .progressive(true);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -108,9 +104,7 @@ fn test_progressive_subsampling_various_sizes() {
                 .map(|i| ((i * 7) % 256) as u8)
                 .collect();
 
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-                .quality(85.0)
-                .ycbcr(*subsampling)
+            let config = EncoderConfig::ycbcr(85.0, *subsampling)
                 .progressive(true);
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)

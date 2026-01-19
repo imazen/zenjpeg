@@ -5,9 +5,9 @@
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+//! use jpegli::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
 //!
-//! let config = EncoderConfig::new().quality(85);
+//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
 //! let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
 //! enc.push_packed(&rgb_bytes, Unstoppable)?;
 //! let jpeg = enc.finish()?;
@@ -15,45 +15,43 @@
 //!
 //! # Entry Points
 //!
-//! `EncoderConfig` provides three encoder creation methods:
+//! `EncoderConfig` provides three constructors for different color modes:
 //!
-//! | Method | Input Type | Use Case |
-//! |--------|------------|----------|
-//! | `encode_from_bytes()` | `&[u8]` | Raw byte buffers |
-//! | `encode_from_rgb()` | `rgb` crate types | Type-safe pixels |
-//! | `encode_from_ycbcr_planar()` | `YCbCrPlanes` | Video pipelines |
+//! | Constructor | Color Mode | Use Case |
+//! |-------------|------------|----------|
+//! | `EncoderConfig::ycbcr(q, sub)` | YCbCr | Standard JPEG (most compatible) |
+//! | `EncoderConfig::xyb(q, b_sub)` | XYB | Perceptual color space |
+//! | `EncoderConfig::grayscale(q)` | Grayscale | Single-channel output |
+//!
+//! Then use `encode_from_bytes()`, `encode_from_rgb()`, or `encode_from_ycbcr_planar()`.
 //!
 //! # Configuration
 //!
 //! ```rust,ignore
-//! use jpegli::encoder::{EncoderConfig, Quality, ChromaSubsampling};
+//! use jpegli::encoder::{EncoderConfig, Quality, ChromaSubsampling, XybSubsampling};
 //!
-//! let config = EncoderConfig::new()
-//!     // Quality (multiple scales available)
-//!     .quality(85)                              // 0-100 scale (default: 90)
-//!     .quality(Quality::ApproxMozjpeg(80))      // Match mozjpeg output
-//!     .quality(Quality::ApproxSsim2(90.0))      // Target SSIMULACRA2 score
-//!     .quality(Quality::ApproxButteraugli(1.0)) // Target butteraugli distance
-//!
-//!     // Encoding mode
+//! // YCbCr (standard JPEG)
+//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 //!     .progressive(true)                        // Progressive JPEG (~3% smaller)
 //!     .optimize_huffman(true)                   // Optimal Huffman tables (default)
-//!
-//!     // Color mode (default is 4:4:4)
-//!     .ycbcr(ChromaSubsampling::None)           // 4:4:4 (default, best quality)
-//!     .ycbcr(ChromaSubsampling::Quarter)        // 4:2:0 (good compression)
-//!     .xyb()                                    // XYB perceptual color space
-//!     .grayscale()                              // Single-channel output
-//!
-//!     // Downsampling
 //!     .sharp_yuv(true)                          // Better color edges (~3x slower)
-//!
-//!     // Metadata
 //!     .icc_profile(bytes)                       // Attach ICC profile
 //!     .exif(Exif::build()                       // EXIF orientation/copyright
 //!         .orientation(Orientation::Rotate90)
 //!         .copyright("© 2024 Corp"))
 //!     .restart_interval(64);                    // MCUs between restart markers
+//!
+//! // XYB (perceptual color space)
+//! let config = EncoderConfig::xyb(85, XybSubsampling::BQuarter)
+//!     .progressive(true);
+//!
+//! // Grayscale
+//! let config = EncoderConfig::grayscale(85);
+//!
+//! // Quality can also use enum variants:
+//! let config = EncoderConfig::ycbcr(Quality::ApproxMozjpeg(80), ChromaSubsampling::Quarter);
+//! let config = EncoderConfig::ycbcr(Quality::ApproxSsim2(90.0), ChromaSubsampling::None);
+//! let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(1.0), ChromaSubsampling::Quarter);
 //! ```
 //!
 //! # Pixel Layouts
@@ -89,7 +87,9 @@
 //! # Memory Estimation
 //!
 //! ```rust,ignore
-//! let config = EncoderConfig::new().quality(85);
+//! use jpegli::{EncoderConfig, ChromaSubsampling};
+//!
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 //!
 //! // Typical estimate
 //! let estimate = config.estimate_memory(1920, 1080);
@@ -104,10 +104,9 @@
 //!
 //! ```rust,ignore
 //! #[cfg(feature = "parallel")]
-//! use jpegli::encoder::ParallelEncoding;
+//! use jpegli::encoder::{EncoderConfig, ChromaSubsampling, ParallelEncoding};
 //!
-//! let config = EncoderConfig::new()
-//!     .quality(85)
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 //!     .parallel(ParallelEncoding::Auto);
 //! ```
 

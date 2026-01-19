@@ -24,7 +24,7 @@ fn benchmark(
     }
 
     let config =
-        EncoderConfig::new(85.0, ChromaSubsampling::Quarter).restart_interval(restart_interval);
+        EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).restart_interval(restart_interval);
 
     // Warmup
     for _ in 0..3 {

@@ -8,7 +8,7 @@ mod test_utils;
 
 use jpegli::{
     decoder::{ColorSpace, Decoder, DecoderConfig, Dimensions},
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
 use test_utils::{generate_gradient_d, generate_noise};
 
@@ -136,12 +136,12 @@ mod entropy_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Low quality creates larger coefficients
-        let config = EncoderConfig::new(10.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(10.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
         assert!(jpeg.len() > 100);
 
         // High quality with small coefficients
-        let config = EncoderConfig::new(100.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(100.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
         assert!(jpeg.len() > 100);
     }
@@ -151,7 +151,7 @@ mod entropy_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // Test progressive mode (exercises DC progressive encoding)
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
             .quality(90.0);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("progressive encode failed");
@@ -170,7 +170,7 @@ mod entropy_coverage {
         // Use a noisy image to exercise more AC coefficient paths
         let img = generate_noise(128, 128, 42, 3);
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
             .quality(80.0);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("progressive encode failed");
@@ -184,7 +184,7 @@ mod entropy_coverage {
         // Solid color image should have many EOB runs
         let img = test_utils::generate_solid(128, 128, 128, 3);
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
             .quality(90.0);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
@@ -211,7 +211,7 @@ mod color_coverage {
             pixels[i * 3 + 2] = 128; // R
         }
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_bgr(64, 64, &pixels, &config).expect("BGR encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -229,7 +229,7 @@ mod color_coverage {
             pixels[i * 4 + 3] = 255; // A
         }
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_bgra(64, 64, &pixels, &config).expect("BGRA encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -240,7 +240,7 @@ mod color_coverage {
     fn grayscale_from_rgb() {
         // Encode RGB but with grayscale-like content
         let img = test_utils::generate_gradient_h(64, 64, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -260,7 +260,7 @@ mod idct_coverage {
         // Different quality levels exercise different coefficient ranges
         for q in [1.0, 5.0, 20.0, 40.0, 60.0, 80.0, 95.0, 100.0] {
             let img = generate_noise(64, 64, 12345, 3);
-            let config = EncoderConfig::new(q, ChromaSubsampling::Quarter);
+            let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter);
             let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -272,7 +272,7 @@ mod idct_coverage {
     fn decode_progressive_multiple_passes() {
         // Progressive decode exercises IDCT with partial coefficients
         let img = generate_noise(256, 256, 99, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
             .quality(70.0);
         let jpeg = encode_rgb(256, 256, &img.pixels, &config).expect("encode failed");
@@ -293,7 +293,7 @@ mod decode_coverage {
     #[test]
     fn decode_f32_output() {
         let img = generate_gradient_d(64, 64, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         // Decode to f32
@@ -311,7 +311,7 @@ mod decode_coverage {
     fn decode_grayscale_to_rgb() {
         // Encode grayscale
         let img = test_utils::generate_gradient_h(64, 64, 1);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).grayscale();
+        let config = EncoderConfig::grayscale(90.0);
         let jpeg = encode_gray(64, 64, &img.pixels, &config).expect("encode failed");
 
         // Decode to RGB (default)
@@ -324,7 +324,7 @@ mod decode_coverage {
     #[test]
     fn decode_with_memory_limits() {
         let img = generate_gradient_d(128, 128, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
         // Test with custom memory limits
@@ -341,7 +341,7 @@ mod decode_coverage {
     #[test]
     fn decode_with_block_smoothing() {
         let img = generate_noise(64, 64, 42, 3);
-        let config = EncoderConfig::new(30.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(30.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         let decode_config = DecoderConfig {
@@ -357,7 +357,7 @@ mod decode_coverage {
     fn decode_with_fancy_upsampling() {
         let img = generate_gradient_d(128, 128, 3);
         let config =
-            EncoderConfig::new(90.0, ChromaSubsampling::Quarter).ycbcr(ChromaSubsampling::Quarter);
+            EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
         let decode_config = DecoderConfig {
@@ -372,7 +372,7 @@ mod decode_coverage {
     #[test]
     fn decode_xyb_to_rgb() {
         let img = generate_gradient_d(64, 64, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
         // Decode with ICC application (requires cms feature)
@@ -403,9 +403,7 @@ mod encode_coverage {
             ChromaSubsampling::Quarter,
             ChromaSubsampling::HalfVertical,
         ] {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-                .progressive(true)
-                .ycbcr(subsampling);
+            let config = EncoderConfig::ycbcr(90.0, subsampling).progressive(true);
             let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -418,7 +416,7 @@ mod encode_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // XYB with 4:4:4 (default for XYB)
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("XYB encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -429,7 +427,7 @@ mod encode_coverage {
     fn encode_very_small_images() {
         for size in [1, 2, 3, 4, 5, 6, 7, 8] {
             let img = generate_gradient_d(size, size, 3);
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
             let jpeg = encode_rgb(size, size, &img.pixels, &config)
                 .unwrap_or_else(|_| panic!("{}x{} encode failed", size, size));
 
@@ -444,11 +442,11 @@ mod encode_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Very low quality
-        let config_low = EncoderConfig::new(1.0, ChromaSubsampling::Quarter);
+        let config_low = EncoderConfig::ycbcr(1.0, ChromaSubsampling::Quarter);
         let jpeg_low = encode_rgb(64, 64, &img.pixels, &config_low).expect("low Q encode failed");
 
         // Very high quality
-        let config_high = EncoderConfig::new(100.0, ChromaSubsampling::Quarter);
+        let config_high = EncoderConfig::ycbcr(100.0, ChromaSubsampling::Quarter);
         let jpeg_high =
             encode_rgb(64, 64, &img.pixels, &config_high).expect("high Q encode failed");
 
@@ -469,9 +467,7 @@ mod xyb_coverage {
         let img = generate_gradient_d(64, 64, 3);
 
         // Encode with XYB
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .xyb()
-            .quality(90.0);
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
         // Verify APP14 Adobe marker present
@@ -499,7 +495,7 @@ mod xyb_coverage {
 
         for (r, g, b) in colors {
             let img = test_utils::generate_solid_rgb(32, 32, r, g, b);
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
+            let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
             let jpeg = encode_rgb(32, 32, &img.pixels, &config).expect("XYB encode failed");
 
             let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -511,9 +507,7 @@ mod xyb_coverage {
     fn xyb_progressive() {
         let img = generate_gradient_d(128, 128, 3);
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .xyb()
-            .progressive(true);
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter).progressive(true);
         let jpeg =
             encode_rgb(128, 128, &img.pixels, &config).expect("XYB progressive encode failed");
 
@@ -555,7 +549,7 @@ mod bitstream_coverage {
 
         // Image with high entropy (random noise)
         let noise = generate_noise(64, 64, 12345, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg_noise = encode_rgb(64, 64, &noise.pixels, &config).expect("noise encode failed");
 
         // Image with low entropy (solid color)
@@ -588,7 +582,7 @@ mod huffman_coverage {
             ),
         ];
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
 
         for (name, img) in patterns {
             let jpeg = encode_rgb(128, 128, &img.pixels, &config)
@@ -620,7 +614,7 @@ mod aq_coverage {
         ];
 
         for (i, img) in patterns.iter().enumerate() {
-            let config = EncoderConfig::new(85.0, ChromaSubsampling::Quarter);
+            let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
             let jpeg = encode_rgb(img.width, img.height, &img.pixels, &config)
                 .unwrap_or_else(|_| panic!("pattern {} encode failed", i));
 
@@ -635,7 +629,7 @@ mod aq_coverage {
 
         // Test AQ behavior across quality range
         for q in [10.0, 30.0, 50.0, 70.0, 90.0, 100.0] {
-            let config = EncoderConfig::new(q, ChromaSubsampling::Quarter);
+            let config = EncoderConfig::ycbcr(q, ChromaSubsampling::Quarter);
             let jpeg = encode_rgb(64, 64, &img.pixels, &config)
                 .unwrap_or_else(|_| panic!("Q{} encode failed", q));
 
@@ -657,7 +651,7 @@ mod scan_script_coverage {
         let img = generate_gradient_d(128, 128, 3);
 
         // Progressive encoding exercises scan script
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .progressive(true)
             .quality(80.0);
         let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("progressive encode failed");
@@ -674,9 +668,7 @@ mod scan_script_coverage {
     fn progressive_grayscale() {
         let img = test_utils::generate_gradient_h(64, 64, 1);
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .grayscale()
-            .progressive(true);
+        let config = EncoderConfig::grayscale(90.0).progressive(true);
         let jpeg =
             encode_gray(64, 64, &img.pixels, &config).expect("progressive grayscale encode failed");
 
@@ -717,10 +709,10 @@ mod quant_coverage {
         // Different qualities should produce different quant tables
         let img = generate_gradient_d(64, 64, 3);
 
-        let config_q10 = EncoderConfig::new(10.0, ChromaSubsampling::Quarter);
+        let config_q10 = EncoderConfig::ycbcr(10.0, ChromaSubsampling::Quarter);
         let jpeg_q10 = encode_rgb(64, 64, &img.pixels, &config_q10).expect("Q10 encode failed");
 
-        let config_q90 = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config_q90 = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg_q90 = encode_rgb(64, 64, &img.pixels, &config_q90).expect("Q90 encode failed");
 
         // Different qualities should produce different output
@@ -745,7 +737,7 @@ mod alloc_coverage {
         // Test allocation with moderately large images
         let img = generate_gradient_d(1024, 1024, 3);
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(1024, 1024, &img.pixels, &config).expect("large encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");
@@ -756,7 +748,7 @@ mod alloc_coverage {
     #[test]
     fn decode_with_strict_limits() {
         let img = generate_gradient_d(64, 64, 3);
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
         // Test with very strict limits (but still enough for this image)
@@ -783,7 +775,7 @@ mod transfer_coverage {
         // XYB encoding exercises transfer functions
         let img = generate_gradient_d(64, 64, 3);
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).xyb();
+        let config = EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
         let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("XYB encode failed");
 
         let decoded = Decoder::new().decode(&jpeg).expect("decode failed");

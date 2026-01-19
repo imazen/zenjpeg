@@ -15,7 +15,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use enough::Unstoppable;
-use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use std::time::Duration;
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -48,7 +48,7 @@ fn quick_bench(c: &mut Criterion) {
     // Core path: progressive + optimized huffman + 420 (most common)
     group.bench_function("prog-opt-420", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                 .progressive(true)
                 .optimize_huffman(true);
             let mut enc = config
@@ -62,7 +62,7 @@ fn quick_bench(c: &mut Criterion) {
     // Baseline (simpler path)
     group.bench_function("base-opt-420", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                 .progressive(false)
                 .optimize_huffman(true);
             let mut enc = config
@@ -76,7 +76,7 @@ fn quick_bench(c: &mut Criterion) {
     // 444 subsampling (no chroma downsampling)
     group.bench_function("prog-opt-444", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::None)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
                 .progressive(true)
                 .optimize_huffman(true);
             let mut enc = config
@@ -90,10 +90,9 @@ fn quick_bench(c: &mut Criterion) {
     // XYB color space
     group.bench_function("prog-opt-444-xyb", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::None)
+            let config = EncoderConfig::xyb(90.0, XybSubsampling::Full)
                 .progressive(true)
-                .optimize_huffman(true)
-                .xyb();
+                .optimize_huffman(true);
             let mut enc = config
                 .encode_from_bytes(WIDTH, HEIGHT, PixelLayout::Rgb8Srgb)
                 .unwrap();

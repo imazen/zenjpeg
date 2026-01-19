@@ -198,7 +198,7 @@ fn encode_with_method(
 ) -> Result<EncodingResult, Error> {
     let start = Instant::now();
 
-    let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).ycbcr(subsampling);
+    let mut config = EncoderConfig::ycbcr(90.0, subsampling);
 
     if let Some(m) = method {
         config = config.downsampling_method(m);

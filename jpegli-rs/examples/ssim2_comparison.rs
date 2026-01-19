@@ -40,7 +40,7 @@ fn encode_rust(
         Subsampling::S440 => JpegliSubsampling::HalfVertical,
         _ => JpegliSubsampling::Quarter,
     };
-    let config = JpegliEncoderConfig::new(quality as f32, sub)
+    let config = JpegliEncoderConfig::ycbcr(quality as f32, sub)
         .progressive(progressive)
         .optimize_huffman(true);
     let mut enc = config

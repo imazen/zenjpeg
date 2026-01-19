@@ -3,11 +3,10 @@
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use jpegli::{EncoderConfig, PixelLayout};
+//! use jpegli::{EncoderConfig, ChromaSubsampling, PixelLayout};
 //!
 //! // Create reusable config
-//! let config = EncoderConfig::new()
-//!     .quality(85)
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 //!     .progressive(true);
 //!
 //! // Encode from raw bytes
@@ -19,10 +18,10 @@
 //! For large images or when you want to process rows incrementally:
 //!
 //! ```rust,ignore
-//! use jpegli::{EncoderConfig, PixelLayout};
+//! use jpegli::{EncoderConfig, ChromaSubsampling, PixelLayout};
 //! use enough::Unstoppable;
 //!
-//! let config = EncoderConfig::new().quality(85);
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 //! let mut enc = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
 //!
 //! // Push rows (or use push_packed for all at once)
@@ -66,9 +65,15 @@ pub mod exif;
 /// Default quantization and zero-bias tables for customization.
 ///
 /// This module exposes the internal default tables so users can modify them
-/// rather than creating tables from scratch.
-#[doc(hidden)]
+/// rather than creating tables from scratch. Used with [`tuning::EncodingTables`].
 pub mod tables;
+
+/// Encoding table tuning for optimization experiments.
+///
+/// This module provides fine-grained control over quantization and zero-bias
+/// tables for researching better encoding parameters. See the README
+/// "Table Optimization" section for research methodology.
+pub mod tuning;
 
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
@@ -126,8 +131,8 @@ use enough::Unstoppable;
 ///     .encode(&pixels)?;
 ///
 /// // New API (recommended):
-/// use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
-/// let config = EncoderConfig::new().quality(85);
+/// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
+/// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 /// let mut enc = config.encode_from_bytes(640, 480, PixelLayout::Rgb8Srgb)?;
 /// enc.push_packed(&pixels, Unstoppable)?;
 /// let jpeg = enc.finish()?;

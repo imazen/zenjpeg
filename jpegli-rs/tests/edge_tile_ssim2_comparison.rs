@@ -158,9 +158,7 @@ fn tile_bottom_edge(rgb: &[u8], width: usize, height: usize, edge_height: usize)
 
 /// Encode with Rust jpegli
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(quality)
-        .ycbcr(ChromaSubsampling::None)
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None)
         .progressive(true)
         .optimize_huffman(true);
     let mut enc = config

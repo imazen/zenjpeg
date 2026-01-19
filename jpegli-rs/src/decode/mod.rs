@@ -518,7 +518,7 @@ mod tests {
         }
 
         // Encode using v2 API
-        let config = EncoderConfig::new(95.0, ChromaSubsampling::None).grayscale();
+        let config = EncoderConfig::grayscale(95.0);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
             .expect("encoder creation should succeed");
@@ -566,7 +566,7 @@ mod tests {
         }
 
         // Encode using v2 API
-        let config = EncoderConfig::new(95.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder creation should succeed");
@@ -608,7 +608,7 @@ mod tests {
         }
 
         // Encode using v2 API
-        let config = EncoderConfig::new(95.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(95.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder creation should succeed");
@@ -667,7 +667,7 @@ mod tests {
         }
 
         // Encode at high quality using v2 API
-        let config = EncoderConfig::new(98.0, ChromaSubsampling::None);
+        let config = EncoderConfig::ycbcr(98.0, ChromaSubsampling::None);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder creation should succeed");

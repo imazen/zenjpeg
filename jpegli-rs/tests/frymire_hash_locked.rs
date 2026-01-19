@@ -10,7 +10,9 @@
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
-use jpegli::encoder::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout};
+use jpegli::encoder::{
+    ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout, XybSubsampling,
+};
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -292,15 +294,14 @@ struct EncoderTestConfig {
 
 impl EncoderTestConfig {
     fn encode(&self, rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-        let mut config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .quality(quality)
-            .progressive(self.progressive)
-            .ycbcr(self.subsampling)
-            .optimize_huffman(self.optimize_huffman)
-            .downsampling_method(self.downsampling_method);
-        if self.use_xyb {
-            config = config.xyb();
+        let config = if self.use_xyb {
+            EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
+        } else {
+            EncoderConfig::ycbcr(quality, self.subsampling)
         }
+        .progressive(self.progressive)
+        .optimize_huffman(self.optimize_huffman)
+        .downsampling_method(self.downsampling_method);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
@@ -539,9 +540,7 @@ fn print_all_hashes() {
 fn print_single_hash() {
     let (rgb, width, height) = load_frymire();
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .quality(90.0)
-        .ycbcr(ChromaSubsampling::None)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
         .optimize_huffman(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)

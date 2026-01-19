@@ -27,7 +27,7 @@ fn bench_encode(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let config = EncoderConfig::new(90, ChromaSubsampling::Quarter);
+                    let config = EncoderConfig::ycbcr(90, ChromaSubsampling::Quarter);
                     let mut enc = config
                         .encode_from_bytes(size as u32, size as u32, PixelLayout::Rgb8Srgb)
                         .unwrap();
@@ -49,7 +49,7 @@ fn bench_quality_levels(c: &mut Criterion) {
     for quality in [50, 75, 90, 95] {
         group.bench_with_input(BenchmarkId::new("q", quality), &data, |b, data| {
             b.iter(|| {
-                let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
+                let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
                 let mut enc = config
                     .encode_from_bytes(512, 512, PixelLayout::Rgb8Srgb)
                     .unwrap();

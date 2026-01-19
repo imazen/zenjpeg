@@ -742,9 +742,9 @@ impl StreamingEncoderBuilder {
 /// This type is deprecated. Use [`crate::encoder::EncoderConfig`] instead:
 ///
 /// ```rust,ignore
-/// use jpegli::encoder::{EncoderConfig, PixelLayout, Unstoppable};
+/// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
 ///
-/// let config = EncoderConfig::new().quality(85);
+/// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
 /// let mut encoder = config.encode_from_bytes(1920, 1080, PixelLayout::Rgb8Srgb)?;
 /// encoder.push_packed(&rgb_data, Unstoppable)?;
 /// let jpeg = encoder.finish()?;

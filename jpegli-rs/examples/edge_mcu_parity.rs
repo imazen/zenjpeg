@@ -51,7 +51,7 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
 }
 
 fn encode_rust(pixels: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let config = JpegliEncoderConfig::new(quality as f32, JpegliChromaSubsampling::Quarter)
+    let config = JpegliEncoderConfig::ycbcr(quality as f32, JpegliChromaSubsampling::Quarter)
         .progressive(true)
         .optimize_huffman(true);
     let mut enc = config

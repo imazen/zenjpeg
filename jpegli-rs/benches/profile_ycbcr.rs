@@ -65,7 +65,7 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // YCbCr 4:2:0 - most common, has chroma downsampling
     group.bench_function("ycbcr-420", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                 .progressive(true)
                 .optimize_huffman(true);
             let mut enc = config
@@ -79,7 +79,7 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // YCbCr 4:4:4 - no chroma downsampling
     group.bench_function("ycbcr-444", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::None)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
                 .progressive(true)
                 .optimize_huffman(true);
             let mut enc = config
@@ -93,7 +93,7 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
     // Baseline mode variants (simpler scan structure)
     group.bench_function("ycbcr-420-baseline", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                 .progressive(false)
                 .optimize_huffman(true);
             let mut enc = config
@@ -106,7 +106,7 @@ fn profile_ycbcr_bench(c: &mut Criterion) {
 
     group.bench_function("ycbcr-444-baseline", |b| {
         b.iter(|| {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::None)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None)
                 .progressive(false)
                 .optimize_huffman(true);
             let mut enc = config

@@ -9,12 +9,11 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use jpegli::encode::v2::{EncoderConfig, PixelLayout};
+//! use jpegli::encode::v2::{EncoderConfig, ChromaSubsampling, PixelLayout};
 //! use enough::Unstoppable;
 //!
 //! // Create reusable config
-//! let config = EncoderConfig::new()
-//!     .quality(85)
+//! let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 //!     .progressive(true);
 //!
 //! // Encode from raw bytes

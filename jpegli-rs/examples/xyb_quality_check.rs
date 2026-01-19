@@ -5,7 +5,7 @@ use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 use jpegli::{
     decoder::Decoder,
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
+    encoder::{EncoderConfig, PixelLayout, XybSubsampling},
 };
 use std::fs;
 use std::io::Write;
@@ -26,7 +26,7 @@ fn main() {
     println!("Image: {}x{}\n", width, height);
 
     // Encode with Rust XYB
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::None).xyb();
+    let config = EncoderConfig::xyb(90.0, XybSubsampling::Full);
     let mut enc = config
         .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
         .unwrap();

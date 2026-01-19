@@ -56,10 +56,7 @@ fn test_progressive_grayscale_gradient() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .grayscale()
-        .quality(90.0)
-        .progressive(true);
+    let config = EncoderConfig::grayscale(90.0).progressive(true);
 
     let jpeg_data =
         encode_gray(width, height, &data, &config).expect("Progressive encoding should succeed");
@@ -103,10 +100,7 @@ fn test_progressive_solid_gray() {
     let height = 16u32;
     let data = vec![128u8; (width * height) as usize];
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .grayscale()
-        .quality(90.0)
-        .progressive(true);
+    let config = EncoderConfig::grayscale(90.0).progressive(true);
 
     let jpeg_data =
         encode_gray(width, height, &data, &config).expect("Progressive encoding should succeed");
@@ -133,7 +127,7 @@ fn test_progressive_rgb() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter).progressive(true);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).progressive(true);
 
     let jpeg_data =
         encode_rgb(width, height, &data, &config).expect("Progressive RGB encoding should succeed");
@@ -162,10 +156,7 @@ fn test_progressive_has_multiple_scans() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .grayscale()
-        .quality(85.0)
-        .progressive(true);
+    let config = EncoderConfig::grayscale(85.0).progressive(true);
 
     let jpeg_data = encode_gray(width, height, &data, &config).expect("Encoding should succeed");
 
@@ -204,7 +195,7 @@ fn test_progressive_optimized_smaller() {
     }
 
     // Progressive + fixed Huffman should fail (not supported)
-    let config_no_opt = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config_no_opt = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(false);
@@ -213,7 +204,7 @@ fn test_progressive_optimized_smaller() {
     assert!(result.is_err(), "Progressive + fixed Huffman should fail");
 
     // Progressive + optimized Huffman should succeed
-    let config_opt = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config_opt = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -225,7 +216,7 @@ fn test_progressive_optimized_smaller() {
     assert_eq!(&opt_data[0..2], &[0xFF, 0xD8]);
 
     // Compare with baseline + optimized to verify progressive is smaller
-    let config_baseline = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config_baseline = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(false)
         .optimize_huffman(true);
@@ -257,10 +248,7 @@ fn test_progressive_optimized_external_decode() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .grayscale()
-        .quality(90.0)
-        .progressive(true);
+    let config = EncoderConfig::grayscale(90.0).progressive(true);
 
     let jpeg_data = encode_gray(width, height, &data, &config).expect("Encoding should succeed");
 
@@ -310,7 +298,7 @@ fn test_progressive_optimized_larger_image() {
     }
 
     // Progressive with optimized Huffman
-    let config_prog = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config_prog = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -318,7 +306,7 @@ fn test_progressive_optimized_larger_image() {
         .expect("Progressive encoding should succeed");
 
     // Baseline with optimized Huffman for comparison
-    let config_baseline = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config_baseline = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(false)
         .optimize_huffman(true);
@@ -357,7 +345,7 @@ fn test_progressive_optimized_solid_color() {
     // Solid red
     let data: Vec<u8> = (0..(width * height)).flat_map(|_| [255u8, 0, 0]).collect();
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -388,7 +376,7 @@ fn test_progressive_optimized_high_frequency() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -419,7 +407,7 @@ fn test_progressive_optimized_quality_levels() {
     let mut prev_size = 0usize;
 
     for quality in [70.0, 85.0, 95.0] {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .quality(quality)
             .progressive(true)
             .optimize_huffman(true);
@@ -450,7 +438,7 @@ fn test_progressive_optimized_single_block() {
     let height = 8u32;
     let data: Vec<u8> = (0..64).flat_map(|i| [i as u8 * 4, 128, 64]).collect();
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(90.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -474,9 +462,7 @@ fn test_progressive_optimized_grayscale_sizes() {
             }
         }
 
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-            .grayscale()
-            .quality(85.0)
+        let config = EncoderConfig::grayscale(85.0)
             .progressive(true)
             .optimize_huffman(true);
         let jpeg_data = encode_gray(size, size, &data, &config)
@@ -497,7 +483,7 @@ fn test_progressive_optimized_scan_structure() {
     let height = 32u32;
     let data: Vec<u8> = (0..(width * height * 3)).map(|i| (i % 256) as u8).collect();
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -547,7 +533,7 @@ fn test_progressive_optimized_non_square() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -577,7 +563,7 @@ fn test_progressive_optimized_non_square() {
 /// Test non-multiple-of-8 dimensions (requires padding).
 #[test]
 fn test_progressive_optimized_odd_dimensions() {
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(85.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -621,10 +607,7 @@ fn test_baseline_still_works() {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
-        .grayscale()
-        .quality(90.0)
-        .progressive(false);
+    let config = EncoderConfig::grayscale(90.0).progressive(false);
 
     let jpeg_data =
         encode_gray(width, height, &data, &config).expect("Baseline encoding should succeed");
@@ -667,7 +650,7 @@ fn test_progressive_all_quality_levels() {
 
     // Test quality levels from 10 to 100 in steps of 5
     for q in (10..=100).step_by(5) {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .quality(q as f32)
             .progressive(true)
             .optimize_huffman(true);
@@ -782,7 +765,7 @@ fn test_progressive_quality_various_content() {
         let data = (tc.generator)(tc.width, tc.height);
 
         for &q in &quality_levels {
-            let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+            let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
                 .quality(q)
                 .progressive(true)
                 .optimize_huffman(true);
@@ -823,7 +806,7 @@ fn test_progressive_extreme_low_quality() {
         .collect();
 
     for q in [1.0, 2.0, 3.0, 5.0, 7.0, 10.0] {
-        let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+        let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
             .quality(q)
             .progressive(true)
             .optimize_huffman(true);
@@ -862,7 +845,7 @@ fn test_libjpeg_compatibility_noise() {
         })
         .collect();
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(50.0)
         .progressive(true)
         .optimize_huffman(true);
@@ -937,7 +920,7 @@ fn test_cpp_pixel_parity() {
         .collect();
 
     // Encode with Rust
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter)
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
         .quality(50.0)
         .progressive(true)
         .optimize_huffman(true);

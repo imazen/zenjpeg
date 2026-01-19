@@ -57,7 +57,7 @@ fn idct_parity_with_simd128() {
 
     // The IDCT should produce uniform output for DC-only input
     // Just verify encoder creation works with SIMD128
-    let config = jpegli::encoder::EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+    let config = jpegli::encoder::EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(8, 8, jpegli::encoder::PixelLayout::Gray8Srgb)
         .expect("encoder setup");

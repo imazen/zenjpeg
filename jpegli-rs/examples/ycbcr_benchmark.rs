@@ -19,7 +19,7 @@ fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
             data[idx + 2] = 128;
         }
     }
-    let config = EncoderConfig::new(quality, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .unwrap();

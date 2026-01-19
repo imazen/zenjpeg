@@ -3,11 +3,11 @@
 //! This test encodes a solid color image and compares the DC coefficients.
 
 use enough::Unstoppable;
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 use std::process::Command;
 
 fn encode_rust_xyb_dump(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::new(quality, ChromaSubsampling::None).xyb();
+    let config = EncoderConfig::xyb(quality, XybSubsampling::Full);
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");

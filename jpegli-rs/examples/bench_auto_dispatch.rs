@@ -14,7 +14,7 @@ fn bench(width: usize, height: usize) -> (f64, usize) {
         }
     }
 
-    let config = EncoderConfig::new(90.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
 
     // Warmup
     for _ in 0..3 {

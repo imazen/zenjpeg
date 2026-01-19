@@ -1528,20 +1528,20 @@ impl EncoderConfig {
     }
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        use jpegli::encoder::{EncoderConfig, PixelLayout};
+        use jpegli::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         if self.hybrid {
             return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
         }
 
-        let mut config = EncoderConfig::new(self.quality as f32, self.subsampling.to_v2())
-            .progressive(self.scan == ScanMode::Progressive);
-
-        // Set color mode if XYB
-        if self.color == ColorMode::Xyb {
-            config = config.xyb();
+        // Create config based on color mode
+        let config = if self.color == ColorMode::Xyb {
+            EncoderConfig::xyb(self.quality as f32, XybSubsampling::BQuarter)
+        } else {
+            EncoderConfig::ycbcr(self.quality as f32, self.subsampling.to_v2())
         }
+        .progressive(self.scan == ScanMode::Progressive);
 
         let mut enc = config
             .encode_from_bytes(img.width as u32, img.height as u32, PixelLayout::Rgb8Srgb)
