@@ -127,6 +127,11 @@ impl BytesEncoder {
             builder = builder.use_xyb(true);
         }
 
+        #[cfg(feature = "mozjpeg-deringing")]
+        if config.deringing {
+            builder = builder.deringing(true);
+        }
+
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             // ParallelEncoding::Auto means enable parallel encoding

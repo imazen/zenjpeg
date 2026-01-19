@@ -29,6 +29,9 @@ pub struct EncoderConfig {
     /// Hybrid quantization configuration (requires `experimental-hybrid-trellis` feature)
     #[cfg(feature = "experimental-hybrid-trellis")]
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
+    /// Enable overshoot deringing (requires `mozjpeg-deringing` feature)
+    #[cfg(feature = "mozjpeg-deringing")]
+    pub(crate) deringing: bool,
 }
 
 // Note: No Default impl - quality and subsampling are required via new()
@@ -77,6 +80,8 @@ impl EncoderConfig {
             parallel: None,
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
+            #[cfg(feature = "mozjpeg-deringing")]
+            deringing: false,
         }
     }
 
@@ -382,6 +387,25 @@ impl EncoderConfig {
         } else {
             DownsamplingMethod::Box
         })
+    }
+
+    /// Enable overshoot deringing to reduce ringing artifacts on white backgrounds.
+    ///
+    /// Deringing smooths hard edges (like text on white) by allowing values to
+    /// "overshoot" beyond the maximum. Since JPEG decoders clamp values to 0-255,
+    /// the overshoot is invisible but the smoother curve compresses better.
+    ///
+    /// This is particularly effective for:
+    /// - Images with white backgrounds
+    /// - Text and graphics with hard edges
+    /// - Any image with saturated regions (pixels at 0 or 255)
+    ///
+    /// Requires the `mozjpeg-deringing` feature.
+    #[cfg(feature = "mozjpeg-deringing")]
+    #[must_use]
+    pub fn deringing(mut self, enable: bool) -> Self {
+        self.deringing = enable;
+        self
     }
 
     // === Validation ===
