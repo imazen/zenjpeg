@@ -85,6 +85,8 @@ pub struct StreamingEncoderBuilder {
     use_xyb: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     deringing: bool,
+    /// Allow 16-bit quantization tables (default: true)
+    allow_16bit_quant_tables: bool,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     parallel: bool,
@@ -113,6 +115,7 @@ impl StreamingEncoderBuilder {
             custom_zero_bias: CustomZeroBias::Default,
             use_xyb: false,
             deringing: true,
+            allow_16bit_quant_tables: true,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -340,6 +343,19 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn deringing(mut self, enable: bool) -> Self {
         self.deringing = enable;
+        self
+    }
+
+    /// Allow 16-bit quantization tables for better low-quality precision.
+    ///
+    /// When enabled (default), quantization values can exceed 255, producing
+    /// extended sequential JPEGs (SOF1 marker).
+    ///
+    /// When disabled, quantization values are clamped to 255, producing
+    /// baseline-compatible JPEGs (SOF0 marker) that work with all decoders.
+    #[must_use]
+    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+        self.allow_16bit_quant_tables = enable;
         self
     }
 
@@ -860,35 +876,39 @@ impl StreamingEncoder {
             ColorSpace::YCbCr
         };
 
+        let allow_16bit = builder.allow_16bit_quant_tables;
         let (y_quant, cb_quant, cr_quant) = if let Some(ref custom) = builder.custom_quant_matrices
         {
             (
-                quant::generate_quant_table_custom(distance, 0, builder.use_xyb, custom),
-                quant::generate_quant_table_custom(distance, 1, builder.use_xyb, custom),
-                quant::generate_quant_table_custom(distance, 2, builder.use_xyb, custom),
+                quant::generate_quant_table_custom_ex(distance, 0, builder.use_xyb, custom, allow_16bit),
+                quant::generate_quant_table_custom_ex(distance, 1, builder.use_xyb, custom, allow_16bit),
+                quant::generate_quant_table_custom_ex(distance, 2, builder.use_xyb, custom, allow_16bit),
             )
         } else {
             (
-                quant::generate_quant_table(
+                quant::generate_quant_table_ex(
                     builder.quality,
                     0,
                     color_space,
                     builder.use_xyb,
                     is_420,
+                    allow_16bit,
                 ),
-                quant::generate_quant_table(
+                quant::generate_quant_table_ex(
                     builder.quality,
                     1,
                     color_space,
                     builder.use_xyb,
                     is_420,
+                    allow_16bit,
                 ),
-                quant::generate_quant_table(
+                quant::generate_quant_table_ex(
                     builder.quality,
                     2,
                     color_space,
                     builder.use_xyb,
                     is_420,
+                    allow_16bit,
                 ),
             )
         };
