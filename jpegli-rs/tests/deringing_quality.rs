@@ -45,8 +45,7 @@ fn encode_gray_with_deringing(
     quality: f32,
     deringing: bool,
 ) -> Vec<u8> {
-    let config = EncoderConfig::grayscale(quality)
-        .deringing(deringing);
+    let config = EncoderConfig::grayscale(quality).deringing(deringing);
 
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)

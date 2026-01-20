@@ -836,6 +836,12 @@ impl StreamingEncoder {
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
 
+        // Enable trellis quantization if configured
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        if let Some(ref trellis) = builder.trellis {
+            processor.set_trellis(*trellis);
+        }
+
         // Generate quantization tables and zero-bias params
         let is_420 = builder.subsampling == Subsampling::S420;
         let distance = builder.quality.to_distance();
