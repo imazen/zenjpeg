@@ -48,6 +48,11 @@ pub mod config;
 mod hybrid;
 pub(crate) mod linear_lut;
 
+// Archmage-based SIMD (token-based safe intrinsics)
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[doc(hidden)]
+pub mod mage_simd;
+
 /// Overshoot deringing for reducing ringing artifacts on white backgrounds.
 ///
 /// This module implements the deringing algorithm pioneered by @kornel in mozjpeg.

@@ -36,6 +36,8 @@ rayon = { workspace = true, optional = true }  # For parallel encoding
 mozjpeg-rs = { workspace = true, optional = true }
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 yuv = { workspace = true, optional = true }
+# Token-based safe SIMD intrinsics
+archmage = { workspace = true, optional = true }
 
 [dev-dependencies]
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
@@ -84,6 +86,9 @@ parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/
 # Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
 # Without this, all SIMD uses safe `wide` crate which auto-vectorizes on all platforms.
 unsafe_simd = []
+# Token-based safe SIMD using archmage (alternative to unsafe_simd)
+# Provides same intrinsics with compile-time safety via capability tokens
+archmage-simd = ["dep:archmage"]
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
