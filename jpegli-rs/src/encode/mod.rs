@@ -82,6 +82,15 @@ pub mod tables;
 /// "Table Optimization" section for research methodology.
 pub mod tuning;
 
+/// mozjpeg-compatible quantization table presets.
+///
+/// This module provides access to the 9 quantization table variants used by mozjpeg
+/// (Robidoux, MSSIM, Klein, etc.) with the standard quality scaling formula.
+///
+/// Requires the `mozjpeg-tables` feature flag.
+#[cfg(feature = "mozjpeg-tables")]
+pub mod mozjpeg_tables;
+
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
 pub mod v2;
@@ -103,6 +112,9 @@ pub use encoder_types::{
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
 pub use exif::{Exif, ExifFields, Orientation};
+#[cfg(feature = "mozjpeg-tables")]
+#[allow(unused_imports)] // Public API re-exports
+pub use mozjpeg_tables::{MozjpegTables, QuantTablePreset};
 
 use crate::error::{Error, Result};
 
