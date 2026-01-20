@@ -77,7 +77,7 @@ impl BytesEncoder {
         use crate::quant::Quality as LegacyQuality;
 
         let quality = LegacyQuality::from_quality(config.quality.to_internal());
-        let pixel_format = layout.to_legacy();
+        let pixel_format = layout.into();
         let subsampling = match config.color_mode {
             super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
