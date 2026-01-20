@@ -950,6 +950,8 @@ impl StreamingEncoder {
             hybrid_config: builder.hybrid_config,
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: builder.custom_aq_map,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            trellis: builder.trellis,
             encoding_tables: builder.encoding_tables,
             edge_padding: crate::types::EdgePaddingConfig::default(),
             original_width: None,
