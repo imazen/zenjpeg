@@ -482,11 +482,12 @@ impl StreamingAQ {
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
             // Per-block modulations with padded buffer
-            // Buffer has padded_width stride and edge-clamped rows for full SIMD access
+            // Buffer has padded_width stride; pass actual image dimensions for edge clamping
             per_block_modulations_row(
                 &self.y_imcu_buffers[y_buffer_idx],
-                self.padded_width,
-                self.y_imcu_height,
+                self.padded_width, // stride (MCU-aligned)
+                self.width,        // img_width (actual, for edge clamping)
+                self.height,       // img_height (actual, for edge clamping)
                 by_offset,
                 blocks_w,
                 &mut self.fuzzy_erosion_out[row_start..row_end],

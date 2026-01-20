@@ -453,12 +453,16 @@ fn fast_log2(x: f32) -> f32 {
 ///
 /// SIMD accelerated - processes one row of 8 pixels at a time.
 ///
+/// When the buffer has edge-replicated padding (stride > img_width), we use
+/// all 8 pixels per row including replicated ones. This matches C++ behavior
+/// and gives correct normalization (64 pixels per block).
+///
 /// # Arguments
 /// * `block` - Pointer to top-left of 8x8 block
-/// * `stride` - Row stride (image width)
-/// * `block_x` - X position of block (for boundary check)
+/// * `stride` - Row stride (may be padded beyond img_width)
+/// * `_block_x` - X position of block (unused, kept for API compatibility)
 /// * `block_y` - Y position of block (for boundary check)
-/// * `img_width` - Total image width
+/// * `_img_width` - Image width (unused, kept for API compatibility)
 /// * `img_height` - Total image height
 ///
 /// # Returns
@@ -467,18 +471,17 @@ fn fast_log2(x: f32) -> f32 {
 pub fn gamma_modulation_sum_8x8(
     block: &[f32],
     stride: usize,
-    block_x: usize,
+    _block_x: usize,
     block_y: usize,
-    img_width: usize,
+    _img_width: usize,
     img_height: usize,
 ) -> f32 {
     let bias = f32x8::splat(K_BIAS);
     let mut sum = f32x8::ZERO;
-    let mut scalar_sum = 0.0f32;
 
-    // Calculate how many pixels are valid in this block
-    let valid_cols = ((block_x + 8).min(img_width) - block_x).min(8);
-
+    // The buffer is guaranteed to have 8 columns per block row due to MCU-aligned
+    // allocation. For edge blocks, the extra columns contain replicated edge values,
+    // which is correct for normalization (same pixel value contributes multiple times).
     for dy in 0..8 {
         let y = block_y + dy;
         if y >= img_height {
@@ -487,37 +490,32 @@ pub fn gamma_modulation_sum_8x8(
 
         let row_start = dy * stride;
 
-        // Try SIMD path if we have a full row of 8 valid pixels
-        if valid_cols == 8 && row_start + 8 <= block.len() {
+        // Process all 8 pixels - buffer has MCU-aligned padding with edge replication
+        if row_start + 8 <= block.len() {
             let row = load_f32x8(block, row_start);
             let ratio = ratio_of_derivatives_inv_x8(row + bias);
             sum += ratio;
-        } else {
-            // Scalar fallback for edge blocks - process all valid pixels
-            for dx in 0..valid_cols {
-                let idx = row_start + dx;
-                if idx < block.len() {
-                    let val = block[idx] + K_BIAS;
-                    scalar_sum += ratio_of_derivatives_scalar(val, true);
-                }
-            }
         }
     }
 
     // Horizontal sum using SIMD reduce_add
-    sum.reduce_add() + scalar_sum
+    sum.reduce_add()
 }
 
 /// Compute HF modulation sum: |p - right| + |p - below| for 8x8 block.
 ///
 /// Optimized with SIMD for row processing.
+///
+/// When the buffer has edge-replicated padding (stride > img_width), we use
+/// all 8 pixels per row including replicated ones. This matches C++ behavior
+/// and gives correct normalization (112 = 7×8 + 8×7 differences).
 #[inline(always)]
 pub fn hf_modulation_sum_8x8(
     block: &[f32],
     stride: usize,
-    block_x: usize,
+    _block_x: usize,
     block_y: usize,
-    img_width: usize,
+    _img_width: usize,
     img_height: usize,
 ) -> f32 {
     // Mask to zero out the 8th element for horizontal differences
@@ -525,8 +523,10 @@ pub fn hf_modulation_sum_8x8(
 
     let mut h_sum = f32x8::ZERO;
     let mut v_sum = f32x8::ZERO;
-    let mut scalar_sum = 0.0f32;
 
+    // The buffer is guaranteed to have 8 columns per block row due to MCU-aligned
+    // allocation. For edge blocks, the extra columns contain replicated edge values,
+    // which give 0 differences (correct for normalization).
     for dy in 0..8 {
         let y = block_y + dy;
         if y >= img_height {
@@ -536,49 +536,27 @@ pub fn hf_modulation_sum_8x8(
         let row_start = dy * stride;
 
         // Horizontal differences: |p - p_right| for positions 0..6
-        if row_start + 9 <= block.len() && block_x + 8 < img_width {
+        // Buffer has 9 valid elements per row (8 + 1 for rightward shift)
+        if row_start + 9 <= block.len() {
             let p = load_f32x8(block, row_start);
             let p_right = load_f32x8(block, row_start + 1);
-            // Mask out 8th element (invalid difference), accumulate
+            // Mask out 8th element (position 7->8 difference not needed), accumulate
             h_sum += (p - p_right).abs() * MASK_FIRST_7;
-        } else {
-            // Scalar fallback for edge blocks
-            let max_x = (block_x + 7).min(img_width.saturating_sub(1));
-            let h_count = if block_x < max_x {
-                (max_x - block_x).min(7)
-            } else {
-                0
-            };
-            for dx in 0..h_count {
-                let idx = row_start + dx;
-                scalar_sum += (block[idx] - block[idx + 1]).abs();
-            }
         }
 
         // Vertical differences: |p - p_below| for first 7 rows
         if dy < 7 && y + 1 < img_height {
             let next_row_start = (dy + 1) * stride;
-            if row_start + 8 <= block.len()
-                && next_row_start + 8 <= block.len()
-                && block_x + 8 <= img_width
-            {
+            if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
                 let p = load_f32x8(block, row_start);
                 let p_below = load_f32x8(block, next_row_start);
                 v_sum += (p - p_below).abs();
-            } else {
-                // Scalar fallback
-                let v_count = ((block_x + 8).min(img_width) - block_x).min(8);
-                for dx in 0..v_count {
-                    let idx = row_start + dx;
-                    let below_idx = next_row_start + dx;
-                    scalar_sum += (block[idx] - block[below_idx]).abs();
-                }
             }
         }
     }
 
     // Single horizontal reduction at the end
-    h_sum.reduce_add() + v_sum.reduce_add() + scalar_sum
+    h_sum.reduce_add() + v_sum.reduce_add()
 }
 
 /// Full per_block_modulations with SIMD acceleration.
@@ -615,8 +593,9 @@ pub fn per_block_modulations_simd(
         let row_end = row_start + block_w;
         per_block_modulations_row(
             input,
-            width,
-            height,
+            width,  // stride
+            width,  // img_width (same as stride for non-streaming)
+            height, // img_height
             by,
             block_w,
             &mut aq_map[row_start..row_end],
@@ -629,11 +608,22 @@ pub fn per_block_modulations_simd(
 /// Process per_block_modulations for a row of blocks.
 ///
 /// Combines ComputeMask, HfModulation, GammaModulation, and final transform.
+///
+/// # Parameters
+/// - `input`: Input Y plane data
+/// - `stride`: Row stride in input buffer (may be padded for SIMD alignment)
+/// - `img_width`: Actual image width (for edge clamping)
+/// - `img_height`: Actual image height (for edge clamping)
+/// - `by`: Block row index
+/// - `block_w`: Number of blocks in row
+/// - `aq_row`: Output AQ values (one per block)
+/// - `mul`, `add`: Final transform coefficients
 #[multiversed]
 pub fn per_block_modulations_row(
     input: &[f32],
-    width: usize,
-    height: usize,
+    stride: usize,
+    img_width: usize,
+    img_height: usize,
     by: usize,
     block_w: usize,
     aq_row: &mut [f32],
@@ -675,13 +665,14 @@ pub fn per_block_modulations_row(
         );
 
         // 2. HfModulation with SIMD
-        let block_offset = y_start * width + x_start;
+        let block_offset = y_start * stride + x_start;
         let block = &input[block_offset..];
-        let hf_sum = hf_modulation_sum_8x8(block, width, x_start, y_start, width, height);
+        let hf_sum = hf_modulation_sum_8x8(block, stride, x_start, y_start, img_width, img_height);
         out_val += hf_sum * K_SUM_COEFF;
 
         // 3. GammaModulation with SIMD and fast_log2
-        let gamma_sum = gamma_modulation_sum_8x8(block, width, x_start, y_start, width, height);
+        let gamma_sum =
+            gamma_modulation_sum_8x8(block, stride, x_start, y_start, img_width, img_height);
         let overall_ratio = gamma_sum * K_SCALE;
         let log_ratio = if overall_ratio > 0.0 {
             fast_log2(overall_ratio)
