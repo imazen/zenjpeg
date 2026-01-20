@@ -34,7 +34,7 @@
 
 use crate::encode::strip::StripProcessor;
 use crate::encode::tuning::EncodingTables;
-use crate::encode::Encoder;
+use crate::encode::config::ComputedConfig;
 use crate::error::{Error, Result};
 use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
@@ -753,8 +753,8 @@ pub(crate) struct StreamingEncoder {
     /// Underlying strip processor
     processor: StripProcessor,
 
-    /// Encoder for JPEG output generation
-    encoder: Encoder,
+    /// Configuration for JPEG output generation
+    config: ComputedConfig,
 
     /// Quantization tables (generated from quality)
     y_quant: QuantTable,
@@ -906,30 +906,29 @@ impl StreamingEncoder {
         // Allocate row buffer for one strip
         let row_buffer = vec![0u8; bytes_per_row * strip_height];
 
-        // Create encoder for final JPEG output
-        let encoder = Encoder::new()
-            .width(builder.width)
-            .height(builder.height)
-            .pixel_format(builder.pixel_format)
-            .jpegli_quality(builder.quality)
-            .subsampling(builder.subsampling)
-            .mode(builder.mode)
-            .optimize_huffman(builder.optimize_huffman)
-            .chroma_downsampling(builder.chroma_downsampling)
-            .restart_interval(builder.restart_interval)
-            .use_xyb(builder.use_xyb);
-
-        #[cfg(feature = "parallel")]
-        let encoder = encoder.parallel(builder.parallel);
-
-        #[cfg(feature = "experimental-hybrid-trellis")]
-        let encoder = encoder.hybrid_config(builder.hybrid_config);
-
-        #[cfg(feature = "experimental-hybrid-trellis")]
-        let encoder = if let Some(map) = builder.custom_aq_map {
-            encoder.aq_map(map)
-        } else {
-            encoder
+        // Create config for final JPEG output
+        let config = ComputedConfig {
+            width: builder.width,
+            height: builder.height,
+            pixel_format: builder.pixel_format,
+            quality: builder.quality,
+            subsampling: builder.subsampling,
+            mode: builder.mode,
+            optimize_huffman: builder.optimize_huffman,
+            chroma_downsampling: builder.chroma_downsampling,
+            restart_interval: builder.restart_interval,
+            use_xyb: builder.use_xyb,
+            #[cfg(feature = "parallel")]
+            parallel: builder.parallel,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            hybrid_config: builder.hybrid_config,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            custom_aq_map: builder.custom_aq_map,
+            encoding_tables: builder.encoding_tables,
+            edge_padding: crate::types::EdgePaddingConfig::default(),
+            original_width: None,
+            original_height: None,
+            allow_16bit_quant_tables: builder.allow_16bit_quant_tables,
         };
 
         Ok(Self {
@@ -941,7 +940,7 @@ impl StreamingEncoder {
             rows_buffered: 0,
             current_y: 0,
             processor,
-            encoder,
+            config,
             y_quant,
             cb_quant,
             cr_quant,
@@ -1357,7 +1356,7 @@ impl StreamingEncoder {
         }
 
         // Extract needed data before consuming processor
-        let encoder = self.encoder;
+        let config = self.config;
         let y_quant = self.y_quant;
         let cb_quant = self.cb_quant;
         let cr_quant = self.cr_quant;
@@ -1367,9 +1366,9 @@ impl StreamingEncoder {
         // Finalize strip processing
         let strip_output = self.processor.finalize()?;
 
-        // Build JPEG output using the encoder's internal methods
+        // Build JPEG output using the config's internal methods
         Self::build_jpeg_from_blocks(
-            &encoder,
+            &config,
             &y_quant,
             &cb_quant,
             &cr_quant,
@@ -1382,7 +1381,7 @@ impl StreamingEncoder {
 
     /// Builds JPEG output from processed blocks.
     fn build_jpeg_from_blocks(
-        encoder: &Encoder,
+        config: &ComputedConfig,
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
@@ -1394,16 +1393,16 @@ impl StreamingEncoder {
         stop.check()?;
 
         // Branch based on encoding mode (mirrors encode_strip_based in encode/mod.rs)
-        match encoder.config.mode {
+        match config.mode {
             JpegMode::Progressive => {
                 // Progressive mode requires optimized Huffman tables
-                if !encoder.config.optimize_huffman {
+                if !config.optimize_huffman {
                     return Err(Error::unsupported_feature(
                         "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
                     ));
                 }
                 // Use progressive encoding path
-                encoder.encode_progressive_from_blocks(
+                config.encode_progressive_from_blocks(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1414,52 +1413,52 @@ impl StreamingEncoder {
             }
             _ => {
                 // Baseline encoding
-                Self::build_jpeg_baseline(encoder, y_quant, cb_quant, cr_quant, strip_output)
+                Self::build_jpeg_baseline(config, y_quant, cb_quant, cr_quant, strip_output)
             }
         }
     }
 
     /// Builds baseline JPEG output from processed blocks.
     fn build_jpeg_baseline(
-        encoder: &Encoder,
+        config: &ComputedConfig,
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
         strip_output: crate::encode::strip::StripProcessorOutput,
     ) -> Result<Vec<u8>> {
-        let is_color = !encoder.config.pixel_format.is_grayscale();
-        let width = encoder.config.width as usize;
-        let height = encoder.config.height as usize;
+        let is_color = !config.pixel_format.is_grayscale();
+        let width = config.width as usize;
+        let height = config.height as usize;
 
         let mut output = Vec::with_capacity(width * height / 4);
 
         // Branch based on XYB vs YCbCr mode
-        let scan_data = if encoder.config.use_xyb {
+        let scan_data = if config.use_xyb {
             // XYB mode: uses different headers, tables, and encoding
-            encoder.write_header_xyb(&mut output)?;
-            encoder.write_app14_adobe(&mut output, 0)?;
-            encoder.write_icc_profile(&mut output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
-            encoder.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
+            config.write_header_xyb(&mut output)?;
+            config.write_app14_adobe(&mut output, 0)?;
+            config.write_icc_profile(&mut output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
+            config.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
             // Use SOF1 if any quant table needs 16-bit precision
             let is_extended =
                 y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
-            encoder.write_frame_header_xyb_ex(&mut output, is_extended)?;
+            config.write_frame_header_xyb_ex(&mut output, is_extended)?;
 
-            if encoder.config.optimize_huffman {
-                let (dc_table, ac_table) = encoder.build_optimized_tables_xyb_raster(
+            if config.optimize_huffman {
+                let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
                 )?;
 
-                encoder.write_huffman_tables_xyb_optimized(&mut output, &dc_table, &ac_table);
+                config.write_huffman_tables_xyb_optimized(&mut output, &dc_table, &ac_table);
 
-                if encoder.config.restart_interval > 0 {
-                    encoder.write_restart_interval(&mut output)?;
+                if config.restart_interval > 0 {
+                    config.write_restart_interval(&mut output)?;
                 }
-                encoder.write_scan_header_xyb(&mut output)?;
+                config.write_scan_header_xyb(&mut output)?;
 
-                encoder.encode_with_tables_xyb_raster(
+                config.encode_with_tables_xyb_raster(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1467,14 +1466,14 @@ impl StreamingEncoder {
                     &ac_table,
                 )?
             } else {
-                encoder.write_huffman_tables(&mut output)?;
+                config.write_huffman_tables(&mut output)?;
 
-                if encoder.config.restart_interval > 0 {
-                    encoder.write_restart_interval(&mut output)?;
+                if config.restart_interval > 0 {
+                    config.write_restart_interval(&mut output)?;
                 }
-                encoder.write_scan_header_xyb(&mut output)?;
+                config.write_scan_header_xyb(&mut output)?;
 
-                encoder.encode_with_tables_xyb_standard_raster(
+                config.encode_with_tables_xyb_standard_raster(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1482,29 +1481,29 @@ impl StreamingEncoder {
             }
         } else {
             // YCbCr mode: standard JPEG encoding
-            encoder.write_header(&mut output)?;
-            encoder.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
+            config.write_header(&mut output)?;
+            config.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
             // Use SOF1 if any quant table needs 16-bit precision
             let is_extended =
                 y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
-            encoder.write_frame_header_ex(&mut output, is_extended)?;
+            config.write_frame_header_ex(&mut output, is_extended)?;
 
-            if encoder.config.optimize_huffman {
-                let tables = encoder.build_optimized_tables(
+            if config.optimize_huffman {
+                let tables = config.build_optimized_tables(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
                     is_color,
                 )?;
 
-                encoder.write_huffman_tables_optimized(&mut output, &tables)?;
+                config.write_huffman_tables_optimized(&mut output, &tables)?;
 
-                if encoder.config.restart_interval > 0 {
-                    encoder.write_restart_interval(&mut output)?;
+                if config.restart_interval > 0 {
+                    config.write_restart_interval(&mut output)?;
                 }
-                encoder.write_scan_header(&mut output)?;
+                config.write_scan_header(&mut output)?;
 
-                encoder.encode_with_tables(
+                config.encode_with_tables(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1512,14 +1511,14 @@ impl StreamingEncoder {
                     Some(&tables),
                 )?
             } else {
-                encoder.write_huffman_tables(&mut output)?;
+                config.write_huffman_tables(&mut output)?;
 
-                if encoder.config.restart_interval > 0 {
-                    encoder.write_restart_interval(&mut output)?;
+                if config.restart_interval > 0 {
+                    config.write_restart_interval(&mut output)?;
                 }
-                encoder.write_scan_header(&mut output)?;
+                config.write_scan_header(&mut output)?;
 
-                encoder.encode_with_tables(
+                config.encode_with_tables(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
@@ -1619,7 +1618,7 @@ mod tests {
     }
 
     #[test]
-    fn test_streaming_matches_standard_small() {
+    fn test_streaming_matches_oneshot() {
         // Create a small test image
         let width = 32u32;
         let height = 32u32;
@@ -1627,16 +1626,14 @@ mod tests {
             .map(|i| ((i * 17) % 256) as u8)
             .collect();
 
-        // Encode with standard encoder
-        let standard_result = Encoder::new()
-            .width(width)
-            .height(height)
+        // Encode with one-shot method
+        let oneshot_result = StreamingEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(Subsampling::S444)
             .encode(&pixels)
             .unwrap();
 
-        // Encode with streaming encoder
+        // Encode with streaming encoder (row by row)
         let mut streaming = StreamingEncoder::new(width, height)
             .quality(Quality::from_quality(85.0))
             .subsampling(Subsampling::S444)
@@ -1653,10 +1650,10 @@ mod tests {
 
         // Results should be identical
         assert_eq!(
-            standard_result.len(),
+            oneshot_result.len(),
             streaming_result.len(),
             "output lengths differ"
         );
-        assert_eq!(standard_result, streaming_result, "outputs differ");
+        assert_eq!(oneshot_result, streaming_result, "outputs differ");
     }
 }
