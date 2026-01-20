@@ -26,26 +26,20 @@
 //! # Example
 //!
 //! ```ignore
-//! use jpegli::encoder::{EncoderConfig, QuantTableConfig, ChromaSubsampling};
-//! use jpegli::encoder::tables;
+//! use jpegli::encode::tuning::{EncodingTables, PerComponent};
+//! use jpegli::encode::tables;
 //!
-//! // Start with defaults and modify
-//! let mut luma = [0.0f32; 64];
-//! let mut cb = [0.0f32; 64];
-//! let mut cr = [0.0f32; 64];
-//!
-//! // Copy from defaults
-//! luma.copy_from_slice(&tables::BASE_QUANT_YCBCR[0..64]);
-//! cb.copy_from_slice(&tables::BASE_QUANT_YCBCR[64..128]);
-//! cr.copy_from_slice(&tables::BASE_QUANT_YCBCR[128..192]);
+//! // Start with jpegli defaults and modify
+//! let mut tables = EncodingTables::default_ycbcr();
 //!
 //! // Modify: reduce DC quantization for sharper edges
-//! luma[0] *= 0.5;
-//! cb[0] *= 0.5;
-//! cr[0] *= 0.5;
+//! tables.quant.c0[0] *= 0.5; // Y
+//! tables.quant.c1[0] *= 0.5; // Cb
+//! tables.quant.c2[0] *= 0.5; // Cr
 //!
-//! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
-//!     .quant_tables(QuantTableConfig::CustomBase { luma, cb, cr });
+//! // Or use mozjpeg-style tables
+//! use jpegli::encode::{MozjpegTables, QuantTablePreset};
+//! let mozjpeg_tables = MozjpegTables::generate(85, QuantTablePreset::Robidoux);
 //! ```
 
 // Re-export base quantization matrices
