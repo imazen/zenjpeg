@@ -6,7 +6,6 @@
 //! - Huffman table optimization
 //! - Scan encoding
 
-
 use super::config::ComputedConfig;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;

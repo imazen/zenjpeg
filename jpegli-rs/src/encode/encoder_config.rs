@@ -44,27 +44,6 @@ pub struct EncoderConfig {
 // Note: No Default impl - quality and color mode are required via constructors
 
 impl EncoderConfig {
-    /// Create a new encoder configuration with required quality and chroma subsampling.
-    ///
-    /// # Deprecated
-    ///
-    /// Use [`EncoderConfig::ycbcr`], [`EncoderConfig::xyb`], or [`EncoderConfig::grayscale`]
-    /// instead for clearer intent.
-    ///
-    /// # Arguments
-    /// - `quality`: Quality level (0-100 for jpegli scale, or use `Quality::*` variants)
-    /// - `subsampling`: Chroma subsampling mode
-    ///   - `ChromaSubsampling::Quarter` (4:2:0) - good compression, smaller files
-    ///   - `ChromaSubsampling::None` (4:4:4) - best quality, larger files
-    #[must_use]
-    #[deprecated(
-        since = "0.9.0",
-        note = "Use EncoderConfig::ycbcr(), ::xyb(), or ::grayscale() instead"
-    )]
-    pub fn new(quality: impl Into<Quality>, subsampling: ChromaSubsampling) -> Self {
-        Self::ycbcr(quality, subsampling)
-    }
-
     /// Create a YCbCr encoder configuration.
     ///
     /// YCbCr is the standard JPEG color space, compatible with all decoders.

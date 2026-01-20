@@ -15,10 +15,13 @@ pub mod aq;
 pub mod quality_conversion;
 
 use crate::foundation::consts::{
-    quality_to_distance, BASE_QUANT_MATRIX_STD, BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR,
-    DCT_BLOCK_SIZE, GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
+    BASE_QUANT_MATRIX_STD, BASE_QUANT_MATRIX_XYB, BASE_QUANT_MATRIX_YCBCR, DCT_BLOCK_SIZE,
+    GLOBAL_SCALE_XYB, GLOBAL_SCALE_YCBCR,
 };
 use crate::types::ColorSpace;
+
+// Use the public Quality type from encoder_types
+pub use crate::encode::encoder_types::Quality;
 
 // Re-export QuantTable from types
 pub use crate::types::QuantTable;
@@ -404,118 +407,7 @@ pub const STD_CHROMINANCE_QUANT: [u16; DCT_BLOCK_SIZE] = [
     99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
 ];
 
-/// Quality representation that can be either traditional (1-100) or butteraugli distance.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
-pub enum Quality {
-    /// Traditional JPEG quality (1-100, where 100 is best)
-    Traditional(f32),
-    /// Butteraugli distance (0.0 = lossless, higher = more compression)
-    /// Typical values: 0.5 = very high quality, 1.0 = high, 2.0 = medium
-    Distance(f32),
-}
-
-impl Default for Quality {
-    fn default() -> Self {
-        Self::Traditional(90.0)
-    }
-}
-
-impl Quality {
-    /// Creates a quality setting from traditional JPEG quality (1-100).
-    #[must_use]
-    pub fn from_quality(q: f32) -> Self {
-        Self::Traditional(q.clamp(1.0, 100.0))
-    }
-
-    /// Creates a quality setting from butteraugli distance.
-    #[must_use]
-    pub fn from_distance(d: f32) -> Self {
-        Self::Distance(d.max(0.0))
-    }
-
-    /// Converts to butteraugli distance.
-    #[must_use]
-    pub fn to_distance(self) -> f32 {
-        match self {
-            Self::Traditional(q) => quality_to_distance(q as i32),
-            Self::Distance(d) => d,
-        }
-    }
-
-    /// Converts to traditional quality (approximate).
-    #[must_use]
-    pub fn to_quality(self) -> f32 {
-        match self {
-            Self::Traditional(q) => q,
-            Self::Distance(d) => distance_to_quality(d),
-        }
-    }
-
-    /// Converts to linear quality (0.0-1.0 where 1.0 is best).
-    #[must_use]
-    pub fn to_linear(self) -> f32 {
-        let d = self.to_distance();
-        // Approximate inverse of linear_quality_to_distance
-        if d <= 0.1 {
-            1.0
-        } else {
-            (0.1 / d).min(1.0)
-        }
-    }
-}
-
-// ============================================================================
-// From implementations for ergonomic quality setting
-// ============================================================================
-
-impl From<u8> for Quality {
-    /// Converts a `u8` quality value (1-100) to `Quality::Traditional`.
-    fn from(q: u8) -> Self {
-        Self::Traditional(f32::from(q.clamp(1, 100)))
-    }
-}
-
-impl From<i32> for Quality {
-    /// Converts an `i32` quality value (1-100) to `Quality::Traditional`.
-    fn from(q: i32) -> Self {
-        Self::Traditional((q.clamp(1, 100)) as f32)
-    }
-}
-
-impl From<f32> for Quality {
-    /// Converts an `f32` quality value (1.0-100.0) to `Quality::Traditional`.
-    fn from(q: f32) -> Self {
-        Self::Traditional(q.clamp(1.0, 100.0))
-    }
-}
-
-impl From<f64> for Quality {
-    /// Converts an `f64` quality value (1.0-100.0) to `Quality::Traditional`.
-    fn from(q: f64) -> Self {
-        Self::Traditional((q.clamp(1.0, 100.0)) as f32)
-    }
-}
-
-impl From<crate::encode::v2::Quality> for Quality {
-    /// Converts v2 API Quality to internal Quality.
-    fn from(q: crate::encode::v2::Quality) -> Self {
-        Self::Traditional(q.to_internal().clamp(1.0, 100.0))
-    }
-}
-
-/// Converts butteraugli distance to approximate traditional quality.
-fn distance_to_quality(distance: f32) -> f32 {
-    // Approximate inverse of quality_to_distance
-    if distance <= 0.0 {
-        100.0
-    } else if distance >= 15.0 {
-        1.0
-    } else {
-        // This is a rough approximation
-        100.0 - (distance * 6.6).min(99.0)
-    }
-}
+// Old internal Quality enum removed - now using crate::encode::encoder_types::Quality
 
 /// Generates a quantization table for the given quality and component.
 ///
@@ -1120,12 +1012,12 @@ mod tests {
     #[test]
     fn test_quality_conversion() {
         // Traditional quality 90 should give reasonable distance
-        let q = Quality::from_quality(90.0);
+        let q = Quality::ApproxJpegli(90.0);
         let d = q.to_distance();
         assert!(d > 0.0 && d < 5.0);
 
         // Distance 1.0 should round-trip approximately
-        let q2 = Quality::from_distance(1.0);
+        let q2 = Quality::ApproxButteraugli(1.0);
         let d2 = q2.to_distance();
         assert!((d2 - 1.0).abs() < 0.001);
     }
@@ -1187,7 +1079,7 @@ mod tests {
     fn test_xyb_table_generation() {
         // XYB tables with allow_16bit = false should be clamped to 255
         let table = generate_quant_table_ex(
-            Quality::from_distance(1.0),
+            Quality::ApproxButteraugli(1.0),
             0,
             ColorSpace::Xyb,
             true,
@@ -1205,7 +1097,7 @@ mod tests {
 
         // XYB tables with allow_16bit = true can use extended range
         let table_ex = generate_quant_table_ex(
-            Quality::from_distance(10.0),
+            Quality::ApproxButteraugli(10.0),
             0,
             ColorSpace::Xyb,
             true,
@@ -1231,7 +1123,7 @@ mod tests {
         );
 
         for q in [10, 20, 30, 40, 50, 60, 70, 80, 90] {
-            let quality = Quality::from_quality(q as f32);
+            let quality = Quality::ApproxJpegli(q as f32);
             let distance = quality.to_distance();
 
             let ycbcr = generate_quant_table(quality, 0, ColorSpace::YCbCr, false, false);
