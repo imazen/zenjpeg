@@ -6,7 +6,8 @@
 //! - Scan script generation
 
 
-use super::{Encoder, ProgressiveScan};
+use super::config::ComputedConfig;
+use super::ProgressiveScan;
 use crate::entropy::EntropyEncoder;
 use crate::error::{Error, Result};
 use crate::foundation::consts::{DCT_BLOCK_SIZE, MARKER_EOI, XYB_ICC_PROFILE};
@@ -14,7 +15,7 @@ use crate::huffman::optimize::{ContextConfig, OptimizedTable, ProgressiveTokenBu
 use crate::quant::QuantTable;
 use crate::types::Subsampling;
 
-impl Encoder {
+impl ComputedConfig {
     /// Replays tokens for a progressive scan with optimized tables.
     ///
     /// # Arguments
@@ -67,8 +68,8 @@ impl Encoder {
             encoder.set_ac_table(slot, &table.table);
         }
 
-        if self.config.restart_interval > 0 {
-            encoder.set_restart_interval(self.config.restart_interval);
+        if self.restart_interval > 0 {
+            encoder.set_restart_interval(self.restart_interval);
         }
 
         // Get scan info
@@ -133,7 +134,7 @@ impl Encoder {
         // For XYB mode, always use non-interleaved DC scans (matches C++ jpegli)
         // For 4:4:4 YCbCr subsampling, DC can be interleaved
         let dc_interleaved =
-            !self.config.use_xyb && matches!(self.config.subsampling, Subsampling::S444);
+            !self.use_xyb && matches!(self.subsampling, Subsampling::S444);
 
         // DC first scan
         if dc_interleaved && is_color {
@@ -250,15 +251,15 @@ impl Encoder {
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
     ) -> Result<Vec<u8>> {
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
+        let width = self.width as usize;
+        let height = self.height as usize;
 
         let mut output = crate::foundation::alloc::try_with_capacity(
             width * height / 4,
             "progressive from blocks output",
         )?;
 
-        let is_color = !self.config.pixel_format.is_grayscale();
+        let is_color = !self.pixel_format.is_grayscale();
         let num_components = if is_color { 3 } else { 1 };
 
         // Define progressive scan script
@@ -329,7 +330,7 @@ impl Encoder {
             )?;
 
         // ========== WRITE JPEG STRUCTURE ==========
-        if self.config.use_xyb {
+        if self.use_xyb {
             // XYB mode: use XYB-specific headers
             self.write_header_xyb(&mut output)?;
             // Write APP14 Adobe marker for RGB colorspace (required by decoders)
@@ -353,7 +354,7 @@ impl Encoder {
             4, // max_initial_ac
         )?;
 
-        if self.config.restart_interval > 0 {
+        if self.restart_interval > 0 {
             self.write_restart_interval(&mut output)?;
         }
 
