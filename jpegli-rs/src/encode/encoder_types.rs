@@ -484,26 +484,6 @@ impl PixelLayout {
             Self::Rgb16Linear | Self::Rgbx16Linear | Self::Gray16Linear
         )
     }
-
-    /// Convert to legacy PixelFormat (best effort).
-    #[must_use]
-    pub fn to_legacy(&self) -> crate::types::PixelFormat {
-        match self {
-            Self::Rgb8Srgb => crate::types::PixelFormat::Rgb,
-            Self::Bgr8Srgb => crate::types::PixelFormat::Bgr,
-            Self::Rgbx8Srgb => crate::types::PixelFormat::Rgba,
-            Self::Bgrx8Srgb => crate::types::PixelFormat::Bgrx,
-            Self::Gray8Srgb => crate::types::PixelFormat::Gray,
-            Self::Rgb16Linear => crate::types::PixelFormat::Rgb16,
-            Self::Rgbx16Linear => crate::types::PixelFormat::Rgba16,
-            Self::Gray16Linear => crate::types::PixelFormat::Gray16,
-            Self::RgbF32Linear => crate::types::PixelFormat::RgbF32,
-            Self::RgbxF32Linear => crate::types::PixelFormat::RgbaF32,
-            Self::GrayF32Linear => crate::types::PixelFormat::GrayF32,
-            // YCbCr layouts don't have direct legacy equivalents
-            Self::YCbCr8 | Self::YCbCrF32 => crate::types::PixelFormat::Rgb,
-        }
-    }
 }
 
 /// Planar YCbCr data for a strip of rows.

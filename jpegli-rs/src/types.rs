@@ -275,6 +275,27 @@ impl From<crate::encode::encoder_types::ChromaSubsampling> for Subsampling {
     }
 }
 
+impl From<crate::encode::encoder_types::PixelLayout> for PixelFormat {
+    fn from(layout: crate::encode::encoder_types::PixelLayout) -> Self {
+        use crate::encode::encoder_types::PixelLayout;
+        match layout {
+            PixelLayout::Rgb8Srgb => Self::Rgb,
+            PixelLayout::Bgr8Srgb => Self::Bgr,
+            PixelLayout::Rgbx8Srgb => Self::Rgba,
+            PixelLayout::Bgrx8Srgb => Self::Bgrx,
+            PixelLayout::Gray8Srgb => Self::Gray,
+            PixelLayout::Rgb16Linear => Self::Rgb16,
+            PixelLayout::Rgbx16Linear => Self::Rgba16,
+            PixelLayout::Gray16Linear => Self::Gray16,
+            PixelLayout::RgbF32Linear => Self::RgbF32,
+            PixelLayout::RgbxF32Linear => Self::RgbaF32,
+            PixelLayout::GrayF32Linear => Self::GrayF32,
+            // YCbCr layouts don't have direct legacy equivalents
+            PixelLayout::YCbCr8 | PixelLayout::YCbCrF32 => Self::Rgb,
+        }
+    }
+}
+
 /// Strategy for padding partial MCU blocks at image edges.
 ///
 /// When image dimensions are not multiples of the MCU size (8 or 16 pixels),
