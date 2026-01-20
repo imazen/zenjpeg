@@ -2,8 +2,7 @@
 
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
-    XybSubsampling, ZeroBiasConfig,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, XybSubsampling,
 };
 use super::tuning::EncodingTables;
 use crate::error::Result;
@@ -13,8 +12,9 @@ use crate::types::EdgePaddingConfig;
 #[derive(Clone, Debug)]
 pub struct EncoderConfig {
     pub(crate) quality: Quality,
-    pub(crate) quant_tables: QuantTableConfig,
-    pub(crate) zero_bias: ZeroBiasConfig,
+    /// Custom encoding tables (quantization + zero-bias).
+    /// `None` means use perceptual defaults based on color mode and quality.
+    pub(crate) tables: Option<Box<EncodingTables>>,
     pub(crate) progressive: bool,
     pub(crate) optimize_huffman: bool,
     pub(crate) color_mode: ColorMode,
@@ -149,8 +149,7 @@ impl EncoderConfig {
     fn default_internal() -> Self {
         Self {
             quality: Quality::default(),
-            quant_tables: QuantTableConfig::default(),
-            zero_bias: ZeroBiasConfig::default(),
+            tables: None, // Use perceptual defaults
             progressive: false,
             optimize_huffman: true,
             color_mode: ColorMode::default(),
@@ -180,42 +179,6 @@ impl EncoderConfig {
     #[must_use]
     pub fn quality(mut self, q: impl Into<Quality>) -> Self {
         self.quality = q.into();
-        self
-    }
-
-    /// Set custom quantization tables.
-    #[must_use]
-    pub fn quant_tables(mut self, config: QuantTableConfig) -> Self {
-        self.quant_tables = config;
-        self
-    }
-
-    /// Set zero-bias configuration.
-    ///
-    /// Zero-bias controls how DCT coefficients are rounded toward zero during
-    /// quantization. The default mode auto-selects between YCbCr and XYB tables
-    /// based on the color mode.
-    ///
-    /// # Options
-    ///
-    /// - `ZeroBiasConfig::Default` (default) - auto-select based on color mode
-    /// - `ZeroBiasConfig::YCbCr` - force YCbCr quality-adaptive tables
-    /// - `ZeroBiasConfig::Xyb` - force XYB 0.5 tables
-    /// - `ZeroBiasConfig::Disabled` - no zero-bias (standard JPEG behavior)
-    /// - `ZeroBiasConfig::Custom { .. }` - provide custom per-component tables
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use jpegli::encoder::{EncoderConfig, ZeroBiasConfig};
-    ///
-    /// // Disable zero-bias for standard JPEG behavior
-    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None)
-    ///     .zero_bias(ZeroBiasConfig::Disabled);
-    /// ```
-    #[must_use]
-    pub fn zero_bias(mut self, config: ZeroBiasConfig) -> Self {
-        self.zero_bias = config;
         self
     }
 
@@ -445,12 +408,9 @@ impl EncoderConfig {
     ///     .tables(Box::new(tables));
     /// ```
     #[must_use]
-    pub fn tables(self, tables: Box<EncodingTables>) -> Self {
-        // Convert EncodingTables to internal representations
-        let quant_config = tables.to_quant_config();
-        let zero_bias_config = tables.to_zero_bias_config();
-
-        self.quant_tables(quant_config).zero_bias(zero_bias_config)
+    pub fn tables(mut self, tables: Box<EncodingTables>) -> Self {
+        self.tables = Some(tables);
+        self
     }
 
     /// Enable or disable SharpYUV (GammaAwareIterative) downsampling.

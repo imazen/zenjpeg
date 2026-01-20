@@ -72,10 +72,10 @@ pub struct EncoderConfig {
     #[cfg(feature = "experimental-hybrid-trellis")]
     pub custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
 
-    /// Custom quantization matrices (escape hatch for experimentation).
-    /// Not part of public API - use Encoder::custom_quant_matrices() method.
+    /// Custom encoding tables (escape hatch for experimentation).
+    /// Not part of public API.
     #[doc(hidden)]
-    pub(crate) custom_quant_matrices: Option<crate::quant::CustomQuantMatrices>,
+    pub(crate) encoding_tables: Option<Box<crate::encode::tuning::EncodingTables>>,
 
     // EncodingBackend removed - strip-based encoding is now the only backend
     /// Edge padding strategy for partial MCU blocks.
@@ -133,7 +133,7 @@ impl Default for EncoderConfig {
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
-            custom_quant_matrices: None,
+            encoding_tables: None,
             edge_padding: EdgePaddingConfig::default(),
             original_width: None,
             original_height: None,

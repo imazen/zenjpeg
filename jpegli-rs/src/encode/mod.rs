@@ -97,8 +97,8 @@ pub use encoder_config::EncoderConfig;
 pub use encoder_types::ParallelEncoding;
 #[allow(unused_imports)] // Public API re-exports
 pub use encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
-    XybSubsampling, YCbCrPlanes, ZeroBiasConfig,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, XybSubsampling,
+    YCbCrPlanes,
 };
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
@@ -350,39 +350,8 @@ impl Encoder {
         self
     }
 
-    /// Sets custom base quantization matrices for experimentation.
-    ///
-    /// **This is an undocumented escape hatch for research purposes.**
-    ///
-    /// See [`CustomQuantMatrices`](crate::quant::CustomQuantMatrices) for details
-    /// on the matrix format and how quantization works.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use jpegli::quant::CustomQuantMatrices;
-    ///
-    /// // Create custom matrices by modifying the defaults
-    /// let mut custom_ycbcr = jpegli::consts::BASE_QUANT_MATRIX_YCBCR;
-    /// // Modify DC coefficient (index 0) for Y channel
-    /// custom_ycbcr[0] *= 0.8; // 20% smaller DC quantization step
-    ///
-    /// let custom = CustomQuantMatrices::new()
-    ///     .with_ycbcr(custom_ycbcr);
-    ///
-    /// let jpeg = Encoder::new()
-    ///     .width(800)
-    ///     .height(600)
-    ///     .custom_quant_matrices(custom)
-    ///     .encode(&pixels)?;
-    /// ```
-    #[doc(hidden)]
-    #[must_use]
-    pub fn custom_quant_matrices(mut self, custom: crate::quant::CustomQuantMatrices) -> Self {
-        self.config.custom_quant_matrices = Some(custom);
-        self
-    }
-
     // encoding_backend method removed - strip-based encoding is now the only backend
+    // custom_quant_matrices method removed - use EncoderConfig::tables() instead
 
     /// Sets the edge padding strategy for partial MCU blocks.
     ///
@@ -582,23 +551,23 @@ impl Encoder {
             .restart_interval(self.config.restart_interval)
             .use_xyb(self.config.use_xyb);
 
-        if let Some(ref custom) = self.config.custom_quant_matrices {
-            builder = builder.custom_quant_matrices(custom.clone());
+        if let Some(ref tables) = self.config.encoding_tables {
+            builder = builder.encoding_tables(tables.clone());
         }
 
         builder.encode_with_stop(data, stop)
     }
 
-    /// Generate a quantization table, using custom matrices if configured.
+    /// Generate a quantization table, using custom tables if configured.
     ///
-    /// This helper method respects the `custom_quant_matrices` config option.
+    /// This helper method respects the `encoding_tables` config option.
     #[inline]
     #[allow(dead_code)]
     fn gen_quant_table(&self, component: usize, use_xyb: bool, is_420: bool) -> QuantTable {
         let distance = self.config.quality.to_distance();
 
-        if let Some(ref custom) = self.config.custom_quant_matrices {
-            quant::generate_quant_table_custom(distance, component, use_xyb, custom)
+        if let Some(ref tables) = self.config.encoding_tables {
+            tables.generate_quant_table(component, distance, is_420)
         } else {
             quant::generate_quant_table(
                 self.config.quality,
