@@ -53,7 +53,8 @@ fn test_custom_quant_tables_change_output() {
         scaling: ScalingParams::Exact, // Use exact values, no quality scaling
         ..EncodingTables::default_ycbcr()
     };
-    let config_custom = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables));
+    let config_custom =
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables));
     let jpeg_custom = encode_with_config(&config_custom, &pixels, width, height);
 
     // The outputs should be different

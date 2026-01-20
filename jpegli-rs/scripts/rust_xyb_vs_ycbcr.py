@@ -47,7 +47,7 @@ fn main() {{
     let jpeg = jpegli::Encoder::new()
         .width(info.width)
         .height(info.height)
-        .quality(jpegli::quant::Quality::from_quality({quality}.0))
+        .quality(jpegli::encoder::Quality::ApproxJpegli({quality}.0))
         .use_xyb({str(use_xyb).lower()})
         .encode(pixels)
         .expect("encode");
@@ -101,7 +101,7 @@ fn main() {{
     let jpeg = jpegli::Encoder::new()
         .width(info.width)
         .height(info.height)
-        .quality(jpegli::quant::Quality::from_quality({q}.0))
+        .quality(jpegli::encoder::Quality::ApproxJpegli({q}.0))
         .use_xyb(false)
         .encode(pixels)
         .expect("encode");

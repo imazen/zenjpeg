@@ -39,6 +39,7 @@
 
 mod convert;
 
+use crate::encode::encoder_types::DownsamplingMethod;
 use crate::error::Result;
 use crate::foundation::alloc::{
     try_alloc_filled, try_alloc_zeroed_f32_tracked, try_clone_slice, try_with_capacity_tracked,
@@ -49,7 +50,6 @@ use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{PixelFormat, Subsampling};
-use crate::encode::encoder_types::DownsamplingMethod;
 
 // Trellis quantization support (feature-gated)
 #[cfg(feature = "experimental-hybrid-trellis")]

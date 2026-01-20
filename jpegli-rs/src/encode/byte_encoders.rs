@@ -74,10 +74,8 @@ impl BytesEncoder {
         layout: PixelLayout,
     ) -> Result<StreamingEncoder> {
         use crate::encode::streaming::StreamingEncoder as SE;
-        use crate::quant::Quality;
         use crate::types::PixelFormat;
 
-        let quality: Quality = config.quality.into();
         let pixel_format: PixelFormat = layout.into();
         let subsampling = match config.color_mode {
             super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
@@ -86,7 +84,7 @@ impl BytesEncoder {
         };
 
         let mut builder = SE::new(width, height)
-            .quality(quality)
+            .quality(config.quality)
             .pixel_format(pixel_format)
             .subsampling(subsampling)
             .optimize_huffman(config.optimize_huffman)
@@ -735,10 +733,8 @@ impl YCbCrPlanarEncoder {
         width: u32,
         height: u32,
     ) -> Result<StreamingEncoder> {
-        use crate::quant::Quality;
         use crate::types::PixelFormat;
 
-        let quality: Quality = config.quality.into();
         let subsampling = match config.color_mode {
             super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             _ => crate::types::Subsampling::S444,
@@ -747,7 +743,7 @@ impl YCbCrPlanarEncoder {
         // Use RGB pixel format - the streaming encoder will accept YCbCr data
         // via push_ycbcr_strip_f32, but needs a pixel format for buffer sizing
         let mut builder = StreamingEncoder::new(width, height)
-            .quality(quality)
+            .quality(config.quality)
             .pixel_format(PixelFormat::Rgb) // Buffer sizing only
             .subsampling(subsampling)
             .optimize_huffman(config.optimize_huffman)

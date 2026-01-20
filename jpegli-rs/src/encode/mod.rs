@@ -136,7 +136,6 @@ use crate::types::{EdgePadding, EdgePaddingConfig};
 // (see serialize.rs, blocks.rs, progressive.rs).
 // StreamingEncoder stores ComputedConfig directly.
 
-
 /// Converts coefficients from natural order to zigzag order, writing directly to destination.
 /// Avoids allocation when writing to pre-allocated block arrays.
 #[cfg(feature = "experimental-hybrid-trellis")]

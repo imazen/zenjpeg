@@ -805,7 +805,7 @@ async fn encode_async(
 // Old API
 JpegEncoder::new(w, h)
     .pixel_format(PixelFormat::Rgb)
-    .quality(Quality::from_quality(85.0))
+    .quality(Quality::ApproxJpegli(85.0))
     .subsampling(Subsampling::S420)
     .encode(&pixels)?;
 

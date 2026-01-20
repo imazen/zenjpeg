@@ -166,7 +166,7 @@ impl QualityConversion {
     pub fn to_jpegli_quality(self) -> Quality {
         // Q100 passthrough
         if self.source_quality >= 100 {
-            return Quality::from_quality(100.0);
+            return Quality::ApproxJpegli(100.0);
         }
 
         // Get the mapping table
@@ -174,14 +174,14 @@ impl QualityConversion {
             Some(t) => t,
             None => {
                 // No table available, use identity mapping
-                return Quality::from_quality(self.source_quality as f32);
+                return Quality::ApproxJpegli(self.source_quality as f32);
             }
         };
 
         // Try exact lookup first
         for &(moz_q, jpegli_q) in table {
             if moz_q == self.source_quality {
-                return Quality::from_quality(jpegli_q as f32);
+                return Quality::ApproxJpegli(jpegli_q as f32);
             }
         }
 
@@ -218,13 +218,13 @@ fn interpolate_quality(moz_q: u8, table: &[(u8, u8)]) -> Quality {
             // Linear interpolation
             let t = (moz_q - l_moz) as f32 / (u_moz - l_moz) as f32;
             let jpegli_q = l_jpegli as f32 + t * (u_jpegli as f32 - l_jpegli as f32);
-            Quality::from_quality(jpegli_q)
+            Quality::ApproxJpegli(jpegli_q)
         }
-        (Some((_, jpegli_q)), _) => Quality::from_quality(jpegli_q as f32),
-        (_, Some((_, jpegli_q))) => Quality::from_quality(jpegli_q as f32),
+        (Some((_, jpegli_q)), _) => Quality::ApproxJpegli(jpegli_q as f32),
+        (_, Some((_, jpegli_q))) => Quality::ApproxJpegli(jpegli_q as f32),
         (None, None) => {
             // Fallback to identity
-            Quality::from_quality(moz_q as f32)
+            Quality::ApproxJpegli(moz_q as f32)
         }
     }
 }
@@ -365,7 +365,7 @@ mod tests {
             QualityComparisonMetric::Dssim,
         );
         let q = conv.to_jpegli_quality();
-        assert_eq!(q.to_quality(), 100.0);
+        assert_eq!(q.to_internal(), 100.0);
     }
 
     #[test]
@@ -380,7 +380,7 @@ mod tests {
         let conv = conv.unwrap();
         assert!(!conv.is_interpolated);
         let q = conv.to_jpegli_quality();
-        assert_eq!(q.to_quality(), 89.0);
+        assert_eq!(q.to_internal(), 89.0);
     }
 
     #[test]
@@ -407,10 +407,10 @@ mod tests {
         // Should interpolate: 83 + (87-85)/(90-85) * (89-83) = 83 + 0.4 * 6 = 85.4
         let expected = 85.4;
         assert!(
-            (q.to_quality() - expected).abs() < 0.5,
+            (q.to_internal() - expected).abs() < 0.5,
             "Expected ~{}, got {}",
             expected,
-            q.to_quality()
+            q.to_internal()
         );
     }
 
@@ -434,7 +434,7 @@ mod tests {
         ] {
             let conv = QualityConversion::mozjpeg_equivalent(85, Subsampling::S444, metric);
             let q = conv.to_jpegli_quality();
-            assert!(q.to_quality() >= 80.0 && q.to_quality() <= 90.0);
+            assert!(q.to_internal() >= 80.0 && q.to_internal() <= 90.0);
         }
     }
 
@@ -448,6 +448,6 @@ mod tests {
         );
         let q = conv.to_jpegli_quality();
         // Should clamp to lowest table entry (28)
-        assert!(q.to_quality() <= 30.0);
+        assert!(q.to_internal() <= 30.0);
     }
 }

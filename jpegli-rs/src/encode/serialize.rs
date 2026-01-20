@@ -6,7 +6,6 @@
 //! - Huffman tables
 //! - Frame and scan headers
 
-
 use crate::error::Result;
 use crate::foundation::consts::{
     DCT_BLOCK_SIZE, ICC_PROFILE_SIGNATURE, JPEG_NATURAL_ORDER, MARKER_APP14, MARKER_APP2,

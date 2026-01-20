@@ -4,9 +4,9 @@
 
 #![allow(dead_code)]
 
-use crate::quant::Quality;
-use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 use super::encoder_types::DownsamplingMethod;
+use super::encoder_types::Quality;
+use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 
 // ============================================================================
 // Progressive Scan Configuration

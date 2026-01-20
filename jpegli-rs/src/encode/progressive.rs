@@ -5,7 +5,6 @@
 //! - Successive approximation (refinement scans)
 //! - Scan script generation
 
-
 use super::config::ComputedConfig;
 use super::ProgressiveScan;
 use crate::entropy::EntropyEncoder;
@@ -133,8 +132,7 @@ impl ComputedConfig {
 
         // For XYB mode, always use non-interleaved DC scans (matches C++ jpegli)
         // For 4:4:4 YCbCr subsampling, DC can be interleaved
-        let dc_interleaved =
-            !self.use_xyb && matches!(self.subsampling, Subsampling::S444);
+        let dc_interleaved = !self.use_xyb && matches!(self.subsampling, Subsampling::S444);
 
         // DC first scan
         if dc_interleaved && is_color {

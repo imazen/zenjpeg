@@ -15,7 +15,7 @@
 //! use jpegli::{StreamingEncoder, Quality, Subsampling};
 //!
 //! let mut encoder = StreamingEncoder::new(1920, 1080)
-//!     .quality(Quality::from_quality(85.0))
+//!     .quality(Quality::ApproxJpegli(85.0))
 //!     .subsampling(Subsampling::S420)
 //!     .start()?;
 //!
@@ -32,13 +32,14 @@
 
 #![allow(dead_code)]
 
+use super::encoder_types::DownsamplingMethod;
+use super::encoder_types::Quality;
+use crate::encode::config::ComputedConfig;
 use crate::encode::strip::StripProcessor;
 use crate::encode::tuning::EncodingTables;
-use crate::encode::config::ComputedConfig;
 use crate::error::{Error, Result};
-use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
+use crate::quant::{self, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
-use super::encoder_types::DownsamplingMethod;
 use enough::{Stop, Unstoppable};
 
 /// Builder for creating a streaming encoder.
@@ -118,10 +119,10 @@ impl StreamingEncoderBuilder {
     /// let enc = JpegEncoder::new(640, 480).quality(85);
     ///
     /// // Quality enum for explicit control
-    /// let enc = JpegEncoder::new(640, 480).quality(Quality::from_quality(85.0));
+    /// let enc = JpegEncoder::new(640, 480).quality(Quality::ApproxJpegli(85.0));
     ///
     /// // Butteraugli distance (advanced)
-    /// let enc = JpegEncoder::new(640, 480).quality(Quality::from_distance(1.0));
+    /// let enc = JpegEncoder::new(640, 480).quality(Quality::ApproxButteraugli(1.0));
     /// ```
     #[must_use]
     pub(crate) fn quality(mut self, quality: impl Into<Quality>) -> Self {
@@ -148,7 +149,7 @@ impl StreamingEncoderBuilder {
     /// ```
     #[must_use]
     pub(crate) fn distance(mut self, distance: f32) -> Self {
-        self.quality = Quality::from_distance(distance);
+        self.quality = Quality::ApproxButteraugli(distance);
         self
     }
 
@@ -792,7 +793,7 @@ impl StreamingEncoder {
     /// use jpegli::{StreamingEncoder, Quality, Subsampling};
     ///
     /// let encoder = StreamingEncoder::new(1920, 1080)
-    ///     .quality(Quality::from_quality(85.0))
+    ///     .quality(Quality::ApproxJpegli(85.0))
     ///     .subsampling(Subsampling::S420)
     ///     .start()?;
     /// ```
@@ -1653,14 +1654,14 @@ mod tests {
 
         // Encode with one-shot method
         let oneshot_result = StreamingEncoder::new(width, height)
-            .quality(Quality::from_quality(85.0))
+            .quality(Quality::ApproxJpegli(85.0))
             .subsampling(Subsampling::S444)
             .encode(&pixels)
             .unwrap();
 
         // Encode with streaming encoder (row by row)
         let mut streaming = StreamingEncoder::new(width, height)
-            .quality(Quality::from_quality(85.0))
+            .quality(Quality::ApproxJpegli(85.0))
             .subsampling(Subsampling::S444)
             .start()
             .unwrap();

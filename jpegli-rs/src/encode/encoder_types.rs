@@ -60,35 +60,6 @@ impl Quality {
         }
     }
 
-    /// Create quality from a 0-100 scale value.
-    ///
-    /// This is equivalent to `Quality::ApproxJpegli(q)` or `Quality::from(q)`.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use Quality::from(f32) or Quality::ApproxJpegli(f32) instead"
-    )]
-    #[must_use]
-    pub fn from_quality(q: f32) -> Self {
-        Quality::ApproxJpegli(q)
-    }
-
-    /// Create quality from butteraugli distance (backward compatibility).
-    ///
-    /// This is equivalent to `Quality::ApproxButteraugli(d)`.
-    #[deprecated(since = "0.5.0", note = "Use Quality::ApproxButteraugli(f32) instead")]
-    #[must_use]
-    pub fn from_distance(d: f32) -> Self {
-        Quality::ApproxButteraugli(d)
-    }
-
-    /// Backward-compatible constructor matching old `Quality::Traditional(f32)`.
-    #[deprecated(since = "0.5.0", note = "Use Quality::ApproxJpegli(f32) instead")]
-    #[must_use]
-    #[allow(non_snake_case)] // Mimics old enum variant naming
-    pub fn Traditional(q: f32) -> Self {
-        Quality::ApproxJpegli(q)
-    }
-
     /// Convert to butteraugli distance.
     ///
     /// Uses the exact same formula as C++ jpegli's `jpegli_quality_to_distance`.
