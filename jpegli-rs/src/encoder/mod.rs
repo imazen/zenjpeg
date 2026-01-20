@@ -138,6 +138,10 @@ pub use crate::encode::tables;
 #[cfg(feature = "parallel")]
 pub use crate::encode::encoder_types::ParallelEncoding;
 
+// === mozjpeg-compatible quantization tables ===
+#[cfg(feature = "mozjpeg-tables")]
+pub use crate::encode::mozjpeg_tables::{MozjpegTables, QuantTablePreset};
+
 // === Types used in encoder configuration ===
 pub use crate::types::HuffmanMethod;
 

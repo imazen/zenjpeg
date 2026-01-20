@@ -67,6 +67,8 @@ pub struct StreamingEncoderBuilder {
     use_xyb: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     deringing: bool,
+    /// Allow 16-bit quantization tables (default: true)
+    allow_16bit_quant_tables: bool,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     parallel: bool,
@@ -94,6 +96,7 @@ impl StreamingEncoderBuilder {
             encoding_tables: None,
             use_xyb: false,
             deringing: true,
+            allow_16bit_quant_tables: true,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -311,6 +314,19 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn deringing(mut self, enable: bool) -> Self {
         self.deringing = enable;
+        self
+    }
+
+    /// Allow 16-bit quantization tables for better low-quality precision.
+    ///
+    /// When enabled (default), quantization values can exceed 255, producing
+    /// extended sequential JPEGs (SOF1 marker).
+    ///
+    /// When disabled, quantization values are clamped to 255, producing
+    /// baseline-compatible JPEGs (SOF0 marker) that work with all decoders.
+    #[must_use]
+    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+        self.allow_16bit_quant_tables = enable;
         self
     }
 
@@ -829,35 +845,49 @@ impl StreamingEncoder {
             ColorSpace::YCbCr
         };
 
+        let allow_16bit = builder.allow_16bit_quant_tables;
         let ((y_quant, cb_quant, cr_quant), (y_zero_bias, cb_zero_bias, cr_zero_bias)) =
             if let Some(ref tables) = builder.encoding_tables {
                 // Use custom encoding tables
                 let quant = tables.generate_quant_tables(distance, is_420);
                 let zero_bias = tables.generate_zero_bias_all();
+                // Apply allow_16bit clamping if needed
+                let quant = if allow_16bit {
+                    quant
+                } else {
+                    (
+                        quant.0.clamp_to_baseline(),
+                        quant.1.clamp_to_baseline(),
+                        quant.2.clamp_to_baseline(),
+                    )
+                };
                 (quant, zero_bias)
             } else {
-                // Use perceptual defaults
+                // Use perceptual defaults with allow_16bit support
                 let quant = (
-                    quant::generate_quant_table(
+                    quant::generate_quant_table_ex(
                         builder.quality,
                         0,
                         color_space,
                         builder.use_xyb,
                         is_420,
+                        allow_16bit,
                     ),
-                    quant::generate_quant_table(
+                    quant::generate_quant_table_ex(
                         builder.quality,
                         1,
                         color_space,
                         builder.use_xyb,
                         is_420,
+                        allow_16bit,
                     ),
-                    quant::generate_quant_table(
+                    quant::generate_quant_table_ex(
                         builder.quality,
                         2,
                         color_space,
                         builder.use_xyb,
                         is_420,
+                        allow_16bit,
                     ),
                 );
 

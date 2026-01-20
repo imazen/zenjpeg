@@ -114,6 +114,8 @@ impl BytesEncoder {
         // Always pass deringing setting (StreamingEncoder defaults to true)
         builder = builder.deringing(config.deringing);
 
+        builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
+
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             // ParallelEncoding::Auto means enable parallel encoding
@@ -759,6 +761,8 @@ impl YCbCrPlanarEncoder {
 
         // Always pass deringing setting (StreamingEncoder defaults to true)
         builder = builder.deringing(config.deringing);
+
+        builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
