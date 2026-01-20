@@ -272,6 +272,13 @@ To eliminate: would need 1 extra pixel of buffer padding for wraparound reads.
 
 2. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
 
+5. **1-pixel partial MCU edge quality gap** - `jpegli-rs/tests/edge_tile_ssim2_comparison.rs`
+   Images with width ≡ 1 (mod 8) show -22 to -35 SSIMULACRA2 gap vs C++ jpegli.
+   3+ pixel partial edges achieve parity. Investigated AQ edge handling (padded
+   buffers, stride vs img_width separation) but gap persists. Root cause likely
+   in pre-erosion edge handling or how single-pixel blocks are encoded.
+   Run: `cargo test --release -p jpegli-rs --test edge_tile_ssim2_comparison -- --ignored`
+
 3. **HF modulation index wrap (FIXED)** - `jpegli-rs/src/quant/aq/simd.rs:566`
    Rightmost partial blocks were reading pixels from next row due to missing column check.
    - Added `block_x + 8 <= img_width` guard to vertical SIMD path
