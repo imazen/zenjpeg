@@ -376,54 +376,6 @@ impl Default for EdgePaddingConfig {
     }
 }
 
-/// Chroma downsampling method for subsampled encoding (4:2:0, 4:2:2, 4:4:0).
-///
-/// Controls how chroma (Cb/Cr) planes are downsampled during encoding.
-/// Different methods trade off between speed and quality.
-///
-/// Has no effect for 4:4:4 subsampling (no downsampling needed).
-#[deprecated(
-    since = "0.10.0",
-    note = "Use encoder::DownsamplingMethod instead"
-)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
-pub enum ChromaDownsampling {
-    /// Simple box filter averaging (default, matches C++ jpegli).
-    ///
-    /// Fast and produces good results for most photographic content.
-    /// Uses BT.601 coefficients with f32 precision for color conversion,
-    /// then simple 2x2/2x1/1x2 averaging for downsampling.
-    #[default]
-    Box,
-
-    /// Gamma-aware chroma downsampling.
-    ///
-    /// Converts to linear RGB before averaging chroma, then back to sRGB.
-    /// Better color preservation on edges compared to box filter.
-    /// Slightly slower than Box.
-    GammaAware,
-
-    /// Iterative gamma-aware optimization (Sharp YUV-like).
-    ///
-    /// Uses iterative refinement with gamma correction to better preserve
-    /// color on edges and thin lines. Best choice for:
-    /// - Synthetic images, graphics, text
-    /// - Any content with sharp color transitions
-    ///
-    /// Handles out-of-gamut clipping gracefully. Slowest option.
-    GammaAwareIterative,
-}
-
-#[allow(deprecated)]
-impl ChromaDownsampling {
-    /// Returns true if this method uses gamma-aware downsampling.
-    #[must_use]
-    pub const fn uses_gamma_aware(self) -> bool {
-        matches!(self, Self::GammaAware | Self::GammaAwareIterative)
-    }
-}
-
 /// JPEG encoding mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
