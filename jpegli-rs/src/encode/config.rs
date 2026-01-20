@@ -5,7 +5,8 @@
 #![allow(dead_code)]
 
 use crate::quant::Quality;
-use crate::types::{ChromaDownsampling, EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
+use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
+use super::encoder_types::DownsamplingMethod;
 
 // ============================================================================
 // Progressive Scan Configuration
@@ -68,7 +69,7 @@ pub struct ComputedConfig {
     /// - `GammaAwareIterative`: Sharp YUV-style optimization (best quality)
     ///
     /// Has no effect for 4:4:4 (no downsampling needed).
-    pub chroma_downsampling: ChromaDownsampling,
+    pub chroma_downsampling: DownsamplingMethod,
     /// Hybrid quantization configuration (jpegli AQ + mozjpeg trellis)
     /// Requires the `experimental-hybrid-trellis` feature
     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -144,7 +145,7 @@ impl Default for ComputedConfig {
             // Huffman optimization enabled by default (pseudo-symbol 256 approach ensures Kraft sum < 2^16)
             optimize_huffman: true,
             // Box filter matches C++ jpegli default
-            chroma_downsampling: ChromaDownsampling::Box,
+            chroma_downsampling: DownsamplingMethod::Box,
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]

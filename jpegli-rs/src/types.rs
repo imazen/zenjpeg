@@ -349,6 +349,10 @@ impl Default for EdgePaddingConfig {
 /// Different methods trade off between speed and quality.
 ///
 /// Has no effect for 4:4:4 subsampling (no downsampling needed).
+#[deprecated(
+    since = "0.10.0",
+    note = "Use encoder::DownsamplingMethod instead"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum ChromaDownsampling {

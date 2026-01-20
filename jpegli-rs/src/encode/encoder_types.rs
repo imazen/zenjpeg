@@ -343,16 +343,10 @@ pub enum DownsamplingMethod {
 }
 
 impl DownsamplingMethod {
-    /// Convert to the legacy ChromaDownsampling enum.
+    /// Returns true if this method uses gamma-aware downsampling.
     #[must_use]
-    pub fn to_legacy(&self) -> crate::types::ChromaDownsampling {
-        match self {
-            DownsamplingMethod::Box => crate::types::ChromaDownsampling::Box,
-            DownsamplingMethod::GammaAware => crate::types::ChromaDownsampling::GammaAware,
-            DownsamplingMethod::GammaAwareIterative => {
-                crate::types::ChromaDownsampling::GammaAwareIterative
-            }
-        }
+    pub const fn uses_gamma_aware(self) -> bool {
+        matches!(self, Self::GammaAware | Self::GammaAwareIterative)
     }
 }
 
