@@ -27,7 +27,7 @@
 //! - `Ahumada` - Ahumada, Watson, Peterson (1993)
 //! - `Peterson` - Peterson, Ahumada, Watson (1993)
 
-use super::encoder_types::QuantTableConfig;
+use super::tuning::{EncodingTables, PerComponent, ScalingParams};
 
 /// DCT block size (8x8 = 64 coefficients)
 const DCTSIZE2: usize = 64;
@@ -76,7 +76,7 @@ impl QuantTablePreset {
 pub struct MozjpegTables;
 
 impl MozjpegTables {
-    /// Generate quantization tables using mozjpeg's quality scaling formula.
+    /// Generate encoding tables using mozjpeg's quality scaling formula.
     ///
     /// # Arguments
     ///
@@ -85,7 +85,8 @@ impl MozjpegTables {
     ///
     /// # Returns
     ///
-    /// A `QuantTableConfig::Exact` with the scaled luminance and chrominance tables.
+    /// An [`EncodingTables`] with the scaled luminance and chrominance tables,
+    /// using `ScalingParams::Exact` (tables are already quality-scaled).
     ///
     /// # Quality Scaling
     ///
@@ -108,11 +109,11 @@ impl MozjpegTables {
     /// let tables = MozjpegTables::generate(75, QuantTablePreset::MssimTuned);
     /// ```
     #[must_use]
-    pub fn generate(quality: u8, preset: QuantTablePreset) -> QuantTableConfig {
+    pub fn generate(quality: u8, preset: QuantTablePreset) -> Box<EncodingTables> {
         Self::generate_ex(quality, preset, false)
     }
 
-    /// Generate quantization tables with baseline clamping control.
+    /// Generate encoding tables with baseline clamping control.
     ///
     /// Like [`generate`](Self::generate), but with explicit control over whether
     /// to clamp values to 255 for baseline JPEG compatibility.
@@ -133,7 +134,7 @@ impl MozjpegTables {
         quality: u8,
         preset: QuantTablePreset,
         force_baseline: bool,
-    ) -> QuantTableConfig {
+    ) -> Box<EncodingTables> {
         let scale = quality_to_scale_factor(quality);
         let luma_base = get_luminance_table(preset);
         let chroma_base = get_chrominance_table(preset);
@@ -142,7 +143,29 @@ impl MozjpegTables {
         let cb = scale_table(chroma_base, scale, force_baseline);
         let cr = cb; // Cb and Cr use the same chrominance table
 
-        QuantTableConfig::Exact { luma, cb, cr }
+        // Convert u16 tables to f32 for EncodingTables
+        let quant = PerComponent {
+            c0: std::array::from_fn(|i| luma[i] as f32),
+            c1: std::array::from_fn(|i| cb[i] as f32),
+            c2: std::array::from_fn(|i| cr[i] as f32),
+        };
+
+        // Use neutral zero-bias for mozjpeg compatibility (standard rounding)
+        // - mul of 0.0 means no dead zone scaling
+        // - offset of 0.5 gives standard round-half-away-from-zero
+        let zero_bias_mul = PerComponent {
+            c0: [0.0f32; 64],
+            c1: [0.0f32; 64],
+            c2: [0.0f32; 64],
+        };
+
+        Box::new(EncodingTables {
+            quant,
+            zero_bias_mul,
+            zero_bias_offset_dc: [0.0, 0.0, 0.0],
+            zero_bias_offset_ac: [0.5, 0.5, 0.5],
+            scaling: ScalingParams::Exact,
+        })
     }
 
     /// Get the raw (unscaled) luminance base table for a preset.
@@ -398,9 +421,9 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_returns_exact_config() {
+    fn test_generate_returns_exact_scaling() {
         let tables = MozjpegTables::generate(85, QuantTablePreset::Robidoux);
-        assert!(matches!(tables, QuantTableConfig::Exact { .. }));
+        assert!(tables.is_exact(), "Should use ScalingParams::Exact");
     }
 
     #[test]
@@ -418,12 +441,15 @@ mod tests {
             QuantTablePreset::Peterson,
         ] {
             let tables = MozjpegTables::generate(75, preset);
-            if let QuantTableConfig::Exact { luma, cb, cr } = tables {
-                for &v in luma.iter().chain(cb.iter()).chain(cr.iter()) {
-                    assert!(v >= 1 && v <= 32767, "Invalid quant value: {}", v);
-                }
-            } else {
-                panic!("Expected Exact config");
+            // Check all quant values are in valid range (1-32767 as f32)
+            for &v in tables
+                .quant
+                .c0
+                .iter()
+                .chain(tables.quant.c1.iter())
+                .chain(tables.quant.c2.iter())
+            {
+                assert!(v >= 1.0 && v <= 32767.0, "Invalid quant value: {}", v);
             }
         }
     }
