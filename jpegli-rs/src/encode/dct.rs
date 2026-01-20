@@ -11,9 +11,9 @@
 //! # Safe/Unsafe Architecture
 //!
 //! - **Safe public APIs**: `forward_dct_8x8`, `transpose_8x8_simd`
-//! - **Unsafe internal functions**: `forward_dct_8x8_avx2`, `transpose_8x8_avx2`
+//! - **Unsafe internal functions**: `forward_dct_8x8_fma`, `transpose_8x8_avx`
 //!
-//! The unsafe AVX2 functions use raw intrinsics for 8x8 matrix transpose
+//! The unsafe AVX/FMA functions use raw intrinsics for 8x8 matrix transpose
 //! (`_mm256_unpacklo/hi_ps`, `_mm256_permute2f128_ps`) which have no `wide` equivalent.
 
 use crate::foundation::consts::DCT_BLOCK_SIZE;
@@ -385,7 +385,7 @@ pub(crate) mod simd {
                     input_flat[i * 8..i * 8 + 8].copy_from_slice(&arr);
                 }
                 unsafe {
-                    transpose_8x8_avx2(&input_flat, &mut output_flat);
+                    transpose_8x8_avx(&input_flat, &mut output_flat);
                 }
                 mem = [f32x8::ZERO; 8];
                 for col in 0..8 {
@@ -417,7 +417,7 @@ pub(crate) mod simd {
                     input_flat[i * 8..i * 8 + 8].copy_from_slice(&arr);
                 }
                 unsafe {
-                    transpose_8x8_avx2(&input_flat, output);
+                    transpose_8x8_avx(&input_flat, output);
                 }
                 return;
             }
@@ -453,7 +453,7 @@ pub(crate) mod simd {
     #[target_feature(enable = "avx2")]
     #[allow(dead_code)]
     #[inline]
-    pub(crate) unsafe fn transpose_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
+    pub(crate) unsafe fn transpose_8x8_avx(input: &[f32; 64], output: &mut [f32; 64]) {
         // Load 8 rows into YMM registers
         let i0 = _mm256_loadu_ps(input.as_ptr());
         let i1 = _mm256_loadu_ps(input.as_ptr().add(8));
@@ -777,7 +777,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     #[inline]
-    unsafe fn transpose_8x8_avx2_inplace(r: &mut [__m256; 8]) {
+    unsafe fn transpose_8x8_avx_inplace(r: &mut [__m256; 8]) {
         // Phase 1: InterleaveLower/Upper pairs
         let q0 = _mm256_unpacklo_ps(r[0], r[2]);
         let q1 = _mm256_unpacklo_ps(r[1], r[3]);
@@ -814,7 +814,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     #[inline]
-    unsafe fn dct1d_2_avx2(m0: &mut __m256, m1: &mut __m256) {
+    unsafe fn dct1d_2_fma(m0: &mut __m256, m1: &mut __m256) {
         let in0 = *m0;
         let in1 = *m1;
         *m0 = _mm256_add_ps(in0, in1);
@@ -825,7 +825,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[inline]
-    unsafe fn dct1d_4_avx2(m: &mut [__m256; 4]) {
+    unsafe fn dct1d_4_fma(m: &mut [__m256; 4]) {
         let wc4_0 = _mm256_set1_ps(0.541196100146197);
         let wc4_1 = _mm256_set1_ps(1.3065629648763764);
         let sqrt2 = _mm256_set1_ps(1.41421356237);
@@ -865,7 +865,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[inline]
-    unsafe fn dct1d_8_avx2(m: &mut [__m256; 8]) {
+    unsafe fn dct1d_8_fma(m: &mut [__m256; 8]) {
         let wc8_0 = _mm256_set1_ps(0.5097955791041592);
         let wc8_1 = _mm256_set1_ps(0.6013448869350453);
         let wc8_2 = _mm256_set1_ps(0.8999762231364156);
@@ -886,7 +886,7 @@ pub(crate) mod simd {
 
         // DCT1D<4> on first half
         let mut first = [t0, t1, t2, t3];
-        dct1d_4_avx2(&mut first);
+        dct1d_4_fma(&mut first);
 
         // Multiply by WC8
         let t4_scaled = _mm256_mul_ps(t4, wc8_0);
@@ -896,7 +896,7 @@ pub(crate) mod simd {
 
         // DCT1D<4> on second half
         let mut second = [t4_scaled, t5_scaled, t6_scaled, t7_scaled];
-        dct1d_4_avx2(&mut second);
+        dct1d_4_fma(&mut second);
 
         // B<4>: cumulative sum with FMA
         // second[0] = second[0] * sqrt2 + second[1]
@@ -924,10 +924,10 @@ pub(crate) mod simd {
     /// Algorithm:
     /// 1. Load rows into registers: reg[i] = row i
     /// 2. Transpose: reg[i] = column i (position i of all rows)
-    /// 3. Row DCT: dct1d_8_avx2 processes (reg[0]..reg[7]) as 8 positions
+    /// 3. Row DCT: dct1d_8_fma processes (reg[0]..reg[7]) as 8 positions
     ///    Each lane processes a separate row. Result: reg[i] = coef i of all rows
     /// 4. Transpose: reg[i] = row i of coefficient matrix
-    /// 5. Column DCT: dct1d_8_avx2 processes columns (reg[k][j] = coef[k,j])
+    /// 5. Column DCT: dct1d_8_fma processes columns (reg[k][j] = coef[k,j])
     ///    Result: reg[i] = final row i
     /// 6. Scale and store
     ///
@@ -938,7 +938,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
     #[inline] // Critical: inline into multiversioned caller
-    pub(crate) unsafe fn forward_dct_8x8_avx2(input: &[f32; 64], output: &mut [f32; 64]) {
+    pub(crate) unsafe fn forward_dct_8x8_fma(input: &[f32; 64], output: &mut [f32; 64]) {
         let scale = _mm256_set1_ps(1.0 / 8.0);
 
         // Load 8 rows: reg[i] = row i of input
@@ -954,23 +954,23 @@ pub(crate) mod simd {
         ];
 
         // Transpose: reg[i] = column i = [row0[i], row1[i], ..., row7[i]]
-        // dct1d_8_avx2 treats reg[0..7] as positions 0-7 of the sequence
+        // dct1d_8_fma treats reg[0..7] as positions 0-7 of the sequence
         // Each lane (element) within a register is a separate row being processed
-        transpose_8x8_avx2_inplace(&mut reg);
+        transpose_8x8_avx_inplace(&mut reg);
 
         // Row DCT: all 8 rows processed in parallel
         // Lane k gets: DCT of (reg[0][k], reg[1][k], ..., reg[7][k]) = DCT of row k
         // Result: reg[i][k] = coefficient i of row k's DCT
-        dct1d_8_avx2(&mut reg);
+        dct1d_8_fma(&mut reg);
 
         // Transpose: reg[i][j] = coef[i, j] (row-major coefficient matrix)
         // This sets up for column DCT: lane j processes column j
-        transpose_8x8_avx2_inplace(&mut reg);
+        transpose_8x8_avx_inplace(&mut reg);
 
         // Column DCT: all 8 columns processed in parallel
         // Lane j gets: DCT of (reg[0][j], reg[1][j], ..., reg[7][j]) = DCT of column j
         // Result: reg[i][j] = final 2D DCT coefficient at (i, j)
-        dct1d_8_avx2(&mut reg);
+        dct1d_8_fma(&mut reg);
 
         // reg[i] is now row i of the final output - store directly
         _mm256_storeu_ps(output.as_mut_ptr(), _mm256_mul_ps(reg[0], scale));
@@ -1034,7 +1034,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
         let mut output = [0.0f32; 64];
         // SAFETY: This code path only compiles when target_feature includes avx2+fma
         unsafe {
-            simd::forward_dct_8x8_avx2(input, &mut output);
+            simd::forward_dct_8x8_fma(input, &mut output);
         }
         return output;
     }
@@ -1469,7 +1469,7 @@ mod tests {
 
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[test]
-    fn test_avx2_dct_matches_scalar() {
+    fn test_fma_dct_matches_scalar() {
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
             return; // Skip on CPUs without AVX2+FMA
         }
@@ -1497,7 +1497,7 @@ mod tests {
 
             let mut avx2_output = [0.0f32; 64];
             unsafe {
-                simd::forward_dct_8x8_avx2(input, &mut avx2_output);
+                simd::forward_dct_8x8_fma(input, &mut avx2_output);
             }
 
             let mut max_error = 0.0f32;
@@ -1521,8 +1521,8 @@ mod tests {
 
     #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
     #[test]
-    #[ignore] // Run with: cargo test --release --features unsafe_simd bench_avx2_dct -- --ignored --nocapture
-    fn bench_avx2_dct_vs_scalar() {
+    #[ignore] // Run with: cargo test --release --features unsafe_simd bench_fma_dct -- --ignored --nocapture
+    fn bench_fma_dct_vs_scalar() {
         use std::hint::black_box;
         use std::time::Instant;
 
@@ -1557,14 +1557,14 @@ mod tests {
         // Warmup AVX2
         for _ in 0..10000 {
             unsafe {
-                simd::forward_dct_8x8_avx2(black_box(&input), &mut output);
+                simd::forward_dct_8x8_fma(black_box(&input), &mut output);
             }
         }
 
         let start = Instant::now();
         for _ in 0..iterations {
             unsafe {
-                simd::forward_dct_8x8_avx2(black_box(&input), black_box(&mut output));
+                simd::forward_dct_8x8_fma(black_box(&input), black_box(&mut output));
             }
         }
         let avx2_time = start.elapsed();
