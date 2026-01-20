@@ -561,7 +561,8 @@ impl Encoder {
             .optimize_huffman(self.config.optimize_huffman)
             .chroma_downsampling(self.config.chroma_downsampling)
             .restart_interval(self.config.restart_interval)
-            .use_xyb(self.config.use_xyb);
+            .use_xyb(self.config.use_xyb)
+            .allow_16bit_quant_tables(self.config.allow_16bit_quant_tables);
 
         if let Some(ref tables) = self.config.encoding_tables {
             builder = builder.encoding_tables(tables.clone());
