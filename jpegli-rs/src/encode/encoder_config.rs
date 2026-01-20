@@ -5,6 +5,7 @@ use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, QuantTableConfig,
     XybSubsampling, ZeroBiasConfig,
 };
+use super::mozjpeg_compat::TrellisConfig;
 use super::tuning::EncodingTables;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
@@ -35,6 +36,9 @@ pub struct EncoderConfig {
     /// Allow 16-bit quantization tables (extended JPEG, SOF1).
     /// When false, quant values are clamped to 255 for baseline compatibility.
     pub(crate) allow_16bit_quant_tables: bool,
+    /// Trellis quantization configuration (mozjpeg-compatible API).
+    /// When Some, enables trellis quantization for rate-distortion optimization.
+    pub(crate) trellis: Option<TrellisConfig>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -169,6 +173,7 @@ impl EncoderConfig {
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
             deringing: true,
             allow_16bit_quant_tables: true,
+            trellis: None,
         }
     }
 
@@ -340,6 +345,52 @@ impl EncoderConfig {
     pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.hybrid_config = config;
         self
+    }
+
+    // === Trellis Quantization ===
+
+    /// Configure trellis quantization (mozjpeg-compatible API).
+    ///
+    /// Trellis quantization uses rate-distortion optimization to find the best
+    /// quantization decisions, typically producing 10-15% smaller files at the
+    /// same visual quality.
+    ///
+    /// This uses the same algorithm as mozjpeg and provides a compatible API.
+    /// For advanced users who want to combine trellis with jpegli's adaptive
+    /// quantization, see [`hybrid_config()`](Self::hybrid_config) (requires
+    /// the `experimental-hybrid-trellis` feature).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::encode::{EncoderConfig, ChromaSubsampling, TrellisConfig};
+    ///
+    /// // Enable trellis with default settings
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .trellis(TrellisConfig::default());
+    ///
+    /// // Fine-tune trellis parameters
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .trellis(TrellisConfig::default()
+    ///         .ac_trellis(true)
+    ///         .dc_trellis(true)
+    ///         .speed_level(5)
+    ///         .rd_factor(0.8));
+    ///
+    /// // Disable trellis for fastest encoding
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .trellis(TrellisConfig::disabled());
+    /// ```
+    #[must_use]
+    pub fn trellis(mut self, config: TrellisConfig) -> Self {
+        self.trellis = Some(config);
+        self
+    }
+
+    /// Get the trellis configuration, if set.
+    #[must_use]
+    pub fn get_trellis(&self) -> Option<&TrellisConfig> {
+        self.trellis.as_ref()
     }
 
     // === ICC Profile ===
@@ -842,5 +893,49 @@ mod tests {
                 subsampling: ChromaSubsampling::Quarter
             }
         ));
+    }
+
+    #[test]
+    fn test_trellis_config() {
+        // Default config has no trellis
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+        assert!(config.trellis.is_none());
+        assert!(config.get_trellis().is_none());
+
+        // Enable trellis with defaults
+        let config =
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(TrellisConfig::default());
+        assert!(config.trellis.is_some());
+        let trellis = config.get_trellis().unwrap();
+        assert!(trellis.is_ac_enabled());
+        assert!(trellis.is_dc_enabled());
+        assert_eq!(trellis.get_speed_level(), 7);
+    }
+
+    #[test]
+    fn test_trellis_config_builder() {
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(
+            TrellisConfig::default()
+                .ac_trellis(true)
+                .dc_trellis(false)
+                .speed_level(5)
+                .rd_factor(0.8),
+        );
+
+        let trellis = config.get_trellis().unwrap();
+        assert!(trellis.is_ac_enabled());
+        assert!(!trellis.is_dc_enabled());
+        assert_eq!(trellis.get_speed_level(), 5);
+    }
+
+    #[test]
+    fn test_trellis_disabled() {
+        let config =
+            EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(TrellisConfig::disabled());
+
+        let trellis = config.get_trellis().unwrap();
+        assert!(!trellis.is_enabled());
+        assert!(!trellis.is_ac_enabled());
+        assert!(!trellis.is_dc_enabled());
     }
 }

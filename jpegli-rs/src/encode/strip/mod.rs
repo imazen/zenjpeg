@@ -50,6 +50,14 @@ use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
 
+// Trellis quantization support (feature-gated)
+#[cfg(feature = "experimental-hybrid-trellis")]
+use crate::encode::hybrid::HybridQuantContext;
+#[cfg(feature = "experimental-hybrid-trellis")]
+use crate::encode::mozjpeg_compat::TrellisConfig;
+#[cfg(feature = "experimental-hybrid-trellis")]
+use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
+
 /// Quantization context: groups all quantization tables and bias parameters.
 ///
 /// This struct is created once via `set_quant_tables()` and ensures all
@@ -211,6 +219,12 @@ pub struct StripProcessor {
     // === Optional preprocessing ===
     /// Enable overshoot deringing (on by default)
     deringing: bool,
+
+    // === Trellis quantization (feature-gated) ===
+    /// Trellis quantization context for rate-distortion optimization.
+    /// When Some, uses trellis quantization instead of standard SIMD quantization.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    hybrid_ctx: Option<HybridQuantContext>,
 }
 
 impl StripProcessor {
@@ -479,6 +493,10 @@ impl StripProcessor {
 
             // Optional preprocessing (deringing on by default)
             deringing: true,
+
+            // Trellis quantization (disabled by default)
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            hybrid_ctx: None,
         })
     }
 
@@ -506,6 +524,22 @@ impl StripProcessor {
     /// This technique was pioneered by @kornel in mozjpeg.
     pub fn set_deringing(&mut self, enable: bool) {
         self.deringing = enable;
+    }
+
+    /// Sets trellis quantization configuration.
+    ///
+    /// When enabled, uses trellis quantization for rate-distortion optimization
+    /// instead of standard SIMD quantization. This typically produces 10-15%
+    /// smaller files at the same quality.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    pub fn set_trellis(&mut self, config: TrellisConfig) {
+        if config.is_enabled() {
+            self.hybrid_ctx = Some(HybridQuantContext::from_trellis_config(config));
+        } else {
+            self.hybrid_ctx = None;
+        }
     }
 
     /// Returns whether XYB mode is enabled.
@@ -997,9 +1031,19 @@ impl StripProcessor {
     ///
     /// This is the key memory optimization: quantize incrementally as soon as
     /// AQ strengths become available, rather than storing all f32 blocks.
+    ///
+    /// When trellis quantization is enabled (via `set_trellis()`), uses
+    /// rate-distortion optimization for better compression. Otherwise uses
+    /// fast SIMD quantization.
     fn quantize_pending_imcu(&mut self, buffer_idx: usize, aq_strengths: &[f32]) {
         // Get quantization context (must be set before processing)
         let quant = self.quant.clone().expect("quant context not set");
+
+        // Check if we have trellis context for R-D optimization
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        let use_trellis = self.hybrid_ctx.is_some();
+        #[cfg(not(feature = "experimental-hybrid-trellis"))]
+        let use_trellis = false;
 
         // Quantize Y blocks
         for (i, dct) in self.pending_y_blocks[buffer_idx].iter().enumerate() {
@@ -1009,12 +1053,35 @@ impl StripProcessor {
                 0.08 // C++ mean fallback
             };
 
-            // Fused quantization + zigzag reorder (single pass, no intermediate array)
-            let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
-                dct,
-                &quant.y_zero_bias_simd,
-                aq_strength,
-            );
+            let zigzag = if use_trellis {
+                #[cfg(feature = "experimental-hybrid-trellis")]
+                {
+                    // Trellis path: convert to array, quantize with R-D, apply zigzag
+                    let dct_arr = dct.to_array();
+                    let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                        &dct_arr,
+                        &quant.y_quant.values,
+                        aq_strength,
+                        1.0,  // dampen
+                        true, // is_luma
+                    );
+                    // Apply zigzag reordering
+                    let mut result = [0i16; DCT_BLOCK_SIZE];
+                    for j in 0..DCT_BLOCK_SIZE {
+                        result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                    }
+                    result
+                }
+                #[cfg(not(feature = "experimental-hybrid-trellis"))]
+                unreachable!()
+            } else {
+                // Fast SIMD path: fused quantization + zigzag reorder
+                quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                    dct,
+                    &quant.y_zero_bias_simd,
+                    aq_strength,
+                )
+            };
 
             self.y_blocks.push(zigzag);
             self.all_aq_strengths.push(aq_strength);
@@ -1047,11 +1114,32 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let zigzag = quant.cb_quant_simd.quantize_with_zero_bias_zigzag(
-                    dct,
-                    &quant.cb_zero_bias_simd,
-                    aq_strength,
-                );
+                let zigzag = if use_trellis {
+                    #[cfg(feature = "experimental-hybrid-trellis")]
+                    {
+                        let dct_arr = dct.to_array();
+                        let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                            &dct_arr,
+                            &quant.cb_quant.values,
+                            aq_strength,
+                            1.0,
+                            false, // is_chroma
+                        );
+                        let mut result = [0i16; DCT_BLOCK_SIZE];
+                        for j in 0..DCT_BLOCK_SIZE {
+                            result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                        }
+                        result
+                    }
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
+                    unreachable!()
+                } else {
+                    quant.cb_quant_simd.quantize_with_zero_bias_zigzag(
+                        dct,
+                        &quant.cb_zero_bias_simd,
+                        aq_strength,
+                    )
+                };
                 self.cb_blocks.push(zigzag);
             }
 
@@ -1072,11 +1160,32 @@ impl StripProcessor {
                     0.08 // C++ mean fallback
                 };
 
-                let zigzag = quant.cr_quant_simd.quantize_with_zero_bias_zigzag(
-                    dct,
-                    &quant.cr_zero_bias_simd,
-                    aq_strength,
-                );
+                let zigzag = if use_trellis {
+                    #[cfg(feature = "experimental-hybrid-trellis")]
+                    {
+                        let dct_arr = dct.to_array();
+                        let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                            &dct_arr,
+                            &quant.cr_quant.values,
+                            aq_strength,
+                            1.0,
+                            false, // is_chroma
+                        );
+                        let mut result = [0i16; DCT_BLOCK_SIZE];
+                        for j in 0..DCT_BLOCK_SIZE {
+                            result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                        }
+                        result
+                    }
+                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
+                    unreachable!()
+                } else {
+                    quant.cr_quant_simd.quantize_with_zero_bias_zigzag(
+                        dct,
+                        &quant.cr_zero_bias_simd,
+                        aq_strength,
+                    )
+                };
                 self.cr_blocks.push(zigzag);
             }
         }

@@ -109,6 +109,16 @@ pub struct EncoderConfig {
     /// Note: Most modern decoders support 16-bit quant tables. Only disable
     /// this for compatibility with very old or limited JPEG decoders.
     pub allow_16bit_quant_tables: bool,
+
+    /// Trellis quantization configuration (mozjpeg-compatible API).
+    ///
+    /// When set, enables trellis quantization for rate-distortion optimization.
+    /// This is the mozjpeg-compatible API. For hybrid AQ+trellis mode, use
+    /// `hybrid_config` instead.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    pub trellis: Option<super::mozjpeg_compat::TrellisConfig>,
 }
 
 impl Default for EncoderConfig {
@@ -140,6 +150,8 @@ impl Default for EncoderConfig {
             // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
             // Set to false only for compatibility with very old decoders
             allow_16bit_quant_tables: true,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            trellis: None,
         }
     }
 }

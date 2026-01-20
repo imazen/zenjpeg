@@ -91,6 +91,12 @@ pub mod tuning;
 #[cfg(feature = "mozjpeg-tables")]
 pub mod mozjpeg_tables;
 
+/// mozjpeg-compatible API types.
+///
+/// This module provides types that mirror mozjpeg-rs's API for easier migration
+/// and familiarity, including [`TrellisConfig`](mozjpeg_compat::TrellisConfig).
+pub mod mozjpeg_compat;
+
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
 pub mod v2;
@@ -112,6 +118,8 @@ pub use encoder_types::{
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
 pub use exif::{Exif, ExifFields, Orientation};
+#[allow(unused_imports)] // Public API re-export
+pub use mozjpeg_compat::TrellisConfig;
 #[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
 pub use mozjpeg_tables::{MozjpegTables, QuantTablePreset};
@@ -462,6 +470,23 @@ impl Encoder {
     #[must_use]
     pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.config.hybrid_config = config;
+        self
+    }
+
+    /// Sets trellis quantization configuration (mozjpeg-compatible API).
+    ///
+    /// Trellis quantization uses rate-distortion optimization to find optimal
+    /// quantization decisions, typically producing 10-15% smaller files at the
+    /// same visual quality.
+    ///
+    /// This is the mozjpeg-compatible API. For hybrid mode that combines
+    /// trellis with jpegli's adaptive quantization, use [`hybrid_config()`](Self::hybrid_config).
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn trellis_config(mut self, config: TrellisConfig) -> Self {
+        self.config.trellis = Some(config);
         self
     }
 
