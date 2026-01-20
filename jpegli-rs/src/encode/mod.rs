@@ -137,9 +137,12 @@ use crate::foundation::alloc::{
 use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
 use crate::quant::{self, Quality as LegacyQuality, QuantTable};
 use crate::types::{
-    ChromaDownsampling as LegacyChromaDownsampling, ColorSpace, EdgePadding, EdgePaddingConfig,
-    JpegMode, PixelFormat as LegacyPixelFormat, Subsampling as LegacySubsampling,
+    ColorSpace, EdgePadding, EdgePaddingConfig, JpegMode, PixelFormat as LegacyPixelFormat,
+    Subsampling as LegacySubsampling,
 };
+
+// Alias for backward compatibility with deprecated Encoder API
+type LegacyChromaDownsampling = DownsamplingMethod;
 use enough::Unstoppable;
 
 /// JPEG encoder.

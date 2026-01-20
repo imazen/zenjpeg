@@ -16,7 +16,7 @@ JpegEncoder::new(width: u32, height: u32) -> StreamingEncoderBuilder
 .pixel_format(PixelFormat)       // Rgb, Rgba, Gray, Rgb16, etc.
 .mode(JpegMode)                  // Baseline, Progressive
 .optimize_huffman(bool)          // Two-pass Huffman optimization
-.chroma_downsampling(ChromaDownsampling)  // Box, GammaAwareIterative
+.chroma_downsampling(DownsamplingMethod)  // Box, GammaAwareIterative
 .sharp_yuv(bool)                 // Alias for GammaAwareIterative
 .restart_interval(u16)           // MCUs between restart markers
 .custom_quant_matrices(CustomQuantMatrices)  // Custom quant tables
@@ -90,7 +90,7 @@ pub struct EncoderConfig {
     pixel_format: PixelFormat,
     mode: JpegMode,
     optimize_huffman: bool,
-    chroma_downsampling: ChromaDownsampling,
+    chroma_downsampling: DownsamplingMethod,
     restart_interval: u16,
     custom_quant_matrices: Option<CustomQuantMatrices>,
     use_xyb: bool,

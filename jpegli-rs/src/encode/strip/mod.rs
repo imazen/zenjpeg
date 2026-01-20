@@ -39,6 +39,7 @@
 
 mod convert;
 
+use crate::encode::encoder_types::DownsamplingMethod;
 use crate::error::Result;
 use crate::foundation::alloc::{
     try_alloc_filled, try_alloc_zeroed_f32_tracked, try_clone_slice, try_with_capacity_tracked,
@@ -48,7 +49,7 @@ use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
-use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
+use crate::types::{PixelFormat, Subsampling};
 
 // Trellis quantization support (feature-gated)
 #[cfg(feature = "experimental-hybrid-trellis")]
@@ -162,7 +163,7 @@ pub struct StripProcessor {
     /// Pixel format of input data
     pub(super) pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
-    pub(super) chroma_downsampling: ChromaDownsampling,
+    pub(super) chroma_downsampling: DownsamplingMethod,
     /// Use XYB color space instead of YCbCr
     pub(super) use_xyb: bool,
 
@@ -246,7 +247,7 @@ impl StripProcessor {
             height,
             subsampling,
             pixel_format,
-            ChromaDownsampling::Box,
+            DownsamplingMethod::Box,
             0,
         )
     }
@@ -265,7 +266,7 @@ impl StripProcessor {
         height: usize,
         subsampling: Subsampling,
         pixel_format: PixelFormat,
-        chroma_downsampling: ChromaDownsampling,
+        chroma_downsampling: DownsamplingMethod,
         _restart_interval: u16,
     ) -> Result<Self> {
         Self::with_xyb(
@@ -288,7 +289,7 @@ impl StripProcessor {
         height: usize,
         subsampling: Subsampling,
         pixel_format: PixelFormat,
-        chroma_downsampling: ChromaDownsampling,
+        chroma_downsampling: DownsamplingMethod,
         _restart_interval: u16,
         use_xyb: bool,
     ) -> Result<Self> {

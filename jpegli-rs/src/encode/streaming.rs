@@ -33,11 +33,12 @@
 #![allow(dead_code)]
 #![allow(deprecated)] // Uses deprecated Encoder internally for progressive mode
 
+use crate::encode::encoder_types::DownsamplingMethod;
 use crate::encode::strip::StripProcessor;
 use crate::encode::Encoder;
 use crate::error::{Error, Result};
 use crate::quant::{self, CustomQuantMatrices, Quality, QuantTable, ZeroBiasParams};
-use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
+use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use enough::{Stop, Unstoppable};
 
 /// Custom zero-bias configuration for streaming encoder.
@@ -78,7 +79,7 @@ pub struct StreamingEncoderBuilder {
     pixel_format: PixelFormat,
     mode: JpegMode,
     optimize_huffman: bool,
-    chroma_downsampling: ChromaDownsampling,
+    chroma_downsampling: DownsamplingMethod,
     restart_interval: u16,
     custom_quant_matrices: Option<CustomQuantMatrices>,
     custom_zero_bias: CustomZeroBias,
@@ -112,7 +113,7 @@ impl StreamingEncoderBuilder {
             pixel_format: PixelFormat::Rgb,
             mode: JpegMode::Baseline,
             optimize_huffman: true,
-            chroma_downsampling: ChromaDownsampling::Box,
+            chroma_downsampling: DownsamplingMethod::Box,
             restart_interval: 0,
             custom_quant_matrices: None,
             custom_zero_bias: CustomZeroBias::Default,
@@ -235,7 +236,7 @@ impl StreamingEncoderBuilder {
 
     /// Sets chroma downsampling method for subsampled modes.
     #[must_use]
-    pub fn chroma_downsampling(mut self, method: ChromaDownsampling) -> Self {
+    pub fn chroma_downsampling(mut self, method: DownsamplingMethod) -> Self {
         self.chroma_downsampling = method;
         self
     }
@@ -246,7 +247,7 @@ impl StreamingEncoderBuilder {
     /// subsampling (4:2:0, 4:2:2). This produces noticeably better quality
     /// on images with sharp color transitions at the cost of slower encoding.
     ///
-    /// Equivalent to `.chroma_downsampling(ChromaDownsampling::GammaAwareIterative)`.
+    /// Equivalent to `.chroma_downsampling(DownsamplingMethod::GammaAwareIterative)`.
     ///
     /// Has no effect for 4:4:4 subsampling (no downsampling needed).
     ///
@@ -262,9 +263,9 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.chroma_downsampling = if enable {
-            ChromaDownsampling::GammaAwareIterative
+            DownsamplingMethod::GammaAwareIterative
         } else {
-            ChromaDownsampling::Box
+            DownsamplingMethod::Box
         };
         self
     }

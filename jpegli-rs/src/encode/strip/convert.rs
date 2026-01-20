@@ -9,8 +9,9 @@
 
 #![allow(dead_code)]
 
+use crate::encode::encoder_types::DownsamplingMethod;
 use crate::error::Result;
-use crate::types::{ChromaDownsampling, PixelFormat, Subsampling};
+use crate::types::{PixelFormat, Subsampling};
 
 use super::StripProcessor;
 
@@ -682,7 +683,7 @@ impl StripProcessor {
     ) -> Result<()> {
         let width = self.width;
         let bpp = self.pixel_format.bytes_per_pixel();
-        let use_iterative = self.chroma_downsampling == ChromaDownsampling::GammaAwareIterative;
+        let use_iterative = self.chroma_downsampling == DownsamplingMethod::GammaAwareIterative;
 
         // Determine chroma strip dimensions
         let (c_width, c_strip_height) = match self.subsampling {

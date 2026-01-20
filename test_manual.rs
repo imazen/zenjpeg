@@ -1,5 +1,6 @@
 // Test at HEAD with explicit settings to match fe0baee behavior
-use jpegli::{Encoder, PixelFormat, Quality, types::Subsampling, ChromaDownsampling};
+use jpegli::{Encoder, PixelFormat, Quality, types::Subsampling};
+use jpegli::encoder::DownsamplingMethod;
 use jpegli::decode::Decoder;
 
 fn main() {
@@ -25,7 +26,7 @@ fn main() {
         .pixel_format(PixelFormat::Rgb)
         .jpegli_quality(Quality::from_quality(70.0))
         .subsampling(Subsampling::S420)
-        .chroma_downsampling(ChromaDownsampling::Box) // Explicit, matches C++ jpegli
+        .chroma_downsampling(DownsamplingMethod::Box) // Explicit, matches C++ jpegli
         .optimize_huffman(true)
         .encode(&rgb)
         .expect("encode");
