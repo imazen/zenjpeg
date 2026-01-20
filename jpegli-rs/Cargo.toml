@@ -159,6 +159,11 @@ harness = false
 name = "bitwriter_bench"
 harness = false
 
+[[bench]]
+name = "mage_simd"
+harness = false
+required-features = ["archmage-simd"]
+
 [lints]
 workspace = true
 

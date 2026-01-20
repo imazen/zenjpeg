@@ -736,7 +736,10 @@ fn compute_mask_scalar(out_val: f32) -> f32 {
     let v4 = 1.0 / (v1 * v1 + K_MASK_OFFSET4);
     // Use K_MASK_MUL* constants (3.24, 12.9, 5.02), NOT K_MUL* (0.04, 0.18, 0.30)
     // FMA chain for consistency with SIMD path
-    v4.mul_add(K_MASK_MUL4, v2.mul_add(K_MASK_MUL2, v3.mul_add(K_MASK_MUL3, K_MASK_BASE)))
+    v4.mul_add(
+        K_MASK_MUL4,
+        v2.mul_add(K_MASK_MUL2, v3.mul_add(K_MASK_MUL3, K_MASK_BASE)),
+    )
 }
 
 /// Ported from HFModulation (scalar version).

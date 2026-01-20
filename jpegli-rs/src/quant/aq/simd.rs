@@ -84,7 +84,9 @@ fn ratio_of_derivatives_scalar(val: f32, invert: bool) -> f32 {
 /// Scalar reference: masking_sqrt
 #[inline]
 fn masking_sqrt_scalar(v: f32) -> f32 {
-    0.25 * v.mul_add((K_MASKING_MUL * 1e8_f32).sqrt(), K_MASKING_LOG_OFFSET).sqrt()
+    0.25 * v
+        .mul_add((K_MASKING_MUL * 1e8_f32).sqrt(), K_MASKING_LOG_OFFSET)
+        .sqrt()
 }
 
 // ============================================================================
@@ -98,7 +100,10 @@ pub fn ratio_of_derivatives_x8(vals: f32x8) -> f32x8 {
     let v = vals.fast_max(f32x8::ZERO);
     let v2 = v * v;
 
-    let num = v2.mul_add(f32x8::splat(K_NUM_MUL_RATIO), f32x8::splat(K_NUM_OFFSET_RATIO));
+    let num = v2.mul_add(
+        f32x8::splat(K_NUM_MUL_RATIO),
+        f32x8::splat(K_NUM_OFFSET_RATIO),
+    );
     let den = (v * f32x8::splat(K_DEN_MUL_RATIO)).mul_add(v2, f32x8::splat(K_VOFFSET_RATIO));
 
     // den is always positive due to K_VOFFSET_RATIO > 0, no need for safe_den check
@@ -112,7 +117,10 @@ pub fn ratio_of_derivatives_inv_x8(vals: f32x8) -> f32x8 {
     let v = vals.fast_max(f32x8::ZERO);
     let v2 = v * v;
 
-    let num = v2.mul_add(f32x8::splat(K_NUM_MUL_RATIO), f32x8::splat(K_NUM_OFFSET_RATIO));
+    let num = v2.mul_add(
+        f32x8::splat(K_NUM_MUL_RATIO),
+        f32x8::splat(K_NUM_OFFSET_RATIO),
+    );
     let den = (v * f32x8::splat(K_DEN_MUL_RATIO)).mul_add(v2, f32x8::splat(K_VOFFSET_RATIO));
 
     num / den
