@@ -129,7 +129,11 @@ impl MozjpegTables {
     /// clamp quant values. This parameter is mainly useful if you want to
     /// inspect the baseline-clamped tables directly.
     #[must_use]
-    pub fn generate_ex(quality: u8, preset: QuantTablePreset, force_baseline: bool) -> QuantTableConfig {
+    pub fn generate_ex(
+        quality: u8,
+        preset: QuantTablePreset,
+        force_baseline: bool,
+    ) -> QuantTableConfig {
         let scale = quality_to_scale_factor(quality);
         let luma_base = get_luminance_table(preset);
         let chroma_base = get_chrominance_table(preset);
@@ -355,8 +359,8 @@ mod tests {
     #[test]
     fn test_quality_to_scale_factor() {
         assert_eq!(quality_to_scale_factor(50), 100); // Q50 = 100%
-        assert_eq!(quality_to_scale_factor(75), 50);  // Q75 = 50%
-        assert_eq!(quality_to_scale_factor(100), 0);  // Q100 = 0%
+        assert_eq!(quality_to_scale_factor(75), 50); // Q75 = 50%
+        assert_eq!(quality_to_scale_factor(100), 0); // Q100 = 0%
         assert_eq!(quality_to_scale_factor(25), 200); // Q25 = 200%
         assert_eq!(quality_to_scale_factor(1), 5000); // Q1 = 5000%
         assert_eq!(quality_to_scale_factor(10), 500); // Q10 = 500%
