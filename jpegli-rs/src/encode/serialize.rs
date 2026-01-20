@@ -6,7 +6,6 @@
 //! - Huffman tables
 //! - Frame and scan headers
 
-#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
 use crate::error::Result;
 use crate::foundation::consts::{

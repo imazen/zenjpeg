@@ -6,7 +6,6 @@
 //! - Huffman table optimization
 //! - Scan encoding
 
-#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
 use super::Encoder;
 use crate::entropy::{self, EntropyEncoder};

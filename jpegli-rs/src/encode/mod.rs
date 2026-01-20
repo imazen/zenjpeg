@@ -30,7 +30,6 @@
 //! ```
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 // Internal implementation modules (pub for internal crate re-exports)
 mod blocks;
@@ -136,28 +135,11 @@ use enough::Unstoppable;
 
 /// JPEG encoder.
 ///
-/// **Deprecated:** Use [`crate::encoder::EncoderConfig`] instead, which provides
-/// a cleaner API with better ergonomics.
+/// Internal encoder implementation.
 ///
-/// # Migration
-///
-/// ```rust,ignore
-/// // Old API (deprecated):
-/// #[allow(deprecated)]
-/// let jpeg = Encoder::new()
-///     .width(640)
-///     .height(480)
-///     .encode(&pixels)?;
-///
-/// // New API (recommended):
-/// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
-/// let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
-/// let mut enc = config.encode_from_bytes(640, 480, PixelLayout::Rgb8Srgb)?;
-/// enc.push_packed(&pixels, Unstoppable)?;
-/// let jpeg = enc.finish()?;
-/// ```
-#[deprecated(since = "0.4.0", note = "Use jpegli::encoder::EncoderConfig instead")]
-pub struct Encoder {
+/// This is used by [`StreamingEncoder`] for JPEG serialization.
+/// For public API, use [`crate::encoder::EncoderConfig`].
+pub(crate) struct Encoder {
     /// Encoder configuration (accessible within crate for streaming encoder).
     pub(crate) config: LegacyEncoderConfig,
 }
@@ -165,7 +147,7 @@ pub struct Encoder {
 impl Encoder {
     /// Creates a new encoder with default settings.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             config: LegacyEncoderConfig::default(),
         }
@@ -173,27 +155,27 @@ impl Encoder {
 
     /// Creates an encoder from configuration.
     #[must_use]
-    pub fn from_config(config: LegacyEncoderConfig) -> Self {
+    pub(crate) fn from_config(config: LegacyEncoderConfig) -> Self {
         Self { config }
     }
 
     /// Sets the image width.
     #[must_use]
-    pub fn width(mut self, width: u32) -> Self {
+    pub(crate) fn width(mut self, width: u32) -> Self {
         self.config.width = width;
         self
     }
 
     /// Sets the image height.
     #[must_use]
-    pub fn height(mut self, height: u32) -> Self {
+    pub(crate) fn height(mut self, height: u32) -> Self {
         self.config.height = height;
         self
     }
 
     /// Sets the pixel format.
     #[must_use]
-    pub fn pixel_format(mut self, format: LegacyPixelFormat) -> Self {
+    pub(crate) fn pixel_format(mut self, format: LegacyPixelFormat) -> Self {
         self.config.pixel_format = format;
         self
     }
@@ -203,7 +185,7 @@ impl Encoder {
     /// Use `Quality::from_quality(90.0)` for traditional JPEG quality (1-100)
     /// or `Quality::from_distance(1.0)` for butteraugli distance.
     #[must_use]
-    pub fn jpegli_quality(mut self, quality: LegacyQuality) -> Self {
+    pub(crate) fn jpegli_quality(mut self, quality: LegacyQuality) -> Self {
         self.config.quality = quality;
         self
     }
@@ -231,7 +213,7 @@ impl Encoder {
     ///     .equivalent_quality(conversion);
     /// ```
     #[must_use]
-    pub fn equivalent_quality(
+    pub(crate) fn equivalent_quality(
         mut self,
         conversion: crate::quant::quality_conversion::QualityConversion,
     ) -> Self {
@@ -248,21 +230,21 @@ impl Encoder {
         since = "0.4.0",
         note = "Use jpegli_quality() or equivalent_quality() instead"
     )]
-    pub fn quality(mut self, quality: LegacyQuality) -> Self {
+    pub(crate) fn quality(mut self, quality: LegacyQuality) -> Self {
         self.config.quality = quality;
         self
     }
 
     /// Sets the encoding mode.
     #[must_use]
-    pub fn mode(mut self, mode: JpegMode) -> Self {
+    pub(crate) fn mode(mut self, mode: JpegMode) -> Self {
         self.config.mode = mode;
         self
     }
 
     /// Sets chroma subsampling.
     #[must_use]
-    pub fn subsampling(mut self, subsampling: LegacySubsampling) -> Self {
+    pub(crate) fn subsampling(mut self, subsampling: LegacySubsampling) -> Self {
         self.config.subsampling = subsampling;
         self
     }
@@ -286,14 +268,14 @@ impl Encoder {
     /// Note: Without ICC profile support in the decoder, images will display with
     /// incorrect colors. Use standard YCbCr mode for maximum compatibility.
     #[must_use]
-    pub fn use_xyb(mut self, enable: bool) -> Self {
+    pub(crate) fn use_xyb(mut self, enable: bool) -> Self {
         self.config.use_xyb = enable;
         self
     }
 
     /// Sets the restart interval.
     #[must_use]
-    pub fn restart_interval(mut self, interval: u16) -> Self {
+    pub(crate) fn restart_interval(mut self, interval: u16) -> Self {
         self.config.restart_interval = interval;
         self
     }
@@ -311,7 +293,7 @@ impl Encoder {
     /// so this only matters for very low quality settings. Most modern
     /// decoders support 16-bit quant tables without issue.
     #[must_use]
-    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+    pub(crate) fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.config.allow_16bit_quant_tables = enable;
         self
     }
@@ -322,14 +304,14 @@ impl Encoder {
     /// threads for entropy encoding.
     #[cfg(feature = "parallel")]
     #[must_use]
-    pub fn parallel(mut self, enable: bool) -> Self {
+    pub(crate) fn parallel(mut self, enable: bool) -> Self {
         self.config.parallel = enable;
         self
     }
 
     /// Enables optimized Huffman tables.
     #[must_use]
-    pub fn optimize_huffman(mut self, enable: bool) -> Self {
+    pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
         self.config.optimize_huffman = enable;
         self
     }
@@ -343,7 +325,7 @@ impl Encoder {
     ///
     /// Has no effect for 4:4:4 subsampling (no downsampling needed).
     #[must_use]
-    pub fn chroma_downsampling(mut self, method: LegacyChromaDownsampling) -> Self {
+    pub(crate) fn chroma_downsampling(mut self, method: LegacyChromaDownsampling) -> Self {
         self.config.chroma_downsampling = method;
         self
     }
@@ -353,7 +335,7 @@ impl Encoder {
     /// - `enable = true` → `LegacyChromaDownsampling::GammaAwareIterative`
     /// - `enable = false` → `LegacyChromaDownsampling::Box`
     #[must_use]
-    pub fn sharp_yuv(mut self, enable: bool) -> Self {
+    pub(crate) fn sharp_yuv(mut self, enable: bool) -> Self {
         self.config.chroma_downsampling = if enable {
             LegacyChromaDownsampling::GammaAwareIterative
         } else {
@@ -398,7 +380,7 @@ impl Encoder {
     ///     });
     /// ```
     #[must_use]
-    pub fn edge_padding(mut self, config: EdgePaddingConfig) -> Self {
+    pub(crate) fn edge_padding(mut self, config: EdgePaddingConfig) -> Self {
         self.config.edge_padding = config;
         self
     }
@@ -412,7 +394,7 @@ impl Encoder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn hybrid_trellis(mut self, enable: bool) -> Self {
+    pub(crate) fn hybrid_trellis(mut self, enable: bool) -> Self {
         if enable {
             self.config.hybrid_config = crate::hybrid::config::HybridConfig::default();
         } else {
@@ -429,7 +411,7 @@ impl Encoder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
+    pub(crate) fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.config.hybrid_config = config;
         self
     }
@@ -465,7 +447,7 @@ impl Encoder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
+    pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.config.custom_aq_map = Some(map);
         self
     }
@@ -480,7 +462,7 @@ impl Encoder {
     /// Encodes the image data.
     ///
     /// This is equivalent to calling `encode_with_stop(data, Unstoppable)`.
-    pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
         self.encode_with_stop(data, Unstoppable)
     }
 
@@ -501,7 +483,7 @@ impl Encoder {
     /// // In another thread: stop.cancel();
     /// let result = encoder.encode_with_stop(&data, timed);
     /// ```
-    pub fn encode_with_stop(&self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
+    pub(crate) fn encode_with_stop(&self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
         self.validate()?;
 
         // Calculate expected size with overflow checking
@@ -544,7 +526,7 @@ impl Encoder {
     ///     .height(3000)
     ///     .encode_strip_based(&rgb_data)?;
     /// ```
-    pub fn encode_strip_based(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn encode_strip_based(&self, data: &[u8]) -> Result<Vec<u8>> {
         self.encode_strip_based_with_stop(data, Unstoppable)
     }
 
