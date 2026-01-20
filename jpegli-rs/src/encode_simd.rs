@@ -13,8 +13,8 @@
 //!    - Safe load/store helpers with bounds checking
 //!    - Runtime CPU feature detection via `multiversion` or `is_x86_feature_detected!`
 //!
-//! 2. **Unsafe internal functions** (e.g., `downsample_2x2_avx2`, `rgb_to_ycbcr_8px_avx2`):
-//!    - Raw AVX2/SSE intrinsics for operations without `wide` equivalents
+//! 2. **Unsafe internal functions** (e.g., `gather_even_odd_x8_avx2`, `rgb_to_ycbcr_8px_fma`):
+//!    - Raw SSSE3/SSE4.1/AVX/AVX2/FMA intrinsics for operations without `wide` equivalents
 //!    - Permute, shuffle, and byte-level operations for de-interleaving
 //!    - Marked `pub(crate)` for testing, but production code uses safe wrappers
 //!
@@ -361,52 +361,56 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 // AVX2 RGB to YCbCr Intrinsics
 // ============================================================================
 
-/// Extract 4 R values from 16 bytes of RGB data using SSE shuffle.
+/// Extract 4 R values from 16 bytes of RGB data using SSSE3 shuffle.
 /// Input: [R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5]
 /// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn extract_r_sse(rgb: __m128i) -> __m128i {
+unsafe fn extract_r_ssse3(rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 0, 3, 6, 9 (R values)
+    // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(0, 3, 6, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
     _mm_shuffle_epi8(rgb, mask)
 }
 
-/// Extract 4 G values from 16 bytes of RGB data using SSE shuffle.
+/// Extract 4 G values from 16 bytes of RGB data using SSSE3 shuffle.
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn extract_g_sse(rgb: __m128i) -> __m128i {
+unsafe fn extract_g_ssse3(rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 1, 4, 7, 10 (G values)
+    // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(1, 4, 7, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
     _mm_shuffle_epi8(rgb, mask)
 }
 
-/// Extract 4 B values from 16 bytes of RGB data using SSE shuffle.
+/// Extract 4 B values from 16 bytes of RGB data using SSSE3 shuffle.
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn extract_b_sse(rgb: __m128i) -> __m128i {
+unsafe fn extract_b_ssse3(rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 2, 5, 8, 11 (B values)
+    // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(2, 5, 8, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
     _mm_shuffle_epi8(rgb, mask)
 }
 
 /// Convert 4 u8 values (in low bytes of __m128i) to __m128 f32.
+/// Uses _mm_cvtepu8_epi32 which requires SSE4.1.
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn u8x4_to_f32x4(v: __m128i) -> core::arch::x86_64::__m128 {
+unsafe fn u8x4_to_f32x4_sse41(v: __m128i) -> core::arch::x86_64::__m128 {
     use core::arch::x86_64::_mm_cvtepi32_ps;
     // Zero-extend u8 to i32, then convert to f32
     let i32_vec = _mm_cvtepu8_epi32(v);
     _mm_cvtepi32_ps(i32_vec)
 }
 
-/// AVX2 intrinsics implementation for RGB to YCbCr conversion.
+/// FMA intrinsics implementation for RGB to YCbCr conversion.
 ///
-/// Processes 8 pixels at a time using explicit SSE/AVX2+FMA intrinsics for
+/// Processes 8 pixels at a time using explicit SSSE3/SSE4.1/FMA intrinsics for
 /// deinterleaving RGB data, which LLVM cannot auto-vectorize effectively.
 /// Uses FMA (fused multiply-add) for better performance and precision.
 ///
@@ -414,11 +418,12 @@ unsafe fn u8x4_to_f32x4(v: __m128i) -> core::arch::x86_64::__m128 {
 /// Production code should use the safe wrapper.
 ///
 /// # Safety
-/// Requires AVX2+FMA support. Caller must verify with `is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")`.
+/// Requires FMA support. Caller must verify with `is_x86_feature_detected!("fma")`.
+/// (SSSE3 and SSE4.1 are implied by FMA on all x86_64 CPUs.)
 #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2", enable = "fma")]
 #[inline]
-pub(crate) unsafe fn rgb_to_ycbcr_8px_avx2(
+pub(crate) unsafe fn rgb_to_ycbcr_8px_fma(
     rgb_ptr: *const u8,
     y_ptr: *mut f32,
     cb_ptr: *mut f32,
@@ -433,22 +438,22 @@ pub(crate) unsafe fn rgb_to_ycbcr_8px_avx2(
     let rgb1 = _mm_loadu_si128(rgb_ptr.add(12) as *const __m128i);
 
     // Extract R, G, B for first 4 pixels
-    let r0_bytes = extract_r_sse(rgb0);
-    let g0_bytes = extract_g_sse(rgb0);
-    let b0_bytes = extract_b_sse(rgb0);
+    let r0_bytes = extract_r_ssse3(rgb0);
+    let g0_bytes = extract_g_ssse3(rgb0);
+    let b0_bytes = extract_b_ssse3(rgb0);
 
     // Extract R, G, B for second 4 pixels
-    let r1_bytes = extract_r_sse(rgb1);
-    let g1_bytes = extract_g_sse(rgb1);
-    let b1_bytes = extract_b_sse(rgb1);
+    let r1_bytes = extract_r_ssse3(rgb1);
+    let g1_bytes = extract_g_ssse3(rgb1);
+    let b1_bytes = extract_b_ssse3(rgb1);
 
     // Convert to f32
-    let r0: __m128 = u8x4_to_f32x4(r0_bytes);
-    let g0: __m128 = u8x4_to_f32x4(g0_bytes);
-    let b0: __m128 = u8x4_to_f32x4(b0_bytes);
-    let r1: __m128 = u8x4_to_f32x4(r1_bytes);
-    let g1: __m128 = u8x4_to_f32x4(g1_bytes);
-    let b1: __m128 = u8x4_to_f32x4(b1_bytes);
+    let r0: __m128 = u8x4_to_f32x4_sse41(r0_bytes);
+    let g0: __m128 = u8x4_to_f32x4_sse41(g0_bytes);
+    let b0: __m128 = u8x4_to_f32x4_sse41(b0_bytes);
+    let r1: __m128 = u8x4_to_f32x4_sse41(r1_bytes);
+    let g1: __m128 = u8x4_to_f32x4_sse41(g1_bytes);
+    let b1: __m128 = u8x4_to_f32x4_sse41(b1_bytes);
 
     // Coefficients
     let r_to_y = _mm_set1_ps(YCBCR_R_TO_Y);
@@ -571,7 +576,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
                     let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
                     let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
                     let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
-                    rgb_to_ycbcr_8px_avx2(rgb_ptr, y_ptr, cb_ptr, cr_ptr);
+                    rgb_to_ycbcr_8px_fma(rgb_ptr, y_ptr, cb_ptr, cr_ptr);
                 }
             }
 
@@ -1467,7 +1472,7 @@ mod tests {
         let mut cr_avx2 = vec![0.0f32; 8];
 
         unsafe {
-            rgb_to_ycbcr_8px_avx2(
+            rgb_to_ycbcr_8px_fma(
                 rgb_data.as_ptr(),
                 y_avx2.as_mut_ptr(),
                 cb_avx2.as_mut_ptr(),
@@ -1544,7 +1549,7 @@ mod tests {
                     let mut cr_avx2 = vec![0.0f32; 8];
 
                     unsafe {
-                        rgb_to_ycbcr_8px_avx2(
+                        rgb_to_ycbcr_8px_fma(
                             rgb_data.as_ptr(),
                             y_avx2.as_mut_ptr(),
                             cb_avx2.as_mut_ptr(),
