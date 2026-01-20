@@ -213,8 +213,26 @@ fn butteraugli_to_internal(dist: f32) -> f32 {
     lower.1 + t * (upper.1 - lower.1)
 }
 
-// QuantTableConfig and ZeroBiasConfig were removed in 0.9.0
-// Use EncoderConfig::tables(Box<EncodingTables>) instead for custom configuration.
+/// Configuration for custom quantization tables.
+///
+/// Used by [`crate::encode::mozjpeg_tables::MozjpegTables`] to return
+/// generated quantization tables.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QuantTableConfig {
+    /// Exact quantization tables for each component.
+    ///
+    /// Values are in zigzag order, 64 coefficients per table (8x8 DCT block).
+    /// Valid range: 1-32767 (or 1-255 for baseline JPEG).
+    Exact {
+        /// Luminance (Y) quantization table
+        luma: [u16; 64],
+        /// Chrominance Cb quantization table
+        cb: [u16; 64],
+        /// Chrominance Cr quantization table
+        cr: [u16; 64],
+    },
+}
 
 /// Output color space with bundled subsampling options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
