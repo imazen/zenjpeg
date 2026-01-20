@@ -1,4 +1,7 @@
-#![cfg_attr(not(any(feature = "unsafe_simd", feature = "archmage-simd")), forbid(unsafe_code))]
+#![cfg_attr(
+    not(any(feature = "unsafe_simd", feature = "archmage-simd")),
+    forbid(unsafe_code)
+)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! # jpegli

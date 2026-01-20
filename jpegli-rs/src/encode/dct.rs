@@ -1023,7 +1023,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 #[multiversed]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    // Use raw AVX2 intrinsics only when unsafe_simd feature is enabled
+    // Use raw AVX2 intrinsics when unsafe_simd feature is enabled
     #[cfg(all(
         feature = "unsafe_simd",
         target_arch = "x86_64",
