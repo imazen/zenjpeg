@@ -32,6 +32,9 @@ pub struct EncoderConfig {
     pub(crate) hybrid_config: crate::hybrid::config::HybridConfig,
     /// Enable overshoot deringing (on by default).
     pub(crate) deringing: bool,
+    /// Allow 16-bit quantization tables (extended JPEG, SOF1).
+    /// When false, quant values are clamped to 255 for baseline compatibility.
+    pub(crate) allow_16bit_quant_tables: bool,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -164,6 +167,7 @@ impl EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
             deringing: true,
+            allow_16bit_quant_tables: true,
         }
     }
 
@@ -207,6 +211,37 @@ impl EncoderConfig {
     pub fn optimize_huffman(mut self, enable: bool) -> Self {
         self.optimize_huffman = enable;
         self
+    }
+
+    /// Allow 16-bit quantization tables (extended sequential JPEG, SOF1).
+    ///
+    /// When enabled (default), quantization values can exceed 255, producing
+    /// extended sequential JPEGs (SOF1 marker) for better low-quality precision.
+    ///
+    /// When disabled, quantization values are clamped to 255, producing
+    /// baseline-compatible JPEGs (SOF0 marker) that work with all decoders.
+    ///
+    /// Most modern decoders support 16-bit quant tables. Only disable this
+    /// for maximum compatibility with legacy software.
+    #[must_use]
+    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+        self.allow_16bit_quant_tables = enable;
+        self
+    }
+
+    /// Force baseline JPEG compatibility.
+    ///
+    /// This is a convenience method equivalent to:
+    /// ```ignore
+    /// config.progressive(false).allow_16bit_quant_tables(false)
+    /// ```
+    ///
+    /// Baseline JPEGs (SOF0) are the most compatible format, supported by
+    /// all JPEG decoders. Use this when targeting legacy software or when
+    /// maximum compatibility is required.
+    #[must_use]
+    pub fn force_baseline(self) -> Self {
+        self.progressive(false).allow_16bit_quant_tables(false)
     }
 
     /// Set the restart interval (MCUs between restart markers).
@@ -637,6 +672,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn is_optimize_huffman(&self) -> bool {
         self.optimize_huffman
+    }
+
+    /// Check if 16-bit quantization tables are allowed.
+    #[must_use]
+    pub fn is_allow_16bit_quant_tables(&self) -> bool {
+        self.allow_16bit_quant_tables
     }
 
     /// Get the ICC profile, if set.

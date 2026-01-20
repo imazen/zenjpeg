@@ -504,6 +504,21 @@ impl QuantTable {
         }
         natural
     }
+
+    /// Clamp values to baseline range (1-255) and set precision to 0.
+    ///
+    /// This ensures the table produces baseline-compatible JPEGs (SOF0).
+    #[must_use]
+    pub fn clamp_to_baseline(self) -> Self {
+        let mut values = self.values;
+        for v in &mut values {
+            *v = (*v).clamp(1, 255);
+        }
+        Self {
+            values,
+            precision: 0,
+        }
+    }
 }
 
 /// A Huffman table.
