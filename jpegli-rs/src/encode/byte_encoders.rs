@@ -89,7 +89,7 @@ impl BytesEncoder {
             .pixel_format(pixel_format)
             .subsampling(subsampling)
             .optimize_huffman(config.optimize_huffman)
-            .chroma_downsampling(config.downsampling_method.to_legacy())
+            .chroma_downsampling(config.downsampling_method)
             .restart_interval(config.restart_interval);
 
         // Apply custom encoding tables if configured
@@ -750,7 +750,7 @@ impl YCbCrPlanarEncoder {
             .pixel_format(PixelFormat::Rgb) // Buffer sizing only
             .subsampling(subsampling)
             .optimize_huffman(config.optimize_huffman)
-            .chroma_downsampling(config.downsampling_method.to_legacy())
+            .chroma_downsampling(config.downsampling_method)
             .restart_interval(config.restart_interval);
 
         // Apply custom encoding tables if configured
