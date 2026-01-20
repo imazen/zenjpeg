@@ -644,7 +644,6 @@ impl EncoderConfig {
     /// Delegates to the streaming encoder's estimate which accounts for all
     /// internal buffers.
     #[must_use]
-    #[allow(deprecated)]
     pub fn estimate_memory(&self, width: u32, height: u32) -> usize {
         use crate::encode::streaming::StreamingEncoder;
 
@@ -684,7 +683,6 @@ impl EncoderConfig {
     /// let buffer = Vec::with_capacity(ceiling);
     /// ```
     #[must_use]
-    #[allow(deprecated)]
     pub fn estimate_memory_ceiling(&self, width: u32, height: u32) -> usize {
         use crate::encode::streaming::StreamingEncoder;
 
@@ -841,7 +839,6 @@ mod tests {
         assert!(config.validate().is_err());
     }
 
-    #[allow(deprecated)]
     #[test]
     fn test_deprecated_new_still_works() {
         // Ensure backward compatibility during migration

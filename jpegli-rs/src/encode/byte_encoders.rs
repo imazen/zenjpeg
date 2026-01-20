@@ -1,8 +1,5 @@
 //! Encoder implementations for v2 API.
 
-// Allow use of deprecated StreamingEncoder internally - v2 API wraps it
-#![allow(deprecated)]
-
 use core::marker::PhantomData;
 
 #[cfg(feature = "std")]

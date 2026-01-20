@@ -6,9 +6,8 @@
 //! - Huffman table optimization
 //! - Scan encoding
 
-#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
-use super::Encoder;
+use super::config::ComputedConfig;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
@@ -18,7 +17,7 @@ use crate::types::Subsampling;
 use multiversed::multiversed;
 use wide::{i16x8, CmpEq};
 
-impl Encoder {
+impl ComputedConfig {
     pub(crate) fn build_optimized_tables(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -31,9 +30,9 @@ impl Encoder {
         let mut ac_luma_freq = FrequencyCounter::new();
         let mut ac_chroma_freq = FrequencyCounter::new();
 
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-        let (h_samp, v_samp) = match self.config.subsampling {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let (h_samp, v_samp) = match self.subsampling {
             Subsampling::S444 => (1, 1),
             Subsampling::S422 => (2, 1),
             Subsampling::S420 => (2, 2),
@@ -50,7 +49,7 @@ impl Encoder {
             let mut prev_cr_dc: i16 = 0;
 
             // Restart interval tracking (must match encoder behavior exactly)
-            let restart_interval = self.config.restart_interval as usize;
+            let restart_interval = self.restart_interval as usize;
             let total_mcus = y_blocks.len();
 
             for (i, y_block) in y_blocks.iter().enumerate() {
@@ -105,7 +104,7 @@ impl Encoder {
             let mut prev_cr_dc: i16 = 0;
 
             // Restart interval tracking (must match encoder behavior exactly)
-            let restart_interval = self.config.restart_interval as usize;
+            let restart_interval = self.restart_interval as usize;
             let total_mcus = mcu_h * mcu_v;
             let mut mcu_idx = 0;
 
@@ -226,9 +225,9 @@ impl Encoder {
         is_color: bool,
         tables: Option<&OptimizedHuffmanTables>,
     ) -> Result<Vec<u8>> {
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
-        let (h_samp, v_samp) = match self.config.subsampling {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        let (h_samp, v_samp) = match self.subsampling {
             Subsampling::S444 => (1, 1),
             Subsampling::S422 => (2, 1),
             Subsampling::S420 => (2, 2),
@@ -237,10 +236,10 @@ impl Encoder {
 
         // Use parallel encoding when explicitly enabled
         #[cfg(feature = "parallel")]
-        if self.config.parallel {
+        if self.parallel {
             // Auto-set restart interval if not specified
-            let restart_interval = if self.config.restart_interval > 0 {
-                self.config.restart_interval
+            let restart_interval = if self.restart_interval > 0 {
+                self.restart_interval
             } else {
                 64 // Default restart interval for parallel encoding
             };
@@ -308,8 +307,8 @@ impl Encoder {
             encoder.set_ac_table(1, HuffmanEncodeTable::std_ac_chrominance());
         }
 
-        if self.config.restart_interval > 0 {
-            encoder.set_restart_interval(self.config.restart_interval);
+        if self.restart_interval > 0 {
+            encoder.set_restart_interval(self.restart_interval);
         }
 
         if h_samp == 1 && v_samp == 1 {
@@ -491,7 +490,7 @@ fn build_nonzero_mask_for_freq(coeffs: &[i16; DCT_BLOCK_SIZE]) -> u64 {
     nonzero_mask
 }
 
-impl Encoder {
+impl ComputedConfig {
     /// Builds optimized Huffman tables for XYB mode with raster-ordered blocks.
     ///
     /// This function handles blocks that are stored in raster order (row by row),
@@ -510,8 +509,8 @@ impl Encoder {
         let mut dc_freq = FrequencyCounter::new();
         let mut ac_freq = FrequencyCounter::new();
 
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
+        let width = self.width as usize;
+        let height = self.height as usize;
 
         // X and Y are full resolution
         let xy_blocks_h = (width + 7) / 8;
@@ -608,8 +607,8 @@ impl Encoder {
         dc_table: &crate::huffman::optimize::OptimizedTable,
         ac_table: &crate::huffman::optimize::OptimizedTable,
     ) -> Result<Vec<u8>> {
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
+        let width = self.width as usize;
+        let height = self.height as usize;
 
         // X and Y are full resolution
         let xy_blocks_h = (width + 7) / 8;
@@ -634,8 +633,8 @@ impl Encoder {
         encoder.set_dc_table(0, &dc_table.table);
         encoder.set_ac_table(0, &ac_table.table);
 
-        if self.config.restart_interval > 0 {
-            encoder.set_restart_interval(self.config.restart_interval);
+        if self.restart_interval > 0 {
+            encoder.set_restart_interval(self.restart_interval);
         }
 
         for mcu_y in 0..mcu_v {
@@ -693,8 +692,8 @@ impl Encoder {
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         b_blocks: &[[i16; DCT_BLOCK_SIZE]],
     ) -> Result<Vec<u8>> {
-        let width = self.config.width as usize;
-        let height = self.config.height as usize;
+        let width = self.width as usize;
+        let height = self.height as usize;
 
         // X and Y are full resolution
         let xy_blocks_h = (width + 7) / 8;
@@ -719,8 +718,8 @@ impl Encoder {
         encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
         encoder.set_ac_table(0, HuffmanEncodeTable::std_ac_luminance());
 
-        if self.config.restart_interval > 0 {
-            encoder.set_restart_interval(self.config.restart_interval);
+        if self.restart_interval > 0 {
+            encoder.set_restart_interval(self.restart_interval);
         }
 
         for mcu_y in 0..mcu_v {
