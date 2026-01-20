@@ -131,6 +131,8 @@ impl BytesEncoder {
             builder = builder.deringing(true);
         }
 
+        builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
+
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             // ParallelEncoding::Auto means enable parallel encoding
@@ -790,6 +792,12 @@ impl YCbCrPlanarEncoder {
         if config.progressive {
             builder = builder.progressive(true);
         }
+
+        if config.deringing {
+            builder = builder.deringing(true);
+        }
+
+        builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
