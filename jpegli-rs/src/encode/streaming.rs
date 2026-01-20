@@ -96,6 +96,9 @@ pub struct StreamingEncoderBuilder {
     /// Custom AQ map (requires `experimental-hybrid-trellis` feature)
     #[cfg(feature = "experimental-hybrid-trellis")]
     custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
+    /// Trellis quantization config (mozjpeg-compat API, requires `experimental-hybrid-trellis`)
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    trellis: Option<super::mozjpeg_compat::TrellisConfig>,
 }
 
 impl StreamingEncoderBuilder {
@@ -122,6 +125,8 @@ impl StreamingEncoderBuilder {
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
             #[cfg(feature = "experimental-hybrid-trellis")]
             custom_aq_map: None,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            trellis: None,
         }
     }
 
@@ -387,6 +392,32 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.hybrid_config = config;
+        self
+    }
+
+    /// Sets trellis quantization configuration (mozjpeg-compatible API).
+    ///
+    /// Trellis quantization uses rate-distortion optimization to find optimal
+    /// quantization decisions, producing smaller files at the same quality.
+    ///
+    /// This is the mozjpeg-compatible API. For hybrid mode that combines
+    /// trellis with jpegli's adaptive quantization, use [`hybrid_config()`](Self::hybrid_config).
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::encode::{JpegEncoder, TrellisConfig};
+    ///
+    /// let encoder = JpegEncoder::new(640, 480)
+    ///     .quality(85)
+    ///     .trellis(TrellisConfig::default());
+    /// ```
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn trellis(mut self, config: super::mozjpeg_compat::TrellisConfig) -> Self {
+        self.trellis = Some(config);
         self
     }
 
@@ -867,6 +898,12 @@ impl StreamingEncoder {
             processor.set_deringing(true);
         }
 
+        // Enable trellis quantization if configured
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        if let Some(ref trellis) = builder.trellis {
+            processor.set_trellis(*trellis);
+        }
+
         // Generate quantization tables (use custom matrices if provided)
         let is_420 = builder.subsampling == Subsampling::S420;
         let distance = builder.quality.to_distance();
@@ -880,9 +917,27 @@ impl StreamingEncoder {
         let (y_quant, cb_quant, cr_quant) = if let Some(ref custom) = builder.custom_quant_matrices
         {
             (
-                quant::generate_quant_table_custom_ex(distance, 0, builder.use_xyb, custom, allow_16bit),
-                quant::generate_quant_table_custom_ex(distance, 1, builder.use_xyb, custom, allow_16bit),
-                quant::generate_quant_table_custom_ex(distance, 2, builder.use_xyb, custom, allow_16bit),
+                quant::generate_quant_table_custom_ex(
+                    distance,
+                    0,
+                    builder.use_xyb,
+                    custom,
+                    allow_16bit,
+                ),
+                quant::generate_quant_table_custom_ex(
+                    distance,
+                    1,
+                    builder.use_xyb,
+                    custom,
+                    allow_16bit,
+                ),
+                quant::generate_quant_table_custom_ex(
+                    distance,
+                    2,
+                    builder.use_xyb,
+                    custom,
+                    allow_16bit,
+                ),
             )
         } else {
             (
@@ -1000,6 +1055,13 @@ impl StreamingEncoder {
 
         #[cfg(feature = "experimental-hybrid-trellis")]
         let encoder = encoder.hybrid_config(builder.hybrid_config);
+
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        let encoder = if let Some(trellis) = builder.trellis {
+            encoder.trellis_config(trellis)
+        } else {
+            encoder
+        };
 
         #[cfg(feature = "experimental-hybrid-trellis")]
         let encoder = if let Some(map) = builder.custom_aq_map {

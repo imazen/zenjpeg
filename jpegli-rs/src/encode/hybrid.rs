@@ -7,6 +7,9 @@
 //! - jpegli's adaptive quantization (WHERE to spend bits)
 //! - mozjpeg's trellis quantization (HOW to spend bits)
 //!
+//! This module also supports standalone trellis quantization via
+//! [`TrellisConfig`](super::TrellisConfig) for mozjpeg-compatible behavior.
+//!
 //! Note: This module is gated by `experimental-hybrid-trellis` feature in mod.rs.
 
 use crate::encode::dct::forward_dct_8x8;
@@ -17,6 +20,7 @@ use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 
+use super::mozjpeg_compat::TrellisConfig;
 use super::natural_to_zigzag_into;
 
 use super::config::EncoderConfig;
@@ -44,8 +48,21 @@ pub(super) fn get_aq_map_or_compute(
 }
 
 /// Create hybrid quantization context if enabled in config.
+///
+/// Priority:
+/// 1. If `trellis` is set (mozjpeg-compat API), use it directly
+/// 2. Else if `hybrid_config.enabled`, use hybrid AQ+trellis mode
+/// 3. Else return None (no trellis quantization)
 #[inline]
 pub(super) fn create_hybrid_ctx(config: &EncoderConfig) -> Option<HybridQuantContext> {
+    // First check for explicit TrellisConfig (mozjpeg-compat API)
+    if let Some(ref trellis) = config.trellis {
+        if trellis.is_enabled() {
+            return Some(HybridQuantContext::from_trellis_config(*trellis));
+        }
+    }
+
+    // Fall back to HybridConfig
     if config.hybrid_config.enabled {
         Some(HybridQuantContext::new(config.hybrid_config))
     } else {
@@ -82,31 +99,62 @@ pub(super) fn quantize_block_dispatch(
 // Hybrid Quantization Context
 // ============================================================================
 
-/// Quantization context for hybrid trellis mode.
+/// Mode for trellis quantization.
+enum TrellisMode {
+    /// Hybrid mode: jpegli AQ + mozjpeg trellis with AQ-adjusted lambda
+    Hybrid(HybridConfig),
+    /// Standalone mode: pure mozjpeg-style trellis (no AQ lambda adjustment)
+    Standalone(TrellisConfig),
+}
+
+/// Quantization context for trellis mode.
 ///
-/// This struct holds pre-built Huffman tables and hybrid config for use
-/// during hybrid quantization (jpegli AQ + mozjpeg trellis).
+/// This struct holds pre-built Huffman tables and trellis config for use
+/// during trellis quantization. Supports two modes:
+///
+/// - **Hybrid**: Combines jpegli's AQ with mozjpeg's trellis, adjusting lambda per-block
+/// - **Standalone**: Pure mozjpeg-style trellis with fixed lambda (no AQ adjustment)
 pub(crate) struct HybridQuantContext {
     huff_tables: StandardHuffmanTables,
-    config: HybridConfig,
+    mode: TrellisMode,
+}
+
+impl std::fmt::Debug for HybridQuantContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode_str = match &self.mode {
+            TrellisMode::Hybrid(_) => "Hybrid",
+            TrellisMode::Standalone(_) => "Standalone",
+        };
+        f.debug_struct("HybridQuantContext")
+            .field("mode", &mode_str)
+            .finish_non_exhaustive()
+    }
 }
 
 impl HybridQuantContext {
-    /// Creates a new hybrid quantization context with the given config.
+    /// Creates a new hybrid quantization context (AQ + trellis).
     pub(crate) fn new(config: HybridConfig) -> Self {
         Self {
             huff_tables: StandardHuffmanTables::new(),
-            config,
+            mode: TrellisMode::Hybrid(config),
         }
     }
 
-    /// Quantize a block using hybrid AQ + trellis.
+    /// Creates a standalone trellis context (mozjpeg-compatible, no AQ adjustment).
+    pub(crate) fn from_trellis_config(config: TrellisConfig) -> Self {
+        Self {
+            huff_tables: StandardHuffmanTables::new(),
+            mode: TrellisMode::Standalone(config),
+        }
+    }
+
+    /// Quantize a block using trellis quantization.
     ///
     /// # Arguments
     /// * `dct_coeffs` - DCT coefficients
     /// * `quant` - Quantization table
-    /// * `aq_strength` - Per-block AQ strength
-    /// * `dampen` - Quality-based AQ dampen factor (0-1)
+    /// * `aq_strength` - Per-block AQ strength (used in hybrid mode)
+    /// * `dampen` - Quality-based AQ dampen factor (0-1, used in hybrid mode)
     /// * `is_luma` - True for Y component, false for Cb/Cr
     pub(crate) fn quantize_block(
         &self,
@@ -122,8 +170,17 @@ impl HybridQuantContext {
             &self.huff_tables.chroma_ac
         };
 
-        // Generate per-block trellis config based on AQ and hybrid settings
-        let trellis_config = self.config.to_trellis_config(aq_strength, dampen, !is_luma);
+        // Generate trellis config based on mode
+        let trellis_config = match &self.mode {
+            TrellisMode::Hybrid(hybrid_config) => {
+                // Hybrid mode: adjust lambda based on AQ strength
+                hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma)
+            }
+            TrellisMode::Standalone(trellis_config) => {
+                // Standalone mode: use config as-is (mozjpeg-compatible)
+                trellis_config.to_mozjpeg_config()
+            }
+        };
 
         hybrid_quantize_block(dct_coeffs, quant, aq_strength, ac_table, &trellis_config)
     }
