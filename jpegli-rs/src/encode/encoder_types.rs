@@ -283,17 +283,6 @@ pub enum ChromaSubsampling {
 }
 
 impl ChromaSubsampling {
-    /// Convert to the legacy Subsampling enum.
-    #[must_use]
-    pub fn to_legacy(&self) -> crate::types::Subsampling {
-        match self {
-            ChromaSubsampling::None => crate::types::Subsampling::S444,
-            ChromaSubsampling::HalfHorizontal => crate::types::Subsampling::S422,
-            ChromaSubsampling::Quarter => crate::types::Subsampling::S420,
-            ChromaSubsampling::HalfVertical => crate::types::Subsampling::S440,
-        }
-    }
-
     /// Horizontal subsampling factor (1 or 2).
     #[must_use]
     pub const fn h_factor(&self) -> u8 {
@@ -309,6 +298,38 @@ impl ChromaSubsampling {
         match self {
             ChromaSubsampling::None | ChromaSubsampling::HalfHorizontal => 1,
             ChromaSubsampling::HalfVertical | ChromaSubsampling::Quarter => 2,
+        }
+    }
+
+    /// Returns the horizontal sampling factor for luma.
+    ///
+    /// This is the luma block count in horizontal direction per MCU.
+    /// Returns 1 for 4:4:4/4:4:0, returns 2 for 4:2:0/4:2:2.
+    #[must_use]
+    pub const fn h_samp_factor_luma(self) -> u8 {
+        self.h_factor()
+    }
+
+    /// Returns the vertical sampling factor for luma.
+    ///
+    /// This is the luma block count in vertical direction per MCU.
+    /// Returns 1 for 4:4:4/4:2:2, returns 2 for 4:2:0/4:4:0.
+    #[must_use]
+    pub const fn v_samp_factor_luma(self) -> u8 {
+        self.v_factor()
+    }
+
+    /// Returns the MCU (Minimum Coded Unit) size for this subsampling mode.
+    ///
+    /// - 8 for 4:4:4 (no subsampling)
+    /// - 16 for modes with 2x sampling (4:2:0, 4:2:2, 4:4:0)
+    #[must_use]
+    pub const fn mcu_size(self) -> usize {
+        match self {
+            ChromaSubsampling::None => 8,
+            ChromaSubsampling::Quarter
+            | ChromaSubsampling::HalfHorizontal
+            | ChromaSubsampling::HalfVertical => 16,
         }
     }
 }

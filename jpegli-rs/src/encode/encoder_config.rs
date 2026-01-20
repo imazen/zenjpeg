@@ -648,7 +648,7 @@ impl EncoderConfig {
         use crate::encode::streaming::StreamingEncoder;
 
         let subsampling = match self.color_mode {
-            ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            ColorMode::YCbCr { subsampling } => subsampling.into(),
             ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             ColorMode::Grayscale => crate::types::Subsampling::S444,
         };
@@ -687,7 +687,7 @@ impl EncoderConfig {
         use crate::encode::streaming::StreamingEncoder;
 
         let subsampling = match self.color_mode {
-            ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            ColorMode::YCbCr { subsampling } => subsampling.into(),
             ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             ColorMode::Grayscale => crate::types::Subsampling::S444,
         };

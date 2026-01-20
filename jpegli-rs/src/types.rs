@@ -263,6 +263,18 @@ impl Subsampling {
     }
 }
 
+impl From<crate::encode::encoder_types::ChromaSubsampling> for Subsampling {
+    fn from(cs: crate::encode::encoder_types::ChromaSubsampling) -> Self {
+        use crate::encode::encoder_types::ChromaSubsampling;
+        match cs {
+            ChromaSubsampling::None => Self::S444,
+            ChromaSubsampling::HalfHorizontal => Self::S422,
+            ChromaSubsampling::Quarter => Self::S420,
+            ChromaSubsampling::HalfVertical => Self::S440,
+        }
+    }
+}
+
 /// Strategy for padding partial MCU blocks at image edges.
 ///
 /// When image dimensions are not multiples of the MCU size (8 or 16 pixels),
@@ -382,6 +394,7 @@ pub enum ChromaDownsampling {
     GammaAwareIterative,
 }
 
+#[allow(deprecated)]
 impl ChromaDownsampling {
     /// Returns true if this method uses gamma-aware downsampling.
     #[must_use]
