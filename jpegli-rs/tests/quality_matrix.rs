@@ -254,14 +254,13 @@ fn encode_rust(
         _ => ChromaSubsampling::None,
     };
 
-    let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
-        .quality(quality as f32)
-        .ycbcr(chroma)
-        .progressive(progressive);
-
-    if use_xyb {
-        config = config.xyb();
-    }
+    let config = if use_xyb {
+        // XYB mode ignores chroma subsampling (uses fixed B quarter subsampling)
+        EncoderConfig::xyb(quality as f32, jpegli::encoder::XybSubsampling::BQuarter)
+            .progressive(progressive)
+    } else {
+        EncoderConfig::ycbcr(quality as f32, chroma).progressive(progressive)
+    };
 
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
@@ -1189,7 +1188,7 @@ fn benchmark_rust_vs_cpp() {
 
         for &quality in &BENCH_QUALITIES {
             // Warmup using EncoderConfig
-            let rust_config = EncoderConfig::ycbcr(EncoderImpl::JpegliRs)
+            let rust_config = EncoderConfig::new(EncoderImpl::JpegliRs)
                 .quality(quality)
                 .color(ColorMode::YCbCr)
                 .subsampling(subsampling)

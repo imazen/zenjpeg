@@ -1,8 +1,7 @@
-//! Tests verifying that QuantTableConfig and ZeroBiasConfig actually affect encoder output.
+//! Tests verifying that EncodingTables actually affect encoder output.
 
-use jpegli::encoder::{
-    ChromaSubsampling, EncoderConfig, PixelLayout, QuantTableConfig, ZeroBiasConfig,
-};
+use jpegli::encode::tuning::{EncodingTables, PerComponent, ScalingParams};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a simple test image (gradient)
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -45,13 +44,16 @@ fn test_custom_quant_tables_change_output() {
 
     // Encode with custom tables (all 16s - uniform quantization)
     let uniform_table = [16.0f32; 64];
-    let config_custom = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(
-        QuantTableConfig::CustomBase {
-            luma: uniform_table,
-            cb: uniform_table,
-            cr: uniform_table,
+    let tables = EncodingTables {
+        quant: PerComponent {
+            c0: uniform_table,
+            c1: uniform_table,
+            c2: uniform_table,
         },
-    );
+        scaling: ScalingParams::Exact, // Use exact values, no quality scaling
+        ..EncodingTables::default_ycbcr()
+    };
+    let config_custom = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables));
     let jpeg_custom = encode_with_config(&config_custom, &pixels, width, height);
 
     // The outputs should be different
@@ -85,13 +87,17 @@ fn test_exact_quant_tables_change_output() {
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
     // Encode with exact tables (very coarse quantization)
-    let coarse_table = [32u16; 64];
-    let config_exact =
-        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(QuantTableConfig::Exact {
-            luma: coarse_table,
-            cb: coarse_table,
-            cr: coarse_table,
-        });
+    let coarse_table = [32.0f32; 64];
+    let tables = EncodingTables {
+        quant: PerComponent {
+            c0: coarse_table,
+            c1: coarse_table,
+            c2: coarse_table,
+        },
+        scaling: ScalingParams::Exact, // Use exact values
+        ..EncodingTables::default_ycbcr()
+    };
+    let config_exact = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables));
     let jpeg_exact = encode_with_config(&config_exact, &pixels, width, height);
 
     // Outputs should differ
@@ -117,13 +123,17 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
     let shared_chroma = [20.0f32; 64];
     let luma = [16.0f32; 64];
 
-    let config_shared = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(
-        QuantTableConfig::CustomBase {
-            luma,
-            cb: shared_chroma,
-            cr: shared_chroma,
+    let tables_shared = EncodingTables {
+        quant: PerComponent {
+            c0: luma,
+            c1: shared_chroma,
+            c2: shared_chroma,
         },
-    );
+        scaling: ScalingParams::Exact,
+        ..EncodingTables::default_ycbcr()
+    };
+    let config_shared =
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables_shared));
     let jpeg_shared = encode_with_config(&config_shared, &pixels, width, height);
 
     // Use different tables for Cb and Cr
@@ -134,13 +144,17 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
         cr_table[i] *= 2.0;
     }
 
-    let config_separate = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).quant_tables(
-        QuantTableConfig::CustomBase {
-            luma,
-            cb: cb_table,
-            cr: cr_table,
+    let tables_separate = EncodingTables {
+        quant: PerComponent {
+            c0: luma,
+            c1: cb_table,
+            c2: cr_table,
         },
-    );
+        scaling: ScalingParams::Exact,
+        ..EncodingTables::default_ycbcr()
+    };
+    let config_separate =
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables_separate));
     let jpeg_separate = encode_with_config(&config_separate, &pixels, width, height);
 
     // Outputs should differ because Cr is quantized more aggressively
@@ -159,7 +173,7 @@ fn test_separate_cb_cr_tables_differ_from_shared() {
 }
 
 #[test]
-fn test_zero_bias_disabled_changes_output() {
+fn test_zero_bias_changes_output() {
     let width = 64u32;
     let height = 64u32;
     let pixels = generate_test_image(width as usize, height as usize);
@@ -168,9 +182,20 @@ fn test_zero_bias_disabled_changes_output() {
     let config_perceptual = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_perceptual = encode_with_config(&config_perceptual, &pixels, width, height);
 
-    // Encode with disabled zero bias
+    // Encode with disabled zero bias (all zeros)
+    let no_bias_mul = [0.0f32; 64];
+    let tables_no_bias = EncodingTables {
+        zero_bias_mul: PerComponent {
+            c0: no_bias_mul,
+            c1: no_bias_mul,
+            c2: no_bias_mul,
+        },
+        zero_bias_offset_dc: [0.0; 3],
+        zero_bias_offset_ac: [0.0; 3],
+        ..EncodingTables::default_ycbcr()
+    };
     let config_disabled =
-        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).zero_bias(ZeroBiasConfig::Disabled);
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables_no_bias));
     let jpeg_disabled = encode_with_config(&config_disabled, &pixels, width, height);
 
     // Outputs should differ
@@ -197,15 +222,19 @@ fn test_custom_zero_bias_changes_output() {
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
     // Encode with aggressive custom zero bias (high multipliers = more zeroing)
-    let aggressive_mul = [1.0f32; 64]; // High multiplier
-    let zero_offset = [0.5f32; 64]; // Moderate offset
-
+    let aggressive_mul = [0.9f32; 64];
+    let tables_aggressive = EncodingTables {
+        zero_bias_mul: PerComponent {
+            c0: aggressive_mul,
+            c1: aggressive_mul,
+            c2: aggressive_mul,
+        },
+        zero_bias_offset_dc: [0.5; 3],
+        zero_bias_offset_ac: [0.5; 3],
+        ..EncodingTables::default_ycbcr()
+    };
     let config_aggressive =
-        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).zero_bias(ZeroBiasConfig::Custom {
-            luma: (aggressive_mul, zero_offset),
-            cb: (aggressive_mul, zero_offset),
-            cr: (aggressive_mul, zero_offset),
-        });
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables_aggressive));
     let jpeg_aggressive = encode_with_config(&config_aggressive, &pixels, width, height);
 
     // Outputs should differ
@@ -213,6 +242,10 @@ fn test_custom_zero_bias_changes_output() {
         jpeg_default, jpeg_aggressive,
         "Custom zero bias should produce different output"
     );
+
+    // Note: Aggressive zero bias typically produces smaller files (more coefficients zeroed),
+    // but this isn't guaranteed due to entropy coding effects on small images.
+    // The important thing is that custom zero bias produces different output.
 
     println!(
         "Default zero-bias size: {} bytes, Aggressive size: {} bytes",
@@ -222,65 +255,46 @@ fn test_custom_zero_bias_changes_output() {
 }
 
 #[test]
-fn test_tables_module_provides_defaults() {
-    use jpegli::encoder::tables;
-
-    // Verify we can access the default tables
-    let ycbcr = &tables::BASE_QUANT_YCBCR;
-    assert_eq!(ycbcr.len(), 192);
-
-    // Extract components
-    let luma = tables::luma_from_192(ycbcr);
-    let cb = tables::cb_from_192(ycbcr);
-    let cr = tables::cr_from_192(ycbcr);
-
-    assert_eq!(luma.len(), 64);
-    assert_eq!(cb.len(), 64);
-    assert_eq!(cr.len(), 64);
-
-    // Verify they're not all zeros
-    assert!(luma.iter().any(|&v| v != 0.0));
-    assert!(cb.iter().any(|&v| v != 0.0));
-    assert!(cr.iter().any(|&v| v != 0.0));
-
-    // Verify zero bias tables are accessible
-    assert_eq!(tables::ZERO_BIAS_MUL_YCBCR_LQ.len(), 192);
-    assert_eq!(tables::ZERO_BIAS_MUL_YCBCR_HQ.len(), 192);
-}
-
-#[test]
-fn test_modified_default_tables_change_output() {
-    use jpegli::encoder::tables;
-
+fn test_combined_quant_and_zero_bias_changes() {
     let width = 64u32;
     let height = 64u32;
     let pixels = generate_test_image(width as usize, height as usize);
 
-    // Encode with perceptual defaults
+    // Encode with default tables
     let config_default = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None);
     let jpeg_default = encode_with_config(&config_default, &pixels, width, height);
 
-    // Start with defaults and modify
-    let mut luma = tables::luma_from_192(&tables::BASE_QUANT_YCBCR);
-    let cb = tables::cb_from_192(&tables::BASE_QUANT_YCBCR);
-    let cr = tables::cr_from_192(&tables::BASE_QUANT_YCBCR);
-
-    // Modify: double the DC quantization (makes image blockier but smaller)
-    luma[0] *= 2.0;
-
-    let config_modified = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
-        .quant_tables(QuantTableConfig::CustomBase { luma, cb, cr });
-    let jpeg_modified = encode_with_config(&config_modified, &pixels, width, height);
+    // Encode with both custom quant and zero bias
+    let fine_table = [8.0f32; 64]; // Fine quantization
+    let aggressive_mul = [0.8f32; 64]; // Aggressive zeroing
+    let tables_custom = EncodingTables {
+        quant: PerComponent {
+            c0: fine_table,
+            c1: fine_table,
+            c2: fine_table,
+        },
+        zero_bias_mul: PerComponent {
+            c0: aggressive_mul,
+            c1: aggressive_mul,
+            c2: aggressive_mul,
+        },
+        zero_bias_offset_dc: [0.5; 3],
+        zero_bias_offset_ac: [0.5; 3],
+        scaling: ScalingParams::Exact,
+    };
+    let config_custom =
+        EncoderConfig::ycbcr(75.0, ChromaSubsampling::None).tables(Box::new(tables_custom));
+    let jpeg_custom = encode_with_config(&config_custom, &pixels, width, height);
 
     // Outputs should differ
     assert_ne!(
-        jpeg_default, jpeg_modified,
-        "Modified default tables should produce different output"
+        jpeg_default, jpeg_custom,
+        "Combined custom tables should produce different output"
     );
 
     println!(
-        "Original defaults: {} bytes, Modified DC: {} bytes",
+        "Default size: {} bytes, Custom combined size: {} bytes",
         jpeg_default.len(),
-        jpeg_modified.len()
+        jpeg_custom.len()
     );
 }

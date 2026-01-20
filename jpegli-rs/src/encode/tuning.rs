@@ -417,57 +417,136 @@ impl EncodingTables {
         }
     }
 
-    // === Conversion to internal types ===
+    // === Quant table and zero-bias generation ===
 
-    /// Convert to `QuantTableConfig` for use with `EncoderConfig`.
+    /// Generate a quantization table for a single component.
+    ///
+    /// # Arguments
+    /// * `component` - 0 for Y/X, 1 for Cb/Y, 2 for Cr/B
+    /// * `distance` - Butteraugli distance (quality parameter)
+    /// * `is_420` - Whether 4:2:0 chroma subsampling is used (applies quality compensation)
     #[must_use]
-    pub fn to_quant_config(&self) -> crate::encode::encoder_types::QuantTableConfig {
-        use crate::encode::encoder_types::QuantTableConfig;
+    pub fn generate_quant_table(
+        &self,
+        component: usize,
+        distance: f32,
+        is_420: bool,
+    ) -> crate::quant::QuantTable {
+        use crate::foundation::consts::{GLOBAL_SCALE_420, K420_RESCALE};
+        use crate::quant::{create_quant_table, DIST_THRESHOLD};
+
+        let c = component.min(2);
+        let base = self.quant.get(c);
 
         match &self.scaling {
             ScalingParams::Exact => {
-                // Convert f32 to u16 (exact values)
-                let to_u16 = |arr: &[f32; 64]| -> [u16; 64] {
-                    std::array::from_fn(|i| arr[i].round().clamp(1.0, 65535.0) as u16)
-                };
-                QuantTableConfig::Exact {
-                    luma: to_u16(&self.quant.c0),
-                    cb: to_u16(&self.quant.c1),
-                    cr: to_u16(&self.quant.c2),
+                // Use values directly without scaling
+                let mut values = [0u16; 64];
+                for i in 0..64 {
+                    values[i] = base[i].round().clamp(1.0, 65535.0) as u16;
                 }
+                create_quant_table(values, true)
             }
-            ScalingParams::Scaled { .. } => {
-                // Use as base tables (scaled by quality)
-                QuantTableConfig::CustomBase {
-                    luma: self.quant.c0,
-                    cb: self.quant.c1,
-                    cr: self.quant.c2,
+            ScalingParams::Scaled {
+                global_scale,
+                frequency_exponents,
+            } => {
+                let mut values = [0u16; 64];
+                let mut scale_factor = *global_scale;
+
+                // Apply 4:2:0 global quality compensation for YCbCr mode
+                if is_420 {
+                    scale_factor *= GLOBAL_SCALE_420;
                 }
+
+                // Check if we need per-frequency chroma rescale for 4:2:0
+                let is_chroma_420 = is_420 && component > 0;
+
+                for i in 0..64 {
+                    // Apply per-frequency non-linear scaling
+                    let freq_scale = if distance < DIST_THRESHOLD {
+                        distance
+                    } else {
+                        let exp = frequency_exponents[i];
+                        let mul = DIST_THRESHOLD.powf(1.0 - exp);
+                        (0.5 * distance).max(mul * distance.powf(exp))
+                    };
+
+                    let mut scale = freq_scale * scale_factor;
+
+                    // Apply additional per-frequency rescale for chroma in 4:2:0 mode
+                    if is_chroma_420 {
+                        scale *= K420_RESCALE[i];
+                    }
+
+                    let q = (base[i] * scale).round();
+                    values[i] = q as u16;
+                }
+
+                create_quant_table(values, true)
             }
         }
     }
 
-    /// Convert to `ZeroBiasConfig` for use with `EncoderConfig`.
+    /// Generate quantization tables for all three components.
+    ///
+    /// Returns (Y/X, Cb/Y, Cr/B) quantization tables.
     #[must_use]
-    pub fn to_zero_bias_config(&self) -> crate::encode::encoder_types::ZeroBiasConfig {
-        use crate::encode::encoder_types::ZeroBiasConfig;
+    pub fn generate_quant_tables(
+        &self,
+        distance: f32,
+        is_420: bool,
+    ) -> (
+        crate::quant::QuantTable,
+        crate::quant::QuantTable,
+        crate::quant::QuantTable,
+    ) {
+        (
+            self.generate_quant_table(0, distance, is_420),
+            self.generate_quant_table(1, distance, is_420),
+            self.generate_quant_table(2, distance, is_420),
+        )
+    }
 
-        // Build per-component (mul, offset) tuples
-        let make_component = |c: usize| -> ([f32; 64], [f32; 64]) {
-            let mul = *self.zero_bias_mul.get(c);
-            let mut offset = [0.0f32; 64];
-            offset[0] = self.zero_bias_offset_dc[c];
-            for i in 1..64 {
-                offset[i] = self.zero_bias_offset_ac[c];
-            }
-            (mul, offset)
-        };
-
-        ZeroBiasConfig::Custom {
-            luma: make_component(0),
-            cb: make_component(1),
-            cr: make_component(2),
+    /// Generate zero-bias parameters for a single component.
+    ///
+    /// # Arguments
+    /// * `component` - 0 for Y/X, 1 for Cb/Y, 2 for Cr/B
+    #[must_use]
+    pub fn generate_zero_bias_params(&self, component: usize) -> crate::quant::ZeroBiasParams {
+        let c = component.min(2);
+        let mul = *self.zero_bias_mul.get(c);
+        let mut offset = [0.0f32; 64];
+        offset[0] = self.zero_bias_offset_dc[c];
+        for i in 1..64 {
+            offset[i] = self.zero_bias_offset_ac[c];
         }
+
+        crate::quant::ZeroBiasParams { mul, offset }
+    }
+
+    /// Generate zero-bias parameters for all three components.
+    ///
+    /// Returns (Y/X, Cb/Y, Cr/B) zero-bias parameters.
+    #[must_use]
+    pub fn generate_zero_bias_all(
+        &self,
+    ) -> (
+        crate::quant::ZeroBiasParams,
+        crate::quant::ZeroBiasParams,
+        crate::quant::ZeroBiasParams,
+    ) {
+        (
+            self.generate_zero_bias_params(0),
+            self.generate_zero_bias_params(1),
+            self.generate_zero_bias_params(2),
+        )
+    }
+
+    /// Check if this uses exact (unscaled) tables.
+    #[must_use]
+    pub fn is_exact(&self) -> bool {
+        matches!(self.scaling, ScalingParams::Exact)
     }
 }
 

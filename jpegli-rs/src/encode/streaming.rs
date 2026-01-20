@@ -34,31 +34,12 @@
 #![allow(deprecated)] // Uses deprecated Encoder internally for progressive mode
 
 use crate::encode::strip::StripProcessor;
+use crate::encode::tuning::EncodingTables;
 use crate::encode::Encoder;
 use crate::error::{Error, Result};
-use crate::quant::{self, CustomQuantMatrices, Quality, QuantTable, ZeroBiasParams};
+use crate::quant::{self, Quality, QuantTable, ZeroBiasParams};
 use crate::types::{ChromaDownsampling, ColorSpace, JpegMode, PixelFormat, Subsampling};
 use enough::{Stop, Unstoppable};
-
-/// Custom zero-bias configuration for streaming encoder.
-#[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)] // Custom tables are rarely used
-pub(crate) enum CustomZeroBias {
-    /// Auto-select based on color mode (YCbCr or XYB)
-    Default,
-    /// Force YCbCr perceptual tables (quality-adaptive)
-    YCbCr,
-    /// Force XYB 0.5 tables
-    Xyb,
-    /// Disable zero-bias entirely
-    Disabled,
-    /// Custom per-component tables: (Y, Cb, Cr) where each is (mul[64], offset[64])
-    Custom {
-        luma: ([f32; 64], [f32; 64]),
-        cb: ([f32; 64], [f32; 64]),
-        cr: ([f32; 64], [f32; 64]),
-    },
-}
 
 /// Builder for creating a streaming encoder.
 ///
@@ -80,8 +61,9 @@ pub struct StreamingEncoderBuilder {
     optimize_huffman: bool,
     chroma_downsampling: ChromaDownsampling,
     restart_interval: u16,
-    custom_quant_matrices: Option<CustomQuantMatrices>,
-    custom_zero_bias: CustomZeroBias,
+    /// Custom encoding tables (quantization + zero-bias).
+    /// `None` means use perceptual defaults based on color mode and quality.
+    encoding_tables: Option<Box<EncodingTables>>,
     use_xyb: bool,
     /// Enable mozjpeg-style overshoot deringing (on by default)
     deringing: bool,
@@ -109,8 +91,7 @@ impl StreamingEncoderBuilder {
             optimize_huffman: true,
             chroma_downsampling: ChromaDownsampling::Box,
             restart_interval: 0,
-            custom_quant_matrices: None,
-            custom_zero_bias: CustomZeroBias::Default,
+            encoding_tables: None,
             use_xyb: false,
             deringing: true,
             #[cfg(feature = "parallel")]
@@ -289,26 +270,16 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Sets custom quantization matrices for experimentation.
+    /// Sets custom encoding tables (quantization + zero-bias).
     ///
-    /// This is an escape hatch for research purposes. The default jpegli matrices
-    /// were optimized against the Butteraugli perceptual metric and generally
-    /// produce better results than custom matrices.
+    /// This replaces both quantization tables and zero-bias configuration
+    /// with values from the provided `EncodingTables`.
     ///
-    /// See [`CustomQuantMatrices`] for documentation on the matrix format.
+    /// Takes `Box<EncodingTables>` since custom tables are rarely used and
+    /// the struct is ~1.5KB.
     #[must_use]
-    pub fn custom_quant_matrices(mut self, custom: CustomQuantMatrices) -> Self {
-        self.custom_quant_matrices = Some(custom);
-        self
-    }
-
-    /// Sets custom zero-bias configuration.
-    ///
-    /// Zero-bias controls how DCT coefficients are rounded toward zero during
-    /// quantization. This is an internal method used by the v2 encoder API.
-    #[must_use]
-    pub(crate) fn custom_zero_bias(mut self, config: CustomZeroBias) -> Self {
-        self.custom_zero_bias = config;
+    pub(crate) fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
+        self.encoding_tables = Some(tables);
         self
     }
 
@@ -846,12 +817,10 @@ impl StreamingEncoder {
             processor.set_xyb_mode(true);
         }
 
-        // Enable deringing if requested (on by default)
-        if builder.deringing {
-            processor.set_deringing(true);
-        }
+        // Set deringing (on by default in both builder and processor)
+        processor.set_deringing(builder.deringing);
 
-        // Generate quantization tables (use custom matrices if provided)
+        // Generate quantization tables and zero-bias params
         let is_420 = builder.subsampling == Subsampling::S420;
         let distance = builder.quality.to_distance();
         let color_space = if builder.use_xyb {
@@ -860,45 +829,44 @@ impl StreamingEncoder {
             ColorSpace::YCbCr
         };
 
-        let (y_quant, cb_quant, cr_quant) = if let Some(ref custom) = builder.custom_quant_matrices
-        {
-            (
-                quant::generate_quant_table_custom(distance, 0, builder.use_xyb, custom),
-                quant::generate_quant_table_custom(distance, 1, builder.use_xyb, custom),
-                quant::generate_quant_table_custom(distance, 2, builder.use_xyb, custom),
-            )
-        } else {
-            (
-                quant::generate_quant_table(
-                    builder.quality,
-                    0,
-                    color_space,
-                    builder.use_xyb,
-                    is_420,
-                ),
-                quant::generate_quant_table(
-                    builder.quality,
-                    1,
-                    color_space,
-                    builder.use_xyb,
-                    is_420,
-                ),
-                quant::generate_quant_table(
-                    builder.quality,
-                    2,
-                    color_space,
-                    builder.use_xyb,
-                    is_420,
-                ),
-            )
-        };
+        let ((y_quant, cb_quant, cr_quant), (y_zero_bias, cb_zero_bias, cr_zero_bias)) =
+            if let Some(ref tables) = builder.encoding_tables {
+                // Use custom encoding tables
+                let quant = tables.generate_quant_tables(distance, is_420);
+                let zero_bias = tables.generate_zero_bias_all();
+                (quant, zero_bias)
+            } else {
+                // Use perceptual defaults
+                let quant = (
+                    quant::generate_quant_table(
+                        builder.quality,
+                        0,
+                        color_space,
+                        builder.use_xyb,
+                        is_420,
+                    ),
+                    quant::generate_quant_table(
+                        builder.quality,
+                        1,
+                        color_space,
+                        builder.use_xyb,
+                        is_420,
+                    ),
+                    quant::generate_quant_table(
+                        builder.quality,
+                        2,
+                        color_space,
+                        builder.use_xyb,
+                        is_420,
+                    ),
+                );
 
-        // Compute zero bias params based on config and color mode
-        let effective_distance = quant::quant_vals_to_distance(&y_quant, &cb_quant, &cr_quant);
-        let (y_zero_bias, cb_zero_bias, cr_zero_bias) = match &builder.custom_zero_bias {
-            CustomZeroBias::Default => {
-                // Auto-select based on color mode (matches C++ jpegli behavior)
-                if builder.use_xyb {
+                // Compute effective distance for quality-adaptive zero bias
+                let effective_distance =
+                    quant::quant_vals_to_distance(&quant.0, &quant.1, &quant.2);
+
+                // Auto-select zero bias based on color mode (matches C++ jpegli behavior)
+                let zero_bias = if builder.use_xyb {
                     (
                         ZeroBiasParams::for_xyb(),
                         ZeroBiasParams::for_xyb(),
@@ -910,41 +878,10 @@ impl StreamingEncoder {
                         ZeroBiasParams::for_ycbcr(effective_distance, 1),
                         ZeroBiasParams::for_ycbcr(effective_distance, 2),
                     )
-                }
-            }
-            CustomZeroBias::YCbCr => {
-                // Force YCbCr perceptual tables
-                (
-                    ZeroBiasParams::for_ycbcr(effective_distance, 0),
-                    ZeroBiasParams::for_ycbcr(effective_distance, 1),
-                    ZeroBiasParams::for_ycbcr(effective_distance, 2),
-                )
-            }
-            CustomZeroBias::Xyb => (
-                ZeroBiasParams::for_xyb(),
-                ZeroBiasParams::for_xyb(),
-                ZeroBiasParams::for_xyb(),
-            ),
-            CustomZeroBias::Disabled => (
-                ZeroBiasParams::default(),
-                ZeroBiasParams::default(),
-                ZeroBiasParams::default(),
-            ),
-            CustomZeroBias::Custom { luma, cb, cr } => (
-                ZeroBiasParams {
-                    mul: luma.0,
-                    offset: luma.1,
-                },
-                ZeroBiasParams {
-                    mul: cb.0,
-                    offset: cb.1,
-                },
-                ZeroBiasParams {
-                    mul: cr.0,
-                    offset: cr.1,
-                },
-            ),
-        };
+                };
+
+                (quant, zero_bias)
+            };
 
         processor.set_quant_tables(
             y_quant.clone(),

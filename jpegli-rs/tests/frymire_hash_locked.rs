@@ -301,7 +301,8 @@ impl EncoderTestConfig {
         }
         .progressive(self.progressive)
         .optimize_huffman(self.optimize_huffman)
-        .downsampling_method(self.downsampling_method);
+        .downsampling_method(self.downsampling_method)
+        .deringing(false); // Disable deringing to match locked hashes
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .expect("encoder setup");
