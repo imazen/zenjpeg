@@ -575,3 +575,61 @@ sum += h_diff.reduce_add();  // Single SIMD reduction
 
 ---
 
+## Bug: 1-Pixel Partial MCU Edge Quality Gap
+
+**Status:** OPEN - Investigation in progress
+**Date:** 2026-01-19
+
+### Summary
+
+When encoding images with partial MCU width of exactly 1 pixel (e.g., width=257), Rust produces significantly worse quality than C++ jpegli.
+
+### Test Results (edge_tile_ssim2_comparison)
+
+Test tiles the rightmost partial MCU pixels across the image to amplify edge effects:
+
+| Image | Dims | Edge | Rust SSIM2 | C++ SSIM2 | Diff |
+|-------|------|------|------------|-----------|------|
+| 258947 | 257x256 | 1 | 62.34 | 85.27 | **-22.93** |
+| 258947 | 259x256 | 3 | 77.02 | 76.43 | +0.59 |
+| 258947 | 262x256 | 6 | 80.06 | 79.61 | +0.45 |
+| 258947 | 257x129 | 1x1 | 59.74 | 89.19 | **-29.45** |
+
+**Pattern:**
+- 1-pixel edges: -15 to -35 SSIM2 (severe)
+- 3+ pixel edges: ~0 (parity)
+- Height-only edges: -1 to -3 (minor)
+
+### Investigation Notes
+
+1. **Edge padding logic is correct** - Both use Replicate strategy
+2. **`hf_modulation_sum_8x8` scalar path** - For 1-pixel edge with `img_width=padded_width`:
+   - `h_count = 7` (computes 7 differences)
+   - But these differences are between replicated pixels (all 0)
+3. **Potential issue in `per_block_modulations_row`**:
+   - Line 680 passes `width` as both stride AND `img_width`
+   - When called from streaming AQ, `width = padded_width`
+   - This may cause incorrect boundary handling
+
+### C++ Behavior
+
+C++ `HfModulation` (adaptive_quantization.cc:295-324):
+- Uses RowBuffer with implicit stride/padding
+- Always does SIMD loads (relies on padding for safety)
+- Uses mask `kMaskRight = [1,1,1,1,1,1,1,0]` to zero position 7
+- Does NOT check `img_width` explicitly
+
+### Possible Fixes
+
+1. Pass actual `img_width` separately from stride to `hf_modulation_sum_8x8`
+2. Match C++ behavior: always use SIMD with mask, rely on padding
+3. Investigate if issue is in AQ, DCT, or quantization path
+
+### Test Command
+
+```bash
+cargo test --release -p jpegli-rs@0.9.0 --test edge_tile_ssim2_comparison -- --nocapture --ignored
+```
+
+---
+
