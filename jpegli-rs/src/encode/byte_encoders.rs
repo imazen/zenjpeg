@@ -79,7 +79,7 @@ impl BytesEncoder {
         let quality = LegacyQuality::from_quality(config.quality.to_internal());
         let pixel_format = layout.to_legacy();
         let subsampling = match config.color_mode {
-            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
             super::encoder_types::ColorMode::Grayscale => crate::types::Subsampling::S444,
         };
@@ -739,7 +739,7 @@ impl YCbCrPlanarEncoder {
 
         let quality = LegacyQuality::from_quality(config.quality.to_internal());
         let subsampling = match config.color_mode {
-            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.to_legacy(),
+            super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             _ => crate::types::Subsampling::S444,
         };
 
