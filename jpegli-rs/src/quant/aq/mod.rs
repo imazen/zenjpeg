@@ -462,8 +462,8 @@ fn ratio_of_derivatives(val: f32, invert: bool) -> f32 {
     let v = val.max(0.0);
     let v2 = v * v;
 
-    let num = K_NUM_MUL_RATIO * v2 + K_NUM_OFFSET_RATIO;
-    let den = (K_DEN_MUL_RATIO * v) * v2 + K_VOFFSET_RATIO;
+    let num = v2.mul_add(K_NUM_MUL_RATIO, K_NUM_OFFSET_RATIO);
+    let den = (v * K_DEN_MUL_RATIO).mul_add(v2, K_VOFFSET_RATIO);
 
     let safe_den = if den == 0.0 { 1e-9 } else { den };
 
@@ -504,7 +504,7 @@ fn update_min4(val: f32, mins: &mut [f32; 4]) {
 fn masking_sqrt(v: f32) -> f32 {
     const K_LOG_OFFSET: f32 = 28.0;
     const K_MUL: f32 = 211.50759899638012;
-    0.25 * (v * (K_MUL * 1e8_f32).sqrt() + K_LOG_OFFSET).sqrt()
+    0.25 * v.mul_add((K_MUL * 1e8_f32).sqrt(), K_LOG_OFFSET).sqrt()
 }
 
 /// FastPow2f from C++ jpegli - bit manipulation approximation of 2^x.
@@ -685,8 +685,11 @@ fn fuzzy_erosion_scalar(
                 }
             }
 
-            // Weighted sum of 4 smallest
-            let weighted = MUL0 * vals[0] + MUL1 * vals[1] + MUL2 * vals[2] + MUL3 * vals[3];
+            // Weighted sum of 4 smallest (using FMA for consistency with SIMD path)
+            let weighted = MUL0.mul_add(
+                vals[0],
+                MUL1.mul_add(vals[1], MUL2.mul_add(vals[2], MUL3 * vals[3])),
+            );
             tmp[y * pre_erosion_w + x] = weighted;
         }
     }
@@ -732,7 +735,8 @@ fn compute_mask_scalar(out_val: f32) -> f32 {
     let v3 = 1.0 / (v1 * v1 + K_MASK_OFFSET3);
     let v4 = 1.0 / (v1 * v1 + K_MASK_OFFSET4);
     // Use K_MASK_MUL* constants (3.24, 12.9, 5.02), NOT K_MUL* (0.04, 0.18, 0.30)
-    K_MASK_BASE + K_MASK_MUL4 * v4 + K_MASK_MUL2 * v2 + K_MASK_MUL3 * v3
+    // FMA chain for consistency with SIMD path
+    v4.mul_add(K_MASK_MUL4, v2.mul_add(K_MASK_MUL2, v3.mul_add(K_MASK_MUL3, K_MASK_BASE)))
 }
 
 /// Ported from HFModulation (scalar version).
@@ -759,7 +763,7 @@ fn hf_modulation_scalar(
         (input_scaled[top_idx] - center_val).abs() + (input_scaled[bottom_idx] - center_val).abs();
 
     let diff_sum = diff_h + diff_v;
-    current_val + K_HF_MOD_COEFF * diff_sum
+    diff_sum.mul_add(K_HF_MOD_COEFF, current_val)
 }
 
 /// Ported from GammaModulation (scalar version).
@@ -773,7 +777,7 @@ fn gamma_modulation_scalar(
     current_val: f32,
 ) -> f32 {
     let val = input_scaled[y * width + x];
-    let log_arg = (val * K_GAMMA_MOD_SCALE + K_GAMMA_MOD_BIAS).max(1e-9);
+    let log_arg = val.mul_add(K_GAMMA_MOD_SCALE, K_GAMMA_MOD_BIAS).max(1e-9);
     let modulation = K_GAMMA_MOD_GAMMA * log_arg.ln();
     current_val + modulation
 }
@@ -888,7 +892,7 @@ fn per_block_modulations_scalar(
             // C++ uses FastPow2f, but standard exp2 produces equivalent results
             // 1.442695041 = 1/ln(2) = log2(e)
             const LOG2_E: f32 = 1.442695041;
-            let quant_field = (out_val * LOG2_E).exp2() * mul + add;
+            let quant_field = (out_val * LOG2_E).exp2().mul_add(mul, add);
 
             aq_map[block_idx] = quant_field;
         }

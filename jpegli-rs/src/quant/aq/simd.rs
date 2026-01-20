@@ -71,8 +71,8 @@ const K_MASKING_MUL: f32 = 211.50759899638012;
 fn ratio_of_derivatives_scalar(val: f32, invert: bool) -> f32 {
     let v = val.max(0.0);
     let v2 = v * v;
-    let num = K_NUM_MUL_RATIO * v2 + K_NUM_OFFSET_RATIO;
-    let den = (K_DEN_MUL_RATIO * v) * v2 + K_VOFFSET_RATIO;
+    let num = v2.mul_add(K_NUM_MUL_RATIO, K_NUM_OFFSET_RATIO);
+    let den = (v * K_DEN_MUL_RATIO).mul_add(v2, K_VOFFSET_RATIO);
     let safe_den = if den == 0.0 { 1e-9 } else { den };
     if invert {
         num / safe_den
@@ -84,7 +84,7 @@ fn ratio_of_derivatives_scalar(val: f32, invert: bool) -> f32 {
 /// Scalar reference: masking_sqrt
 #[inline]
 fn masking_sqrt_scalar(v: f32) -> f32 {
-    0.25 * (v * (K_MASKING_MUL * 1e8_f32).sqrt() + K_MASKING_LOG_OFFSET).sqrt()
+    0.25 * v.mul_add((K_MASKING_MUL * 1e8_f32).sqrt(), K_MASKING_LOG_OFFSET).sqrt()
 }
 
 // ============================================================================
@@ -98,8 +98,8 @@ pub fn ratio_of_derivatives_x8(vals: f32x8) -> f32x8 {
     let v = vals.fast_max(f32x8::ZERO);
     let v2 = v * v;
 
-    let num = f32x8::splat(K_NUM_MUL_RATIO) * v2 + f32x8::splat(K_NUM_OFFSET_RATIO);
-    let den = (f32x8::splat(K_DEN_MUL_RATIO) * v) * v2 + f32x8::splat(K_VOFFSET_RATIO);
+    let num = v2.mul_add(f32x8::splat(K_NUM_MUL_RATIO), f32x8::splat(K_NUM_OFFSET_RATIO));
+    let den = (v * f32x8::splat(K_DEN_MUL_RATIO)).mul_add(v2, f32x8::splat(K_VOFFSET_RATIO));
 
     // den is always positive due to K_VOFFSET_RATIO > 0, no need for safe_den check
     den / num
@@ -112,8 +112,8 @@ pub fn ratio_of_derivatives_inv_x8(vals: f32x8) -> f32x8 {
     let v = vals.fast_max(f32x8::ZERO);
     let v2 = v * v;
 
-    let num = f32x8::splat(K_NUM_MUL_RATIO) * v2 + f32x8::splat(K_NUM_OFFSET_RATIO);
-    let den = (f32x8::splat(K_DEN_MUL_RATIO) * v) * v2 + f32x8::splat(K_VOFFSET_RATIO);
+    let num = v2.mul_add(f32x8::splat(K_NUM_MUL_RATIO), f32x8::splat(K_NUM_OFFSET_RATIO));
+    let den = (v * f32x8::splat(K_DEN_MUL_RATIO)).mul_add(v2, f32x8::splat(K_VOFFSET_RATIO));
 
     num / den
 }
@@ -124,7 +124,7 @@ pub fn ratio_of_derivatives_inv_x8(vals: f32x8) -> f32x8 {
 pub fn masking_sqrt_x8(v: f32x8) -> f32x8 {
     let k_mul_sqrt = f32x8::splat((K_MASKING_MUL * 1e8_f32).sqrt());
     let k_offset = f32x8::splat(K_MASKING_LOG_OFFSET);
-    f32x8::splat(0.25) * (v * k_mul_sqrt + k_offset).sqrt()
+    f32x8::splat(0.25) * v.mul_add(k_mul_sqrt, k_offset).sqrt()
 }
 
 // ============================================================================
@@ -683,7 +683,7 @@ pub fn per_block_modulations_row(
 
         // 4. Final transform using fast_exp2 approximation
         // Note: (out_val * LOG2_E).exp2() = exp(out_val)
-        let quant_field = fast_exp2(out_val * LOG2_E) * mul + add;
+        let quant_field = fast_exp2(out_val * LOG2_E).mul_add(mul, add);
         aq_row[bx] = quant_field;
     }
 }
@@ -839,9 +839,21 @@ pub const TEST_INPUTS_RATIO: [f32; 16] = [
 mod tests {
     use super::*;
 
-    /// Maximum allowed difference between scalar and SIMD results.
-    /// Set tight since we're doing identical math.
-    const EPSILON: f32 = 1e-6;
+    /// Maximum allowed relative difference between scalar and SIMD results.
+    /// 1e-6 = 0.0001% - tight but allows for FMA vs non-FMA rounding differences.
+    const EPSILON_REL: f32 = 1e-6;
+
+    /// Check if two values match within relative tolerance.
+    /// Uses max(abs(a), abs(b)) as denominator to handle near-zero values.
+    fn approx_eq(a: f32, b: f32, rel_tol: f32) -> bool {
+        let diff = (a - b).abs();
+        let max_abs = a.abs().max(b.abs());
+        if max_abs == 0.0 {
+            diff == 0.0
+        } else {
+            diff / max_abs <= rel_tol
+        }
+    }
 
     #[test]
     fn test_ratio_of_derivatives_x8_matches_scalar() {
@@ -861,14 +873,13 @@ mod tests {
 
         for i in 0..8 {
             let scalar_result = ratio_of_derivatives_scalar(TEST_INPUTS_RATIO[i], false);
-            let diff = (simd_arr[i] - scalar_result).abs();
             assert!(
-                diff < EPSILON,
-                "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
+                approx_eq(simd_arr[i], scalar_result, EPSILON_REL),
+                "Mismatch at index {}: SIMD={}, scalar={}, rel_diff={}",
                 i,
                 simd_arr[i],
                 scalar_result,
-                diff
+                (simd_arr[i] - scalar_result).abs() / scalar_result.abs().max(1e-10)
             );
         }
     }
@@ -891,14 +902,13 @@ mod tests {
 
         for i in 0..8 {
             let scalar_result = ratio_of_derivatives_scalar(TEST_INPUTS_RATIO[8 + i], true);
-            let diff = (simd_arr[i] - scalar_result).abs();
             assert!(
-                diff < EPSILON,
-                "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
+                approx_eq(simd_arr[i], scalar_result, EPSILON_REL),
+                "Mismatch at index {}: SIMD={}, scalar={}, rel_diff={}",
                 i,
                 simd_arr[i],
                 scalar_result,
-                diff
+                (simd_arr[i] - scalar_result).abs() / scalar_result.abs().max(1e-10)
             );
         }
     }
@@ -914,14 +924,13 @@ mod tests {
 
         for i in 0..8 {
             let scalar_result = masking_sqrt_scalar(input_arr[i]);
-            let diff = (simd_arr[i] - scalar_result).abs();
             assert!(
-                diff < EPSILON,
-                "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
+                approx_eq(simd_arr[i], scalar_result, EPSILON_REL),
+                "Mismatch at index {}: SIMD={}, scalar={}, rel_diff={}",
                 i,
                 simd_arr[i],
                 scalar_result,
-                diff
+                (simd_arr[i] - scalar_result).abs() / scalar_result.abs().max(1e-10)
             );
         }
     }
@@ -937,17 +946,14 @@ mod tests {
 
         for i in 0..8 {
             let scalar_result = ratio_of_derivatives_scalar(input_arr[i], false);
-            let diff = (simd_arr[i] - scalar_result).abs();
-            // Use relative epsilon for large values
-            let rel_epsilon = EPSILON.max(scalar_result.abs() * 1e-5);
             assert!(
-                diff < rel_epsilon,
-                "Mismatch at index {} (input={}): SIMD={}, scalar={}, diff={}",
+                approx_eq(simd_arr[i], scalar_result, EPSILON_REL),
+                "Mismatch at index {} (input={}): SIMD={}, scalar={}, rel_diff={}",
                 i,
                 input_arr[i],
                 simd_arr[i],
                 scalar_result,
-                diff
+                (simd_arr[i] - scalar_result).abs() / scalar_result.abs().max(1e-10)
             );
         }
     }
@@ -987,11 +993,13 @@ mod tests {
 
         for i in 0..4 {
             assert!(
-                (simd_arr[i] - locked_outputs_non_inv[i]).abs() < EPSILON,
-                "LOCKED VALUE CHANGED! input={}, expected={}, got={}",
+                approx_eq(simd_arr[i], locked_outputs_non_inv[i], EPSILON_REL),
+                "LOCKED VALUE CHANGED! input={}, expected={}, got={}, rel_diff={}",
                 locked_inputs[i],
                 locked_outputs_non_inv[i],
-                simd_arr[i]
+                simd_arr[i],
+                (simd_arr[i] - locked_outputs_non_inv[i]).abs()
+                    / locked_outputs_non_inv[i].abs().max(1e-10)
             );
         }
     }
@@ -1022,14 +1030,13 @@ mod tests {
             let diff_sq = (diff * diff).min(LIMIT);
             let scalar_result = masking_sqrt_scalar(diff_sq);
 
-            let diff = (simd_arr[i] - scalar_result).abs();
             assert!(
-                diff < EPSILON,
-                "Mismatch at index {}: SIMD={}, scalar={}, diff={}",
+                approx_eq(simd_arr[i], scalar_result, EPSILON_REL),
+                "Mismatch at index {}: SIMD={}, scalar={}, rel_diff={}",
                 i,
                 simd_arr[i],
                 scalar_result,
-                diff
+                (simd_arr[i] - scalar_result).abs() / scalar_result.abs().max(1e-10)
             );
         }
     }
@@ -1068,14 +1075,13 @@ mod tests {
 
         // Compare
         for x in 0..width {
-            let diff = (output_simd[x] - output_scalar[x]).abs();
             assert!(
-                diff < EPSILON,
-                "Row mismatch at x={}: SIMD={}, scalar={}, diff={}",
+                approx_eq(output_simd[x], output_scalar[x], EPSILON_REL),
+                "Row mismatch at x={}: SIMD={}, scalar={}, rel_diff={}",
                 x,
                 output_simd[x],
                 output_scalar[x],
-                diff
+                (output_simd[x] - output_scalar[x]).abs() / output_scalar[x].abs().max(1e-10)
             );
         }
     }
@@ -1112,14 +1118,13 @@ mod tests {
         }
 
         for x in 0..width {
-            let diff = (output_simd[x] - output_scalar[x]).abs();
             assert!(
-                diff < EPSILON,
-                "Odd width mismatch at x={}: SIMD={}, scalar={}, diff={}",
+                approx_eq(output_simd[x], output_scalar[x], EPSILON_REL),
+                "Odd width mismatch at x={}: SIMD={}, scalar={}, rel_diff={}",
                 x,
                 output_simd[x],
                 output_scalar[x],
-                diff
+                (output_simd[x] - output_scalar[x]).abs() / output_scalar[x].abs().max(1e-10)
             );
         }
     }
@@ -1195,14 +1200,13 @@ mod tests {
         // Compare
         assert_eq!(simd_result.len(), scalar_result.len());
         for i in 0..simd_result.len() {
-            let diff = (simd_result[i] - scalar_result[i]).abs();
             assert!(
-                diff < EPSILON,
-                "Pre-erosion mismatch at index {}: SIMD={}, scalar={}, diff={}",
+                approx_eq(simd_result[i], scalar_result[i], EPSILON_REL),
+                "Pre-erosion mismatch at index {}: SIMD={}, scalar={}, rel_diff={}",
                 i,
                 simd_result[i],
                 scalar_result[i],
-                diff
+                (simd_result[i] - scalar_result[i]).abs() / scalar_result[i].abs().max(1e-10)
             );
         }
     }
@@ -1365,14 +1369,13 @@ mod tests {
 
         // Compare
         for i in 0..aq_map_simd.len() {
-            let diff = (aq_map_simd[i] - aq_map_scalar[i]).abs();
             assert!(
-                diff < EPSILON,
-                "Fuzzy erosion mismatch at index {}: SIMD={}, scalar={}, diff={}",
+                approx_eq(aq_map_simd[i], aq_map_scalar[i], EPSILON_REL),
+                "Fuzzy erosion mismatch at index {}: SIMD={}, scalar={}, rel_diff={}",
                 i,
                 aq_map_simd[i],
                 aq_map_scalar[i],
-                diff
+                (aq_map_simd[i] - aq_map_scalar[i]).abs() / aq_map_scalar[i].abs().max(1e-10)
             );
         }
     }
@@ -1420,10 +1423,10 @@ mod tests {
                     }
                 }
 
-                let weighted = FUZZY_MUL0 * vals[0]
-                    + FUZZY_MUL1 * vals[1]
-                    + FUZZY_MUL2 * vals[2]
-                    + FUZZY_MUL3 * vals[3];
+                let weighted = FUZZY_MUL0.mul_add(
+                    vals[0],
+                    FUZZY_MUL1.mul_add(vals[1], FUZZY_MUL2.mul_add(vals[2], FUZZY_MUL3 * vals[3])),
+                );
                 tmp[y * pre_erosion_w + x] = weighted;
             }
         }

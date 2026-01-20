@@ -449,7 +449,7 @@ mod tests {
                 .chain(tables.quant.c1.iter())
                 .chain(tables.quant.c2.iter())
             {
-                assert!(v >= 1.0 && v <= 32767.0, "Invalid quant value: {}", v);
+                assert!((1.0..=32767.0).contains(&v), "Invalid quant value: {}", v);
             }
         }
     }
