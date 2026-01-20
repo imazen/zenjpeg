@@ -74,10 +74,11 @@ impl BytesEncoder {
         layout: PixelLayout,
     ) -> Result<StreamingEncoder> {
         use crate::encode::streaming::StreamingEncoder as SE;
-        use crate::quant::Quality as LegacyQuality;
+        use crate::quant::Quality;
+        use crate::types::PixelFormat;
 
-        let quality = LegacyQuality::from_quality(config.quality.to_internal());
-        let pixel_format = layout.into();
+        let quality: Quality = config.quality.into();
+        let pixel_format: PixelFormat = layout.into();
         let subsampling = match config.color_mode {
             super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             super::encoder_types::ColorMode::Xyb { .. } => crate::types::Subsampling::S444,
@@ -734,10 +735,10 @@ impl YCbCrPlanarEncoder {
         width: u32,
         height: u32,
     ) -> Result<StreamingEncoder> {
-        use crate::quant::Quality as LegacyQuality;
+        use crate::quant::Quality;
         use crate::types::PixelFormat;
 
-        let quality = LegacyQuality::from_quality(config.quality.to_internal());
+        let quality: Quality = config.quality.into();
         let subsampling = match config.color_mode {
             super::encoder_types::ColorMode::YCbCr { subsampling } => subsampling.into(),
             _ => crate::types::Subsampling::S444,
