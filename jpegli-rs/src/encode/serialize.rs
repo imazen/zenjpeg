@@ -6,7 +6,6 @@
 //! - Huffman tables
 //! - Frame and scan headers
 
-#![allow(deprecated)] // This module implements methods for the deprecated Encoder struct
 
 use crate::error::Result;
 use crate::foundation::consts::{
@@ -18,9 +17,10 @@ use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedT
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, Subsampling};
 
-use super::{Encoder, ProgressiveScan};
+use super::config::ComputedConfig;
+use super::ProgressiveScan;
 
-impl Encoder {
+impl ComputedConfig {
     /// Writes the JPEG header (SOI only, no JFIF APP0).
     ///
     /// Note: C++ jpegli does not write JFIF APP0, so we skip it for parity.
@@ -210,7 +210,7 @@ impl Encoder {
         output: &mut Vec<u8>,
         is_extended: bool,
     ) -> Result<()> {
-        let marker = if self.config.mode == JpegMode::Progressive {
+        let marker = if self.mode == JpegMode::Progressive {
             MARKER_SOF2
         } else if is_extended {
             MARKER_SOF1 // Extended sequential DCT (allows 16-bit quant tables)
@@ -221,7 +221,7 @@ impl Encoder {
         output.push(0xFF);
         output.push(marker);
 
-        let num_components = if self.config.pixel_format.is_grayscale() {
+        let num_components = if self.pixel_format.is_grayscale() {
             1u8
         } else {
             3u8
@@ -233,8 +233,8 @@ impl Encoder {
 
         // Use original dimensions (before MCU padding) for the header.
         // Decoders will decode full MCUs but crop to these dimensions.
-        let header_width = self.config.original_width.unwrap_or(self.config.width);
-        let header_height = self.config.original_height.unwrap_or(self.config.height);
+        let header_width = self.original_width.unwrap_or(self.width);
+        let header_height = self.original_height.unwrap_or(self.height);
 
         output.push(8); // Sample precision
         output.push((header_height >> 8) as u8);
@@ -250,7 +250,7 @@ impl Encoder {
             output.push(0); // Quant table 0
         } else {
             // Y component
-            let (h_samp, v_samp) = match self.config.subsampling {
+            let (h_samp, v_samp) = match self.subsampling {
                 Subsampling::S444 => (1, 1),
                 Subsampling::S422 => (2, 1),
                 Subsampling::S420 => (2, 2),
@@ -288,7 +288,7 @@ impl Encoder {
         output: &mut Vec<u8>,
         is_extended: bool,
     ) -> Result<()> {
-        let marker = if self.config.mode == JpegMode::Progressive {
+        let marker = if self.mode == JpegMode::Progressive {
             MARKER_SOF2
         } else if is_extended {
             MARKER_SOF1 // Extended sequential DCT (allows 16-bit quant tables)
@@ -305,8 +305,8 @@ impl Encoder {
         output.push(length as u8);
 
         // Use original dimensions (before MCU padding) for the header
-        let header_width = self.config.original_width.unwrap_or(self.config.width);
-        let header_height = self.config.original_height.unwrap_or(self.config.height);
+        let header_width = self.original_width.unwrap_or(self.width);
+        let header_height = self.original_height.unwrap_or(self.height);
 
         output.push(8); // Sample precision
         output.push((header_height >> 8) as u8);
@@ -523,8 +523,8 @@ impl Encoder {
         output.push(MARKER_DRI);
         output.push(0x00);
         output.push(0x04); // Length
-        output.push((self.config.restart_interval >> 8) as u8);
-        output.push(self.config.restart_interval as u8);
+        output.push((self.restart_interval >> 8) as u8);
+        output.push(self.restart_interval as u8);
         Ok(())
     }
 
@@ -533,7 +533,7 @@ impl Encoder {
         output.push(0xFF);
         output.push(MARKER_SOS);
 
-        let num_components = if self.config.pixel_format.is_grayscale() {
+        let num_components = if self.pixel_format.is_grayscale() {
             1u8
         } else {
             3u8
@@ -648,7 +648,7 @@ impl Encoder {
 
         for (comp_in_scan, &comp_idx) in scan.components.iter().enumerate() {
             // Component ID: 1-based for YCbCr, or 'R','G','B' for XYB
-            let comp_id = if self.config.use_xyb {
+            let comp_id = if self.use_xyb {
                 match comp_idx {
                     0 => b'R', // 82
                     1 => b'G', // 71

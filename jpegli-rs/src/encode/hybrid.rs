@@ -23,7 +23,7 @@ use crate::quant::{self, QuantTable, ZeroBiasParams};
 use super::mozjpeg_compat::TrellisConfig;
 use super::natural_to_zigzag_into;
 
-use super::config::EncoderConfig;
+use super::config::ComputedConfig;
 
 // ============================================================================
 // Setup Helpers
@@ -32,7 +32,7 @@ use super::config::EncoderConfig;
 /// Get the AQ map, using custom if provided or computing from Y plane.
 #[inline]
 pub(super) fn get_aq_map_or_compute(
-    config: &EncoderConfig,
+    config: &ComputedConfig,
     y_plane: &[f32],
     width: usize,
     height: usize,
@@ -54,7 +54,7 @@ pub(super) fn get_aq_map_or_compute(
 /// 2. Else if `hybrid_config.enabled`, use hybrid AQ+trellis mode
 /// 3. Else return None (no trellis quantization)
 #[inline]
-pub(super) fn create_hybrid_ctx(config: &EncoderConfig) -> Option<HybridQuantContext> {
+pub(super) fn create_hybrid_ctx(config: &ComputedConfig) -> Option<HybridQuantContext> {
     // First check for explicit TrellisConfig (mozjpeg-compat API)
     if let Some(ref trellis) = config.trellis {
         if trellis.is_enabled() {

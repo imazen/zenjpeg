@@ -27,12 +27,18 @@ pub(crate) struct ProgressiveScan {
 }
 
 // ============================================================================
-// Encoder Configuration
+// Computed Encoder Configuration
 // ============================================================================
 
-/// Encoder configuration.
+/// Computed encoder configuration with dimensions.
+///
+/// This is the internal configuration used during JPEG serialization.
+/// It combines dimension-independent settings from [`crate::encode::EncoderConfig`]
+/// with image dimensions and pixel format.
+///
+/// Created internally by the streaming encoder or via `EncoderConfig::compute()`.
 #[derive(Debug, Clone)]
-pub struct EncoderConfig {
+pub struct ComputedConfig {
     /// Image width
     pub width: u32,
     /// Image height
@@ -121,7 +127,7 @@ pub struct EncoderConfig {
     pub trellis: Option<super::mozjpeg_compat::TrellisConfig>,
 }
 
-impl Default for EncoderConfig {
+impl Default for ComputedConfig {
     fn default() -> Self {
         Self {
             width: 0,
