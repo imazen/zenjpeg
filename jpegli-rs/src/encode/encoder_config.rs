@@ -299,7 +299,7 @@ impl EncoderConfig {
     ///
     /// This uses the same algorithm as mozjpeg and provides a compatible API.
     /// For advanced users who want to combine trellis with jpegli's adaptive
-    /// quantization, see [`hybrid_config()`](Self::hybrid_config) (requires
+    /// quantization, see the `hybrid_config()` method (requires
     /// the `experimental-hybrid-trellis` feature).
     ///
     /// # Example

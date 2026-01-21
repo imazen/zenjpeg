@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-01-19
+## [0.9.0] - 2026-01-20
 
 ### Breaking Changes
 
 - **`EncoderConfig` API redesigned with separate constructors per color mode**
   - New constructors: `EncoderConfig::ycbcr(quality, subsampling)`, `EncoderConfig::xyb(quality, b_subsampling)`, `EncoderConfig::grayscale(quality)`
-  - `EncoderConfig::new()` is deprecated (still works, calls `ycbcr()` internally)
-  - Removed `.xyb()`, `.grayscale()`, `.quality()`, and `.ycbcr(subsampling)` builder methods
+  - Removed `EncoderConfig::new()` - use the explicit constructors above
+  - Removed `.xyb()`, `.grayscale()`, and `.ycbcr(subsampling)` builder methods
   - **Migration**: Replace `EncoderConfig::new(q, sub)` with `EncoderConfig::ycbcr(q, sub)`
   - **Migration**: Replace `EncoderConfig::new(q, sub).xyb()` with `EncoderConfig::xyb(q, XybSubsampling::BQuarter)`
   - **Migration**: Replace `EncoderConfig::new(q, sub).grayscale()` with `EncoderConfig::grayscale(q)`
@@ -22,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **New `XybSubsampling` enum for XYB B-channel subsampling**
   - `XybSubsampling::Full` - No B-channel subsampling (4:4:4)
   - `XybSubsampling::BQuarter` - B-channel at 2x2 downsampled (matches C++ default)
+
+- **Removed deprecated `Quality` methods**
+  - Removed `Quality::from_quality()`, `Quality::from_distance()`, `Quality::Traditional()`
+  - Use `Quality::ApproxJpegli(f32)`, `Quality::ApproxButteraugli(f32)`, or `Quality::ApproxSsim2(f32)` instead
+  - Quality can be passed as `f32` or `u8` directly to constructors (converts to `ApproxJpegli`)
+
+- **`MozjpegTables::generate()` now returns `Box<EncodingTables>`** (was `QuantTableConfig`)
+  - Uses `ScalingParams::Exact` since tables are already quality-scaled
+  - **Migration**: Use `.tables(MozjpegTables::generate(...))` directly on `EncoderConfig`
+
+- **Deprecated `ChromaDownsampling` in favor of `DownsamplingMethod`**
+  - Both enums have the same variants, but `DownsamplingMethod` is the preferred type
+  - `ChromaDownsampling` will be removed in a future version
+
+- **Old `Encoder` and `StreamingEncoder` types made internal**
+  - These are now `pub(crate)` instead of `pub`
+  - Use `EncoderConfig` and its `encode_from_*()` methods instead
 
 ### Added
 
@@ -33,6 +50,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Disable with `.deringing(false)` if needed (not recommended)
   - See README "Overshoot Deringing" section for technical details
 
+- **`TrellisConfig` API for mozjpeg-compatible trellis quantization**
+  - `TrellisConfig::default()` - Standard trellis with AC and DC optimization
+  - `TrellisConfig::disabled()` - No trellis (fastest)
+  - `TrellisConfig::favor_size()` / `TrellisConfig::favor_quality()` - Presets
+  - Builder methods: `.ac_trellis()`, `.dc_trellis()`, `.speed_level()`, `.rd_factor()`
+  - Use via `EncoderConfig::ycbcr(...).trellis(TrellisConfig::default())`
+  - **Note**: Requires `experimental-hybrid-trellis` feature for actual trellis quantization
+
+- **`archmage-simd` feature for token-based safe SIMD**
+  - Alternative to `unsafe_simd` using the archmage crate
+  - Provides AVX2+FMA intrinsics with compile-time capability tokens
+  - New SIMD functions for DCT, color conversion, and AQ computation
+  - Work in progress - not all functions are wired into the pipeline yet
+
+- **New encoder methods**
+  - `.force_baseline()` - Convenience method for maximum compatibility (SOF0)
+  - `.allow_16bit_quant_tables(bool)` - Control extended sequential (SOF1) vs baseline
+  - `.get_trellis()` - Accessor for trellis configuration
+
 - **`EncodingTables` struct for quantization table experimentation**
   - `PerComponent<T>` wrapper with named accessors for YCbCr (Y/Cb/Cr) and XYB (X/Y/B)
   - `ScalingParams` enum: `Exact` (no scaling) or `Scaled { global_scale, frequency_exponents }`
@@ -41,6 +77,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `dct` module with `freq_distance()`, `IMPORTANCE_ORDER`, `to_zigzag()` helpers
   - Use via `EncoderConfig::ycbcr(...).tables(my_tables)` for custom tables
   - See README "Table Optimization" section for research methodology
+
+### Changed
+
+- **SIMD function names now match actual instruction sets used**
+  - `extract_r/g/b_sse` → `extract_r/g/b_ssse3` (uses `_mm_shuffle_epi8`)
+  - `transpose_8x8_avx2` → `transpose_8x8_avx` (uses only AVX)
+  - `forward_dct_8x8_avx2` → `forward_dct_8x8_fma` (uses FMA)
+  - `rgb_to_ycbcr_8px_avx2` → `rgb_to_ycbcr_8px_fma` (uses FMA)
+
+- **AQ computation converted to FMA operations**
+  - Patterns like `a * b + c` now use `mul_add()` for better precision
+  - Tests use relative epsilon (1e-6) to handle FMA hardware differences
+
+### Performance
+
+- **Padded AQ buffers optimization** - 24-50% faster on some encoding paths
+  - StreamingAQ now uses MCU-aligned `padded_width` for buffer stride
+  - Enables full SIMD processing without edge case scalar fallbacks
+
+### Fixed
+
+- Separated `stride` and `img_width` parameters in AQ modulation for correct edge handling
+- `hf_modulation_sum_8x8` now uses consistent 8-pixel rows (buffer is MCU-padded)
 
 ## [0.8.1] - 2026-01-19
 
