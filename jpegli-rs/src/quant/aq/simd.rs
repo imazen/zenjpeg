@@ -906,7 +906,7 @@ fn sum_2x2_blocks_simd(
 // ============================================================================
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-mod archmage_impl {
+pub(crate) mod archmage_impl {
     use archmage::{arcane, HasAvx, HasAvx2, HasFma};
     use core::arch::x86_64::*;
 
@@ -1362,136 +1362,19 @@ mod archmage_impl {
     }
 
     // ========================================================================
-    // Fuzzy erosion - optimized 3x3 neighborhood gathering + partial sort
+    // Fuzzy erosion - massive inlined function (no helper calls in hot path)
     // ========================================================================
 
-    // Fuzzy erosion weighting constants (weighted sum of 4 smallest)
-    const FE_MUL0: f32 = 0.125;
-    const FE_MUL1: f32 = 0.075;
-    const FE_MUL2: f32 = 0.06;
-    const FE_MUL3: f32 = 0.05;
-
-    /// Find 4 smallest values from 9 and return weighted sum.
-    /// Uses an efficient comparison network instead of sorting.
-    #[inline(always)]
-    fn weighted_4_smallest(vals: &[f32; 9]) -> f32 {
-        // Copy for destructive selection
-        let mut v = *vals;
-
-        // Find minimum 4 times with replacement
-        let mut sum = 0.0f32;
-
-        // Pass 1: find minimum
-        let mut min_idx = 0;
-        for i in 1..9 {
-            if v[i] < v[min_idx] {
-                min_idx = i;
-            }
-        }
-        sum += FE_MUL0 * v[min_idx];
-        v[min_idx] = f32::MAX;
-
-        // Pass 2
-        min_idx = 0;
-        for i in 1..9 {
-            if v[i] < v[min_idx] {
-                min_idx = i;
-            }
-        }
-        sum += FE_MUL1 * v[min_idx];
-        v[min_idx] = f32::MAX;
-
-        // Pass 3
-        min_idx = 0;
-        for i in 1..9 {
-            if v[i] < v[min_idx] {
-                min_idx = i;
-            }
-        }
-        sum += FE_MUL2 * v[min_idx];
-        v[min_idx] = f32::MAX;
-
-        // Pass 4
-        min_idx = 0;
-        for i in 1..9 {
-            if v[i] < v[min_idx] {
-                min_idx = i;
-            }
-        }
-        sum += FE_MUL3 * v[min_idx];
-
-        sum
-    }
-
-    /// Gather 9 values from 3x3 neighborhood around (cx, cy) with clamping.
-    #[inline(always)]
-    fn gather_3x3_clamped(
-        buffer_ptr: *const f32,
-        pe_w: usize,
-        buffer_rows: usize,
-        cx: isize,
-        cy: isize,
-        max_y: isize,
-    ) -> [f32; 9] {
-        let mut vals = [0.0f32; 9];
-        let offsets: [(isize, isize); 9] = [
-            (-1, -1), (-1, 0), (-1, 1),
-            (0, -1),  (0, 0),  (0, 1),
-            (1, -1),  (1, 0),  (1, 1),
-        ];
-
-        for (i, (ny, nx)) in offsets.iter().enumerate() {
-            let px = (cx + nx).clamp(0, pe_w as isize - 1) as usize;
-            let py = (cy + ny).clamp(0, max_y.max(0)) as usize;
-            let buffer_row = py % buffer_rows;
-            let idx = buffer_row * pe_w + px;
-            vals[i] = unsafe { *buffer_ptr.add(idx) };
-        }
-        vals
-    }
-
-    /// Gather 9 values from 3x3 neighborhood (interior, no clamping needed).
-    #[inline(always)]
-    fn gather_3x3_interior(
-        buffer_ptr: *const f32,
-        row_offsets: &[usize; 3], // Pre-computed: [(cy-1) % buffer_rows * pe_w, cy % buffer_rows * pe_w, (cy+1) % buffer_rows * pe_w]
-        cx: usize,
-    ) -> [f32; 9] {
-        unsafe {
-            [
-                *buffer_ptr.add(row_offsets[0] + cx - 1),
-                *buffer_ptr.add(row_offsets[0] + cx),
-                *buffer_ptr.add(row_offsets[0] + cx + 1),
-                *buffer_ptr.add(row_offsets[1] + cx - 1),
-                *buffer_ptr.add(row_offsets[1] + cx),
-                *buffer_ptr.add(row_offsets[1] + cx + 1),
-                *buffer_ptr.add(row_offsets[2] + cx - 1),
-                *buffer_ptr.add(row_offsets[2] + cx),
-                *buffer_ptr.add(row_offsets[2] + cx + 1),
-            ]
-        }
-    }
-
-    /// Process one corner contribution (3x3 gather + partial sort + weighted sum).
-    #[inline(always)]
-    fn process_corner_interior(
-        buffer_ptr: *const f32,
-        row_offsets: &[usize; 3],
-        cx: usize,
-    ) -> f32 {
-        let vals = gather_3x3_interior(buffer_ptr, row_offsets, cx);
-        weighted_4_smallest(&vals)
-    }
-
-    /// Archmage-based compute_fuzzy_erosion_row.
-    /// Optimizations:
-    /// - Raw pointer loads (no bounds checks)
-    /// - Pre-computed row offsets for circular buffer
-    /// - Interior fast path (no clamping)
-    /// - Efficient minimum-finding for partial sort
-    #[arcane]
-    pub fn mage_compute_fuzzy_erosion_row<T: HasAvx2 + HasFma + Copy>(
-        _token: T,
+    /// Compute fuzzy erosion for a row of blocks.
+    ///
+    /// This is one massive inlined function to eliminate all function call overhead.
+    /// Everything is done in-place: gather 9 values, find 4 smallest, weighted sum.
+    ///
+    /// For each block, we process 4 corners (2x2), each corner needs:
+    /// - Gather 9 values from 3x3 neighborhood
+    /// - Find 4 smallest values
+    /// - Compute weighted sum: 0.125*v0 + 0.075*v1 + 0.06*v2 + 0.05*v3
+    pub fn mage_compute_fuzzy_erosion_row(
         pre_erosion_buffer: &[f32],
         pe_w: usize,
         buffer_rows: usize,
@@ -1505,73 +1388,363 @@ mod archmage_impl {
             return;
         }
 
-        let buffer_ptr = pre_erosion_buffer.as_ptr();
+        let ptr = pre_erosion_buffer.as_ptr();
+        let pe_w_i = pe_w as isize;
         let max_y = max_filled_row as isize;
 
-        // Pre-compute row offsets for the 2x2 corners (dy=0 and dy=1)
-        // For dy=0: cy = pe_y_base, neighbors at cy-1, cy, cy+1
-        // For dy=1: cy = pe_y_base+1, neighbors at cy, cy+1, cy+2
+        // Pre-compute row base offsets for cy0 and cy1
         let cy0 = pe_y_base as isize;
-        let cy1 = (pe_y_base + 1) as isize;
+        let _cy1 = cy0 + 1; // Used implicitly in row offset calculations
 
-        // Check if all rows are interior (no clamping needed)
-        let y_interior = cy0 >= 1 && (cy1 + 1) <= max_y;
+        // Row offsets for the 6 rows we might access (cy0-1, cy0, cy0+1, cy1, cy1+1, cy1+2)
+        // But cy0+1 == cy1 and cy1+1 == cy0+2, so we only need 4 unique rows
+        let r0 = ((cy0 - 1).clamp(0, max_y) as usize % buffer_rows) * pe_w; // cy0-1
+        let r1 = (cy0.clamp(0, max_y) as usize % buffer_rows) * pe_w;       // cy0
+        let r2 = ((cy0 + 1).clamp(0, max_y) as usize % buffer_rows) * pe_w; // cy0+1 = cy1
+        let r3 = ((cy0 + 2).clamp(0, max_y) as usize % buffer_rows) * pe_w; // cy1+1
 
-        // Row offsets for dy=0 (rows cy0-1, cy0, cy0+1)
-        let row_offsets_0 = if y_interior {
-            [
-                ((cy0 - 1) as usize % buffer_rows) * pe_w,
-                (cy0 as usize % buffer_rows) * pe_w,
-                ((cy0 + 1) as usize % buffer_rows) * pe_w,
-            ]
-        } else {
-            [0, 0, 0] // Not used for boundary path
-        };
-
-        // Row offsets for dy=1 (rows cy1-1=cy0, cy1, cy1+1)
-        let row_offsets_1 = if y_interior {
-            [
-                (cy0 as usize % buffer_rows) * pe_w,
-                (cy1 as usize % buffer_rows) * pe_w,
-                ((cy1 + 1) as usize % buffer_rows) * pe_w,
-            ]
-        } else {
-            [0, 0, 0]
-        };
+        // Check if y is interior (can skip row clamping)
+        let y_interior = cy0 >= 1 && cy0 + 2 <= max_y;
 
         for bx_offset in 0..block_count {
             let bx = block_start + bx_offset;
-            let pe_x_base = bx_offset * 2;
+            let pe_x = (bx_offset * 2) as isize;
 
-            // Check if all 4 corners are interior (x in range [1, pe_w-2])
-            let x_interior = pe_x_base >= 1 && (pe_x_base + 1) < pe_w.saturating_sub(1);
+            // Check if x is interior (can skip column clamping)
+            let x_interior = pe_x >= 1 && pe_x + 2 < pe_w_i - 1;
 
-            let sum = if y_interior && x_interior {
-                // Fast path: all 4 corners are interior
-                let cx0 = pe_x_base;
-                let cx1 = pe_x_base + 1;
+            let block_sum = if y_interior && x_interior {
+                // FAST PATH: No clamping needed - all indices are valid
+                // Unroll all 4 corners completely inline
 
-                let s00 = process_corner_interior(buffer_ptr, &row_offsets_0, cx0);
-                let s01 = process_corner_interior(buffer_ptr, &row_offsets_0, cx1);
-                let s10 = process_corner_interior(buffer_ptr, &row_offsets_1, cx0);
-                let s11 = process_corner_interior(buffer_ptr, &row_offsets_1, cx1);
+                let cx0 = pe_x as usize;
+                let cx1 = cx0 + 1;
 
-                s00 + s01 + s10 + s11
+                // Corner (0,0): center at (cx0, cy0), rows r0/r1/r2
+                let mut sum = 0.0f32;
+                unsafe {
+                    // Load 9 values for corner (0,0)
+                    let v0 = *ptr.add(r0 + cx0 - 1);
+                    let v1 = *ptr.add(r0 + cx0);
+                    let v2 = *ptr.add(r0 + cx0 + 1);
+                    let v3 = *ptr.add(r1 + cx0 - 1);
+                    let v4 = *ptr.add(r1 + cx0);
+                    let v5 = *ptr.add(r1 + cx0 + 1);
+                    let v6 = *ptr.add(r2 + cx0 - 1);
+                    let v7 = *ptr.add(r2 + cx0);
+                    let v8 = *ptr.add(r2 + cx0 + 1);
+
+                    // Find 4 smallest inline using min comparisons
+                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+
+                    // Pass 1: find min
+                    let mut mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.125 * a[mi];
+                    a[mi] = f32::MAX;
+
+                    // Pass 2
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.075 * a[mi];
+                    a[mi] = f32::MAX;
+
+                    // Pass 3
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.06 * a[mi];
+                    a[mi] = f32::MAX;
+
+                    // Pass 4
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.05 * a[mi];
+                }
+
+                // Corner (1,0): center at (cx1, cy0), rows r0/r1/r2
+                unsafe {
+                    let v0 = *ptr.add(r0 + cx1 - 1);
+                    let v1 = *ptr.add(r0 + cx1);
+                    let v2 = *ptr.add(r0 + cx1 + 1);
+                    let v3 = *ptr.add(r1 + cx1 - 1);
+                    let v4 = *ptr.add(r1 + cx1);
+                    let v5 = *ptr.add(r1 + cx1 + 1);
+                    let v6 = *ptr.add(r2 + cx1 - 1);
+                    let v7 = *ptr.add(r2 + cx1);
+                    let v8 = *ptr.add(r2 + cx1 + 1);
+
+                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                    let mut mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.125 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.075 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.06 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.05 * a[mi];
+                }
+
+                // Corner (0,1): center at (cx0, cy1), rows r1/r2/r3
+                unsafe {
+                    let v0 = *ptr.add(r1 + cx0 - 1);
+                    let v1 = *ptr.add(r1 + cx0);
+                    let v2 = *ptr.add(r1 + cx0 + 1);
+                    let v3 = *ptr.add(r2 + cx0 - 1);
+                    let v4 = *ptr.add(r2 + cx0);
+                    let v5 = *ptr.add(r2 + cx0 + 1);
+                    let v6 = *ptr.add(r3 + cx0 - 1);
+                    let v7 = *ptr.add(r3 + cx0);
+                    let v8 = *ptr.add(r3 + cx0 + 1);
+
+                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                    let mut mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.125 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.075 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.06 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.05 * a[mi];
+                }
+
+                // Corner (1,1): center at (cx1, cy1), rows r1/r2/r3
+                unsafe {
+                    let v0 = *ptr.add(r1 + cx1 - 1);
+                    let v1 = *ptr.add(r1 + cx1);
+                    let v2 = *ptr.add(r1 + cx1 + 1);
+                    let v3 = *ptr.add(r2 + cx1 - 1);
+                    let v4 = *ptr.add(r2 + cx1);
+                    let v5 = *ptr.add(r2 + cx1 + 1);
+                    let v6 = *ptr.add(r3 + cx1 - 1);
+                    let v7 = *ptr.add(r3 + cx1);
+                    let v8 = *ptr.add(r3 + cx1 + 1);
+
+                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                    let mut mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.125 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.075 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.06 * a[mi];
+                    a[mi] = f32::MAX;
+                    mi = 0;
+                    if a[1] < a[mi] { mi = 1; }
+                    if a[2] < a[mi] { mi = 2; }
+                    if a[3] < a[mi] { mi = 3; }
+                    if a[4] < a[mi] { mi = 4; }
+                    if a[5] < a[mi] { mi = 5; }
+                    if a[6] < a[mi] { mi = 6; }
+                    if a[7] < a[mi] { mi = 7; }
+                    if a[8] < a[mi] { mi = 8; }
+                    sum += 0.05 * a[mi];
+                }
+
+                sum
             } else {
-                // Slow path: boundary blocks need clamping
-                let mut corner_sum = 0.0f32;
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let cx = (pe_x_base + dx) as isize;
-                        let cy = cy0 + dy as isize;
-                        let vals = gather_3x3_clamped(buffer_ptr, pe_w, buffer_rows, cx, cy, max_y);
-                        corner_sum += weighted_4_smallest(&vals);
+                // SLOW PATH: Boundary blocks - use clamping
+                let mut sum = 0.0f32;
+
+                for dy in 0..2isize {
+                    for dx in 0..2isize {
+                        let cx = pe_x + dx;
+                        let cy = cy0 + dy;
+
+                        // Gather with clamping
+                        let c0 = (cx - 1).clamp(0, pe_w_i - 1) as usize;
+                        let c1 = cx.clamp(0, pe_w_i - 1) as usize;
+                        let c2 = (cx + 1).clamp(0, pe_w_i - 1) as usize;
+
+                        let ry0 = ((cy - 1).clamp(0, max_y) as usize % buffer_rows) * pe_w;
+                        let ry1 = (cy.clamp(0, max_y) as usize % buffer_rows) * pe_w;
+                        let ry2 = ((cy + 1).clamp(0, max_y) as usize % buffer_rows) * pe_w;
+
+                        unsafe {
+                            let v0 = *ptr.add(ry0 + c0);
+                            let v1 = *ptr.add(ry0 + c1);
+                            let v2 = *ptr.add(ry0 + c2);
+                            let v3 = *ptr.add(ry1 + c0);
+                            let v4 = *ptr.add(ry1 + c1);
+                            let v5 = *ptr.add(ry1 + c2);
+                            let v6 = *ptr.add(ry2 + c0);
+                            let v7 = *ptr.add(ry2 + c1);
+                            let v8 = *ptr.add(ry2 + c2);
+
+                            let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                            let mut mi = 0;
+                            if a[1] < a[mi] { mi = 1; }
+                            if a[2] < a[mi] { mi = 2; }
+                            if a[3] < a[mi] { mi = 3; }
+                            if a[4] < a[mi] { mi = 4; }
+                            if a[5] < a[mi] { mi = 5; }
+                            if a[6] < a[mi] { mi = 6; }
+                            if a[7] < a[mi] { mi = 7; }
+                            if a[8] < a[mi] { mi = 8; }
+                            sum += 0.125 * a[mi];
+                            a[mi] = f32::MAX;
+                            mi = 0;
+                            if a[1] < a[mi] { mi = 1; }
+                            if a[2] < a[mi] { mi = 2; }
+                            if a[3] < a[mi] { mi = 3; }
+                            if a[4] < a[mi] { mi = 4; }
+                            if a[5] < a[mi] { mi = 5; }
+                            if a[6] < a[mi] { mi = 6; }
+                            if a[7] < a[mi] { mi = 7; }
+                            if a[8] < a[mi] { mi = 8; }
+                            sum += 0.075 * a[mi];
+                            a[mi] = f32::MAX;
+                            mi = 0;
+                            if a[1] < a[mi] { mi = 1; }
+                            if a[2] < a[mi] { mi = 2; }
+                            if a[3] < a[mi] { mi = 3; }
+                            if a[4] < a[mi] { mi = 4; }
+                            if a[5] < a[mi] { mi = 5; }
+                            if a[6] < a[mi] { mi = 6; }
+                            if a[7] < a[mi] { mi = 7; }
+                            if a[8] < a[mi] { mi = 8; }
+                            sum += 0.06 * a[mi];
+                            a[mi] = f32::MAX;
+                            mi = 0;
+                            if a[1] < a[mi] { mi = 1; }
+                            if a[2] < a[mi] { mi = 2; }
+                            if a[3] < a[mi] { mi = 3; }
+                            if a[4] < a[mi] { mi = 4; }
+                            if a[5] < a[mi] { mi = 5; }
+                            if a[6] < a[mi] { mi = 6; }
+                            if a[7] < a[mi] { mi = 7; }
+                            if a[8] < a[mi] { mi = 8; }
+                            sum += 0.05 * a[mi];
+                        }
                     }
                 }
-                corner_sum
+
+                sum
             };
 
-            output[bx] = sum;
+            output[bx] = block_sum;
         }
     }
 }
@@ -1582,7 +1755,7 @@ pub use archmage_impl::mage_pre_erosion_row_padded;
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_per_block_modulations_row;
 
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+// Note: mage_compute_fuzzy_erosion_row doesn't need archmage - it's pure inlined Rust
 pub use archmage_impl::mage_compute_fuzzy_erosion_row;
 
 // ============================================================================
@@ -2473,10 +2646,9 @@ mod tests {
                     }
                 }
 
-                // Archmage version
+                // Optimized version (no token needed - pure inlined Rust)
                 let mut output_archmage = vec![0.0f32; blocks_w];
                 super::archmage_impl::mage_compute_fuzzy_erosion_row(
-                    token,
                     &pre_erosion_buffer,
                     pe_w,
                     buffer_rows,
@@ -2486,6 +2658,7 @@ mod tests {
                     blocks_w,  // block_count
                     &mut output_archmage,
                 );
+                let _ = token; // Silence unused warning
 
                 // Compare
                 for bx in 0..blocks_w {

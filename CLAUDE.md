@@ -293,6 +293,33 @@ underperforms significantly. Options:
 
 **Conclusion:** The SIMD-optimized sequential path is already efficient. Thread-level parallelism would need coarser granularity (e.g., multiple iMCU rows buffered) to overcome overhead, which conflicts with the streaming architecture.
 
+### Fuzzy Erosion SIMD (2026-01-21)
+
+**Attempted:** SIMD-optimize `compute_fuzzy_erosion_row_into` with archmage.
+
+**Approaches tried:**
+1. **Archmage with helper functions**: Created `mage_compute_fuzzy_erosion_row` with separate
+   `weighted_4_smallest`, `gather_3x3_clamped`, `gather_3x3_interior` helpers.
+   Result: **3x slower** (67ms vs 53ms) - `#[arcane]` prevents inlining, causing YMM register
+   spills at every function call boundary.
+
+2. **Massive inlined function**: ~350 lines with all 4 corners fully unrolled, no helper calls.
+   Result: **Still slower** (68ms vs 53ms) - instruction cache pressure from code bloat.
+
+**Root cause analysis:**
+- The algorithm requires finding 4 smallest from 9 values with index tracking
+- Scalar partial sort: `find min → replace with MAX → repeat 4×`
+- This creates unpredictable branch patterns that SIMD doesn't help
+- Code bloat from unrolling hurts icache more than SIMD helps
+
+**What would actually help:**
+- True SIMD sorting network (e.g., bitonic sort for 16 elements)
+- Would need to process multiple blocks in parallel, not just vectorize one block
+- Complexity not justified for ~5% of encode time
+
+**Files:** `jpegli-rs/src/quant/aq/simd.rs:1377` (massive version, unused),
+`jpegli-rs/src/quant/aq/streaming.rs:631` (original scalar, in use)
+
 ## Known Bugs
 
 0. **Debug env var in hot loop (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:798`
