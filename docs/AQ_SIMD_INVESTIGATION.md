@@ -7,7 +7,13 @@
 **Current state (2026-01-20):**
 - Default build: Rust 1.6x slower than C++
 - With `-C target-cpu=x86-64-v4`: Rust 1.33x slower (40% of gap closed)
-- Remaining gap is in AQ functions using `wide` crate vs Highway hand-tuned AVX-512
+- **Key insight:** The relative AQ percentage stays constant even with -v4, ruling out vector width as bottleneck
+
+**Root cause analysis (from disassembly comparison):**
+- Both use ymm (256-bit) registers in hot loops, not zmm
+- C++ has 41 FMA instructions vs Rust's ~19 in AQ code
+- C++ uses `HWY_CAPPED(float, 8)` for 8x8 block ops (same as Rust f32x8)
+- Difference is likely instruction scheduling, loop structure, or inlining
 
 **Goal:** Match C++ AQ performance by understanding and replicating Highway's SIMD strategy.
 
@@ -469,3 +475,100 @@ just parity               # C++ parity test
 - `jpegli-rs/src/quant/aq/simd.rs` - Main SIMD implementations
 - `jpegli-rs/src/quant/aq/streaming.rs` - Streaming processor
 - `jpegli-rs/Cargo.toml` - Add unsafe_simd or archmage-simd feature
+
+---
+
+## Part 10: Disassembly Comparison Results (2026-01-20)
+
+### Register Usage Comparison
+
+**C++ jpegli AQ (adaptive_quantization.cc.o):**
+```
+    217 xmm (128-bit)
+    147 ymm (256-bit)
+     45 zmm (512-bit)
+```
+
+**Rust jpegli AQ (pre_erosion_row AVX-512 version):**
+```
+     52 ymm (256-bit)
+     20+ xmm (128-bit)
+      0 zmm (512-bit)
+```
+
+### Key Finding: Both Use 256-bit in Hot Loops
+
+Despite having AVX-512 available, both implementations primarily use ymm (256-bit) registers
+in the AQ hot loops. This is because:
+
+1. **C++ Highway:** Uses `HWY_CAPPED(float, 8)` for 8x8 block operations
+2. **Rust wide:** Uses `f32x8` which is always 8 floats
+
+The zmm usage in C++ is for data movement (vmovdqa32 zmm), not computation.
+
+### FMA Instruction Count
+
+| Implementation | FMA Count |
+|----------------|-----------|
+| C++ AQ total | 41 |
+| Rust pre_erosion_row | 9 |
+| Rust per_block_modulations_row | 10 |
+| **Rust AQ total** | **~19** |
+
+The C++ code has 2x more FMA instructions, suggesting:
+1. More aggressive inlining
+2. Different polynomial evaluation strategy
+3. Better instruction selection by Clang/Highway
+
+### C++ Loop Structure (ComputePreErosion hot path at 0x290)
+
+```asm
+# Main loop: processes 8 floats per iteration
+.LBB164_14:
+    vaddps ymm0, ymm25, [r9+r8*4]      # load + add
+    vmulps ymm28, ymm0, ymm0           # square
+    vfmadd132ps ymm27, ymm23, ymm28    # FMA
+    vfmadd132ps ymm0, ymm21, ymm28     # FMA
+    vdivps ymm26, ymm0, ymm27          # division
+    # ... more operations
+    vmovups [rcx+r8*4], ymm0           # store
+    add r8, 8
+    cmp rsi, r8
+    ja .LBB164_14
+```
+
+### Rust Loop Structure (pre_erosion_row hot path)
+
+```asm
+# Main loop: similar structure
+.LBB164_14:
+    vmovups ymm14, [rdi+4*rax]
+    vaddps ymm0, ymm15, ymm2
+    vmulps ymm9, ymm7, ymm7
+    vfmadd231ps ymm8, ymm9, ymm5
+    vfmadd213ps ymm7, ymm9, [rip+.LCPI]
+    vdivps ymm7, ymm7, ymm16
+    # ... more operations
+    vmovups [r9+4*rax], ymm2
+    add r8, 8
+    cmp rcx, r8
+    ja .LBB164_14
+```
+
+### Conclusions
+
+1. **Vector width is NOT the bottleneck** - both use 256-bit in hot loops
+2. **FMA count differs (41 vs ~19)** - C++ has more fused operations
+3. **Loop structure is similar** - no major algorithmic difference
+4. **Likely causes for remaining gap:**
+   - Fewer FMA fusions in Rust (LLVM vs Clang codegen)
+   - Different constant loading strategies
+   - Inlining decisions (C++ inlines more aggressively)
+   - Memory access patterns (C++ may have better cache locality)
+
+### Recommended Next Steps
+
+1. **Profile cache misses:** `perf stat -e cache-misses,L1-dcache-load-misses`
+2. **Force more inlining:** Add `#[inline(always)]` to all helper functions
+3. **Review polynomial evaluation:** Compare `EvalRationalPolynomial` vs Rust equivalent
+4. **Check constant broadcast:** C++ uses `vbroadcastss` with memory operand, Rust uses splat
