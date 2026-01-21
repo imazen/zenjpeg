@@ -325,22 +325,31 @@ The `for i in 0..8` pattern often prevents vectorization. Let the compiler decid
 
 **Benchmark:** `cargo run --release -p jpegli-rs --example bench_autovec_aq`
 
-**Results** (pre_erosion_row, width=4096):
+**Results** (width=4096, 512 blocks):
 
-| Implementation | Time | Speedup |
-|---------------|------|---------|
-| wide (f32x8) | 2.81 µs/row | 1.0x |
-| autovec (iter) | 1.45 µs/row | **1.94x faster** |
-| autovec (chunked) | 8.20 µs/row | 2.9x slower |
+| Function | wide | autovec | Result |
+|----------|------|---------|--------|
+| pre_erosion_row | 2.32 µs/row | 1.19 µs/row | **autovec 1.95x FASTER** |
+| gamma_modulation_sum_8x8 | 16.1 ns/block | 34.6 ns/block | wide 2.15x faster |
+| hf_modulation_sum_8x8 | 9.4 ns/block | 47.8 ns/block | wide 5.08x faster |
+| per_block_modulations_row | 29.8 µs/row | 50.9 µs/row | wide 1.71x faster |
 
-**Key insight:** The simple iterator loop (`for x in data`) autovectorizes much better
-than explicit `for i in 0..8` chunking. The compiler's vectorizer recognizes the
-simple pattern and generates optimal SIMD code.
+**Key insight:** Autovectorization works well for:
+- Long rows with simple iterator loops (pre_erosion_row → 1.95x faster)
+- Linear iteration without complex boundary checks
 
-**Why wide is slower:** The `wide` crate uses `cfg(target_feature)` for compile-time
-detection. Without global `-C target-cpu=x86-64-v3`, it falls back to SSE even inside
-`#[multiversed]` functions. The `multiversion` crate uses `#[target_feature]` which
-enables proper AVX2 codegen.
+Autovectorization fails for:
+- Small 8x8 blocks with nested loops (gamma/hf_modulation → 2-5x slower)
+- Loops with per-element boundary checks preventing vectorization
+
+**Integration:** The faster autovec `pre_erosion_row` is now integrated into the
+streaming AQ path (`streaming.rs:31`). The slower gamma/hf/per_block functions
+continue to use the wide-based SIMD.
+
+**Why wide is slower for pre_erosion:** The `wide` crate uses `cfg(target_feature)`
+for compile-time detection. Without global `-C target-cpu=x86-64-v3`, it falls back
+to SSE even inside `#[multiversed]` functions. The `multiversion` crate uses
+`#[target_feature]` which enables proper AVX2 codegen.
 
 **Files:** `jpegli-rs/src/quant/aq/autovec.rs`, `jpegli-rs/examples/bench_autovec_aq.rs`
 

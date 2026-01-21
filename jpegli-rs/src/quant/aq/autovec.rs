@@ -170,6 +170,242 @@ pub fn pre_erosion_row_autovec_iter(
 }
 
 // ============================================================================
+// Gamma Modulation (autovectorized)
+// ============================================================================
+
+// K_BIAS for gamma modulation is different from GAMMA_OFFSET used in pre_erosion
+const K_BIAS: f32 = 0.16 / K_INPUT_SCALING; // = 40.8
+
+/// Inverse ratio of derivatives - for gamma modulation.
+/// This is num/den instead of den/num used in pre_erosion.
+#[inline(always)]
+fn ratio_of_derivatives_inv(val: f32) -> f32 {
+    let v = val.max(0.0);
+    let v2 = v * v;
+    let num = v2.mul_add(K_NUM_MUL_RATIO, K_NUM_OFFSET_RATIO);
+    let den = (v * K_DEN_MUL_RATIO).mul_add(v2, K_VOFFSET_RATIO);
+    num / den
+}
+
+/// Compute gamma modulation sum for an 8x8 block using autovectorization.
+///
+/// # Arguments
+/// * `block` - Pointer to block start in buffer
+/// * `stride` - Row stride in buffer
+/// * `block_y` - Y coordinate of block start
+/// * `img_height` - Image height for boundary checks
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+pub fn gamma_modulation_sum_8x8_autovec(
+    block: &[f32],
+    stride: usize,
+    block_y: usize,
+    img_height: usize,
+) -> f32 {
+    let mut sum = 0.0f32;
+
+    for dy in 0..8 {
+        let y = block_y + dy;
+        if y >= img_height {
+            continue;
+        }
+
+        let row_start = dy * stride;
+        if row_start + 8 > block.len() {
+            continue;
+        }
+
+        // Process 8 pixels - compiler will autovectorize
+        for i in 0..8 {
+            let pixel = block[row_start + i];
+            sum += ratio_of_derivatives_inv(pixel + K_BIAS);
+        }
+    }
+
+    sum
+}
+
+// ============================================================================
+// HF Modulation (autovectorized)
+// ============================================================================
+
+/// Compute HF modulation sum for an 8x8 block using autovectorization.
+///
+/// Computes sum of |p - p_right| + |p - p_below| for all valid pixel pairs.
+///
+/// # Arguments
+/// * `block` - Pointer to block start in buffer (needs +1 column for horizontal diffs)
+/// * `stride` - Row stride in buffer
+/// * `block_y` - Y coordinate of block start
+/// * `img_height` - Image height for boundary checks
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+pub fn hf_modulation_sum_8x8_autovec(
+    block: &[f32],
+    stride: usize,
+    block_y: usize,
+    img_height: usize,
+) -> f32 {
+    let mut h_sum = 0.0f32;
+    let mut v_sum = 0.0f32;
+
+    for dy in 0..8 {
+        let y = block_y + dy;
+        if y >= img_height {
+            continue;
+        }
+
+        let row_start = dy * stride;
+
+        // Horizontal differences: |p - p_right| for positions 0..7
+        if row_start + 9 <= block.len() {
+            // Process 7 horizontal differences (mask out 8th)
+            for i in 0..7 {
+                let p = block[row_start + i];
+                let p_right = block[row_start + i + 1];
+                h_sum += (p - p_right).abs();
+            }
+        }
+
+        // Vertical differences: |p - p_below| for first 7 rows
+        if dy < 7 && y + 1 < img_height {
+            let next_row_start = (dy + 1) * stride;
+            if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
+                // Process 8 vertical differences
+                for i in 0..8 {
+                    let p = block[row_start + i];
+                    let p_below = block[next_row_start + i];
+                    v_sum += (p - p_below).abs();
+                }
+            }
+        }
+    }
+
+    h_sum + v_sum
+}
+
+// ============================================================================
+// Per-block modulations row (fully autovectorized)
+// ============================================================================
+
+// Fast log2 approximation - must match simd.rs for identical results
+#[inline(always)]
+fn fast_log2(x: f32) -> f32 {
+    if x <= 0.0 {
+        return f32::NEG_INFINITY;
+    }
+
+    let bits = x.to_bits() as i32;
+    let e = (bits >> 23) - 127;
+
+    // Extract mantissa as float in [1, 2)
+    let f = f32::from_bits((bits & 0x007FFFFF) as u32 | 0x3F800000);
+    let f_minus_1 = f - 1.0;
+
+    // Polynomial approximation using Horner's method (FMA)
+    let t = f_minus_1;
+    let log2_f = t * 0.2885390082_f32
+        .mul_add(t, -0.3606737602)
+        .mul_add(t, 0.4808983470)
+        .mul_add(t, -0.7213475204)
+        .mul_add(t, 1.442695041);
+
+    e as f32 + log2_f
+}
+
+// Fast exp2 approximation - must match simd.rs for identical results
+#[inline(always)]
+fn fast_exp2(x: f32) -> f32 {
+    // Clamp to prevent overflow/underflow
+    let x = x.clamp(-126.0, 127.0);
+
+    // Split into integer and fractional parts
+    let xi = x.floor();
+    let xf = x - xi;
+
+    // Minimax polynomial approximation for 2^xf where xf in [0, 1)
+    let p = 1.0
+        + xf * (0.6931471805599453  // ln(2)
+        + xf * (0.24022650695910071 // ln(2)^2/2
+        + xf * (0.055504108664821579 // ln(2)^3/6
+        + xf * 0.009618129107628477))); // ln(2)^4/24
+
+    // Combine: 2^xi * p(xf) using IEEE 754 bit manipulation
+    let xi_i32 = xi as i32;
+    let bits = ((xi_i32 + 127) as u32) << 23;
+    f32::from_bits(bits) * p
+}
+
+/// Process per_block_modulations for a row of blocks using autovectorization.
+///
+/// This combines ComputeMask, HfModulation, GammaModulation, and final transform,
+/// using pure scalar code that the compiler autovectorizes.
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+pub fn per_block_modulations_row_autovec(
+    input: &[f32],
+    stride: usize,
+    _img_width: usize,
+    img_height: usize,
+    by: usize,
+    block_w: usize,
+    aq_row: &mut [f32],
+    mul: f32,
+    add: f32,
+) {
+    const K_SUM_COEFF: f32 = -2.0052193233688884 * K_INPUT_SCALING / 112.0;
+    const K_GAMMA: f32 = -0.15526878023684174 * K_INV_LOG2E;
+    const K_SCALE: f32 = K_INPUT_SCALING / 64.0;
+    const LOG2_E: f32 = 1.442695041;
+
+    // ComputeMask constants
+    const K_MASK_BASE: f32 = -0.74174993;
+    const K_MASK_MUL4: f32 = 3.2353257320940401;
+    const K_MASK_MUL2: f32 = 12.906028311180409;
+    const K_MASK_OFFSET2: f32 = 305.04035728311436;
+    const K_MASK_MUL3: f32 = 5.0220313103171232;
+    const K_MASK_OFFSET3: f32 = 2.1925739705298404;
+    const K_MASK_OFFSET4: f32 = 0.25 * K_MASK_OFFSET3;
+    const K_MASK_MUL0: f32 = 0.74760422233706747;
+
+    let y_start = by * 8;
+
+    for bx in 0..block_w {
+        let x_start = bx * 8;
+
+        // Get fuzzy erosion value
+        let fuzzy_val = aq_row[bx];
+
+        // 1. ComputeMask (inlined)
+        let v1 = (fuzzy_val * K_MASK_MUL0).max(1e-3);
+        let v2 = 1.0 / (v1 + K_MASK_OFFSET2);
+        let v3 = 1.0 / (v1 * v1 + K_MASK_OFFSET3);
+        let v4 = 1.0 / (v1 * v1 + K_MASK_OFFSET4);
+        let mut out_val = K_MASK_MUL4.mul_add(
+            v4,
+            K_MASK_MUL2.mul_add(v2, K_MASK_MUL3.mul_add(v3, K_MASK_BASE)),
+        );
+
+        // 2. HfModulation
+        let block_offset = y_start * stride + x_start;
+        let block = &input[block_offset..];
+        let hf_sum = hf_modulation_sum_8x8_autovec(block, stride, y_start, img_height);
+        out_val += hf_sum * K_SUM_COEFF;
+
+        // 3. GammaModulation
+        let gamma_sum = gamma_modulation_sum_8x8_autovec(block, stride, y_start, img_height);
+        let overall_ratio = gamma_sum * K_SCALE;
+        let log_ratio = if overall_ratio > 0.0 {
+            fast_log2(overall_ratio)
+        } else {
+            0.0
+        };
+        out_val += K_GAMMA * log_ratio;
+
+        // 4. Final transform
+        let quant_field = fast_exp2(out_val * LOG2_E).mul_add(mul, add);
+        aq_row[bx] = quant_field;
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -226,5 +462,90 @@ mod tests {
         // Should produce non-zero results
         let sum: f32 = output.iter().sum();
         assert!(sum > 0.0, "Output should be non-zero, got sum={}", sum);
+    }
+
+    #[test]
+    fn test_gamma_modulation_sum_8x8_autovec() {
+        // Create 8x8 block with known values
+        let stride = 9; // 8 + 1 for horizontal padding
+        let mut block = vec![0.0f32; stride * 8];
+
+        // Fill with test pattern
+        for dy in 0..8 {
+            for dx in 0..8 {
+                block[dy * stride + dx] = ((dy * 8 + dx) as f32 * 3.7) % 255.0;
+            }
+        }
+
+        let sum = gamma_modulation_sum_8x8_autovec(&block, stride, 0, 8);
+        assert!(sum > 0.0, "Gamma sum should be positive, got {}", sum);
+        assert!(sum.is_finite(), "Gamma sum should be finite");
+    }
+
+    #[test]
+    fn test_hf_modulation_sum_8x8_autovec() {
+        // Create 8x8 block with gradient
+        let stride = 9;
+        let mut block = vec![0.0f32; stride * 8];
+
+        // Fill with gradient - differences should be non-zero
+        for dy in 0..8 {
+            for dx in 0..9 {
+                block[dy * stride + dx] = (dy * 10 + dx * 5) as f32;
+            }
+        }
+
+        let sum = hf_modulation_sum_8x8_autovec(&block, stride, 0, 8);
+
+        // With gradient pattern, should have:
+        // - 7 horizontal diffs per row × 8 rows = 56 diffs, each = 5
+        // - 8 vertical diffs per row × 7 rows = 56 diffs, each = 10
+        // Total = 56*5 + 56*10 = 280 + 560 = 840
+        let expected = 840.0;
+        let diff = (sum - expected).abs();
+        assert!(
+            diff < 0.1,
+            "HF sum mismatch: got {}, expected {}",
+            sum,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_per_block_modulations_row_autovec() {
+        // Create input buffer for one row of blocks
+        let block_w = 8;
+        let width = block_w * 8;
+        let height = 8;
+        let stride = width + 1; // +1 for horizontal padding
+
+        let mut input = vec![128.0f32; stride * height];
+        // Add some variation
+        for y in 0..height {
+            for x in 0..width {
+                input[y * stride + x] = 100.0 + ((x + y) % 50) as f32;
+            }
+        }
+
+        // Initialize aq_row with fuzzy erosion values
+        let mut aq_row = vec![0.5f32; block_w];
+
+        let mul = 0.841;
+        let add = 0.1;
+
+        per_block_modulations_row_autovec(
+            &input, stride, width, height, 0, block_w, &mut aq_row, mul, add,
+        );
+
+        // Should produce positive values within reasonable range
+        for (bx, &val) in aq_row.iter().enumerate() {
+            assert!(
+                val.is_finite(),
+                "Block {} has non-finite value: {}",
+                bx,
+                val
+            );
+            assert!(val > 0.0, "Block {} has non-positive value: {}", bx, val);
+        }
     }
 }
