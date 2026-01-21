@@ -367,6 +367,414 @@ pub fn mage_forward_dct_8x8_wide<T: HasAvx2 + HasFma + Copy>(
 }
 
 // ============================================================================
+// AVX-512 Dual-Block Forward DCT (processes 2 blocks simultaneously)
+// ============================================================================
+
+/// In-place 8x8 transpose on 8 __m512 registers, operating on BOTH 256-bit halves.
+///
+/// Each ZMM register holds two rows: [blockA_row[i], blockB_row[i]]
+/// After transpose: [blockA_col[i], blockB_col[i]]
+///
+/// Uses extract/insert to process each 256-bit half with the AVX2 transpose pattern,
+/// then recombines. This is correct because it keeps block A and B data separate.
+#[arcane]
+#[inline]
+fn mage_transpose_8x8_dual_inner(
+    token: impl archmage::HasAvx512f + archmage::HasAvx2,
+    r: &mut [__m512; 8],
+) {
+    // Extract low (block A) and high (block B) halves
+    let mut a: [__m256; 8] = [
+        _mm512_castps512_ps256(r[0]),
+        _mm512_castps512_ps256(r[1]),
+        _mm512_castps512_ps256(r[2]),
+        _mm512_castps512_ps256(r[3]),
+        _mm512_castps512_ps256(r[4]),
+        _mm512_castps512_ps256(r[5]),
+        _mm512_castps512_ps256(r[6]),
+        _mm512_castps512_ps256(r[7]),
+    ];
+    let mut b: [__m256; 8] = [
+        _mm512_extractf32x8_ps::<1>(r[0]),
+        _mm512_extractf32x8_ps::<1>(r[1]),
+        _mm512_extractf32x8_ps::<1>(r[2]),
+        _mm512_extractf32x8_ps::<1>(r[3]),
+        _mm512_extractf32x8_ps::<1>(r[4]),
+        _mm512_extractf32x8_ps::<1>(r[5]),
+        _mm512_extractf32x8_ps::<1>(r[6]),
+        _mm512_extractf32x8_ps::<1>(r[7]),
+    ];
+
+    // Transpose block A using AVX2 pattern
+    // Phase 1: Interleave pairs
+    let q0 = _mm256_unpacklo_ps(a[0], a[2]);
+    let q1 = _mm256_unpacklo_ps(a[1], a[3]);
+    let q2 = _mm256_unpackhi_ps(a[0], a[2]);
+    let q3 = _mm256_unpackhi_ps(a[1], a[3]);
+    let q4 = _mm256_unpacklo_ps(a[4], a[6]);
+    let q5 = _mm256_unpacklo_ps(a[5], a[7]);
+    let q6 = _mm256_unpackhi_ps(a[4], a[6]);
+    let q7 = _mm256_unpackhi_ps(a[5], a[7]);
+
+    // Phase 2
+    let s0 = _mm256_unpacklo_ps(q0, q1);
+    let s1 = _mm256_unpackhi_ps(q0, q1);
+    let s2 = _mm256_unpacklo_ps(q2, q3);
+    let s3 = _mm256_unpackhi_ps(q2, q3);
+    let s4 = _mm256_unpacklo_ps(q4, q5);
+    let s5 = _mm256_unpackhi_ps(q4, q5);
+    let s6 = _mm256_unpacklo_ps(q6, q7);
+    let s7 = _mm256_unpackhi_ps(q6, q7);
+
+    // Phase 3: Exchange 128-bit halves
+    a[0] = _mm256_permute2f128_ps::<0x20>(s0, s4);
+    a[1] = _mm256_permute2f128_ps::<0x20>(s1, s5);
+    a[2] = _mm256_permute2f128_ps::<0x20>(s2, s6);
+    a[3] = _mm256_permute2f128_ps::<0x20>(s3, s7);
+    a[4] = _mm256_permute2f128_ps::<0x31>(s0, s4);
+    a[5] = _mm256_permute2f128_ps::<0x31>(s1, s5);
+    a[6] = _mm256_permute2f128_ps::<0x31>(s2, s6);
+    a[7] = _mm256_permute2f128_ps::<0x31>(s3, s7);
+
+    // Transpose block B using same pattern
+    let q0 = _mm256_unpacklo_ps(b[0], b[2]);
+    let q1 = _mm256_unpacklo_ps(b[1], b[3]);
+    let q2 = _mm256_unpackhi_ps(b[0], b[2]);
+    let q3 = _mm256_unpackhi_ps(b[1], b[3]);
+    let q4 = _mm256_unpacklo_ps(b[4], b[6]);
+    let q5 = _mm256_unpacklo_ps(b[5], b[7]);
+    let q6 = _mm256_unpackhi_ps(b[4], b[6]);
+    let q7 = _mm256_unpackhi_ps(b[5], b[7]);
+
+    let s0 = _mm256_unpacklo_ps(q0, q1);
+    let s1 = _mm256_unpackhi_ps(q0, q1);
+    let s2 = _mm256_unpacklo_ps(q2, q3);
+    let s3 = _mm256_unpackhi_ps(q2, q3);
+    let s4 = _mm256_unpacklo_ps(q4, q5);
+    let s5 = _mm256_unpackhi_ps(q4, q5);
+    let s6 = _mm256_unpacklo_ps(q6, q7);
+    let s7 = _mm256_unpackhi_ps(q6, q7);
+
+    b[0] = _mm256_permute2f128_ps::<0x20>(s0, s4);
+    b[1] = _mm256_permute2f128_ps::<0x20>(s1, s5);
+    b[2] = _mm256_permute2f128_ps::<0x20>(s2, s6);
+    b[3] = _mm256_permute2f128_ps::<0x20>(s3, s7);
+    b[4] = _mm256_permute2f128_ps::<0x31>(s0, s4);
+    b[5] = _mm256_permute2f128_ps::<0x31>(s1, s5);
+    b[6] = _mm256_permute2f128_ps::<0x31>(s2, s6);
+    b[7] = _mm256_permute2f128_ps::<0x31>(s3, s7);
+
+    // Recombine into ZMM registers
+    let _ = token;
+    r[0] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[0]), b[0]);
+    r[1] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[1]), b[1]);
+    r[2] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[2]), b[2]);
+    r[3] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[3]), b[3]);
+    r[4] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[4]), b[4]);
+    r[5] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[5]), b[5]);
+    r[6] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[6]), b[6]);
+    r[7] = _mm512_insertf32x8::<1>(_mm512_castps256_ps512(a[7]), b[7]);
+}
+
+/// AVX-512 DCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
+#[arcane]
+#[inline]
+fn mage_dct1d_2_avx512_inner(
+    _token: impl archmage::HasAvx512f,
+    m0: &mut __m512,
+    m1: &mut __m512,
+) {
+    let in0 = *m0;
+    let in1 = *m1;
+    *m0 = _mm512_add_ps(in0, in1);
+    *m1 = _mm512_sub_ps(in0, in1);
+}
+
+/// AVX-512 DCT for N=4 using FMA
+#[arcane]
+#[inline]
+fn mage_dct1d_4_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma>(
+    token: T,
+    m: &mut [__m512; 4],
+) {
+    let wc4_0 = _mm512_set1_ps(WC4_0);
+    let wc4_1 = _mm512_set1_ps(WC4_1);
+    let sqrt2 = _mm512_set1_ps(SQRT2);
+
+    // AddReverse<2>
+    let t0 = _mm512_add_ps(m[0], m[3]);
+    let t1 = _mm512_add_ps(m[1], m[2]);
+
+    // SubReverse<2>
+    let t2 = _mm512_sub_ps(m[0], m[3]);
+    let t3 = _mm512_sub_ps(m[1], m[2]);
+
+    // DCT1D<2> on first half
+    let r0 = _mm512_add_ps(t0, t1);
+    let r1 = _mm512_sub_ps(t0, t1);
+
+    // Multiply by WC4
+    let t2_scaled = _mm512_mul_ps(t2, wc4_0);
+    let t3_scaled = _mm512_mul_ps(t3, wc4_1);
+
+    // DCT1D<2> on second half
+    let r2 = _mm512_add_ps(t2_scaled, t3_scaled);
+    let r3 = _mm512_sub_ps(t2_scaled, t3_scaled);
+
+    // B<2>: r2 = r2 * sqrt2 + r3 (FMA)
+    let _ = token;
+    let r2_final = _mm512_fmadd_ps(r2, sqrt2, r3);
+
+    // InverseEvenOdd<4>
+    m[0] = r0;
+    m[1] = r2_final;
+    m[2] = r1;
+    m[3] = r3;
+}
+
+/// AVX-512 DCT for N=8 using FMA. Processes 16 independent 8-point DCTs in parallel
+/// (8 from block A, 8 from block B).
+#[arcane]
+#[inline]
+fn mage_dct1d_8_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma + Copy>(
+    token: T,
+    m: &mut [__m512; 8],
+) {
+    let wc8_0 = _mm512_set1_ps(WC8_0);
+    let wc8_1 = _mm512_set1_ps(WC8_1);
+    let wc8_2 = _mm512_set1_ps(WC8_2);
+    let wc8_3 = _mm512_set1_ps(WC8_3);
+    let sqrt2 = _mm512_set1_ps(SQRT2);
+
+    // AddReverse<4>
+    let t0 = _mm512_add_ps(m[0], m[7]);
+    let t1 = _mm512_add_ps(m[1], m[6]);
+    let t2 = _mm512_add_ps(m[2], m[5]);
+    let t3 = _mm512_add_ps(m[3], m[4]);
+
+    // SubReverse<4>
+    let t4 = _mm512_sub_ps(m[0], m[7]);
+    let t5 = _mm512_sub_ps(m[1], m[6]);
+    let t6 = _mm512_sub_ps(m[2], m[5]);
+    let t7 = _mm512_sub_ps(m[3], m[4]);
+
+    // DCT1D<4> on first half
+    let mut first = [t0, t1, t2, t3];
+    mage_dct1d_4_avx512_inner(token, &mut first);
+
+    // Multiply by WC8
+    let t4_scaled = _mm512_mul_ps(t4, wc8_0);
+    let t5_scaled = _mm512_mul_ps(t5, wc8_1);
+    let t6_scaled = _mm512_mul_ps(t6, wc8_2);
+    let t7_scaled = _mm512_mul_ps(t7, wc8_3);
+
+    // DCT1D<4> on second half
+    let mut second = [t4_scaled, t5_scaled, t6_scaled, t7_scaled];
+    mage_dct1d_4_avx512_inner(token, &mut second);
+
+    // B<4>: cumulative sum with FMA
+    second[0] = _mm512_fmadd_ps(second[0], sqrt2, second[1]);
+    second[1] = _mm512_add_ps(second[1], second[2]);
+    second[2] = _mm512_add_ps(second[2], second[3]);
+
+    // InverseEvenOdd<8>
+    m[0] = first[0];
+    m[1] = second[0];
+    m[2] = first[1];
+    m[3] = second[1];
+    m[4] = first[2];
+    m[5] = second[2];
+    m[6] = first[3];
+    m[7] = second[3];
+}
+
+/// AVX-512 dual-block forward DCT: processes TWO 8x8 blocks simultaneously.
+///
+/// This function achieves ~2x throughput compared to the AVX2 version by
+/// processing two independent blocks in parallel using 512-bit registers.
+///
+/// # Arguments
+///
+/// * `token` - AVX-512F + FMA capability token
+/// * `input_a` - First 8x8 block (64 f32s, row-major)
+/// * `input_b` - Second 8x8 block (64 f32s, row-major)
+/// * `output_a` - Output for first block
+/// * `output_b` - Output for second block
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use archmage::{Avx512fToken, SimdToken};
+///
+/// if let Some(token) = Avx512fToken::try_new() {
+///     let block_a = [0.0f32; 64];
+///     let block_b = [0.0f32; 64];
+///     let mut out_a = [0.0f32; 64];
+///     let mut out_b = [0.0f32; 64];
+///     mage_forward_dct_8x8_dual(token, &block_a, &block_b, &mut out_a, &mut out_b);
+/// }
+/// ```
+#[arcane]
+#[inline]
+pub fn mage_forward_dct_8x8_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy>(
+    token: T,
+    input_a: &[f32; 64],
+    input_b: &[f32; 64],
+    output_a: &mut [f32; 64],
+    output_b: &mut [f32; 64],
+) {
+    let scale = _mm512_set1_ps(1.0 / 8.0);
+
+    // Load 8 rows from each block, interleaved into ZMM registers
+    // ZMM[i] = [blockA_row[i], blockB_row[i]]
+    let mut reg: [__m512; 8] = [
+        // Combine two 256-bit loads into one 512-bit register
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[0..8].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[0..8].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[8..16].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[8..16].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[16..24].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[16..24].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[24..32].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[24..32].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[32..40].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[32..40].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[40..48].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[40..48].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[48..56].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[48..56].try_into().unwrap()),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[56..64].try_into().unwrap())),
+            avx::_mm256_loadu_ps(token, input_b[56..64].try_into().unwrap()),
+        ),
+    ];
+
+    // Transpose both blocks (operates on each 256-bit half independently)
+    mage_transpose_8x8_dual_inner(token, &mut reg);
+
+    // Row DCT: all 16 rows (8 per block) processed in parallel
+    mage_dct1d_8_avx512_inner(token, &mut reg);
+
+    // Transpose both blocks again
+    mage_transpose_8x8_dual_inner(token, &mut reg);
+
+    // Column DCT: all 16 columns processed in parallel
+    mage_dct1d_8_avx512_inner(token, &mut reg);
+
+    // Scale and store back to separate output arrays
+    for i in 0..8 {
+        let scaled = _mm512_mul_ps(reg[i], scale);
+        // Extract low 256 bits (block A) and high 256 bits (block B)
+        let lo = _mm512_castps512_ps256(scaled);
+        let hi = _mm512_extractf32x8_ps::<1>(scaled);
+
+        avx::_mm256_storeu_ps(
+            token,
+            (&mut output_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
+            lo,
+        );
+        avx::_mm256_storeu_ps(
+            token,
+            (&mut output_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
+            hi,
+        );
+    }
+}
+
+/// Wide-native dual-block forward DCT: takes two Block8x8f, returns two Block8x8f.
+///
+/// This is the AVX-512 equivalent of `mage_forward_dct_8x8_wide`, processing
+/// two blocks at once for ~2x throughput.
+#[arcane]
+#[inline]
+pub fn mage_forward_dct_8x8_wide_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy>(
+    token: T,
+    input_a: &crate::foundation::simd_types::Block8x8f,
+    input_b: &crate::foundation::simd_types::Block8x8f,
+) -> (
+    crate::foundation::simd_types::Block8x8f,
+    crate::foundation::simd_types::Block8x8f,
+) {
+    use crate::foundation::simd_types::Block8x8f;
+
+    let scale = _mm512_set1_ps(1.0 / 8.0);
+
+    // Cast Block8x8f to [[f32; 8]; 8]
+    let rows_a: &[[f32; 8]; 8] = bytemuck::cast_ref(input_a);
+    let rows_b: &[[f32; 8]; 8] = bytemuck::cast_ref(input_b);
+
+    // Load interleaved
+    let mut reg: [__m512; 8] = [
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[0])),
+            avx::_mm256_loadu_ps(token, &rows_b[0]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[1])),
+            avx::_mm256_loadu_ps(token, &rows_b[1]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[2])),
+            avx::_mm256_loadu_ps(token, &rows_b[2]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[3])),
+            avx::_mm256_loadu_ps(token, &rows_b[3]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[4])),
+            avx::_mm256_loadu_ps(token, &rows_b[4]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[5])),
+            avx::_mm256_loadu_ps(token, &rows_b[5]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[6])),
+            avx::_mm256_loadu_ps(token, &rows_b[6]),
+        ),
+        _mm512_insertf32x8::<1>(
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[7])),
+            avx::_mm256_loadu_ps(token, &rows_b[7]),
+        ),
+    ];
+
+    // Transpose, DCT, transpose, DCT
+    mage_transpose_8x8_dual_inner(token, &mut reg);
+    mage_dct1d_8_avx512_inner(token, &mut reg);
+    mage_transpose_8x8_dual_inner(token, &mut reg);
+    mage_dct1d_8_avx512_inner(token, &mut reg);
+
+    // Store back
+    let mut output_a = Block8x8f::default();
+    let mut output_b = Block8x8f::default();
+    let out_rows_a: &mut [[f32; 8]; 8] = bytemuck::cast_mut(&mut output_a);
+    let out_rows_b: &mut [[f32; 8]; 8] = bytemuck::cast_mut(&mut output_b);
+
+    for i in 0..8 {
+        let scaled = _mm512_mul_ps(reg[i], scale);
+        avx::_mm256_storeu_ps(token, &mut out_rows_a[i], _mm512_castps512_ps256(scaled));
+        avx::_mm256_storeu_ps(token, &mut out_rows_b[i], _mm512_extractf32x8_ps::<1>(scaled));
+    }
+
+    (output_a, output_b)
+}
+
+// ============================================================================
 // RGB to YCbCr Color Conversion
 // ============================================================================
 
@@ -1270,6 +1678,228 @@ mod tests {
                 result,
                 expected
             );
+        }
+    }
+
+    // ========================================================================
+    // AVX-512 DCT Tests
+    // ========================================================================
+
+    #[test]
+    fn test_mage_forward_dct_8x8_dual_flat_blocks() {
+        use archmage::Avx512fToken;
+
+        if let Some(token) = Avx512fToken::try_new() {
+            // Two flat blocks with different constant values
+            let input_a = [128.0f32; 64];
+            let input_b = [64.0f32; 64];
+            let mut output_a = [0.0f32; 64];
+            let mut output_b = [0.0f32; 64];
+
+            mage_forward_dct_8x8_dual(token, &input_a, &input_b, &mut output_a, &mut output_b);
+
+            // For flat blocks, only DC should be non-zero
+            // DC_a = 128 * 8 = 1024, DC_b = 64 * 8 = 512
+            assert!(
+                output_a[0].abs() > 900.0,
+                "DC_a should be ~1024 for flat block, got {}",
+                output_a[0]
+            );
+            assert!(
+                output_b[0].abs() > 400.0,
+                "DC_b should be ~512 for flat block, got {}",
+                output_b[0]
+            );
+
+            // AC coefficients should be near zero
+            for i in 1..64 {
+                assert!(
+                    output_a[i].abs() < 0.001,
+                    "AC_a[{}] = {} should be ~0 for flat block",
+                    i,
+                    output_a[i]
+                );
+                assert!(
+                    output_b[i].abs() < 0.001,
+                    "AC_b[{}] = {} should be ~0 for flat block",
+                    i,
+                    output_b[i]
+                );
+            }
+        } else {
+            println!("AVX-512 not available, skipping test");
+        }
+    }
+
+    #[test]
+    fn test_mage_forward_dct_8x8_dual_matches_single() {
+        use archmage::Avx512fToken;
+
+        if let Some(token) = Avx512fToken::try_new() {
+            // Create test patterns
+            let input_a: [f32; 64] = core::array::from_fn(|i| (i % 256) as f32);
+            let input_b: [f32; 64] = core::array::from_fn(|i| ((i * 3 + 17) % 256) as f32);
+
+            // Process with dual-block AVX-512
+            let mut output_a_dual = [0.0f32; 64];
+            let mut output_b_dual = [0.0f32; 64];
+            mage_forward_dct_8x8_dual(
+                token,
+                &input_a,
+                &input_b,
+                &mut output_a_dual,
+                &mut output_b_dual,
+            );
+
+            // Process individually with AVX2
+            let mut output_a_single = [0.0f32; 64];
+            let mut output_b_single = [0.0f32; 64];
+            mage_forward_dct_8x8(token, &input_a, &mut output_a_single);
+            mage_forward_dct_8x8(token, &input_b, &mut output_b_single);
+
+            // Compare results - should be identical (within floating point tolerance)
+            for i in 0..64 {
+                let diff_a = (output_a_dual[i] - output_a_single[i]).abs();
+                let diff_b = (output_b_dual[i] - output_b_single[i]).abs();
+                let max_a = output_a_single[i].abs().max(1e-10);
+                let max_b = output_b_single[i].abs().max(1e-10);
+
+                assert!(
+                    diff_a / max_a < 1e-5 || diff_a < 1e-6,
+                    "Block A mismatch at {}: dual={}, single={}, diff={}",
+                    i,
+                    output_a_dual[i],
+                    output_a_single[i],
+                    diff_a
+                );
+                assert!(
+                    diff_b / max_b < 1e-5 || diff_b < 1e-6,
+                    "Block B mismatch at {}: dual={}, single={}, diff={}",
+                    i,
+                    output_b_dual[i],
+                    output_b_single[i],
+                    diff_b
+                );
+            }
+        } else {
+            println!("AVX-512 not available, skipping test");
+        }
+    }
+
+    #[test]
+    fn test_mage_transpose_8x8_dual() {
+        use archmage::Avx512fToken;
+
+        if let Some(token) = Avx512fToken::try_new() {
+            // Create test data: two 8x8 blocks
+            let original_a: [f32; 64] = core::array::from_fn(|i| i as f32);
+            let original_b: [f32; 64] = core::array::from_fn(|i| (i + 100) as f32);
+
+            // Load into ZMM registers (interleaved)
+            let mut reg: [__m512; 8] = unsafe {
+                [
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[0..8].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[0..8].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[8..16].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[8..16].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[16..24].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[16..24].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[24..32].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[24..32].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[32..40].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[32..40].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[40..48].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[40..48].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[48..56].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[48..56].try_into().unwrap()),
+                    ),
+                    _mm512_insertf32x8::<1>(
+                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                            token,
+                            original_a[56..64].try_into().unwrap(),
+                        )),
+                        avx::_mm256_loadu_ps(token, original_b[56..64].try_into().unwrap()),
+                    ),
+                ]
+            };
+
+            // Transpose
+            mage_transpose_8x8_dual_inner(token, &mut reg);
+
+            // Store back
+            let mut result_a = [0.0f32; 64];
+            let mut result_b = [0.0f32; 64];
+            for i in 0..8 {
+                unsafe {
+                    avx::_mm256_storeu_ps(
+                        token,
+                        (&mut result_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
+                        _mm512_castps512_ps256(reg[i]),
+                    );
+                    avx::_mm256_storeu_ps(
+                        token,
+                        (&mut result_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
+                        _mm512_extractf32x8_ps::<1>(reg[i]),
+                    );
+                }
+            }
+
+            // Verify transpose for block A: result[col * 8 + row] == original[row * 8 + col]
+            for row in 0..8 {
+                for col in 0..8 {
+                    let orig_val_a = original_a[row * 8 + col];
+                    let trans_val_a = result_a[col * 8 + row];
+                    assert_eq!(
+                        orig_val_a, trans_val_a,
+                        "Block A mismatch at ({}, {}): expected {}, got {}",
+                        row, col, orig_val_a, trans_val_a
+                    );
+
+                    let orig_val_b = original_b[row * 8 + col];
+                    let trans_val_b = result_b[col * 8 + row];
+                    assert_eq!(
+                        orig_val_b, trans_val_b,
+                        "Block B mismatch at ({}, {}): expected {}, got {}",
+                        row, col, orig_val_b, trans_val_b
+                    );
+                }
+            }
+        } else {
+            println!("AVX-512 not available, skipping test");
         }
     }
 }
