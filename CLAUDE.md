@@ -481,6 +481,7 @@ default = ["cms", "test-utils"]
 decoder = []              # Enable decoder (prerelease, API will change)
 parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
 unsafe_simd = []          # Raw AVX2/SSE intrinsics (opt-in)
+archmage-simd = ["dep:archmage"]  # Token-based SIMD for AQ (~6% faster)
 cms = ["cms-lcms2"]       # Color management
 ffi-tests = []            # C++ parity tests (requires jpegli-sys)
 corpus-tests = []         # Corpus comparison tests
@@ -490,8 +491,10 @@ test-utils = []           # Testing utilities
 **Decoder:** The decoder API is in prerelease. Enable with `features = ["decoder"]`.
 API will have breaking changes.
 
-SIMD via the `wide` crate is always enabled (portable, safe).
-The `unsafe_simd` feature enables raw AVX2/SSE intrinsics for ~10-20% speedup on x86_64.
+**SIMD options:**
+- Default: `wide` crate (portable, safe) - always enabled
+- `archmage-simd`: Token-based safe intrinsics for AQ functions - **~6% faster** on x86_64
+- `unsafe_simd`: Raw AVX2/SSE intrinsics - ~10-20% speedup on x86_64
 
 ## Key Files for Debugging
 

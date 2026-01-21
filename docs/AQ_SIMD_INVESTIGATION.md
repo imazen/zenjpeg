@@ -669,7 +669,127 @@ C++ avoids this by ensuring input is always padded to SIMD width.
 
 ### Action Items
 
-1. [ ] Add buffer padding in `StreamingAQ` to eliminate boundary checks
-2. [ ] Implement `unsafe_simd` feature with direct intrinsics for hot paths
+1. [x] Add buffer padding in `StreamingAQ` to eliminate boundary checks
+2. [x] Implement archmage-simd feature with direct intrinsics for hot paths
 3. [ ] Profile individual functions with `perf record` to find exact hotspots
 4. [ ] Consider reordering memory accesses for better cache behavior
+
+---
+
+## Part 12: Archmage Integration Results (2026-01-21)
+
+### Implementation Summary
+
+Added `archmage-simd` feature with token-based safe intrinsics for `pre_erosion_row_padded`.
+
+**Key optimizations:**
+1. **Raw pointer loads** instead of slice-to-array conversion (eliminates bounds checks)
+2. **All constants hoisted** outside loop (broadcast once, reuse)
+3. **Inline everything** - `#[inline(always)]` on inner function to avoid call overhead
+4. **Padded buffers** - eliminates boundary conditionals in inner loop
+
+### Benchmark Results
+
+**Isolated function benchmark** (`cargo bench -p jpegli-rs --bench aq_simd --features "archmage-simd,test-utils"`):
+
+| Width | wide crate | archmage | Speedup |
+|-------|-----------|----------|---------|
+| 64 | 41ns | 26ns | 1.6x |
+| 256 | 149ns | 80ns | 1.9x |
+| 1024 | 607ns | 302ns | 2.0x |
+| 4096 | 2.8µs | 1.2µs | **2.3x** |
+
+**End-to-end encode benchmark** (1448x1080 image, quality 75, 100 iterations):
+
+| Build | Average | Throughput |
+|-------|---------|------------|
+| wide only | 21.85ms | 71.6 MP/s |
+| archmage-simd | 20.58ms | 76.0 MP/s |
+
+**Improvement: 5.8% faster overall** with archmage.
+
+### Code Structure
+
+**File:** `jpegli-rs/src/quant/aq/simd.rs`
+
+```rust
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+mod archmage_impl {
+    use archmage::{arcane, HasAvx2, HasFma};
+    use core::arch::x86_64::*;
+
+    #[arcane]
+    #[inline(always)]
+    fn mage_pre_erosion_row_padded_inner<T: HasAvx2 + HasFma + Copy>(
+        _token: T,
+        row_ptr: *const f32,
+        row_above_ptr: *const f32,
+        row_below_ptr: *const f32,
+        output_ptr: *mut f32,
+        width: usize,
+    ) {
+        // Broadcast constants once outside loop
+        let quarter = _mm256_set1_ps(0.25);
+        let gamma_offset = _mm256_set1_ps(GAMMA_OFFSET);
+        // ... more constants ...
+
+        for chunk in 0..(width / 8) {
+            let x = chunk * 8;
+            let buf_x = x + 1;  // Padded buffer offset
+
+            // Direct pointer loads - no bounds checks
+            let pixels = _mm256_loadu_ps(row_ptr.add(buf_x));
+            let left = _mm256_loadu_ps(row_ptr.add(buf_x - 1));
+            let right = _mm256_loadu_ps(row_ptr.add(buf_x + 1));
+            let top = _mm256_loadu_ps(row_above_ptr.add(buf_x));
+            let bottom = _mm256_loadu_ps(row_below_ptr.add(buf_x));
+
+            // Full computation inlined...
+            let result = /* ... */;
+
+            _mm256_storeu_ps(output_ptr.add(x), result);
+        }
+    }
+}
+```
+
+**Integration in `streaming.rs`:**
+
+```rust
+// Use archmage SIMD when available (2x faster)
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+if let Some(token) = self.archmage_token {
+    mage_pre_erosion_row_padded(token, row_curr, row_above, row_below, width, output);
+} else {
+    pre_erosion_row_padded(row_curr, row_above, row_below, width, output);
+}
+```
+
+### Why Archmage is Faster than Wide
+
+1. **Wide uses `cfg(target_feature)`** - compile-time check, not runtime dispatch
+   - Without `-C target-cpu=x86-64-v3`, wide falls back to SSE (128-bit xmm)
+   - `#[multiversed]` dispatch doesn't help because wide's internal checks are compile-time
+
+2. **Archmage uses `#[target_feature]`** - function-level attribute
+   - Enables AVX2+FMA for specific functions via token system
+   - Generates ymm (256-bit) code even without global target-cpu flag
+
+3. **Direct pointer loads** eliminate:
+   - Slice bounds checking
+   - `try_from().unwrap()` conversion overhead
+   - Array-to-SIMD type conversion
+
+### Remaining Performance Gap
+
+With archmage, we've improved from 1.6x slower to ~1.5x slower vs C++:
+
+| Metric | Before | After | Target |
+|--------|--------|-------|--------|
+| pre_erosion (isolated) | 2.8µs | 1.2µs | ~1µs |
+| Full encode | 22ms | 20.6ms | ~12ms |
+
+Next opportunities:
+1. Apply archmage to `per_block_modulations_row` (6.9% of encode)
+2. Apply archmage to `hf_modulation_sum_8x8` (inner loop of above)
+3. Cache locality improvements (3x higher L1 miss rate than C++)

@@ -907,7 +907,6 @@ fn sum_2x2_blocks_simd(
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 mod archmage_impl {
-    use archmage::mem::avx;
     use archmage::{arcane, HasAvx, HasAvx2, HasFma};
     use core::arch::x86_64::*;
 
