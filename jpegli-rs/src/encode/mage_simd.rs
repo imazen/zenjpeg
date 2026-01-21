@@ -590,8 +590,13 @@ fn mage_dct1d_8_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma + Copy>(
 
 /// AVX-512 dual-block forward DCT: processes TWO 8x8 blocks simultaneously.
 ///
-/// This function achieves ~2x throughput compared to the AVX2 version by
-/// processing two independent blocks in parallel using 512-bit registers.
+/// **WARNING: Experimental - actually 2.3x SLOWER than AVX2 single-block!**
+///
+/// The transpose overhead (extract/AVX2/insert pattern) negates any benefit from
+/// 512-bit arithmetic. 8x8 blocks fit AVX2 perfectly; AVX-512's 16-wide registers
+/// just add packing/unpacking overhead. See CLAUDE.md "Failed Explorations" for details.
+///
+/// Kept for reference and potential future optimization with different data layouts.
 ///
 /// # Arguments
 ///
@@ -697,8 +702,8 @@ pub fn mage_forward_dct_8x8_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + a
 
 /// Wide-native dual-block forward DCT: takes two Block8x8f, returns two Block8x8f.
 ///
-/// This is the AVX-512 equivalent of `mage_forward_dct_8x8_wide`, processing
-/// two blocks at once for ~2x throughput.
+/// **WARNING: Experimental - actually 2.3x SLOWER than AVX2 single-block!**
+/// See `mage_forward_dct_8x8_dual` docs for explanation.
 #[arcane]
 #[inline]
 pub fn mage_forward_dct_8x8_wide_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy>(
