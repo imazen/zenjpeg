@@ -134,6 +134,11 @@ whereat::define_at_crate_info!(path = "jpegli-rs/");
 /// Contains: `EncoderConfig`, `BytesEncoder`, `RgbEncoder`, `Error`, `Result`, etc.
 pub mod encoder;
 
+/// Resource estimation heuristics for encoding and decoding.
+///
+/// Provides min/typical/max estimates for peak memory and time.
+pub mod heuristics;
+
 /// JPEG decoder - public API.
 ///
 /// Contains: `Decoder`, `DecodedImage`, `Error`, `Result`, etc.
