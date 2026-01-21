@@ -320,7 +320,7 @@ impl EncoderConfig {
     ///     .trellis(TrellisConfig::default()
     ///         .ac_trellis(true)
     ///         .dc_trellis(true)
-    ///         .speed_level(5)
+    ///         .speed_mode(TrellisSpeedMode::Level(5))
     ///         .rd_factor(0.8));
     ///
     /// // Disable trellis for fastest encoding
@@ -854,7 +854,7 @@ mod tests {
         let trellis = config.get_trellis().unwrap();
         assert!(trellis.is_ac_enabled());
         assert!(trellis.is_dc_enabled());
-        assert_eq!(trellis.get_speed_level(), 7);
+        assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Adaptive);
     }
 
     #[test]
@@ -864,14 +864,14 @@ mod tests {
             TrellisConfig::default()
                 .ac_trellis(true)
                 .dc_trellis(false)
-                .speed_level(5)
+                .speed_mode(TrellisSpeedMode::Level(5))
                 .rd_factor(0.8),
         );
 
         let trellis = config.get_trellis().unwrap();
         assert!(trellis.is_ac_enabled());
         assert!(!trellis.is_dc_enabled());
-        assert_eq!(trellis.get_speed_level(), 5);
+        assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Level(5));
     }
 
     #[test]
