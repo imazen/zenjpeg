@@ -320,6 +320,33 @@ underperforms significantly. Options:
 **Files:** `jpegli-rs/src/quant/aq/simd.rs:1377` (massive version, unused),
 `jpegli-rs/src/quant/aq/streaming.rs:631` (original scalar, in use)
 
+### AVX-512 Dual-Block DCT (2026-01-21)
+
+**Attempted:** Process two 8x8 blocks simultaneously using AVX-512 (512-bit = 16 floats = 2 blocks).
+
+**Implementation:** Pack two blocks into ZMM registers [A_row_i, B_row_i], do DCT butterflies
+with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
+
+**Benchmark results:**
+- AVX2 single-block: 41.19M blocks/sec
+- AVX-512 dual-block: 17.58M blocks/sec (2.3x **slower**)
+
+**Why it failed:**
+1. **8x8 blocks fit AVX2 perfectly** - 8 floats = 256 bits, no wasted register space
+2. **Transpose cannot be done natively in AVX-512** - `_mm512_unpacklo_ps` operates on 128-bit
+   lanes, mixing data between blocks A and B
+3. **Extract/insert workaround is expensive** - each transpose requires:
+   - 8 `_mm512_extractf32x8_ps` to split ZMM→YMM
+   - 48 AVX2 operations (two 8x8 transposes)
+   - 16 `_mm512_insertf32x8` to recombine YMM→ZMM
+4. **Two transposes per DCT** = 64 extra extract/insert operations
+5. **AVX-512 frequency throttling** on some CPUs adds further penalty
+
+**Conclusion:** AVX-512 benefits require naturally 16-wide workloads. 8x8 DCT is inherently
+8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
+
+**Files:** `jpegli-rs/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
+
 ## Known Bugs
 
 0. **Debug env var in hot loop (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:798`
