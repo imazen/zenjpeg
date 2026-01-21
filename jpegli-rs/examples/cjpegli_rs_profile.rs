@@ -1,8 +1,9 @@
-//! Simple profiling example: load image once, compress N times.
+//! cjpegli-rs-profile: CLI profiling tool matching cjpegli defaults.
 //!
+//! Loads image once, compresses N times for accurate timing.
 //! Matches cjpegli defaults: [YUV d1.000 AQ p2 OPT]
 //!
-//! Usage: cargo run --release --example profile_50 -- INPUT [OUTPUT] [OPTIONS]
+//! Usage: cargo run --release --example cjpegli_rs_profile -- INPUT [OUTPUT] [OPTIONS]
 //!
 //! Options:
 //!   -d, --distance N     Butteraugli distance (default: 1.0, visually lossless)
@@ -14,10 +15,10 @@
 //!   --quiet              Suppress informative output
 //!
 //! Examples:
-//!   cargo run --release --example profile_50 -- image.png
-//!   cargo run --release --example profile_50 -- image.png -d 1.0 -p 2 --num_reps 500
-//!   cargo run --release --example profile_50 -- image.png out.jpg -q 90
-//!   cargo run --release --example profile_50 -- image.png --disable_output --num_reps 500
+//!   cargo run --release --example cjpegli_rs_profile -- image.png
+//!   cargo run --release --example cjpegli_rs_profile -- image.png -d 1.0 -p 2 --num_reps 500
+//!   cargo run --release --example cjpegli_rs_profile -- image.png out.jpg -q 90
+//!   cargo run --release --example cjpegli_rs_profile -- image.png --disable_output --num_reps 500
 
 use enough::Unstoppable;
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
@@ -95,7 +96,7 @@ fn parse_args() -> Args {
                 quiet = true;
             }
             "-h" | "--help" => {
-                eprintln!("Usage: profile_50 INPUT [OUTPUT] [OPTIONS]");
+                eprintln!("Usage: cjpegli_rs_profile INPUT [OUTPUT] [OPTIONS]");
                 eprintln!();
                 eprintln!("Options:");
                 eprintln!("  -d, --distance N     Butteraugli distance (default: 1.0)");
@@ -122,7 +123,7 @@ fn parse_args() -> Args {
 
     let input = input.unwrap_or_else(|| {
         eprintln!("Error: INPUT file required");
-        eprintln!("Usage: profile_50 INPUT [OUTPUT] [OPTIONS]");
+        eprintln!("Usage: cjpegli_rs_profile INPUT [OUTPUT] [OPTIONS]");
         eprintln!("Try --help for more options");
         std::process::exit(1);
     });

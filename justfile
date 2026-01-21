@@ -5,11 +5,11 @@ TEST_IMAGE := env_var_or_default("TEST_IMAGE", "~/work/codec-eval/codec-corpus/C
 
 # Profile with cjpegli-compatible CLI (progressive, d1.0, 444, 50 iterations)
 profile IMAGE=TEST_IMAGE:
-    cargo run --release -p jpegli-rs --example profile_50 -- {{IMAGE}} --num_reps 50
+    cargo run --release -p jpegli-rs --example cjpegli_rs_profile -- {{IMAGE}} --num_reps 50
 
 # Profile with flamegraph (progressive, d1.0, 444, 50 iterations)
 flamegraph IMAGE=TEST_IMAGE:
-    cargo flamegraph --release -p jpegli-rs --example profile_50 -- {{IMAGE}} --num_reps 50
+    cargo flamegraph --release -p jpegli-rs --example cjpegli_rs_profile -- {{IMAGE}} --num_reps 50
     perf report --stdio --no-children -g none --percent-limit 0.5 2>/dev/null
 
 # Profile 4K synthetic (sequential, q90, 4:2:0, 10 iterations) - old style
