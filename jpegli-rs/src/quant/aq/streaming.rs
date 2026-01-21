@@ -34,6 +34,9 @@ use super::simd::{per_block_modulations_row, pre_erosion_row_padded};
 use super::simd::mage_pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use super::simd::mage_per_block_modulations_row;
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{Avx2FmaToken, SimdToken};
 
 /// Streaming AQ with rolling buffers - low memory, high performance.
@@ -571,12 +574,39 @@ impl StreamingAQ {
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
             // Per-block modulations with padded buffer
-            // Buffer has padded_width stride; pass actual image dimensions for edge clamping
+            // Use archmage SIMD when available (fused HF+gamma, ~2x faster)
+            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            if let Some(token) = self.archmage_token {
+                mage_per_block_modulations_row(
+                    token,
+                    &self.y_imcu_buffers[y_buffer_idx],
+                    self.padded_width, // stride (MCU-aligned)
+                    by_offset,
+                    blocks_w,
+                    &mut self.fuzzy_erosion_out[row_start..row_end],
+                    mul,
+                    add,
+                );
+            } else {
+                per_block_modulations_row(
+                    &self.y_imcu_buffers[y_buffer_idx],
+                    self.padded_width,
+                    self.width,
+                    self.height,
+                    by_offset,
+                    blocks_w,
+                    &mut self.fuzzy_erosion_out[row_start..row_end],
+                    mul,
+                    add,
+                );
+            }
+
+            #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
             per_block_modulations_row(
                 &self.y_imcu_buffers[y_buffer_idx],
-                self.padded_width, // stride (MCU-aligned)
-                self.width,        // img_width (actual, for edge clamping)
-                self.height,       // img_height (actual, for edge clamping)
+                self.padded_width,
+                self.width,
+                self.height,
                 by_offset,
                 blocks_w,
                 &mut self.fuzzy_erosion_out[row_start..row_end],

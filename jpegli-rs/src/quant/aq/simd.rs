@@ -1123,10 +1123,250 @@ mod archmage_impl {
             output[x] += masked;
         }
     }
+
+    // ========================================================================
+    // per_block_modulations_row - fused HF+gamma with minimal data movement
+    // ========================================================================
+
+    // Constants for per_block_modulations
+    const K_INPUT_SCALING: f32 = 1.0 / 255.0;
+    const K_INV_LOG2E: f32 = 0.6931471805599453;
+    const K_BIAS: f32 = 0.16 / K_INPUT_SCALING; // 40.8
+
+    const K_SUM_COEFF: f32 = -2.0052193233688884 * K_INPUT_SCALING / 112.0;
+    const K_GAMMA: f32 = -0.15526878023684174 * K_INV_LOG2E;
+    const K_SCALE: f32 = K_INPUT_SCALING / 64.0;
+    const LOG2_E: f32 = 1.442695041;
+
+    // ComputeMask constants
+    const K_MASK_BASE: f32 = -0.74174993;
+    const K_MASK_MUL4: f32 = 3.2353257320940401;
+    const K_MASK_MUL2: f32 = 12.906028311180409;
+    const K_MASK_OFFSET2: f32 = 305.04035728311436;
+    const K_MASK_MUL3: f32 = 5.0220313103171232;
+    const K_MASK_OFFSET3: f32 = 2.1925739705298404;
+    const K_MASK_OFFSET4: f32 = 0.25 * K_MASK_OFFSET3;
+    const K_MASK_MUL0: f32 = 0.74760422233706747;
+
+    /// Horizontal sum of __m256 (8 floats) to scalar
+    #[arcane]
+    #[inline(always)]
+    fn hsum_ps<T: HasAvx>(_token: T, v: __m256) -> f32 {
+        // vhaddps ymm, ymm, ymm -> adds adjacent pairs
+        let sum1 = _mm256_hadd_ps(v, v); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
+        let sum2 = _mm256_hadd_ps(sum1, sum1); // [a+b+c+d, ..., e+f+g+h, ...]
+        // Extract high 128 and add to low 128
+        let hi = _mm256_extractf128_ps(sum2, 1);
+        let lo = _mm256_castps256_ps128(sum2);
+        let sum3 = _mm_add_ps(lo, hi);
+        _mm_cvtss_f32(sum3)
+    }
+
+    /// Ratio of derivatives (inverted form for gamma modulation)
+    #[arcane]
+    #[inline(always)]
+    fn mage_ratio_of_derivatives_inv_x8<T: HasAvx2 + HasFma>(
+        _token: T,
+        vals: __m256,
+        zero: __m256,
+        k_num_mul: __m256,
+        k_num_off: __m256,
+        k_den_mul: __m256,
+        k_voff: __m256,
+    ) -> __m256 {
+        let v = _mm256_max_ps(vals, zero);
+        let v2 = _mm256_mul_ps(v, v);
+        let num = _mm256_fmadd_ps(v2, k_num_mul, k_num_off);
+        let v_scaled = _mm256_mul_ps(v, k_den_mul);
+        let den = _mm256_fmadd_ps(v_scaled, v2, k_voff);
+        // Inverted: num / den (not den / num)
+        _mm256_div_ps(num, den)
+    }
+
+    /// Fused HF + Gamma computation for one 8x8 block.
+    /// Returns (hf_sum, gamma_sum).
+    ///
+    /// This fuses two loops into one, halving memory traffic.
+    #[arcane]
+    #[inline(always)]
+    fn mage_hf_gamma_sum_8x8<T: HasAvx2 + HasFma + Copy>(
+        token: T,
+        block_ptr: *const f32,
+        stride: usize,
+        // Pre-broadcast constants (avoid repeated broadcasts)
+        zero: __m256,
+        bias: __m256,
+        mask_first_7: __m256,
+        k_num_mul: __m256,
+        k_num_off: __m256,
+        k_den_mul: __m256,
+        k_voff: __m256,
+    ) -> (f32, f32) {
+        let mut hf_acc = _mm256_setzero_ps();
+        let mut gamma_acc = _mm256_setzero_ps();
+
+        // Process 8 rows
+        for dy in 0..8usize {
+            let row_ptr = block_ptr.add(dy * stride);
+
+            // Load row[0:8] and row[1:9]
+            let row = _mm256_loadu_ps(row_ptr);
+            let row_right = _mm256_loadu_ps(row_ptr.add(1));
+
+            // HF horizontal: |row - row_right| * mask (first 7 positions)
+            let h_diff = _mm256_sub_ps(row, row_right);
+            let h_abs = _mm256_andnot_ps(_mm256_set1_ps(-0.0), h_diff); // abs via sign bit clear
+            let h_masked = _mm256_mul_ps(h_abs, mask_first_7);
+            hf_acc = _mm256_add_ps(hf_acc, h_masked);
+
+            // HF vertical: |row - next_row| for rows 0..6
+            if dy < 7 {
+                let next_row_ptr = block_ptr.add((dy + 1) * stride);
+                let next_row = _mm256_loadu_ps(next_row_ptr);
+                let v_diff = _mm256_sub_ps(row, next_row);
+                let v_abs = _mm256_andnot_ps(_mm256_set1_ps(-0.0), v_diff);
+                hf_acc = _mm256_add_ps(hf_acc, v_abs);
+            }
+
+            // Gamma: ratio_of_derivatives_inv(row + bias)
+            let row_biased = _mm256_add_ps(row, bias);
+            let gamma_val = mage_ratio_of_derivatives_inv_x8(
+                token, row_biased, zero, k_num_mul, k_num_off, k_den_mul, k_voff,
+            );
+            gamma_acc = _mm256_add_ps(gamma_acc, gamma_val);
+        }
+
+        // Reduce to scalars
+        let hf_sum = hsum_ps(token, hf_acc);
+        let gamma_sum = hsum_ps(token, gamma_acc);
+
+        (hf_sum, gamma_sum)
+    }
+
+    /// Fast log2 approximation (scalar) - matches super::fast_log2
+    #[inline(always)]
+    fn mage_fast_log2(x: f32) -> f32 {
+        if x <= 0.0 {
+            return f32::NEG_INFINITY;
+        }
+        let bits = x.to_bits() as i32;
+        let e = (bits >> 23) - 127;
+        let f = f32::from_bits((bits & 0x007FFFFF) as u32 | 0x3F800000);
+        let t = f - 1.0;
+        // Horner's method matching super::fast_log2
+        let log2_f = t * 0.2885390082_f32
+            .mul_add(t, -0.3606737602)
+            .mul_add(t, 0.4808983470)
+            .mul_add(t, -0.7213475204)
+            .mul_add(t, 1.442695041);
+        e as f32 + log2_f
+    }
+
+    /// Fast exp2 approximation (scalar)
+    #[inline(always)]
+    fn mage_fast_exp2(x: f32) -> f32 {
+        let x = x.clamp(-126.0, 127.0);
+        let xi = x.floor();
+        let xf = x - xi;
+        let p = 1.0 + xf * (0.6931471805599453
+            + xf * (0.24022650695910071
+            + xf * (0.055504108664821579
+            + xf * 0.009618129107628477)));
+        let pow2_xi = f32::from_bits(((xi as i32 + 127) as u32) << 23);
+        p * pow2_xi
+    }
+
+    /// Archmage-based per_block_modulations_row.
+    /// Fuses HF and gamma into a single pass over the 8x8 block.
+    ///
+    /// Key optimizations:
+    /// - Single fused loop for HF + gamma (halves memory traffic)
+    /// - Raw pointer loads (no bounds checks)
+    /// - All constants broadcast once, passed to inner function
+    /// - Scalar ComputeMask (not worth SIMD for 1 value per block)
+    #[arcane]
+    pub fn mage_per_block_modulations_row<T: HasAvx2 + HasFma + Copy>(
+        token: T,
+        input: &[f32],
+        stride: usize,
+        by: usize,
+        block_w: usize,
+        aq_row: &mut [f32],
+        mul: f32,
+        add: f32,
+    ) {
+        if block_w == 0 {
+            return;
+        }
+
+        let y_start = by * 8;
+        let input_ptr = input.as_ptr();
+
+        // Broadcast constants once (these live in ymm registers throughout)
+        let zero = _mm256_setzero_ps();
+        let bias = _mm256_set1_ps(K_BIAS);
+        let mask_first_7 = _mm256_set_ps(0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+        let k_num_mul = _mm256_set1_ps(K_NUM_MUL_RATIO);
+        let k_num_off = _mm256_set1_ps(K_NUM_OFFSET_RATIO);
+        let k_den_mul = _mm256_set1_ps(K_DEN_MUL_RATIO);
+        let k_voff = _mm256_set1_ps(K_VOFFSET_RATIO);
+
+        for bx in 0..block_w {
+            let x_start = bx * 8;
+
+            // Load fuzzy erosion value
+            let fuzzy_val = aq_row[bx];
+
+            // ComputeMask (scalar - 4 divisions, not worth SIMD for 1 value)
+            let v1 = (fuzzy_val * K_MASK_MUL0).max(1e-3);
+            let v1_sq = v1 * v1;
+            let v2 = 1.0 / (v1 + K_MASK_OFFSET2);
+            let v3 = 1.0 / (v1_sq + K_MASK_OFFSET3);
+            let v4 = 1.0 / (v1_sq + K_MASK_OFFSET4);
+            let mut out_val = K_MASK_BASE
+                + K_MASK_MUL4 * v4
+                + K_MASK_MUL2 * v2
+                + K_MASK_MUL3 * v3;
+
+            // Fused HF + Gamma for 8x8 block
+            let block_offset = y_start * stride + x_start;
+            let block_ptr = input_ptr.add(block_offset);
+
+            let (hf_sum, gamma_sum) = mage_hf_gamma_sum_8x8(
+                token,
+                block_ptr,
+                stride,
+                zero,
+                bias,
+                mask_first_7,
+                k_num_mul,
+                k_num_off,
+                k_den_mul,
+                k_voff,
+            );
+
+            // HF contribution
+            out_val += hf_sum * K_SUM_COEFF;
+
+            // Gamma contribution
+            let overall_ratio = gamma_sum * K_SCALE;
+            if overall_ratio > 0.0 {
+                let log_ratio = mage_fast_log2(overall_ratio);
+                out_val += K_GAMMA * log_ratio;
+            }
+
+            // Final transform: exp(out_val) * mul + add
+            let quant_field = mage_fast_exp2(out_val * LOG2_E) * mul + add;
+            aq_row[bx] = quant_field;
+        }
+    }
 }
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_pre_erosion_row_padded;
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+pub use archmage_impl::mage_per_block_modulations_row;
 
 // ============================================================================
 // Locked test data from frymire.png
