@@ -76,7 +76,7 @@ pub mod exif;
 /// Default quantization and zero-bias tables for customization.
 ///
 /// This module exposes the internal default tables so users can modify them
-/// rather than creating tables from scratch. Used with [`tuning::EncodingTables`].
+/// rather than creating tables from scratch. Used with `tuning::EncodingTables`.
 pub mod tables;
 
 /// Encoding table tuning for optimization experiments.
