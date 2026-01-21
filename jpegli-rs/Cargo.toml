@@ -74,7 +74,7 @@ codec-eval = { workspace = true }
 # Metadata crates (for integration testing)
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
-ultrahdr = { workspace = true }
+# ultrahdr = { workspace = true }  # Temporarily disabled - needs API update for 0.9.0
 
 [features]
 default = ["std", "yuv"]
@@ -169,6 +169,11 @@ required-features = ["archmage-simd"]
 [[bench]]
 name = "vec_variants"
 harness = false
+
+[[bench]]
+name = "aq_simd"
+harness = false
+required-features = ["test-utils"]
 
 [lints]
 workspace = true
