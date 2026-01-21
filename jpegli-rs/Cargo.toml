@@ -102,6 +102,8 @@ cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
 cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 # Enable debug token serialization for C++ comparison
 debug-tokens = []
+# Enable internal profiling instrumentation (scope timers)
+profile = []
 # Enable test utilities (image generation, quality verification)
 # Requires std for file path operations
 test-utils = ["std"]
