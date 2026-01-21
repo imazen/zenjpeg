@@ -4,6 +4,7 @@ use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, XybSubsampling,
 };
+#[cfg(feature = "experimental-hybrid-trellis")]
 use super::mozjpeg_compat::TrellisConfig;
 use super::tuning::EncodingTables;
 use crate::error::Result;
@@ -38,6 +39,7 @@ pub struct EncoderConfig {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Trellis quantization configuration (mozjpeg-compatible API).
     /// When Some, enables trellis quantization for rate-distortion optimization.
+    #[cfg(feature = "experimental-hybrid-trellis")]
     pub(crate) trellis: Option<TrellisConfig>,
 }
 
@@ -151,6 +153,7 @@ impl EncoderConfig {
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
             deringing: true,
             allow_16bit_quant_tables: true,
+            #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
         }
     }
@@ -299,8 +302,9 @@ impl EncoderConfig {
     ///
     /// This uses the same algorithm as mozjpeg and provides a compatible API.
     /// For advanced users who want to combine trellis with jpegli's adaptive
-    /// quantization, see the `hybrid_config()` method (requires
-    /// the `experimental-hybrid-trellis` feature).
+    /// quantization, see the `hybrid_config()` method.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
     ///
     /// # Example
     ///
@@ -323,6 +327,7 @@ impl EncoderConfig {
     /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
     ///     .trellis(TrellisConfig::disabled());
     /// ```
+    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub fn trellis(mut self, config: TrellisConfig) -> Self {
         self.trellis = Some(config);
@@ -330,6 +335,9 @@ impl EncoderConfig {
     }
 
     /// Get the trellis configuration, if set.
+    ///
+    /// Requires the `experimental-hybrid-trellis` feature.
+    #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
     pub fn get_trellis(&self) -> Option<&TrellisConfig> {
         self.trellis.as_ref()
@@ -832,6 +840,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     fn test_trellis_config() {
         // Default config has no trellis
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
@@ -849,6 +858,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     fn test_trellis_config_builder() {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(
             TrellisConfig::default()
@@ -865,6 +875,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental-hybrid-trellis")]
     fn test_trellis_disabled() {
         let config =
             EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).trellis(TrellisConfig::disabled());
