@@ -15,7 +15,14 @@ use wide::{f32x8, i16x8, i32x8, CmpGe};
 /// - Each row is already a SIMD vector (no gather needed)
 /// - Row-wise operations (DCT, quantization) are trivial
 /// - 32-byte aligned for optimal SIMD access
-#[derive(Clone, Copy, Debug)]
+///
+/// # Safety
+///
+/// `Block8x8f` is `Pod` and `Zeroable` because:
+/// - `f32x8` is `#[repr(C)]` containing 8 f32s (all Pod)
+/// - The struct is `#[repr(C, align(32))]` with no padding
+/// - All bit patterns are valid (f32 allows all patterns including NaN)
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, align(32))]
 pub struct Block8x8f {
     pub rows: [f32x8; 8],

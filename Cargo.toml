@@ -65,6 +65,9 @@ spin = "0.9"
 # Fast linear-sRGB conversion
 linear-srgb = "0.3.1"
 
+# Token-based safe SIMD intrinsics
+archmage = { path = "/home/lilith/work/archmage", features = ["safe_unaligned_simd"] }
+
 # Error tracing with location tracking
 whereat = "0.1.3"
 
