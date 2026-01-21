@@ -28,7 +28,7 @@ use crate::error::Result;
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 
 use super::quant_field_to_aq_strength;
-use super::simd::{per_block_modulations_row, pre_erosion_row};
+use super::simd::{per_block_modulations_row, pre_erosion_row_padded};
 
 /// Streaming AQ with rolling buffers - low memory, high performance.
 ///
@@ -167,9 +167,11 @@ impl StreamingAQ {
             pre_erosion_h,
             pre_erosion_buffer: try_alloc_zeroed(pre_erosion_w * pre_erosion_buffer_rows)?,
             pre_erosion_buffer_rows,
-            row_prev_prev: try_alloc_zeroed(width)?,
-            row_prev: try_alloc_zeroed(width)?,
-            row_curr: try_alloc_zeroed(width)?,
+            // Allocate with +2 padding (1 on each side) for branchless SIMD access
+            // Index 0 = replicated left edge, indices 1..width+1 = data, index width+1 = replicated right edge
+            row_prev_prev: try_alloc_zeroed(width + 2)?,
+            row_prev: try_alloc_zeroed(width + 2)?,
+            row_curr: try_alloc_zeroed(width + 2)?,
             pending_pre_erosion_row: None,
             pre_erosion_accum: try_alloc_zeroed(width)?,
             pre_erosion_temp: try_alloc_zeroed(width)?,
@@ -356,18 +358,33 @@ impl StreamingAQ {
         Ok(self.all_aq_strengths)
     }
 
+    /// Copy row data into padded buffer with edge replication.
+    /// Buffer layout: [edge_left, data[0..width], edge_right]
+    /// where edge_left = data[0] and edge_right = data[width-1]
+    #[inline(always)]
+    fn copy_row_with_edge_replication(dst: &mut [f32], src: &[f32]) {
+        let width = src.len();
+        // Copy data at offset 1
+        dst[1..1 + width].copy_from_slice(src);
+        // Replicate edges
+        dst[0] = src[0];
+        dst[width + 1] = src[width - 1];
+    }
+
     /// Process a single row for pre-erosion computation.
     fn process_pre_erosion_row(&mut self, row: &[f32], global_y: usize) {
         // Shift row buffers
         core::mem::swap(&mut self.row_prev_prev, &mut self.row_prev);
         core::mem::swap(&mut self.row_prev, &mut self.row_curr);
-        self.row_curr.copy_from_slice(row);
+        Self::copy_row_with_edge_replication(&mut self.row_curr, row);
 
         // Initialize for first rows (boundary clamping)
         if global_y == 0 {
-            self.row_prev.copy_from_slice(row);
-            self.row_prev_prev.copy_from_slice(row);
+            Self::copy_row_with_edge_replication(&mut self.row_prev, row);
+            Self::copy_row_with_edge_replication(&mut self.row_prev_prev, row);
         } else if global_y == 1 {
+            // row_prev already contains correct data from previous iteration
+            // Just need to duplicate it for row_prev_prev
             self.row_prev_prev.copy_from_slice(&self.row_prev);
         }
 
@@ -388,12 +405,19 @@ impl StreamingAQ {
     }
 
     fn compute_last_row_pre_erosion(&mut self) {
+        // Padded buffers: data is at indices 1..width+1, edges are replicated at 0 and width+1
         let row_above = &self.row_prev;
         let row_curr = &self.row_curr;
-        let row_below = &self.row_curr; // Boundary clamping
+        let row_below = &self.row_curr; // Boundary clamping (same row)
 
         self.pre_erosion_temp.fill(0.0);
-        pre_erosion_row(row_curr, row_above, row_below, &mut self.pre_erosion_temp);
+        pre_erosion_row_padded(
+            row_curr,
+            row_above,
+            row_below,
+            self.width,
+            &mut self.pre_erosion_temp,
+        );
 
         for x in 0..self.width {
             self.pre_erosion_accum[x] += self.pre_erosion_temp[x];
@@ -401,12 +425,19 @@ impl StreamingAQ {
     }
 
     fn compute_and_accumulate_pre_erosion(&mut self, row_y: usize) {
+        // Padded buffers: data is at indices 1..width+1, edges are replicated at 0 and width+1
         let row_above = &self.row_prev_prev;
         let row_curr = &self.row_prev;
         let row_below = &self.row_curr;
 
         self.pre_erosion_temp.fill(0.0);
-        pre_erosion_row(row_curr, row_above, row_below, &mut self.pre_erosion_temp);
+        pre_erosion_row_padded(
+            row_curr,
+            row_above,
+            row_below,
+            self.width,
+            &mut self.pre_erosion_temp,
+        );
 
         for x in 0..self.width {
             self.pre_erosion_accum[x] += self.pre_erosion_temp[x];
