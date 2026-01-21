@@ -276,6 +276,83 @@ pub fn pre_erosion_row(row: &[f32], row_above: &[f32], row_below: &[f32], output
     }
 }
 
+/// Process a full row of pre-erosion using padded input buffers (no boundary conditionals).
+///
+/// This is the optimized version for streaming AQ where buffers have edge replication.
+/// Buffer layout: [left_edge, data[0..width], right_edge] where:
+/// - left_edge = data[0] (replicated)
+/// - right_edge = data[width-1] (replicated)
+///
+/// This eliminates all boundary conditionals in the SIMD loop.
+///
+/// # Arguments
+/// * `row` - Current row with padding (length = width + 2)
+/// * `row_above` - Row above with padding (length = width + 2)
+/// * `row_below` - Row below with padding (length = width + 2)
+/// * `width` - Actual data width (without padding)
+/// * `output` - Output buffer to accumulate into (length = width)
+#[multiversed]
+pub fn pre_erosion_row_padded(
+    row: &[f32],
+    row_above: &[f32],
+    row_below: &[f32],
+    width: usize,
+    output: &mut [f32],
+) {
+    debug_assert_eq!(row.len(), width + 2);
+    debug_assert_eq!(row_above.len(), width + 2);
+    debug_assert_eq!(row_below.len(), width + 2);
+    debug_assert_eq!(output.len(), width);
+
+    if width == 0 {
+        return;
+    }
+
+    // Process 8 pixels at a time - no boundary conditionals needed!
+    // Pixel data starts at index 1, left neighbor at index 0, right neighbor at index 2
+    let chunks = width / 8;
+
+    for chunk in 0..chunks {
+        let x = chunk * 8;
+        // Data offset: pixel at logical position x is at buffer index x+1
+        let buf_x = x + 1;
+
+        // Load center pixels (indices buf_x..buf_x+8)
+        let pixels = load_f32x8(row, buf_x);
+
+        // Load neighbors - no conditionals needed due to padding!
+        let left = load_f32x8(row, buf_x - 1); // indices x..x+8, always valid
+        let right = load_f32x8(row, buf_x + 1); // indices x+2..x+10, always valid
+        let top = load_f32x8(row_above, buf_x);
+        let bottom = load_f32x8(row_below, buf_x);
+
+        // Compute and accumulate
+        let result = pre_erosion_pixel_x8(pixels, left, right, top, bottom);
+
+        // Load existing, add result, store back
+        let existing = load_f32x8(output, x);
+        store_f32x8(output, x, existing + result);
+    }
+
+    // Handle remainder (scalar fallback) - still no conditionals due to padding
+    for x in (chunks * 8)..width {
+        let buf_x = x + 1;
+        let pixel = row[buf_x];
+        let left_val = row[buf_x - 1]; // Always valid due to padding
+        let right_val = row[buf_x + 1]; // Always valid due to padding
+        let top_val = row_above[buf_x];
+        let bottom_val = row_below[buf_x];
+
+        let base = 0.25 * (left_val + right_val + top_val + bottom_val);
+        let ratio = ratio_of_derivatives_scalar(pixel + GAMMA_OFFSET, false);
+        let diff = ratio * (pixel - base);
+        let diff_sq = (diff * diff).min(LIMIT);
+        let masked = masking_sqrt_scalar(diff_sq);
+
+        output[x] += masked;
+    }
+}
+
 // ============================================================================
 // Full pre-erosion computation (SIMD)
 // ============================================================================
@@ -1454,6 +1531,112 @@ mod tests {
                     + get_tmp(px, py + 1)
                     + get_tmp(px + 1, py + 1);
                 aq_map[by * block_w + bx] = sum;
+            }
+        }
+    }
+
+    #[test]
+    fn test_pre_erosion_row_padded_matches_original() {
+        // Test that pre_erosion_row_padded produces same results as pre_erosion_row
+        // when given properly padded input buffers with edge replication
+        let width = 35; // Non-multiple of 8 to test remainder handling
+        let row: Vec<f32> = (0..width).map(|x| 128.0 + (x as f32)).collect();
+        let row_above: Vec<f32> = (0..width).map(|x| 126.0 + (x as f32)).collect();
+        let row_below: Vec<f32> = (0..width).map(|x| 130.0 + (x as f32)).collect();
+
+        // Create padded buffers with edge replication
+        let mut row_padded = vec![0.0f32; width + 2];
+        let mut row_above_padded = vec![0.0f32; width + 2];
+        let mut row_below_padded = vec![0.0f32; width + 2];
+
+        // Copy with edge replication: [left_edge, data[0..width], right_edge]
+        row_padded[1..1 + width].copy_from_slice(&row);
+        row_padded[0] = row[0];
+        row_padded[width + 1] = row[width - 1];
+
+        row_above_padded[1..1 + width].copy_from_slice(&row_above);
+        row_above_padded[0] = row_above[0];
+        row_above_padded[width + 1] = row_above[width - 1];
+
+        row_below_padded[1..1 + width].copy_from_slice(&row_below);
+        row_below_padded[0] = row_below[0];
+        row_below_padded[width + 1] = row_below[width - 1];
+
+        // Original version
+        let mut output_original = vec![0.0f32; width];
+        pre_erosion_row(&row, &row_above, &row_below, &mut output_original);
+
+        // Padded version
+        let mut output_padded = vec![0.0f32; width];
+        pre_erosion_row_padded(
+            &row_padded,
+            &row_above_padded,
+            &row_below_padded,
+            width,
+            &mut output_padded,
+        );
+
+        // Compare
+        for x in 0..width {
+            assert!(
+                approx_eq(output_padded[x], output_original[x], EPSILON_REL),
+                "Padded vs original mismatch at x={}: padded={}, original={}, rel_diff={}",
+                x,
+                output_padded[x],
+                output_original[x],
+                (output_padded[x] - output_original[x]).abs() / output_original[x].abs().max(1e-10)
+            );
+        }
+    }
+
+    #[test]
+    fn test_pre_erosion_row_padded_various_widths() {
+        // Test several widths to ensure SIMD chunks and remainders work correctly
+        for width in [8, 16, 24, 31, 32, 33, 64, 100, 128] {
+            let row: Vec<f32> = (0..width).map(|x| 100.0 + (x as f32) * 1.5).collect();
+            let row_above: Vec<f32> = (0..width).map(|x| 98.0 + (x as f32) * 1.5).collect();
+            let row_below: Vec<f32> = (0..width).map(|x| 102.0 + (x as f32) * 1.5).collect();
+
+            // Create padded buffers
+            let mut row_padded = vec![0.0f32; width + 2];
+            let mut row_above_padded = vec![0.0f32; width + 2];
+            let mut row_below_padded = vec![0.0f32; width + 2];
+
+            row_padded[1..1 + width].copy_from_slice(&row);
+            row_padded[0] = row[0];
+            row_padded[width + 1] = row[width - 1];
+
+            row_above_padded[1..1 + width].copy_from_slice(&row_above);
+            row_above_padded[0] = row_above[0];
+            row_above_padded[width + 1] = row_above[width - 1];
+
+            row_below_padded[1..1 + width].copy_from_slice(&row_below);
+            row_below_padded[0] = row_below[0];
+            row_below_padded[width + 1] = row_below[width - 1];
+
+            let mut output_original = vec![0.0f32; width];
+            let mut output_padded = vec![0.0f32; width];
+
+            pre_erosion_row(&row, &row_above, &row_below, &mut output_original);
+            pre_erosion_row_padded(
+                &row_padded,
+                &row_above_padded,
+                &row_below_padded,
+                width,
+                &mut output_padded,
+            );
+
+            for x in 0..width {
+                assert!(
+                    approx_eq(output_padded[x], output_original[x], EPSILON_REL),
+                    "Width {} mismatch at x={}: padded={}, original={}, rel_diff={}",
+                    width,
+                    x,
+                    output_padded[x],
+                    output_original[x],
+                    (output_padded[x] - output_original[x]).abs()
+                        / output_original[x].abs().max(1e-10)
+                );
             }
         }
     }
