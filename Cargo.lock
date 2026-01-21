@@ -79,14 +79,8 @@ version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
-
-[[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
 
 [[package]]
 name = "autocfg"
@@ -190,7 +184,7 @@ checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -522,7 +516,7 @@ checksum = "44f23cf4b44bfce11a86ace86f8a73ffdec849c9fd00a386a53d278bd9e81fb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -542,7 +536,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e617a6909672b4d526b44ea869ec1e0188c1aa5648ac30606848fa7ff96f26"
 dependencies = [
  "imgref",
- "multiversion 0.8.0",
+ "multiversion",
  "num-traits",
  "safe_unaligned_simd",
  "thiserror",
@@ -607,7 +601,7 @@ checksum = "1a5c6c585bc94aaf2c7b51dd4c2ba22680844aba4c687be581871a6f518c5742"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -769,7 +763,7 @@ dependencies = [
  "fast-ssim2",
  "imgref",
  "jpegli-internals-sys",
- "jpegli-rs 0.9.0",
+ "jpegli-rs",
  "libc",
  "moxcms 0.6.4",
  "png",
@@ -784,23 +778,6 @@ dependencies = [
  "cc",
  "cmake",
  "libc",
-]
-
-[[package]]
-name = "jpegli-rs"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa82f4897016f8fa754904391c4efbf7922476ec486251612636ea500332201f"
-dependencies = [
- "arrayref",
- "butteraugli",
- "bytemuck",
- "imgref",
- "jpeg-decoder",
- "lcms2",
- "multiversion 0.7.4",
- "rgb",
- "wide 0.7.33",
 ]
 
 [[package]]
@@ -830,7 +807,7 @@ dependencies = [
  "moxcms 0.6.4",
  "mozjpeg-rs",
  "multiversed",
- "multiversion 0.8.0",
+ "multiversion",
  "png",
  "proptest",
  "rayon",
@@ -843,7 +820,6 @@ dependencies = [
  "test-case",
  "thiserror",
  "tinyvec",
- "ultrahdr",
  "whereat",
  "wide 1.1.1",
  "yuv",
@@ -912,7 +888,7 @@ checksum = "153732436b90b689934ad2d2997d5f0d2416163017ac76e6c0475dce9e7999c3"
 dependencies = [
  "bytemuck",
  "multiversed",
- "multiversion 0.8.0",
+ "multiversion",
  "num-traits",
  "wide 1.1.1",
 ]
@@ -1008,7 +984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a599639941ff2316b17d6ec9133bbb345fa38668f5cef5bd09455342b6568db1"
 dependencies = [
  "bytemuck",
- "multiversion 0.8.0",
+ "multiversion",
  "wide 1.1.1",
 ]
 
@@ -1020,17 +996,7 @@ checksum = "31eede710ee60ecb1708685a9d948d25a67ee3940ee8a1096431590cb21eef7d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "multiversion"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4851161a11d3ad0bf9402d90ffc3967bf231768bfd7aeb61755ad06dbf1a142"
-dependencies = [
- "multiversion-macros 0.7.4",
- "target-features",
+ "syn",
 ]
 
 [[package]]
@@ -1039,19 +1005,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edb7f0ff51249dfda9ab96b5823695e15a052dc15074c9dbf3d118afaf2c201"
 dependencies = [
- "multiversion-macros 0.8.0",
- "target-features",
-]
-
-[[package]]
-name = "multiversion-macros"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79a74ddee9e0c27d2578323c13905793e91622148f138ba29738f9dddb835e90"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
+ "multiversion-macros",
  "target-features",
 ]
 
@@ -1063,7 +1017,7 @@ checksum = "b093064383341eb3271f42e381cb8f10a01459478446953953c75d24bd339fc0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
  "target-features",
 ]
 
@@ -1091,7 +1045,7 @@ checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -1467,7 +1421,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -1536,17 +1490,6 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
-
-[[package]]
-name = "syn"
 version = "2.0.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4d107df263a3013ef9b1879b0df87d706ff80f65a86ea879bd9c31f9b307c2a"
@@ -1593,7 +1536,7 @@ dependencies = [
  "cfg-if",
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -1604,7 +1547,7 @@ checksum = "5c89e72a01ed4c579669add59014b9a524d609c0c88c6a585ce37485879f6ffb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
  "test-case-core",
 ]
 
@@ -1625,7 +1568,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -1658,21 +1601,6 @@ name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
-
-[[package]]
-name = "ultrahdr"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "half",
- "imgref",
- "jpegli-rs 0.3.0",
- "moxcms 0.6.4",
- "multiversion 0.8.0",
- "rgb",
- "thiserror",
- "wide 1.1.1",
-]
 
 [[package]]
 name = "unarray"
@@ -1769,7 +1697,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
  "wasm-bindgen-shared",
 ]
 
@@ -1848,7 +1776,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -1859,7 +1787,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]
@@ -1946,7 +1874,7 @@ checksum = "2c7962b26b0a8685668b671ee4b54d007a67d4eaf05fda79ac0ecf41e32270f1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.114",
+ "syn",
 ]
 
 [[package]]

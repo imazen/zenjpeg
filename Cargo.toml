@@ -92,11 +92,6 @@ img-parts = "0.4"
 # Our ultrahdr crate (for integration testing)
 ultrahdr = { path = "/home/lilith/work/ultrahdr" }
 
-# Patch ultrahdr's jpegli-rs dependency to use local version
-[patch.crates-io]
-jpegli-rs = { path = "jpegli-rs" }
-
-
 [profile.release]
 debug = true
 
