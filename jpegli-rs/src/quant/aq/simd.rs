@@ -1755,7 +1755,9 @@ pub use archmage_impl::mage_pre_erosion_row_padded;
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_per_block_modulations_row;
 
-// Note: mage_compute_fuzzy_erosion_row doesn't need archmage - it's pure inlined Rust
+// Note: mage_compute_fuzzy_erosion_row doesn't need archmage token - it's pure inlined Rust
+// But it's still inside archmage_impl module which requires the feature
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_compute_fuzzy_erosion_row;
 
 // ============================================================================
