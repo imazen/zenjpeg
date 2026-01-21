@@ -4,16 +4,23 @@
 
 **Problem:** Rust jpegli-rs AQ functions consume 24% of encode time vs C++ jpegli's 8% (3x relative overhead).
 
-**Current state (2026-01-20):**
-- Default build: Rust 1.6x slower than C++
-- With `-C target-cpu=x86-64-v4`: Rust 1.33x slower (40% of gap closed)
-- **Key insight:** The relative AQ percentage stays constant even with -v4, ruling out vector width as bottleneck
+**Current state (2026-01-21):**
+- Default build (wide only): 21.2ms, 73.8 MP/s
+- With `archmage-simd` feature: 19.8ms, 79.0 MP/s (**6.6% faster**)
+- C++ jpegli target: ~12ms
+- **Gap: ~1.65x slower than C++** (improved from 1.6x)
 
-**Root cause analysis (from disassembly comparison):**
-- Both use ymm (256-bit) registers in hot loops, not zmm
-- C++ has 41 FMA instructions vs Rust's ~19 in AQ code
-- C++ uses `HWY_CAPPED(float, 8)` for 8x8 block ops (same as Rust f32x8)
-- Difference is likely instruction scheduling, loop structure, or inlining
+**Root cause identified:**
+- `wide` crate uses `cfg(target_feature)` (compile-time check)
+- `#[multiversed]` dispatch is useless - all versions use SSE-level code
+- Solution: `archmage` with token-based runtime AVX2+FMA dispatch
+
+**Optimizations implemented:**
+1. `pre_erosion_row_padded` - raw pointer loads, hoisted constants (2.3x faster isolated)
+2. `per_block_modulations_row` - fused HF+gamma loop (halves memory traffic)
+
+**For binary distribution:** Enable `archmage-simd` feature. Provides proper runtime
+CPU detection via `Avx2FmaToken::try_new()`.
 
 **Goal:** Match C++ AQ performance by understanding and replicating Highway's SIMD strategy.
 
@@ -780,16 +787,195 @@ if let Some(token) = self.archmage_token {
    - `try_from().unwrap()` conversion overhead
    - Array-to-SIMD type conversion
 
-### Remaining Performance Gap
+### Remaining Performance Gap (after Part 12)
 
-With archmage, we've improved from 1.6x slower to ~1.5x slower vs C++:
+With archmage pre_erosion, we improved from 1.6x slower to ~1.5x slower vs C++:
 
 | Metric | Before | After | Target |
 |--------|--------|-------|--------|
 | pre_erosion (isolated) | 2.8µs | 1.2µs | ~1µs |
 | Full encode | 22ms | 20.6ms | ~12ms |
 
-Next opportunities:
-1. Apply archmage to `per_block_modulations_row` (6.9% of encode)
-2. Apply archmage to `hf_modulation_sum_8x8` (inner loop of above)
-3. Cache locality improvements (3x higher L1 miss rate than C++)
+---
+
+## Part 13: Fused per_block_modulations with Archmage (2026-01-21)
+
+### Problem: Separate HF and Gamma Loops
+
+The original `per_block_modulations_row` called two separate functions for each 8x8 block:
+1. `hf_modulation_sum_8x8` - loads 8 rows, computes horizontal/vertical differences
+2. `gamma_modulation_sum_8x8` - loads same 8 rows again, computes ratio_of_derivatives
+
+This doubled memory traffic for the same data.
+
+### Solution: Fused HF+Gamma Loop
+
+Created `mage_per_block_modulations_row` that fuses both computations into a single 8-row loop:
+
+```rust
+#[arcane]
+fn mage_hf_gamma_sum_8x8<T: HasAvx2 + HasFma + Copy>(
+    token: T,
+    block_ptr: *const f32,
+    stride: usize,
+    // Pre-broadcast constants passed in (not created per-block)
+    zero: __m256, bias: __m256, mask_first_7: __m256,
+    k_num_mul: __m256, k_num_off: __m256, k_den_mul: __m256, k_voff: __m256,
+) -> (f32, f32) {
+    let mut hf_acc = _mm256_setzero_ps();
+    let mut gamma_acc = _mm256_setzero_ps();
+
+    for dy in 0..8usize {
+        let row_ptr = block_ptr.add(dy * stride);
+        let row = _mm256_loadu_ps(row_ptr);
+        let row_right = _mm256_loadu_ps(row_ptr.add(1));
+
+        // HF horizontal: |row - row_right| * mask
+        let h_diff = _mm256_sub_ps(row, row_right);
+        let h_abs = _mm256_andnot_ps(_mm256_set1_ps(-0.0), h_diff);
+        hf_acc = _mm256_add_ps(hf_acc, _mm256_mul_ps(h_abs, mask_first_7));
+
+        // HF vertical (rows 0-6 only)
+        if dy < 7 {
+            let next_row = _mm256_loadu_ps(block_ptr.add((dy + 1) * stride));
+            let v_abs = _mm256_andnot_ps(_mm256_set1_ps(-0.0), _mm256_sub_ps(row, next_row));
+            hf_acc = _mm256_add_ps(hf_acc, v_abs);
+        }
+
+        // Gamma: ratio_of_derivatives_inv(row + bias)
+        let row_biased = _mm256_add_ps(row, bias);
+        let gamma_val = mage_ratio_of_derivatives_inv_x8(...);
+        gamma_acc = _mm256_add_ps(gamma_acc, gamma_val);
+    }
+
+    (hsum_ps(token, hf_acc), hsum_ps(token, gamma_acc))
+}
+```
+
+### Key Optimizations
+
+1. **Fused loop** - One pass over 8 rows instead of two (halves memory traffic)
+2. **Constants hoisted** - All SIMD constants broadcast once outside the block loop
+3. **Constants passed to inner function** - Avoids repeated broadcasts per-block
+4. **Raw pointer loads** - No bounds checks, no slice-to-array conversion
+5. **Same data reused** - Row loaded once, used for both HF and gamma
+
+### Benchmark Results
+
+**Test:** 1448x1080 image, quality 75, 200 iterations, default target (binary distribution)
+
+| Build | Average | Throughput | vs baseline |
+|-------|---------|------------|-------------|
+| wide only | 21.19ms | 73.8 MP/s | baseline |
+| archmage-simd | 19.79ms | 79.0 MP/s | **6.6% faster** |
+
+### Numerical Parity
+
+Initial implementation had different `fast_log2` approximation, causing 0.06% file size difference.
+Fixed by matching the Horner's method coefficients from `super::fast_log2`.
+**Both versions now produce byte-identical JPEG output.**
+
+### Multiversion Analysis
+
+Tested removing `#[multiversed]` tags with `-C target-cpu=native`:
+- With multiversion: 18.85ms
+- Without multiversion: 18.74ms
+- **Difference: ~0.6% (within noise)**
+
+For binary distribution, `#[multiversed]` + `wide` is useless because `wide` uses
+`cfg(target_feature)` (compile-time), not `#[target_feature]` (function-level).
+The multiversion dispatch selects between versions that all use SSE-level code.
+
+**Recommendation:** Use `archmage-simd` feature for binary distribution. The archmage
+token system (`Avx2FmaToken::try_new()`) provides proper runtime AVX2+FMA detection.
+
+---
+
+## Part 14: Handoff Notes (2026-01-21)
+
+### Current State
+
+**Performance (binary distribution, default target):**
+- wide only: 21.2ms / 73.8 MP/s
+- archmage-simd: 19.8ms / 79.0 MP/s (6.6% faster)
+- C++ jpegli: ~12ms (target)
+- **Gap: ~1.65x slower than C++**
+
+**Archmage coverage:**
+- ✅ `pre_erosion_row_padded` - 2.3x faster isolated, ~3% end-to-end
+- ✅ `per_block_modulations_row` - fused HF+gamma, ~3% end-to-end
+- ❌ `compute_fuzzy_erosion_row_into` - still scalar
+- ❌ `quant_field_to_aq_strength` - still scalar loop
+
+### Files Modified
+
+```
+jpegli-rs/src/quant/aq/simd.rs
+├── archmage_impl module (lines 908-1358)
+│   ├── mage_pre_erosion_row_padded_inner
+│   ├── mage_pre_erosion_row_padded (public)
+│   ├── mage_hf_gamma_sum_8x8
+│   ├── mage_ratio_of_derivatives_inv_x8
+│   ├── mage_fast_log2, mage_fast_exp2
+│   └── mage_per_block_modulations_row (public)
+└── pub use statements for archmage functions
+
+jpegli-rs/src/quant/aq/streaming.rs
+├── archmage_token field in StreamingAQ
+├── Token initialization in new()
+├── Conditional dispatch in compute_and_accumulate_pre_erosion
+├── Conditional dispatch in compute_last_row_pre_erosion
+└── Conditional dispatch in finalize_imcu_aq_with_buffer
+```
+
+### Remaining Optimization Opportunities
+
+1. **`compute_fuzzy_erosion_row_into`** (in streaming.rs)
+   - Currently scalar, processes pre_erosion buffer
+   - 3x3 window, partial sort to find 4 smallest, weighted sum
+   - Could use SIMD for the sorting network
+
+2. **`quant_field_to_aq_strength`** (scalar loop)
+   - Simple `1.0 / (1.0 + x)` transform
+   - Could process 8 values at once with SIMD
+
+3. **Cache locality** (3x higher L1 miss rate than C++)
+   - Profile with `perf stat -e L1-dcache-load-misses`
+   - Review buffer access patterns
+   - Consider prefetch hints
+
+4. **AVX-512** (currently unused)
+   - Both C++ and Rust use ymm (256-bit) in hot loops
+   - AVX-512 zmm could help for large images
+   - Would need new archmage token type
+
+### Testing Commands
+
+```bash
+# Run streaming AQ tests
+cargo test -p jpegli-rs --features "archmage-simd,test-utils" --lib streaming --release
+
+# Benchmark comparison
+cargo build --release -p jpegli-rs --example cjpegli_rs_profile --features "test-utils"
+./target/release/examples/cjpegli_rs_profile IMAGE.png --disable_output -q 75 --num_reps 200
+
+cargo build --release -p jpegli-rs --example cjpegli_rs_profile --features "test-utils,archmage-simd"
+./target/release/examples/cjpegli_rs_profile IMAGE.png --disable_output -q 75 --num_reps 200
+
+# Verify numerical parity
+md5sum /tmp/out_wide.jpg /tmp/out_mage.jpg  # Should match
+```
+
+### Key Learnings
+
+1. **`wide` crate limitation:** Uses `cfg(target_feature)` at compile time, ignores
+   `#[target_feature]` function attributes. `#[multiversed]` dispatch is useless.
+
+2. **archmage pattern:** Token proves CPU capability, `#[arcane]` enables intrinsics,
+   pass pre-broadcast constants to inner functions to avoid repeated setup.
+
+3. **Fusing loops:** When two functions read same data, fuse into one loop.
+   Memory bandwidth is often the bottleneck, not compute.
+
+4. **Numerical parity:** Different polynomial approximations (log2, exp2) can cause
+   small differences. Match coefficients exactly for byte-identical output.
