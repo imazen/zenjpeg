@@ -1,14 +1,19 @@
 //! Comprehensive comparison of Rust vs C++ jpegli across corpora.
 //!
 //! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
+//!
+//! Uses FFI to call C++ jpegli directly (no subprocess overhead).
 
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli_bench_utils::{
+    ChromaSubsampling as BenchChromaSubsampling, ColorMode,
+    EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, ScanMode,
+};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
-fn encode_rgb_progressive(
+fn encode_rust_progressive(
     width: u32,
     height: u32,
     data: &[u8],
@@ -20,6 +25,22 @@ fn encode_rgb_progressive(
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
+}
+
+fn encode_cpp_ffi_progressive(width: u32, height: u32, data: &[u8], quality: u8) -> Vec<u8> {
+    let img = ImageData {
+        name: "test".to_string(),
+        pixels: data.to_vec(),
+        width: width as usize,
+        height: height as usize,
+    };
+    BenchEncoderConfig::new(EncoderImpl::CJpegli)
+        .color(ColorMode::YCbCr)
+        .scan(ScanMode::Progressive)
+        .subsampling(BenchChromaSubsampling::S420)
+        .quality(quality)
+        .encode(&img)
+        .expect("C++ jpegli FFI encode failed")
 }
 
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
@@ -89,17 +110,10 @@ struct ComparisonResult {
     cpp_butteraugli: f64,
 }
 
-fn compare_image(
-    rgb: &[u8],
-    width: u32,
-    height: u32,
-    quality: u8,
-    cjpegli_path: &Path,
-    png_path: &Path,
-) -> Option<ComparisonResult> {
+fn compare_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<ComparisonResult> {
     // Rust encoding with timing
     let rust_start = Instant::now();
-    let rust_jpeg = encode_rgb_progressive(width, height, rgb, quality as f32).ok()?;
+    let rust_jpeg = encode_rust_progressive(width, height, rgb, quality as f32).ok()?;
     let rust_time_ms = rust_start.elapsed().as_secs_f64() * 1000.0;
     let rust_size = rust_jpeg.len();
 
@@ -119,27 +133,10 @@ fn compare_image(
     .expect("butteraugli")
     .score;
 
-    // C++ encoding with timing
-    let cpp_out = format!("/tmp/cpp_compare_q{}.jpg", quality);
+    // C++ encoding via FFI with timing
     let cpp_start = Instant::now();
-    let status = Command::new(cjpegli_path)
-        .args([
-            png_path.to_str().unwrap(),
-            &cpp_out,
-            "-q",
-            &quality.to_string(),
-            "--progressive_level=2",
-            "--chroma_subsampling=420", // Match Rust default (4:2:0)
-        ])
-        .output()
-        .ok()?;
+    let cpp_jpeg = encode_cpp_ffi_progressive(width, height, rgb, quality);
     let cpp_time_ms = cpp_start.elapsed().as_secs_f64() * 1000.0;
-
-    if !status.status.success() {
-        return None;
-    }
-
-    let cpp_jpeg = fs::read(&cpp_out).ok()?;
     let cpp_size = cpp_jpeg.len();
 
     // Decode C++ JPEG for quality metrics
@@ -157,9 +154,6 @@ fn compare_image(
     .expect("butteraugli")
     .score;
 
-    // Cleanup
-    let _ = fs::remove_file(&cpp_out);
-
     Some(ComparisonResult {
         quality,
         rust_size,
@@ -171,10 +165,6 @@ fn compare_image(
         rust_butteraugli,
         cpp_butteraugli,
     })
-}
-
-fn find_cjpegli() -> Option<std::path::PathBuf> {
-    jpegli::test_utils::find_cjpegli()
 }
 
 fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
@@ -228,16 +218,8 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
-#[ignore] // Requires C++ cjpegli and corpus images
+#[ignore] // Requires C++ jpegli FFI build and corpus images
 fn test_comprehensive_cpp_comparison() {
-    let cjpegli_path = match find_cjpegli() {
-        Some(p) => p,
-        None => {
-            println!("Skipping: cjpegli not found");
-            return;
-        }
-    };
-
     let max_images = std::env::var("MAX_IMAGES")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -253,7 +235,7 @@ fn test_comprehensive_cpp_comparison() {
     let qualities: Vec<u8> = (1..=50).map(|i| i * 2).collect();
 
     println!("\n{}", "=".repeat(120));
-    println!(" COMPREHENSIVE RUST vs C++ JPEGLI COMPARISON ");
+    println!(" COMPREHENSIVE RUST vs C++ JPEGLI COMPARISON (FFI) ");
     println!("{}\n", "=".repeat(120));
     println!("Images: {}", images.len());
     println!("Quality levels: {:?}\n", qualities);
@@ -279,26 +261,11 @@ fn test_comprehensive_cpp_comparison() {
             }
         };
 
-        // Save as PNG for C++ input
-        let tmp_png = format!("/tmp/rust_compare_{}.png", img_idx);
-        {
-            let file = fs::File::create(&tmp_png).unwrap();
-            let mut encoder = png::Encoder::new(file, width, height);
-            encoder.set_color(png::ColorType::Rgb);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(&rgb).unwrap();
-        }
-
         for &q in &qualities {
-            if let Some(result) =
-                compare_image(&rgb, width, height, q, &cjpegli_path, Path::new(&tmp_png))
-            {
+            if let Some(result) = compare_image(&rgb, width, height, q) {
                 aggregated.entry(q).or_default().push(result);
             }
         }
-
-        let _ = fs::remove_file(&tmp_png);
     }
 
     // Print summary table
@@ -327,6 +294,7 @@ fn test_comprehensive_cpp_comparison() {
     let mut all_size_diffs = Vec::new();
     let mut all_dssim_diffs = Vec::new();
     let mut all_bfly_diffs = Vec::new();
+    let mut all_time_diffs = Vec::new();
 
     for q in &qualities {
         if let Some(results) = aggregated.get(q) {
@@ -359,6 +327,7 @@ fn test_comprehensive_cpp_comparison() {
             all_size_diffs.push(size_diff);
             all_dssim_diffs.push(dssim_diff);
             all_bfly_diffs.push(bfly_diff);
+            all_time_diffs.push(time_diff);
 
             println!(
                 "{:>4} | {:>10.0} {:>10.0} {:>+6.1}% | {:>8.2} {:>8.2} {:>+6.1}% | {:>8.6} {:>8.6} {:>+6.1}% | {:>8.4} {:>8.4} {:>+6.1}%",
@@ -376,11 +345,16 @@ fn test_comprehensive_cpp_comparison() {
     let avg_size_diff: f64 = all_size_diffs.iter().sum::<f64>() / all_size_diffs.len() as f64;
     let avg_dssim_diff: f64 = all_dssim_diffs.iter().sum::<f64>() / all_dssim_diffs.len() as f64;
     let avg_bfly_diff: f64 = all_bfly_diffs.iter().sum::<f64>() / all_bfly_diffs.len() as f64;
+    let avg_time_diff: f64 = all_time_diffs.iter().sum::<f64>() / all_time_diffs.len() as f64;
 
     println!("\nOVERALL AVERAGES:");
     println!(
         "  Size difference:       {:>+.2}% (positive = Rust larger)",
         avg_size_diff
+    );
+    println!(
+        "  Time difference:       {:>+.2}% (positive = Rust slower)",
+        avg_time_diff
     );
     println!(
         "  DSSIM difference:      {:>+.2}% (positive = Rust worse)",
