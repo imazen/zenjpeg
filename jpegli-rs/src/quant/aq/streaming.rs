@@ -30,6 +30,12 @@ use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 use super::quant_field_to_aq_strength;
 use super::simd::{per_block_modulations_row, pre_erosion_row_padded};
 
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use super::simd::mage_pre_erosion_row_padded;
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use archmage::{Avx2FmaToken, SimdToken};
+
 /// Streaming AQ with rolling buffers - low memory, high performance.
 ///
 /// Supports two usage modes:
@@ -119,6 +125,10 @@ pub struct StreamingAQ {
 
     // Pending AQ: iMCU row waiting for lookahead before finalization
     pending_imcu_row: Option<usize>,
+
+    // Archmage token for optimized SIMD (when feature enabled)
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    archmage_token: Option<Avx2FmaToken>,
 }
 
 impl StreamingAQ {
@@ -191,6 +201,8 @@ impl StreamingAQ {
             total_imcu_rows,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
+            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            archmage_token: Avx2FmaToken::try_new(),
         })
     }
 
@@ -232,6 +244,8 @@ impl StreamingAQ {
             total_imcu_rows: 0,
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
+            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            archmage_token: None,
         }
     }
 
@@ -411,6 +425,29 @@ impl StreamingAQ {
         let row_below = &self.row_curr; // Boundary clamping (same row)
 
         self.pre_erosion_temp.fill(0.0);
+
+        // Use archmage SIMD when available (2x faster)
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        if let Some(token) = self.archmage_token {
+            mage_pre_erosion_row_padded(
+                token,
+                row_curr,
+                row_above,
+                row_below,
+                self.width,
+                &mut self.pre_erosion_temp,
+            );
+        } else {
+            pre_erosion_row_padded(
+                row_curr,
+                row_above,
+                row_below,
+                self.width,
+                &mut self.pre_erosion_temp,
+            );
+        }
+
+        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
         pre_erosion_row_padded(
             row_curr,
             row_above,
@@ -431,6 +468,29 @@ impl StreamingAQ {
         let row_below = &self.row_curr;
 
         self.pre_erosion_temp.fill(0.0);
+
+        // Use archmage SIMD when available (2x faster)
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        if let Some(token) = self.archmage_token {
+            mage_pre_erosion_row_padded(
+                token,
+                row_curr,
+                row_above,
+                row_below,
+                self.width,
+                &mut self.pre_erosion_temp,
+            );
+        } else {
+            pre_erosion_row_padded(
+                row_curr,
+                row_above,
+                row_below,
+                self.width,
+                &mut self.pre_erosion_temp,
+            );
+        }
+
+        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
         pre_erosion_row_padded(
             row_curr,
             row_above,
