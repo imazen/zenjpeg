@@ -1101,13 +1101,10 @@ impl StripProcessor {
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         let use_trellis = false;
 
-        // Quantize Y blocks
+        // Quantize Y blocks (vectors pre-allocated at construction)
         for (i, dct) in self.pending_y_blocks[buffer_idx].iter().enumerate() {
-            let aq_strength = if i < aq_strengths.len() {
-                aq_strengths[i]
-            } else {
-                0.08 // C++ mean fallback
-            };
+            // Use get() with fallback to avoid branch on common path
+            let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
 
             let zigzag = if use_trellis {
                 #[cfg(feature = "experimental-hybrid-trellis")]
@@ -1154,7 +1151,7 @@ impl StripProcessor {
             // For 4:2:0, each iMCU has 1 chroma block row
             let global_chroma_by = self.cb_blocks.len() / c_blocks_h.max(1);
 
-            // Quantize Cb blocks
+            // Quantize Cb blocks (vectors pre-allocated at construction)
             for (i, dct) in self.pending_cb_blocks[buffer_idx].iter().enumerate() {
                 let bx = i % c_blocks_h.max(1);
                 let local_by = i / c_blocks_h.max(1);

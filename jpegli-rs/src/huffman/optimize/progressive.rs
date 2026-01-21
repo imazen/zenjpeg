@@ -488,20 +488,20 @@ impl ProgressiveTokenBuffer {
         // Get the number of blocks (all components should have same count for interleaved)
         let num_blocks = blocks.first().map(|b| b.len()).unwrap_or(0);
 
+        // Iterate using zip to ensure matched lengths without bounds checks
         for block_idx in 0..num_blocks {
-            for (comp_offset, &comp_idx) in component_indices.iter().enumerate() {
-                if let Some(comp_blocks) = blocks.get(comp_offset) {
-                    if let Some(block) = comp_blocks.get(block_idx) {
-                        // Get DC coefficient and shift by al
-                        let dc = block[0] >> al;
-                        let prev = self.dc_pred(comp_idx);
-                        let diff = dc - prev;
-                        self.set_dc_pred(comp_idx, dc);
+            for (&comp_idx, &comp_blocks) in component_indices.iter().zip(blocks.iter()) {
+                // Use get() for block access - gracefully handles mismatched block counts
+                if let Some(block) = comp_blocks.get(block_idx) {
+                    // Get DC coefficient and shift by al
+                    let dc = block[0] >> al;
+                    let prev = self.dc_pred(comp_idx);
+                    let diff = dc - prev;
+                    self.set_dc_pred(comp_idx, dc);
 
-                        // Create DC token
-                        let token = Token::dc(comp_idx as u8, diff);
-                        self.push(token);
-                    }
+                    // Create DC token
+                    let token = Token::dc(comp_idx as u8, diff);
+                    self.push(token);
                 }
             }
         }
@@ -511,17 +511,17 @@ impl ProgressiveTokenBuffer {
     fn tokenize_dc_refine(&mut self, blocks: &[&[[i16; 64]]], component_indices: &[usize], al: u8) {
         let num_blocks = blocks.first().map(|b| b.len()).unwrap_or(0);
 
+        // Iterate using zip to ensure matched lengths without bounds checks
         for block_idx in 0..num_blocks {
-            for (comp_offset, &comp_idx) in component_indices.iter().enumerate() {
-                if let Some(comp_blocks) = blocks.get(comp_offset) {
-                    if let Some(block) = comp_blocks.get(block_idx) {
-                        // For DC refinement, just emit the bit at position al
-                        let bit = ((block[0] >> al) & 1) as u8;
+            for (&comp_idx, &comp_blocks) in component_indices.iter().zip(blocks.iter()) {
+                // Use get() for block access - gracefully handles mismatched block counts
+                if let Some(block) = comp_blocks.get(block_idx) {
+                    // For DC refinement, just emit the bit at position al
+                    let bit = ((block[0] >> al) & 1) as u8;
 
-                        // DC refinement uses symbol 0 with extra bit
-                        let token = Token::new(comp_idx as u8, 0, bit as u16, 1);
-                        self.push(token);
-                    }
+                    // DC refinement uses symbol 0 with extra bit
+                    let token = Token::new(comp_idx as u8, 0, bit as u16, 1);
+                    self.push(token);
                 }
             }
         }
