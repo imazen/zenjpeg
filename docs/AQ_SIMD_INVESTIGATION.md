@@ -572,3 +572,104 @@ The C++ code has 2x more FMA instructions, suggesting:
 2. **Force more inlining:** Add `#[inline(always)]` to all helper functions
 3. **Review polynomial evaluation:** Compare `EvalRationalPolynomial` vs Rust equivalent
 4. **Check constant broadcast:** C++ uses `vbroadcastss` with memory operand, Rust uses splat
+
+---
+
+## Part 11: Deep Dive Findings (2026-01-21)
+
+### Cache Performance Comparison
+
+Profiled with `perf stat` on 1507x2048 image, 20 encodes:
+
+| Metric | Rust | C++ (subprocess overhead) |
+|--------|------|---------------------------|
+| IPC | **2.73** | 1.53 |
+| L1 cache miss rate | 8.22% | **2.88%** |
+| Branch miss rate | **1.49%** | 8.48% |
+
+**Key finding:** Rust has 3x higher L1 cache miss rate despite higher IPC. This suggests
+memory access pattern differences, not instruction throughput, are a significant factor.
+
+### Code Structure Differences
+
+#### 1. Boundary Handling in Inner Loop
+
+**C++ (no conditionals in hot path):**
+```cpp
+// Input is pre-padded, all loads are safe
+for (size_t x = 0; x < xsize; x += Lanes(df)) {
+    const auto in = LoadU(df, row_in + x);
+    const auto in_r = LoadU(df, row_in + x + 1);  // Always valid due to padding
+    const auto in_l = LoadU(df, row_in + x - 1);  // Always valid due to padding
+    // ... pure SIMD computation
+}
+```
+
+**Rust (conditionals per chunk):**
+```rust
+for chunk in 0..chunks {
+    let x = chunk * 8;
+    let left = if x == 0 {
+        // Construct vector element-by-element for first chunk
+        f32x8::from([row[0], row[x], row[x+1], ...])  // SLOW
+    } else {
+        load_f32x8(row, x - 1)
+    };
+    // Similar for right neighbor on last chunk
+}
+```
+
+**Impact:** First and last chunks have slow element-by-element vector construction.
+
+#### 2. Load/Store Overhead
+
+**C++ (direct intrinsic):**
+```cpp
+const auto in = LoadU(df, row_in + x);  // Single vmovups instruction
+```
+
+**Rust (bounds checking + conversion):**
+```rust
+fn load_f32x8(slice: &[f32], offset: usize) -> f32x8 {
+    <[f32; 8]>::try_from(&slice[offset..offset + 8])
+        .unwrap()  // Bounds check + panic path
+        .into()    // Array to f32x8 conversion
+}
+```
+
+**Impact:** Extra bounds checking and conversion overhead on every load.
+
+#### 3. Scalar Remainder Loop
+
+```rust
+// Rust has scalar fallback for width % 8 != 0
+for x in (chunks * 8)..width {
+    // Scalar operations with per-pixel conditionals
+}
+```
+
+C++ avoids this by ensuring input is always padded to SIMD width.
+
+### Performance Improvement Opportunities
+
+1. **Pre-pad input buffers** to eliminate boundary conditionals in hot loop
+2. **Use unsafe loads** when buffer padding guarantees safety (behind `unsafe_simd` feature)
+3. **Eliminate scalar remainder** by padding width to multiple of 8
+4. **Cache-friendly access patterns:** Review buffer layouts for better locality
+
+### Estimated Impact
+
+| Optimization | Estimated Speedup |
+|--------------|------------------|
+| Remove boundary conditionals | 5-10% |
+| Use direct SIMD loads | 3-5% |
+| Eliminate scalar remainder | 2-3% |
+| Better cache locality | 10-20% |
+| **Total potential** | **20-35%** |
+
+### Action Items
+
+1. [ ] Add buffer padding in `StreamingAQ` to eliminate boundary checks
+2. [ ] Implement `unsafe_simd` feature with direct intrinsics for hot paths
+3. [ ] Profile individual functions with `perf record` to find exact hotspots
+4. [ ] Consider reordering memory accesses for better cache behavior
