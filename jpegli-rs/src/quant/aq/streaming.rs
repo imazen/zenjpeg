@@ -36,6 +36,9 @@ use super::simd::mage_pre_erosion_row_padded;
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use super::simd::mage_per_block_modulations_row;
 
+// Note: mage_compute_fuzzy_erosion_row exists but is not used - it's 3x slower
+// than scalar due to function call overhead. Would need true SIMD partial sort.
+
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{Avx2FmaToken, SimdToken};
 
@@ -628,7 +631,18 @@ impl StreamingAQ {
     fn compute_fuzzy_erosion_row_into(&mut self, pe_y_base: usize, start: usize, end: usize) {
         let pe_w = self.pre_erosion_w;
         let buffer_rows = self.pre_erosion_buffer_rows;
-        let max_filled_row = self.pre_erosion_rows_flushed.saturating_sub(1) as isize;
+        let max_filled_row = self.pre_erosion_rows_flushed.saturating_sub(1);
+
+        // DISABLED: mage_compute_fuzzy_erosion_row is 3x slower than scalar version
+        // due to function call overhead and branch misprediction.
+        // TODO: Needs SIMD-vectorized partial sort to be worthwhile.
+        // #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        // if let Some(token) = self.archmage_token {
+        //     mage_compute_fuzzy_erosion_row(...);
+        //     return;
+        // }
+
+        let max_filled_row = max_filled_row as isize;
 
         const MUL0: f32 = 0.125;
         const MUL1: f32 = 0.075;

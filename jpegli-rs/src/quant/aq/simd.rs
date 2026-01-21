@@ -1360,6 +1360,220 @@ mod archmage_impl {
             aq_row[bx] = quant_field;
         }
     }
+
+    // ========================================================================
+    // Fuzzy erosion - optimized 3x3 neighborhood gathering + partial sort
+    // ========================================================================
+
+    // Fuzzy erosion weighting constants (weighted sum of 4 smallest)
+    const FE_MUL0: f32 = 0.125;
+    const FE_MUL1: f32 = 0.075;
+    const FE_MUL2: f32 = 0.06;
+    const FE_MUL3: f32 = 0.05;
+
+    /// Find 4 smallest values from 9 and return weighted sum.
+    /// Uses an efficient comparison network instead of sorting.
+    #[inline(always)]
+    fn weighted_4_smallest(vals: &[f32; 9]) -> f32 {
+        // Copy for destructive selection
+        let mut v = *vals;
+
+        // Find minimum 4 times with replacement
+        let mut sum = 0.0f32;
+
+        // Pass 1: find minimum
+        let mut min_idx = 0;
+        for i in 1..9 {
+            if v[i] < v[min_idx] {
+                min_idx = i;
+            }
+        }
+        sum += FE_MUL0 * v[min_idx];
+        v[min_idx] = f32::MAX;
+
+        // Pass 2
+        min_idx = 0;
+        for i in 1..9 {
+            if v[i] < v[min_idx] {
+                min_idx = i;
+            }
+        }
+        sum += FE_MUL1 * v[min_idx];
+        v[min_idx] = f32::MAX;
+
+        // Pass 3
+        min_idx = 0;
+        for i in 1..9 {
+            if v[i] < v[min_idx] {
+                min_idx = i;
+            }
+        }
+        sum += FE_MUL2 * v[min_idx];
+        v[min_idx] = f32::MAX;
+
+        // Pass 4
+        min_idx = 0;
+        for i in 1..9 {
+            if v[i] < v[min_idx] {
+                min_idx = i;
+            }
+        }
+        sum += FE_MUL3 * v[min_idx];
+
+        sum
+    }
+
+    /// Gather 9 values from 3x3 neighborhood around (cx, cy) with clamping.
+    #[inline(always)]
+    fn gather_3x3_clamped(
+        buffer_ptr: *const f32,
+        pe_w: usize,
+        buffer_rows: usize,
+        cx: isize,
+        cy: isize,
+        max_y: isize,
+    ) -> [f32; 9] {
+        let mut vals = [0.0f32; 9];
+        let offsets: [(isize, isize); 9] = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),  (0, 0),  (0, 1),
+            (1, -1),  (1, 0),  (1, 1),
+        ];
+
+        for (i, (ny, nx)) in offsets.iter().enumerate() {
+            let px = (cx + nx).clamp(0, pe_w as isize - 1) as usize;
+            let py = (cy + ny).clamp(0, max_y.max(0)) as usize;
+            let buffer_row = py % buffer_rows;
+            let idx = buffer_row * pe_w + px;
+            vals[i] = unsafe { *buffer_ptr.add(idx) };
+        }
+        vals
+    }
+
+    /// Gather 9 values from 3x3 neighborhood (interior, no clamping needed).
+    #[inline(always)]
+    fn gather_3x3_interior(
+        buffer_ptr: *const f32,
+        row_offsets: &[usize; 3], // Pre-computed: [(cy-1) % buffer_rows * pe_w, cy % buffer_rows * pe_w, (cy+1) % buffer_rows * pe_w]
+        cx: usize,
+    ) -> [f32; 9] {
+        unsafe {
+            [
+                *buffer_ptr.add(row_offsets[0] + cx - 1),
+                *buffer_ptr.add(row_offsets[0] + cx),
+                *buffer_ptr.add(row_offsets[0] + cx + 1),
+                *buffer_ptr.add(row_offsets[1] + cx - 1),
+                *buffer_ptr.add(row_offsets[1] + cx),
+                *buffer_ptr.add(row_offsets[1] + cx + 1),
+                *buffer_ptr.add(row_offsets[2] + cx - 1),
+                *buffer_ptr.add(row_offsets[2] + cx),
+                *buffer_ptr.add(row_offsets[2] + cx + 1),
+            ]
+        }
+    }
+
+    /// Process one corner contribution (3x3 gather + partial sort + weighted sum).
+    #[inline(always)]
+    fn process_corner_interior(
+        buffer_ptr: *const f32,
+        row_offsets: &[usize; 3],
+        cx: usize,
+    ) -> f32 {
+        let vals = gather_3x3_interior(buffer_ptr, row_offsets, cx);
+        weighted_4_smallest(&vals)
+    }
+
+    /// Archmage-based compute_fuzzy_erosion_row.
+    /// Optimizations:
+    /// - Raw pointer loads (no bounds checks)
+    /// - Pre-computed row offsets for circular buffer
+    /// - Interior fast path (no clamping)
+    /// - Efficient minimum-finding for partial sort
+    #[arcane]
+    pub fn mage_compute_fuzzy_erosion_row<T: HasAvx2 + HasFma + Copy>(
+        _token: T,
+        pre_erosion_buffer: &[f32],
+        pe_w: usize,
+        buffer_rows: usize,
+        max_filled_row: usize,
+        pe_y_base: usize,
+        block_start: usize,
+        block_count: usize,
+        output: &mut [f32],
+    ) {
+        if block_count == 0 || pe_w == 0 {
+            return;
+        }
+
+        let buffer_ptr = pre_erosion_buffer.as_ptr();
+        let max_y = max_filled_row as isize;
+
+        // Pre-compute row offsets for the 2x2 corners (dy=0 and dy=1)
+        // For dy=0: cy = pe_y_base, neighbors at cy-1, cy, cy+1
+        // For dy=1: cy = pe_y_base+1, neighbors at cy, cy+1, cy+2
+        let cy0 = pe_y_base as isize;
+        let cy1 = (pe_y_base + 1) as isize;
+
+        // Check if all rows are interior (no clamping needed)
+        let y_interior = cy0 >= 1 && (cy1 + 1) <= max_y;
+
+        // Row offsets for dy=0 (rows cy0-1, cy0, cy0+1)
+        let row_offsets_0 = if y_interior {
+            [
+                ((cy0 - 1) as usize % buffer_rows) * pe_w,
+                (cy0 as usize % buffer_rows) * pe_w,
+                ((cy0 + 1) as usize % buffer_rows) * pe_w,
+            ]
+        } else {
+            [0, 0, 0] // Not used for boundary path
+        };
+
+        // Row offsets for dy=1 (rows cy1-1=cy0, cy1, cy1+1)
+        let row_offsets_1 = if y_interior {
+            [
+                (cy0 as usize % buffer_rows) * pe_w,
+                (cy1 as usize % buffer_rows) * pe_w,
+                ((cy1 + 1) as usize % buffer_rows) * pe_w,
+            ]
+        } else {
+            [0, 0, 0]
+        };
+
+        for bx_offset in 0..block_count {
+            let bx = block_start + bx_offset;
+            let pe_x_base = bx_offset * 2;
+
+            // Check if all 4 corners are interior (x in range [1, pe_w-2])
+            let x_interior = pe_x_base >= 1 && (pe_x_base + 1) < pe_w.saturating_sub(1);
+
+            let sum = if y_interior && x_interior {
+                // Fast path: all 4 corners are interior
+                let cx0 = pe_x_base;
+                let cx1 = pe_x_base + 1;
+
+                let s00 = process_corner_interior(buffer_ptr, &row_offsets_0, cx0);
+                let s01 = process_corner_interior(buffer_ptr, &row_offsets_0, cx1);
+                let s10 = process_corner_interior(buffer_ptr, &row_offsets_1, cx0);
+                let s11 = process_corner_interior(buffer_ptr, &row_offsets_1, cx1);
+
+                s00 + s01 + s10 + s11
+            } else {
+                // Slow path: boundary blocks need clamping
+                let mut corner_sum = 0.0f32;
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let cx = (pe_x_base + dx) as isize;
+                        let cy = cy0 + dy as isize;
+                        let vals = gather_3x3_clamped(buffer_ptr, pe_w, buffer_rows, cx, cy, max_y);
+                        corner_sum += weighted_4_smallest(&vals);
+                    }
+                }
+                corner_sum
+            };
+
+            output[bx] = sum;
+        }
+    }
 }
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
@@ -1367,6 +1581,9 @@ pub use archmage_impl::mage_pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub use archmage_impl::mage_per_block_modulations_row;
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+pub use archmage_impl::mage_compute_fuzzy_erosion_row;
 
 // ============================================================================
 // Locked test data from frymire.png
@@ -2176,6 +2393,111 @@ mod tests {
                     output_wide[x],
                     rel_diff
                 );
+            }
+        }
+    }
+
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_archmage_fuzzy_erosion_matches_scalar() {
+        use archmage::{Avx2FmaToken, SimdToken};
+
+        let Some(token) = Avx2FmaToken::try_new() else {
+            println!("AVX2+FMA not available, skipping archmage test");
+            return;
+        };
+
+        // Test with various buffer sizes
+        for (pe_w, buffer_rows, blocks_w) in [
+            (32, 12, 16),  // Small image
+            (120, 12, 60), // Medium image
+            (480, 12, 240), // Large image (like 1920px)
+        ] {
+            // Create test pre-erosion buffer with recognizable pattern
+            let mut pre_erosion_buffer = vec![0.0f32; pe_w * buffer_rows];
+            for row in 0..buffer_rows {
+                for col in 0..pe_w {
+                    pre_erosion_buffer[row * pe_w + col] =
+                        ((row + col) % 256) as f32 / 256.0 + 0.1;
+                }
+            }
+
+            // Test several pe_y_base values (interior and boundary)
+            for pe_y_base in [0, 1, 5, 10] {
+                let max_filled_row = 11; // One less than buffer_rows
+
+                // Scalar reference implementation (inline copy of original algorithm)
+                let mut output_scalar = vec![0.0f32; blocks_w];
+                {
+                    const MUL0: f32 = 0.125;
+                    const MUL1: f32 = 0.075;
+                    const MUL2: f32 = 0.06;
+                    const MUL3: f32 = 0.05;
+
+                    for bx in 0..blocks_w {
+                        let pe_x_base = bx * 2;
+                        let pe_y = pe_y_base as isize;
+
+                        let mut sum = 0.0f32;
+                        for dy in 0..2 {
+                            for dx in 0..2 {
+                                let cx = (pe_x_base + dx) as isize;
+                                let cy = pe_y + dy as isize;
+
+                                let mut vals = [0.0f32; 9];
+                                for (i, (ny, nx)) in [
+                                    (-1, -1), (-1, 0), (-1, 1),
+                                    (0, -1),  (0, 0),  (0, 1),
+                                    (1, -1),  (1, 0),  (1, 1),
+                                ].iter().enumerate() {
+                                    let px = (cx + nx).clamp(0, pe_w as isize - 1) as usize;
+                                    let py = (cy + ny).clamp(0, max_filled_row as isize) as usize;
+                                    let buffer_row = py % buffer_rows;
+                                    let buf_idx = buffer_row * pe_w + px;
+                                    vals[i] = pre_erosion_buffer[buf_idx];
+                                }
+
+                                // Partial sort to get 4 smallest
+                                for i in 0..4 {
+                                    for j in (i + 1)..9 {
+                                        if vals[j] < vals[i] {
+                                            vals.swap(i, j);
+                                        }
+                                    }
+                                }
+
+                                sum += MUL0 * vals[0] + MUL1 * vals[1] + MUL2 * vals[2] + MUL3 * vals[3];
+                            }
+                        }
+                        output_scalar[bx] = sum;
+                    }
+                }
+
+                // Archmage version
+                let mut output_archmage = vec![0.0f32; blocks_w];
+                super::archmage_impl::mage_compute_fuzzy_erosion_row(
+                    token,
+                    &pre_erosion_buffer,
+                    pe_w,
+                    buffer_rows,
+                    max_filled_row,
+                    pe_y_base,
+                    0,         // block_start
+                    blocks_w,  // block_count
+                    &mut output_archmage,
+                );
+
+                // Compare
+                for bx in 0..blocks_w {
+                    let diff = (output_archmage[bx] - output_scalar[bx]).abs();
+                    let rel_diff = diff / output_scalar[bx].abs().max(1e-10);
+                    assert!(
+                        rel_diff < 1e-5,
+                        "pe_w={} pe_y_base={} mismatch at bx={}: archmage={}, scalar={}, rel_diff={}",
+                        pe_w, pe_y_base, bx,
+                        output_archmage[bx], output_scalar[bx], rel_diff
+                    );
+                }
             }
         }
     }
