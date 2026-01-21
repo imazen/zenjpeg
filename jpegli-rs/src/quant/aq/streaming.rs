@@ -28,7 +28,11 @@ use crate::error::Result;
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 
 use super::quant_field_to_aq_strength;
-use super::simd::{per_block_modulations_row, pre_erosion_row_padded};
+use super::simd::per_block_modulations_row;
+
+// Use autovec pre_erosion - 1.95x faster than wide-based version due to
+// better autovectorization with #[multiversion] runtime dispatch
+use super::autovec::pre_erosion_row_autovec_iter as pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use super::simd::mage_pre_erosion_row_padded;
