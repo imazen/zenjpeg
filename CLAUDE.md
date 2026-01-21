@@ -271,6 +271,53 @@ underperforms significantly. Options:
 1. Build with `-C target-cpu=x86-64-v3` (requires AVX2 at runtime)
 2. Use archmage with `#[arcane]` macro for AQ functions
 3. Use raw intrinsics guarded by runtime feature detection
+4. **Use `multiversion` crate for autovectorization** (see below)
+
+### Autovectorization with multiversion (2026-01-21)
+
+**KEY DISCOVERY:** Pure scalar Rust code can be autovectorized to match manual SIMD
+by using the `multiversion` crate for runtime dispatch.
+
+**Benchmark results** (8x8 f32 transpose, `jpegli-rs/examples/autovec_transpose.rs`):
+
+| Implementation | Time | Speedup |
+|---------------|------|---------|
+| Naive scalar | 13.31 ns | 1.0x |
+| `#[multiversion]` | 4.73 ns | **2.8x** |
+
+**How it works:**
+1. Decorate function with `#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse4.1", "aarch64+neon"))]`
+2. Compiler generates separate versions with different `#[target_feature]` attributes
+3. Runtime dispatcher picks the best version based on CPU features
+4. LLVM autovectorizes each version with the enabled instruction set
+
+**Assembly verification:** The AVX2 version uses `vunpcklps`, `vinsertf128`, `vshufps`,
+`vblendps` - the **exact same instructions** as hand-written SIMD!
+
+**When autovectorization works well:**
+- Integer operations (excellent)
+- Float operations with simple memory patterns (good when multiversion enables AVX2)
+- Operations without data-dependent branches
+
+**When autovectorization fails:**
+- Complex gather/scatter patterns (without global AVX2)
+- Operations with conditional branches in inner loops
+- Floating-point requiring strict IEEE semantics (compiler can't reorder)
+
+**Recommended approach:**
+```rust
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+fn process(data: &mut [f32]) {
+    // Write simple scalar code - compiler autovectorizes
+    for chunk in data.chunks_exact_mut(8) {
+        for x in chunk {
+            *x = x.sqrt();  // Becomes vsqrtps with AVX2
+        }
+    }
+}
+```
+
+**Files:** `jpegli-rs/examples/autovec_transpose.rs`
 
 ## Failed Explorations
 
