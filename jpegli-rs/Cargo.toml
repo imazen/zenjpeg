@@ -64,6 +64,7 @@ bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg-rs = { workspace = true }
 rayon = { workspace = true }
+smallvec = "1.13"
 sha2 = "0.10"
 yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy testing
 # For corpus comparison tests (requires local codec-eval crate)
@@ -164,6 +165,10 @@ harness = false
 name = "mage_simd"
 harness = false
 required-features = ["archmage-simd"]
+
+[[bench]]
+name = "vec_variants"
+harness = false
 
 [lints]
 workspace = true
