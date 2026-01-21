@@ -7,17 +7,144 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use jpegli::encode::{EncoderConfig, ChromaSubsampling, TrellisConfig};
+//! use jpegli::encode::{EncoderConfig, ChromaSubsampling, TrellisConfig, TrellisSpeedMode};
 //!
 //! // Configure trellis like mozjpeg-rs
 //! let trellis = TrellisConfig::default()
 //!     .ac_trellis(true)
 //!     .dc_trellis(true)
-//!     .speed_level(7);
+//!     .speed_mode(TrellisSpeedMode::Adaptive);
 //!
 //! let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 //!     .trellis(trellis);
 //! ```
+
+/// Speed optimization mode for trellis quantization.
+///
+/// Trellis quantization has O(n²) complexity per block. For high-entropy
+/// blocks (many non-zero coefficients at high quality), this can be slow.
+/// These modes control how aggressively to limit the search space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TrellisSpeedMode {
+    /// Full search on all blocks (slowest, optimal quality).
+    /// Use when encoding time is not a concern.
+    Thorough,
+
+    /// Two-tier adaptive limits matching C mozjpeg (default).
+    /// - nonzero > 55: lookback=8, candidates=3 (extreme entropy)
+    /// - nonzero > 48: lookback=16, candidates=4 (high entropy)
+    /// - otherwise: full search
+    Adaptive,
+
+    /// Formula-based level (0-10), the original Rust implementation.
+    /// - threshold = 61 - level×3
+    /// - lookback = 26 - level×2
+    /// - candidates = 9 - (level+1)/2
+    ///
+    /// Level 0 = full search, Level 7 ≈ C mozjpeg adaptive, Level 10 = fastest.
+    Level(u8),
+
+    /// Custom two-tier thresholds for fine-tuning.
+    ///
+    /// When nonzero coefficient count exceeds a threshold, the search is limited.
+    /// Tier 1 is for extreme entropy (higher threshold, more aggressive limits).
+    /// Tier 2 is for high entropy (lower threshold, moderate limits).
+    Custom {
+        /// Tier 1: nonzero count threshold (e.g., 55)
+        tier1_threshold: u8,
+        /// Tier 1: maximum lookback positions (e.g., 8)
+        tier1_lookback: u8,
+        /// Tier 1: maximum quantization candidates (e.g., 3)
+        tier1_candidates: u8,
+        /// Tier 2: nonzero count threshold (e.g., 48, must be <= tier1)
+        tier2_threshold: u8,
+        /// Tier 2: maximum lookback positions (e.g., 16)
+        tier2_lookback: u8,
+        /// Tier 2: maximum quantization candidates (e.g., 4)
+        tier2_candidates: u8,
+    },
+}
+
+impl Default for TrellisSpeedMode {
+    fn default() -> Self {
+        Self::Adaptive
+    }
+}
+
+impl TrellisSpeedMode {
+    /// Returns (max_lookback, max_candidates) for the given nonzero count.
+    #[inline]
+    pub fn get_limits(&self, nonzero_count: i32) -> (usize, usize) {
+        match *self {
+            Self::Thorough => (63, 16),
+            Self::Adaptive => {
+                if nonzero_count > 55 {
+                    (8, 3)
+                } else if nonzero_count > 48 {
+                    (16, 4)
+                } else {
+                    (63, 16)
+                }
+            }
+            Self::Level(level) => {
+                let level = level.min(10) as i32;
+                if level == 0 {
+                    return (63, 16);
+                }
+                let threshold = 61 - level * 3;
+                if nonzero_count > threshold {
+                    let lookback = (26 - level * 2).max(4) as usize;
+                    let candidates = (9 - (level + 1) / 2).max(2) as usize;
+                    (lookback, candidates)
+                } else {
+                    (63, 16)
+                }
+            }
+            Self::Custom {
+                tier1_threshold,
+                tier1_lookback,
+                tier1_candidates,
+                tier2_threshold,
+                tier2_lookback,
+                tier2_candidates,
+            } => {
+                if nonzero_count > tier1_threshold as i32 {
+                    (tier1_lookback as usize, tier1_candidates as usize)
+                } else if nonzero_count > tier2_threshold as i32 {
+                    (tier2_lookback as usize, tier2_candidates as usize)
+                } else {
+                    (63, 16)
+                }
+            }
+        }
+    }
+
+    /// Convert to mozjpeg-rs TrellisSpeedMode.
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    #[must_use]
+    pub fn to_mozjpeg(&self) -> mozjpeg_rs::TrellisSpeedMode {
+        match *self {
+            Self::Thorough => mozjpeg_rs::TrellisSpeedMode::Thorough,
+            Self::Adaptive => mozjpeg_rs::TrellisSpeedMode::Adaptive,
+            Self::Level(l) => mozjpeg_rs::TrellisSpeedMode::Level(l),
+            Self::Custom {
+                tier1_threshold,
+                tier1_lookback,
+                tier1_candidates,
+                tier2_threshold,
+                tier2_lookback,
+                tier2_candidates,
+            } => mozjpeg_rs::TrellisSpeedMode::Custom {
+                tier1_threshold,
+                tier1_lookback,
+                tier1_candidates,
+                tier2_threshold,
+                tier2_lookback,
+                tier2_candidates,
+            },
+        }
+    }
+}
 
 /// Configuration for trellis quantization.
 ///
@@ -29,15 +156,15 @@
 ///
 /// # Presets
 ///
-/// - [`TrellisConfig::default()`] - Balanced settings (AC + DC trellis, speed_level=7)
+/// - [`TrellisConfig::default()`] - Balanced settings (AC + DC trellis, Adaptive mode)
 /// - [`TrellisConfig::disabled()`] - No trellis (fastest encoding)
 /// - [`TrellisConfig::favor_size()`] - More aggressive zeroing (smaller files)
 /// - [`TrellisConfig::favor_quality()`] - More conservative (better quality)
 /// - [`TrellisConfig::thorough()`] - Full search, no speed optimizations
 ///
-/// # Speed Levels
+/// # Speed Modes
 ///
-/// The `speed_level` parameter (0-10) controls adaptive search limiting:
+/// The [`TrellisSpeedMode`] controls adaptive search limiting:
 ///
 /// - **0** = Thorough: Full O(n²) search on all blocks. Slowest but optimal.
 /// - **7** = Default: ~30% faster. Limits search on high-entropy blocks.
@@ -64,8 +191,8 @@ pub struct TrellisConfig {
     pub(crate) lambda_log_scale2: f32,
     /// Number of trellis optimization loops
     pub(crate) num_loops: i32,
-    /// Speed optimization level (0-10)
-    pub(crate) speed_level: u8,
+    /// Speed optimization mode
+    pub(crate) speed_mode: TrellisSpeedMode,
 }
 
 /// Default lambda_log_scale1 value (matches mozjpeg)
@@ -88,7 +215,7 @@ impl Default for TrellisConfig {
             lambda_log_scale1: DEFAULT_LAMBDA_LOG_SCALE1,
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             num_loops: 1,
-            speed_level: 7, // Balanced speed/quality
+            speed_mode: TrellisSpeedMode::Adaptive,
         }
     }
 }
@@ -114,7 +241,7 @@ impl TrellisConfig {
             lambda_log_scale1: DEFAULT_LAMBDA_LOG_SCALE1,
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             num_loops: 1,
-            speed_level: 7,
+            speed_mode: TrellisSpeedMode::Adaptive,
         }
     }
 
@@ -145,14 +272,14 @@ impl TrellisConfig {
         }
     }
 
-    /// Preset for thorough encoding (speed_level=0).
+    /// Preset for thorough encoding (full search).
     ///
     /// Full trellis search on all blocks with no speed optimizations.
     /// Slowest but produces optimal results. Use when encoding time is not a concern.
     #[must_use]
     pub fn thorough() -> Self {
         Self {
-            speed_level: 0,
+            speed_mode: TrellisSpeedMode::Thorough,
             ..Self::default()
         }
     }
@@ -247,25 +374,33 @@ impl TrellisConfig {
         self
     }
 
+    /// Set the speed optimization mode.
+    ///
+    /// See [`TrellisSpeedMode`] for available modes.
+    #[must_use]
+    pub fn speed_mode(mut self, mode: TrellisSpeedMode) -> Self {
+        self.speed_mode = mode;
+        self
+    }
+
     /// Set the speed optimization level (0-10).
     ///
-    /// Higher levels detect high-entropy blocks and limit the trellis search,
-    /// trading a negligible quality loss for faster encoding.
+    /// This uses the formula-based [`TrellisSpeedMode::Level`] mode.
+    /// For C mozjpeg compatibility, use [`TrellisSpeedMode::Adaptive`] instead.
     ///
     /// | Level | Speed | Quality | Notes |
     /// |-------|-------|---------|-------|
     /// | 0 | ~1x | Optimal | Full search on all blocks |
-    /// | 7 | ~1.3x | Excellent | Default, balanced |
+    /// | 7 | ~1.3x | Excellent | ≈ C mozjpeg adaptive |
     /// | 10 | ~1.5x | Very good | Most aggressive limiting |
     ///
     /// Speed gains are most significant for Q80-100 on noisy/high-detail images.
     /// At lower quality or on smooth images, most blocks have few non-zero
     /// coefficients and the optimization rarely triggers.
-    ///
-    /// Default: `7`
+    #[deprecated(since = "0.7.0", note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead")]
     #[must_use]
     pub fn speed_level(mut self, level: u8) -> Self {
-        self.speed_level = level.min(10);
+        self.speed_mode = TrellisSpeedMode::Level(level.min(10));
         self
     }
 
@@ -301,10 +436,22 @@ impl TrellisConfig {
         self.eob_opt
     }
 
-    /// Get the current speed level.
+    /// Get the current speed mode.
+    #[must_use]
+    pub fn get_speed_mode(&self) -> TrellisSpeedMode {
+        self.speed_mode
+    }
+
+    /// Get the current speed level (deprecated).
+    #[deprecated(since = "0.7.0", note = "Use get_speed_mode() instead")]
     #[must_use]
     pub fn get_speed_level(&self) -> u8 {
-        self.speed_level
+        match self.speed_mode {
+            TrellisSpeedMode::Thorough => 0,
+            TrellisSpeedMode::Adaptive => 7,
+            TrellisSpeedMode::Level(l) => l,
+            TrellisSpeedMode::Custom { .. } => 7, // Approximate
+        }
     }
 
     /// Check if any trellis optimization is enabled.
@@ -331,7 +478,7 @@ impl TrellisConfig {
             freq_split: 8, // Default, not exposed
             num_loops: self.num_loops,
             delta_dc_weight: 0.0, // Default, not exposed
-            speed_level: self.speed_level,
+            speed_mode: self.speed_mode.to_mozjpeg(),
         }
     }
 }
@@ -346,7 +493,7 @@ mod tests {
         assert!(config.enabled);
         assert!(config.dc_enabled);
         assert!(!config.eob_opt); // Disabled by default
-        assert_eq!(config.speed_level, 7);
+        assert_eq!(config.speed_mode, TrellisSpeedMode::Adaptive);
         assert!((config.lambda_log_scale1 - 14.75).abs() < 0.01);
     }
 
@@ -367,7 +514,7 @@ mod tests {
         assert!(favor_quality.lambda_log_scale1 > DEFAULT_LAMBDA_LOG_SCALE1);
 
         let thorough = TrellisConfig::thorough();
-        assert_eq!(thorough.speed_level, 0);
+        assert_eq!(thorough.speed_mode, TrellisSpeedMode::Thorough);
     }
 
     #[test]
@@ -376,13 +523,13 @@ mod tests {
             .ac_trellis(true)
             .dc_trellis(false)
             .eob_optimization(true)
-            .speed_level(5)
+            .speed_mode(TrellisSpeedMode::Level(5))
             .lambda_scales(15.0, 17.0);
 
         assert!(config.enabled);
         assert!(!config.dc_enabled);
         assert!(config.eob_opt);
-        assert_eq!(config.speed_level, 5);
+        assert_eq!(config.speed_mode, TrellisSpeedMode::Level(5));
         assert!((config.lambda_log_scale1 - 15.0).abs() < 0.01);
         assert!((config.lambda_log_scale2 - 17.0).abs() < 0.01);
     }
@@ -403,9 +550,47 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_speed_level_clamping() {
         let config = TrellisConfig::default().speed_level(15);
-        assert_eq!(config.speed_level, 10); // Clamped to max
+        assert_eq!(config.speed_mode, TrellisSpeedMode::Level(10)); // Clamped to max
+    }
+
+    #[test]
+    fn test_speed_mode_variants() {
+        // Test all variants
+        let thorough = TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough);
+        assert_eq!(thorough.speed_mode, TrellisSpeedMode::Thorough);
+
+        let adaptive = TrellisConfig::default().speed_mode(TrellisSpeedMode::Adaptive);
+        assert_eq!(adaptive.speed_mode, TrellisSpeedMode::Adaptive);
+
+        let level = TrellisConfig::default().speed_mode(TrellisSpeedMode::Level(5));
+        assert_eq!(level.speed_mode, TrellisSpeedMode::Level(5));
+
+        let custom = TrellisConfig::default().speed_mode(TrellisSpeedMode::Custom {
+            tier1_threshold: 55,
+            tier1_lookback: 8,
+            tier1_candidates: 3,
+            tier2_threshold: 48,
+            tier2_lookback: 16,
+            tier2_candidates: 4,
+        });
+        assert!(matches!(custom.speed_mode, TrellisSpeedMode::Custom { .. }));
+    }
+
+    #[test]
+    fn test_speed_mode_get_limits() {
+        // Thorough always returns full search
+        assert_eq!(TrellisSpeedMode::Thorough.get_limits(60), (63, 16));
+
+        // Adaptive uses two-tier thresholds
+        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(56), (8, 3));   // > 55
+        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(50), (16, 4));  // > 48
+        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(40), (63, 16)); // <= 48
+
+        // Level(0) is full search
+        assert_eq!(TrellisSpeedMode::Level(0).get_limits(60), (63, 16));
     }
 
     #[test]
