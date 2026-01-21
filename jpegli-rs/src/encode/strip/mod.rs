@@ -140,6 +140,31 @@ pub(crate) fn extract_block_from_strip_wide(
     Block8x8f { rows }
 }
 
+/// Performs forward DCT on a block, dispatching to archmage SIMD when available.
+///
+/// When the `archmage-simd` feature is enabled and a token is provided,
+/// uses the token-based archmage implementation. Otherwise falls back to the
+/// portable wide crate implementation.
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+#[inline]
+fn forward_dct_dispatch(
+    token: Option<crate::encode::mage_simd::Desktop64>,
+    block: &Block8x8f,
+) -> Block8x8f {
+    if let Some(t) = token {
+        return crate::encode::mage_simd::mage_forward_dct_8x8_wide(t, block);
+    }
+    crate::encode::dct::simd::forward_dct_8x8_wide(block)
+}
+
+/// Performs forward DCT on a block (non-archmage fallback).
+/// The `_token` parameter is ignored but accepted for API consistency.
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+#[inline]
+fn forward_dct_dispatch(_token: (), block: &Block8x8f) -> Block8x8f {
+    crate::encode::dct::simd::forward_dct_8x8_wide(block)
+}
+
 // StreamingAQ uses rolling buffers for low memory (~2.5 MB for 4K vs 33 MB).
 
 /// Strip-based encoder for low-memory JPEG encoding.
@@ -226,6 +251,12 @@ pub struct StripProcessor {
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
     #[cfg(feature = "experimental-hybrid-trellis")]
     hybrid_ctx: Option<HybridQuantContext>,
+
+    // === Archmage SIMD token (feature-gated) ===
+    /// Desktop64 token for zero-dispatch SIMD operations.
+    /// Obtained once at construction, reused for all blocks.
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    simd_token: Option<crate::encode::mage_simd::Desktop64>,
 }
 
 impl StripProcessor {
@@ -498,6 +529,13 @@ impl StripProcessor {
             // Trellis quantization (disabled by default)
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_ctx: None,
+
+            // Archmage SIMD token (obtained once, reused for all blocks)
+            #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+            simd_token: {
+                use archmage::SimdToken;
+                crate::encode::mage_simd::Desktop64::summon()
+            },
         })
     }
 
@@ -505,6 +543,17 @@ impl StripProcessor {
     #[must_use]
     pub fn allocation_stats(&self) -> &AllocationStats {
         &self.alloc_stats
+    }
+
+    /// Returns the archmage SIMD token if available.
+    ///
+    /// The token is obtained once at construction and can be reused for all blocks
+    /// with zero per-call dispatch overhead.
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[inline]
+    #[must_use]
+    pub fn simd_token(&self) -> Option<crate::encode::mage_simd::Desktop64> {
+        self.simd_token
     }
 
     /// Enables or disables XYB color space mode.
@@ -840,6 +889,12 @@ impl StripProcessor {
         // Y strip is now in padded layout (padded_width pixels per row)
         let padded_width = self.padded_width;
 
+        // Extract SIMD token once for all blocks in this strip
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        let simd_token = self.simd_token;
+        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+        let simd_token = ();
+
         // y_strip is in padded layout, so use padded_width for sizing
         let y_size = strip_height * padded_width;
 
@@ -891,7 +946,7 @@ impl StripProcessor {
                         super::deringing::preprocess_deringing_block(&mut block, y_dc_quant);
                     }
 
-                    output[idx] = crate::encode::dct::simd::forward_dct_8x8_wide(&block);
+                    output[idx] = forward_dct_dispatch(simd_token, &block);
                     idx += 1;
                 }
             }
@@ -929,7 +984,7 @@ impl StripProcessor {
                             padded_width,
                         );
                         self.pending_cb_blocks[pending_idx][cb_start + cb_idx] =
-                            crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
+                            forward_dct_dispatch(simd_token, &cb_block);
                         cb_idx += 1;
                     }
                 }
@@ -965,7 +1020,7 @@ impl StripProcessor {
                             padded_c_width,
                         );
                         self.pending_cr_blocks[pending_idx][cr_start + cr_idx] =
-                            crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
+                            forward_dct_dispatch(simd_token, &cr_block);
                         cr_idx += 1;
                     }
                 }
@@ -1005,7 +1060,7 @@ impl StripProcessor {
                             padded_c_width,
                         );
                         self.pending_cb_blocks[pending_idx][cb_start + idx] =
-                            crate::encode::dct::simd::forward_dct_8x8_wide(&cb_block);
+                            forward_dct_dispatch(simd_token, &cb_block);
 
                         // Cr block - DCT only (wide-native path)
                         let cr_block = extract_block_from_strip_wide(
@@ -1015,7 +1070,7 @@ impl StripProcessor {
                             padded_c_width,
                         );
                         self.pending_cr_blocks[pending_idx][cr_start + idx] =
-                            crate::encode::dct::simd::forward_dct_8x8_wide(&cr_block);
+                            forward_dct_dispatch(simd_token, &cr_block);
                         idx += 1;
                     }
                 }
