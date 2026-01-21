@@ -902,6 +902,234 @@ fn sum_2x2_blocks_simd(
 }
 
 // ============================================================================
+// Archmage SIMD implementations (token-based safe intrinsics)
+// ============================================================================
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+mod archmage_impl {
+    use archmage::mem::avx;
+    use archmage::{arcane, HasAvx, HasAvx2, HasFma};
+    use core::arch::x86_64::*;
+
+    use super::{
+        GAMMA_OFFSET, K_DEN_MUL_RATIO, K_MASKING_LOG_OFFSET, K_MASKING_MUL, K_NUM_MUL_RATIO,
+        K_NUM_OFFSET_RATIO, K_VOFFSET_RATIO, LIMIT,
+    };
+
+    /// Archmage-based ratio_of_derivatives (non-inverted) using direct intrinsics.
+    /// Uses FMA for all multiply-add operations.
+    #[arcane]
+    #[inline(always)]
+    fn mage_ratio_of_derivatives_x8<T: HasAvx2 + HasFma>(_token: T, vals: __m256) -> __m256 {
+        let zero = _mm256_setzero_ps();
+
+        // v = max(vals, 0)
+        let v = _mm256_max_ps(vals, zero);
+
+        // v2 = v * v
+        let v2 = _mm256_mul_ps(v, v);
+
+        // num = v2 * K_NUM_MUL_RATIO + K_NUM_OFFSET_RATIO (FMA)
+        let k_num_mul = _mm256_set1_ps(K_NUM_MUL_RATIO);
+        let k_num_off = _mm256_set1_ps(K_NUM_OFFSET_RATIO);
+        let num = _mm256_fmadd_ps(v2, k_num_mul, k_num_off);
+
+        // den = (v * K_DEN_MUL_RATIO) * v2 + K_VOFFSET_RATIO
+        // = v * K_DEN_MUL_RATIO * v2 + K_VOFFSET_RATIO
+        let k_den_mul = _mm256_set1_ps(K_DEN_MUL_RATIO);
+        let k_voff = _mm256_set1_ps(K_VOFFSET_RATIO);
+        let v_scaled = _mm256_mul_ps(v, k_den_mul);
+        let den = _mm256_fmadd_ps(v_scaled, v2, k_voff);
+
+        // return den / num (non-inverted)
+        _mm256_div_ps(den, num)
+    }
+
+    /// Archmage-based masking_sqrt using direct intrinsics.
+    #[arcane]
+    #[inline(always)]
+    fn mage_masking_sqrt_x8<T: HasAvx + HasFma>(_token: T, v: __m256) -> __m256 {
+        let k_mul_sqrt = _mm256_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
+        let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
+        let quarter = _mm256_set1_ps(0.25);
+
+        // inner = v * k_mul_sqrt + k_offset (FMA)
+        let inner = _mm256_fmadd_ps(v, k_mul_sqrt, k_offset);
+        // sqrt(inner)
+        let sqrt_inner = _mm256_sqrt_ps(inner);
+        // 0.25 * sqrt_inner
+        _mm256_mul_ps(quarter, sqrt_inner)
+    }
+
+    /// Archmage-based pre_erosion computation for 8 pixels.
+    /// All operations use direct intrinsics with FMA.
+    #[arcane]
+    #[inline(always)]
+    fn mage_pre_erosion_pixel_x8<T: HasAvx2 + HasFma + Copy>(
+        token: T,
+        pixels: __m256,
+        left: __m256,
+        right: __m256,
+        top: __m256,
+        bottom: __m256,
+    ) -> __m256 {
+        let quarter = _mm256_set1_ps(0.25);
+        let gamma_offset = _mm256_set1_ps(GAMMA_OFFSET);
+        let limit = _mm256_set1_ps(LIMIT);
+
+        // base = 0.25 * (left + right + top + bottom)
+        let sum_lr = _mm256_add_ps(left, right);
+        let sum_tb = _mm256_add_ps(top, bottom);
+        let sum_all = _mm256_add_ps(sum_lr, sum_tb);
+        let base = _mm256_mul_ps(quarter, sum_all);
+
+        // ratio = ratio_of_derivatives(pixel + gamma_offset)
+        let pixel_gamma = _mm256_add_ps(pixels, gamma_offset);
+        let ratio = mage_ratio_of_derivatives_x8(token, pixel_gamma);
+
+        // diff = ratio * (pixel - base)
+        let pixel_minus_base = _mm256_sub_ps(pixels, base);
+        let diff = _mm256_mul_ps(ratio, pixel_minus_base);
+
+        // diff_sq = min(diff * diff, LIMIT)
+        let diff_sq = _mm256_mul_ps(diff, diff);
+        let diff_sq_clamped = _mm256_min_ps(diff_sq, limit);
+
+        // masked = masking_sqrt(diff_sq)
+        mage_masking_sqrt_x8(token, diff_sq_clamped)
+    }
+
+    /// Archmage-based pre_erosion_row_padded using unsafe pointer loads.
+    /// Uses direct intrinsics for maximum performance.
+    ///
+    /// This version uses raw pointer loads to avoid slice-to-array conversion overhead.
+    ///
+    /// # Safety
+    /// - Requires AVX2 + FMA capable CPU (token proves this)
+    /// - Caller must ensure buffers are properly padded (row.len() >= width + 2)
+    #[arcane]
+    #[inline(always)]
+    fn mage_pre_erosion_row_padded_inner<T: HasAvx2 + HasFma + Copy>(
+        _token: T,
+        row_ptr: *const f32,
+        row_above_ptr: *const f32,
+        row_below_ptr: *const f32,
+        output_ptr: *mut f32,
+        width: usize,
+    ) {
+        let chunks = width / 8;
+
+        // Broadcast constants once outside the loop
+        let quarter = _mm256_set1_ps(0.25);
+        let gamma_offset = _mm256_set1_ps(GAMMA_OFFSET);
+        let limit = _mm256_set1_ps(LIMIT);
+        let k_num_mul = _mm256_set1_ps(K_NUM_MUL_RATIO);
+        let k_num_off = _mm256_set1_ps(K_NUM_OFFSET_RATIO);
+        let k_den_mul = _mm256_set1_ps(K_DEN_MUL_RATIO);
+        let k_voff = _mm256_set1_ps(K_VOFFSET_RATIO);
+        let k_mul_sqrt = _mm256_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
+        let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
+        let zero = _mm256_setzero_ps();
+
+        for chunk in 0..chunks {
+            let x = chunk * 8;
+            let buf_x = x + 1; // Data offset due to padding
+
+            // Direct pointer loads - no bounds checks
+            let pixels = _mm256_loadu_ps(row_ptr.add(buf_x));
+            let left = _mm256_loadu_ps(row_ptr.add(buf_x - 1));
+            let right = _mm256_loadu_ps(row_ptr.add(buf_x + 1));
+            let top = _mm256_loadu_ps(row_above_ptr.add(buf_x));
+            let bottom = _mm256_loadu_ps(row_below_ptr.add(buf_x));
+
+            // base = 0.25 * (left + right + top + bottom)
+            let sum_lr = _mm256_add_ps(left, right);
+            let sum_tb = _mm256_add_ps(top, bottom);
+            let sum_all = _mm256_add_ps(sum_lr, sum_tb);
+            let base = _mm256_mul_ps(quarter, sum_all);
+
+            // ratio = ratio_of_derivatives(pixel + gamma_offset)
+            let pixel_gamma = _mm256_add_ps(pixels, gamma_offset);
+            let v = _mm256_max_ps(pixel_gamma, zero);
+            let v2 = _mm256_mul_ps(v, v);
+            let num = _mm256_fmadd_ps(v2, k_num_mul, k_num_off);
+            let v_scaled = _mm256_mul_ps(v, k_den_mul);
+            let den = _mm256_fmadd_ps(v_scaled, v2, k_voff);
+            let ratio = _mm256_div_ps(den, num);
+
+            // diff = ratio * (pixel - base)
+            let pixel_minus_base = _mm256_sub_ps(pixels, base);
+            let diff = _mm256_mul_ps(ratio, pixel_minus_base);
+
+            // diff_sq = min(diff * diff, LIMIT)
+            let diff_sq = _mm256_mul_ps(diff, diff);
+            let diff_sq_clamped = _mm256_min_ps(diff_sq, limit);
+
+            // masked = masking_sqrt(diff_sq)
+            let inner = _mm256_fmadd_ps(diff_sq_clamped, k_mul_sqrt, k_offset);
+            let sqrt_inner = _mm256_sqrt_ps(inner);
+            let result = _mm256_mul_ps(quarter, sqrt_inner);
+
+            // Load existing, add result, store back
+            let existing = _mm256_loadu_ps(output_ptr.add(x));
+            let updated = _mm256_add_ps(existing, result);
+            _mm256_storeu_ps(output_ptr.add(x), updated);
+        }
+    }
+
+    /// Archmage-based pre_erosion_row_padded - public wrapper with bounds checking.
+    pub fn mage_pre_erosion_row_padded<T: HasAvx2 + HasFma + Copy>(
+        token: T,
+        row: &[f32],
+        row_above: &[f32],
+        row_below: &[f32],
+        width: usize,
+        output: &mut [f32],
+    ) {
+        debug_assert_eq!(row.len(), width + 2);
+        debug_assert_eq!(row_above.len(), width + 2);
+        debug_assert_eq!(row_below.len(), width + 2);
+        debug_assert_eq!(output.len(), width);
+
+        if width == 0 {
+            return;
+        }
+
+        // SAFETY: We've verified buffer lengths above, and token proves CPU capability
+        mage_pre_erosion_row_padded_inner(
+            token,
+            row.as_ptr(),
+            row_above.as_ptr(),
+            row_below.as_ptr(),
+            output.as_mut_ptr(),
+            width,
+        );
+
+        // Scalar remainder
+        let chunks = width / 8;
+        for x in (chunks * 8)..width {
+            let buf_x = x + 1;
+            let pixel = row[buf_x];
+            let left_val = row[buf_x - 1];
+            let right_val = row[buf_x + 1];
+            let top_val = row_above[buf_x];
+            let bottom_val = row_below[buf_x];
+
+            let base = 0.25 * (left_val + right_val + top_val + bottom_val);
+            let ratio = super::ratio_of_derivatives_scalar(pixel + GAMMA_OFFSET, false);
+            let diff = ratio * (pixel - base);
+            let diff_sq = (diff * diff).min(LIMIT);
+            let masked = super::masking_sqrt_scalar(diff_sq);
+
+            output[x] += masked;
+        }
+    }
+}
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+pub use archmage_impl::mage_pre_erosion_row_padded;
+
+// ============================================================================
 // Locked test data from frymire.png
 // ============================================================================
 
@@ -1636,6 +1864,78 @@ mod tests {
                     output_original[x],
                     (output_padded[x] - output_original[x]).abs()
                         / output_original[x].abs().max(1e-10)
+                );
+            }
+        }
+    }
+
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    #[test]
+    fn test_archmage_pre_erosion_matches_wide() {
+        use archmage::SimdToken;
+
+        // Get archmage token - skip test if CPU doesn't support required features
+        let Some(token) = archmage::Desktop64::summon() else {
+            eprintln!("Skipping archmage test - CPU doesn't support AVX2+FMA");
+            return;
+        };
+
+        // Test with various widths
+        for width in [8, 16, 24, 32, 64, 100, 128, 256] {
+            let row: Vec<f32> = (0..width).map(|x| 100.0 + (x as f32) * 1.5).collect();
+            let row_above: Vec<f32> = (0..width).map(|x| 98.0 + (x as f32) * 1.5).collect();
+            let row_below: Vec<f32> = (0..width).map(|x| 102.0 + (x as f32) * 1.5).collect();
+
+            // Create padded buffers
+            let mut row_padded = vec![0.0f32; width + 2];
+            let mut row_above_padded = vec![0.0f32; width + 2];
+            let mut row_below_padded = vec![0.0f32; width + 2];
+
+            row_padded[1..1 + width].copy_from_slice(&row);
+            row_padded[0] = row[0];
+            row_padded[width + 1] = row[width - 1];
+
+            row_above_padded[1..1 + width].copy_from_slice(&row_above);
+            row_above_padded[0] = row_above[0];
+            row_above_padded[width + 1] = row_above[width - 1];
+
+            row_below_padded[1..1 + width].copy_from_slice(&row_below);
+            row_below_padded[0] = row_below[0];
+            row_below_padded[width + 1] = row_below[width - 1];
+
+            // Wide crate version (multiversed)
+            let mut output_wide = vec![0.0f32; width];
+            pre_erosion_row_padded(
+                &row_padded,
+                &row_above_padded,
+                &row_below_padded,
+                width,
+                &mut output_wide,
+            );
+
+            // Archmage version
+            let mut output_archmage = vec![0.0f32; width];
+            mage_pre_erosion_row_padded(
+                token,
+                &row_padded,
+                &row_above_padded,
+                &row_below_padded,
+                width,
+                &mut output_archmage,
+            );
+
+            // Compare - allow slightly more tolerance for FMA rounding differences
+            for x in 0..width {
+                let diff = (output_archmage[x] - output_wide[x]).abs();
+                let rel_diff = diff / output_wide[x].abs().max(1e-10);
+                assert!(
+                    rel_diff < 1e-5, // Slightly looser for FMA vs non-FMA
+                    "Width {} archmage vs wide mismatch at x={}: archmage={}, wide={}, rel_diff={}",
+                    width,
+                    x,
+                    output_archmage[x],
+                    output_wide[x],
+                    rel_diff
                 );
             }
         }

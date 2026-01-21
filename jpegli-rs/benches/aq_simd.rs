@@ -5,7 +5,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 // Import production AQ functions (wide-based, multiversed)
-use jpegli::quant::aq::simd::{pre_erosion_row, per_block_modulations_row};
+use jpegli::quant::aq::simd::{pre_erosion_row, pre_erosion_row_padded, per_block_modulations_row};
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use jpegli::quant::aq::simd::mage_pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{arcane, mem::avx, Avx2FmaToken, HasAvx2, HasFma, SimdToken};
@@ -110,6 +113,71 @@ fn bench_pre_erosion_row(c: &mut Criterion) {
     }
 }
 
+fn bench_pre_erosion_row_padded(c: &mut Criterion) {
+    for width in [64, 256, 1024, 4096] {
+        let mut group = c.benchmark_group(format!("AQ pre_erosion_row_padded width={}", width));
+        group.throughput(Throughput::Elements(width as u64));
+
+        let row: Vec<f32> = (0..width).map(|i| (i % 256) as f32).collect();
+        let row_above: Vec<f32> = (0..width).map(|i| ((i + 1) % 256) as f32).collect();
+        let row_below: Vec<f32> = (0..width).map(|i| ((i + 2) % 256) as f32).collect();
+
+        // Create padded buffers with edge replication
+        let mut row_padded = vec![0.0f32; width + 2];
+        let mut row_above_padded = vec![0.0f32; width + 2];
+        let mut row_below_padded = vec![0.0f32; width + 2];
+
+        row_padded[1..1 + width].copy_from_slice(&row);
+        row_padded[0] = row[0];
+        row_padded[width + 1] = row[width - 1];
+
+        row_above_padded[1..1 + width].copy_from_slice(&row_above);
+        row_above_padded[0] = row_above[0];
+        row_above_padded[width + 1] = row_above[width - 1];
+
+        row_below_padded[1..1 + width].copy_from_slice(&row_below);
+        row_below_padded[0] = row_below[0];
+        row_below_padded[width + 1] = row_below[width - 1];
+
+        let mut output = vec![0.0f32; width];
+
+        group.bench_function("wide+multiversed padded", |b| {
+            b.iter(|| {
+                output.fill(0.0);
+                pre_erosion_row_padded(
+                    black_box(&row_padded),
+                    black_box(&row_above_padded),
+                    black_box(&row_below_padded),
+                    black_box(width),
+                    &mut output,
+                );
+                black_box(output[0])
+            })
+        });
+
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        if let Some(token) = Avx2FmaToken::try_new() {
+            let mut output_mage = vec![0.0f32; width];
+            group.bench_function("archmage padded", |b| {
+                b.iter(|| {
+                    output_mage.fill(0.0);
+                    mage_pre_erosion_row_padded(
+                        token,
+                        black_box(&row_padded),
+                        black_box(&row_above_padded),
+                        black_box(&row_below_padded),
+                        black_box(width),
+                        &mut output_mage,
+                    );
+                    black_box(output_mage[0])
+                })
+            });
+        }
+
+        group.finish();
+    }
+}
+
 fn bench_per_block_modulations_row(c: &mut Criterion) {
     for blocks_w in [8, 32, 128, 512] {
         let width = blocks_w * 8;
@@ -156,6 +224,7 @@ fn bench_per_block_modulations_row(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_pre_erosion_row,
+    bench_pre_erosion_row_padded,
     bench_per_block_modulations_row,
 );
 criterion_main!(benches);
