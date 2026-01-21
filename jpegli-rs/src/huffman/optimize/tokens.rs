@@ -170,6 +170,48 @@ impl ScanTokenInfo {
         }
     }
 
+    /// Creates info for an AC refinement scan with pre-allocated capacity.
+    ///
+    /// Estimates based on typical refinement scan characteristics:
+    /// - `ref_tokens`: ~1-2 tokens per block on average
+    /// - `refbits`: varies widely, estimate ~4 per block
+    /// - `eobruns`: ~10% of blocks end with EOB runs
+    ///
+    /// Uses fallible allocation via `try_reserve`.
+    pub fn with_capacity_refinement(
+        context: u8,
+        ss: u8,
+        se: u8,
+        ah: u8,
+        al: u8,
+        num_blocks: usize,
+    ) -> Result<Self> {
+        use crate::error::Error;
+
+        let mut info = Self::new(context, ss, se, ah, al);
+
+        // Estimate capacities - these are rough estimates to avoid most reallocations
+        // Tokens: typically 1-2 per block, use 2 to be safe
+        let token_capacity = num_blocks.saturating_mul(2);
+        info.ref_tokens
+            .try_reserve(token_capacity)
+            .map_err(|_| Error::allocation_failed(token_capacity * 2, "refinement tokens"))?;
+
+        // Refbits: varies by content, ~4 per block is reasonable
+        let refbits_capacity = num_blocks.saturating_mul(4);
+        info.refbits
+            .try_reserve(refbits_capacity)
+            .map_err(|_| Error::allocation_failed(refbits_capacity, "refinement bits"))?;
+
+        // EOB runs: typically much fewer, ~10% of blocks
+        let eobrun_capacity = num_blocks / 10 + 16;
+        info.eobruns
+            .try_reserve(eobrun_capacity)
+            .map_err(|_| Error::allocation_failed(eobrun_capacity * 2, "EOB runs"))?;
+
+        Ok(info)
+    }
+
     /// Returns true if this is an AC refinement scan.
     #[inline]
     pub fn is_refinement(&self) -> bool {
