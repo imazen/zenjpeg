@@ -62,6 +62,9 @@ multiversed = "0.1"
 # no_std compatible lazy initialization
 spin = "0.9"
 
+# Stack-allocated bounded vectors (no heap allocation for small fixed-size collections)
+tinyvec = { version = "1.10", features = ["alloc"] }
+
 # Fast linear-sRGB conversion
 linear-srgb = "0.3.1"
 

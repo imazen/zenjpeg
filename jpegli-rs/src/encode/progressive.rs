@@ -314,7 +314,7 @@ impl ComputedConfig {
                 };
                 token_buffer.tokenize_ac_refinement_scan(
                     blocks, context, scan.ss, scan.se, scan.ah, scan.al,
-                );
+                )?;
             }
         }
 

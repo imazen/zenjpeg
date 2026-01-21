@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 use crate::error::Result;
+use tinyvec::ArrayVec;
 
 use super::cluster::cluster_histograms;
 use super::frequency::{FrequencyCounter, OptimizedHuffmanTables, OptimizedTable};
@@ -138,6 +139,25 @@ impl ProgressiveTokenBuffer {
         let mut info = ScanTokenInfo::new(context, ss, se, ah, al);
         info.token_offset = self.tokens.len();
         self.scan_info.push(info);
+    }
+
+    /// Starts a new AC refinement scan with pre-allocated capacity.
+    ///
+    /// Uses fallible allocation for the internal vectors based on block count.
+    pub fn start_scan_for_refinement(
+        &mut self,
+        context: u8,
+        ss: u8,
+        se: u8,
+        ah: u8,
+        al: u8,
+        num_blocks: usize,
+    ) -> Result<()> {
+        let mut info =
+            ScanTokenInfo::with_capacity_refinement(context, ss, se, ah, al, num_blocks)?;
+        info.token_offset = self.tokens.len();
+        self.scan_info.push(info);
+        Ok(())
     }
 
     /// Finalizes the current scan, recording the token count.
@@ -519,8 +539,11 @@ impl ProgressiveTokenBuffer {
     /// * `blocks` - Quantized DCT blocks for this component
     /// * `context` - Context ID for this scan (for histogram)
     /// * `ss` - Spectral selection start (1-63)
-    /// * `se` - Spectral selection end (1-63)
+    /// * `se` - Spectral selection end (1-63, >= ss)
     /// * `al` - Successive approximation low bit
+    ///
+    /// # Panics
+    /// Panics if `ss == 0`, `se > 63`, or `ss > se`.
     pub fn tokenize_ac_first_scan(
         &mut self,
         blocks: &[[i16; 64]],
@@ -529,28 +552,44 @@ impl ProgressiveTokenBuffer {
         se: u8,
         al: u8,
     ) {
+        // Validate spectral selection bounds (1-63 for AC, ss <= se)
+        // This assertion helps the compiler eliminate bounds checks below.
+        assert!(
+            ss >= 1 && se <= 63 && ss <= se,
+            "invalid spectral selection: ss={}, se={}",
+            ss,
+            se
+        );
+
         self.start_scan(context, ss, se, 0, al);
 
         let mut eob_run: u16 = 0;
 
+        // Convert ss/se to usize once, with bounds the compiler can prove
+        let ss_idx = ss as usize;
+        let se_idx = se as usize;
+        let coef_count = se_idx - ss_idx + 1;
+
         for block in blocks {
-            // Find last nonzero coefficient in spectral range
-            // Use absolute value for consistency with refinement scan classification
-            // We search from end to start and track both last_nonzero and is_eob in one pass
-            let mut last_nonzero = ss as usize;
+            // Extract the coefficient slice once per block.
+            // Since we validated 1 <= ss <= se <= 63, this is guaranteed in-bounds.
+            // The compiler can now eliminate bounds checks in the inner loops.
+            let coeffs = &block[ss_idx..=se_idx];
+
+            // Find last nonzero coefficient in spectral range (relative to slice start)
+            // We search from end to start and track both last_nonzero_rel and found_nonzero in one pass
+            let mut last_nonzero_rel = 0usize;
             let mut found_nonzero = false;
-            for k in (ss as usize..=se as usize).rev() {
-                if (block[k].unsigned_abs() >> al) != 0 {
-                    last_nonzero = k;
+            for (i, &coef) in coeffs.iter().enumerate().rev() {
+                if (coef.unsigned_abs() >> al) != 0 {
+                    last_nonzero_rel = i;
                     found_nonzero = true;
                     break;
                 }
             }
 
             // If no nonzero found, the block is all zeros in this range
-            let is_eob = !found_nonzero;
-
-            if is_eob {
+            if !found_nonzero {
                 eob_run += 1;
                 // Emit EOB run when it reaches max (0x7FFF) or at end
                 if eob_run == 0x7FFF {
@@ -566,10 +605,9 @@ impl ProgressiveTokenBuffer {
                 eob_run = 0;
             }
 
-            // Encode coefficients
+            // Encode coefficients (using relative index within slice)
             let mut run = 0u8;
-            for k in ss as usize..=se as usize {
-                let coef = block[k];
+            for (i, &coef) in coeffs.iter().enumerate() {
                 let abs_shifted = coef.unsigned_abs() >> al;
                 if abs_shifted == 0 {
                     run += 1;
@@ -593,13 +631,14 @@ impl ProgressiveTokenBuffer {
                     run = 0;
                 }
 
-                if k == last_nonzero {
+                if i == last_nonzero_rel {
                     break;
                 }
             }
 
             // If we didn't reach the end, emit EOB
-            if last_nonzero < se as usize {
+            // (last_nonzero_rel is relative, so compare against coef_count - 1)
+            if last_nonzero_rel < coef_count - 1 {
                 eob_run += 1;
                 if eob_run == 0x7FFF {
                     self.emit_eob_run(context, eob_run);
@@ -648,10 +687,13 @@ impl ProgressiveTokenBuffer {
     /// # Arguments
     /// * `blocks` - Quantized DCT blocks for this component
     /// * `context` - Context ID for this scan
-    /// * `ss` - Spectral selection start
-    /// * `se` - Spectral selection end
+    /// * `ss` - Spectral selection start (1-63)
+    /// * `se` - Spectral selection end (1-63, >= ss)
     /// * `ah` - Successive approximation high bit (previous precision)
     /// * `al` - Successive approximation low bit (current precision)
+    ///
+    /// # Errors
+    /// Returns an error if memory allocation fails.
     pub fn tokenize_ac_refinement_scan(
         &mut self,
         blocks: &[[i16; 64]],
@@ -660,18 +702,45 @@ impl ProgressiveTokenBuffer {
         se: u8,
         ah: u8,
         al: u8,
-    ) {
-        self.start_scan(context, ss, se, ah, al);
+    ) -> Result<()> {
+        use crate::error::Error;
+
+        // Validate spectral selection bounds (1-63 for AC, ss <= se)
+        // This helps the compiler eliminate bounds checks below.
+        if ss == 0 || se > 63 || ss > se {
+            return Err(Error::internal("invalid spectral selection for AC refinement"));
+        }
+
+        // Pre-allocate scan storage based on block count
+        self.start_scan_for_refinement(context, ss, se, ah, al, blocks.len())?;
 
         let mut eob_run: u16 = 0;
+
+        // Pre-allocate pending_refbits - max 256 before flush
         let mut pending_refbits: Vec<u8> = Vec::new();
+        pending_refbits
+            .try_reserve(256)
+            .map_err(|_| Error::allocation_failed(256, "pending refinement bits"))?;
+
+        // Use stack-allocated ArrayVec for block_refbits - no heap allocation needed.
+        // Max refbits per block = se - ss + 1 <= 63 (spectral range 1-63), so 64 is sufficient.
+        // ArrayVec is reused with clear() between blocks.
+        let mut block_refbits: ArrayVec<[u8; 64]> = ArrayVec::new();
+
+        // Convert ss/se to usize once, with bounds that the compiler can prove
+        let ss_idx = ss as usize;
+        let se_idx = se as usize;
 
         for block in blocks {
+            // Extract the coefficient slice once per block.
+            // Since we validated ss <= se <= 63 above, this is guaranteed in-bounds.
+            // The compiler can now eliminate bounds checks in the inner loop.
+            let coeffs = &block[ss_idx..=se_idx];
+
             // Find if there are any newly-nonzero or previously-nonzero coefficients
-            // Use unsigned_abs() for consistency with first-pass encoding
             let mut has_content = false;
-            for k in ss as usize..=se as usize {
-                let abs_coef = block[k].unsigned_abs();
+            for &coef in coeffs {
+                let abs_coef = coef.unsigned_abs();
                 // Was previously nonzero (bits at ah position or higher)
                 let was_nonzero = (abs_coef >> ah) != 0;
                 // Is newly nonzero (bit at al position, but not at ah)
@@ -710,10 +779,9 @@ impl ProgressiveTokenBuffer {
             // 3. If previously nonzero (absval > 1), add refbit
             // 4. If newly nonzero (absval == 1), emit token
             let mut run = 0u8;
-            let mut block_refbits: Vec<u8> = Vec::new();
+            block_refbits.clear(); // Reuse allocation from previous iteration
 
-            for k in ss as usize..=se as usize {
-                let coef = block[k];
+            for &coef in coeffs {
                 let abs_coef = coef.unsigned_abs();
 
                 // Step 1: Check if coefficient is completely zero
@@ -755,6 +823,7 @@ impl ProgressiveTokenBuffer {
                 // Step 4: Check if previously nonzero (magnitude > 1)
                 if absval > 1 {
                     // Previously nonzero: add refinement bit, continue
+                    // Note: block_refbits capacity was pre-allocated, no grow_one
                     let refbit = (abs_coef >> al) & 1;
                     block_refbits.push(refbit as u8);
                     continue;
@@ -788,7 +857,7 @@ impl ProgressiveTokenBuffer {
                         eob_run = 0;
                     }
                 }
-                pending_refbits.extend(block_refbits);
+                pending_refbits.extend(&block_refbits);
                 eob_run += 1;
 
                 // Also check if we've hit the max run or refbits limit after accumulation
@@ -850,6 +919,8 @@ impl ProgressiveTokenBuffer {
                 eprintln!("=== End Rust AC Refinement Scan ===\n");
             }
         }
+
+        Ok(())
     }
 
     /// Emits an EOB run token with associated refinement bits.
