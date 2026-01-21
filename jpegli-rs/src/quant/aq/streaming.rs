@@ -633,14 +633,10 @@ impl StreamingAQ {
         let buffer_rows = self.pre_erosion_buffer_rows;
         let max_filled_row = self.pre_erosion_rows_flushed.saturating_sub(1);
 
-        // DISABLED: mage_compute_fuzzy_erosion_row is 3x slower than scalar version
-        // due to function call overhead and branch misprediction.
-        // TODO: Needs SIMD-vectorized partial sort to be worthwhile.
-        // #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-        // if let Some(token) = self.archmage_token {
-        //     mage_compute_fuzzy_erosion_row(...);
-        //     return;
-        // }
+        // NOTE: mage_compute_fuzzy_erosion_row (massive inlined version) is still slower
+        // than the original scalar due to instruction cache pressure from code bloat.
+        // The partial sort with index tracking causes branch mispredictions.
+        // Keeping original scalar code until a SIMD sorting network is implemented.
 
         let max_filled_row = max_filled_row as isize;
 
