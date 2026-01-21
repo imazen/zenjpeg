@@ -153,28 +153,40 @@ cargo run --release --example xyb_cpp_comparison
 cargo run --release --example xyb_vs_ycbcr_butteraugli
 ```
 
-## Profiling Results (8K image, 2026-01-17)
+## Profiling Results (4K image, 2026-01-20)
 
-Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile -- 8k`
+Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile -- 4k`
+Then: `perf report --stdio --no-children -g none --percent-limit 0.5 2>/dev/null`
 
 | Function | % Time | Notes |
 |----------|--------|-------|
-| `encode_block_simd` | 14.0% | Entropy encoding - parallel path exists |
-| `forward_dct_8x8_wide` | 11.4% | DCT - parallel path exists |
-| `finalize_imcu_aq` | 10.6% | AQ finalization - NOT parallelizable (too fine-grained) |
-| `per_block_modulations_row` | 9.3% | AQ calculation - NOT parallelizable (too fine-grained) |
-| `memmove_avx512` | 8.4% | Memory ops |
-| `collect_block_frequencies_simd` | 6.3% | Huffman freq counting |
-| `quantize_block_zigzag` | 6.2% | Quantization - parallel path exists |
-| `pre_erosion_row` | 6.0% | AQ pre-erosion - sequential (row dependency) |
-| `BitWriter::flush_bytes` | 3.2% | Bit packing |
+| `per_block_modulations_row` | 12.1% | AQ calculation |
+| `encode_block_simd` | 12.1% | Entropy encoding |
+| `finalize_imcu_aq_with_buffer` | 9.6% | AQ finalization |
+| `forward_dct_8x8_wide` | 7.3% | DCT |
+| `yuv::avx2::rgb_to_yuv` | 6.9% | Color conversion (yuv crate) |
+| `pre_erosion_row` | 5.3% | AQ pre-erosion |
+| `memmove_avx512` | 5.3% | Memory ops |
+| `preprocess_deringing_f32` | 4.7% | Deringing |
+| `collect_block_frequencies_simd` | 4.7% | Huffman freq counting |
+| `quantize_block_zigzag` | 4.0% | Quantization |
 
-**Parallelization status** (by % time):
-1. AQ calculation (25.9%) - **NOT parallelizable** (see Failed Explorations below)
-2. Entropy encoding (14.0%) - already has parallel path
-3. DCT (11.4%) - already has parallel path
-4. Quantization (6.2%) - parallelizable with DCT
-5. Frequency counting (6.3%) - sequential (DC prediction dependency)
+**By category:**
+- **Adaptive Quantization (AQ)**: 27.0% (per_block + finalize + pre_erosion)
+- **Entropy Encoding**: 12.1%
+- **Color Conversion**: 8.9% (yuv crate + rgb_to_ycbcr)
+- **DCT**: 7.3%
+- **Memory ops**: 6.1% (memmove + memset)
+- **Quantization**: 6.3%
+- **Huffman freq counting**: 4.7%
+- **Deringing**: 4.7%
+
+**Parallelization status:**
+1. AQ calculation (27%) - NOT parallelizable (too fine-grained, see Failed Explorations)
+2. Entropy encoding (12%) - already has parallel path
+3. DCT (7%) - already has parallel path
+4. Quantization (6%) - parallelizable with DCT
+5. Frequency counting (5%) - sequential (DC prediction dependency)
 
 ## C++ Performance Gap (2026-01-18)
 
@@ -230,6 +242,35 @@ differences in rightmost block column due to `block_x + 8 < img_width` check.
 This affects ~1.5% of blocks.
 
 To eliminate: would need 1 extra pixel of buffer padding for wraparound reads.
+
+### wide vs archmage SIMD Analysis (2026-01-20)
+
+**Benchmark:** `cargo bench -p jpegli-rs --bench aq_simd --features "archmage-simd,test-utils"`
+
+**Key finding:** The `wide` crate uses `cfg(target_feature)` (compile-time check), NOT
+`#[target_feature]` (function-level attribute). This means `#[multiversed]` dispatch
+doesn't help - wide falls back to SSE (128-bit xmm) without global AVX2.
+
+**Isolated primitive benchmarks** (misleading):
+- `ratio_of_derivatives_x8`: wide 2.1ns, archmage 11.5ns - wide 5.5x faster
+- `hf_modulation_sum_8x8`: wide 12.9ns, archmage 9.3ns - archmage 1.4x faster
+
+**Why archmage slower for simple primitives:** `#[target_feature]` prevents inlining,
+causing YMM register spills at call boundaries.
+
+**Outer-level benchmarks** (production-representative):
+- Without global AVX2 (`-C target-cpu=x86-64`):
+  - `pre_erosion_row` width=4096: wide 2.49µs, archmage 1.16µs - **archmage 2.2x faster**
+- With global AVX2 (`-C target-cpu=x86-64-v3`):
+  - Gap narrows to ~10-17% (wide now uses ymm registers)
+
+**Verification:** `cargo asm` shows 0 ymm usages without global AVX2, 83 ymm usages with it.
+
+**Conclusion:** For production builds without global target-cpu flags, `wide` crate
+underperforms significantly. Options:
+1. Build with `-C target-cpu=x86-64-v3` (requires AVX2 at runtime)
+2. Use archmage with `#[arcane]` macro for AQ functions
+3. Use raw intrinsics guarded by runtime feature detection
 
 ## Failed Explorations
 
