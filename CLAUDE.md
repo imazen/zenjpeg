@@ -309,15 +309,40 @@ by using the `multiversion` crate for runtime dispatch.
 #[multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
 fn process(data: &mut [f32]) {
     // Write simple scalar code - compiler autovectorizes
-    for chunk in data.chunks_exact_mut(8) {
-        for x in chunk {
-            *x = x.sqrt();  // Becomes vsqrtps with AVX2
-        }
+    // NOTE: Simple loops vectorize better than explicit chunks!
+    for x in data.iter_mut() {
+        *x = x.sqrt();  // Becomes vsqrtps with AVX2
     }
 }
 ```
 
+**IMPORTANT:** Simple loops autovectorize better than explicit chunked loops.
+The `for i in 0..8` pattern often prevents vectorization. Let the compiler decide.
+
 **Files:** `jpegli-rs/examples/autovec_transpose.rs`
+
+### Autovec vs Wide Crate AQ Benchmark (2026-01-21)
+
+**Benchmark:** `cargo run --release -p jpegli-rs --example bench_autovec_aq`
+
+**Results** (pre_erosion_row, width=4096):
+
+| Implementation | Time | Speedup |
+|---------------|------|---------|
+| wide (f32x8) | 2.81 µs/row | 1.0x |
+| autovec (iter) | 1.45 µs/row | **1.94x faster** |
+| autovec (chunked) | 8.20 µs/row | 2.9x slower |
+
+**Key insight:** The simple iterator loop (`for x in data`) autovectorizes much better
+than explicit `for i in 0..8` chunking. The compiler's vectorizer recognizes the
+simple pattern and generates optimal SIMD code.
+
+**Why wide is slower:** The `wide` crate uses `cfg(target_feature)` for compile-time
+detection. Without global `-C target-cpu=x86-64-v3`, it falls back to SSE even inside
+`#[multiversed]` functions. The `multiversion` crate uses `#[target_feature]` which
+enables proper AVX2 codegen.
+
+**Files:** `jpegli-rs/src/quant/aq/autovec.rs`, `jpegli-rs/examples/bench_autovec_aq.rs`
 
 ## Failed Explorations
 
