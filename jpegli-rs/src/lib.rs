@@ -185,6 +185,11 @@ pub mod huffman;
 #[cfg(not(feature = "test-utils"))]
 pub(crate) mod huffman;
 
+// Make quant accessible for benchmarks when test-utils enabled
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub mod quant;
+#[cfg(not(feature = "test-utils"))]
 pub(crate) mod quant;
 
 #[cfg(feature = "test-utils")]
@@ -199,3 +204,6 @@ pub mod test_utils;
 // Hybrid quantization (jpegli AQ + mozjpeg trellis)
 #[cfg(feature = "experimental-hybrid-trellis")]
 pub mod hybrid;
+
+// Profiling instrumentation (zero-cost when disabled)
+pub mod profile;
