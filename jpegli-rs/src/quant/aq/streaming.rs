@@ -474,11 +474,9 @@ impl StreamingAQ {
             let row_start = by_offset * blocks_w;
             let row_end = row_start + blocks_w;
 
-            // Fuzzy erosion
+            // Fuzzy erosion - use fill() for vectorized zeroing
             let pe_y = global_by * 2;
-            for i in row_start..row_end {
-                self.fuzzy_erosion_out[i] = 0.0;
-            }
+            self.fuzzy_erosion_out[row_start..row_end].fill(0.0);
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
             // Per-block modulations with padded buffer
@@ -495,11 +493,11 @@ impl StreamingAQ {
                 add,
             );
 
-            // Convert to AQ strength
-            for bx in 0..blocks_w {
-                let block_idx = row_start + bx;
-                let qf = self.fuzzy_erosion_out[block_idx];
-                self.imcu_aq_strengths[block_idx] = quant_field_to_aq_strength(qf);
+            // Convert to AQ strength - use slice iteration to eliminate bounds checks
+            let qf_slice = &self.fuzzy_erosion_out[row_start..row_end];
+            let aq_slice = &mut self.imcu_aq_strengths[row_start..row_end];
+            for (qf, aq) in qf_slice.iter().zip(aq_slice.iter_mut()) {
+                *aq = quant_field_to_aq_strength(*qf);
             }
         }
 

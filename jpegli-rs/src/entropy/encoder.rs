@@ -851,13 +851,13 @@ impl<'a> EntropyEncoder<'a> {
 
                 // Write refinement bits AFTER sign bit
                 // These are correction bits for previously-nonzero coefficients
-                for _ in 0..ref_token.refbits {
-                    if refbit_idx < scan_info.refbits.len() {
-                        let bit = scan_info.refbits[refbit_idx] as u32;
-                        self.writer.write_bits(bit, 1);
-                        refbit_idx += 1;
-                    }
+                // Get slice upfront to eliminate per-bit bounds checks
+                let num_refbits = ref_token.refbits as usize;
+                let refbits_end = (refbit_idx + num_refbits).min(scan_info.refbits.len());
+                for &bit in &scan_info.refbits[refbit_idx..refbits_end] {
+                    self.writer.write_bits(bit as u32, 1);
                 }
+                refbit_idx = refbits_end;
             }
         }
 
