@@ -50,13 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Disable with `.deringing(false)` if needed (not recommended)
   - See README "Overshoot Deringing" section for technical details
 
-- **`TrellisConfig` API for mozjpeg-compatible trellis quantization**
+- **`TrellisConfig` API for mozjpeg-compatible trellis quantization** (requires `experimental-hybrid-trellis` feature)
   - `TrellisConfig::default()` - Standard trellis with AC and DC optimization
   - `TrellisConfig::disabled()` - No trellis (fastest)
   - `TrellisConfig::favor_size()` / `TrellisConfig::favor_quality()` - Presets
   - Builder methods: `.ac_trellis()`, `.dc_trellis()`, `.speed_level()`, `.rd_factor()`
   - Use via `EncoderConfig::ycbcr(...).trellis(TrellisConfig::default())`
-  - **Note**: Requires `experimental-hybrid-trellis` feature for actual trellis quantization
 
 - **`archmage-simd` feature for token-based safe SIMD**
   - Alternative to `unsafe_simd` using the archmage crate

@@ -99,6 +99,9 @@ pub mod mozjpeg_tables;
 ///
 /// This module provides types that mirror mozjpeg-rs's API for easier migration
 /// and familiarity, including [`TrellisConfig`](mozjpeg_compat::TrellisConfig).
+///
+/// Requires the `experimental-hybrid-trellis` feature.
+#[cfg(feature = "experimental-hybrid-trellis")]
 pub mod mozjpeg_compat;
 
 // v2 is the primary public API (types re-exported below)
