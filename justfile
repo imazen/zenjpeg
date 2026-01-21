@@ -1,7 +1,7 @@
 # jpegli-rs development commands
 
 # Default test image for profiling
-TEST_IMAGE := env_var_or_default("TEST_IMAGE", "~/work/codec-eval/codec-corpus/cid22/artificial.png")
+TEST_IMAGE := env_var_or_default("TEST_IMAGE", "~/work/codec-eval/codec-corpus/CID22/CID22-512/validation/1025469.png")
 
 # Profile with cjpegli-compatible CLI (progressive, d1.0, 444, 50 iterations)
 profile IMAGE=TEST_IMAGE:
