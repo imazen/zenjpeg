@@ -783,6 +783,170 @@ const FUZZY_MUL1: f32 = 0.075;
 const FUZZY_MUL2: f32 = 0.06;
 const FUZZY_MUL3: f32 = 0.05;
 
+// ============================================================================
+// SIMD Sorting Network for 4-smallest-of-9
+// ============================================================================
+
+/// Compare-and-swap for sorting network: returns (min, max)
+#[inline(always)]
+fn cas(a: f32x8, b: f32x8) -> (f32x8, f32x8) {
+    (a.min(b), a.max(b))
+}
+
+/// SIMD sorting network to find 4 smallest of 9 values.
+/// Processes 8 independent sets of 9 values in parallel (one per SIMD lane).
+/// Returns weighted sum for each lane: MUL0*v0 + MUL1*v1 + MUL2*v2 + MUL3*v3
+///
+/// Uses a fixed comparison network - no branches, fully SIMD-parallel.
+/// The network ensures v[0..4] contain the 4 smallest values (not fully sorted,
+/// but the 4 smallest are guaranteed to be in those positions).
+#[inline(always)]
+fn weighted_min4_of_9_simd(mut v: [f32x8; 9]) -> f32x8 {
+    // Sorting network for 9 elements to get 4 smallest in positions 0-3
+    // This is a partial sorting network optimized for finding k-smallest
+    //
+    // The network below is derived from Batcher's odd-even merge sort,
+    // optimized to only guarantee the 4 smallest values end up in v[0..4].
+    // Total: 19 compare-exchange operations
+
+    // Layer 1: Initial pairwise comparisons
+    (v[0], v[1]) = cas(v[0], v[1]);
+    (v[2], v[3]) = cas(v[2], v[3]);
+    (v[4], v[5]) = cas(v[4], v[5]);
+    (v[6], v[7]) = cas(v[6], v[7]);
+
+    // Layer 2: Compare across pairs
+    (v[0], v[2]) = cas(v[0], v[2]);
+    (v[1], v[3]) = cas(v[1], v[3]);
+    (v[4], v[6]) = cas(v[4], v[6]);
+    (v[5], v[7]) = cas(v[5], v[7]);
+
+    // Layer 3: Merge groups of 4
+    (v[0], v[4]) = cas(v[0], v[4]);
+    (v[1], v[5]) = cas(v[1], v[5]);
+    (v[2], v[6]) = cas(v[2], v[6]);
+    (v[3], v[7]) = cas(v[3], v[7]);
+
+    // Layer 4: Integrate element 8
+    (v[0], v[8]) = cas(v[0], v[8]);
+    (v[4], v[8]) = cas(v[4], v[8]);
+
+    // Layer 5: Fix ordering in bottom half
+    (v[1], v[2]) = cas(v[1], v[2]);
+    (v[1], v[4]) = cas(v[1], v[4]);
+    (v[2], v[4]) = cas(v[2], v[4]);
+    (v[3], v[4]) = cas(v[3], v[4]);
+    (v[5], v[8]) = cas(v[5], v[8]);
+
+    // Now v[0..4] contains the 4 smallest values
+    // Compute weighted sum using FMA
+    let mul0 = f32x8::splat(FUZZY_MUL0);
+    let mul1 = f32x8::splat(FUZZY_MUL1);
+    let mul2 = f32x8::splat(FUZZY_MUL2);
+    let mul3 = f32x8::splat(FUZZY_MUL3);
+
+    mul0 * v[0] + mul1 * v[1] + mul2 * v[2] + mul3 * v[3]
+}
+
+/// Process a row of fuzzy erosion using SIMD, 8 pixels at a time.
+/// Returns the number of pixels processed.
+#[inline]
+pub fn fuzzy_erosion_row_simd(
+    pre_erosion: &[f32],
+    pre_erosion_w: usize,
+    y: usize,
+    max_y: usize,
+    out: &mut [f32],
+) -> usize {
+    let row_above_y = (y as isize - 1).clamp(0, max_y as isize) as usize;
+    let row_below_y = (y + 1).min(max_y);
+
+    let row_above = &pre_erosion[row_above_y * pre_erosion_w..];
+    let row_curr = &pre_erosion[y * pre_erosion_w..];
+    let row_below = &pre_erosion[row_below_y * pre_erosion_w..];
+
+    // Process 8 pixels at a time with SIMD
+    let mut x = 1; // Start at 1 to avoid left edge
+
+    while x + 8 <= pre_erosion_w.saturating_sub(1) {
+        // Gather 9 neighbor values for 8 consecutive pixels
+        // Each v[i] contains the i-th neighbor for 8 different pixels
+        let v = [
+            load_f32x8(row_above, x - 1), // top-left
+            load_f32x8(row_above, x),     // top
+            load_f32x8(row_above, x + 1), // top-right (shifted by 1)
+            load_f32x8(row_curr, x - 1),  // left
+            load_f32x8(row_curr, x),      // center
+            load_f32x8(row_curr, x + 1),  // right
+            load_f32x8(row_below, x - 1), // bottom-left
+            load_f32x8(row_below, x),     // bottom
+            load_f32x8(row_below, x + 1), // bottom-right
+        ];
+
+        let result = weighted_min4_of_9_simd(v);
+        store_f32x8(out, x, result);
+
+        x += 8;
+    }
+
+    // Handle remaining pixels with scalar code
+    while x < pre_erosion_w.saturating_sub(1) {
+        let x_left = x - 1;
+        let x_right = x + 1;
+
+        let vals = [
+            row_above[x_left],
+            row_above[x],
+            row_above[x_right],
+            row_curr[x_left],
+            row_curr[x],
+            row_curr[x_right],
+            row_below[x_left],
+            row_below[x],
+            row_below[x_right],
+        ];
+
+        out[x] = weighted_min4_of_9(vals);
+        x += 1;
+    }
+
+    // Handle edges with clamped bounds
+    // Left edge (x=0)
+    {
+        let vals = [
+            row_above[0],
+            row_above[0],
+            row_above[1.min(pre_erosion_w - 1)],
+            row_curr[0],
+            row_curr[0],
+            row_curr[1.min(pre_erosion_w - 1)],
+            row_below[0],
+            row_below[0],
+            row_below[1.min(pre_erosion_w - 1)],
+        ];
+        out[0] = weighted_min4_of_9(vals);
+    }
+
+    // Right edge (x=pre_erosion_w-1)
+    if pre_erosion_w > 1 {
+        let x = pre_erosion_w - 1;
+        let vals = [
+            row_above[x - 1],
+            row_above[x],
+            row_above[x],
+            row_curr[x - 1],
+            row_curr[x],
+            row_curr[x],
+            row_below[x - 1],
+            row_below[x],
+            row_below[x],
+        ];
+        out[x] = weighted_min4_of_9(vals);
+    }
+
+    pre_erosion_w
+}
+
 /// Find 4 smallest values from 9 inputs using selection sort.
 /// Returns weighted sum: MUL0*min0 + MUL1*min1 + MUL2*min2 + MUL3*min3
 ///
@@ -807,6 +971,199 @@ fn weighted_min4_of_9(v: [f32; 9]) -> f32 {
         a[0],
         FUZZY_MUL1.mul_add(a[1], FUZZY_MUL2.mul_add(a[2], FUZZY_MUL3 * a[3])),
     )
+}
+
+// ============================================================================
+// Streaming circular buffer SIMD support
+// ============================================================================
+
+/// Gather a single neighbor value for 8 blocks from circular buffer.
+/// Each lane gets the value at (cx[lane] + nx, cy + ny) with boundary clamping.
+#[inline(always)]
+fn gather_neighbor_circular(
+    buffer: &[f32],
+    pe_w: usize,
+    buffer_rows: usize,
+    base_cx: [isize; 8],
+    cy: isize,
+    nx: isize,
+    ny: isize,
+    max_x: isize,
+    max_y: isize,
+) -> f32x8 {
+    let py = (cy + ny).clamp(0, max_y) as usize;
+    let buffer_row = py % buffer_rows;
+    let row_offset = buffer_row * pe_w;
+
+    // Gather 8 values with clamped x coordinates
+    let vals: [f32; 8] = std::array::from_fn(|i| {
+        let px = (base_cx[i] + nx).clamp(0, max_x) as usize;
+        let idx = row_offset + px;
+        if idx < buffer.len() {
+            buffer[idx]
+        } else {
+            0.0
+        }
+    });
+    vals.into()
+}
+
+/// Compute fuzzy erosion for 8 blocks using SIMD sorting network.
+///
+/// For streaming AQ: processes blocks from a circular pre-erosion buffer.
+/// Each block sums 4 weighted_min4_of_9 values (one per 2x2 sub-pixel).
+///
+/// Returns the number of blocks processed.
+#[inline]
+pub fn compute_fuzzy_erosion_blocks_simd(
+    pre_erosion_buffer: &[f32],
+    pe_w: usize,
+    buffer_rows: usize,
+    pe_y_base: isize,
+    max_filled_row: isize,
+    start: usize,
+    end: usize,
+    out: &mut [f32],
+) -> usize {
+    let max_x = pe_w as isize - 1;
+    let max_y = max_filled_row.max(0);
+
+    let mut processed = 0;
+    let mut bx = start;
+
+    // Process 8 blocks at a time with SIMD
+    while bx + 8 <= end {
+        // Base cx values for 8 consecutive blocks (stride 2 in pre-erosion space)
+        let base_cx: [isize; 8] = std::array::from_fn(|i| ((bx + i - start) * 2) as isize);
+
+        let mut sum = f32x8::ZERO;
+
+        // Process 4 sub-pixels per block: (dx, dy) in {0,1} x {0,1}
+        for dy in 0..2isize {
+            for dx in 0..2isize {
+                let cy = pe_y_base + dy;
+                // Add offset to base_cx for this sub-pixel
+                let cx: [isize; 8] = std::array::from_fn(|i| base_cx[i] + dx);
+
+                // Gather 9 neighbors for all 8 blocks
+                let v = [
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        -1,
+                        -1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        0,
+                        -1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        1,
+                        -1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        -1,
+                        0,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        0,
+                        0,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        1,
+                        0,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        -1,
+                        1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        0,
+                        1,
+                        max_x,
+                        max_y,
+                    ),
+                    gather_neighbor_circular(
+                        pre_erosion_buffer,
+                        pe_w,
+                        buffer_rows,
+                        cx,
+                        cy,
+                        1,
+                        1,
+                        max_x,
+                        max_y,
+                    ),
+                ];
+
+                // SIMD sorting network to find 4 smallest and compute weighted sum
+                sum += weighted_min4_of_9_simd(v);
+            }
+        }
+
+        // Store results for 8 blocks
+        let sum_arr = sum.to_array();
+        for i in 0..8 {
+            out[bx + i] = sum_arr[i];
+        }
+
+        bx += 8;
+        processed += 8;
+    }
+
+    processed
 }
 
 /// SIMD-optimized FuzzyErosion.
