@@ -7,15 +7,32 @@
 //! cargo bench --bench cpp_comparison -- --save-baseline main
 //! cargo bench --bench cpp_comparison -- --baseline main
 //! ```
+//!
+//! IMPORTANT: Uses distance-based encoding for fair comparison.
+//! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
+//! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jpegli::encoder::{
-    ChromaSubsampling as RustSubsampling, EncoderConfig as RustConfig, PixelLayout, Unstoppable,
+    ChromaSubsampling as RustSubsampling, EncoderConfig as RustConfig, PixelLayout, Quality,
+    Unstoppable,
 };
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
 use std::time::Duration;
+
+/// Convert quality (0-100) to butteraugli distance.
+/// Same formula as C++ jpegli_quality_to_distance.
+fn quality_to_distance(q: f32) -> f32 {
+    if q >= 100.0 {
+        0.01
+    } else if q >= 30.0 {
+        0.1 + (100.0 - q) * 0.09
+    } else {
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
+    }
+}
 
 // ============================================================================
 // Test Data
@@ -57,6 +74,11 @@ impl BenchConfig {
         format!("{}-{}-{}-q{}", mode, sub, color, self.quality)
     }
 
+    /// Get butteraugli distance (for 3-table parity with Rust)
+    fn distance(self) -> f32 {
+        quality_to_distance(self.quality as f32)
+    }
+
     fn to_encoder_config(self) -> EncoderConfig {
         EncoderConfig::new(EncoderImpl::CJpegli)
             .color(if self.use_xyb {
@@ -70,7 +92,7 @@ impl BenchConfig {
                 ScanMode::Baseline
             })
             .subsampling(self.subsampling)
-            .quality(self.quality)
+            .distance(self.distance()) // Use distance for 3-table parity
     }
 
     fn to_rust_subsampling(self) -> RustSubsampling {
@@ -84,8 +106,11 @@ impl BenchConfig {
 }
 
 fn encode_rust(image: &ImageData, config: &BenchConfig) -> Vec<u8> {
-    let rust_config = RustConfig::ycbcr(config.quality, config.to_rust_subsampling())
-        .progressive(config.progressive);
+    let rust_config = RustConfig::ycbcr(
+        Quality::ApproxButteraugli(config.distance()),
+        config.to_rust_subsampling(),
+    )
+    .progressive(config.progressive);
 
     let mut enc = rust_config
         .encode_from_bytes(
@@ -121,7 +146,7 @@ fn ffi_available() -> bool {
 
     let config = EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
-        .quality(90);
+        .distance(quality_to_distance(90.0)); // Use distance for 3-table parity
 
     config.encode(&test_img).is_ok()
 }

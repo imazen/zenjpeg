@@ -53,10 +53,17 @@ fn main() {
     let (rust_w, rust_h, rust_vals) = load_aq_map(rust_path).expect("Failed to load Rust AQ map");
 
     println!("=== AQ Map Comparison ===\n");
-    println!("C++ AQ:  {}x{} blocks ({} values)", cpp_w, cpp_h, cpp_vals.len());
+    println!(
+        "C++ AQ:  {}x{} blocks ({} values)",
+        cpp_w,
+        cpp_h,
+        cpp_vals.len()
+    );
     println!(
         "Rust AQ: {}x{} blocks ({} values)",
-        rust_w, rust_h, rust_vals.len()
+        rust_w,
+        rust_h,
+        rust_vals.len()
     );
 
     if cpp_w != rust_w || cpp_h != rust_h {
@@ -119,15 +126,24 @@ fn main() {
     let rust_mean: f32 = rust_vals.iter().sum::<f32>() / rust_vals.len() as f32;
 
     println!("\n=== Value Range Statistics ===");
-    println!("C++:  min={:.4}, max={:.4}, mean={:.4}", cpp_min, cpp_max, cpp_mean);
-    println!("Rust: min={:.4}, max={:.4}, mean={:.4}", rust_min, rust_max, rust_mean);
+    println!(
+        "C++:  min={:.4}, max={:.4}, mean={:.4}",
+        cpp_min, cpp_max, cpp_mean
+    );
+    println!(
+        "Rust: min={:.4}, max={:.4}, mean={:.4}",
+        rust_min, rust_max, rust_mean
+    );
 
     // First few values comparison
     println!("\n=== First 10 Values ===");
     println!("{:>8} {:>10} {:>10} {:>10}", "Index", "C++", "Rust", "Diff");
     for i in 0..10.min(cpp_vals.len()) {
         let diff = rust_vals[i] - cpp_vals[i];
-        println!("{:>8} {:>10.6} {:>10.6} {:>+10.6}", i, cpp_vals[i], rust_vals[i], diff);
+        println!(
+            "{:>8} {:>10.6} {:>10.6} {:>+10.6}",
+            i, cpp_vals[i], rust_vals[i], diff
+        );
     }
 
     // Find largest differences
@@ -140,13 +156,21 @@ fn main() {
     indexed_diffs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
     println!("\n=== Largest Absolute Differences ===");
-    println!("{:>8} {:>10} {:>10} {:>10} {:>6} {:>6}", "Index", "C++", "Rust", "Diff", "Row", "Col");
+    println!(
+        "{:>8} {:>10} {:>10} {:>10} {:>6} {:>6}",
+        "Index", "C++", "Rust", "Diff", "Row", "Col"
+    );
     for (i, diff) in indexed_diffs.iter().take(10) {
         let row = i / cpp_w as usize;
         let col = i % cpp_w as usize;
         println!(
             "{:>8} {:>10.6} {:>10.6} {:>+10.6} {:>6} {:>6}",
-            i, cpp_vals[*i], rust_vals[*i], rust_vals[*i] - cpp_vals[*i], row, col
+            i,
+            cpp_vals[*i],
+            rust_vals[*i],
+            rust_vals[*i] - cpp_vals[*i],
+            row,
+            col
         );
     }
 
@@ -160,14 +184,54 @@ fn main() {
         hist[bin] += 1;
     }
     let total = diffs.len();
-    println!("  <0.001:   {:>6} ({:>5.1}%)", hist[0], hist[0] as f32 / total as f32 * 100.0);
-    println!("  <0.005:   {:>6} ({:>5.1}%)", hist[1], hist[1] as f32 / total as f32 * 100.0);
-    println!("  <0.01:    {:>6} ({:>5.1}%)", hist[2], hist[2] as f32 / total as f32 * 100.0);
-    println!("  <0.02:    {:>6} ({:>5.1}%)", hist[3], hist[3] as f32 / total as f32 * 100.0);
-    println!("  <0.05:    {:>6} ({:>5.1}%)", hist[4], hist[4] as f32 / total as f32 * 100.0);
-    println!("  <0.1:     {:>6} ({:>5.1}%)", hist[5], hist[5] as f32 / total as f32 * 100.0);
-    println!("  <0.2:     {:>6} ({:>5.1}%)", hist[6], hist[6] as f32 / total as f32 * 100.0);
-    println!("  <0.5:     {:>6} ({:>5.1}%)", hist[7], hist[7] as f32 / total as f32 * 100.0);
-    println!("  <1.0:     {:>6} ({:>5.1}%)", hist[8], hist[8] as f32 / total as f32 * 100.0);
-    println!("  >=1.0:    {:>6} ({:>5.1}%)", hist[9], hist[9] as f32 / total as f32 * 100.0);
+    println!(
+        "  <0.001:   {:>6} ({:>5.1}%)",
+        hist[0],
+        hist[0] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.005:   {:>6} ({:>5.1}%)",
+        hist[1],
+        hist[1] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.01:    {:>6} ({:>5.1}%)",
+        hist[2],
+        hist[2] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.02:    {:>6} ({:>5.1}%)",
+        hist[3],
+        hist[3] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.05:    {:>6} ({:>5.1}%)",
+        hist[4],
+        hist[4] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.1:     {:>6} ({:>5.1}%)",
+        hist[5],
+        hist[5] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.2:     {:>6} ({:>5.1}%)",
+        hist[6],
+        hist[6] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <0.5:     {:>6} ({:>5.1}%)",
+        hist[7],
+        hist[7] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  <1.0:     {:>6} ({:>5.1}%)",
+        hist[8],
+        hist[8] as f32 / total as f32 * 100.0
+    );
+    println!(
+        "  >=1.0:    {:>6} ({:>5.1}%)",
+        hist[9],
+        hist[9] as f32 / total as f32 * 100.0
+    );
 }

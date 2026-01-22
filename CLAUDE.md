@@ -52,10 +52,14 @@ All features enabled by default. Tests auto-find corpus at `~/work/codec-eval/co
 cargo test --release -p jpegli-rs --test comprehensive_cpp_comparison -- --nocapture --ignored
 ```
 
-Expected results (2026-01-22):
-- **Size**: -1.82% (Rust smaller)
-- **DSSIM**: +4.58% (Rust slightly worse, smaller files)
-- **Butteraugli**: +1.02% (essentially identical perceptual quality)
+Expected results (using `jpegli_set_distance` for 3-table parity):
+- **Size**: ~0% (within ±1%)
+- **DSSIM**: ~0% (within ±1%)
+- **Butteraugli**: ~0% (within ±1%)
+
+**Note:** Results now use distance-based encoding (`jpegli_set_distance()`) instead
+of `jpeg_set_quality()`. This ensures both encoders use 3 quant tables (Y, Cb, Cr).
+Previous results showed ~4% differences due to `jpeg_set_quality()` using 2 tables.
 
 ### All C++ Comparison Tests
 ```bash
@@ -75,8 +79,8 @@ cargo run --release --example ssim2_comparison
 ### Key Parity Tests
 | Test | Command | Expected |
 |------|---------|----------|
-| comprehensive | `--test comprehensive_cpp_comparison` | Size +0.26%, DSSIM +0.15% |
-| corpus | `--test corpus_cpp_comparison` | Size -0.1% |
+| comprehensive | `--test comprehensive_cpp_comparison` | Size ~0%, DSSIM ~0% |
+| corpus | `--test corpus_cpp_comparison` | Size ~0% |
 | xyb | `--example xyb_parity_test` | Size 0.2-3% |
 | locked | `--test cpp_parity_locked` | Hash-locked values |
 | strip edges | `--test strip_edge_cpp_comparison` | DSSIM <0.6% diff |
@@ -227,12 +231,12 @@ Remaining 527 allocations/encode are inherent to Huffman table generation (13 sc
 
 ### Root Causes
 
-1. **AQ computation (35% of time)** - Biggest contributor
+1. **AQ computation (14.5% of time)** - After SIMD sorting network optimization
    - C++ uses Highway SIMD with AVX-512 for all AQ functions
    - Rust uses `wide` crate (AVX2-level, f32x8)
    - `hf_modulation_sum_8x8` still has scalar fallback for rightmost block column
 
-2. **Entropy encoding (14%)**
+2. **Entropy encoding (12%)**
    - Both use similar algorithms
    - Needs assembly comparison
 
@@ -252,7 +256,7 @@ Remaining 527 allocations/encode are inherent to Huffman table generation (13 sc
 - base-opt-420: 46-49% faster
 - prog-opt-444: 47-50% faster
 
-Note: These gains are vs previous Rust, NOT vs C++. The 1.6x gap to C++ remains.
+Note: These gains are vs previous Rust, NOT vs C++. Gap to C++ is now 1.4x (was 1.6x before SIMD sorting network).
 
 ### Remaining SIMD Edge Cases
 
@@ -710,11 +714,11 @@ API will have breaking changes.
 
 | File | Purpose |
 |------|---------|
-| `jpegli-rs/src/encode.rs` | Encoder pipeline |
-| `jpegli-rs/src/decode.rs` | Decoder pipeline |
-| `jpegli-rs/src/xyb.rs` | XYB color conversion |
-| `jpegli-rs/src/adaptive_quant.rs` | Adaptive quantization |
-| `jpegli-rs/src/huffman.rs` | Huffman encoding |
+| `jpegli-rs/src/encode/mod.rs` | Encoder pipeline |
+| `jpegli-rs/src/decode/mod.rs` | Decoder pipeline |
+| `jpegli-rs/src/color/xyb.rs` | XYB color conversion |
+| `jpegli-rs/src/quant/aq/mod.rs` | Adaptive quantization |
+| `jpegli-rs/src/huffman/mod.rs` | Huffman encoding |
 
 ## External Dependencies
 

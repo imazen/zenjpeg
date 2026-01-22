@@ -14,9 +14,12 @@ use jpegli_bench_utils::{
 };
 
 fn encode_rust(pixels: &[u8], width: u32, height: u32, distance: f32) -> Vec<u8> {
-    let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(distance), ChromaSubsampling::Quarter)
-        .progressive(false)
-        .optimize_huffman(true);
+    let config = EncoderConfig::ycbcr(
+        Quality::ApproxButteraugli(distance),
+        ChromaSubsampling::Quarter,
+    )
+    .progressive(false)
+    .optimize_huffman(true);
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");
@@ -37,7 +40,7 @@ fn encode_cpp_ffi(pixels: &[u8], width: u32, height: u32, distance: f32) -> Vec<
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Baseline)
         .subsampling(BenchChromaSubsampling::S420)
-        .distance(distance)  // Use distance, not quality!
+        .distance(distance) // Use distance, not quality!
         .encode(&img)
         .expect("C++ jpegli FFI encode failed")
 }
@@ -56,17 +59,30 @@ fn test_solid_color(r: u8, g: u8, b: u8, name: &str, distance: f32) {
     let cpp_jpeg = encode_cpp_ffi(&pixels, width, height, distance);
 
     let decoder = Decoder::new();
-    let rust_coeffs = decoder.decode_coefficients(&rust_jpeg).expect("decode rust");
+    let rust_coeffs = decoder
+        .decode_coefficients(&rust_jpeg)
+        .expect("decode rust");
     let cpp_coeffs = decoder.decode_coefficients(&cpp_jpeg).expect("decode cpp");
 
-    println!("=== {} (RGB={},{},{}) distance={:.2} ===", name, r, g, b, distance);
+    println!(
+        "=== {} (RGB={},{},{}) distance={:.2} ===",
+        name, r, g, b, distance
+    );
 
     // Print quant tables
     println!("  Quant tables (DC position [0]):");
-    for (i, (rust_qt, cpp_qt)) in rust_coeffs.quant_tables.iter().zip(&cpp_coeffs.quant_tables).enumerate() {
+    for (i, (rust_qt, cpp_qt)) in rust_coeffs
+        .quant_tables
+        .iter()
+        .zip(&cpp_coeffs.quant_tables)
+        .enumerate()
+    {
         if let (Some(rq), Some(cq)) = (rust_qt, cpp_qt) {
             if rq[0] != cq[0] {
-                println!("    Table {}: rust={}, cpp={} (DIFFERENT!)", i, rq[0], cq[0]);
+                println!(
+                    "    Table {}: rust={}, cpp={} (DIFFERENT!)",
+                    i, rq[0], cq[0]
+                );
             } else {
                 println!("    Table {}: rust={}, cpp={} (same)", i, rq[0], cq[0]);
             }
@@ -117,14 +133,14 @@ fn main() {
     let distance = 1.0;
 
     // Test common colors
-    test_solid_color(128, 128, 128, "Gray", distance);    // Neutral gray
-    test_solid_color(0, 0, 0, "Black", distance);          // Pure black
-    test_solid_color(255, 255, 255, "White", distance);    // Pure white
-    test_solid_color(255, 0, 0, "Red", distance);          // Pure red
-    test_solid_color(0, 255, 0, "Green", distance);        // Pure green
-    test_solid_color(0, 0, 255, "Blue", distance);         // Pure blue
-    test_solid_color(255, 255, 0, "Yellow", distance);     // Yellow
-    test_solid_color(0, 255, 255, "Cyan", distance);       // Cyan
+    test_solid_color(128, 128, 128, "Gray", distance); // Neutral gray
+    test_solid_color(0, 0, 0, "Black", distance); // Pure black
+    test_solid_color(255, 255, 255, "White", distance); // Pure white
+    test_solid_color(255, 0, 0, "Red", distance); // Pure red
+    test_solid_color(0, 255, 0, "Green", distance); // Pure green
+    test_solid_color(0, 0, 255, "Blue", distance); // Pure blue
+    test_solid_color(255, 255, 0, "Yellow", distance); // Yellow
+    test_solid_color(0, 255, 255, "Cyan", distance); // Cyan
 
     // Test at different distance levels
     println!("=== Distance Level Comparison (Gray) ===\n");

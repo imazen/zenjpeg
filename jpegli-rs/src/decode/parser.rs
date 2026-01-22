@@ -1291,13 +1291,13 @@ impl<'a> JpegParser<'a> {
     /// Extracts raw quantized DCT coefficients for analysis.
     ///
     /// Must be called after `decode()` with streaming disabled.
-    pub(super) fn extract_coefficients(
-        &self,
-    ) -> Result<super::image::DecodedCoefficients> {
+    pub(super) fn extract_coefficients(&self) -> Result<super::image::DecodedCoefficients> {
         use super::image::{ComponentCoefficients, DecodedCoefficients};
 
         if self.coeffs.is_empty() {
-            return Err(Error::internal("no coefficients available - was streaming used?"));
+            return Err(Error::internal(
+                "no coefficients available - was streaming used?",
+            ));
         }
 
         // Calculate MCU dimensions

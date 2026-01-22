@@ -1,17 +1,33 @@
 //! Compare Rust vs C++ FFI encoding sizes.
+//!
+//! IMPORTANT: Uses distance-based encoding for fair comparison.
+//! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
+//! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use jpegli_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode,
 };
 use std::fs;
 
+/// Convert quality (0-100) to butteraugli distance.
+/// Same formula as C++ jpegli_quality_to_distance.
+fn quality_to_distance(q: f32) -> f32 {
+    if q >= 100.0 {
+        0.01
+    } else if q >= 30.0 {
+        0.1 + (100.0 - q) * 0.09
+    } else {
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let png_path = args.get(1).expect("need image path");
-    let quality: u8 = args
-        .get(2)
-        .map(|s| s.parse().unwrap())
-        .unwrap_or(75);
+    let quality: u8 = args.get(2).map(|s| s.parse().unwrap()).unwrap_or(75);
+
+    // Convert quality to distance for fair comparison
+    let distance = quality_to_distance(quality as f32);
 
     // Load PNG
     let file = fs::File::open(png_path).expect("open png");
@@ -41,7 +57,7 @@ fn main() {
     };
 
     println!("Image: {}x{}", info.width, info.height);
-    println!("Quality: {}\n", quality);
+    println!("Quality: {} (distance: {:.2})\n", quality, distance);
 
     // Test baseline mode
     println!("=== Baseline Mode ===");
@@ -49,7 +65,7 @@ fn main() {
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Baseline)
         .subsampling(ChromaSubsampling::S420)
-        .quality(quality)
+        .distance(distance)
         .encode(&img)
         .expect("C++ encode");
 
@@ -57,7 +73,7 @@ fn main() {
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Baseline)
         .subsampling(ChromaSubsampling::S420)
-        .quality(quality)
+        .distance(distance)
         .encode(&img)
         .expect("Rust encode");
 
@@ -74,7 +90,7 @@ fn main() {
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Progressive)
         .subsampling(ChromaSubsampling::S420)
-        .quality(quality)
+        .distance(distance)
         .encode(&img)
         .expect("C++ encode");
 
@@ -82,7 +98,7 @@ fn main() {
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Progressive)
         .subsampling(ChromaSubsampling::S420)
-        .quality(quality)
+        .distance(distance)
         .encode(&img)
         .expect("Rust encode");
 

@@ -9,10 +9,15 @@
 //! cargo run --release --example edge_mcu_parity
 //! cargo run --release --example edge_mcu_parity -- --edge-width 1
 //! ```
+//!
+//! IMPORTANT: Uses distance-based encoding for fair comparison.
+//! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
+//! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use enough::Unstoppable;
 use jpegli::encoder::{
-    ChromaSubsampling as JpegliChromaSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
+    ChromaSubsampling as JpegliChromaSubsampling, EncoderConfig as JpegliEncoderConfig,
+    PixelLayout, Quality,
 };
 use jpegli_bench_utils::{
     create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
@@ -20,6 +25,18 @@ use jpegli_bench_utils::{
 };
 use std::fs;
 use std::path::PathBuf;
+
+/// Convert quality (0-100) to butteraugli distance.
+/// Same formula as C++ jpegli_quality_to_distance.
+fn quality_to_distance(q: f32) -> f32 {
+    if q >= 100.0 {
+        0.01
+    } else if q >= 30.0 {
+        0.1 + (100.0 - q) * 0.09
+    } else {
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
+    }
+}
 
 fn load_png(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
     let file = fs::File::open(path).ok()?;
@@ -50,10 +67,13 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<rgb::RGB8>, u32, u32)> {
     Some((rgb, width, height))
 }
 
-fn encode_rust(pixels: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    let config = JpegliEncoderConfig::ycbcr(quality as f32, JpegliChromaSubsampling::Quarter)
-        .progressive(true)
-        .optimize_huffman(true);
+fn encode_rust(pixels: &[u8], width: u32, height: u32, distance: f32) -> Vec<u8> {
+    let config = JpegliEncoderConfig::ycbcr(
+        Quality::ApproxButteraugli(distance),
+        JpegliChromaSubsampling::Quarter,
+    )
+    .progressive(true)
+    .optimize_huffman(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
@@ -61,12 +81,12 @@ fn encode_rust(pixels: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     enc.finish().expect("Rust encode failed")
 }
 
-fn encode_cpp(image: &ImageData, quality: u8) -> Vec<u8> {
+fn encode_cpp(image: &ImageData, distance: f32) -> Vec<u8> {
     let config = EncoderConfig::new(EncoderImpl::CJpegli)
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Progressive)
         .subsampling(ChromaSubsampling::S420)
-        .quality(quality);
+        .distance(distance); // Use distance for 3-table parity
     config.encode(image).expect("C++ encode failed")
 }
 
@@ -213,14 +233,17 @@ fn main() {
     println!("{}", "-".repeat(85));
 
     for quality in qualities {
+        // Convert quality to distance for fair comparison (both use 3 quant tables)
+        let distance = quality_to_distance(quality as f32);
+
         // Encode
         let rust_jpeg = encode_rust(
             &tiled_bytes,
             target_width as u32,
             tiled_height as u32,
-            quality,
+            distance,
         );
-        let cpp_jpeg = encode_cpp(&tiled_image_data, quality);
+        let cpp_jpeg = encode_cpp(&tiled_image_data, distance);
 
         // Decode
         let rust_decoded = decode_jpeg(&rust_jpeg);

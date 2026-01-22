@@ -563,6 +563,40 @@ Tested against C++ jpegli on frymire.png (1118x1105):
 
 Quality is identical; file sizes within 0.5%.
 
+### Comparing with C++ jpegli: 2 vs 3 Quantization Tables
+
+When comparing output between jpegli-rs and C++ jpegli, **use `jpegli_set_distance()`
+in C++**, not `jpeg_set_quality()`. Here's why:
+
+**The issue:**
+- `jpeg_set_quality()` in C++ uses **2 chroma tables** (Cb and Cr share the same table)
+- `jpegli_set_distance()` in C++ uses **3 tables** (separate Y, Cb, Cr tables)
+- jpegli-rs **always uses 3 tables**
+
+Using `jpeg_set_quality()` for comparison will show ~4% file size differences and
+different quantization behavior because the encoders are configured differently.
+
+**Correct comparison (FFI):**
+```c
+// C++ - use distance-based quality (3 tables)
+jpegli_set_distance(&cinfo, 1.0, JPEGLI_TRUE);  // distance 1.0 ≈ quality 90
+
+// NOT: jpeg_set_quality(&cinfo, 90, TRUE);  // 2 tables - invalid comparison!
+```
+
+**Quality to distance conversion:**
+```rust
+fn quality_to_distance(q: f32) -> f32 {
+    if q >= 100.0 { 0.01 }
+    else if q >= 30.0 { 0.1 + (100.0 - q) * 0.09 }
+    else { 53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0 }
+}
+// q90 → distance 1.0, q75 → distance 2.35
+```
+
+With proper distance-based comparison, size and quality differences are typically
+within ±1%.
+
 ## Feature Flags
 
 | Feature | Default | Description |
