@@ -79,6 +79,10 @@ pub struct StreamingAQ {
     height: usize,
     /// MCU-aligned width (blocks_w * 8) - used for internal buffers to avoid boundary checks
     padded_width: usize,
+    /// Row stride in Y iMCU buffer (padded_width + 1 for edge replication during HF modulation)
+    /// The extra pixel allows `hf_modulation_sum_8x8` to read position 8 of the rightmost block
+    /// without wrapping to the next row.
+    y_buffer_stride: usize,
     /// Row stride in input data (may be larger than width for padded strips)
     strip_stride: usize,
 
@@ -161,6 +165,10 @@ impl StreamingAQ {
         let blocks_w = (width + 7) / 8;
         let blocks_h = (height + 7) / 8;
         let padded_width = blocks_w * 8; // MCU-aligned width for SIMD-friendly access
+                                         // Y buffer stride needs +1 for edge replication pixel at position padded_width.
+                                         // This allows hf_modulation_sum_8x8 to safely read 9 consecutive elements
+                                         // (positions 0-8) for the rightmost block without wrapping to the next row.
+        let y_buffer_stride = padded_width + 1;
         let pre_erosion_w = (width + 3) / 4;
         let pre_erosion_h = (height + 3) / 4;
 
@@ -181,6 +189,7 @@ impl StreamingAQ {
             width,
             height,
             padded_width,
+            y_buffer_stride,
             strip_stride: padded_width, // Default: stride equals padded_width
             blocks_w,
             blocks_h,
@@ -197,9 +206,9 @@ impl StreamingAQ {
             pre_erosion_accum: try_alloc_zeroed(width)?,
             pre_erosion_temp: try_alloc_zeroed(width)?,
             y_imcu_buffers: [
-                // Use padded_width for SIMD-friendly aligned access
-                try_alloc_zeroed(padded_width * imcu_height)?,
-                try_alloc_zeroed(padded_width * imcu_height)?,
+                // Use y_buffer_stride (padded_width + 1) for proper edge replication
+                try_alloc_zeroed(y_buffer_stride * imcu_height)?,
+                try_alloc_zeroed(y_buffer_stride * imcu_height)?,
             ],
             y_imcu_current: 0,
             y_imcu_height: imcu_height,
@@ -230,6 +239,7 @@ impl StreamingAQ {
             width: 0,
             height: 0,
             padded_width: 0,
+            y_buffer_stride: 0,
             strip_stride: 0,
             blocks_w: 0,
             blocks_h: 0,
@@ -284,6 +294,7 @@ impl StreamingAQ {
         // Use strip_stride for indexing input data
         let stride = self.strip_stride;
         let padded_width = self.padded_width;
+        let y_buffer_stride = self.y_buffer_stride;
 
         // Process each row in the strip
         for local_y in 0..strip_height {
@@ -297,10 +308,14 @@ impl StreamingAQ {
             // Store padded row in Y iMCU buffer (includes replicated edge pixels for SIMD)
             // The input strip is expected to have stride >= padded_width with edge replication
             let imcu_local_y = global_y % self.y_imcu_height;
-            let dest_start = imcu_local_y * padded_width;
+            let dest_start = imcu_local_y * y_buffer_stride;
             let padded_row = &y_strip[row_start..row_start + padded_width];
             self.y_imcu_buffers[self.y_imcu_current][dest_start..dest_start + padded_width]
                 .copy_from_slice(padded_row);
+            // Fill the extra edge pixel (position padded_width) for HF modulation rightmost block
+            // This allows hf_modulation_sum_8x8 to safely read 9 consecutive elements
+            let edge_val = padded_row[padded_width - 1];
+            self.y_imcu_buffers[self.y_imcu_current][dest_start + padded_width] = edge_val;
 
             // Process pre-erosion using only actual width pixels (not padding)
             let row = &y_strip[row_start..row_start + self.width];
@@ -317,13 +332,14 @@ impl StreamingAQ {
             // Edge clamp: fill remaining rows of the iMCU buffer with copies of the last valid row
             // This is needed for partial iMCU rows at the bottom of the image
             let valid_rows_in_imcu = self.rows_received - self.current_imcu_row * imcu_height;
-            let padded_width = self.padded_width;
+            let y_buffer_stride = self.y_buffer_stride;
             if valid_rows_in_imcu < imcu_height && valid_rows_in_imcu > 0 {
                 let last_valid_row = valid_rows_in_imcu - 1;
-                let src_start = last_valid_row * padded_width;
-                let src_end = src_start + padded_width;
+                let src_start = last_valid_row * y_buffer_stride;
+                // Copy full y_buffer_stride (includes the extra edge pixel)
+                let src_end = src_start + y_buffer_stride;
                 for fill_row in valid_rows_in_imcu..imcu_height {
-                    let dest_start = fill_row * padded_width;
+                    let dest_start = fill_row * y_buffer_stride;
                     self.y_imcu_buffers[self.y_imcu_current]
                         .copy_within(src_start..src_end, dest_start);
                 }
@@ -381,6 +397,7 @@ impl StreamingAQ {
         // Use strip_stride for indexing input data
         let stride = self.strip_stride;
         let padded_width = self.padded_width;
+        let y_buffer_stride = self.y_buffer_stride;
 
         // Process each row in the strip
         for local_y in 0..strip_height {
@@ -393,10 +410,13 @@ impl StreamingAQ {
 
             // Store padded row in Y iMCU buffer
             let imcu_local_y = global_y % self.y_imcu_height;
-            let dest_start = imcu_local_y * padded_width;
+            let dest_start = imcu_local_y * y_buffer_stride;
             let padded_row = &y_strip[row_start..row_start + padded_width];
             self.y_imcu_buffers[self.y_imcu_current][dest_start..dest_start + padded_width]
                 .copy_from_slice(padded_row);
+            // Fill the extra edge pixel (position padded_width) for HF modulation rightmost block
+            let edge_val = padded_row[padded_width - 1];
+            self.y_imcu_buffers[self.y_imcu_current][dest_start + padded_width] = edge_val;
 
             // Process pre-erosion using only actual width pixels
             let row = &y_strip[row_start..row_start + self.width];
@@ -412,13 +432,14 @@ impl StreamingAQ {
         if self.rows_received >= next_imcu_boundary.min(self.height) {
             // Edge clamp: fill remaining rows of the iMCU buffer
             let valid_rows_in_imcu = self.rows_received - self.current_imcu_row * imcu_height;
-            let padded_width = self.padded_width;
+            let y_buffer_stride = self.y_buffer_stride;
             if valid_rows_in_imcu < imcu_height && valid_rows_in_imcu > 0 {
                 let last_valid_row = valid_rows_in_imcu - 1;
-                let src_start = last_valid_row * padded_width;
-                let src_end = src_start + padded_width;
+                let src_start = last_valid_row * y_buffer_stride;
+                // Copy full y_buffer_stride (includes the extra edge pixel)
+                let src_end = src_start + y_buffer_stride;
                 for fill_row in valid_rows_in_imcu..imcu_height {
-                    let dest_start = fill_row * padded_width;
+                    let dest_start = fill_row * y_buffer_stride;
                     self.y_imcu_buffers[self.y_imcu_current]
                         .copy_within(src_start..src_end, dest_start);
                 }
@@ -700,13 +721,14 @@ impl StreamingAQ {
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
             // Per-block modulations with padded buffer
+            // Use y_buffer_stride (padded_width + 1) to allow reading 9 elements for HF modulation
             // Use archmage SIMD when available (fused HF+gamma, ~2x faster)
             #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
             if let Some(token) = self.archmage_token {
                 mage_per_block_modulations_row(
                     token,
                     &self.y_imcu_buffers[y_buffer_idx],
-                    self.padded_width, // stride (MCU-aligned)
+                    self.y_buffer_stride, // stride (padded_width + 1 for edge replication)
                     by_offset,
                     blocks_w,
                     &mut self.fuzzy_erosion_out[row_start..row_end],
@@ -716,7 +738,7 @@ impl StreamingAQ {
             } else {
                 per_block_modulations_row(
                     &self.y_imcu_buffers[y_buffer_idx],
-                    self.padded_width,
+                    self.y_buffer_stride,
                     self.width,
                     self.height,
                     by_offset,
@@ -730,7 +752,7 @@ impl StreamingAQ {
             #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
             per_block_modulations_row(
                 &self.y_imcu_buffers[y_buffer_idx],
-                self.padded_width,
+                self.y_buffer_stride,
                 self.width,
                 self.height,
                 by_offset,

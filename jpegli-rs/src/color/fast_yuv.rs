@@ -157,6 +157,14 @@ pub fn rgb_to_ycbcr_strided_fast(
                 cb_plane[cbcr_dst_start + x] = cb_u8[src_start + x] as f32;
                 cr_plane[cbcr_dst_start + x] = cr_u8[src_start + x] as f32;
             }
+
+            // Edge-replicate Y for rightmost partial MCU
+            if width < y_stride {
+                let edge_val = y_plane[y_dst_start + width - 1];
+                for x in width..y_stride {
+                    y_plane[y_dst_start + x] = edge_val;
+                }
+            }
         }
     }
 }
@@ -259,6 +267,14 @@ pub fn rgb_to_ycbcr_strided_reuse(
                 cb_plane[cbcr_dst_start + x] = cb_u8[src_start + x] as f32;
                 cr_plane[cbcr_dst_start + x] = cr_u8[src_start + x] as f32;
             }
+
+            // Edge-replicate Y for rightmost partial MCU
+            if width < y_stride {
+                let edge_val = y_plane[y_dst_start + width - 1];
+                for x in width..y_stride {
+                    y_plane[y_dst_start + x] = edge_val;
+                }
+            }
         }
     }
 }
@@ -346,6 +362,14 @@ pub fn bgr_to_ycbcr_strided_reuse(
                 y_plane[y_dst_start + x] = y_u8[src_start + x] as f32;
                 cb_plane[cbcr_dst_start + x] = cb_u8[src_start + x] as f32;
                 cr_plane[cbcr_dst_start + x] = cr_u8[src_start + x] as f32;
+            }
+
+            // Edge-replicate Y for rightmost partial MCU
+            if width < y_stride {
+                let edge_val = y_plane[y_dst_start + width - 1];
+                for x in width..y_stride {
+                    y_plane[y_dst_start + x] = edge_val;
+                }
             }
         }
     }
