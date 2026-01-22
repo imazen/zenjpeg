@@ -25,7 +25,10 @@ mod parser;
 mod scanline;
 mod upsample;
 
-pub use image::{DecodedImage, DecodedImageF32, DecodedYCbCr};
+pub use image::{
+    CoefficientComparison, ComponentCoefficients, DecodedCoefficients, DecodedImage,
+    DecodedImageF32, DecodedYCbCr,
+};
 use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
@@ -394,6 +397,40 @@ impl Decoder {
             format: output_format,
             data: pixels,
         })
+    }
+
+    /// Decodes a JPEG and extracts raw quantized DCT coefficients.
+    ///
+    /// This provides access to the coefficients before IDCT and color conversion,
+    /// useful for debugging, quality analysis, and encoder comparison.
+    ///
+    /// Coefficients are stored in zigzag order as they appear in the JPEG file.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::decode::Decoder;
+    ///
+    /// let decoder = Decoder::new();
+    /// let coeffs = decoder.decode_coefficients(&jpeg_data)?;
+    ///
+    /// // Access Y component DC coefficient for first block
+    /// let y_dc = coeffs.components[0].block(0)[0];
+    /// println!("Y DC coefficient: {}", y_dc);
+    ///
+    /// // Compare with another JPEG's coefficients
+    /// let other_coeffs = decoder.decode_coefficients(&other_jpeg_data)?;
+    /// let comparison = coeffs.compare(&other_coeffs);
+    /// println!("{}% of blocks differ", comparison.diff_block_pct());
+    /// ```
+    pub fn decode_coefficients(&self, data: &[u8]) -> Result<DecodedCoefficients> {
+        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        // Disable streaming - we need coefficients stored
+        parser.prefer_streaming = false;
+        parser.decode()?;
+
+        // Extract coefficients from parser
+        parser.extract_coefficients()
     }
 
     /// Decodes a JPEG image to planar YCbCr f32 data.

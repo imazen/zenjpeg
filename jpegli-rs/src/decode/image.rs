@@ -269,3 +269,175 @@ impl DecodedYCbCr {
         self.cr.iter().map(|&v| v + 128.0).collect()
     }
 }
+
+/// DCT coefficients for a single component.
+///
+/// Coefficients are stored in zigzag order as they appear in the JPEG file.
+/// Each block contains 64 i16 values.
+#[derive(Debug, Clone)]
+pub struct ComponentCoefficients {
+    /// Component ID (typically 1=Y, 2=Cb, 3=Cr for YCbCr)
+    pub id: u8,
+    /// Coefficients in block-row-major order, zigzag within each block.
+    /// Length = blocks_wide * blocks_high * 64
+    pub coeffs: Vec<i16>,
+    /// Number of horizontal blocks (component width / 8)
+    pub blocks_wide: usize,
+    /// Number of vertical blocks (component height / 8)
+    pub blocks_high: usize,
+    /// Horizontal sampling factor
+    pub h_samp: u8,
+    /// Vertical sampling factor
+    pub v_samp: u8,
+}
+
+impl ComponentCoefficients {
+    /// Returns a block's coefficients by block index.
+    ///
+    /// Block index is `by * blocks_wide + bx` where (bx, by) is block position.
+    #[must_use]
+    pub fn block(&self, block_idx: usize) -> &[i16] {
+        let start = block_idx * 64;
+        &self.coeffs[start..start + 64]
+    }
+
+    /// Returns a block's coefficients by position.
+    #[must_use]
+    pub fn block_at(&self, bx: usize, by: usize) -> &[i16] {
+        self.block(by * self.blocks_wide + bx)
+    }
+
+    /// Returns the total number of blocks.
+    #[must_use]
+    pub fn num_blocks(&self) -> usize {
+        self.blocks_wide * self.blocks_high
+    }
+}
+
+/// Decoded DCT coefficients for analysis and comparison.
+///
+/// This provides access to the raw quantized DCT coefficients before IDCT,
+/// useful for debugging, quality analysis, and encoder comparison.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use jpegli::decode::Decoder;
+///
+/// let decoder = Decoder::new();
+/// let coeffs = decoder.decode_coefficients(&jpeg_data)?;
+///
+/// // Access Y component DC coefficient for first block
+/// let y_dc = coeffs.components[0].block(0)[0];
+/// println!("Y DC: {}", y_dc);
+/// ```
+#[derive(Debug, Clone)]
+pub struct DecodedCoefficients {
+    /// Image width in pixels
+    pub width: u32,
+    /// Image height in pixels
+    pub height: u32,
+    /// Per-component coefficient data
+    pub components: Vec<ComponentCoefficients>,
+    /// Quantization tables (one per table slot used)
+    /// Index matches component's quant_table_idx
+    pub quant_tables: Vec<Option<[u16; 64]>>,
+}
+
+impl DecodedCoefficients {
+    /// Returns the number of components.
+    #[must_use]
+    pub fn num_components(&self) -> usize {
+        self.components.len()
+    }
+
+    /// Compares coefficients with another decode result, returning statistics.
+    ///
+    /// Returns (total_blocks, differing_blocks, max_diff, total_diff_coeffs)
+    #[must_use]
+    pub fn compare(&self, other: &DecodedCoefficients) -> CoefficientComparison {
+        let mut total_blocks = 0usize;
+        let mut differing_blocks = 0usize;
+        let mut max_diff = 0i16;
+        let mut total_diff_coeffs = 0usize;
+        let mut diff_by_position = [0u64; 64];
+
+        for (comp_idx, (c1, c2)) in self.components.iter().zip(&other.components).enumerate() {
+            let num_blocks = c1.num_blocks().min(c2.num_blocks());
+            for block_idx in 0..num_blocks {
+                total_blocks += 1;
+                let b1 = c1.block(block_idx);
+                let b2 = c2.block(block_idx);
+                let mut has_diff = false;
+                for coeff_idx in 0..64 {
+                    let diff = (b1[coeff_idx] as i32 - b2[coeff_idx] as i32).abs() as i16;
+                    if diff != 0 {
+                        has_diff = true;
+                        total_diff_coeffs += 1;
+                        diff_by_position[coeff_idx] += 1;
+                        if diff > max_diff {
+                            max_diff = diff;
+                        }
+                    }
+                }
+                if has_diff {
+                    differing_blocks += 1;
+                }
+            }
+            // Warn if block counts differ
+            if c1.num_blocks() != c2.num_blocks() {
+                eprintln!(
+                    "Warning: component {} block count mismatch: {} vs {}",
+                    comp_idx,
+                    c1.num_blocks(),
+                    c2.num_blocks()
+                );
+            }
+        }
+
+        CoefficientComparison {
+            total_blocks,
+            differing_blocks,
+            max_diff,
+            total_diff_coeffs,
+            diff_by_position,
+        }
+    }
+}
+
+/// Statistics from comparing two coefficient sets.
+#[derive(Debug, Clone)]
+pub struct CoefficientComparison {
+    /// Total number of blocks compared
+    pub total_blocks: usize,
+    /// Number of blocks with at least one differing coefficient
+    pub differing_blocks: usize,
+    /// Maximum absolute difference found
+    pub max_diff: i16,
+    /// Total count of differing coefficients
+    pub total_diff_coeffs: usize,
+    /// Difference counts by zigzag position (0=DC, 1-63=AC)
+    pub diff_by_position: [u64; 64],
+}
+
+impl CoefficientComparison {
+    /// Returns the percentage of blocks with differences.
+    #[must_use]
+    pub fn diff_block_pct(&self) -> f64 {
+        if self.total_blocks == 0 {
+            0.0
+        } else {
+            100.0 * self.differing_blocks as f64 / self.total_blocks as f64
+        }
+    }
+
+    /// Returns the percentage of DC coefficients that differ.
+    #[must_use]
+    pub fn dc_diff_pct(&self) -> f64 {
+        if self.total_blocks == 0 {
+            0.0
+        } else {
+            100.0 * self.diff_by_position[0] as f64 / self.total_blocks as f64
+        }
+    }
+}
