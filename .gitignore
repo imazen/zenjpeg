@@ -12,3 +12,4 @@ perf.data.old
 *.json.gz
 *_profile.json
 .cache/
+heaptrack.*.zst
