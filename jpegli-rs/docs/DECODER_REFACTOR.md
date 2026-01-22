@@ -35,6 +35,72 @@ Refactor the jpegli-rs decoder to achieve zune-jpeg-level performance while main
 4. **Bitstream Overhead** - More function call overhead in bit reading
 5. **No Progressive Streaming** - Progressive must buffer all coefficients (inherent)
 
+## Benchmark Results (2026-01-22)
+
+Run with: `cargo bench -p jpegli-rs --bench decode_compare --features decoder`
+
+| Size | Mode | zune-jpeg | jpegli-rs | Ratio |
+|------|------|-----------|-----------|-------|
+| 256x256 | baseline | 94 µs | 554 µs | **5.9x slower** |
+| 256x256 | progressive | 214 µs | 758 µs | **3.5x slower** |
+| 512x512 | baseline | 272 µs | 5.6 ms | **20x slower** |
+| 1024x1024 | baseline | ~1 ms | ~23 ms | **23x slower** |
+| 1024x1024 | progressive | 2.3 ms | 25 ms | **11x slower** |
+| 2048x2048 | baseline | 3.7 ms | 93 ms | **25x slower** |
+| 2048x2048 | progressive | 9.2 ms | 100 ms | **11x slower** |
+
+**Key findings:**
+- Baseline is 20-25x slower than zune-jpeg (gap increases with image size)
+- Progressive is "only" 10x slower (coefficient buffering inherent in both)
+- Gap increases with image size, suggesting O(n) overhead per pixel
+
+### Root Cause Analysis
+
+Code review of `parser.rs:to_pixels()` reveals these bottlenecks:
+
+1. **Pixel-by-pixel upsampling loop** (parser.rs:1706-1715):
+   ```rust
+   for py in 0..height {
+       for px in 0..width {
+           upsampled[py * width + px] = comp_plane_f32[sy * info.comp_width + sx];
+       }
+   }
+   ```
+   - Division and min() per pixel
+   - No SIMD vectorization
+   - No copy_from_slice optimization
+
+2. **f32 intermediate everywhere**:
+   - Integer IDCT outputs i16
+   - Immediately converted to f32 (line 1660)
+   - Upsampling in f32
+   - Color conversion in f32
+   - Final clamp back to u8
+   - zune-jpeg keeps i16/u8 throughout
+
+3. **Bias stats gathering** (parser.rs:1566-1590):
+   - Computed for EVERY block even for baseline
+   - Only needed for progressive XYB quality
+   - Adds ~20% overhead
+
+4. **Double zigzag reorder**:
+   - Once at line 1578 for stats
+   - Again at line 1617 for IDCT
+   - Scalar loop instead of LUT or SIMD
+
+5. **Two-pass architecture**:
+   - Pass 1: Buffer ALL coefficients (decode_scan)
+   - Pass 2: IDCT + upsample + color convert (to_pixels)
+   - zune-jpeg: single pass per MCU row
+
+### What Phase 1 Already Has (but isn't using effectively)
+
+The code already has fast AC lookup and tiered IDCT implemented:
+- `HuffmanDecodeTable::fast_decode_ac()` at huffman/encode.rs:397
+- `idct_int_tiered()` at decode/idct_int.rs:740
+
+But these are undermined by the f32 intermediate and two-pass architecture
+
 ## Architecture
 
 ### Decode Paths

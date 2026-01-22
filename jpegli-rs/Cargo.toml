@@ -177,6 +177,11 @@ name = "aq_simd"
 harness = false
 required-features = ["test-utils"]
 
+[[bench]]
+name = "decode_compare"
+harness = false
+required-features = ["decoder"]
+
 [lints]
 workspace = true
 
