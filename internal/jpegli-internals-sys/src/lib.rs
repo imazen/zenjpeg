@@ -980,6 +980,15 @@ extern "C" {
 
     /// RatioOfDerivativesOfCubicRootToSimpleGamma
     pub fn jpegli_ratio_of_derivatives(v: f32, invert: c_int) -> f32;
+
+    // ========================================================================
+    // DCT Functions (for coefficient parity testing)
+    // ========================================================================
+
+    /// Forward 8x8 DCT (scalar reference implementation)
+    /// Input: 64 floats (row-major), level-shifted (pixels - 128)
+    /// Output: 64 floats (row-major DCT coefficients), scaled by 1/8
+    pub fn jpegli_forward_dct_8x8(input: *const f32, output: *mut f32);
 }
 
 // ============================================================================
