@@ -218,7 +218,7 @@ impl<'a> EntropyEncoder<'a> {
         component: usize,
         dc_table_idx: usize,
         ac_table_idx: usize,
-    ) -> Result<()> {
+    ) {
         self.encode_block_simd(coeffs, component, dc_table_idx, ac_table_idx)
     }
 
@@ -297,6 +297,10 @@ impl<'a> EntropyEncoder<'a> {
     /// This reduces branching overhead when blocks have many zeros.
     ///
     /// Delegates to a multiversioned free function for CPU-specific optimizations.
+    /// Encodes a single 8x8 block using SIMD-optimized entropy coding.
+    ///
+    /// # Panics
+    /// Panics if DC or AC tables are not set (indicates encoder misconfiguration).
     #[inline]
     pub fn encode_block_simd(
         &mut self,
@@ -304,20 +308,20 @@ impl<'a> EntropyEncoder<'a> {
         component: usize,
         dc_table_idx: usize,
         ac_table_idx: usize,
-    ) -> Result<()> {
+    ) {
+        // SAFETY: Tables must be set before encoding. Using expect() instead of
+        // ok_or_else() avoids Error allocation overhead in the hot path.
         let dc_table = self.dc_tables[dc_table_idx]
             .as_ref()
-            .ok_or_else(|| Error::internal("DC table not set"))?;
+            .expect("DC table not set");
         let ac_table = self.ac_tables[ac_table_idx]
             .as_ref()
-            .ok_or_else(|| Error::internal("AC table not set"))?;
+            .expect("AC table not set");
 
         let prev_dc = self.prev_dc[component];
         let (_, new_dc) =
             encode_block_simd_impl(coeffs, dc_table, ac_table, prev_dc, &mut self.writer);
         self.prev_dc[component] = new_dc;
-
-        Ok(())
     }
 
     /// Handles restart marker if needed.
@@ -564,7 +568,9 @@ impl<'a> EntropyEncoder<'a> {
 
         let mut k = ss;
         let mut run = 0u32;
-        let mut pending_bits: Vec<u32> = Vec::new();
+        // Fixed-size array for pending refinement bits (max 63 AC coefficients)
+        let mut pending_bits = [0u8; 64];
+        let mut pending_count = 0usize;
 
         while k <= se {
             let coef = coeffs[k as usize];
@@ -591,17 +597,18 @@ impl<'a> EntropyEncoder<'a> {
                 self.writer.write_bits(code, len);
 
                 // Output pending correction bits (only those from within this ZRL span)
-                for &bit in &pending_bits {
-                    self.writer.write_bits(bit, 1);
+                for i in 0..pending_count {
+                    self.writer.write_bits(pending_bits[i] as u32, 1);
                 }
-                pending_bits.clear();
+                pending_count = 0;
                 run -= 16;
             }
 
             if was_previously_coded {
                 // Already coded - just collect the refinement bit for later
-                let refbit = (shifted & 1) as u32;
-                pending_bits.push(refbit);
+                let refbit = (shifted & 1) as u8;
+                pending_bits[pending_count] = refbit;
+                pending_count += 1;
             } else if shifted == 1 {
                 // New non-zero coefficient at this refinement level
                 // Flush EOBRUN if needed
@@ -621,10 +628,10 @@ impl<'a> EntropyEncoder<'a> {
                 // Output pending correction bits FIRST (before sign bit!)
                 // The decoder reads refinement bits while skipping zeros,
                 // then reads the sign bit after finding the target position.
-                for &bit in &pending_bits {
-                    self.writer.write_bits(bit, 1);
+                for i in 0..pending_count {
+                    self.writer.write_bits(pending_bits[i] as u32, 1);
                 }
-                pending_bits.clear();
+                pending_count = 0;
 
                 // Sign bit (1 for positive, 0 for negative) comes AFTER refinement bits
                 let sign_bit = if coef > 0 { 1u32 } else { 0u32 };
@@ -640,8 +647,8 @@ impl<'a> EntropyEncoder<'a> {
         }
 
         // Handle remaining run (EOB case)
-        if run > 0 || !pending_bits.is_empty() {
-            if !pending_bits.is_empty() {
+        if run > 0 || pending_count > 0 {
+            if pending_count > 0 {
                 // This block has correction bits - must emit its own EOB, can't join EOB run
                 // First flush any pending EOB run from pure-zero blocks
                 if *eob_run > 0 {
@@ -657,8 +664,8 @@ impl<'a> EntropyEncoder<'a> {
                 self.writer.write_bits(eob_code, eob_len);
 
                 // Output correction bits for this block's previously-nonzero coefficients
-                for &bit in &pending_bits {
-                    self.writer.write_bits(bit, 1);
+                for i in 0..pending_count {
+                    self.writer.write_bits(pending_bits[i] as u32, 1);
                 }
             } else {
                 // Pure zero block (no correction bits) - can accumulate into EOB run
@@ -1050,7 +1057,7 @@ mod tests {
 
             // Encode with SIMD (via encode_block which now calls encode_block_simd)
             let mut simd_encoder = encoder_with_tables();
-            simd_encoder.encode_block(block, 0, 0, 0).unwrap();
+            simd_encoder.encode_block(block, 0, 0, 0);
             let simd_output = simd_encoder.finish();
 
             assert_eq!(

@@ -314,11 +314,11 @@ impl ComputedConfig {
             // 4:4:4 mode - simple 1:1 interleaving
             let total_mcus = y_blocks.len();
             for (i, y_block) in y_blocks.iter().enumerate() {
-                encoder.encode_block(y_block, 0, 0, 0)?;
+                encoder.encode_block(y_block, 0, 0, 0);
 
                 if is_color {
-                    encoder.encode_block(&cb_blocks[i], 1, 1, 1)?;
-                    encoder.encode_block(&cr_blocks[i], 2, 1, 1)?;
+                    encoder.encode_block(&cb_blocks[i], 1, 1, 1);
+                    encoder.encode_block(&cr_blocks[i], 2, 1, 1);
                 }
 
                 // Only check restart if not the last MCU
@@ -353,10 +353,10 @@ impl ComputedConfig {
                             let y_by = mcu_y * v_samp + dy;
                             if y_bx < y_blocks_h && y_by < y_blocks_v {
                                 let y_idx = y_by * y_blocks_h + y_bx;
-                                encoder.encode_block(&y_blocks[y_idx], 0, 0, 0)?;
+                                encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
                             } else {
                                 // Out of bounds - encode zero block (padding)
-                                encoder.encode_block(&ZERO_BLOCK, 0, 0, 0)?;
+                                encoder.encode_block(&ZERO_BLOCK, 0, 0, 0);
                             }
                         }
                     }
@@ -365,12 +365,12 @@ impl ComputedConfig {
                     if is_color {
                         if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
                             let c_idx = mcu_y * c_blocks_h + mcu_x;
-                            encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1)?;
-                            encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1)?;
+                            encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
+                            encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
                         } else {
                             // Out of bounds - encode zero blocks (padding)
-                            encoder.encode_block(&ZERO_BLOCK, 1, 1, 1)?;
-                            encoder.encode_block(&ZERO_BLOCK, 2, 1, 1)?;
+                            encoder.encode_block(&ZERO_BLOCK, 1, 1, 1);
+                            encoder.encode_block(&ZERO_BLOCK, 2, 1, 1);
                         }
                     }
 
@@ -649,7 +649,7 @@ impl ComputedConfig {
                         } else {
                             &ZERO_BLOCK
                         };
-                        encoder.encode_block(block, 0, 0, 0)?;
+                        encoder.encode_block(block, 0, 0, 0);
                     }
                 }
 
@@ -664,7 +664,7 @@ impl ComputedConfig {
                         } else {
                             &ZERO_BLOCK
                         };
-                        encoder.encode_block(block, 1, 0, 0)?;
+                        encoder.encode_block(block, 1, 0, 0);
                     }
                 }
 
@@ -675,7 +675,7 @@ impl ComputedConfig {
                 } else {
                     &ZERO_BLOCK
                 };
-                encoder.encode_block(b_block, 2, 0, 0)?;
+                encoder.encode_block(b_block, 2, 0, 0);
 
                 encoder.check_restart();
             }
@@ -734,7 +734,7 @@ impl ComputedConfig {
                         } else {
                             &ZERO_BLOCK
                         };
-                        encoder.encode_block(block, 0, 0, 0)?;
+                        encoder.encode_block(block, 0, 0, 0);
                     }
                 }
 
@@ -749,7 +749,7 @@ impl ComputedConfig {
                         } else {
                             &ZERO_BLOCK
                         };
-                        encoder.encode_block(block, 1, 0, 0)?;
+                        encoder.encode_block(block, 1, 0, 0);
                     }
                 }
 
@@ -760,7 +760,7 @@ impl ComputedConfig {
                 } else {
                     &ZERO_BLOCK
                 };
-                encoder.encode_block(b_block, 2, 0, 0)?;
+                encoder.encode_block(b_block, 2, 0, 0);
 
                 encoder.check_restart();
             }
