@@ -708,7 +708,9 @@ impl ProgressiveTokenBuffer {
         // Validate spectral selection bounds (1-63 for AC, ss <= se)
         // This helps the compiler eliminate bounds checks below.
         if ss == 0 || se > 63 || ss > se {
-            return Err(Error::internal("invalid spectral selection for AC refinement"));
+            return Err(Error::internal(
+                "invalid spectral selection for AC refinement",
+            ));
         }
 
         // Pre-allocate scan storage based on block count

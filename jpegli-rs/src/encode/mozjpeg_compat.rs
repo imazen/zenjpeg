@@ -397,7 +397,10 @@ impl TrellisConfig {
     /// Speed gains are most significant for Q80-100 on noisy/high-detail images.
     /// At lower quality or on smooth images, most blocks have few non-zero
     /// coefficients and the optimization rarely triggers.
-    #[deprecated(since = "0.7.0", note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead")]
+    #[deprecated(
+        since = "0.7.0",
+        note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead"
+    )]
     #[must_use]
     pub fn speed_level(mut self, level: u8) -> Self {
         self.speed_mode = TrellisSpeedMode::Level(level.min(10));
@@ -585,8 +588,8 @@ mod tests {
         assert_eq!(TrellisSpeedMode::Thorough.get_limits(60), (63, 16));
 
         // Adaptive uses two-tier thresholds
-        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(56), (8, 3));   // > 55
-        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(50), (16, 4));  // > 48
+        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(56), (8, 3)); // > 55
+        assert_eq!(TrellisSpeedMode::Adaptive.get_limits(50), (16, 4)); // > 48
         assert_eq!(TrellisSpeedMode::Adaptive.get_limits(40), (63, 16)); // <= 48
 
         // Level(0) is full search

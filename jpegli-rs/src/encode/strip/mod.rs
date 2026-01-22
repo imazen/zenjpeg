@@ -713,9 +713,7 @@ impl StripProcessor {
                 // Try fused 420 path when applicable (significantly faster)
                 #[cfg(feature = "yuv")]
                 {
-                    if self.subsampling == Subsampling::S420
-                        && !self.pixel_format.is_grayscale()
-                    {
+                    if self.subsampling == Subsampling::S420 && !self.pixel_format.is_grayscale() {
                         if self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)? {
                             chroma_already_downsampled = true;
                         }

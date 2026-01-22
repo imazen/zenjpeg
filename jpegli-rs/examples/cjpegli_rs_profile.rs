@@ -288,9 +288,5 @@ fn main() {
     println!("  Total time:  {:.1}ms", total_ms);
     println!("  Average:     {:.2}ms per encode", avg_ms);
     println!("  Throughput:  {:.1} MP/s", mp_per_sec);
-    println!(
-        "  Output size: {} bytes ({:.2} bpp)",
-        jpeg_bytes.len(),
-        bpp
-    );
+    println!("  Output size: {} bytes ({:.2} bpp)", jpeg_bytes.len(), bpp);
 }

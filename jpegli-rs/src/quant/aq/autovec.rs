@@ -689,7 +689,15 @@ mod tests {
         let add = 0.1;
 
         per_block_modulations_row_autovec(
-            &input, stride, width, height, 0, block_w, &mut aq_row, mul, add,
+            &input,
+            stride,
+            width,
+            height,
+            0,
+            block_w,
+            &mut aq_row,
+            mul,
+            add,
         );
 
         // Should produce positive values within reasonable range
