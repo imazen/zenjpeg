@@ -1156,6 +1156,84 @@ pub fn rgb_to_ycbcr_strided_inplace(
     } // #[cfg(not(feature = "yuv"))]
 }
 
+/// RGB to YCbCr with strided output using pre-allocated u8 buffers.
+///
+/// This version eliminates per-call allocation by reusing the provided u8 buffers.
+/// When the `yuv` feature is disabled, this falls back to SIMD conversion.
+///
+/// # Arguments
+/// * `rgb_data` - Input RGB data (width × height × bpp bytes)
+/// * `y_plane` - Output Y plane (y_stride × height elements)
+/// * `cb_plane` - Output Cb plane (width × height elements)
+/// * `cr_plane` - Output Cr plane (width × height elements)
+/// * `yuv_temp_y` - Reusable u8 buffer (width × height bytes)
+/// * `yuv_temp_cb` - Reusable u8 buffer (width × height bytes)
+/// * `yuv_temp_cr` - Reusable u8 buffer (width × height bytes)
+/// * `width` - Image width in pixels
+/// * `height` - Number of rows to process
+/// * `y_stride` - Y output stride (typically padded_width)
+/// * `bpp` - Bytes per pixel (3 for RGB, 4 for RGBA)
+#[cfg(feature = "yuv")]
+pub fn rgb_to_ycbcr_strided_reuse(
+    rgb_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    yuv_temp_y: &mut [u8],
+    yuv_temp_cb: &mut [u8],
+    yuv_temp_cr: &mut [u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    bpp: usize,
+) {
+    crate::color::fast_yuv::rgb_to_ycbcr_strided_reuse(
+        rgb_data,
+        y_plane,
+        cb_plane,
+        cr_plane,
+        yuv_temp_y,
+        yuv_temp_cb,
+        yuv_temp_cr,
+        width,
+        height,
+        y_stride,
+        bpp,
+    );
+}
+
+/// BGR to YCbCr with strided output using pre-allocated u8 buffers.
+///
+/// Same as `rgb_to_ycbcr_strided_reuse` but for BGR/BGRA input.
+#[cfg(feature = "yuv")]
+pub fn bgr_to_ycbcr_strided_reuse(
+    bgr_data: &[u8],
+    y_plane: &mut [f32],
+    cb_plane: &mut [f32],
+    cr_plane: &mut [f32],
+    yuv_temp_y: &mut [u8],
+    yuv_temp_cb: &mut [u8],
+    yuv_temp_cr: &mut [u8],
+    width: usize,
+    height: usize,
+    y_stride: usize,
+    bpp: usize,
+) {
+    crate::color::fast_yuv::bgr_to_ycbcr_strided_reuse(
+        bgr_data,
+        y_plane,
+        cb_plane,
+        cr_plane,
+        yuv_temp_y,
+        yuv_temp_cb,
+        yuv_temp_cr,
+        width,
+        height,
+        y_stride,
+        bpp,
+    );
+}
+
 /// BGR variant of strided conversion (for BGR/BGRA input).
 #[multiversed]
 pub fn bgr_to_ycbcr_strided_inplace(
