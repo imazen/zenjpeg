@@ -614,6 +614,25 @@ pub(crate) mod simd {
         f32x8::transpose(rows)
     }
 
+    /// 1/8 scaling factor for DCT normalization.
+    /// Applied after each 1D DCT pass, giving 1/64 total scaling (matching C++ jpegli).
+    const DCT_SCALE: f32x8 = f32x8::new([1.0 / 8.0; 8]);
+
+    /// Apply 1/8 scaling to 8 f32x8 vectors.
+    #[inline(always)]
+    fn scale_vec(v: [f32x8; 8]) -> [f32x8; 8] {
+        [
+            v[0] * DCT_SCALE,
+            v[1] * DCT_SCALE,
+            v[2] * DCT_SCALE,
+            v[3] * DCT_SCALE,
+            v[4] * DCT_SCALE,
+            v[5] * DCT_SCALE,
+            v[6] * DCT_SCALE,
+            v[7] * DCT_SCALE,
+        ]
+    }
+
     /// Vectorized 1D DCT on 8 rows in parallel.
     /// Input: 8 f32x8 vectors where each represents corresponding values from 8 rows.
     /// (i.e., m[0] contains element 0 from each of 8 rows)
@@ -707,27 +726,27 @@ pub(crate) mod simd {
         // This layout allows dct_1d_vec to process 8 rows in parallel
         let cols = transpose_vec(rows);
 
-        // Row DCT: processes all 8 rows in parallel
-        let cols_after_row = dct_1d_vec(cols);
+        // Row DCT with 1/8 scaling (first pass)
+        let cols_after_row = scale_vec(dct_1d_vec(cols));
 
         // Transpose back to row layout (also correct layout for column DCT)
         let rows_for_col = transpose_vec(cols_after_row);
 
-        // Column DCT: processes all 8 columns in parallel using row layout
-        let final_rows = dct_1d_vec(rows_for_col);
+        // Column DCT with 1/8 scaling (second pass)
+        // Total scaling: 1/8 * 1/8 = 1/64, matching C++ jpegli
+        let final_rows = scale_vec(dct_1d_vec(rows_for_col));
 
-        // Apply 1/8 scaling and store (already in row layout)
-        let scale = f32x8::splat(1.0 / 8.0);
+        // Store results (scaling already applied)
         let mut output = [0.0f32; 64];
 
-        output[0..8].copy_from_slice(&(final_rows[0] * scale).to_array());
-        output[8..16].copy_from_slice(&(final_rows[1] * scale).to_array());
-        output[16..24].copy_from_slice(&(final_rows[2] * scale).to_array());
-        output[24..32].copy_from_slice(&(final_rows[3] * scale).to_array());
-        output[32..40].copy_from_slice(&(final_rows[4] * scale).to_array());
-        output[40..48].copy_from_slice(&(final_rows[5] * scale).to_array());
-        output[48..56].copy_from_slice(&(final_rows[6] * scale).to_array());
-        output[56..64].copy_from_slice(&(final_rows[7] * scale).to_array());
+        output[0..8].copy_from_slice(&final_rows[0].to_array());
+        output[8..16].copy_from_slice(&final_rows[1].to_array());
+        output[16..24].copy_from_slice(&final_rows[2].to_array());
+        output[24..32].copy_from_slice(&final_rows[3].to_array());
+        output[32..40].copy_from_slice(&final_rows[4].to_array());
+        output[40..48].copy_from_slice(&final_rows[5].to_array());
+        output[48..56].copy_from_slice(&final_rows[6].to_array());
+        output[56..64].copy_from_slice(&final_rows[7].to_array());
 
         output
     }
@@ -742,29 +761,17 @@ pub(crate) mod simd {
         // Transpose: rows[j] -> cols[i] where cols[i] = [row0[i], row1[i], ..., row7[i]]
         let cols = transpose_vec(input.rows);
 
-        // Row DCT: processes all 8 rows in parallel
-        let cols_after_row = dct_1d_vec(cols);
+        // Row DCT with 1/8 scaling (first pass)
+        let cols_after_row = scale_vec(dct_1d_vec(cols));
 
         // Transpose back to row layout
         let rows_for_col = transpose_vec(cols_after_row);
 
-        // Column DCT: processes all 8 columns in parallel
-        let final_rows = dct_1d_vec(rows_for_col);
+        // Column DCT with 1/8 scaling (second pass)
+        // Total scaling: 1/8 * 1/8 = 1/64, matching C++ jpegli
+        let final_rows = scale_vec(dct_1d_vec(rows_for_col));
 
-        // Apply 1/8 scaling
-        let scale = f32x8::splat(1.0 / 8.0);
-        Block8x8f {
-            rows: [
-                final_rows[0] * scale,
-                final_rows[1] * scale,
-                final_rows[2] * scale,
-                final_rows[3] * scale,
-                final_rows[4] * scale,
-                final_rows[5] * scale,
-                final_rows[6] * scale,
-                final_rows[7] * scale,
-            ],
-        }
+        Block8x8f { rows: final_rows }
     }
 
     // ========================================================================
@@ -963,6 +970,11 @@ pub(crate) mod simd {
         // Result: reg[i][k] = coefficient i of row k's DCT
         dct1d_8_fma(&mut reg);
 
+        // Apply 1/8 scaling after row DCT (first pass)
+        for r in &mut reg {
+            *r = _mm256_mul_ps(*r, scale);
+        }
+
         // Transpose: reg[i][j] = coef[i, j] (row-major coefficient matrix)
         // This sets up for column DCT: lane j processes column j
         transpose_8x8_avx_inplace(&mut reg);
@@ -972,15 +984,21 @@ pub(crate) mod simd {
         // Result: reg[i][j] = final 2D DCT coefficient at (i, j)
         dct1d_8_fma(&mut reg);
 
+        // Apply 1/8 scaling after column DCT (second pass)
+        // Total scaling: 1/8 * 1/8 = 1/64, matching C++ jpegli
+        for r in &mut reg {
+            *r = _mm256_mul_ps(*r, scale);
+        }
+
         // reg[i] is now row i of the final output - store directly
-        _mm256_storeu_ps(output.as_mut_ptr(), _mm256_mul_ps(reg[0], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(8), _mm256_mul_ps(reg[1], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(16), _mm256_mul_ps(reg[2], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(24), _mm256_mul_ps(reg[3], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(32), _mm256_mul_ps(reg[4], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(40), _mm256_mul_ps(reg[5], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(48), _mm256_mul_ps(reg[6], scale));
-        _mm256_storeu_ps(output.as_mut_ptr().add(56), _mm256_mul_ps(reg[7], scale));
+        _mm256_storeu_ps(output.as_mut_ptr(), reg[0]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(8), reg[1]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(16), reg[2]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(24), reg[3]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(32), reg[4]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(40), reg[5]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(48), reg[6]);
+        _mm256_storeu_ps(output.as_mut_ptr().add(56), reg[7]);
     }
 }
 
@@ -1201,6 +1219,11 @@ pub fn aan_forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZ
         data[offset + 7] = row_data[7];
     }
 
+    // Apply 1/8 scaling after row pass (matching C++ jpegli)
+    for v in &mut data {
+        *v *= 0.125;
+    }
+
     // Pass 2: Process columns (strided access)
     for col in 0..8 {
         let mut col_data: [f32; 8] = [
@@ -1224,23 +1247,9 @@ pub fn aan_forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZ
         data[col + 56] = col_data[7];
     }
 
-    // Apply 1/8 scaling for JPEG decoder compatibility
-    let scale = f32x8::splat(1.0 / 8.0);
-    for chunk in 0..8 {
-        let k = chunk * 8;
-        let v = f32x8::from([
-            data[k],
-            data[k + 1],
-            data[k + 2],
-            data[k + 3],
-            data[k + 4],
-            data[k + 5],
-            data[k + 6],
-            data[k + 7],
-        ]);
-        let scaled = v * scale;
-        let arr: [f32; 8] = scaled.into();
-        data[k..k + 8].copy_from_slice(&arr);
+    // Apply 1/8 scaling after column pass (total 1/64, matching C++ jpegli)
+    for v in &mut data {
+        *v *= 0.125;
     }
 
     data

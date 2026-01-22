@@ -531,7 +531,16 @@ mod tests {
         }
 
         let dct = forward_dct_8x8(&input);
-        let recovered = inverse_dct_8x8(&dct);
+
+        // DCT outputs 1/64 scale, IDCT expects 1/8 scale input.
+        // In the real pipeline, quantize(×8/q) and dequant(×q) bridge this gap.
+        // For direct roundtrip, we multiply by 8 to simulate dequantization.
+        let mut dct_scaled = dct;
+        for v in &mut dct_scaled {
+            *v *= 8.0;
+        }
+
+        let recovered = inverse_dct_8x8(&dct_scaled);
 
         for i in 0..DCT_BLOCK_SIZE {
             assert!(
@@ -606,7 +615,15 @@ mod tests {
             }
 
             let dct = forward_dct_8x8(&input);
-            let recovered = inverse_dct_8x8(&dct);
+
+            // DCT outputs 1/64 scale, IDCT expects 1/8 scale input.
+            // Multiply by 8 to bridge the gap (simulating dequantization).
+            let mut dct_scaled = dct;
+            for v in &mut dct_scaled {
+                *v *= 8.0;
+            }
+
+            let recovered = inverse_dct_8x8(&dct_scaled);
 
             for i in 0..DCT_BLOCK_SIZE {
                 assert!(
@@ -628,7 +645,15 @@ mod tests {
         let input = [value; DCT_BLOCK_SIZE];
 
         let dct = forward_dct_8x8(&input);
-        let recovered = inverse_dct_8x8(&dct);
+
+        // DCT outputs 1/64 scale, IDCT expects 1/8 scale input.
+        // Multiply by 8 to bridge the gap (simulating dequantization).
+        let mut dct_scaled = dct;
+        for v in &mut dct_scaled {
+            *v *= 8.0;
+        }
+
+        let recovered = inverse_dct_8x8(&dct_scaled);
 
         for (i, &v) in recovered.iter().enumerate() {
             assert!(
