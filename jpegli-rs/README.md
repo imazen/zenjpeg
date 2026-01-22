@@ -112,6 +112,7 @@ Choose one constructor based on desired color mode:
 | `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
 | `.deringing(bool)` | Overshoot deringing for documents/graphics | `true` |
 | `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |
+| `.separate_chroma_tables(bool)` | Use 3 quant tables (Y, Cb, Cr) vs 2 (Y, shared) | `true` |
 | `.icc_profile(bytes)` | Attach ICC profile | None |
 | `.exif(exif)` | Embed EXIF metadata | None |
 | `.xmp(data)` | Embed XMP metadata | None |
@@ -596,6 +597,17 @@ fn quality_to_distance(q: f32) -> f32 {
 
 With proper distance-based comparison, size and quality differences are typically
 within ±1%.
+
+**Matching jpeg_set_quality() behavior:**
+
+If you need output that matches tools using `jpeg_set_quality()` (2 tables),
+use the `.separate_chroma_tables(false)` option:
+
+```rust
+// Match jpeg_set_quality() behavior (2 tables: Y, shared chroma)
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    .separate_chroma_tables(false);
+```
 
 ## Feature Flags
 
