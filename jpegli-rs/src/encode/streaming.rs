@@ -881,6 +881,12 @@ impl StreamingEncoder {
                 (quant, zero_bias)
             } else {
                 // Use perceptual defaults with allow_16bit support
+                //
+                // When separate_chroma_tables is false (2-table mode, jpeg_set_quality),
+                // use the Cr base matrix for both Cb and Cr tables. This matches C++
+                // jpegli behavior where the single chroma table uses the Cr matrix.
+                let cb_component = if builder.separate_chroma_tables { 1 } else { 2 };
+
                 let quant = (
                     quant::generate_quant_table_ex(
                         builder.quality,
@@ -892,7 +898,7 @@ impl StreamingEncoder {
                     ),
                     quant::generate_quant_table_ex(
                         builder.quality,
-                        1,
+                        cb_component,
                         color_space,
                         builder.use_xyb,
                         is_420,
