@@ -28,7 +28,7 @@ use crate::error::Result;
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 
 use super::quant_field_to_aq_strength;
-use super::simd::per_block_modulations_row;
+use super::simd::{compute_fuzzy_erosion_blocks_simd, per_block_modulations_row};
 
 // Use autovec pre_erosion - 1.95x faster than wide-based version due to
 // better autovectorization with #[multiversion] runtime dispatch
@@ -753,21 +753,32 @@ impl StreamingAQ {
     fn compute_fuzzy_erosion_row_into(&mut self, pe_y_base: usize, start: usize, end: usize) {
         let pe_w = self.pre_erosion_w;
         let buffer_rows = self.pre_erosion_buffer_rows;
-        let max_filled_row = self.pre_erosion_rows_flushed.saturating_sub(1);
+        let max_filled_row = self.pre_erosion_rows_flushed.saturating_sub(1) as isize;
 
-        // NOTE: mage_compute_fuzzy_erosion_row (massive inlined version) is still slower
-        // than the original scalar due to instruction cache pressure from code bloat.
-        // The partial sort with index tracking causes branch mispredictions.
-        // Keeping original scalar code until a SIMD sorting network is implemented.
+        // Use SIMD sorting network for bulk processing (8 blocks at a time)
+        let simd_processed = compute_fuzzy_erosion_blocks_simd(
+            &self.pre_erosion_buffer,
+            pe_w,
+            buffer_rows,
+            pe_y_base as isize,
+            max_filled_row,
+            start,
+            end,
+            &mut self.fuzzy_erosion_out,
+        );
 
-        let max_filled_row = max_filled_row as isize;
+        // Handle remaining blocks with scalar code
+        let scalar_start = start + simd_processed;
+        if scalar_start >= end {
+            return;
+        }
 
         const MUL0: f32 = 0.125;
         const MUL1: f32 = 0.075;
         const MUL2: f32 = 0.06;
         const MUL3: f32 = 0.05;
 
-        for bx in start..end {
+        for bx in scalar_start..end {
             let pe_x_base = (bx - start) * 2;
             let pe_y = pe_y_base as isize;
 
