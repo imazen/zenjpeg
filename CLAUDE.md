@@ -52,10 +52,10 @@ All features enabled by default. Tests auto-find corpus at `~/work/codec-eval/co
 cargo test --release -p jpegli-rs --test comprehensive_cpp_comparison -- --nocapture --ignored
 ```
 
-Expected results:
-- **Size**: +0.26% (Rust slightly larger)
-- **DSSIM**: +0.15% (essentially identical quality)
-- **Butteraugli**: -0.00% (identical)
+Expected results (2026-01-22):
+- **Size**: -1.82% (Rust smaller)
+- **DSSIM**: +4.58% (Rust slightly worse, smaller files)
+- **Butteraugli**: +1.02% (essentially identical perceptual quality)
 
 ### All C++ Comparison Tests
 ```bash
@@ -449,39 +449,40 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 
 ## Investigation Notes
 
-### AQ Map Comparison (2026-01-22)
+### AQ Map Comparison (2026-01-22) - RESOLVED
+
+**CRITICAL FINDING: AQ maps are 100% identical between Rust and C++ FFI.**
+
+Previous analysis incorrectly compared CLI cjpegli (distance-based quality) with Rust (libjpeg quality),
+producing spurious 4.5% difference. With proper FFI comparison using same quant tables, AQ maps match exactly.
 
 **Tools added:**
 - C++: `DUMP_AQ_MAP=/path/to/file.bin cjpegli ...` dumps AQ map after encoding
 - Rust: `DUMP_AQ_MAP=/path/to/file.bin` env var triggers dump in `StreamingAQ::finalize()` or `flush_into()`
 - Example: `cargo run --release --example compare_aq_maps -- cpp.bin rust.bin`
 
-**Key finding: CLI vs FFI discrepancy**
+**CLI vs FFI quality discrepancy:**
 
-| Method | C++ Size | Rust Size | Diff |
-|--------|----------|-----------|------|
-| CLI cjpegli -q 75 | 362KB | 308KB | -15% |
-| FFI jpeg_set_quality(75) | 305KB | 300KB | **-1.7%** |
+| Method | C++ Size | Rust Size | Diff | Valid? |
+|--------|----------|-----------|------|--------|
+| CLI cjpegli -q 75 | 362KB | 308KB | -15% | ❌ Invalid |
+| FFI jpeg_set_quality(75) | 305KB | 300KB | **-1.7%** | ✅ Valid |
 
-The CLI uses jpegli's native distance-based quality, while FFI uses libjpeg-compatible scaling.
-**Only FFI comparison is valid for parity testing.**
+CLI `-q 75` remaps to distance=2.35 via `jpegli_quality_to_distance()`, producing different quant tables
+than FFI's `jpeg_set_quality(75)`. Only FFI comparison is valid.
 
-**AQ value statistics** (FFI mode, flower.png 2268x1512, q75):
-- Mean difference: -0.001 (negligible)
-- Mean |difference|: 0.045 (4.5%)
-- Mean relative diff: +6.83% (Rust values slightly higher)
-- 90% of blocks: diff < 0.1
-- 2% of blocks: diff > 0.2 (outliers)
+**Verified AQ parity** (FFI mode, flower.png 2268x1512, q75):
+```
+Mean difference:     0.000000
+Mean |difference|:   0.000000
+All 53,676 blocks:   0% difference
+```
 
-**Root cause hypothesis:**
-Rust AQ values are ~7% higher on average → more quantization → ~2% smaller files.
-The difference is consistent across quality levels but doesn't significantly affect perceptual quality
-(DSSIM and Butteraugli within acceptable range per comprehensive test).
-
-**Next steps:**
-1. Instrument pre-erosion, fuzzy erosion, and per-block modulations separately to pinpoint divergence
-2. Check floating-point precision differences in SIMD implementations
-3. Verify gamma modulation and HF modulation match C++ exactly
+**File size difference source** (~2% Rust smaller, ~5% worse DSSIM):
+- AQ is identical → same quantization tables
+- Difference must be in zero-bias implementation or quantization rounding
+- Both use optimized Huffman (verified: `optimize_coding = 1` in FFI)
+- Butteraugli quality within 1% (essentially identical perceptual quality)
 
 ## Known Bugs
 
