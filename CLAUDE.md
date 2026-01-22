@@ -467,12 +467,13 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 
 2. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
 
-5. **1-pixel partial MCU edge quality gap** - `jpegli-rs/tests/edge_tile_ssim2_comparison.rs`
-   Images with width ≡ 1 (mod 8) show -22 to -35 SSIMULACRA2 gap vs C++ jpegli.
-   3+ pixel partial edges achieve parity. Investigated AQ edge handling (padded
-   buffers, stride vs img_width separation) but gap persists. Root cause likely
-   in pre-erosion edge handling or how single-pixel blocks are encoded.
-   Run: `cargo test --release -p jpegli-rs --test edge_tile_ssim2_comparison -- --ignored`
+5. **1-pixel partial MCU edge quality gap (FIXED)** - `jpegli-rs/tests/edge_tile_ssim2_comparison.rs`
+   Images with width ≡ 1 (mod 8) showed -22 to -35 SSIMULACRA2 gap vs C++ jpegli.
+   **Root cause**: Missing edge replication in Y buffers:
+   - `fast_yuv.rs`: RGB→YCbCr strided paths left positions `width..y_stride` uninitialized
+   - `streaming.rs`: AQ Y buffer stride was exactly `padded_width`, but `hf_modulation_sum_8x8`
+     reads position 8 of rightmost block (needed `padded_width + 1`)
+   **Fix**: Added edge replication to both. Now -0.33 average diff (within normal ±4 variance).
 
 3. **HF modulation index wrap (FIXED)** - `jpegli-rs/src/quant/aq/simd.rs:566`
    Rightmost partial blocks were reading pixels from next row due to missing column check.
