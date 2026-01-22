@@ -343,9 +343,17 @@ pub fn quant_vals_to_distance(
     use crate::foundation::consts::{BASE_QUANT_MATRIX_YCBCR, GLOBAL_SCALE_YCBCR};
 
     const DIST_MAX: f32 = 10000.0;
-    const QUANT_MAX: u16 = 255; // baseline JPEG
 
     let global_scale = GLOBAL_SCALE_YCBCR;
+
+    // Determine quant_max based on table precision (matches C++ force_baseline logic)
+    // If any table uses 16-bit precision, use extended range
+    let is_extended = y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+    let quant_max = if is_extended {
+        QUANT_MAX_EXTENDED
+    } else {
+        QUANT_MAX_BASELINE
+    };
 
     let mut dist_min = 0.0f32;
     let mut dist_max = DIST_MAX;
@@ -367,7 +375,7 @@ pub fn quant_vals_to_distance(
                 let scale_min = (qval as f32 - 0.5) * invq;
                 dmin = scale_to_distance(scale_min, k);
             }
-            if qval < QUANT_MAX {
+            if qval < quant_max {
                 let scale_max = (qval as f32 + 0.5) * invq;
                 dmax = scale_to_distance(scale_max, k);
             }
