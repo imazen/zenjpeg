@@ -1288,6 +1288,66 @@ impl<'a> JpegParser<'a> {
         }
     }
 
+    /// Extracts raw quantized DCT coefficients for analysis.
+    ///
+    /// Must be called after `decode()` with streaming disabled.
+    pub(super) fn extract_coefficients(
+        &self,
+    ) -> Result<super::image::DecodedCoefficients> {
+        use super::image::{ComponentCoefficients, DecodedCoefficients};
+
+        if self.coeffs.is_empty() {
+            return Err(Error::internal("no coefficients available - was streaming used?"));
+        }
+
+        // Calculate MCU dimensions
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+        let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
+
+        // Extract component coefficients
+        let mut components = Vec::with_capacity(self.num_components as usize);
+        for comp_idx in 0..self.num_components as usize {
+            let comp = &self.components[comp_idx];
+            let h_samp = comp.h_samp_factor as usize;
+            let v_samp = comp.v_samp_factor as usize;
+            let blocks_wide = mcu_cols * h_samp;
+            let blocks_high = mcu_rows * v_samp;
+
+            // Flatten blocks into contiguous coefficient array
+            let mut coeffs = Vec::with_capacity(blocks_wide * blocks_high * 64);
+            for block in &self.coeffs[comp_idx] {
+                coeffs.extend_from_slice(block);
+            }
+
+            components.push(ComponentCoefficients {
+                id: comp.id,
+                coeffs,
+                blocks_wide,
+                blocks_high,
+                h_samp: comp.h_samp_factor,
+                v_samp: comp.v_samp_factor,
+            });
+        }
+
+        // Copy quant tables
+        let quant_tables = self.quant_tables.to_vec();
+
+        Ok(DecodedCoefficients {
+            width: self.width,
+            height: self.height,
+            components,
+            quant_tables,
+        })
+    }
+
     /// Check if we can use the fast integer decode path.
     ///
     /// Fast path requirements:
