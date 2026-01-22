@@ -71,11 +71,11 @@ impl ComputedConfig {
             encoder.set_restart_interval(self.restart_interval);
         }
 
-        // Get scan info
+        // Get scan info (use ok_or_else for lazy error creation)
         let scan_info = token_buffer
             .scan_info
             .get(scan_idx)
-            .ok_or(Error::internal("Scan info not found"))?;
+            .ok_or_else(|| Error::internal("Scan info not found"))?;
 
         if scan.ss == 0 && scan.se == 0 {
             // DC scan: replay DC tokens

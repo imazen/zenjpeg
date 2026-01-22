@@ -12,6 +12,7 @@
 //! ProfileStats::print_summary();
 //! ```
 
+#[cfg(feature = "profile")]
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

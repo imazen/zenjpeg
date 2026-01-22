@@ -42,8 +42,7 @@ mod convert;
 use crate::encode::encoder_types::DownsamplingMethod;
 use crate::error::Result;
 use crate::foundation::alloc::{
-    try_alloc_filled, try_alloc_zeroed_f32_tracked, try_clone_slice, try_with_capacity_tracked,
-    AllocationStats,
+    try_alloc_filled, try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, AllocationStats,
 };
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
@@ -753,7 +752,7 @@ impl StripProcessor {
         if let Some(count) = aq_count {
             let prev_buffer = 1 - self.pending_current;
             // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
-            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
             self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
             // Clear the previous buffer for reuse
@@ -840,7 +839,7 @@ impl StripProcessor {
         if let Some(count) = aq_count {
             let prev_buffer = 1 - self.pending_current;
             // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
-            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
             self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
             self.pending_y_blocks[prev_buffer].clear();
@@ -917,7 +916,7 @@ impl StripProcessor {
         if let Some(count) = aq_count {
             let prev_buffer = 1 - self.pending_current;
             // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
-            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
             self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
             self.pending_y_blocks[prev_buffer].clear();
@@ -1325,7 +1324,7 @@ impl StripProcessor {
             let prev_buffer = 1 - self.pending_current;
             if !self.pending_y_blocks[prev_buffer].is_empty() {
                 // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
-                let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
                 self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
                 self.aq_strengths_buffer = temp_buffer;
             }
