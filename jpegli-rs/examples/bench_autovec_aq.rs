@@ -23,8 +23,12 @@ fn bench_pre_erosion() {
     // Create padded test data (width + 2 for left/right padding)
     let padded_len = WIDTH + 2;
     let mut row: Vec<f32> = (0..padded_len).map(|i| (i as f32 * 1.7) % 255.0).collect();
-    let mut row_above: Vec<f32> = (0..padded_len).map(|i| (i as f32 * 2.3 + 10.0) % 255.0).collect();
-    let mut row_below: Vec<f32> = (0..padded_len).map(|i| (i as f32 * 3.1 + 20.0) % 255.0).collect();
+    let mut row_above: Vec<f32> = (0..padded_len)
+        .map(|i| (i as f32 * 2.3 + 10.0) % 255.0)
+        .collect();
+    let mut row_below: Vec<f32> = (0..padded_len)
+        .map(|i| (i as f32 * 3.1 + 20.0) % 255.0)
+        .collect();
 
     // Edge replication for padding
     row[0] = row[1];
@@ -40,10 +44,18 @@ fn bench_pre_erosion() {
     // Warmup
     for _ in 0..10 {
         jpegli::quant::aq::simd::pre_erosion_row_padded(
-            &row, &row_above, &row_below, WIDTH, &mut output_wide
+            &row,
+            &row_above,
+            &row_below,
+            WIDTH,
+            &mut output_wide,
         );
         jpegli::quant::aq::autovec::pre_erosion_row_autovec_iter(
-            &row, &row_above, &row_below, WIDTH, &mut output_autovec
+            &row,
+            &row_above,
+            &row_below,
+            WIDTH,
+            &mut output_autovec,
         );
     }
 
@@ -52,7 +64,11 @@ fn bench_pre_erosion() {
     for _ in 0..ITERS {
         output_wide.fill(0.0);
         jpegli::quant::aq::simd::pre_erosion_row_padded(
-            &row, &row_above, &row_below, WIDTH, &mut output_wide
+            &row,
+            &row_above,
+            &row_below,
+            WIDTH,
+            &mut output_wide,
         );
         std::hint::black_box(&output_wide);
     }
@@ -63,7 +79,11 @@ fn bench_pre_erosion() {
     for _ in 0..ITERS {
         output_autovec.fill(0.0);
         jpegli::quant::aq::autovec::pre_erosion_row_autovec_iter(
-            &row, &row_above, &row_below, WIDTH, &mut output_autovec
+            &row,
+            &row_above,
+            &row_below,
+            WIDTH,
+            &mut output_autovec,
         );
         std::hint::black_box(&output_autovec);
     }
@@ -73,20 +93,36 @@ fn bench_pre_erosion() {
     output_wide.fill(0.0);
     output_autovec.fill(0.0);
     jpegli::quant::aq::simd::pre_erosion_row_padded(
-        &row, &row_above, &row_below, WIDTH, &mut output_wide
+        &row,
+        &row_above,
+        &row_below,
+        WIDTH,
+        &mut output_wide,
     );
     jpegli::quant::aq::autovec::pre_erosion_row_autovec_iter(
-        &row, &row_above, &row_below, WIDTH, &mut output_autovec
+        &row,
+        &row_above,
+        &row_below,
+        WIDTH,
+        &mut output_autovec,
     );
 
-    let max_diff = output_wide.iter().zip(&output_autovec)
+    let max_diff = output_wide
+        .iter()
+        .zip(&output_autovec)
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
 
     println!("Pre-erosion row (width={}, {} iters)", WIDTH, ITERS);
     println!("=========================================================");
-    println!("wide (f32x8): {:>8.2} µs/row", wide_time.as_secs_f64() * 1e6 / ITERS as f64);
-    println!("autovec:      {:>8.2} µs/row", autovec_time.as_secs_f64() * 1e6 / ITERS as f64);
+    println!(
+        "wide (f32x8): {:>8.2} µs/row",
+        wide_time.as_secs_f64() * 1e6 / ITERS as f64
+    );
+    println!(
+        "autovec:      {:>8.2} µs/row",
+        autovec_time.as_secs_f64() * 1e6 / ITERS as f64
+    );
 
     let speedup = wide_time.as_secs_f64() / autovec_time.as_secs_f64();
     if speedup > 1.0 {
@@ -94,15 +130,19 @@ fn bench_pre_erosion() {
     } else {
         println!("autovec is {:.2}x SLOWER than wide", 1.0 / speedup);
     }
-    println!("Max diff: {:.2e} {}", max_diff, if max_diff < 1e-4 { "✓" } else { "⚠" });
+    println!(
+        "Max diff: {:.2e} {}",
+        max_diff,
+        if max_diff < 1e-4 { "✓" } else { "⚠" }
+    );
 }
 
 fn bench_gamma_hf_modulation() {
-    const BLOCK_W: usize = 512;  // 512 blocks = 4096 pixels
+    const BLOCK_W: usize = 512; // 512 blocks = 4096 pixels
     const HEIGHT: usize = 8;
     const ITERS: usize = 1000;
 
-    let stride = BLOCK_W * 8 + 1;  // +1 for horizontal neighbor access
+    let stride = BLOCK_W * 8 + 1; // +1 for horizontal neighbor access
     let input: Vec<f32> = (0..stride * HEIGHT)
         .map(|i| ((i % 256) as f32 * 1.7) % 255.0)
         .collect();
@@ -112,11 +152,16 @@ fn bench_gamma_hf_modulation() {
         let x_start = bx * 8;
         let block = &input[x_start..];
         std::hint::black_box(jpegli::quant::aq::simd::gamma_modulation_sum_8x8(
-            block, stride, x_start, 0, BLOCK_W * 8, HEIGHT
+            block,
+            stride,
+            x_start,
+            0,
+            BLOCK_W * 8,
+            HEIGHT,
         ));
-        std::hint::black_box(jpegli::quant::aq::autovec::gamma_modulation_sum_8x8_autovec(
-            block, stride, 0, HEIGHT
-        ));
+        std::hint::black_box(
+            jpegli::quant::aq::autovec::gamma_modulation_sum_8x8_autovec(block, stride, 0, HEIGHT),
+        );
     }
 
     // Benchmark wide gamma
@@ -126,7 +171,12 @@ fn bench_gamma_hf_modulation() {
             let x_start = bx * 8;
             let block = &input[x_start..];
             std::hint::black_box(jpegli::quant::aq::simd::gamma_modulation_sum_8x8(
-                block, stride, x_start, 0, BLOCK_W * 8, HEIGHT
+                block,
+                stride,
+                x_start,
+                0,
+                BLOCK_W * 8,
+                HEIGHT,
             ));
         }
     }
@@ -138,9 +188,11 @@ fn bench_gamma_hf_modulation() {
         for bx in 0..BLOCK_W {
             let x_start = bx * 8;
             let block = &input[x_start..];
-            std::hint::black_box(jpegli::quant::aq::autovec::gamma_modulation_sum_8x8_autovec(
-                block, stride, 0, HEIGHT
-            ));
+            std::hint::black_box(
+                jpegli::quant::aq::autovec::gamma_modulation_sum_8x8_autovec(
+                    block, stride, 0, HEIGHT,
+                ),
+            );
         }
     }
     let autovec_gamma_time = start.elapsed();
@@ -152,7 +204,12 @@ fn bench_gamma_hf_modulation() {
             let x_start = bx * 8;
             let block = &input[x_start..];
             std::hint::black_box(jpegli::quant::aq::simd::hf_modulation_sum_8x8(
-                block, stride, x_start, 0, BLOCK_W * 8, HEIGHT
+                block,
+                stride,
+                x_start,
+                0,
+                BLOCK_W * 8,
+                HEIGHT,
             ));
         }
     }
@@ -165,7 +222,7 @@ fn bench_gamma_hf_modulation() {
             let x_start = bx * 8;
             let block = &input[x_start..];
             std::hint::black_box(jpegli::quant::aq::autovec::hf_modulation_sum_8x8_autovec(
-                block, stride, 0, HEIGHT
+                block, stride, 0, HEIGHT,
             ));
         }
     }
@@ -174,8 +231,14 @@ fn bench_gamma_hf_modulation() {
     println!("Gamma/HF modulation ({} blocks, {} iters)", BLOCK_W, ITERS);
     println!("=========================================================");
     println!("gamma_modulation_sum_8x8:");
-    println!("  wide:    {:>6.1} ns/block", wide_gamma_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64);
-    println!("  autovec: {:>6.1} ns/block", autovec_gamma_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64);
+    println!(
+        "  wide:    {:>6.1} ns/block",
+        wide_gamma_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64
+    );
+    println!(
+        "  autovec: {:>6.1} ns/block",
+        autovec_gamma_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64
+    );
     let speedup = wide_gamma_time.as_secs_f64() / autovec_gamma_time.as_secs_f64();
     if speedup > 1.0 {
         println!("  autovec is {:.2}x FASTER", speedup);
@@ -184,8 +247,14 @@ fn bench_gamma_hf_modulation() {
     }
 
     println!("hf_modulation_sum_8x8:");
-    println!("  wide:    {:>6.1} ns/block", wide_hf_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64);
-    println!("  autovec: {:>6.1} ns/block", autovec_hf_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64);
+    println!(
+        "  wide:    {:>6.1} ns/block",
+        wide_hf_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64
+    );
+    println!(
+        "  autovec: {:>6.1} ns/block",
+        autovec_hf_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64
+    );
     let speedup = wide_hf_time.as_secs_f64() / autovec_hf_time.as_secs_f64();
     if speedup > 1.0 {
         println!("  autovec is {:.2}x FASTER", speedup);
@@ -195,7 +264,7 @@ fn bench_gamma_hf_modulation() {
 }
 
 fn bench_per_block_modulations() {
-    const BLOCK_W: usize = 512;  // 512 blocks = 4096 pixels
+    const BLOCK_W: usize = 512; // 512 blocks = 4096 pixels
     const HEIGHT: usize = 8;
     const ITERS: usize = 1000;
 
@@ -214,11 +283,27 @@ fn bench_per_block_modulations() {
     for _ in 0..10 {
         aq_row_wide.fill(0.5);
         jpegli::quant::aq::simd::per_block_modulations_row(
-            &input, stride, BLOCK_W * 8, HEIGHT, 0, BLOCK_W, &mut aq_row_wide, mul, add
+            &input,
+            stride,
+            BLOCK_W * 8,
+            HEIGHT,
+            0,
+            BLOCK_W,
+            &mut aq_row_wide,
+            mul,
+            add,
         );
         aq_row_autovec.fill(0.5);
         jpegli::quant::aq::autovec::per_block_modulations_row_autovec(
-            &input, stride, BLOCK_W * 8, HEIGHT, 0, BLOCK_W, &mut aq_row_autovec, mul, add
+            &input,
+            stride,
+            BLOCK_W * 8,
+            HEIGHT,
+            0,
+            BLOCK_W,
+            &mut aq_row_autovec,
+            mul,
+            add,
         );
     }
 
@@ -227,7 +312,15 @@ fn bench_per_block_modulations() {
     for _ in 0..ITERS {
         aq_row_wide.fill(0.5);
         jpegli::quant::aq::simd::per_block_modulations_row(
-            &input, stride, BLOCK_W * 8, HEIGHT, 0, BLOCK_W, &mut aq_row_wide, mul, add
+            &input,
+            stride,
+            BLOCK_W * 8,
+            HEIGHT,
+            0,
+            BLOCK_W,
+            &mut aq_row_wide,
+            mul,
+            add,
         );
         std::hint::black_box(&aq_row_wide);
     }
@@ -238,7 +331,15 @@ fn bench_per_block_modulations() {
     for _ in 0..ITERS {
         aq_row_autovec.fill(0.5);
         jpegli::quant::aq::autovec::per_block_modulations_row_autovec(
-            &input, stride, BLOCK_W * 8, HEIGHT, 0, BLOCK_W, &mut aq_row_autovec, mul, add
+            &input,
+            stride,
+            BLOCK_W * 8,
+            HEIGHT,
+            0,
+            BLOCK_W,
+            &mut aq_row_autovec,
+            mul,
+            add,
         );
         std::hint::black_box(&aq_row_autovec);
     }
@@ -248,24 +349,49 @@ fn bench_per_block_modulations() {
     aq_row_wide.fill(0.5);
     aq_row_autovec.fill(0.5);
     jpegli::quant::aq::simd::per_block_modulations_row(
-        &input, stride, BLOCK_W * 8, HEIGHT, 0, BLOCK_W, &mut aq_row_wide, mul, add
+        &input,
+        stride,
+        BLOCK_W * 8,
+        HEIGHT,
+        0,
+        BLOCK_W,
+        &mut aq_row_wide,
+        mul,
+        add,
     );
     jpegli::quant::aq::autovec::per_block_modulations_row_autovec(
-        &input, stride, BLOCK_W * 8, HEIGHT, 0, BLOCK_W, &mut aq_row_autovec, mul, add
+        &input,
+        stride,
+        BLOCK_W * 8,
+        HEIGHT,
+        0,
+        BLOCK_W,
+        &mut aq_row_autovec,
+        mul,
+        add,
     );
 
-    let max_diff = aq_row_wide.iter().zip(&aq_row_autovec)
+    let max_diff = aq_row_wide
+        .iter()
+        .zip(&aq_row_autovec)
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
 
-    println!("per_block_modulations_row ({} blocks, {} iters)", BLOCK_W, ITERS);
+    println!(
+        "per_block_modulations_row ({} blocks, {} iters)",
+        BLOCK_W, ITERS
+    );
     println!("=========================================================");
-    println!("wide:    {:>6.2} µs/row ({:.1} ns/block)",
-             wide_time.as_secs_f64() * 1e6 / ITERS as f64,
-             wide_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64);
-    println!("autovec: {:>6.2} µs/row ({:.1} ns/block)",
-             autovec_time.as_secs_f64() * 1e6 / ITERS as f64,
-             autovec_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64);
+    println!(
+        "wide:    {:>6.2} µs/row ({:.1} ns/block)",
+        wide_time.as_secs_f64() * 1e6 / ITERS as f64,
+        wide_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64
+    );
+    println!(
+        "autovec: {:>6.2} µs/row ({:.1} ns/block)",
+        autovec_time.as_secs_f64() * 1e6 / ITERS as f64,
+        autovec_time.as_nanos() as f64 / (ITERS * BLOCK_W) as f64
+    );
 
     let speedup = wide_time.as_secs_f64() / autovec_time.as_secs_f64();
     if speedup > 1.0 {
@@ -273,5 +399,9 @@ fn bench_per_block_modulations() {
     } else {
         println!("autovec is {:.2}x SLOWER than wide", 1.0 / speedup);
     }
-    println!("Max diff: {:.2e} {}", max_diff, if max_diff < 1e-3 { "✓" } else { "⚠" });
+    println!(
+        "Max diff: {:.2e} {}",
+        max_diff,
+        if max_diff < 1e-3 { "✓" } else { "⚠" }
+    );
 }

@@ -335,7 +335,11 @@ fn main() {
         std::hint::black_box(&data);
     }
     let elapsed = start.elapsed();
-    println!("{:15}: {:.2} ns/transpose", "inplace", elapsed.as_nanos() as f64 / ITERS as f64);
+    println!(
+        "{:15}: {:.2} ns/transpose",
+        "inplace",
+        elapsed.as_nanos() as f64 / ITERS as f64
+    );
 
     let start = Instant::now();
     for _ in 0..ITERS {
@@ -344,7 +348,11 @@ fn main() {
         std::hint::black_box(&data);
     }
     let elapsed = start.elapsed();
-    println!("{:15}: {:.2} ns/transpose", "memswap", elapsed.as_nanos() as f64 / ITERS as f64);
+    println!(
+        "{:15}: {:.2} ns/transpose",
+        "memswap",
+        elapsed.as_nanos() as f64 / ITERS as f64
+    );
 
     println!("\nTo compare assembly:");
     println!("  cargo asm -p jpegli-rs --example autovec_transpose --release transpose_naive");

@@ -6,8 +6,8 @@
 
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use jpegli_bench_utils::{
-    ChromaSubsampling as BenchChromaSubsampling, ColorMode,
-    EncoderConfig as BenchEncoderConfig, EncoderImpl, ImageData, ScanMode,
+    ChromaSubsampling as BenchChromaSubsampling, ColorMode, EncoderConfig as BenchEncoderConfig,
+    EncoderImpl, ImageData, ScanMode,
 };
 use std::fs;
 use std::path::Path;

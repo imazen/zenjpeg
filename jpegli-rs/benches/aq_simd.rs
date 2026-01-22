@@ -5,7 +5,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 // Import production AQ functions (wide-based, multiversed)
-use jpegli::quant::aq::simd::{pre_erosion_row, pre_erosion_row_padded, per_block_modulations_row};
+use jpegli::quant::aq::simd::{per_block_modulations_row, pre_erosion_row, pre_erosion_row_padded};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use jpegli::quant::aq::simd::mage_pre_erosion_row_padded;
@@ -40,31 +40,31 @@ fn mage_pre_erosion_row<T: HasAvx2 + HasFma + Copy>(
         let x = chunk * 8;
 
         // Load center pixels
-        let pixels = avx::_mm256_loadu_ps(token, (&row[x..x+8]).try_into().unwrap());
+        let pixels = avx::_mm256_loadu_ps(token, (&row[x..x + 8]).try_into().unwrap());
 
         // Load neighbors (simplified - skip boundary handling for benchmark)
         let left = if x == 0 {
             avx::_mm256_loadu_ps(token, (&row[0..8]).try_into().unwrap())
         } else {
-            avx::_mm256_loadu_ps(token, (&row[x-1..x+7]).try_into().unwrap())
+            avx::_mm256_loadu_ps(token, (&row[x - 1..x + 7]).try_into().unwrap())
         };
 
         let right = if x + 9 > width {
-            avx::_mm256_loadu_ps(token, (&row[x..x+8]).try_into().unwrap())
+            avx::_mm256_loadu_ps(token, (&row[x..x + 8]).try_into().unwrap())
         } else {
-            avx::_mm256_loadu_ps(token, (&row[x+1..x+9]).try_into().unwrap())
+            avx::_mm256_loadu_ps(token, (&row[x + 1..x + 9]).try_into().unwrap())
         };
 
-        let top = avx::_mm256_loadu_ps(token, (&row_above[x..x+8]).try_into().unwrap());
-        let bottom = avx::_mm256_loadu_ps(token, (&row_below[x..x+8]).try_into().unwrap());
+        let top = avx::_mm256_loadu_ps(token, (&row_above[x..x + 8]).try_into().unwrap());
+        let bottom = avx::_mm256_loadu_ps(token, (&row_below[x..x + 8]).try_into().unwrap());
 
         // Compute using archmage primitive
         let result = mage_pre_erosion_pixel_x8(token, pixels, left, right, top, bottom);
 
         // Load existing, add result, store back
-        let existing = avx::_mm256_loadu_ps(token, (&output[x..x+8]).try_into().unwrap());
+        let existing = avx::_mm256_loadu_ps(token, (&output[x..x + 8]).try_into().unwrap());
         let sum = _mm256_add_ps(existing, result);
-        avx::_mm256_storeu_ps(token, (&mut output[x..x+8]).try_into().unwrap(), sum);
+        avx::_mm256_storeu_ps(token, (&mut output[x..x + 8]).try_into().unwrap(), sum);
     }
 }
 
@@ -182,7 +182,8 @@ fn bench_per_block_modulations_row(c: &mut Criterion) {
     for blocks_w in [8, 32, 128, 512] {
         let width = blocks_w * 8;
         let height = 64;
-        let mut group = c.benchmark_group(format!("AQ per_block_modulations_row blocks={}", blocks_w));
+        let mut group =
+            c.benchmark_group(format!("AQ per_block_modulations_row blocks={}", blocks_w));
         group.throughput(Throughput::Elements((blocks_w * 64) as u64));
 
         let stride = width + 8;

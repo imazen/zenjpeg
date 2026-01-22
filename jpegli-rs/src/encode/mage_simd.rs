@@ -479,11 +479,7 @@ fn mage_transpose_8x8_dual_inner(
 /// AVX-512 DCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
 #[arcane]
 #[inline]
-fn mage_dct1d_2_avx512_inner(
-    _token: impl archmage::HasAvx512f,
-    m0: &mut __m512,
-    m1: &mut __m512,
-) {
+fn mage_dct1d_2_avx512_inner(_token: impl archmage::HasAvx512f, m0: &mut __m512, m1: &mut __m512) {
     let in0 = *m0;
     let in1 = *m1;
     *m0 = _mm512_add_ps(in0, in1);
@@ -621,7 +617,9 @@ fn mage_dct1d_8_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma + Copy>(
 /// ```
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy>(
+pub fn mage_forward_dct_8x8_dual<
+    T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy,
+>(
     token: T,
     input_a: &[f32; 64],
     input_b: &[f32; 64],
@@ -635,35 +633,59 @@ pub fn mage_forward_dct_8x8_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + a
     let mut reg: [__m512; 8] = [
         // Combine two 256-bit loads into one 512-bit register
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[0..8].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[0..8].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[0..8].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[8..16].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[8..16].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[8..16].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[16..24].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[16..24].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[16..24].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[24..32].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[24..32].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[24..32].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[32..40].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[32..40].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[32..40].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[40..48].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[40..48].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[40..48].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[48..56].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[48..56].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[48..56].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, input_a[56..64].try_into().unwrap())),
+            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                token,
+                input_a[56..64].try_into().unwrap(),
+            )),
             avx::_mm256_loadu_ps(token, input_b[56..64].try_into().unwrap()),
         ),
     ];
@@ -706,7 +728,9 @@ pub fn mage_forward_dct_8x8_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + a
 /// See `mage_forward_dct_8x8_dual` docs for explanation.
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8_wide_dual<T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy>(
+pub fn mage_forward_dct_8x8_wide_dual<
+    T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy,
+>(
     token: T,
     input_a: &crate::foundation::simd_types::Block8x8f,
     input_b: &crate::foundation::simd_types::Block8x8f,
@@ -773,7 +797,11 @@ pub fn mage_forward_dct_8x8_wide_dual<T: archmage::HasAvx512f + archmage::HasAvx
     for i in 0..8 {
         let scaled = _mm512_mul_ps(reg[i], scale);
         avx::_mm256_storeu_ps(token, &mut out_rows_a[i], _mm512_castps512_ps256(scaled));
-        avx::_mm256_storeu_ps(token, &mut out_rows_b[i], _mm512_extractf32x8_ps::<1>(scaled));
+        avx::_mm256_storeu_ps(
+            token,
+            &mut out_rows_b[i],
+            _mm512_extractf32x8_ps::<1>(scaled),
+        );
     }
 
     (output_a, output_b)
