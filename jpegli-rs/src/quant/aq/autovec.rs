@@ -406,6 +406,165 @@ pub fn per_block_modulations_row_autovec(
 }
 
 // ============================================================================
+// Fuzzy erosion with autovectorized sorting network
+// ============================================================================
+
+const FUZZY_MUL0: f32 = 0.125;
+const FUZZY_MUL1: f32 = 0.075;
+const FUZZY_MUL2: f32 = 0.06;
+const FUZZY_MUL3: f32 = 0.05;
+
+/// Compare-and-swap at indices a and b in the 9x8 array.
+/// Operates on all 8 lanes in parallel (autovectorizes).
+#[allow(dead_code)]
+#[inline(always)]
+fn cas_idx(v: &mut [[f32; 8]; 9], a: usize, b: usize) {
+    for i in 0..8 {
+        let min = v[a][i].min(v[b][i]);
+        let max = v[a][i].max(v[b][i]);
+        v[a][i] = min;
+        v[b][i] = max;
+    }
+}
+
+/// Sorting network to find 4 smallest of 9 values, operating on 8 parallel sets.
+/// Returns weighted sum: MUL0*v0 + MUL1*v1 + MUL2*v2 + MUL3*v3 for each set.
+#[allow(dead_code)]
+#[inline(always)]
+fn weighted_min4_of_9_autovec(mut v: [[f32; 8]; 9]) -> [f32; 8] {
+    // Sorting network: 19 compare-exchange operations
+    // Each operation processes 8 values in parallel (autovectorizes to SIMD)
+
+    // Layer 1
+    cas_idx(&mut v, 0, 1);
+    cas_idx(&mut v, 2, 3);
+    cas_idx(&mut v, 4, 5);
+    cas_idx(&mut v, 6, 7);
+
+    // Layer 2
+    cas_idx(&mut v, 0, 2);
+    cas_idx(&mut v, 1, 3);
+    cas_idx(&mut v, 4, 6);
+    cas_idx(&mut v, 5, 7);
+
+    // Layer 3
+    cas_idx(&mut v, 0, 4);
+    cas_idx(&mut v, 1, 5);
+    cas_idx(&mut v, 2, 6);
+    cas_idx(&mut v, 3, 7);
+
+    // Layer 4
+    cas_idx(&mut v, 0, 8);
+    cas_idx(&mut v, 4, 8);
+
+    // Layer 5
+    cas_idx(&mut v, 1, 2);
+    cas_idx(&mut v, 1, 4);
+    cas_idx(&mut v, 2, 4);
+    cas_idx(&mut v, 3, 4);
+    cas_idx(&mut v, 5, 8);
+
+    // Compute weighted sum
+    let mut result = [0.0f32; 8];
+    for i in 0..8 {
+        result[i] = FUZZY_MUL0 * v[0][i]
+            + FUZZY_MUL1 * v[1][i]
+            + FUZZY_MUL2 * v[2][i]
+            + FUZZY_MUL3 * v[3][i];
+    }
+    result
+}
+
+/// Compute fuzzy erosion for blocks using autovectorized sorting network.
+/// Uses #[multiversion] for runtime AVX2/SSE dispatch.
+///
+/// Note: This is ~12% slower than the wide-based SIMD version when compiled
+/// with `-C target-cpu=native`. However, it provides better performance
+/// than scalar when compiling without target-cpu flags.
+///
+/// Returns the number of blocks processed.
+#[allow(dead_code)]
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse4.1", "aarch64+neon"))]
+pub fn compute_fuzzy_erosion_blocks_autovec(
+    pre_erosion_buffer: &[f32],
+    pe_w: usize,
+    buffer_rows: usize,
+    pe_y_base: isize,
+    max_filled_row: isize,
+    start: usize,
+    end: usize,
+    out: &mut [f32],
+) -> usize {
+    let max_x = pe_w as isize - 1;
+    let max_y = max_filled_row.max(0);
+
+    let mut processed = 0;
+    let mut bx = start;
+
+    // Process 8 blocks at a time
+    while bx + 8 <= end {
+        let base_cx: [isize; 8] = std::array::from_fn(|i| ((bx + i - start) * 2) as isize);
+
+        let mut sum = [0.0f32; 8];
+
+        // Process 4 sub-pixels per block
+        for dy in 0..2isize {
+            for dx in 0..2isize {
+                let cy = pe_y_base + dy;
+                let cx: [isize; 8] = std::array::from_fn(|i| base_cx[i] + dx);
+
+                // Gather 9 neighbors for all 8 blocks
+                let mut v: [[f32; 8]; 9] = [[0.0; 8]; 9];
+                for (neighbor_idx, (ny, nx)) in [
+                    (-1isize, -1isize),
+                    (-1, 0),
+                    (-1, 1),
+                    (0, -1),
+                    (0, 0),
+                    (0, 1),
+                    (1, -1),
+                    (1, 0),
+                    (1, 1),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let py = (cy + ny).clamp(0, max_y) as usize;
+                    let buffer_row = py % buffer_rows;
+                    let row_offset = buffer_row * pe_w;
+
+                    for lane in 0..8 {
+                        let px = (cx[lane] + nx).clamp(0, max_x) as usize;
+                        let idx = row_offset + px;
+                        v[neighbor_idx][lane] = if idx < pre_erosion_buffer.len() {
+                            pre_erosion_buffer[idx]
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+
+                // Sorting network
+                let result = weighted_min4_of_9_autovec(v);
+                for i in 0..8 {
+                    sum[i] += result[i];
+                }
+            }
+        }
+
+        // Store results
+        for i in 0..8 {
+            out[bx + i] = sum[i];
+        }
+
+        bx += 8;
+        processed += 8;
+    }
+
+    processed
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
