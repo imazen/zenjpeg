@@ -466,9 +466,10 @@ Rust configuration:
 - `separate_chroma_tables(false)`: 2 tables, matches `jpeg_set_quality()`
 
 **Root cause of ±1 coefficient differences:**
-- Highway (C++) uses round-to-nearest-**even** (banker's rounding)
-- Rust uses round-to-nearest-**ties-away-from-zero**
 - Different DCT SIMD implementations (Highway vs wide crate) produce slightly different floating-point intermediates
+- **NOT** rounding mode - tested round-to-even in Rust, made no difference (2026-01-22)
+- **NOT** DCT scaling - Rust uses 1/8 scaling, C++ uses 1/64, but this is compensated in quantization (`quant_mul = 8/quant` in C++)
+- Source is SIMD float precision in intermediate DCT butterfly operations
 
 **Tools added:**
 - `jpegli_set_distance` FFI binding in `jpegli-internals-sys`
