@@ -185,6 +185,8 @@ pub fn upsample_h2v2(
 // i16 Upsampling Functions (for fast decode path)
 // =============================================================================
 
+use wide::i16x8;
+
 /// Box filter 2x2 upsampling in i16 (4:2:0 → 4:4:4).
 ///
 /// Simple pixel duplication - fastest possible upsampling.
@@ -198,15 +200,80 @@ pub fn upsample_h2v2_i16_box(
     out_width: usize,
     out_height: usize,
 ) {
-    for out_y in 0..out_height {
-        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
-        let out_row = out_y * out_width;
-        let in_row = in_y * in_width;
+    // Process two output rows at a time (both map to same input row)
+    for out_y_pair in 0..(out_height + 1) / 2 {
+        let in_y = out_y_pair.min(in_height.saturating_sub(1));
+        let in_row = &input[in_y * in_width..];
 
-        for out_x in 0..out_width {
-            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
-            output[out_row + out_x] = input[in_row + in_x];
+        // First output row of pair
+        let out_y0 = out_y_pair * 2;
+        if out_y0 < out_height {
+            let out_row0 = &mut output[out_y0 * out_width..][..out_width];
+            upsample_row_h2_box(in_row, in_width, out_row0);
         }
+
+        // Second output row of pair
+        let out_y1 = out_y0 + 1;
+        if out_y1 < out_height {
+            let out_row1 = &mut output[out_y1 * out_width..][..out_width];
+            upsample_row_h2_box(in_row, in_width, out_row1);
+        }
+    }
+}
+
+/// Upsample a single row horizontally 2x (box filter = pixel duplication).
+#[inline(always)]
+fn upsample_row_h2_box(input: &[i16], in_width: usize, output: &mut [i16]) {
+    let out_width = output.len();
+
+    // SIMD path: process 8 input pixels → 16 output pixels at a time
+    let simd_in_chunks = in_width / 8;
+
+    for chunk in 0..simd_in_chunks {
+        let in_x = chunk * 8;
+        let out_x = chunk * 16;
+
+        if out_x + 16 > out_width {
+            break;
+        }
+
+        // Load 8 input pixels
+        let v = i16x8::from([
+            input[in_x],
+            input[in_x + 1],
+            input[in_x + 2],
+            input[in_x + 3],
+            input[in_x + 4],
+            input[in_x + 5],
+            input[in_x + 6],
+            input[in_x + 7],
+        ]);
+
+        // Duplicate each pixel: [a,b,c,d,e,f,g,h] → [a,a,b,b,c,c,d,d], [e,e,f,f,g,g,h,h]
+        let arr: [i16; 8] = v.into();
+        output[out_x] = arr[0];
+        output[out_x + 1] = arr[0];
+        output[out_x + 2] = arr[1];
+        output[out_x + 3] = arr[1];
+        output[out_x + 4] = arr[2];
+        output[out_x + 5] = arr[2];
+        output[out_x + 6] = arr[3];
+        output[out_x + 7] = arr[3];
+        output[out_x + 8] = arr[4];
+        output[out_x + 9] = arr[4];
+        output[out_x + 10] = arr[5];
+        output[out_x + 11] = arr[5];
+        output[out_x + 12] = arr[6];
+        output[out_x + 13] = arr[6];
+        output[out_x + 14] = arr[7];
+        output[out_x + 15] = arr[7];
+    }
+
+    // Scalar remainder
+    let processed_out = simd_in_chunks * 16;
+    for out_x in processed_out..out_width {
+        let in_x = (out_x / 2).min(in_width.saturating_sub(1));
+        output[out_x] = input[in_x];
     }
 }
 
@@ -223,45 +290,119 @@ pub fn upsample_h2v2_i16_fancy(
     out_width: usize,
     out_height: usize,
 ) {
-    // For each output row
-    for out_y in 0..out_height {
-        let in_y = out_y / 2;
-        let is_top = out_y % 2 == 0;
-        let out_row = out_y * out_width;
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
 
-        // Vertical neighbor row
-        let v_neighbor_y = if is_top {
+    // Process each output row
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height - 1);
+        let is_top_half = out_y % 2 == 0;
+
+        // Vertical neighbor: above for top half, below for bottom half
+        let v_neighbor_y = if is_top_half {
             in_y.saturating_sub(1)
         } else {
-            (in_y + 1).min(in_height.saturating_sub(1))
+            (in_y + 1).min(in_height - 1)
         };
 
-        let curr_row = in_y.min(in_height.saturating_sub(1)) * in_width;
-        let v_neighbor_row = v_neighbor_y * in_width;
+        let curr_row = &input[in_y * in_width..];
+        let v_neighbor_row = &input[v_neighbor_y * in_width..];
+        let out_row = &mut output[out_y * out_width..][..out_width];
 
-        for out_x in 0..out_width {
-            let in_x = out_x / 2;
-            let is_left = out_x % 2 == 0;
+        // Process row with optimized interior loop
+        upsample_row_h2_fancy_bilinear(curr_row, v_neighbor_row, in_width, out_row, is_top_half);
+    }
+}
 
-            // Horizontal neighbor column
-            let h_neighbor_x = if is_left {
-                in_x.saturating_sub(1)
-            } else {
-                (in_x + 1).min(in_width.saturating_sub(1))
-            };
+/// Upsample a single row horizontally 2x with vertical blending (triangle filter).
+///
+/// For each output pixel at (out_x, out_y):
+/// - in_x = out_x / 2
+/// - is_left = out_x % 2 == 0
+/// - Horizontal neighbor: left if is_left, right otherwise
+/// - Vertical neighbor: above if is_top_half, below otherwise
+/// - Result = (9*curr + 3*h_neighbor + 3*v_neighbor + hv_neighbor + 8) >> 4
+#[inline(always)]
+fn upsample_row_h2_fancy_bilinear(
+    curr_row: &[i16],
+    v_neighbor_row: &[i16],
+    in_width: usize,
+    output: &mut [i16],
+    _is_top_half: bool,
+) {
+    let out_width = output.len();
+    if in_width == 0 {
+        return;
+    }
 
-            let in_x_clamped = in_x.min(in_width.saturating_sub(1));
+    // Process interior pixels in bulk (skip first and last input columns for edge handling)
+    // Interior: in_x from 1 to in_width-2, which maps to out_x from 2 to out_width-4
+    let interior_start_out = 2;
+    let interior_end_out = if in_width >= 2 {
+        ((in_width - 1) * 2).min(out_width)
+    } else {
+        0
+    };
 
-            // Get the 4 input pixels for bilinear interpolation
-            let curr = input[curr_row + in_x_clamped] as i32;
-            let h_neighbor = input[curr_row + h_neighbor_x] as i32;
-            let v_neighbor = input[v_neighbor_row + in_x_clamped] as i32;
-            let hv_neighbor = input[v_neighbor_row + h_neighbor_x] as i32;
+    // Handle left edge (out_x = 0, 1)
+    if out_width >= 1 {
+        // out_x = 0: in_x = 0, is_left = true, h_neighbor = left (clamped to 0)
+        let curr = curr_row[0] as i32;
+        let v_neighbor = v_neighbor_row[0] as i32;
+        // h_neighbor and hv_neighbor are same as curr/v_neighbor (clamped edge)
+        output[0] = ((9 * curr + 3 * curr + 3 * v_neighbor + v_neighbor + 8) >> 4) as i16;
+    }
+    if out_width >= 2 {
+        // out_x = 1: in_x = 0, is_left = false, h_neighbor = right (in_x + 1)
+        let curr = curr_row[0] as i32;
+        let h_neighbor = curr_row[1.min(in_width - 1)] as i32;
+        let v_neighbor = v_neighbor_row[0] as i32;
+        let hv_neighbor = v_neighbor_row[1.min(in_width - 1)] as i32;
+        output[1] = ((9 * curr + 3 * h_neighbor + 3 * v_neighbor + hv_neighbor + 8) >> 4) as i16;
+    }
 
-            // Triangle filter: (9*curr + 3*h + 3*v + hv + 8) >> 4
-            // This is equivalent to separable (3*near + far)/4 applied twice
-            let result = (9 * curr + 3 * h_neighbor + 3 * v_neighbor + hv_neighbor + 8) >> 4;
-            output[out_row + out_x] = result as i16;
+    // Interior loop: no edge checks needed
+    // Each pair of output pixels (2*in_x, 2*in_x+1) comes from input at in_x
+    for in_x in 1..in_width.saturating_sub(1) {
+        let out_x = in_x * 2;
+        if out_x >= interior_end_out || out_x + 1 >= out_width {
+            break;
+        }
+
+        let curr = curr_row[in_x] as i32;
+        let left = curr_row[in_x - 1] as i32;
+        let right = curr_row[in_x + 1] as i32;
+        let v_curr = v_neighbor_row[in_x] as i32;
+        let v_left = v_neighbor_row[in_x - 1] as i32;
+        let v_right = v_neighbor_row[in_x + 1] as i32;
+
+        // Left half of output pixel pair (is_left = true, h_neighbor = left)
+        output[out_x] = ((9 * curr + 3 * left + 3 * v_curr + v_left + 8) >> 4) as i16;
+
+        // Right half of output pixel pair (is_left = false, h_neighbor = right)
+        output[out_x + 1] = ((9 * curr + 3 * right + 3 * v_curr + v_right + 8) >> 4) as i16;
+    }
+
+    // Handle right edge
+    if in_width >= 1 {
+        let last_in_x = in_width - 1;
+        let out_x = last_in_x * 2;
+
+        if out_x < out_width {
+            // Left pixel of last pair
+            let curr = curr_row[last_in_x] as i32;
+            let left = curr_row[last_in_x.saturating_sub(1)] as i32;
+            let v_curr = v_neighbor_row[last_in_x] as i32;
+            let v_left = v_neighbor_row[last_in_x.saturating_sub(1)] as i32;
+            output[out_x] = ((9 * curr + 3 * left + 3 * v_curr + v_left + 8) >> 4) as i16;
+        }
+
+        if out_x + 1 < out_width {
+            // Right pixel of last pair (h_neighbor clamped to edge)
+            let curr = curr_row[last_in_x] as i32;
+            let v_curr = v_neighbor_row[last_in_x] as i32;
+            output[out_x + 1] = ((9 * curr + 3 * curr + 3 * v_curr + v_curr + 8) >> 4) as i16;
         }
     }
 }
