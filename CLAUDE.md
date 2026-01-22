@@ -188,23 +188,33 @@ Then: `perf report --stdio --no-children -g none --percent-limit 0.5 2>/dev/null
 4. Quantization (6%) - parallelizable with DCT
 5. Frequency counting (5%) - sequential (DC prediction dependency)
 
-## C++ Performance Gap (2026-01-18)
+## C++ Performance Gap (2026-01-21)
 
-Run with: `cargo bench -p jpegli-rs@0.6.0 --bench cpp_comparison`
+Run with: `cargo bench -p jpegli-rs --bench cpp_comparison`
 
 **WARNING**: The `comprehensive_cpp_comparison` test uses subprocess timing (unfair).
 Use the FFI benchmark above for accurate library-to-library comparison.
 
 ### Summary
 
-Rust is consistently **1.6x slower** than C++ jpegli (FFI benchmark, 512x512):
+Rust is consistently **1.55x slower** than C++ jpegli (FFI benchmark, 512x512):
 
 | Quality | Rust | C++ FFI | Ratio |
 |---------|------|---------|-------|
-| q50 | 2.8ms | 1.74ms | 1.6x |
-| q75 | 3.0ms | 1.86ms | 1.6x |
-| q90 | 3.4ms | 2.05ms | 1.6x |
-| q95 | 3.8ms | 2.40ms | 1.6x |
+| q50 | 2.32ms | 1.50ms | 1.55x |
+| q75 | 2.41ms | 1.55ms | 1.56x |
+| q90 | 2.78ms | 1.76ms | 1.58x |
+| q95 | 3.01ms | 1.98ms | 1.52x |
+
+### Allocation Optimization (2026-01-21)
+
+Reduced allocations from 33,595 to 5,272 per 10 encodes (84% reduction):
+- `Vec::with_capacity` in `generate_code_lengths` (classic.rs:187)
+- Fixed array instead of `Vec<Vec>` in `depths_to_bits_values` (classic.rs:272)
+- Lazy error creation with `ok_or_else` in progressive.rs:78
+- Reusable buffers for YUV conversion and AQ strengths
+
+Remaining 527 allocations/encode are inherent to Huffman table generation (13 scans × ~40 allocations each).
 
 ### Root Causes
 
