@@ -27,8 +27,9 @@
 use crate::error::Result;
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 
+use super::autovec::compute_fuzzy_erosion_blocks_autovec;
 use super::quant_field_to_aq_strength;
-use super::simd::{compute_fuzzy_erosion_blocks_simd, per_block_modulations_row};
+use super::simd::per_block_modulations_row;
 
 // Use autovec pre_erosion - 1.95x faster than wide-based version due to
 // better autovectorization with #[multiversion] runtime dispatch
@@ -755,9 +756,8 @@ impl StreamingAQ {
         let buffer_rows = self.pre_erosion_buffer_rows;
         let max_filled_row = self.pre_erosion_rows_flushed.saturating_sub(1) as isize;
 
-        // Use SIMD sorting network for bulk processing (8 blocks at a time)
-        // Note: Uses wide crate which requires -C target-cpu=native for AVX2
-        let simd_processed = compute_fuzzy_erosion_blocks_simd(
+        // Use autovectorized sorting network with runtime AVX2/SSE dispatch
+        let simd_processed = compute_fuzzy_erosion_blocks_autovec(
             &self.pre_erosion_buffer,
             pe_w,
             buffer_rows,

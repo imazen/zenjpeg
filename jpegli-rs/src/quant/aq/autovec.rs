@@ -416,7 +416,6 @@ const FUZZY_MUL3: f32 = 0.05;
 
 /// Compare-and-swap at indices a and b in the 9x8 array.
 /// Operates on all 8 lanes in parallel (autovectorizes).
-#[allow(dead_code)]
 #[inline(always)]
 fn cas_idx(v: &mut [[f32; 8]; 9], a: usize, b: usize) {
     for i in 0..8 {
@@ -429,7 +428,6 @@ fn cas_idx(v: &mut [[f32; 8]; 9], a: usize, b: usize) {
 
 /// Sorting network to find 4 smallest of 9 values, operating on 8 parallel sets.
 /// Returns weighted sum: MUL0*v0 + MUL1*v1 + MUL2*v2 + MUL3*v3 for each set.
-#[allow(dead_code)]
 #[inline(always)]
 fn weighted_min4_of_9_autovec(mut v: [[f32; 8]; 9]) -> [f32; 8] {
     // Sorting network: 19 compare-exchange operations
@@ -476,14 +474,12 @@ fn weighted_min4_of_9_autovec(mut v: [[f32; 8]; 9]) -> [f32; 8] {
 }
 
 /// Compute fuzzy erosion for blocks using autovectorized sorting network.
-/// Uses #[multiversion] for runtime AVX2/SSE dispatch.
+/// Uses #[multiversion] for runtime AVX2/SSE/NEON dispatch.
 ///
-/// Note: This is ~12% slower than the wide-based SIMD version when compiled
-/// with `-C target-cpu=native`. However, it provides better performance
-/// than scalar when compiling without target-cpu flags.
+/// This is the default fast path - provides runtime SIMD dispatch without
+/// requiring `-C target-cpu=native` compile flags.
 ///
 /// Returns the number of blocks processed.
-#[allow(dead_code)]
 #[multiversion(targets("x86_64+avx2+fma", "x86_64+sse4.1", "aarch64+neon"))]
 pub fn compute_fuzzy_erosion_blocks_autovec(
     pre_erosion_buffer: &[f32],
