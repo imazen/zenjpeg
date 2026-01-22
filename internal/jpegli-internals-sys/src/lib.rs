@@ -569,6 +569,13 @@ extern "C" {
     );
     #[link_name = "jpegli_quality_scaling"]
     pub fn jpeg_quality_scaling(quality: c_int) -> c_int;
+    /// Set quality by Butteraugli distance.
+    ///
+    /// This is the proper way to set quality in jpegli for parity testing.
+    /// Unlike `jpeg_set_quality`, this uses `add_two_chroma_tables=true` (3 tables).
+    pub fn jpegli_set_distance(cinfo: j_compress_ptr, distance: f32, force_baseline: boolean);
+    /// Enable or disable adaptive quantization.
+    pub fn jpegli_enable_adaptive_quantization(cinfo: j_compress_ptr, value: boolean);
     #[link_name = "jpegli_simple_progression"]
     pub fn jpeg_simple_progression(cinfo: j_compress_ptr);
     #[link_name = "jpegli_suppress_tables"]
