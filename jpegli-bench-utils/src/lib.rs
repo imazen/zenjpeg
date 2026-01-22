@@ -1428,6 +1428,10 @@ pub struct EncoderConfig {
     pub subsampling: ChromaSubsampling,
     /// Quality (0-100 for libjpeg-style, or distance for jpegli)
     pub quality: u8,
+    /// Butteraugli distance (if set, overrides quality).
+    /// This uses `jpegli_set_distance` in C++ (3 tables) instead of
+    /// `jpeg_set_quality` (2 tables), ensuring proper parity testing.
+    pub distance: Option<f32>,
     /// Enable hybrid trellis quantization (jpegli-rs only, requires feature)
     pub hybrid: bool,
 }
@@ -1442,6 +1446,7 @@ impl EncoderConfig {
             scan: ScanMode::default(),
             subsampling: ChromaSubsampling::default(),
             quality: 75,
+            distance: None,
             hybrid: false,
         }
     }
@@ -1471,6 +1476,17 @@ impl EncoderConfig {
     #[must_use]
     pub fn quality(mut self, q: u8) -> Self {
         self.quality = q;
+        self
+    }
+
+    /// Set Butteraugli distance (overrides quality).
+    ///
+    /// This ensures proper parity testing by using `jpegli_set_distance`
+    /// in C++ (which sets `add_two_chroma_tables=true` for 3 tables)
+    /// instead of `jpeg_set_quality` (which uses 2 tables).
+    #[must_use]
+    pub fn distance(mut self, d: f32) -> Self {
+        self.distance = Some(d);
         self
     }
 
@@ -1599,8 +1615,14 @@ impl EncoderConfig {
             // Set defaults (this sets up YCbCr conversion, quant tables, etc.)
             jpeg_set_defaults(cinfo_ptr);
 
-            // Set quality
-            jpeg_set_quality(cinfo_ptr, self.quality as i32, 1);
+            // Set quality via distance (preferred, 3 tables) or quality (legacy, 2 tables)
+            if let Some(dist) = self.distance {
+                // Use jpegli_set_distance for proper 3-table encoding
+                jpegli_set_distance(cinfo_ptr, dist, 1);
+            } else {
+                // Legacy: jpeg_set_quality uses 2 chroma tables (Cr for both Cb and Cr)
+                jpeg_set_quality(cinfo_ptr, self.quality as i32, 1);
+            }
 
             // Set subsampling via comp_info
             if !(*cinfo_ptr).comp_info.is_null() {
