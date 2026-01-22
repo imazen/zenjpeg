@@ -153,40 +153,43 @@ cargo run --release --example xyb_cpp_comparison
 cargo run --release --example xyb_vs_ycbcr_butteraugli
 ```
 
-## Profiling Results (4K image, 2026-01-20)
+## Profiling Results (4K image, 2026-01-21)
 
 Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile -- 4k`
-Then: `perf report --stdio --no-children -g none --percent-limit 0.5 2>/dev/null`
+Then: `perf report --stdio --no-children -g none --percent-limit 1.0 2>/dev/null`
 
 | Function | % Time | Notes |
 |----------|--------|-------|
-| `per_block_modulations_row` | 12.1% | AQ calculation |
-| `encode_block_simd` | 12.1% | Entropy encoding |
-| `finalize_imcu_aq_with_buffer` | 9.6% | AQ finalization |
-| `forward_dct_8x8_wide` | 7.3% | DCT |
-| `yuv::avx2::rgb_to_yuv` | 6.9% | Color conversion (yuv crate) |
-| `pre_erosion_row` | 5.3% | AQ pre-erosion |
-| `memmove_avx512` | 5.3% | Memory ops |
-| `preprocess_deringing_f32` | 4.7% | Deringing |
-| `collect_block_frequencies_simd` | 4.7% | Huffman freq counting |
-| `quantize_block_zigzag` | 4.0% | Quantization |
+| `encode_block_simd` | 11.7% | Entropy encoding |
+| `per_block_modulations_row` | 9.1% | AQ calculation |
+| `preprocess_deringing_f32` | 6.9% | Deringing |
+| `build_optimized_tables` | 6.1% | Huffman table building |
+| `dct_strip_blocks_to_pending` | 4.5% | DCT |
+| `quantize_pending_imcu` | 4.1% | Quantization |
+| `yuv::avx2::rgb_to_yuv` | 4.0% | Color conversion (yuv crate) |
+| `downsample_2x2_simd_inplace` | 3.0% | Chroma subsampling |
+| `finalize_imcu_aq_with_buffer` | 2.8% | AQ finalization (SIMD fuzzy erosion) |
+| `pre_erosion_row_autovec_iter` | 2.6% | AQ pre-erosion |
+| `memmove_avx512` | 2.6% | Memory ops |
 
-**By category:**
-- **Adaptive Quantization (AQ)**: 27.0% (per_block + finalize + pre_erosion)
-- **Entropy Encoding**: 12.1%
-- **Color Conversion**: 8.9% (yuv crate + rgb_to_ycbcr)
-- **DCT**: 7.3%
-- **Memory ops**: 6.1% (memmove + memset)
-- **Quantization**: 6.3%
-- **Huffman freq counting**: 4.7%
-- **Deringing**: 4.7%
+**By category (after SIMD sorting network optimization):**
+- **Adaptive Quantization (AQ)**: 14.5% (per_block + finalize + pre_erosion)
+- **Entropy Encoding**: 11.7%
+- **Deringing**: 6.9%
+- **Huffman table building**: 6.1%
+- **DCT + Quantization**: 8.6%
+- **Color Conversion**: 5.8% (yuv crate + rgb_to_ycbcr)
+- **Memory ops**: 2.6%
+
+**Improvement from SIMD sorting network (2026-01-21):**
+- `finalize_imcu_aq_with_buffer`: 9.6% → 2.8% (3.4x faster)
+- Total AQ: 27% → 14.5% (1.86x faster)
 
 **Parallelization status:**
-1. AQ calculation (27%) - NOT parallelizable (too fine-grained, see Failed Explorations)
+1. AQ calculation (14.5%) - SIMD-optimized, not worth parallelizing
 2. Entropy encoding (12%) - already has parallel path
-3. DCT (7%) - already has parallel path
-4. Quantization (6%) - parallelizable with DCT
-5. Frequency counting (5%) - sequential (DC prediction dependency)
+3. DCT + Quantization (8.6%) - already has parallel path
+4. Frequency counting - sequential (DC prediction dependency)
 
 ## C++ Performance Gap (2026-01-21)
 
@@ -197,26 +200,20 @@ Use the FFI benchmark above for accurate library-to-library comparison.
 
 ### Summary
 
-Rust is consistently **1.5x slower** than C++ jpegli (FFI benchmark, 512x512).
+Rust is consistently **1.4x slower** than C++ jpegli (FFI benchmark, 512x512).
+Improved from 1.6x after SIMD sorting network optimization.
 
 **Fair comparison (both at `-C target-cpu=native`):**
 
 | Quality | Rust | C++ FFI | Ratio |
 |---------|------|---------|-------|
-| q50 | 2.14ms | 1.40ms | 1.53x |
-| q75 | 2.26ms | 1.48ms | 1.53x |
-| q90 | 2.50ms | 1.70ms | 1.47x |
-| q95 | 2.90ms | 1.90ms | 1.53x |
+| q50 | 2.22ms | 1.49ms | 1.49x |
+| q75 | 2.24ms | 1.53ms | 1.46x |
+| q90 | 2.45ms | 1.75ms | 1.40x |
+| q95 | 2.74ms | 2.01ms | 1.36x |
 
-**Without native (Rust SSE2 only, C++ uses Highway runtime dispatch):**
-
-| Quality | Rust | C++ FFI | Ratio |
-|---------|------|---------|-------|
-| q50 | 2.32ms | 1.49ms | 1.56x |
-| q75 | 2.41ms | 1.54ms | 1.56x |
-
-Note: C++ times are similar because Highway uses runtime SIMD dispatch regardless of
-compile flags. The `wide` crate uses compile-time `cfg(target_feature)` checks.
+Note: Gap was 1.6x before SIMD sorting network. Highway uses runtime SIMD dispatch
+regardless of compile flags, while `wide` crate uses compile-time `cfg(target_feature)`.
 
 ### Allocation Optimization (2026-01-21)
 
