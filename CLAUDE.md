@@ -447,6 +447,42 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 
 **Files:** `jpegli-rs/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
 
+## Investigation Notes
+
+### AQ Map Comparison (2026-01-22)
+
+**Tools added:**
+- C++: `DUMP_AQ_MAP=/path/to/file.bin cjpegli ...` dumps AQ map after encoding
+- Rust: `DUMP_AQ_MAP=/path/to/file.bin` env var triggers dump in `StreamingAQ::finalize()` or `flush_into()`
+- Example: `cargo run --release --example compare_aq_maps -- cpp.bin rust.bin`
+
+**Key finding: CLI vs FFI discrepancy**
+
+| Method | C++ Size | Rust Size | Diff |
+|--------|----------|-----------|------|
+| CLI cjpegli -q 75 | 362KB | 308KB | -15% |
+| FFI jpeg_set_quality(75) | 305KB | 300KB | **-1.7%** |
+
+The CLI uses jpegli's native distance-based quality, while FFI uses libjpeg-compatible scaling.
+**Only FFI comparison is valid for parity testing.**
+
+**AQ value statistics** (FFI mode, flower.png 2268x1512, q75):
+- Mean difference: -0.001 (negligible)
+- Mean |difference|: 0.045 (4.5%)
+- Mean relative diff: +6.83% (Rust values slightly higher)
+- 90% of blocks: diff < 0.1
+- 2% of blocks: diff > 0.2 (outliers)
+
+**Root cause hypothesis:**
+Rust AQ values are ~7% higher on average → more quantization → ~2% smaller files.
+The difference is consistent across quality levels but doesn't significantly affect perceptual quality
+(DSSIM and Butteraugli within acceptable range per comprehensive test).
+
+**Next steps:**
+1. Instrument pre-erosion, fuzzy erosion, and per-block modulations separately to pinpoint divergence
+2. Check floating-point precision differences in SIMD implementations
+3. Verify gamma modulation and HF modulation match C++ exactly
+
 ## Known Bugs
 
 0. **Debug env var in hot loop (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:798`

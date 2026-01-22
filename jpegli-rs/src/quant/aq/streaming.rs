@@ -502,9 +502,40 @@ impl StreamingAQ {
             // Also accumulate for batch mode
             self.all_aq_strengths
                 .extend_from_slice(&self.imcu_aq_strengths[..count]);
+
+            // Debug: dump AQ map when image processing is complete
+            if self.rows_received >= self.height && self.pending_imcu_row.is_none() {
+                self.dump_aq_map_if_requested();
+            }
+
             return Some(count);
         }
         None
+    }
+
+    /// Debug: dump AQ map to file if DUMP_AQ_MAP env var is set.
+    fn dump_aq_map_if_requested(&self) {
+        if let Ok(path) = std::env::var("DUMP_AQ_MAP") {
+            if let Ok(mut file) = std::fs::File::create(&path) {
+                use std::io::Write;
+                let w = self.blocks_w as u32;
+                let h = self.blocks_h as u32;
+                // Write header
+                let _ = file.write_all(&w.to_le_bytes());
+                let _ = file.write_all(&h.to_le_bytes());
+                // Write AQ values
+                for val in &self.all_aq_strengths {
+                    let _ = file.write_all(&val.to_le_bytes());
+                }
+                eprintln!(
+                    "AQ map dumped to {} ({}x{} blocks, {} values)",
+                    path,
+                    w,
+                    h,
+                    self.all_aq_strengths.len()
+                );
+            }
+        }
     }
 
     /// Finalize and return all AQ strengths (batch mode).
@@ -518,6 +549,9 @@ impl StreamingAQ {
 
         // Flush any remaining pending iMCU
         self.flush();
+
+        // Debug: dump AQ map if requested
+        self.dump_aq_map_if_requested();
 
         Ok(self.all_aq_strengths)
     }
