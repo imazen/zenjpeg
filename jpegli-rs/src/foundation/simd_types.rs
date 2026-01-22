@@ -164,11 +164,12 @@ impl Default for Block8x8i16 {
 
 /// Quantization table stored in SIMD-friendly layout.
 ///
-/// Pre-computes multipliers (1/value) for fast quantization.
+/// Pre-computes multipliers (8/value) for fast quantization.
+/// The 8x factor compensates for DCT's 1/64 scaling (matching C++ jpegli).
 #[derive(Clone, Debug)]
 #[repr(C, align(32))]
 pub struct QuantTableSimd {
-    /// Reciprocal multipliers for quantization (1.0 / quant_value)
+    /// Multipliers for quantization (8.0 / quant_value)
     pub mul_rows: [f32x8; 8],
     /// Original values for encoding the JPEG header
     pub values: [u16; 64],
@@ -208,9 +209,13 @@ impl ZeroBiasSimd {
 
 impl QuantTableSimd {
     /// Create from u16 quantization values
+    ///
+    /// Computes 8.0/quant multipliers for fast quantization.
+    /// The 8.0 factor compensates for DCT's 1/64 scaling (matching C++ jpegli).
     pub fn from_values(values: &[u16; 64]) -> Self {
         let mut mul_rows = [f32x8::ZERO; 8];
-        let one = f32x8::splat(1.0);
+        // DCT uses 1/64 scaling, so quantize needs to multiply by 8/quant
+        let eight = f32x8::splat(8.0);
         for row in 0..8 {
             let start = row * 8;
             // Convert u16 -> f32 (unavoidable), then SIMD divide
@@ -224,7 +229,7 @@ impl QuantTableSimd {
                 values[start + 6] as f32,
                 values[start + 7] as f32,
             ];
-            mul_rows[row] = one / f32x8::from(row_f32);
+            mul_rows[row] = eight / f32x8::from(row_f32);
         }
         Self {
             mul_rows,
@@ -233,15 +238,19 @@ impl QuantTableSimd {
     }
 
     /// Create from f32 quantization values
+    ///
+    /// Computes 8.0/quant multipliers for fast quantization.
+    /// The 8.0 factor compensates for DCT's 1/64 scaling (matching C++ jpegli).
     pub fn from_f32_values(values: &[f32; 64]) -> Self {
         let mut mul_rows = [f32x8::ZERO; 8];
         let mut u16_values = [0u16; 64];
-        let one = f32x8::splat(1.0);
+        // DCT uses 1/64 scaling, so quantize needs to multiply by 8/quant
+        let eight = f32x8::splat(8.0);
         for row in 0..8 {
             let start = row * 8;
             // Zero-cost load, SIMD divide
             let values_slice: [f32; 8] = values[start..start + 8].try_into().unwrap();
-            mul_rows[row] = one / f32x8::from(values_slice);
+            mul_rows[row] = eight / f32x8::from(values_slice);
             for col in 0..8 {
                 u16_values[start + col] = values[start + col].round() as u16;
             }
@@ -566,11 +575,11 @@ mod tests {
 
         let quant = QuantTableSimd::from_values(&values);
 
-        // Check that multipliers are correct
+        // Check that multipliers are correct (8.0 / value to compensate for 1/64 DCT scaling)
         for row in 0..8 {
             let row_arr: [f32; 8] = quant.mul_rows[row].into();
             for col in 0..8 {
-                let expected = 1.0 / (row * 8 + col + 1) as f32;
+                let expected = 8.0 / (row * 8 + col + 1) as f32;
                 assert!((row_arr[col] - expected).abs() < 1e-6);
             }
         }
@@ -578,7 +587,8 @@ mod tests {
 
     #[test]
     fn test_quantize_simple() {
-        // Create a block with known values
+        // Create a block with known values (simulating DCT output at 1/64 scale)
+        // The quantize function expects coefficients that have been scaled by 1/64 from DCT.
         let mut arr = [0.0f32; 64];
         for i in 0..64 {
             arr[i] = (i + 1) as f32 * 10.0; // 10, 20, 30, ...
@@ -592,13 +602,12 @@ mod tests {
         }
         let quant = QuantTableSimd::from_values(&values);
 
-        // Quantize
+        // Quantize: coeff * 8 / quant_value = (i+1)*10 * 8 / (i+1) = 80
         let result = quant.quantize(&block);
 
-        // Each coefficient should be 10 (value * 10 / value = 10)
         let arr = result.to_i16_array();
         for i in 0..64 {
-            assert_eq!(arr[i], 10, "Mismatch at index {}", i);
+            assert_eq!(arr[i], 80, "Mismatch at index {}", i);
         }
     }
 }

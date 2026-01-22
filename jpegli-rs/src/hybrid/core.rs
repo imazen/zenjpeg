@@ -133,17 +133,17 @@ pub fn scale_quant_by_aq(
 /// Convert f32 DCT coefficients to i32 for trellis quantization.
 ///
 /// jpegli and mozjpeg use different quantization formulas:
-/// - jpegli: quantized = round(DCT / quantval)
+/// - jpegli: quantized = round(DCT * 8 / quantval) (DCT at 1/64 scale)
 /// - mozjpeg trellis: quantized = round(DCT / (8 * quantval))
 ///
 /// To make trellis produce the same quantized values as jpegli:
-/// - We multiply DCT by 8: trellis sees round((8*DCT) / (8*quantval)) = round(DCT / quantval)
-/// - This preserves precision better than dividing quant by 8
+/// - We multiply DCT by 64: trellis sees round((64*DCT) / (8*quantval)) = round(DCT*8 / quantval)
+/// - This compensates for both the 1/64 DCT scaling and the trellis's 8× divisor
 pub fn dct_f32_to_i32(coeffs: &[f32; DCT_BLOCK_SIZE]) -> [i32; DCT_BLOCK_SIZE] {
     let mut result = [0i32; DCT_BLOCK_SIZE];
 
     use wide::f32x8;
-    let scale = f32x8::splat(8.0);
+    let scale = f32x8::splat(64.0);
 
     for chunk in 0..8 {
         let k = chunk * 8;
@@ -256,7 +256,9 @@ pub fn hybrid_quantize_block_simple(
             scaled_quant[k + 6] as f32,
             scaled_quant[k + 7] as f32,
         ]);
-        let val = (dct / q).round();
+        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+        let eight = f32x8::splat(8.0);
+        let val = (dct * eight / q).round();
         let arr: [f32; 8] = val.into();
         for j in 0..8 {
             quantized[k + j] = arr[j] as i16;

@@ -589,11 +589,12 @@ pub fn generate_standard_jpeg_table_ex(
 }
 
 /// Quantizes a DCT coefficient using the given quantization value.
+/// DCT uses 1/64 scaling (matching C++), so multiply by 8/quant.
 #[inline]
 #[must_use]
 pub fn quantize(coeff: f32, quant: u16) -> i16 {
     let q = quant as f32;
-    (coeff / q).round() as i16
+    (coeff * 8.0 / q).round() as i16
 }
 
 /// Dequantizes a coefficient.
@@ -632,7 +633,9 @@ pub fn quantize_block(
             quant[k + 7] as f32,
         ]);
 
-        let qval = c / q;
+        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+        let eight = f32x8::splat(8.0);
+        let qval = c * eight / q;
         let rounded = qval.round();
         let arr: [f32; 8] = rounded.into();
 
@@ -674,12 +677,9 @@ pub fn quantize_block_with_zero_bias(
 
     for k in 0..DCT_BLOCK_SIZE {
         let q = quant[k] as f32;
-        let qval = coeffs[k] / q;
+        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+        let qval = coeffs[k] * 8.0 / q;
 
-        // Note on scaling: C++ DCT uses 1/64 scaling total, Rust uses 1/8.
-        // C++ compensates by using quant_mul = 8/quant in quantization.
-        // Net effect: both produce qval = dct_normalized / quant for storage.
-        // For threshold comparison, both compare |qval| vs threshold directly.
         let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
 
         if qval.abs() >= threshold {
@@ -724,8 +724,9 @@ pub fn quantize_block_with_zero_bias_simd(
             quant[k + 7] as f32,
         ]);
 
-        // Compute qval = coeffs / quant
-        let qval = c / q;
+        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+        let eight = f32x8::splat(8.0);
+        let qval = c * eight / q;
 
         // Load zero_bias offset and mul directly from slices
         let offset = f32x8::from(<[f32; 8]>::try_from(&zero_bias.offset[k..k + 8]).unwrap());
@@ -763,7 +764,8 @@ pub fn quantize_block_compare(
     let mut zeros_from_bias = 0usize;
     for k in 0..DCT_BLOCK_SIZE {
         let q = quant[k] as f32;
-        let qval = coeffs[k] / q;
+        // DCT uses 1/64 scaling (matching C++), so multiply by 8/quant
+        let qval = coeffs[k] * 8.0 / q;
         let simple_result = qval.round() as i16;
         let threshold = zero_bias.offset[k] + zero_bias.mul[k] * aq_strength;
 
@@ -1043,14 +1045,28 @@ mod tests {
 
     #[test]
     fn test_quantize_dequantize() {
-        let coeff = 123.456f32;
+        // The input coeff is at 1/64 scale (from DCT).
+        // quantize() multiplies by 8 to compensate, then divides by quant.
+        // dequantize() multiplies by quant, giving values at 1/8 scale for IDCT.
+        //
+        // For this test, we pass a value that represents a DCT coefficient at 1/64 scale.
+        let coeff = 123.456f32 / 8.0; // Simulate 1/64 scale by dividing by 8
         let quant = 16;
 
         let quantized = quantize(coeff, quant);
         let recovered = dequantize(quantized, quant);
 
+        // The recovered value is at 1/8 scale (8× the input 1/64 scale)
+        let expected = coeff * 8.0; // Convert expected to 1/8 scale
+
         // Should be within one quantization step
-        assert!((recovered - coeff).abs() < quant as f32);
+        assert!(
+            (recovered - expected).abs() < quant as f32,
+            "recovered={}, expected={}, diff={}",
+            recovered,
+            expected,
+            (recovered - expected).abs()
+        );
     }
 
     #[test]
