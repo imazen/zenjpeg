@@ -170,7 +170,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.dc_tables
             .get(idx)
             .and_then(|&t| t)
-            .ok_or(Error::internal("DC table not set or invalid index"))
+            .ok_or_else(|| Error::internal("DC table not set or invalid index"))
     }
 
     /// Safely gets an AC table reference, handling out-of-bounds indices.
@@ -179,7 +179,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         self.ac_tables
             .get(idx)
             .and_then(|&t| t)
-            .ok_or(Error::internal("AC table not set or invalid index"))
+            .ok_or_else(|| Error::internal("AC table not set or invalid index"))
     }
 
     /// Decodes a block of DCT coefficients with fast AC path.
@@ -190,8 +190,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         ac_table_idx: usize,
     ) -> ScanResult<[i16; DCT_BLOCK_SIZE]> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::internal("DC table not set"))?;
-        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::internal("AC table not set"))?;
+        let dc_table = self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table = self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
@@ -340,8 +340,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         ac_table_idx: usize,
     ) -> ScanResult<([i16; DCT_BLOCK_SIZE], u8)> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx].ok_or(Error::internal("DC table not set"))?;
-        let ac_table = self.ac_tables[ac_table_idx].ok_or(Error::internal("AC table not set"))?;
+        let dc_table = self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table = self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 

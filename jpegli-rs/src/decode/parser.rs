@@ -1591,14 +1591,23 @@ impl<'a> JpegParser<'a> {
         let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
         let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
 
+        // Pre-fetch quant tables outside the loop (avoids Error allocation per MCU row)
+        let quant_y = self.quant_tables[comp_infos[0].quant_idx]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Y quant table"))?;
+        let quant_cb = self.quant_tables[comp_infos[1].quant_idx]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Cb quant table"))?;
+        let quant_cr = self.quant_tables[comp_infos[2].quant_idx]
+            .as_ref()
+            .ok_or_else(|| Error::internal("missing Cr quant table"))?;
+
         // Process MCU row by row
         for imcu_row in 0..mcu_rows {
             // IDCT Y blocks (full resolution)
             {
                 let info = &comp_infos[0];
-                let quant = self.quant_tables[info.quant_idx]
-                    .as_ref()
-                    .ok_or(Error::internal("missing Y quant table"))?;
+                let quant = quant_y;
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;
@@ -1631,9 +1640,7 @@ impl<'a> JpegParser<'a> {
             // IDCT Cb blocks (subsampled)
             {
                 let info = &comp_infos[1];
-                let quant = self.quant_tables[info.quant_idx]
-                    .as_ref()
-                    .ok_or(Error::internal("missing Cb quant table"))?;
+                let quant = quant_cb;
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;
@@ -1666,9 +1673,7 @@ impl<'a> JpegParser<'a> {
             // IDCT Cr blocks (subsampled)
             {
                 let info = &comp_infos[2];
-                let quant = self.quant_tables[info.quant_idx]
-                    .as_ref()
-                    .ok_or(Error::internal("missing Cr quant table"))?;
+                let quant = quant_cr;
 
                 for iy in 0..info.v_samp {
                     let by = imcu_row * info.v_samp + iy;

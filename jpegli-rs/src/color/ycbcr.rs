@@ -925,6 +925,7 @@ fn ycbcr_to_rgb_i16_x16_scalar(
         rgb[idx + 1] = g.clamp(0, 255) as u8;
         rgb[idx + 2] = b.clamp(0, 255) as u8;
     }
+
     *offset += 48;
 }
 
@@ -1092,6 +1093,57 @@ unsafe fn ycbcr_to_rgb_i16_x16_avx2(
     *offset += 48;
 }
 
+/// Autovectorized YCbCr to separate R, G, B planes.
+///
+/// This function is decorated with `#[multiversion]` to generate optimized versions
+/// for different SIMD instruction sets (AVX2, SSE4.1, NEON) with runtime dispatch.
+/// Writing to separate planes allows better autovectorization than interleaved output.
+#[multiversion::multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+fn ycbcr_to_rgb_planes_autovec(
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    r_out: &mut [u8],
+    g_out: &mut [u8],
+    b_out: &mut [u8],
+) {
+    let len = y_plane.len();
+
+    for i in 0..len {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
+
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+
+        let r_raw = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+        let g_raw = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+        let b_raw = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+
+        // Clamp to [0, 255]
+        r_out[i] = r_raw.max(0).min(255) as u8;
+        g_out[i] = g_raw.max(0).min(255) as u8;
+        b_out[i] = b_raw.max(0).min(255) as u8;
+    }
+}
+
+/// Interleave R, G, B planes into RGB buffer.
+#[multiversion::multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+fn interleave_rgb_planes(
+    r: &[u8],
+    g: &[u8],
+    b: &[u8],
+    rgb: &mut [u8],
+) {
+    let len = r.len();
+    for i in 0..len {
+        let out_idx = i * 3;
+        rgb[out_idx] = r[i];
+        rgb[out_idx + 1] = g[i];
+        rgb[out_idx + 2] = b[i];
+    }
+}
+
 /// Batch convert i16 YCbCr planes to interleaved RGB u8.
 ///
 /// This is the fast path for standard JPEG decoding, avoiding f32 entirely.
@@ -1106,39 +1158,19 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     debug_assert_eq!(y_plane.len(), cr_plane.len());
     debug_assert_eq!(rgb.len(), y_plane.len() * 3);
 
-    let mut offset = 0;
+    let len = y_plane.len();
 
-    // Process 16 pixels at a time using chunks
-    let chunk_count = y_plane.len() / 16;
+    // Allocate temporary planes for R, G, B
+    // This allows autovectorization of the conversion step
+    let mut r_plane = vec![0u8; len];
+    let mut g_plane = vec![0u8; len];
+    let mut b_plane = vec![0u8; len];
 
-    for chunk_idx in 0..chunk_count {
-        let start = chunk_idx * 16;
-        // SAFETY: We know start..start+16 is in bounds since chunk_idx < chunk_count
-        let y_chunk: &[i16; 16] = y_plane[start..start + 16].try_into().unwrap();
-        let cb_chunk: &[i16; 16] = cb_plane[start..start + 16].try_into().unwrap();
-        let cr_chunk: &[i16; 16] = cr_plane[start..start + 16].try_into().unwrap();
-        ycbcr_to_rgb_i16_x16(y_chunk, cb_chunk, cr_chunk, rgb, &mut offset);
-    }
+    // Convert YCbCr to separate R, G, B planes (autovectorized)
+    ycbcr_to_rgb_planes_autovec(y_plane, cb_plane, cr_plane, &mut r_plane, &mut g_plane, &mut b_plane);
 
-    // Handle remaining pixels
-    let remaining_start = chunk_count * 16;
-    for i in remaining_start..y_plane.len() {
-        let y_val = i32::from(y_plane[i]);
-        let cb_val = i32::from(cb_plane[i]) - 128;
-        let cr_val = i32::from(cr_plane[i]) - 128;
-
-        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
-
-        let r = ((y_scaled + cr_val * CR_TO_R_INT) >> 14).clamp(0, 255) as u8;
-        let g =
-            ((y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14).clamp(0, 255) as u8;
-        let b = ((y_scaled + cb_val * CB_TO_B_INT) >> 14).clamp(0, 255) as u8;
-
-        rgb[offset] = r;
-        rgb[offset + 1] = g;
-        rgb[offset + 2] = b;
-        offset += 3;
-    }
+    // Interleave R, G, B into RGB output (autovectorized)
+    interleave_rgb_planes(&r_plane, &g_plane, &b_plane, rgb);
 }
 
 #[cfg(test)]
