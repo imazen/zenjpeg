@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
