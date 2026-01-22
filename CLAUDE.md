@@ -449,38 +449,56 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 
 ## Investigation Notes
 
-### AQ Map Comparison (2026-01-22) - RESOLVED
+### DCT Coefficient Parity (2026-01-22) - VERIFIED
 
-**CRITICAL FINDING: AQ maps are 100% identical between Rust and C++ FFI.**
+**CRITICAL: Use `jpegli_set_distance()`, NOT `jpeg_set_quality()` for C++ parity testing.**
 
-Previous analysis incorrectly compared CLI cjpegli (distance-based quality) with Rust (libjpeg quality),
-producing spurious 4.5% difference. With proper FFI comparison using same quant tables, AQ maps match exactly.
+The two functions use different quant table configurations:
+- `jpeg_set_quality()`: 2 chroma tables (`add_two_chroma_tables=false`) - Cr used for both Cb and Cr
+- `jpegli_set_distance()`: 3 tables (`add_two_chroma_tables=true`) - separate Y, Cb, Cr tables
+
+Rust always uses 3 tables, so only `jpegli_set_distance()` produces valid comparisons.
 
 **Tools added:**
-- C++: `DUMP_AQ_MAP=/path/to/file.bin cjpegli ...` dumps AQ map after encoding
-- Rust: `DUMP_AQ_MAP=/path/to/file.bin` env var triggers dump in `StreamingAQ::finalize()` or `flush_into()`
-- Example: `cargo run --release --example compare_aq_maps -- cpp.bin rust.bin`
+- `jpegli_set_distance` FFI binding in `jpegli-internals-sys`
+- `EncoderConfig::distance(f32)` in `jpegli-bench-utils` for distance-based encoding
+- `cargo run --release --example compare_dct_coefficients` - DCT coefficient comparison
+- `cargo run --release --example coeff_synthetic_test` - Solid color coefficient test
 
-**CLI vs FFI quality discrepancy:**
+**Verified parity (distance=1.0, kodak/1.png 768x512):**
+```
+Quantization Tables:
+  Table 0: DC rust=3, cpp=3 (MATCH)
+  Table 1: DC rust=2, cpp=2 (MATCH)
+  Table 2: DC rust=3, cpp=3 (MATCH)
 
-| Method | C++ Size | Rust Size | Diff | Valid? |
-|--------|----------|-----------|------|--------|
-| CLI cjpegli -q 75 | 362KB | 308KB | -15% | ❌ Invalid |
-| FFI jpeg_set_quality(75) | 305KB | 300KB | **-1.7%** | ✅ Valid |
+Rust JPEG: 130,270 bytes
+C++  JPEG: 130,506 bytes
+Size diff: -0.18%
+```
 
-CLI `-q 75` remaps to distance=2.35 via `jpegli_quality_to_distance()`, producing different quant tables
-than FFI's `jpeg_set_quality(75)`. Only FFI comparison is valid.
+**Coefficient differences are normal ±1 rounding, not systematic bugs:**
+- 80% of Y blocks differ by ±1 in 1-3 AC coefficients
+- Max difference: 6 (single outlier block)
+- Cb/Cr: 27-37% blocks differ, all by ±1
 
-**Verified AQ parity** (FFI mode, flower.png 2268x1512, q75):
+### AQ Map Comparison (2026-01-22) - RESOLVED
+
+**AQ maps are 100% identical between Rust and C++ FFI when using matching quant tables.**
+
+Previous analysis using `jpeg_set_quality()` showed spurious differences because
+the quant tables didn't match (2 vs 3 tables). With `jpegli_set_distance()`, AQ maps match exactly.
+
+**Verified AQ parity** (FFI mode with distance, flower.png 2268x1512):
 ```
 Mean difference:     0.000000
 Mean |difference|:   0.000000
 All 53,676 blocks:   0% difference
 ```
 
-**File size difference source** (~2% Rust smaller, ~5% worse DSSIM):
+**Remaining ~0.2% size difference source:**
 - AQ is identical → same quantization tables
-- Difference must be in zero-bias implementation or quantization rounding
+- Difference is in DCT rounding (±1 coefficient differences)
 - Both use optimized Huffman (verified: `optimize_coding = 1` in FFI)
 - Butteraugli quality within 1% (essentially identical perceptual quality)
 
