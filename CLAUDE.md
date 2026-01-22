@@ -197,14 +197,26 @@ Use the FFI benchmark above for accurate library-to-library comparison.
 
 ### Summary
 
-Rust is consistently **1.55x slower** than C++ jpegli (FFI benchmark, 512x512):
+Rust is consistently **1.5x slower** than C++ jpegli (FFI benchmark, 512x512).
+
+**Fair comparison (both at `-C target-cpu=native`):**
 
 | Quality | Rust | C++ FFI | Ratio |
 |---------|------|---------|-------|
-| q50 | 2.32ms | 1.50ms | 1.55x |
-| q75 | 2.41ms | 1.55ms | 1.56x |
-| q90 | 2.78ms | 1.76ms | 1.58x |
-| q95 | 3.01ms | 1.98ms | 1.52x |
+| q50 | 2.14ms | 1.40ms | 1.53x |
+| q75 | 2.26ms | 1.48ms | 1.53x |
+| q90 | 2.50ms | 1.70ms | 1.47x |
+| q95 | 2.90ms | 1.90ms | 1.53x |
+
+**Without native (Rust SSE2 only, C++ uses Highway runtime dispatch):**
+
+| Quality | Rust | C++ FFI | Ratio |
+|---------|------|---------|-------|
+| q50 | 2.32ms | 1.49ms | 1.56x |
+| q75 | 2.41ms | 1.54ms | 1.56x |
+
+Note: C++ times are similar because Highway uses runtime SIMD dispatch regardless of
+compile flags. The `wide` crate uses compile-time `cfg(target_feature)` checks.
 
 ### Allocation Optimization (2026-01-21)
 
