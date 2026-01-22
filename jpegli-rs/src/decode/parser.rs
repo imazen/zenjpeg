@@ -1379,6 +1379,51 @@ impl<'a> JpegParser<'a> {
         true
     }
 
+    /// Check if we can use the fast i16 path for subsampled images (4:2:0, 4:2:2, 4:4:0).
+    ///
+    /// Fast path requirements:
+    /// - Non-XYB (standard JPEG)
+    /// - RGB output format
+    /// - 3 components (YCbCr)
+    /// - Standard subsampling (Y full-res, Cb/Cr subsampled)
+    fn can_use_fast_i16_subsampled(&self, format: PixelFormat, is_xyb: bool) -> bool {
+        if is_xyb {
+            return false;
+        }
+        if format != PixelFormat::Rgb {
+            return false;
+        }
+        if self.num_components != 3 {
+            return false;
+        }
+
+        // Y component should have the highest sampling factors
+        let y_h = self.components[0].h_samp_factor;
+        let y_v = self.components[0].v_samp_factor;
+
+        // Cb and Cr should have <= Y sampling
+        let cb_h = self.components[1].h_samp_factor;
+        let cb_v = self.components[1].v_samp_factor;
+        let cr_h = self.components[2].h_samp_factor;
+        let cr_v = self.components[2].v_samp_factor;
+
+        // Cb and Cr must match each other
+        if cb_h != cr_h || cb_v != cr_v {
+            return false;
+        }
+
+        // Chroma must be subsampled (not 4:4:4, that uses the other path)
+        if cb_h == y_h && cb_v == y_v {
+            return false;
+        }
+
+        // Only support standard ratios: 2x1 (4:2:2), 1x2 (4:4:0), 2x2 (4:2:0)
+        let h_ratio = y_h / cb_h;
+        let v_ratio = y_v / cb_v;
+
+        matches!((h_ratio, v_ratio), (2, 1) | (1, 2) | (2, 2))
+    }
+
     /// Fast decode path using integer arithmetic throughout.
     ///
     /// This path avoids f32 entirely by using:
@@ -1492,6 +1537,316 @@ impl<'a> JpegParser<'a> {
         Ok(rgb)
     }
 
+    /// Fast decode path for subsampled images (4:2:0, 4:2:2, 4:4:0) using i16 throughout.
+    ///
+    /// This path avoids f32 entirely by using:
+    /// - Integer IDCT (outputs i16 [0, 255])
+    /// - Integer upsampling (i16 → i16)
+    /// - Integer color conversion (i16 YCbCr → u8 RGB)
+    fn to_pixels_fast_i16_subsampled(&self, fancy_upsampling: bool) -> Result<Vec<u8>> {
+        use crate::decode::upsample::{
+            upsample_h1v2_i16_fancy, upsample_h2v1_i16_fancy, upsample_h2v2_i16_fancy,
+        };
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        // Get sampling factors
+        let y_h = self.components[0].h_samp_factor as usize;
+        let y_v = self.components[0].v_samp_factor as usize;
+        let c_h = self.components[1].h_samp_factor as usize;
+        let c_v = self.components[1].v_samp_factor as usize;
+
+        let h_ratio = y_h / c_h;
+        let v_ratio = y_v / c_v;
+
+        // MCU dimensions
+        let mcu_width = y_h * 8;
+        let mcu_height = y_v * 8;
+        let mcu_cols = (width + mcu_width - 1) / mcu_width;
+        let mcu_rows = (height + mcu_height - 1) / mcu_height;
+
+        // Component info
+        let comp_infos = self.build_comp_infos(mcu_cols, mcu_rows, y_h, y_v, 3)?;
+
+        // Allocate strip buffers for one MCU row
+        let y_strip_height = y_v * 8;
+        let y_strip_width = comp_infos[0].comp_width;
+        let y_strip_size = y_strip_width * y_strip_height;
+
+        let c_strip_height = c_v * 8;
+        let c_strip_width = comp_infos[1].comp_width;
+        let c_strip_size = c_strip_width * c_strip_height;
+
+        // Y strip at full resolution
+        let mut y_strip: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
+        // Chroma strips at subsampled resolution
+        let mut cb_strip_sub: Vec<i16> = try_alloc_maybeuninit(c_strip_size, "Cb strip buffer")?;
+        let mut cr_strip_sub: Vec<i16> = try_alloc_maybeuninit(c_strip_size, "Cr strip buffer")?;
+        // Upsampled chroma strips
+        let mut cb_strip: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Cb upsampled buffer")?;
+        let mut cr_strip: Vec<i16> = try_alloc_maybeuninit(y_strip_size, "Cr upsampled buffer")?;
+
+        // Allocate output RGB buffer
+        let rgb_size = checked_size_2d(width, height).and_then(|s| checked_size_2d(s, 3))?;
+        let mut rgb: Vec<u8> = try_alloc_maybeuninit(rgb_size, "RGB output buffer")?;
+
+        // Process MCU row by row
+        for imcu_row in 0..mcu_rows {
+            // IDCT Y blocks (full resolution)
+            {
+                let info = &comp_infos[0];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing Y quant table"))?;
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+                    let strip_row = iy * DCT_SIZE;
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[0].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[0][block_idx];
+                        let coeff_count = self.coeff_counts[0][block_idx];
+
+                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let base_px = bx * DCT_SIZE;
+                        let dst_offset = strip_row * y_strip_width + base_px;
+                        idct_int_tiered(
+                            &mut dequant_i32,
+                            &mut y_strip[dst_offset..],
+                            y_strip_width,
+                            coeff_count,
+                        );
+                    }
+                }
+            }
+
+            // IDCT Cb blocks (subsampled)
+            {
+                let info = &comp_infos[1];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing Cb quant table"))?;
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+                    let strip_row = iy * DCT_SIZE;
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[1].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[1][block_idx];
+                        let coeff_count = self.coeff_counts[1][block_idx];
+
+                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let base_px = bx * DCT_SIZE;
+                        let dst_offset = strip_row * c_strip_width + base_px;
+                        idct_int_tiered(
+                            &mut dequant_i32,
+                            &mut cb_strip_sub[dst_offset..],
+                            c_strip_width,
+                            coeff_count,
+                        );
+                    }
+                }
+            }
+
+            // IDCT Cr blocks (subsampled)
+            {
+                let info = &comp_infos[2];
+                let quant = self.quant_tables[info.quant_idx]
+                    .as_ref()
+                    .ok_or(Error::internal("missing Cr quant table"))?;
+
+                for iy in 0..info.v_samp {
+                    let by = imcu_row * info.v_samp + iy;
+                    if by >= info.comp_blocks_v {
+                        continue;
+                    }
+                    let strip_row = iy * DCT_SIZE;
+
+                    for bx in 0..info.comp_blocks_h {
+                        let block_idx = by * info.comp_blocks_h + bx;
+                        if block_idx >= self.coeffs[2].len() {
+                            continue;
+                        }
+                        let coeffs = &self.coeffs[2][block_idx];
+                        let coeff_count = self.coeff_counts[2][block_idx];
+
+                        let mut dequant_i32 = dequantize_unzigzag_i32(coeffs, quant);
+                        let base_px = bx * DCT_SIZE;
+                        let dst_offset = strip_row * c_strip_width + base_px;
+                        idct_int_tiered(
+                            &mut dequant_i32,
+                            &mut cr_strip_sub[dst_offset..],
+                            c_strip_width,
+                            coeff_count,
+                        );
+                    }
+                }
+            }
+
+            // Upsample chroma to match Y resolution
+            let y_rows_this_mcu = y_strip_height.min(height.saturating_sub(imcu_row * mcu_height));
+            let y_cols_this_mcu = width.min(y_strip_width);
+            let c_rows_this_mcu = c_strip_height.min(
+                (height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio,
+            );
+            let c_cols_this_mcu = (y_cols_this_mcu + h_ratio - 1) / h_ratio;
+
+            if fancy_upsampling {
+                match (h_ratio, v_ratio) {
+                    (2, 2) => {
+                        upsample_h2v2_i16_fancy(
+                            &cb_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cb_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                        upsample_h2v2_i16_fancy(
+                            &cr_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cr_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                    }
+                    (2, 1) => {
+                        upsample_h2v1_i16_fancy(
+                            &cb_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cb_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                        upsample_h2v1_i16_fancy(
+                            &cr_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cr_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                    }
+                    (1, 2) => {
+                        upsample_h1v2_i16_fancy(
+                            &cb_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cb_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                        upsample_h1v2_i16_fancy(
+                            &cr_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cr_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                    }
+                    _ => unreachable!("unsupported ratio should be filtered by can_use_fast_i16_subsampled"),
+                }
+            } else {
+                // Box filter (simple pixel duplication)
+                use crate::decode::upsample::upsample_h2v2_i16_box;
+                // Only 4:2:0 has a box filter implementation; others use fancy even without flag
+                if h_ratio == 2 && v_ratio == 2 {
+                    upsample_h2v2_i16_box(
+                        &cb_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cb_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                    upsample_h2v2_i16_box(
+                        &cr_strip_sub,
+                        c_strip_width,
+                        c_rows_this_mcu,
+                        &mut cr_strip,
+                        y_strip_width,
+                        y_rows_this_mcu,
+                    );
+                } else {
+                    // Fall back to fancy for 4:2:2 and 4:4:0
+                    match (h_ratio, v_ratio) {
+                        (2, 1) => {
+                            upsample_h2v1_i16_fancy(
+                                &cb_strip_sub,
+                                c_strip_width,
+                                c_rows_this_mcu,
+                                &mut cb_strip,
+                                y_strip_width,
+                                y_rows_this_mcu,
+                            );
+                            upsample_h2v1_i16_fancy(
+                                &cr_strip_sub,
+                                c_strip_width,
+                                c_rows_this_mcu,
+                                &mut cr_strip,
+                                y_strip_width,
+                                y_rows_this_mcu,
+                            );
+                        }
+                        (1, 2) => {
+                            upsample_h1v2_i16_fancy(
+                                &cb_strip_sub,
+                                c_strip_width,
+                                c_rows_this_mcu,
+                                &mut cb_strip,
+                                y_strip_width,
+                                y_rows_this_mcu,
+                            );
+                            upsample_h1v2_i16_fancy(
+                                &cr_strip_sub,
+                                c_strip_width,
+                                c_rows_this_mcu,
+                                &mut cr_strip,
+                                y_strip_width,
+                                y_rows_this_mcu,
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+
+            // Color convert and write to output
+            let y_start = imcu_row * mcu_height;
+            for row in 0..y_rows_this_mcu {
+                let strip_offset = row * y_strip_width;
+                let rgb_offset = (y_start + row) * width * 3;
+
+                ycbcr_planes_i16_to_rgb_u8(
+                    &y_strip[strip_offset..strip_offset + y_cols_this_mcu],
+                    &cb_strip[strip_offset..strip_offset + y_cols_this_mcu],
+                    &cr_strip[strip_offset..strip_offset + y_cols_this_mcu],
+                    &mut rgb[rgb_offset..rgb_offset + y_cols_this_mcu * 3],
+                );
+            }
+        }
+
+        Ok(rgb)
+    }
+
     #[allow(clippy::wrong_self_convention)] // Takes &mut self to take() internal buffer
     pub(super) fn to_pixels(
         &mut self,
@@ -1513,6 +1868,11 @@ impl<'a> JpegParser<'a> {
         // Try fast integer path for non-XYB 4:4:4 RGB images
         if self.can_use_fast_i16_path(format, is_xyb) {
             return self.to_pixels_fast_i16(fancy_upsampling);
+        }
+
+        // Try fast integer path for subsampled images (4:2:0, 4:2:2, 4:4:0)
+        if self.can_use_fast_i16_subsampled(format, is_xyb) {
+            return self.to_pixels_fast_i16_subsampled(fancy_upsampling);
         }
 
         let width = self.width as usize;
