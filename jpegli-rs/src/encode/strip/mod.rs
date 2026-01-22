@@ -257,6 +257,17 @@ pub struct StripProcessor {
     /// Obtained once at construction, reused for all blocks.
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     simd_token: Option<crate::encode::mage_simd::Desktop64>,
+
+    // === Reusable u8 buffers for yuv crate (yuv feature) ===
+    /// Temporary Y buffer for yuv crate conversion (avoids per-strip allocation)
+    #[cfg(feature = "yuv")]
+    yuv_temp_y: Vec<u8>,
+    /// Temporary Cb buffer for yuv crate conversion
+    #[cfg(feature = "yuv")]
+    yuv_temp_cb: Vec<u8>,
+    /// Temporary Cr buffer for yuv crate conversion
+    #[cfg(feature = "yuv")]
+    yuv_temp_cr: Vec<u8>,
 }
 
 impl StripProcessor {
@@ -535,6 +546,27 @@ impl StripProcessor {
             simd_token: {
                 use archmage::SimdToken;
                 crate::encode::mage_simd::Desktop64::summon()
+            },
+
+            // Reusable u8 buffers for yuv crate (one strip worth of pixels)
+            // Allocated once, reused for each strip to avoid per-strip allocation
+            #[cfg(feature = "yuv")]
+            yuv_temp_y: if is_color {
+                vec![0u8; padded_width * strip_height]
+            } else {
+                Vec::new()
+            },
+            #[cfg(feature = "yuv")]
+            yuv_temp_cb: if is_color {
+                vec![0u8; padded_width * strip_height]
+            } else {
+                Vec::new()
+            },
+            #[cfg(feature = "yuv")]
+            yuv_temp_cr: if is_color {
+                vec![0u8; padded_width * strip_height]
+            } else {
+                Vec::new()
             },
         })
     }

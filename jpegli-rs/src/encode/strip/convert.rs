@@ -189,29 +189,69 @@ impl StripProcessor {
         match self.pixel_format {
             PixelFormat::Rgb | PixelFormat::Rgba => {
                 let bpp = self.pixel_format.bytes_per_pixel();
-                crate::encode_simd::rgb_to_ycbcr_strided_inplace(
-                    rgb_strip,
-                    &mut self.y_strip[..y_size],
-                    &mut self.cb_strip[..num_pixels],
-                    &mut self.cr_strip[..num_pixels],
-                    width,
-                    strip_height,
-                    padded_width,
-                    bpp,
-                );
+                // Use reuse version with pre-allocated buffers when yuv feature is enabled
+                #[cfg(feature = "yuv")]
+                {
+                    crate::encode_simd::rgb_to_ycbcr_strided_reuse(
+                        rgb_strip,
+                        &mut self.y_strip[..y_size],
+                        &mut self.cb_strip[..num_pixels],
+                        &mut self.cr_strip[..num_pixels],
+                        &mut self.yuv_temp_y[..num_pixels],
+                        &mut self.yuv_temp_cb[..num_pixels],
+                        &mut self.yuv_temp_cr[..num_pixels],
+                        width,
+                        strip_height,
+                        padded_width,
+                        bpp,
+                    );
+                }
+                #[cfg(not(feature = "yuv"))]
+                {
+                    crate::encode_simd::rgb_to_ycbcr_strided_inplace(
+                        rgb_strip,
+                        &mut self.y_strip[..y_size],
+                        &mut self.cb_strip[..num_pixels],
+                        &mut self.cr_strip[..num_pixels],
+                        width,
+                        strip_height,
+                        padded_width,
+                        bpp,
+                    );
+                }
             }
             PixelFormat::Bgr | PixelFormat::Bgra => {
                 let bpp = self.pixel_format.bytes_per_pixel();
-                crate::encode_simd::bgr_to_ycbcr_strided_inplace(
-                    rgb_strip,
-                    &mut self.y_strip[..y_size],
-                    &mut self.cb_strip[..num_pixels],
-                    &mut self.cr_strip[..num_pixels],
-                    width,
-                    strip_height,
-                    padded_width,
-                    bpp,
-                );
+                // Use reuse version with pre-allocated buffers when yuv feature is enabled
+                #[cfg(feature = "yuv")]
+                {
+                    crate::encode_simd::bgr_to_ycbcr_strided_reuse(
+                        rgb_strip,
+                        &mut self.y_strip[..y_size],
+                        &mut self.cb_strip[..num_pixels],
+                        &mut self.cr_strip[..num_pixels],
+                        &mut self.yuv_temp_y[..num_pixels],
+                        &mut self.yuv_temp_cb[..num_pixels],
+                        &mut self.yuv_temp_cr[..num_pixels],
+                        width,
+                        strip_height,
+                        padded_width,
+                        bpp,
+                    );
+                }
+                #[cfg(not(feature = "yuv"))]
+                {
+                    crate::encode_simd::bgr_to_ycbcr_strided_inplace(
+                        rgb_strip,
+                        &mut self.y_strip[..y_size],
+                        &mut self.cb_strip[..num_pixels],
+                        &mut self.cr_strip[..num_pixels],
+                        width,
+                        strip_height,
+                        padded_width,
+                        bpp,
+                    );
+                }
             }
             PixelFormat::Gray => {
                 // Grayscale: write Y with strided layout directly
