@@ -455,13 +455,20 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 
 ### DCT Coefficient Parity (2026-01-22) - VERIFIED
 
-**CRITICAL: Use `jpegli_set_distance()`, NOT `jpeg_set_quality()` for C++ parity testing.**
+**Rust now supports both 2-table and 3-table modes via `separate_chroma_tables` flag.**
 
-The two functions use different quant table configurations:
-- `jpeg_set_quality()`: 2 chroma tables (`add_two_chroma_tables=false`) - Cr used for both Cb and Cr
+The two C++ functions use different quant table configurations:
+- `jpeg_set_quality()`: 2 chroma tables (`add_two_chroma_tables=false`) - Cr matrix used for both Cb and Cr
 - `jpegli_set_distance()`: 3 tables (`add_two_chroma_tables=true`) - separate Y, Cb, Cr tables
 
-Rust always uses 3 tables, so only `jpegli_set_distance()` produces valid comparisons.
+Rust configuration:
+- `separate_chroma_tables(true)` (default): 3 tables, matches `jpegli_set_distance()`
+- `separate_chroma_tables(false)`: 2 tables, matches `jpeg_set_quality()`
+
+**Root cause of ±1 coefficient differences:**
+- Highway (C++) uses round-to-nearest-**even** (banker's rounding)
+- Rust uses round-to-nearest-**ties-away-from-zero**
+- Different DCT SIMD implementations (Highway vs wide crate) produce slightly different floating-point intermediates
 
 **Tools added:**
 - `jpegli_set_distance` FFI binding in `jpegli-internals-sys`
