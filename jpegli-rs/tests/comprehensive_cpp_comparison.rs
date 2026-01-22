@@ -1,10 +1,13 @@
 //! Comprehensive comparison of Rust vs C++ jpegli across corpora.
 //!
-//! Measures: timing, file size, DSSIM, butteraugli at quality levels 2, 4, 6, ..., 100
+//! Measures: timing, file size, DSSIM, butteraugli at distance levels.
 //!
 //! Uses FFI to call C++ jpegli directly (no subprocess overhead).
+//!
+//! IMPORTANT: Uses `jpegli_set_distance()` for C++ (not `jpeg_set_quality()`)
+//! to ensure matching quant table configuration (3 tables for both).
 
-use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 use jpegli_bench_utils::{
     ChromaSubsampling as BenchChromaSubsampling, ColorMode, EncoderConfig as BenchEncoderConfig,
     EncoderImpl, ImageData, ScanMode,
@@ -13,21 +16,36 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
+/// Convert quality (0-100) to butteraugli distance.
+/// Same formula as C++ jpegli_quality_to_distance.
+fn quality_to_distance(q: f32) -> f32 {
+    if q >= 100.0 {
+        0.01
+    } else if q >= 30.0 {
+        0.1 + (100.0 - q) * 0.09
+    } else {
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
+    }
+}
+
 fn encode_rust_progressive(
     width: u32,
     height: u32,
     data: &[u8],
-    quality: f32,
+    distance: f32,
 ) -> jpegli::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter) // 4:2:0 to match C++
-        .progressive(true)
-        .optimize_huffman(true);
+    let config = EncoderConfig::ycbcr(
+        Quality::ApproxButteraugli(distance),
+        ChromaSubsampling::Quarter,
+    )
+    .progressive(true)
+    .optimize_huffman(true);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
-fn encode_cpp_ffi_progressive(width: u32, height: u32, data: &[u8], quality: u8) -> Vec<u8> {
+fn encode_cpp_ffi_progressive(width: u32, height: u32, data: &[u8], distance: f32) -> Vec<u8> {
     let img = ImageData {
         name: "test".to_string(),
         pixels: data.to_vec(),
@@ -38,7 +56,7 @@ fn encode_cpp_ffi_progressive(width: u32, height: u32, data: &[u8], quality: u8)
         .color(ColorMode::YCbCr)
         .scan(ScanMode::Progressive)
         .subsampling(BenchChromaSubsampling::S420)
-        .quality(quality)
+        .distance(distance) // Use distance for 3-table parity
         .encode(&img)
         .expect("C++ jpegli FFI encode failed")
 }
@@ -100,6 +118,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 #[allow(dead_code)] // Fields used in Debug output and extended reporting
 struct ComparisonResult {
     quality: u8,
+    distance: f32,
     rust_size: usize,
     cpp_size: usize,
     rust_time_ms: f64,
@@ -111,9 +130,12 @@ struct ComparisonResult {
 }
 
 fn compare_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<ComparisonResult> {
+    // Convert quality to distance for both encoders
+    let distance = quality_to_distance(quality as f32);
+
     // Rust encoding with timing
     let rust_start = Instant::now();
-    let rust_jpeg = encode_rust_progressive(width, height, rgb, quality as f32).ok()?;
+    let rust_jpeg = encode_rust_progressive(width, height, rgb, distance).ok()?;
     let rust_time_ms = rust_start.elapsed().as_secs_f64() * 1000.0;
     let rust_size = rust_jpeg.len();
 
@@ -133,9 +155,9 @@ fn compare_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<Com
     .expect("butteraugli")
     .score;
 
-    // C++ encoding via FFI with timing
+    // C++ encoding via FFI with timing (using same distance)
     let cpp_start = Instant::now();
-    let cpp_jpeg = encode_cpp_ffi_progressive(width, height, rgb, quality);
+    let cpp_jpeg = encode_cpp_ffi_progressive(width, height, rgb, distance);
     let cpp_time_ms = cpp_start.elapsed().as_secs_f64() * 1000.0;
     let cpp_size = cpp_jpeg.len();
 
@@ -156,6 +178,7 @@ fn compare_image(rgb: &[u8], width: u32, height: u32, quality: u8) -> Option<Com
 
     Some(ComparisonResult {
         quality,
+        distance,
         rust_size,
         cpp_size,
         rust_time_ms,

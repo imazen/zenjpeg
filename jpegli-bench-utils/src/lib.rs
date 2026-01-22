@@ -1544,18 +1544,25 @@ impl EncoderConfig {
     }
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
-        use jpegli::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
+        use jpegli::encoder::{EncoderConfig, PixelLayout, Quality, XybSubsampling};
 
         #[cfg(not(feature = "experimental-hybrid-trellis"))]
         if self.hybrid {
             return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
         }
 
+        // Use distance if set, otherwise quality
+        let quality: Quality = if let Some(d) = self.distance {
+            Quality::ApproxButteraugli(d)
+        } else {
+            Quality::ApproxJpegli(self.quality as f32)
+        };
+
         // Create config based on color mode
         let config = if self.color == ColorMode::Xyb {
-            EncoderConfig::xyb(self.quality as f32, XybSubsampling::BQuarter)
+            EncoderConfig::xyb(quality, XybSubsampling::BQuarter)
         } else {
-            EncoderConfig::ycbcr(self.quality as f32, self.subsampling.to_v2())
+            EncoderConfig::ycbcr(quality, self.subsampling.to_v2())
         }
         .progressive(self.scan == ScanMode::Progressive);
 

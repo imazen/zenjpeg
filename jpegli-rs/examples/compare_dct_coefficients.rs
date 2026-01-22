@@ -41,10 +41,19 @@ fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
 }
 
 /// Encode using Rust jpegli with Butteraugli distance.
-fn encode_rust(pixels: &[u8], width: u32, height: u32, distance: f32, progressive: bool) -> Vec<u8> {
-    let config = EncoderConfig::ycbcr(Quality::ApproxButteraugli(distance), ChromaSubsampling::Quarter)
-        .progressive(progressive)
-        .optimize_huffman(true);
+fn encode_rust(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    distance: f32,
+    progressive: bool,
+) -> Vec<u8> {
+    let config = EncoderConfig::ycbcr(
+        Quality::ApproxButteraugli(distance),
+        ChromaSubsampling::Quarter,
+    )
+    .progressive(progressive)
+    .optimize_huffman(true);
     let mut encoder = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder creation failed");
@@ -59,7 +68,13 @@ fn encode_rust(pixels: &[u8], width: u32, height: u32, distance: f32, progressiv
 /// Uses `jpegli_set_distance` which sets `add_two_chroma_tables=true` (3 tables),
 /// matching Rust's behavior. This is different from `jpeg_set_quality` which
 /// uses 2 chroma tables (Cr shared for both Cb and Cr).
-fn encode_cpp_ffi(pixels: &[u8], width: u32, height: u32, distance: f32, progressive: bool) -> Vec<u8> {
+fn encode_cpp_ffi(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    distance: f32,
+    progressive: bool,
+) -> Vec<u8> {
     let img = ImageData {
         name: "test".to_string(),
         pixels: pixels.to_vec(),
@@ -75,7 +90,7 @@ fn encode_cpp_ffi(pixels: &[u8], width: u32, height: u32, distance: f32, progres
         .color(ColorMode::YCbCr)
         .scan(scan_mode)
         .subsampling(BenchChromaSubsampling::S420)
-        .distance(distance)  // Use distance, not quality!
+        .distance(distance) // Use distance, not quality!
         .encode(&img)
         .expect("C++ jpegli FFI encode failed")
 }
@@ -109,7 +124,12 @@ fn main() {
 
     // Load source image
     let (pixels, width, height) = load_test_image(&src_path);
-    println!("Loaded {}x{} image ({} bytes RGB)", width, height, pixels.len());
+    println!(
+        "Loaded {}x{} image ({} bytes RGB)",
+        width,
+        height,
+        pixels.len()
+    );
 
     // Encode with both encoders using identical distance settings
     let rust_jpeg = encode_rust(&pixels, width, height, distance, progressive);
@@ -135,7 +155,10 @@ fn main() {
     // Print quant tables for verification
     println!("=== Quantization Tables ===");
     for i in 0..4 {
-        match (&rust_coeffs.quant_tables.get(i), &cpp_coeffs.quant_tables.get(i)) {
+        match (
+            &rust_coeffs.quant_tables.get(i),
+            &cpp_coeffs.quant_tables.get(i),
+        ) {
             (Some(Some(rq)), Some(Some(cq))) => {
                 let dc_match = rq[0] == cq[0];
                 println!(
@@ -179,7 +202,10 @@ fn main() {
         comparison.diff_block_pct()
     );
     println!("Max absolute difference: {}", comparison.max_diff);
-    println!("Total differing coefficients: {}", comparison.total_diff_coeffs);
+    println!(
+        "Total differing coefficients: {}",
+        comparison.total_diff_coeffs
+    );
     println!(
         "DC coefficients differing: {} ({:.2}%)",
         comparison.diff_by_position[0],
@@ -214,7 +240,11 @@ fn main() {
     println!("=== Blocks with Largest Differences ===");
     let mut max_diff_blocks: Vec<(usize, usize, usize, usize, i16, i16)> = Vec::new(); // (comp, bx, by, pos, rust, cpp)
 
-    for comp_idx in 0..rust_coeffs.components.len().min(cpp_coeffs.components.len()) {
+    for comp_idx in 0..rust_coeffs
+        .components
+        .len()
+        .min(cpp_coeffs.components.len())
+    {
         let rc = &rust_coeffs.components[comp_idx];
         let cc = &cpp_coeffs.components[comp_idx];
         let num_blocks = rc.num_blocks().min(cc.num_blocks());
@@ -227,7 +257,8 @@ fn main() {
 
             for i in 0..64 {
                 let diff = (rb[i] as i32 - cb[i] as i32).abs() as i16;
-                if diff >= 3 {  // Show blocks with diff >= 3
+                if diff >= 3 {
+                    // Show blocks with diff >= 3
                     max_diff_blocks.push((comp_idx, bx, by, i, rb[i], cb[i]));
                 }
             }
@@ -259,7 +290,11 @@ fn main() {
     // Detailed analysis of first few differing blocks
     println!("=== First 10 Differing Blocks (detailed) ===");
     let mut shown = 0;
-    'outer: for comp_idx in 0..rust_coeffs.components.len().min(cpp_coeffs.components.len()) {
+    'outer: for comp_idx in 0..rust_coeffs
+        .components
+        .len()
+        .min(cpp_coeffs.components.len())
+    {
         let rc = &rust_coeffs.components[comp_idx];
         let cc = &cpp_coeffs.components[comp_idx];
         let num_blocks = rc.num_blocks().min(cc.num_blocks());
@@ -281,7 +316,9 @@ fn main() {
                 let by = block_idx / rc.blocks_wide;
                 println!(
                     "Block (comp={}, x={}, y={}) - {} differences:",
-                    comp_idx, bx, by,
+                    comp_idx,
+                    bx,
+                    by,
                     diffs.len()
                 );
                 for (pos, rust_val, cpp_val) in diffs.iter().take(5) {
@@ -309,7 +346,11 @@ fn main() {
 
     // Analyze per-component statistics
     println!("=== Per-Component Analysis ===");
-    for comp_idx in 0..rust_coeffs.components.len().min(cpp_coeffs.components.len()) {
+    for comp_idx in 0..rust_coeffs
+        .components
+        .len()
+        .min(cpp_coeffs.components.len())
+    {
         let rc = &rust_coeffs.components[comp_idx];
         let cc = &cpp_coeffs.components[comp_idx];
         let num_blocks = rc.num_blocks().min(cc.num_blocks());

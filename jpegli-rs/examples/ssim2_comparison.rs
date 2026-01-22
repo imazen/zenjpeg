@@ -4,17 +4,34 @@
 //! ```bash
 //! cargo run --release --example ssim2_comparison
 //! ```
+//!
+//! IMPORTANT: Uses distance-based encoding for fair comparison.
+//! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
+//! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
 use jpegli::encoder::{
     ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
+    Quality,
 };
 use jpegli::types::Subsampling;
 use jpegli_bench_utils::{
     ChromaSubsampling as BenchSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
     ScanMode, SyntheticPattern,
 };
+
+/// Convert quality (0-100) to butteraugli distance.
+/// Same formula as C++ jpegli_quality_to_distance.
+fn quality_to_distance(q: f32) -> f32 {
+    if q >= 100.0 {
+        0.01
+    } else if q >= 30.0 {
+        0.1 + (100.0 - q) * 0.09
+    } else {
+        53.0 / 3000.0 * q * q - 23.0 / 20.0 * q + 25.0
+    }
+}
 
 fn create_test_image(width: u32, height: u32) -> ImageData {
     let pattern = SyntheticPattern::Complex;
@@ -29,7 +46,7 @@ fn create_test_image(width: u32, height: u32) -> ImageData {
 
 fn encode_rust(
     image: &ImageData,
-    quality: u8,
+    distance: f32,
     subsampling: Subsampling,
     progressive: bool,
 ) -> Vec<u8> {
@@ -40,7 +57,7 @@ fn encode_rust(
         Subsampling::S440 => JpegliSubsampling::HalfVertical,
         _ => JpegliSubsampling::Quarter,
     };
-    let config = JpegliEncoderConfig::ycbcr(quality as f32, sub)
+    let config = JpegliEncoderConfig::ycbcr(Quality::ApproxButteraugli(distance), sub)
         .progressive(progressive)
         .optimize_huffman(true);
     let mut enc = config
@@ -56,7 +73,7 @@ fn encode_rust(
 
 fn encode_cpp_ffi(
     image: &ImageData,
-    quality: u8,
+    distance: f32,
     subsampling: Subsampling,
     progressive: bool,
 ) -> Vec<u8> {
@@ -74,7 +91,7 @@ fn encode_cpp_ffi(
             Subsampling::S440 => BenchSubsampling::S440,
             _ => BenchSubsampling::S420,
         })
-        .quality(quality);
+        .distance(distance); // Use distance for 3-table parity
 
     config.encode(image).expect("C++ FFI encode failed")
 }
@@ -134,9 +151,12 @@ fn main() {
         let image = create_test_image(width, height);
 
         for quality in qualities {
+            // Convert quality to distance for fair comparison (both use 3 quant tables)
+            let distance = quality_to_distance(quality as f32);
+
             // Encode with both
-            let rust_jpeg = encode_rust(&image, quality, subsampling, progressive);
-            let cpp_jpeg = encode_cpp_ffi(&image, quality, subsampling, progressive);
+            let rust_jpeg = encode_rust(&image, distance, subsampling, progressive);
+            let cpp_jpeg = encode_cpp_ffi(&image, distance, subsampling, progressive);
 
             // Decode both
             let rust_decoded = decode_jpeg(&rust_jpeg);

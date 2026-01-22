@@ -66,9 +66,5 @@ fn main() {
     let jpeg_data = encoder.finish().expect("Encode failed");
 
     fs::write(output_path, &jpeg_data).expect("Failed to write JPEG");
-    eprintln!(
-        "Wrote {} bytes to {:?}",
-        jpeg_data.len(),
-        output_path
-    );
+    eprintln!("Wrote {} bytes to {:?}", jpeg_data.len(), output_path);
 }
