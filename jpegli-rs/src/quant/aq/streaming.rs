@@ -352,6 +352,101 @@ impl StreamingAQ {
         None
     }
 
+    /// Process Y strip and write AQ strengths to provided buffer (zero allocation).
+    ///
+    /// Same as `process_y_strip` but writes to an external buffer instead of
+    /// returning a reference. This avoids the `.to_vec()` copy when the caller
+    /// needs to hold the results while mutating other state.
+    ///
+    /// # Arguments
+    /// * `y_strip` - Y pixel data for this strip
+    /// * `strip_y` - Starting row index
+    /// * `strip_height` - Number of rows in the strip
+    /// * `out_buffer` - Buffer to write AQ strengths into (must be large enough)
+    ///
+    /// # Returns
+    /// Number of AQ values written to `out_buffer`, or `None` if no iMCU completed.
+    pub fn process_y_strip_into(
+        &mut self,
+        y_strip: &[f32],
+        strip_y: usize,
+        strip_height: usize,
+        out_buffer: &mut [f32],
+    ) -> Option<usize> {
+        if self.width == 0 || self.height == 0 {
+            return None;
+        }
+
+        // Use strip_stride for indexing input data
+        let stride = self.strip_stride;
+        let padded_width = self.padded_width;
+
+        // Process each row in the strip
+        for local_y in 0..strip_height {
+            let global_y = strip_y + local_y;
+            if global_y >= self.height {
+                break;
+            }
+
+            let row_start = local_y * stride;
+
+            // Store padded row in Y iMCU buffer
+            let imcu_local_y = global_y % self.y_imcu_height;
+            let dest_start = imcu_local_y * padded_width;
+            let padded_row = &y_strip[row_start..row_start + padded_width];
+            self.y_imcu_buffers[self.y_imcu_current][dest_start..dest_start + padded_width]
+                .copy_from_slice(padded_row);
+
+            // Process pre-erosion using only actual width pixels
+            let row = &y_strip[row_start..row_start + self.width];
+            self.process_pre_erosion_row(row, global_y);
+
+            self.rows_received = global_y + 1;
+        }
+
+        // Check if we completed an iMCU row
+        let imcu_height = self.y_imcu_height;
+        let next_imcu_boundary = (self.current_imcu_row + 1) * imcu_height;
+
+        if self.rows_received >= next_imcu_boundary.min(self.height) {
+            // Edge clamp: fill remaining rows of the iMCU buffer
+            let valid_rows_in_imcu = self.rows_received - self.current_imcu_row * imcu_height;
+            let padded_width = self.padded_width;
+            if valid_rows_in_imcu < imcu_height && valid_rows_in_imcu > 0 {
+                let last_valid_row = valid_rows_in_imcu - 1;
+                let src_start = last_valid_row * padded_width;
+                let src_end = src_start + padded_width;
+                for fill_row in valid_rows_in_imcu..imcu_height {
+                    let dest_start = fill_row * padded_width;
+                    self.y_imcu_buffers[self.y_imcu_current]
+                        .copy_within(src_start..src_end, dest_start);
+                }
+            }
+            // Finalize previously pending iMCU
+            let valid_count = if let Some(pending) = self.pending_imcu_row.take() {
+                let prev_buffer = 1 - self.y_imcu_current;
+                let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
+                // Copy to caller's buffer instead of accumulating
+                out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
+                // Also accumulate for batch mode
+                self.all_aq_strengths
+                    .extend_from_slice(&self.imcu_aq_strengths[..count]);
+                Some(count)
+            } else {
+                None
+            };
+
+            // Mark just-completed iMCU as pending
+            self.pending_imcu_row = Some(self.current_imcu_row);
+            self.current_imcu_row += 1;
+            self.y_imcu_current = 1 - self.y_imcu_current;
+
+            return valid_count;
+        }
+
+        None
+    }
+
     /// Flush any pending iMCU AQ at end of image.
     ///
     /// Call after all strips have been processed to get the last iMCU's AQ.
@@ -363,6 +458,29 @@ impl StreamingAQ {
             self.all_aq_strengths
                 .extend_from_slice(&self.imcu_aq_strengths[..count]);
             return Some(&self.imcu_aq_strengths[..count]);
+        }
+        None
+    }
+
+    /// Flush pending iMCU AQ into provided buffer (zero allocation).
+    ///
+    /// Same as `flush` but writes to an external buffer.
+    ///
+    /// # Arguments
+    /// * `out_buffer` - Buffer to write AQ strengths into
+    ///
+    /// # Returns
+    /// Number of AQ values written, or `None` if nothing pending.
+    pub fn flush_into(&mut self, out_buffer: &mut [f32]) -> Option<usize> {
+        if let Some(pending) = self.pending_imcu_row.take() {
+            let prev_buffer = 1 - self.y_imcu_current;
+            let count = self.finalize_imcu_aq_with_buffer(pending, prev_buffer);
+            // Copy to caller's buffer
+            out_buffer[..count].copy_from_slice(&self.imcu_aq_strengths[..count]);
+            // Also accumulate for batch mode
+            self.all_aq_strengths
+                .extend_from_slice(&self.imcu_aq_strengths[..count]);
+            return Some(count);
         }
         None
     }

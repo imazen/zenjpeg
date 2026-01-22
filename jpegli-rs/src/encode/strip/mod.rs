@@ -268,6 +268,10 @@ pub struct StripProcessor {
     /// Temporary Cr buffer for yuv crate conversion
     #[cfg(feature = "yuv")]
     yuv_temp_cr: Vec<u8>,
+
+    // === Reusable AQ strengths buffer ===
+    /// Buffer for AQ strengths from process_y_strip_into (avoids per-strip allocation)
+    aq_strengths_buffer: Vec<f32>,
 }
 
 impl StripProcessor {
@@ -568,6 +572,10 @@ impl StripProcessor {
             } else {
                 Vec::new()
             },
+
+            // Reusable AQ strengths buffer (one iMCU row worth of blocks)
+            // Size: blocks_per_row * v_samp_factor (max 2 for 4:2:0)
+            aq_strengths_buffer: vec![0.0f32; padded_y_blocks_h * v_samp],
         })
     }
 
@@ -711,9 +719,14 @@ impl StripProcessor {
         }
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
-        let aq_strengths = if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
-                .map(|s| s.to_vec())
+        // Use process_y_strip_into to write to reusable buffer (zero allocation)
+        let aq_count = if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip_into(
+                &self.y_strip,
+                strip_y,
+                actual_strip_height,
+                &mut self.aq_strengths_buffer,
+            )
         } else {
             None
         };
@@ -737,9 +750,12 @@ impl StripProcessor {
 
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
         // This is the key optimization: quantize to i16 immediately instead of storing f32
-        if let Some(strengths) = aq_strengths {
+        if let Some(count) = aq_count {
             let prev_buffer = 1 - self.pending_current;
-            self.quantize_pending_imcu(prev_buffer, &strengths);
+            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
+            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+            self.aq_strengths_buffer = temp_buffer;
             // Clear the previous buffer for reuse
             self.pending_y_blocks[prev_buffer].clear();
             self.pending_cb_blocks[prev_buffer].clear();
@@ -798,9 +814,14 @@ impl StripProcessor {
         }
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
-        let aq_strengths = if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
-                .map(|s| s.to_vec())
+        // Use process_y_strip_into to write to reusable buffer (zero allocation)
+        let aq_count = if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip_into(
+                &self.y_strip,
+                strip_y,
+                actual_strip_height,
+                &mut self.aq_strengths_buffer,
+            )
         } else {
             None
         };
@@ -816,9 +837,12 @@ impl StripProcessor {
         }
 
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
-        if let Some(strengths) = aq_strengths {
+        if let Some(count) = aq_count {
             let prev_buffer = 1 - self.pending_current;
-            self.quantize_pending_imcu(prev_buffer, &strengths);
+            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
+            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+            self.aq_strengths_buffer = temp_buffer;
             self.pending_y_blocks[prev_buffer].clear();
             self.pending_cb_blocks[prev_buffer].clear();
             self.pending_cr_blocks[prev_buffer].clear();
@@ -875,9 +899,14 @@ impl StripProcessor {
         }
 
         // Step 2: Process AQ
-        let aq_strengths = if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip(&self.y_strip, strip_y, actual_strip_height)
-                .map(|s| s.to_vec())
+        // Use process_y_strip_into to write to reusable buffer (zero allocation)
+        let aq_count = if let Some(ref mut aq) = self.aq_state {
+            aq.process_y_strip_into(
+                &self.y_strip,
+                strip_y,
+                actual_strip_height,
+                &mut self.aq_strengths_buffer,
+            )
         } else {
             None
         };
@@ -885,9 +914,12 @@ impl StripProcessor {
         // Step 3: Skip chroma downsampling - already done by caller
 
         // Step 4: Quantize previous pending iMCU if strengths are ready
-        if let Some(strengths) = aq_strengths {
+        if let Some(count) = aq_count {
             let prev_buffer = 1 - self.pending_current;
-            self.quantize_pending_imcu(prev_buffer, &strengths);
+            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
+            let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+            self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+            self.aq_strengths_buffer = temp_buffer;
             self.pending_y_blocks[prev_buffer].clear();
             self.pending_cb_blocks[prev_buffer].clear();
             self.pending_cr_blocks[prev_buffer].clear();
@@ -1282,14 +1314,20 @@ impl StripProcessor {
     /// This method only handles the last pending iMCU.
     pub fn finalize(mut self) -> Result<StripProcessorOutput> {
         // Flush AQ to get the last iMCU's strengths
-        if let Some(ref mut aq) = self.aq_state {
-            if let Some(last_aq) = aq.flush() {
-                // Quantize the last pending iMCU
-                let last_strengths = try_clone_slice(last_aq, "last_aq_strengths")?;
-                let prev_buffer = 1 - self.pending_current;
-                if !self.pending_y_blocks[prev_buffer].is_empty() {
-                    self.quantize_pending_imcu(prev_buffer, &last_strengths);
-                }
+        // Use flush_into to write to reusable buffer (zero allocation)
+        let flush_count = if let Some(ref mut aq) = self.aq_state {
+            aq.flush_into(&mut self.aq_strengths_buffer)
+        } else {
+            None
+        };
+        if let Some(count) = flush_count {
+            // Quantize the last pending iMCU
+            let prev_buffer = 1 - self.pending_current;
+            if !self.pending_y_blocks[prev_buffer].is_empty() {
+                // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
+                let mut temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+                self.aq_strengths_buffer = temp_buffer;
             }
         }
 
