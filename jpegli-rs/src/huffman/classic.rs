@@ -183,7 +183,8 @@ pub fn generate_code_lengths(freq: &mut [i64; 257]) -> Result<[u8; 256]> {
     let mut lengths = [0u8; 256];
 
     // Collect ALL symbols (including pseudo-symbol 256) with their original codesizes
-    let mut all_symbols: Vec<(usize, usize)> = Vec::new(); // (original_index, codesize)
+    // Pre-allocate to avoid reallocs (num_nz is the upper bound)
+    let mut all_symbols: Vec<(usize, usize)> = Vec::with_capacity(num_nz);
     for i in 0..num_nz {
         let orig_idx = nz_index[i];
         if codesize[i] > 0 {
@@ -268,7 +269,8 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<([u8; 16], Vec<u8
 /// This function is used when converting from jpegli-style depths to DHT format.
 pub fn depths_to_bits_values(depths: &[u8]) -> ([u8; 16], Vec<u8>) {
     let mut bits = [0u8; 16];
-    let mut symbols_by_length: Vec<Vec<u8>> = vec![Vec::new(); 16];
+    // Use fixed array - Default creates empty Vecs (no allocation until push)
+    let mut symbols_by_length: [Vec<u8>; 16] = Default::default();
 
     // Group symbols by their code length.
     // Only process symbols 0-255 (pseudo-symbol 256 is already excluded).
