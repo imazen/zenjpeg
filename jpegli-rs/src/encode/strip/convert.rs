@@ -532,6 +532,77 @@ impl StripProcessor {
         Ok(())
     }
 
+    /// Converts RGB strip to YCbCr 4:2:0 in a single fused pass.
+    ///
+    /// This is significantly faster than 444→downsample because:
+    /// - Single pass through RGB data (better cache locality)
+    /// - SIMD downsampling integrated into color conversion
+    /// - No intermediate full-resolution Cb/Cr buffers
+    ///
+    /// Only available when `yuv` feature is enabled and for RGB/RGBA/BGR/BGRA formats.
+    /// Other formats fall back to the standard 444+downsample path.
+    ///
+    /// Returns true if the fused path was used, false if caller should use standard path.
+    #[cfg(feature = "yuv")]
+    pub(super) fn convert_strip_to_ycbcr_420(
+        &mut self,
+        rgb_strip: &[u8],
+        strip_height: usize,
+    ) -> Result<bool> {
+        let width = self.width;
+        let padded_width = self.padded_width;
+        let num_pixels = strip_height * width;
+        let y_size = strip_height * padded_width;
+        let c_width = (width + 1) / 2;
+        let c_height = (strip_height + 1) / 2;
+        let c_size = c_width * c_height;
+
+        match self.pixel_format {
+            PixelFormat::Rgb | PixelFormat::Rgba => {
+                let bpp = self.pixel_format.bytes_per_pixel();
+                crate::color::fast_yuv::rgb_to_ycbcr_420_reuse(
+                    rgb_strip,
+                    &mut self.y_strip[..y_size],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    &mut self.yuv_temp_y[..num_pixels],
+                    &mut self.yuv_temp_cb[..c_size],
+                    &mut self.yuv_temp_cr[..c_size],
+                    width,
+                    strip_height,
+                    padded_width,
+                    bpp,
+                );
+
+                // Pad chroma down buffers horizontally
+                self.pad_chroma_down_strip(c_height, c_width);
+                Ok(true)
+            }
+            PixelFormat::Bgr | PixelFormat::Bgra | PixelFormat::Bgrx => {
+                let bpp = self.pixel_format.bytes_per_pixel();
+                crate::color::fast_yuv::bgr_to_ycbcr_420_reuse(
+                    rgb_strip,
+                    &mut self.y_strip[..y_size],
+                    &mut self.cb_down[..c_size],
+                    &mut self.cr_down[..c_size],
+                    &mut self.yuv_temp_y[..num_pixels],
+                    &mut self.yuv_temp_cb[..c_size],
+                    &mut self.yuv_temp_cr[..c_size],
+                    width,
+                    strip_height,
+                    padded_width,
+                    bpp,
+                );
+
+                // Pad chroma down buffers horizontally
+                self.pad_chroma_down_strip(c_height, c_width);
+                Ok(true)
+            }
+            // Other formats: fall back to standard path
+            _ => Ok(false),
+        }
+    }
+
     /// Converts RGB strip to scaled XYB color space.
     ///
     /// XYB layout in strip buffers:

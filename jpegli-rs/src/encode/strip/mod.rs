@@ -690,12 +690,16 @@ impl StripProcessor {
     pub fn process_strip(&mut self, rgb_strip: &[u8], strip_y: usize) -> Result<usize> {
         let actual_strip_height = self.strip_height.min(self.height - strip_y);
 
+        // Track whether chroma was already downsampled by a fused path
+        let mut chroma_already_downsampled = false;
+
         // Step 1: Color convert RGB -> YCbCr or XYB into strip buffers
         if self.use_xyb {
             // XYB mode: convert RGB -> scaled XYB
             // X and Y go to y_strip and cb_strip at full res
             // B goes to cr_strip at full res, then is always 2x2 downsampled
             self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
+            chroma_already_downsampled = true; // XYB handles B downsampling internally
         } else {
             // YCbCr mode: choose optimal path based on subsampling
             let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
@@ -704,10 +708,24 @@ impl StripProcessor {
 
             if uses_gamma_aware_fused {
                 self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+                chroma_already_downsampled = true;
             } else {
-                // Standard path: convert to YCbCr, then downsample separately
-                // This matches the fullplane encoder's code path for bitexact output
-                self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+                // Try fused 420 path when applicable (significantly faster)
+                #[cfg(feature = "yuv")]
+                {
+                    if self.subsampling == Subsampling::S420
+                        && !self.pixel_format.is_grayscale()
+                    {
+                        if self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)? {
+                            chroma_already_downsampled = true;
+                        }
+                    }
+                }
+
+                if !chroma_already_downsampled {
+                    // Standard path: convert to YCbCr 444, then downsample separately
+                    self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+                }
             }
         }
 
@@ -731,19 +749,13 @@ impl StripProcessor {
         };
 
         // Step 3: Downsample chroma if needed
-        // - XYB mode: B channel is always 2x2 downsampled (handled in convert_strip_to_xyb)
-        // - Gamma-aware fused path already wrote to cb_down/cr_down
-        // - Standard path wrote to cb_strip/cr_strip at full res, needs downsampling
+        // Skip if already done by fused path (XYB, gamma-aware, or fused 420)
         let downsample_height = if actual_strip_height < self.strip_height {
             self.strip_height
         } else {
             actual_strip_height
         };
-        let uses_gamma_aware_fused = !self.use_xyb
-            && self.chroma_downsampling.uses_gamma_aware()
-            && !self.pixel_format.is_grayscale()
-            && self.subsampling != Subsampling::S444;
-        if !self.pixel_format.is_grayscale() && !uses_gamma_aware_fused && !self.use_xyb {
+        if !self.pixel_format.is_grayscale() && !chroma_already_downsampled {
             self.downsample_chroma_strip(downsample_height)?;
         }
 
