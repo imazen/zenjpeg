@@ -64,6 +64,8 @@ pub(crate) struct StreamingEncoderBuilder {
     deringing: bool,
     /// Allow 16-bit quantization tables (default: true)
     allow_16bit_quant_tables: bool,
+    /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
+    separate_chroma_tables: bool,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     parallel: bool,
@@ -95,6 +97,7 @@ impl StreamingEncoderBuilder {
             use_xyb: false,
             deringing: true,
             allow_16bit_quant_tables: true,
+            separate_chroma_tables: true,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -327,6 +330,16 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.allow_16bit_quant_tables = enable;
+        self
+    }
+
+    /// Use separate Cb and Cr quantization tables.
+    ///
+    /// When enabled (default), uses 3 tables: Y, Cb, Cr.
+    /// When disabled, uses 2 tables: Y, shared chroma.
+    #[must_use]
+    pub(crate) fn separate_chroma_tables(mut self, enable: bool) -> Self {
+        self.separate_chroma_tables = enable;
         self
     }
 
@@ -957,6 +970,7 @@ impl StreamingEncoder {
             original_width: None,
             original_height: None,
             allow_16bit_quant_tables: builder.allow_16bit_quant_tables,
+            separate_chroma_tables: builder.separate_chroma_tables,
         };
 
         Ok(Self {

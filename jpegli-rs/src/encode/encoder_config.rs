@@ -37,6 +37,11 @@ pub struct EncoderConfig {
     /// Allow 16-bit quantization tables (extended JPEG, SOF1).
     /// When false, quant values are clamped to 255 for baseline compatibility.
     pub(crate) allow_16bit_quant_tables: bool,
+    /// Use separate quantization tables for Cb and Cr (3 tables total).
+    /// When false, Cb and Cr share the same table (2 tables total).
+    /// Default is true (3 tables), matching C++ jpegli's `jpegli_set_distance()`.
+    /// Set to false for compatibility with `jpeg_set_quality()` behavior.
+    pub(crate) separate_chroma_tables: bool,
     /// Trellis quantization configuration (mozjpeg-compatible API).
     /// When Some, enables trellis quantization for rate-distortion optimization.
     #[cfg(feature = "experimental-hybrid-trellis")]
@@ -153,6 +158,7 @@ impl EncoderConfig {
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
             deringing: true,
             allow_16bit_quant_tables: true,
+            separate_chroma_tables: true, // 3 tables (matches jpegli_set_distance)
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
         }
@@ -213,6 +219,38 @@ impl EncoderConfig {
     #[must_use]
     pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.allow_16bit_quant_tables = enable;
+        self
+    }
+
+    /// Use separate quantization tables for Cb and Cr components.
+    ///
+    /// When enabled (default), uses 3 quantization tables:
+    /// - Table 0: Y (luma)
+    /// - Table 1: Cb (blue chroma)
+    /// - Table 2: Cr (red chroma)
+    ///
+    /// When disabled, uses 2 quantization tables:
+    /// - Table 0: Y (luma)
+    /// - Table 1: Cb and Cr (shared chroma)
+    ///
+    /// # Compatibility
+    ///
+    /// - 3 tables (default): Matches C++ jpegli's `jpegli_set_distance()` behavior
+    /// - 2 tables: Matches C++ jpegli's `jpeg_set_quality()` behavior
+    ///
+    /// Use 2 tables when you need exact output parity with tools that use
+    /// `jpeg_set_quality()` (most libjpeg-based encoders).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Match jpeg_set_quality() behavior (2 tables)
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .separate_chroma_tables(false);
+    /// ```
+    #[must_use]
+    pub fn separate_chroma_tables(mut self, enable: bool) -> Self {
+        self.separate_chroma_tables = enable;
         self
     }
 
@@ -714,6 +752,12 @@ impl EncoderConfig {
     #[must_use]
     pub fn is_allow_16bit_quant_tables(&self) -> bool {
         self.allow_16bit_quant_tables
+    }
+
+    /// Check if separate chroma tables are enabled (3 tables vs 2).
+    #[must_use]
+    pub fn is_separate_chroma_tables(&self) -> bool {
+        self.separate_chroma_tables
     }
 
     /// Get the ICC profile, if set.

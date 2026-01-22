@@ -117,6 +117,21 @@ pub struct ComputedConfig {
     /// this for compatibility with very old or limited JPEG decoders.
     pub allow_16bit_quant_tables: bool,
 
+    /// Use separate quantization tables for Cb and Cr (3 tables total).
+    ///
+    /// When `true` (default), uses 3 quantization tables:
+    /// - Table 0: Y (luma)
+    /// - Table 1: Cb (blue chroma)
+    /// - Table 2: Cr (red chroma)
+    ///
+    /// When `false`, uses 2 quantization tables:
+    /// - Table 0: Y (luma)
+    /// - Table 1: Cb and Cr (shared chroma)
+    ///
+    /// The 3-table mode matches C++ jpegli's `jpegli_set_distance()` behavior.
+    /// The 2-table mode matches C++ jpegli's `jpeg_set_quality()` behavior.
+    pub separate_chroma_tables: bool,
+
     /// Trellis quantization configuration (mozjpeg-compatible API).
     ///
     /// When set, enables trellis quantization for rate-distortion optimization.
@@ -157,6 +172,8 @@ impl Default for ComputedConfig {
             // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
             // Set to false only for compatibility with very old decoders
             allow_16bit_quant_tables: true,
+            // Use 3 tables by default (matches jpegli_set_distance)
+            separate_chroma_tables: true,
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
         }

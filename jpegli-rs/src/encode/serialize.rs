@@ -109,8 +109,14 @@ impl ComputedConfig {
         Ok(())
     }
 
-    /// Writes quantization tables (3 separate tables for Y, Cb, Cr).
-    /// This matches C++ jpegli behavior with add_two_chroma_tables=true.
+    /// Writes quantization tables for YCbCr mode.
+    ///
+    /// When `separate_chroma_tables` is true (default):
+    /// - Writes 3 tables (Y, Cb, Cr) matching `jpegli_set_distance()` behavior
+    ///
+    /// When `separate_chroma_tables` is false:
+    /// - Writes 2 tables (Y, shared chroma) matching `jpeg_set_quality()` behavior
+    /// - The `cr_quant` parameter is ignored; Cb table is used for both
     ///
     /// Supports both 8-bit (baseline) and 16-bit (extended) precision based on
     /// the `precision` field of each QuantTable.
@@ -121,8 +127,15 @@ impl ComputedConfig {
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
     ) -> Result<()> {
-        let tables = [(0u8, y_quant), (1u8, cb_quant), (2u8, cr_quant)];
-        Self::write_dqt_segment(output, &tables)
+        if self.separate_chroma_tables {
+            // 3 tables: Y, Cb, Cr (matches jpegli_set_distance)
+            let tables = [(0u8, y_quant), (1u8, cb_quant), (2u8, cr_quant)];
+            Self::write_dqt_segment(output, &tables)
+        } else {
+            // 2 tables: Y, shared chroma (matches jpeg_set_quality)
+            let tables = [(0u8, y_quant), (1u8, cb_quant)];
+            Self::write_dqt_segment(output, &tables)
+        }
     }
 
     /// Writes quantization tables for XYB mode (3 separate tables).
@@ -266,7 +279,9 @@ impl ComputedConfig {
 
             output.push(3); // Component ID = 3 (Cr)
             output.push(0x11); // 1x1 sampling
-            output.push(2); // Quant table 2 (separate Cr table like C++ cjpegli)
+                               // Cr uses table 2 when separate_chroma_tables=true (jpegli_set_distance)
+                               // Cr uses table 1 when separate_chroma_tables=false (jpeg_set_quality)
+            output.push(if self.separate_chroma_tables { 2 } else { 1 });
         }
 
         Ok(())
