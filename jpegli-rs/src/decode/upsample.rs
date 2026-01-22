@@ -180,3 +180,165 @@ pub fn upsample_h2v2(
     // Then upsample vertically
     upsample_h1v2(&h_upsampled, out_width, in_height, out_width, out_height)
 }
+
+// =============================================================================
+// i16 Upsampling Functions (for fast decode path)
+// =============================================================================
+
+/// Box filter 2x2 upsampling in i16 (4:2:0 → 4:4:4).
+///
+/// Simple pixel duplication - fastest possible upsampling.
+/// Output is written to pre-allocated buffer for zero allocation.
+#[inline]
+pub fn upsample_h2v2_i16_box(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = (out_x / 2).min(in_width.saturating_sub(1));
+            output[out_row + out_x] = input[in_row + in_x];
+        }
+    }
+}
+
+/// Triangle filter 2x2 upsampling in i16 (4:2:0 → 4:4:4).
+///
+/// Uses (3 * near + far + 2) >> 2 for proper rounding.
+/// Output is written to pre-allocated buffer for zero allocation.
+#[inline]
+pub fn upsample_h2v2_i16_fancy(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    // For each output row
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let is_top = out_y % 2 == 0;
+        let out_row = out_y * out_width;
+
+        // Vertical neighbor row
+        let v_neighbor_y = if is_top {
+            in_y.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let curr_row = in_y.min(in_height.saturating_sub(1)) * in_width;
+        let v_neighbor_row = v_neighbor_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = out_x / 2;
+            let is_left = out_x % 2 == 0;
+
+            // Horizontal neighbor column
+            let h_neighbor_x = if is_left {
+                in_x.saturating_sub(1)
+            } else {
+                (in_x + 1).min(in_width.saturating_sub(1))
+            };
+
+            let in_x_clamped = in_x.min(in_width.saturating_sub(1));
+
+            // Get the 4 input pixels for bilinear interpolation
+            let curr = input[curr_row + in_x_clamped] as i32;
+            let h_neighbor = input[curr_row + h_neighbor_x] as i32;
+            let v_neighbor = input[v_neighbor_row + in_x_clamped] as i32;
+            let hv_neighbor = input[v_neighbor_row + h_neighbor_x] as i32;
+
+            // Triangle filter: (9*curr + 3*h + 3*v + hv + 8) >> 4
+            // This is equivalent to separable (3*near + far)/4 applied twice
+            let result = (9 * curr + 3 * h_neighbor + 3 * v_neighbor + hv_neighbor + 8) >> 4;
+            output[out_row + out_x] = result as i16;
+        }
+    }
+}
+
+/// Horizontal 2x upsampling in i16 (4:2:2 → 4:4:4) with triangle filter.
+#[inline]
+pub fn upsample_h2v1_i16_fancy(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = out_y.min(in_height.saturating_sub(1));
+        let out_row = out_y * out_width;
+        let in_row = in_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = out_x / 2;
+            let in_x_clamped = in_x.min(in_width.saturating_sub(1));
+            let curr = input[in_row + in_x_clamped] as i32;
+
+            let result = if out_x % 2 == 0 {
+                // Left half - blend with left neighbor
+                let left = if in_x > 0 {
+                    input[in_row + in_x - 1] as i32
+                } else {
+                    curr
+                };
+                (3 * curr + left + 2) >> 2
+            } else {
+                // Right half - blend with right neighbor
+                let right = if in_x + 1 < in_width {
+                    input[in_row + in_x + 1] as i32
+                } else {
+                    curr
+                };
+                (3 * curr + right + 2) >> 2
+            };
+            output[out_row + out_x] = result as i16;
+        }
+    }
+}
+
+/// Vertical 2x upsampling in i16 (4:4:0 → 4:4:4) with triangle filter.
+#[inline]
+pub fn upsample_h1v2_i16_fancy(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    for out_y in 0..out_height {
+        let in_y = out_y / 2;
+        let is_top = out_y % 2 == 0;
+        let out_row = out_y * out_width;
+
+        let neighbor_y = if is_top {
+            in_y.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let in_y_clamped = in_y.min(in_height.saturating_sub(1));
+        let curr_row = in_y_clamped * in_width;
+        let neighbor_row = neighbor_y * in_width;
+
+        for out_x in 0..out_width {
+            let in_x = out_x.min(in_width.saturating_sub(1));
+            let curr = input[curr_row + in_x] as i32;
+            let neighbor = input[neighbor_row + in_x] as i32;
+            let result = (3 * curr + neighbor + 2) >> 2;
+            output[out_row + out_x] = result as i16;
+        }
+    }
+}
