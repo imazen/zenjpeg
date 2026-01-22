@@ -277,6 +277,7 @@ fn upsample_row_h2_box(input: &[i16], in_width: usize, output: &mut [i16]) {
     }
 }
 
+
 /// Triangle filter 2x2 upsampling in i16 (4:2:0 → 4:4:4).
 ///
 /// Uses (3 * near + far + 2) >> 2 for proper rounding.
