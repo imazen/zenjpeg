@@ -130,6 +130,20 @@ pub fn decode_value(category: u8, bits: u16) -> i16 {
     }
 }
 
+/// Branchless JPEG HUFF_EXTEND equivalent.
+/// Reconstructs a signed value from category (s) and bits (x).
+/// This is ~2x faster than the branching version for random input.
+///
+/// Formula: x + (((x - (1 << (s-1))) >> 31) & ((-1 << s) + 1))
+/// - If x >= 2^(s-1), returns x (positive value)
+/// - If x < 2^(s-1), returns x - (2^s - 1) (negative value)
+#[inline(always)]
+pub fn huff_extend(x: i32, s: i32) -> i32 {
+    // The shift creates a mask: all 1s if x < half, all 0s otherwise
+    // This is branchless and SIMD-friendly
+    x + ((((x) - (1 << ((s) - 1))) >> 31) & (((-1) << (s)) + 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

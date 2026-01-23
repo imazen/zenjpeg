@@ -758,13 +758,14 @@ impl<'a> JpegParser<'a> {
                                     }
                                 }
                             } else {
+                                // Use original decode path (fast path still has issues)
                                 let (coeffs, count) = match decoder.decode_block_with_count(
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
                                 )? {
                                     ScanRead::Value(v) => v,
-                                    // EndOfScan/Truncated mid-decode is unusual but not fatal - fill with zeros
+                                    // EndOfScan/Truncated mid-decode - fill with zeros
                                     ScanRead::EndOfScan | ScanRead::Truncated => {
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
