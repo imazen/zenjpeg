@@ -1,0 +1,325 @@
+//! Progressive JPEG scan decoding.
+//!
+//! This module handles the incremental refinement of DCT coefficients
+//! across multiple scans in progressive JPEG files.
+//!
+//! Progressive scan types:
+//! - DC-first (ss=0, se=0, ah=0): Initial DC coefficient values
+//! - DC-refine (ss=0, se=0, ah>0): Refine DC coefficient precision
+//! - AC-first (ss>0, ah=0): Initial AC coefficient values for range [ss, se]
+//! - AC-refine (ss>0, ah>0): Refine AC coefficient precision for range [ss, se]
+
+use crate::entropy::EntropyDecoder;
+use crate::error::{Error, Result, ScanRead};
+use crate::foundation::alloc::{checked_size_2d, try_alloc_dct_blocks};
+use crate::foundation::consts::MAX_HUFFMAN_TABLES;
+use crate::huffman::HuffmanDecodeTable;
+
+use super::JpegParser;
+
+/// Progressive scan decoding methods for JpegParser.
+impl<'a> JpegParser<'a> {
+    /// Decode a progressive scan (DC or AC, first or refine).
+    ///
+    /// Progressive JPEG encodes coefficients incrementally:
+    /// - First, DC coefficients are sent for all blocks
+    /// - Then AC coefficients in bands [ss, se]
+    /// - Refinement scans improve precision bit by bit
+    pub(super) fn decode_progressive_scan(
+        &mut self,
+        scan_components: &[(usize, u8, u8)],
+        ss: u8,
+        se: u8,
+        ah: u8,
+        al: u8,
+    ) -> Result<()> {
+        // Calculate max sampling factors to determine MCU structure
+        let mut max_h_samp = 1u8;
+        let mut max_v_samp = 1u8;
+        for i in 0..self.num_components as usize {
+            max_h_samp = max_h_samp.max(self.components[i].h_samp_factor);
+            max_v_samp = max_v_samp.max(self.components[i].v_samp_factor);
+        }
+
+        // MCU dimensions in pixels
+        let mcu_width = (max_h_samp as usize) * 8;
+        let mcu_height = (max_v_samp as usize) * 8;
+
+        // Number of MCUs
+        let mcu_cols = (self.width as usize + mcu_width - 1) / mcu_width;
+        let mcu_rows = (self.height as usize + mcu_height - 1) / mcu_height;
+
+        // Initialize coefficient storage if not already done
+        if self.coeffs.is_empty() {
+            for i in 0..self.num_components as usize {
+                let h_samp = self.components[i].h_samp_factor as usize;
+                let v_samp = self.components[i].v_samp_factor as usize;
+                let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
+                let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
+                let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
+                self.coeffs.push(try_alloc_dct_blocks(
+                    num_blocks,
+                    "allocating DCT coefficients",
+                )?);
+                // For progressive, we don't know coeff counts until all scans are done
+                // Default to 64 (full IDCT) - tiered IDCT is mainly for baseline
+                self.coeff_counts.push(vec![64u8; num_blocks]);
+            }
+        }
+
+        // Set up entropy decoder
+        let scan_data = &self.data[self.position..];
+
+        // Debug: print progressive scan info
+        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
+            let first_bytes: Vec<u8> = scan_data.iter().take(8).copied().collect();
+            eprintln!(
+                "DEBUG prog: ss={} se={} ah={} al={} comps={:?} pos={} data={:02x?}",
+                ss, se, ah, al, scan_components, self.position, first_bytes
+            );
+        }
+
+        let mut decoder = EntropyDecoder::new(scan_data);
+
+        for (_comp_idx, dc_table, ac_table) in scan_components {
+            let dc_idx = (*dc_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+            let ac_idx = (*ac_table as usize).min(MAX_HUFFMAN_TABLES - 1);
+
+            // Use explicit table if provided, otherwise use standard JPEG tables.
+            // MJPEG files often omit DHT markers and expect standard tables.
+            // Tables are borrowed, not cloned (~1.5KB savings per table).
+            let dc_table_ref: &HuffmanDecodeTable = match &self.dc_tables[dc_idx] {
+                Some(table) => table,
+                None => {
+                    if dc_idx == 0 {
+                        HuffmanDecodeTable::std_dc_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_dc_chrominance()
+                    }
+                }
+            };
+            decoder.set_dc_table(dc_idx, dc_table_ref);
+
+            let ac_table_ref: &HuffmanDecodeTable = match &self.ac_tables[ac_idx] {
+                Some(table) => table,
+                None => {
+                    if ac_idx == 0 {
+                        HuffmanDecodeTable::std_ac_luminance()
+                    } else {
+                        HuffmanDecodeTable::std_ac_chrominance()
+                    }
+                }
+            };
+            decoder.set_ac_table(ac_idx, ac_table_ref);
+        }
+
+        // Determine scan type
+        let is_dc_scan = ss == 0 && se == 0;
+        let is_first_scan = ah == 0;
+
+        // EOB run tracking for AC scans
+        let mut eob_run = 0u16;
+
+        // Restart marker handling
+        let mut mcu_count = 0u32;
+        let restart_interval = self.restart_interval as u32;
+        let mut next_restart_num = 0u8;
+
+        if is_dc_scan {
+            // DC scan - can be interleaved (multiple components) or non-interleaved (single component)
+            // For non-interleaved scans, blocks are in raster order (like AC scans)
+            // For interleaved scans, blocks follow MCU order
+
+            if scan_components.len() == 1 {
+                // Non-interleaved DC scan: blocks in raster order (like AC scans)
+                let (comp_idx, dc_table, _ac_table) = scan_components[0];
+                let h_samp = self.components[comp_idx].h_samp_factor as usize;
+                let v_samp = self.components[comp_idx].v_samp_factor as usize;
+                let comp_blocks_h = mcu_cols * h_samp;
+                let comp_blocks_v = mcu_rows * v_samp;
+                let total_blocks = comp_blocks_h * comp_blocks_v;
+
+                for block_idx in 0..total_blocks {
+                    // Check for restart marker
+                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                        decoder.align_to_byte();
+                        decoder.read_restart_marker(next_restart_num)?;
+                        next_restart_num = (next_restart_num + 1) & 7;
+                        decoder.reset_dc();
+                    }
+
+                    if is_first_scan {
+                        match decoder.decode_dc_first(comp_idx, dc_table as usize, al)? {
+                            ScanRead::Value(dc) => self.coeffs[comp_idx][block_idx][0] = dc,
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                // End of scan data - remaining blocks have DC=0
+                                break;
+                            }
+                        }
+                    } else {
+                        match decoder.decode_dc_refine(al)? {
+                            ScanRead::Value(bit) => self.coeffs[comp_idx][block_idx][0] |= bit,
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                // End of scan data - remaining blocks unchanged
+                                break;
+                            }
+                        }
+                    }
+
+                    mcu_count += 1;
+                }
+            } else {
+                // Interleaved DC scan: blocks in MCU order
+                'dc_scan: for mcu_y in 0..mcu_rows {
+                    for mcu_x in 0..mcu_cols {
+                        // Check for restart marker
+                        if restart_interval > 0
+                            && mcu_count > 0
+                            && mcu_count % restart_interval == 0
+                        {
+                            // Align to byte boundary (discard padding bits)
+                            decoder.align_to_byte();
+                            // Read and verify restart marker
+                            decoder.read_restart_marker(next_restart_num)?;
+                            // Update expected marker number (cycles 0-7)
+                            next_restart_num = (next_restart_num + 1) & 7;
+                            // Reset DC predictors
+                            decoder.reset_dc();
+                        }
+
+                        for (comp_idx, dc_table, _ac_table) in scan_components {
+                            let h_samp = self.components[*comp_idx].h_samp_factor as usize;
+                            let v_samp = self.components[*comp_idx].v_samp_factor as usize;
+                            let comp_blocks_h = mcu_cols * h_samp;
+
+                            for v in 0..v_samp {
+                                for h in 0..h_samp {
+                                    let block_x = mcu_x * h_samp + h;
+                                    let block_y = mcu_y * v_samp + v;
+                                    let block_idx = block_y * comp_blocks_h + block_x;
+
+                                    if is_first_scan {
+                                        // DC first scan
+                                        match decoder.decode_dc_first(
+                                            *comp_idx,
+                                            *dc_table as usize,
+                                            al,
+                                        )? {
+                                            ScanRead::Value(dc) => {
+                                                self.coeffs[*comp_idx][block_idx][0] = dc;
+                                            }
+                                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                                // End of scan data - remaining blocks have DC=0
+                                                break 'dc_scan;
+                                            }
+                                        }
+                                    } else {
+                                        // DC refinement scan
+                                        match decoder.decode_dc_refine(al)? {
+                                            ScanRead::Value(bit) => {
+                                                self.coeffs[*comp_idx][block_idx][0] |= bit;
+                                            }
+                                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                                // End of scan data - remaining blocks unchanged
+                                                break 'dc_scan;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        mcu_count += 1;
+                    }
+                }
+            }
+        } else {
+            // AC scan (single component only for progressive)
+            // Progressive AC scans can only have one component
+            if scan_components.len() != 1 {
+                return Err(Error::invalid_jpeg_data(
+                    "progressive AC scan must have single component",
+                ));
+            }
+
+            let (comp_idx, _dc_table, ac_table) = scan_components[0];
+            let h_samp = self.components[comp_idx].h_samp_factor as usize;
+            let v_samp = self.components[comp_idx].v_samp_factor as usize;
+
+            // For non-interleaved AC scans, blocks are encoded in raster order
+            // NOT in interleaved MCU order. Each MCU contains exactly 1 block.
+            let comp_blocks_h = mcu_cols * h_samp;
+            let comp_blocks_v = mcu_rows * v_samp;
+            let total_blocks = comp_blocks_h * comp_blocks_v;
+
+            // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
+            mcu_count = 0;
+            next_restart_num = 0;
+
+            for block_idx in 0..total_blocks {
+                // Check for restart marker
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    // Align to byte boundary (discard padding bits)
+                    decoder.align_to_byte();
+                    // Read and verify restart marker
+                    decoder.read_restart_marker(next_restart_num)?;
+                    // Update expected marker number (cycles 0-7)
+                    next_restart_num = (next_restart_num + 1) & 7;
+                    // Reset DC predictors and EOB run
+                    decoder.reset_dc();
+                    eob_run = 0;
+                }
+
+                if is_first_scan {
+                    // AC first scan
+                    match decoder.decode_ac_first(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        ac_table as usize,
+                        ss,
+                        se,
+                        al,
+                        &mut eob_run,
+                    )? {
+                        ScanRead::Value(()) => {}
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                            // End of scan data - remaining blocks have zeros (implicit EOB)
+                            // This is normal in progressive JPEG when encoder uses
+                            // implicit EOB at end of scan
+                            break;
+                        }
+                    }
+                } else {
+                    // AC refinement scan
+                    match decoder.decode_ac_refine(
+                        &mut self.coeffs[comp_idx][block_idx],
+                        ac_table as usize,
+                        ss,
+                        se,
+                        al,
+                        &mut eob_run,
+                    )? {
+                        ScanRead::Value(()) => {}
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                            // End of scan data - remaining blocks unchanged
+                            break;
+                        }
+                    }
+                }
+
+                mcu_count += 1;
+            }
+        }
+
+        // Debug: print position after scan
+        if std::env::var("DEBUG_PROGRESSIVE").is_ok() {
+            eprintln!(
+                "DEBUG prog end: decoder.position()={} new self.position={}",
+                decoder.position(),
+                self.position + decoder.position()
+            );
+        }
+
+        self.position += decoder.position();
+        Ok(())
+    }
+}
