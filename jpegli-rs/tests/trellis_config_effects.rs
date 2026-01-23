@@ -4,7 +4,7 @@
 
 #![cfg(feature = "experimental-hybrid-trellis")]
 
-use jpegli::encode::mozjpeg_compat::TrellisConfig;
+use jpegli::encode::mozjpeg_compat::{TrellisConfig, TrellisSpeedMode};
 use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a simple test image (gradient with some texture)
@@ -168,14 +168,14 @@ fn test_trellis_speed_levels() {
     let height = 128u32;
     let pixels = generate_test_image(width as usize, height as usize);
 
-    // Speed level 0 (thorough)
+    // Speed mode thorough
     let config_slow = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
-        .trellis(TrellisConfig::default().speed_level(0));
+        .trellis(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough));
     let jpeg_slow = encode_with_config(&config_slow, &pixels, width, height);
 
-    // Speed level 10 (fast)
+    // Speed mode fast (level 10)
     let config_fast = EncoderConfig::ycbcr(75.0, ChromaSubsampling::None)
-        .trellis(TrellisConfig::default().speed_level(10));
+        .trellis(TrellisConfig::default().speed_mode(TrellisSpeedMode::Level(10)));
     let jpeg_fast = encode_with_config(&config_fast, &pixels, width, height);
 
     println!(

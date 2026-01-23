@@ -35,7 +35,7 @@
 //! These remain configurable for further experimentation.
 
 #[cfg(feature = "experimental-hybrid-trellis")]
-use mozjpeg_rs::{TrellisConfig, TrellisSpeedMode};
+use mozjpeg_rs::TrellisConfig;
 
 /// Threshold for AQ mean above which hybrid trellis might be beneficial.
 ///
@@ -312,7 +312,7 @@ impl HybridConfig {
             freq_split: 8,
             num_loops: self.num_loops,
             delta_dc_weight: 0.0,
-            speed_mode: TrellisSpeedMode::Adaptive,
+            speed_level: 7, // Adaptive (default)
         }
     }
 

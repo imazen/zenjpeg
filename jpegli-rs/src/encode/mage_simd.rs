@@ -379,10 +379,7 @@ pub fn mage_forward_dct_8x8_wide<T: HasAvx2 + HasFma + Copy>(
 /// then recombines. This is correct because it keeps block A and B data separate.
 #[arcane]
 #[inline]
-fn mage_transpose_8x8_dual_inner(
-    token: impl archmage::HasAvx512f + archmage::HasAvx2,
-    r: &mut [__m512; 8],
-) {
+fn mage_transpose_8x8_dual_inner(token: impl archmage::HasAvx512f, r: &mut [__m512; 8]) {
     // Extract low (block A) and high (block B) halves
     let mut a: [__m256; 8] = [
         _mm512_castps512_ps256(r[0]),

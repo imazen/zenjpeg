@@ -213,10 +213,10 @@ fn encode_segment_444(
 
     let mcu_end = (mcu_start + mcu_count).min(y_blocks.len());
     for i in mcu_start..mcu_end {
-        let _ = encoder.encode_block(&y_blocks[i], 0, 0, 0);
+        encoder.encode_block(&y_blocks[i], 0, 0, 0);
         if is_color {
-            let _ = encoder.encode_block(&cb_blocks[i], 1, 1, 1);
-            let _ = encoder.encode_block(&cr_blocks[i], 2, 1, 1);
+            encoder.encode_block(&cb_blocks[i], 1, 1, 1);
+            encoder.encode_block(&cr_blocks[i], 2, 1, 1);
         }
     }
 
@@ -259,9 +259,9 @@ fn encode_segment_subsampled(
                 let y_by = mcu_y * v_samp + dy;
                 if y_bx < y_blocks_h && y_by < y_blocks_v {
                     let y_idx = y_by * y_blocks_h + y_bx;
-                    let _ = encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
+                    encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
                 } else {
-                    let _ = encoder.encode_block(&ZERO_BLOCK, 0, 0, 0);
+                    encoder.encode_block(&ZERO_BLOCK, 0, 0, 0);
                 }
             }
         }
@@ -270,11 +270,11 @@ fn encode_segment_subsampled(
         if is_color {
             if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
                 let c_idx = mcu_y * c_blocks_h + mcu_x;
-                let _ = encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
-                let _ = encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
+                encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
+                encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
             } else {
-                let _ = encoder.encode_block(&ZERO_BLOCK, 1, 1, 1);
-                let _ = encoder.encode_block(&ZERO_BLOCK, 2, 1, 1);
+                encoder.encode_block(&ZERO_BLOCK, 1, 1, 1);
+                encoder.encode_block(&ZERO_BLOCK, 2, 1, 1);
             }
         }
     }

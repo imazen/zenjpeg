@@ -26,7 +26,7 @@ use core::time::Duration;
 #[cfg(feature = "profile")]
 thread_local! {
     static STATS: RefCell<ProfileStats> = RefCell::new(ProfileStats::new());
-    static STACK: RefCell<Vec<(&'static str, Instant)>> = RefCell::new(Vec::new());
+    static STACK: RefCell<Vec<(&'static str, Instant)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(feature = "profile")]
@@ -58,12 +58,14 @@ impl ProfileStats {
     pub fn record(name: &'static str, elapsed: Duration) {
         STATS.with(|stats| {
             let mut stats = stats.borrow_mut();
-            let timing = stats.timings.entry(name).or_insert_with(|| {
+            // Check if new entry, track call order separately to avoid borrow conflict
+            let is_new = !stats.timings.contains_key(name);
+            if is_new {
                 stats.call_order.push(name);
-                Timing {
-                    min: Duration::MAX,
-                    ..Default::default()
-                }
+            }
+            let timing = stats.timings.entry(name).or_insert_with(|| Timing {
+                min: Duration::MAX,
+                ..Default::default()
             });
             timing.total += elapsed;
             timing.count += 1;

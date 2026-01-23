@@ -868,6 +868,8 @@ impl EncoderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "experimental-hybrid-trellis")]
+    use crate::encode::mozjpeg_compat::TrellisSpeedMode;
 
     #[test]
     fn test_ycbcr_config() {

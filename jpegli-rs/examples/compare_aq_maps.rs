@@ -160,7 +160,7 @@ fn main() {
         "{:>8} {:>10} {:>10} {:>10} {:>6} {:>6}",
         "Index", "C++", "Rust", "Diff", "Row", "Col"
     );
-    for (i, diff) in indexed_diffs.iter().take(10) {
+    for (i, _diff) in indexed_diffs.iter().take(10) {
         let row = i / cpp_w as usize;
         let col = i % cpp_w as usize;
         println!(
