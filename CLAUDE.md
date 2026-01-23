@@ -786,6 +786,30 @@ cargo bench --bench decode
 cargo run --release --example benchmark_sharp_yuv
 ```
 
+### Benchmark Output Rules (CRITICAL)
+
+**NEVER re-run benchmarks just to parse output differently.** Criterion saves structured JSON:
+
+```bash
+# Results are stored in target/criterion/<group>/<bench>/new/estimates.json
+# Extract results from JSON instead of re-running:
+cat target/criterion/decode_compare/jpegli-baseline/512x512/new/estimates.json | jq '.mean.point_estimate'
+
+# If you need terminal output, pipe to a file on FIRST run:
+cargo bench --bench decode_compare 2>&1 | tee /tmp/bench-output.txt
+```
+
+**JSON structure:** `estimates.json` contains `mean`, `median`, `slope`, `std_dev` with `point_estimate` (nanoseconds) and `confidence_interval`.
+
+**Example extraction:**
+```bash
+for d in target/criterion/decode_compare/*/512x512/new; do
+  name=$(basename $(dirname $(dirname $d)))
+  mean=$(cat "$d/estimates.json" | jq -r '.mean.point_estimate')
+  echo "$name: $(echo "scale=2; $mean/1000" | bc) µs"
+done
+```
+
 ## C++ Parity Testing
 
 Requires `cjpegli`/`djpegli` binaries from libjxl build:
