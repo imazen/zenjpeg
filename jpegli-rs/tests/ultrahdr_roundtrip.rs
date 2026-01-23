@@ -263,7 +263,7 @@ fn test_gainmap_grayscale_roundtrip() {
         &GainMapConfig::default(),
         &ToneMapConfig::default(),
         &EncoderConfig::ycbcr(95.0, ChromaSubsampling::None), // High quality for accurate test
-        95.0, // High gainmap quality
+        95.0,                                                 // High gainmap quality
         Unstoppable,
     )
     .expect("Encoding failed");
@@ -280,7 +280,10 @@ fn test_gainmap_grayscale_roundtrip() {
     // Verify gainmap properties
     assert!(gainmap.width > 0, "Gainmap width should be positive");
     assert!(gainmap.height > 0, "Gainmap height should be positive");
-    assert_eq!(gainmap.channels, 1, "Gainmap should be single-channel (grayscale)");
+    assert_eq!(
+        gainmap.channels, 1,
+        "Gainmap should be single-channel (grayscale)"
+    );
 
     // Verify gainmap has valid pixel data
     let expected_size = (gainmap.width * gainmap.height) as usize;

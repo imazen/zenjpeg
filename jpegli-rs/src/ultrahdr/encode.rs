@@ -165,8 +165,7 @@ pub fn create_gainmap_computer(
         y_only: !config.multi_channel,
     };
 
-    RowEncoder::new(width, height, config.clone(), input_config)
-        .map_err(ultrahdr_to_jpegli_error)
+    RowEncoder::new(width, height, config.clone(), input_config).map_err(ultrahdr_to_jpegli_error)
 }
 
 /// Encode SDR image with pre-computed gain map.

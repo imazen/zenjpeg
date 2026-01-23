@@ -51,7 +51,7 @@ struct Timing {
 
 impl ProfileStats {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     #[cfg(feature = "profile")]
