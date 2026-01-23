@@ -13,7 +13,7 @@ use crate::huffman::HuffmanDecodeTable;
 use crate::quant::dequantize_unzigzag_i32_into;
 use crate::types::JpegMode;
 
-use super::idct_int::idct_int_tiered;
+use super::super::idct_int::idct_int_tiered;
 use super::JpegParser;
 use crate::color::ycbcr_planes_i16_to_rgb_u8;
 

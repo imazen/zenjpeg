@@ -14,31 +14,16 @@ mod output;
 mod progressive;
 mod scan;
 
-use super::idct::inverse_dct_8x8;
-use super::idct_int::{idct_int_auto, idct_int_tiered};
-use super::upsample::upsample_fancy;
 use super::{JpegInfo, ScanInfo};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
-use crate::color::{
-    gray_f32_to_gray_f32, gray_f32_to_gray_u8, gray_f32_to_rgb_f32, gray_f32_to_rgb_u8,
-    ycbcr_planes_f32_to_rgb_f32, ycbcr_planes_f32_to_rgb_u8, ycbcr_planes_i16_to_rgb_u8,
-};
-use crate::entropy::EntropyDecoder;
-use crate::error::{Error, Result, ScanRead};
-use crate::foundation::alloc::{
-    checked_size_2d, try_alloc_dct_blocks, try_alloc_maybeuninit, validate_dimensions,
-};
+use crate::error::{Error, Result};
+use crate::foundation::alloc::checked_size_2d;
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, DCT_SIZE, JPEG_NATURAL_ORDER, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT,
-    MARKER_DRI, MARKER_EOI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI, MARKER_SOS,
-    MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI,
+    MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
-use crate::quant::{
-    dequantize_block, dequantize_block_i32, dequantize_block_with_bias, dequantize_unzigzag_i32,
-    dequantize_unzigzag_i32_into, DequantBiasStats,
-};
-use crate::types::{ColorSpace, Component, Dimensions, JpegMode, PixelFormat};
+use crate::types::{ColorSpace, Component, Dimensions, JpegMode};
 
 /// Pre-computed component info for decoding efficiency.
 ///
@@ -343,8 +328,8 @@ impl<'a> JpegParser<'a> {
         }
     }
 
-    pub(super) fn extract_coefficients(&self) -> Result<super::super::image::DecodedCoefficients> {
-        use super::super::image::{ComponentCoefficients, DecodedCoefficients};
+    pub(super) fn extract_coefficients(&self) -> Result<crate::decode::image::DecodedCoefficients> {
+        use crate::decode::image::{ComponentCoefficients, DecodedCoefficients};
 
         if self.coeffs.is_empty() {
             return Err(Error::internal("no coefficients decoded"));
@@ -367,26 +352,33 @@ impl<'a> JpegParser<'a> {
         for i in 0..self.num_components as usize {
             let h_samp = self.components[i].h_samp_factor as usize;
             let v_samp = self.components[i].v_samp_factor as usize;
-            let blocks_h = mcu_cols * h_samp;
-            let blocks_v = mcu_rows * v_samp;
+            let blocks_wide = mcu_cols * h_samp;
+            let blocks_high = mcu_rows * v_samp;
 
-            let quant_table = self.quant_tables[self.components[i].quant_table_idx as usize]
-                .ok_or(Error::internal("missing quantization table"))?;
+            // Flatten block coefficients from Vec<[i16; 64]> to Vec<i16>
+            let coeffs: Vec<i16> = self.coeffs[i]
+                .iter()
+                .flat_map(|block| block.iter().copied())
+                .collect();
 
             components.push(ComponentCoefficients {
-                blocks: self.coeffs[i].clone(),
-                blocks_h,
-                blocks_v,
-                h_samp_factor: h_samp as u8,
-                v_samp_factor: v_samp as u8,
-                quant_table,
+                id: self.components[i].id,
+                coeffs,
+                blocks_wide,
+                blocks_high,
+                h_samp: h_samp as u8,
+                v_samp: v_samp as u8,
             });
         }
+
+        // Collect quantization tables
+        let quant_tables: Vec<Option<[u16; 64]>> = self.quant_tables.to_vec();
 
         Ok(DecodedCoefficients {
             width: self.width,
             height: self.height,
             components,
+            quant_tables,
         })
     }
 }
