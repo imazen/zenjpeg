@@ -24,7 +24,6 @@ imgref = { workspace = true }
 multiversion = { workspace = true }
 multiversed = { workspace = true }
 enough = { workspace = true }
-spin = { workspace = true }  # no_std lazy initialization (for huffman tables)
 tinyvec = { workspace = true }  # Stack-allocated bounded vectors
 linear-srgb = { workspace = true }  # Fast linear↔sRGB conversion
 whereat = { workspace = true }  # Error tracing with location tracking

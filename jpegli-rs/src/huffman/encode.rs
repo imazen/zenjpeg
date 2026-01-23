@@ -7,45 +7,103 @@
 
 #![allow(dead_code)]
 
-use spin::Lazy;
-
 use crate::error::{Error, Result};
 
-// Static standard encode tables (lazily initialized, ~1.3KB each)
-static STD_DC_LUMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
-    HuffmanEncodeTable::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
-static STD_DC_CHROMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
-    HuffmanEncodeTable::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
-static STD_AC_LUMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
-    HuffmanEncodeTable::from_bits_values(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
-static STD_AC_CHROMINANCE_ENC: Lazy<HuffmanEncodeTable> = Lazy::new(|| {
-    HuffmanEncodeTable::from_bits_values(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
+/// Builds a Huffman encode table at compile time from JPEG-format bits and values.
+///
+/// This is a const fn that generates the codes and lengths arrays for encoding.
+const fn build_encode_table<const N: usize>(
+    bits: &[u8; 16],
+    values: &[u8; N],
+) -> ([u32; MAX_SYMBOLS], [u8; MAX_SYMBOLS]) {
+    let mut codes = [0u32; MAX_SYMBOLS];
+    let mut lengths = [0u8; MAX_SYMBOLS];
 
-// Static standard decode tables (lazily initialized, ~1.5KB each)
-static STD_DC_LUMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
-    HuffmanDecodeTable::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
+    let mut code: u32 = 0;
+    let mut symbol_idx = 0;
+    let mut length_minus_1 = 0;
+
+    while length_minus_1 < 16 {
+        let length = (length_minus_1 + 1) as u8;
+        let count = bits[length_minus_1] as usize;
+        let mut i = 0;
+        while i < count {
+            let symbol = values[symbol_idx] as usize;
+            codes[symbol] = code;
+            lengths[symbol] = length;
+            code += 1;
+            symbol_idx += 1;
+            i += 1;
+        }
+        code <<= 1;
+        length_minus_1 += 1;
+    }
+
+    (codes, lengths)
+}
+
+// Standard encode tables - computed at compile time
+const STD_DC_LUMINANCE_ENC_DATA: ([u32; MAX_SYMBOLS], [u8; MAX_SYMBOLS]) =
+    build_encode_table(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES);
+const STD_DC_CHROMINANCE_ENC_DATA: ([u32; MAX_SYMBOLS], [u8; MAX_SYMBOLS]) =
+    build_encode_table(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES);
+const STD_AC_LUMINANCE_ENC_DATA: ([u32; MAX_SYMBOLS], [u8; MAX_SYMBOLS]) =
+    build_encode_table(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES);
+const STD_AC_CHROMINANCE_ENC_DATA: ([u32; MAX_SYMBOLS], [u8; MAX_SYMBOLS]) =
+    build_encode_table(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES);
+
+// Static standard encode tables - zero runtime init cost
+static STD_DC_LUMINANCE_ENC: HuffmanEncodeTable = HuffmanEncodeTable {
+    codes: STD_DC_LUMINANCE_ENC_DATA.0,
+    lengths: STD_DC_LUMINANCE_ENC_DATA.1,
+    num_symbols: STD_DC_LUMINANCE_VALUES.len(),
+};
+static STD_DC_CHROMINANCE_ENC: HuffmanEncodeTable = HuffmanEncodeTable {
+    codes: STD_DC_CHROMINANCE_ENC_DATA.0,
+    lengths: STD_DC_CHROMINANCE_ENC_DATA.1,
+    num_symbols: STD_DC_CHROMINANCE_VALUES.len(),
+};
+static STD_AC_LUMINANCE_ENC: HuffmanEncodeTable = HuffmanEncodeTable {
+    codes: STD_AC_LUMINANCE_ENC_DATA.0,
+    lengths: STD_AC_LUMINANCE_ENC_DATA.1,
+    num_symbols: STD_AC_LUMINANCE_VALUES.len(),
+};
+static STD_AC_CHROMINANCE_ENC: HuffmanEncodeTable = HuffmanEncodeTable {
+    codes: STD_AC_CHROMINANCE_ENC_DATA.0,
+    lengths: STD_AC_CHROMINANCE_ENC_DATA.1,
+    num_symbols: STD_AC_CHROMINANCE_VALUES.len(),
+};
+
+// Static standard decode tables - lazily initialized at runtime
+// (Decode tables contain Vec/Box which can't be const)
+// Only available with std feature (LazyLock requires std)
+#[cfg(feature = "std")]
+static STD_DC_LUMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
+    std::sync::LazyLock::new(|| {
+        HuffmanDecodeTable::from_bits_values(&STD_DC_LUMINANCE_BITS, &STD_DC_LUMINANCE_VALUES)
+            .expect("standard table should be valid")
+    });
+#[cfg(feature = "std")]
+static STD_DC_CHROMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
+    std::sync::LazyLock::new(|| {
+        HuffmanDecodeTable::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
+            .expect("standard table should be valid")
+    });
+#[cfg(feature = "std")]
+static STD_AC_LUMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
+    std::sync::LazyLock::new(|| {
+        HuffmanDecodeTable::from_bits_values_ac(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
+            .expect("standard table should be valid")
+    });
+#[cfg(feature = "std")]
+static STD_AC_CHROMINANCE_DEC: std::sync::LazyLock<HuffmanDecodeTable> =
+    std::sync::LazyLock::new(|| {
+        HuffmanDecodeTable::from_bits_values_ac(
+            &STD_AC_CHROMINANCE_BITS,
+            &STD_AC_CHROMINANCE_VALUES,
+        )
         .expect("standard table should be valid")
-});
-static STD_DC_CHROMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
-    HuffmanDecodeTable::from_bits_values(&STD_DC_CHROMINANCE_BITS, &STD_DC_CHROMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
-static STD_AC_LUMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
-    HuffmanDecodeTable::from_bits_values_ac(&STD_AC_LUMINANCE_BITS, &STD_AC_LUMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
-static STD_AC_CHROMINANCE_DEC: Lazy<HuffmanDecodeTable> = Lazy::new(|| {
-    HuffmanDecodeTable::from_bits_values_ac(&STD_AC_CHROMINANCE_BITS, &STD_AC_CHROMINANCE_VALUES)
-        .expect("standard table should be valid")
-});
+    });
 
 /// Maximum code length in bits for JPEG Huffman codes.
 pub const MAX_CODE_LENGTH: usize = 16;
@@ -436,24 +494,32 @@ impl HuffmanDecodeTable {
     }
 
     /// Returns a reference to the standard DC luminance decode table (lazily initialized).
+    /// Only available with the `std` feature.
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_dc_luminance() -> &'static Self {
         &STD_DC_LUMINANCE_DEC
     }
 
     /// Returns a reference to the standard DC chrominance decode table (lazily initialized).
+    /// Only available with the `std` feature.
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_dc_chrominance() -> &'static Self {
         &STD_DC_CHROMINANCE_DEC
     }
 
     /// Returns a reference to the standard AC luminance decode table (lazily initialized).
+    /// Only available with the `std` feature.
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_ac_luminance() -> &'static Self {
         &STD_AC_LUMINANCE_DEC
     }
 
     /// Returns a reference to the standard AC chrominance decode table (lazily initialized).
+    /// Only available with the `std` feature.
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn std_ac_chrominance() -> &'static Self {
         &STD_AC_CHROMINANCE_DEC
