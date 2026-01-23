@@ -376,6 +376,66 @@ to SSE even inside `#[multiversed]` functions. The `multiversion` crate uses
 
 **Files:** `jpegli-rs/src/quant/aq/autovec.rs`, `jpegli-rs/examples/bench_autovec_aq.rs`
 
+## Decoder Performance Gap (2026-01-22)
+
+Run with: `cargo bench -p jpegli-rs --bench decode_compare`
+
+### Summary
+
+jpegli-rs decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x slower** for progressive JPEG.
+
+**Baseline JPEG (sequential Huffman):**
+
+| Size | zune-jpeg | jpegli-rs | Ratio |
+|------|-----------|-----------|-------|
+| 256x256 | 82 µs | 337 µs | 4.1x |
+| 512x512 | 285 µs | 1.31 ms | 4.6x |
+| 1024x1024 | 946 µs | 4.56 ms | 4.8x |
+| 2048x2048 | 3.80 ms | 19.2 ms | 5.0x |
+
+**Progressive JPEG:**
+
+| Size | zune-jpeg | jpegli-rs | Ratio |
+|------|-----------|-----------|-------|
+| 256x256 | 240 µs | 519 µs | 2.2x |
+| 512x512 | 860 µs | 2.03 ms | 2.4x |
+| 1024x1024 | 2.46 ms | 10.0 ms | 4.1x |
+| 2048x2048 | 9.16 ms | 32.0 ms | 3.5x |
+
+**Throughput comparison (2048x2048):**
+- zune-jpeg baseline: 1104 MP/s
+- jpegli-rs baseline: 219 MP/s
+- zune-jpeg progressive: 458 MP/s
+- jpegli-rs progressive: 131 MP/s
+
+### Known Performance Issues
+
+1. **Entropy decoder (10.6% of decode time)** - vs zune's 4%
+   - Uses `ScanRead` enum with match on every bit read
+   - Branchless `huff_extend` added but control flow overhead remains
+   - zune-jpeg uses macros for inline Huffman with no enum matching
+
+2. **Color conversion (20.5% `to_pixels` + 10% YCbCr→RGB)**
+   - YCbCr to RGB uses autovectorized i16 path
+   - Needs SIMD optimization like encoder's yuv crate
+
+3. **memset overhead (5.57%)**
+   - Zeroing coefficient arrays before each block decode
+   - Zero-copy architecture could eliminate this
+
+4. **IDCT (4.4% `idct_int_4x4`)**
+   - Uses scaled integer IDCT
+   - Not bottleneck currently
+
+### Decoder Optimization Path
+
+1. ✅ Branchless huff_extend (done)
+2. ✅ AVX2 upsampling (done)
+3. ✅ Autovectorized YCbCr conversion (done)
+4. 🔲 Eliminate coefficient array zeroing (zero-copy)
+5. 🔲 Macro-based Huffman (eliminate ScanRead enum)
+6. 🔲 SIMD color conversion (port from encoder)
+
 ## Failed Explorations
 
 ### Parallel AQ (2026-01-17)
@@ -450,6 +510,45 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
 
 **Files:** `jpegli-rs/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
+
+### Decoder Memset Optimization (2026-01-22)
+
+**Attempted:** Smart zeroing of coefficient buffer (zune-jpeg optimization).
+
+**Implementation:** Track `last_written` from previous block, only zero that many positions instead of all 64.
+For sparse blocks (typical), this saves ~50% of zeroing (e.g., 20 bytes instead of 128).
+
+**Result:** No measurable improvement despite correct implementation.
+
+**Why it didn't help:**
+1. Current API returns `([i16; 64], u8)` by value - copies 128 bytes per block
+2. Smart zeroing saves ~54 bytes average zeroing (from 128 to 74)
+3. But copy still writes 128 bytes regardless
+4. Copy dominates total memory bandwidth
+
+**Files changed:**
+- `entropy/decoder.rs`: Added `coeff_buffer` and `last_written` to `EntropyDecoder`
+- Reusable buffer instead of stack-allocated array
+- Track written positions for next block's targeted zeroing
+
+**What would actually help (zero-copy architecture):**
+```rust
+// Current (copies 128 bytes per block):
+fn decode_block() -> ([i16; 64], u8)
+
+// Zero-copy (writes directly to caller's buffer):
+fn decode_block_into(&mut self, coeffs: &mut [i16; 64]) -> u8
+```
+
+With caller-provided buffer:
+1. Zero only `last_written` positions (not full 64)
+2. No 128-byte copy on return
+3. Caller can reuse same buffer across blocks
+4. Total bandwidth: ~20 bytes zeroing + ~20 bytes coefficients = 40 bytes
+   vs current: 128 bytes zeroing + 128 bytes copy = 256 bytes
+
+**Conclusion:** Smart zeroing is prerequisite but insufficient. Full benefit requires zero-copy
+API where caller manages buffer lifecycle. Kept implementation as foundation for future work.
 
 ## Investigation Notes
 
