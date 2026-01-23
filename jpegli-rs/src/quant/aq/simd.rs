@@ -1155,9 +1155,7 @@ pub fn compute_fuzzy_erosion_blocks_simd(
 
         // Store results for 8 blocks
         let sum_arr = sum.to_array();
-        for i in 0..8 {
-            out[bx + i] = sum_arr[i];
-        }
+        out[bx..bx + 8].copy_from_slice(&sum_arr);
 
         bx += 8;
         processed += 8;
