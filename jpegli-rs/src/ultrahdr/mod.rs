@@ -77,9 +77,9 @@ pub use ultrahdr_core::{
     // Gainmap functions (full-image)
     gainmap::{apply_gainmap, compute_gainmap, GainMapConfig, HdrOutputFormat},
     // Streaming APIs (low-memory processing)
-    gainmap::{
-        EncoderInputConfig, InputConfig, StreamingGainMapComputer, StreamingHdrReconstructor,
-    },
+    // - RowDecoder/RowEncoder: full gainmap in memory, row-based SDR/HDR
+    // - StreamDecoder/StreamEncoder: dual streaming for parallel decode
+    gainmap::{DecodeInput, EncodeInput, RowDecoder, RowEncoder, StreamDecoder, StreamEncoder},
     // Metadata
     metadata::xmp::{generate_xmp, parse_xmp},
     // Color types (aliased to avoid collision with jpegli types)

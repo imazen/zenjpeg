@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
     color::tonemap::{tonemap_to_sdr, AdaptiveTonemapper, ToneMapConfig},
-    gainmap::{compute_gainmap, EncoderInputConfig, GainMapConfig, StreamingGainMapComputer},
+    gainmap::{compute_gainmap, EncodeInput, GainMapConfig, RowEncoder},
     metadata::xmp::generate_xmp,
     ColorGamut, ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
 };
@@ -120,7 +120,7 @@ pub fn encode_ultrahdr_with_tonemapper(
 ///
 /// # Returns
 ///
-/// A [`StreamingGainMapComputer`] that can process HDR/SDR row pairs.
+/// A [`RowEncoder`] that can process HDR/SDR row pairs.
 ///
 /// # Example
 ///
@@ -152,9 +152,9 @@ pub fn create_gainmap_computer(
     hdr_format: UhdrPixelFormat,
     hdr_transfer: ColorTransfer,
     hdr_gamut: ColorGamut,
-) -> Result<StreamingGainMapComputer> {
+) -> Result<RowEncoder> {
     let hdr_bpp = hdr_format.bytes_per_pixel().unwrap_or(16);
-    let input_config = EncoderInputConfig {
+    let input_config = EncodeInput {
         hdr_format,
         hdr_stride: width * hdr_bpp as u32,
         hdr_transfer,
@@ -165,7 +165,7 @@ pub fn create_gainmap_computer(
         y_only: !config.multi_channel,
     };
 
-    StreamingGainMapComputer::new(width, height, config.clone(), input_config)
+    RowEncoder::new(width, height, config.clone(), input_config)
         .map_err(ultrahdr_to_jpegli_error)
 }
 
