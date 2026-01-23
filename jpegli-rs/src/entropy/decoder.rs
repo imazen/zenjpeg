@@ -68,6 +68,12 @@ pub struct EntropyDecoder<'data, 'tables> {
     ac_tables: [Option<&'tables HuffmanDecodeTable>; 4],
     /// Previous DC values for each component
     prev_dc: [i16; 4],
+    /// Reusable coefficient buffer - avoids zeroing full 64 elements each block.
+    /// Only positions 0..last_written are valid; rest may be garbage.
+    coeff_buffer: [i16; DCT_BLOCK_SIZE],
+    /// Number of positions written in coeff_buffer that need clearing before next use.
+    /// Positions 0..last_written need to be zeroed; rest are already zero.
+    last_written: u8,
 }
 
 /// Saved state of an EntropyDecoder for speculative decoding.
@@ -75,6 +81,7 @@ pub struct EntropyDecoder<'data, 'tables> {
 pub struct EntropyDecoderState {
     reader_state: crate::foundation::bitstream::BitReaderState,
     prev_dc: [i16; 4],
+    last_written: u8,
 }
 
 impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
@@ -85,6 +92,8 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             dc_tables: [None, None, None, None],
             ac_tables: [None, None, None, None],
             prev_dc: [0; 4],
+            coeff_buffer: [0i16; DCT_BLOCK_SIZE],
+            last_written: 0,
         }
     }
 
@@ -348,7 +357,18 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let fast_ac = ac_table.fast_ac_slice();
         let has_fast_ac = !fast_ac.is_empty();
 
-        let mut coeffs = [0i16; DCT_BLOCK_SIZE];
+        // Smart zeroing: only clear positions written by previous block.
+        // This is the zune-jpeg optimization - consecutive blocks have similar sparsity.
+        // Instead of zeroing all 64 elements (128 bytes), we only zero the positions
+        // that were actually written last time. For sparse blocks (typical), this
+        // saves significant memory bandwidth.
+        let clear_len = self.last_written as usize;
+        if clear_len > 0 {
+            self.coeff_buffer[..clear_len].fill(0);
+        }
+
+        // Use the pre-cleared buffer for this block
+        let coeffs = &mut self.coeff_buffer;
 
         // Decode DC coefficient using standalone function
         let dc_cat = match decode_huffman_symbol(&mut self.reader, dc_table)? {
@@ -448,8 +468,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         } else {
                             match self.reader.read_bits(ac_cat)? {
                                 ScanRead::Value(v) => v,
-                                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                                ScanRead::EndOfScan => {
+                                    self.last_written = DCT_BLOCK_SIZE as u8;
+                                    return Ok(ScanRead::EndOfScan);
+                                }
+                                ScanRead::Truncated => {
+                                    self.last_written = DCT_BLOCK_SIZE as u8;
+                                    return Ok(ScanRead::Truncated);
+                                }
                             }
                         };
                         // Use branchless huff_extend
@@ -464,8 +490,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             // Slow path for long codes or when not enough bits
             let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
                 ScanRead::Value(v) => v,
-                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                ScanRead::EndOfScan => {
+                    self.last_written = DCT_BLOCK_SIZE as u8;
+                    return Ok(ScanRead::EndOfScan);
+                }
+                ScanRead::Truncated => {
+                    self.last_written = DCT_BLOCK_SIZE as u8;
+                    return Ok(ScanRead::Truncated);
+                }
             };
 
             if symbol == 0 {
@@ -498,8 +530,14 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 } else {
                     match self.reader.read_bits(ac_cat)? {
                         ScanRead::Value(v) => v,
-                        ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                        ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                        ScanRead::EndOfScan => {
+                            self.last_written = DCT_BLOCK_SIZE as u8;
+                            return Ok(ScanRead::EndOfScan);
+                        }
+                        ScanRead::Truncated => {
+                            self.last_written = DCT_BLOCK_SIZE as u8;
+                            return Ok(ScanRead::Truncated);
+                        }
                     }
                 };
                 // Use branchless huff_extend
@@ -509,7 +547,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             }
         }
 
-        Ok(ScanRead::Value((coeffs, last_nonzero)))
+        // Record how much was written for next block's smart zeroing
+        self.last_written = last_nonzero;
+
+        // Return a copy of the buffer
+        Ok(ScanRead::Value((*coeffs, last_nonzero)))
     }
 
     /// Fast decode optimized for baseline JPEG (non-progressive).
@@ -729,6 +771,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         EntropyDecoderState {
             reader_state: self.reader.save_state(),
             prev_dc: self.prev_dc,
+            last_written: self.last_written,
         }
     }
 
@@ -736,6 +779,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     pub fn restore_state(&mut self, state: EntropyDecoderState) {
         self.reader.restore_state(state.reader_state);
         self.prev_dc = state.prev_dc;
+        self.last_written = state.last_written;
     }
 
     /// Reads and verifies a restart marker.
