@@ -39,6 +39,8 @@ mozjpeg-rs = { workspace = true, optional = true }
 yuv = { workspace = true, optional = true }
 # Token-based safe SIMD intrinsics
 archmage = { workspace = true, optional = true }
+# WASM console logging for debugging browser-specific issues
+web-sys = { version = "0.3", features = ["console"], optional = true }
 
 [dev-dependencies]
 # WASM-compatible dev dependencies
@@ -122,6 +124,8 @@ sharp-yuv = []
 # Enable mozjpeg-compatible quantization table presets (Robidoux, MSSIM, Klein, etc.)
 # Provides MozjpegTables::generate() helper for producing tables compatible with mozjpeg
 mozjpeg-tables = []
+# Enable WASM console tracing for debugging browser-specific issues
+wasm-trace = ["dep:web-sys"]
 # Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
 experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 # Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
