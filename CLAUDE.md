@@ -195,6 +195,33 @@ Then: `perf report --stdio --no-children -g none --percent-limit 1.0 2>/dev/null
 3. DCT + Quantization (8.6%) - already has parallel path
 4. Frequency counting - sequential (DC prediction dependency)
 
+## Decoder Profiling (512x512 image, 2026-01-22)
+
+Run with: `valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli 512`
+
+| Function | Instructions | % | Notes |
+|----------|--------------|---|-------|
+| `idct_int_avx2` | 1.6M | 4.0% | AVX2 IDCT (DC-only check built-in) |
+| `upsample_h2v2_i16_fancy_avx2` | 0.7M | 1.7% | Chroma upsampling |
+| `to_pixels` | 2.9M | 7.1% | Dequantization |
+| `ycbcr_planes_i16_to_rgb_u8_avx2` | 0.8M | 1.9% | YCbCr→RGB |
+| `decode_scan` | 1.1M | 2.7% | Entropy decoding |
+
+**Optimization progress (2026-01-22):**
+- Started: 60.3M instructions (1.74x vs zune-jpeg)
+- After AVX2 upsampling: 46.3M (-23%)
+- After AVX2 IDCT: 40.5M (-33% total, 1.17x vs zune)
+
+**Key insight:** Tiered 4x4/8x8 IDCT was counterproductive. The scalar 4x4 IDCT
+for sparse blocks took 7M instructions, while AVX2 8x8 IDCT (with built-in DC-only
+check) takes only 1.6M. Removed the tiering - always use AVX2 8x8 for non-DC blocks.
+
+**Benchmark results (512x512):**
+| Mode | Before | After | Improvement |
+|------|--------|-------|-------------|
+| Baseline | 1.31ms | 456µs | 65% faster |
+| Progressive | 2.03ms | 1.15ms | 43% faster |
+
 ## C++ Performance Gap (2026-01-21)
 
 Run with: `cargo bench -p jpegli-rs --bench cpp_comparison`
