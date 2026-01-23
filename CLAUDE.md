@@ -671,37 +671,15 @@ All 53,676 blocks:   0% difference
 
 ## Known Bugs
 
-0. **Debug env var in hot loop (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:798`
-   `std::env::var("DEBUG_HUFFMAN_LOOKUP")` was called on every token write.
-   Even though the debug code only ran when the env var existed, the syscall
-   overhead consumed ~12% of total encode time. Removed entirely.
+1. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
 
-4. **Eager error evaluation in hot path (FIXED)** - `jpegli-rs/src/entropy/encoder.rs:308-313`
-   `ok_or(Error::internal(...))` eagerly evaluates the error argument on every call.
-   `Error::new()` → `AtTraceBoxed::capture()` → malloc per call.
-   For 8K: ~4M blocks × 2 lookups = 8M unnecessary allocations (11.4% of encode time).
-   **Fix**: Changed to `ok_or_else(|| ...)` for lazy evaluation. **13% speedup.**
+### Fixed Bugs (historical reference)
 
-1. **Progressive XYB decode (FIXED)** - `jpegli-rs/src/decode/mod.rs:1187-1275`
-   Progressive DC scans now handle `EndOfScanData` gracefully (same as AC scans).
-   Previously failed on XYB with non-standard component IDs (R/G/B = 82/71/66).
-   See `tests/progressive_xyb_decode.rs`.
-
-2. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
-
-5. **1-pixel partial MCU edge quality gap (FIXED)** - `jpegli-rs/tests/edge_tile_ssim2_comparison.rs`
-   Images with width ≡ 1 (mod 8) showed -22 to -35 SSIMULACRA2 gap vs C++ jpegli.
-   **Root cause**: Missing edge replication in Y buffers:
-   - `fast_yuv.rs`: RGB→YCbCr strided paths left positions `width..y_stride` uninitialized
-   - `streaming.rs`: AQ Y buffer stride was exactly `padded_width`, but `hf_modulation_sum_8x8`
-     reads position 8 of rightmost block (needed `padded_width + 1`)
-   **Fix**: Added edge replication to both. Now -0.33 average diff (within normal ±4 variance).
-
-3. **HF modulation index wrap (FIXED)** - `jpegli-rs/src/quant/aq/simd.rs:566`
-   Rightmost partial blocks were reading pixels from next row due to missing column check.
-   - Added `block_x + 8 <= img_width` guard to vertical SIMD path
-   - Affects images where `width % 8 != 0`
-   - See `CODE.md` for full analysis
+- **Debug env var in hot loop** - `entropy/encoder.rs`: Removed `std::env::var()` call from hot path (was 12% overhead)
+- **Eager error evaluation** - `entropy/encoder.rs`: Changed `ok_or()` to `ok_or_else()` (13% speedup)
+- **Progressive XYB decode** - `decode/mod.rs`: Handle `EndOfScanData` gracefully for non-standard component IDs
+- **1-pixel partial MCU edge** - `fast_yuv.rs`, `streaming.rs`: Added edge replication for width ≡ 1 (mod 8)
+- **HF modulation index wrap** - `quant/aq/simd.rs`: Added bounds check for rightmost partial blocks
 
 ## Planned Features / TODO
 
@@ -884,6 +862,7 @@ parallel = ["dep:rayon"]  # Multi-threaded DCT/quantization
 unsafe_simd = []          # Raw AVX2/SSE intrinsics (opt-in)
 archmage-simd = ["dep:archmage"]  # Token-based SIMD for AQ (~6% faster)
 cms = ["cms-lcms2"]       # Color management
+ultrahdr = ["dep:ultrahdr-core", "decoder"]  # UltraHDR HDR gain map support
 ffi-tests = []            # C++ parity tests (requires jpegli-sys)
 corpus-tests = []         # Corpus comparison tests
 test-utils = []           # Testing utilities
@@ -919,5 +898,4 @@ API will have breaking changes.
 - `jpegli-rs/examples/README.md` - Examples and debugging tools
 - `jpegli-rs/docs/ADAPTIVE_QUANTIZATION.md` - AQ algorithm details
 - `jpegli-rs/docs/API_DESIGN.md` - Full API surface and proposed enhancements
-- `internal/jpegli-cpp/jpegli-rs/CLAUDE.md` - Detailed handoff document
 - `docs/SECURITY.md` - Security considerations
