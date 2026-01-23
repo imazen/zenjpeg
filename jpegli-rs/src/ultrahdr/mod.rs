@@ -62,15 +62,24 @@ mod decode;
 mod encode;
 
 // Re-export the main workflow functions
-pub use decode::{reconstruct_hdr, reencode_ultrahdr, tonemapper_from_ultrahdr, UltraHdrExtras};
-pub use encode::{encode_ultrahdr, encode_ultrahdr_with_tonemapper};
+pub use decode::{
+    create_hdr_reconstructor, reconstruct_hdr, reencode_ultrahdr, tonemapper_from_ultrahdr,
+    UltraHdrExtras,
+};
+pub use encode::{
+    create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_with_tonemapper, encode_with_gainmap,
+};
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions)
 pub use ultrahdr_core::{
     // Tonemapping
     color::tonemap::{AdaptiveTonemapper, FitConfig, FitMode, FitStats, ToneMapConfig},
-    // Gainmap functions
+    // Gainmap functions (full-image)
     gainmap::{apply_gainmap, compute_gainmap, GainMapConfig, HdrOutputFormat},
+    // Streaming APIs (low-memory processing)
+    gainmap::{
+        EncoderInputConfig, InputConfig, StreamingGainMapComputer, StreamingHdrReconstructor,
+    },
     // Metadata
     metadata::xmp::{generate_xmp, parse_xmp},
     // Color types (aliased to avoid collision with jpegli types)
