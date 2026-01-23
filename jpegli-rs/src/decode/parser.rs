@@ -1574,8 +1574,6 @@ impl<'a> JpegParser<'a> {
         use crate::decode::upsample::{
             upsample_h1v2_i16_fancy, upsample_h2v1_i16_fancy, upsample_h2v2_i16_fancy,
         };
-        #[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
-        use crate::decode::upsample::upsample_h2v2_i16_fancy_simd;
 
         let width = self.width as usize;
         let height = self.height as usize;
@@ -1743,44 +1741,23 @@ impl<'a> JpegParser<'a> {
             if fancy_upsampling {
                 match (h_ratio, v_ratio) {
                     (2, 2) => {
-                        #[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
-                        {
-                            upsample_h2v2_i16_fancy_simd(
-                                &cb_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cb_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                            upsample_h2v2_i16_fancy_simd(
-                                &cr_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cr_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                        }
-                        #[cfg(not(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64"))))]
-                        {
-                            upsample_h2v2_i16_fancy(
-                                &cb_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cb_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                            upsample_h2v2_i16_fancy(
-                                &cr_strip_sub,
-                                c_strip_width,
-                                c_rows_this_mcu,
-                                &mut cr_strip,
-                                y_strip_width,
-                                y_rows_this_mcu,
-                            );
-                        }
+                        // Uses multiversion for automatic SIMD dispatch
+                        upsample_h2v2_i16_fancy(
+                            &cb_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cb_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
+                        upsample_h2v2_i16_fancy(
+                            &cr_strip_sub,
+                            c_strip_width,
+                            c_rows_this_mcu,
+                            &mut cr_strip,
+                            y_strip_width,
+                            y_rows_this_mcu,
+                        );
                     }
                     (2, 1) => {
                         upsample_h2v1_i16_fancy(
