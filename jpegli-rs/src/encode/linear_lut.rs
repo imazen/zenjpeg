@@ -2,26 +2,12 @@
 //!
 //! Uses direct transfer function computation - no LUTs, no runtime initialization.
 //! The linear-srgb crate provides optimized implementations with FMA acceleration.
-//!
-//! When AVX2+FMA is available, uses the mage module for ~1.7x faster SIMD operations.
 
 use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
     YCBCR_R_TO_CB, YCBCR_R_TO_CR, YCBCR_R_TO_Y,
 };
 use linear_srgb::default::linear_to_srgb;
-
-// Mage token for FMA-accelerated SIMD (cached on first use)
-use linear_srgb::mage::{SimdToken, Token as MageToken};
-use spin::Once;
-
-static MAGE_TOKEN: Once<Option<MageToken>> = Once::new();
-
-/// Get the cached mage token, or None if AVX2+FMA unavailable.
-#[inline]
-fn get_mage_token() -> Option<MageToken> {
-    *MAGE_TOKEN.call_once(MageToken::try_new)
-}
 
 /// Cb/Cr offset (128.0 for 8-bit JPEG)
 const CHROMA_OFFSET: f32 = 128.0;
@@ -115,14 +101,13 @@ pub fn linear_rgbf32_to_ycbcr_lut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 // SIMD implementations (8-wide)
 // ============================================================================
 
-// Use inline variant from linear-srgb as fallback
+// Use inline variant from linear-srgb - no dispatch overhead, pure SIMD
 use linear_srgb::default::inline::linear_to_srgb_x8;
 use wide::{f32x8, CmpGt};
 
 /// Convert 8 linear f32 values [0,1] to sRGB [0, 255] using SIMD.
 ///
 /// Values > 1.0 are tone-mapped with Reinhard.
-/// Uses FMA-accelerated mage module when AVX2+FMA is available (~1.7x faster).
 #[inline(always)]
 pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
     // Clamp negatives to zero
@@ -135,20 +120,11 @@ pub fn linear_to_srgb_255_x8(x: f32x8) -> f32x8 {
     let tonemapped = x / (one + x);
     let x = needs_tonemap.blend(tonemapped, x);
 
-    // Use mage for FMA-accelerated sRGB conversion when available
-    if let Some(token) = get_mage_token() {
-        let mut arr = x.to_array();
-        linear_srgb::mage::linear_to_srgb_slice(token, &mut arr);
-        return f32x8::new(arr) * f32x8::splat(255.0);
-    }
-
-    // Fallback: use wide-based implementation
+    // Apply sRGB transfer function and scale to [0, 255]
     linear_to_srgb_x8(x) * f32x8::splat(255.0)
 }
 
 /// Convert 8 linear u16 values [0, 65535] to sRGB [0, 255] using SIMD.
-///
-/// Uses FMA-accelerated mage module when AVX2+FMA is available.
 #[inline(always)]
 pub fn linear_u16_to_srgb_255_x8(values: [u16; 8]) -> f32x8 {
     let scale = f32x8::splat(1.0 / 65535.0);
@@ -163,15 +139,7 @@ pub fn linear_u16_to_srgb_255_x8(values: [u16; 8]) -> f32x8 {
         values[7] as f32,
     ]) * scale;
 
-    // Use mage for FMA-accelerated sRGB conversion when available
     // No HDR tone mapping needed for u16 (max is 1.0)
-    if let Some(token) = get_mage_token() {
-        let mut arr = linear.to_array();
-        linear_srgb::mage::linear_to_srgb_slice(token, &mut arr);
-        return f32x8::new(arr) * f32x8::splat(255.0);
-    }
-
-    // Fallback: use wide-based implementation
     linear_to_srgb_x8(linear) * f32x8::splat(255.0)
 }
 
