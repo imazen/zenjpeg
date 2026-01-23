@@ -9,6 +9,7 @@ use enough::Stop;
 
 use super::encoder_config::EncoderConfig;
 use super::encoder_types::{PixelLayout, YCbCrPlanes};
+use super::extras::inject_encoder_segments;
 use super::streaming::StreamingEncoder;
 use crate::error::{Error, Result};
 
@@ -258,8 +259,14 @@ impl BytesEncoder {
         // Finish streaming encoder
         let mut jpeg = self.inner.finish()?;
 
-        // Inject metadata in order: EXIF first (right after SOI), then XMP, then ICC
-        // This matches standard JPEG metadata ordering
+        // Use EncoderSegments if provided (new API)
+        if let Some(ref segments) = self.config.segments {
+            jpeg = inject_encoder_segments(jpeg, segments);
+        }
+
+        // Fall back to individual metadata fields for backwards compatibility
+        // These are applied after EncoderSegments if both are provided
+        // (allows override of specific fields while keeping bulk segments)
         if let Some(ref exif) = self.config.exif_data {
             if let Some(exif_bytes) = exif.to_bytes() {
                 jpeg = inject_exif(jpeg, &exif_bytes);
@@ -1054,7 +1061,12 @@ impl YCbCrPlanarEncoder {
         // Finish streaming encoder
         let mut jpeg = self.inner.finish()?;
 
-        // Inject metadata in order: EXIF first (right after SOI), then XMP, then ICC
+        // Use EncoderSegments if provided (new API)
+        if let Some(ref segments) = self.config.segments {
+            jpeg = inject_encoder_segments(jpeg, segments);
+        }
+
+        // Fall back to individual metadata fields for backwards compatibility
         if let Some(ref exif) = self.config.exif_data {
             if let Some(exif_bytes) = exif.to_bytes() {
                 jpeg = inject_exif(jpeg, &exif_bytes);
@@ -1855,5 +1867,166 @@ mod tests {
         let jpeg = enc.finish().unwrap();
         assert!(!jpeg.is_empty());
         assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+    }
+
+    // =========================================================================
+    // EncoderSegments integration tests
+    // =========================================================================
+
+    #[test]
+    fn test_encoder_segments_injection() {
+        use crate::encode::extras::EncoderSegments;
+
+        // Create segments with EXIF and comment
+        let segments = EncoderSegments::new()
+            .set_exif(vec![0x49, 0x49, 0x2A, 0x00]) // Minimal TIFF header
+            .add_comment("Test comment");
+
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).with_segments(segments);
+
+        let mut enc = config
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+
+        let pixels = vec![128u8; 8 * 8 * 3];
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+
+        let jpeg = enc.finish().unwrap();
+
+        // Verify SOI
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
+
+        // Find EXIF (APP1 with "Exif\0\0" signature)
+        let mut found_exif = false;
+        let mut pos = 2;
+        while pos + 4 < jpeg.len() {
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xE1 {
+                if jpeg.len() > pos + 10 && &jpeg[pos + 4..pos + 10] == b"Exif\0\0" {
+                    found_exif = true;
+                    break;
+                }
+            }
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + len;
+            } else {
+                pos += 1;
+            }
+        }
+        assert!(found_exif, "EXIF segment not found in output");
+
+        // Find comment (COM marker 0xFE)
+        let mut found_comment = false;
+        pos = 2;
+        while pos + 4 < jpeg.len() {
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xFE {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                let comment_data = &jpeg[pos + 4..pos + 2 + len];
+                if comment_data == b"Test comment" {
+                    found_comment = true;
+                    break;
+                }
+            }
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + len;
+            } else {
+                pos += 1;
+            }
+        }
+        assert!(found_comment, "Comment segment not found in output");
+    }
+
+    #[test]
+    fn test_encoder_segments_icc_chunking() {
+        use crate::encode::extras::EncoderSegments;
+
+        // Large ICC profile that needs chunking
+        let large_profile = vec![0xAB; 100_000];
+
+        let segments = EncoderSegments::new().set_icc(large_profile);
+
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).with_segments(segments);
+
+        let mut enc = config
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+
+        let pixels = vec![128u8; 8 * 8 * 3];
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+
+        let jpeg = enc.finish().unwrap();
+
+        // Count ICC chunks
+        let mut chunk_count = 0;
+        let mut pos = 2;
+        while pos + 4 < jpeg.len() {
+            if jpeg[pos] == 0xFF
+                && jpeg[pos + 1] == 0xE2
+                && jpeg.len() > pos + 16
+                && &jpeg[pos + 4..pos + 16] == b"ICC_PROFILE\0"
+            {
+                chunk_count += 1;
+            }
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + len;
+            } else {
+                pos += 1;
+            }
+        }
+        assert_eq!(chunk_count, 2, "Expected 2 ICC chunks for 100KB profile");
+    }
+
+    #[test]
+    fn test_encoder_segments_xmp() {
+        use crate::encode::extras::EncoderSegments;
+
+        let xmp = "<?xml version=\"1.0\"?><x:xmpmeta>test XMP data</x:xmpmeta>";
+        let segments = EncoderSegments::new().set_xmp(xmp);
+
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).with_segments(segments);
+
+        let mut enc = config
+            .encode_from_bytes(8, 8, PixelLayout::Rgb8Srgb)
+            .unwrap();
+
+        let pixels = vec![128u8; 8 * 8 * 3];
+        enc.push_packed(&pixels, Unstoppable).unwrap();
+
+        let jpeg = enc.finish().unwrap();
+
+        // Find XMP (APP1 with XMP namespace)
+        let xmp_ns = b"http://ns.adobe.com/xap/1.0/\0";
+        let mut found_xmp = false;
+        let mut pos = 2;
+        while pos + 4 < jpeg.len() {
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xE1 {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                if jpeg.len() > pos + 4 + xmp_ns.len()
+                    && &jpeg[pos + 4..pos + 4 + xmp_ns.len()] == xmp_ns
+                {
+                    found_xmp = true;
+                    // Verify XMP content follows namespace
+                    let xmp_start = pos + 4 + xmp_ns.len();
+                    let xmp_end = pos + 2 + len;
+                    if xmp_end <= jpeg.len() {
+                        let xmp_data = &jpeg[xmp_start..xmp_end];
+                        assert!(
+                            xmp_data.starts_with(b"<?xml"),
+                            "XMP data should start with XML declaration"
+                        );
+                    }
+                    break;
+                }
+            }
+            if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
+                let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
+                pos += 2 + len;
+            } else {
+                pos += 1;
+            }
+        }
+        assert!(found_xmp, "XMP segment not found in output");
     }
 }

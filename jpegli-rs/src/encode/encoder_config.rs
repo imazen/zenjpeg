@@ -46,6 +46,8 @@ pub struct EncoderConfig {
     /// When Some, enables trellis quantization for rate-distortion optimization.
     #[cfg(feature = "experimental-hybrid-trellis")]
     pub(crate) trellis: Option<TrellisConfig>,
+    /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
+    pub(crate) segments: Option<super::extras::EncoderSegments>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -161,6 +163,7 @@ impl EncoderConfig {
             separate_chroma_tables: true, // 3 tables (matches jpegli_set_distance)
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
+            segments: None,
         }
     }
 
@@ -783,6 +786,82 @@ impl EncoderConfig {
     #[must_use]
     pub fn get_edge_padding(&self) -> EdgePaddingConfig {
         self.edge_padding
+    }
+
+    // === Segment Injection ===
+
+    /// Add prepared segments for injection into output.
+    ///
+    /// Use this to preserve metadata during round-trip encoding or to inject
+    /// custom metadata and MPF secondary images.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::decoder::Decoder;
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+    ///
+    /// // Decode with metadata preservation
+    /// let decoded = Decoder::new().decode(&original)?;
+    /// let extras = decoded.extras().unwrap();
+    ///
+    /// // Re-encode with same metadata
+    /// let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
+    ///     .with_segments(extras.to_encoder_segments());
+    /// ```
+    #[must_use]
+    pub fn with_segments(mut self, segments: super::extras::EncoderSegments) -> Self {
+        self.segments = Some(segments);
+        self
+    }
+
+    /// Add a single segment (convenience method).
+    ///
+    /// The segment type is inferred from the marker and data.
+    #[must_use]
+    pub fn add_segment(mut self, marker: u8, data: Vec<u8>) -> Self {
+        use super::extras::EncoderSegments;
+        self.segments
+            .get_or_insert_with(EncoderSegments::new)
+            .add_raw_mut(marker, data);
+        self
+    }
+
+    /// Add an MPF secondary image (gain map, depth map, etc.).
+    ///
+    /// The image data must be a complete JPEG file. An MPF directory
+    /// will be automatically generated during encoding.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling, MpfImageType};
+    ///
+    /// let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
+    ///     .add_mpf_image(gainmap_jpeg, MpfImageType::Undefined);
+    /// ```
+    #[must_use]
+    pub fn add_mpf_image(mut self, jpeg: Vec<u8>, typ: super::extras::MpfImageType) -> Self {
+        use super::extras::EncoderSegments;
+        self.segments
+            .get_or_insert_with(EncoderSegments::new)
+            .add_mpf_image_mut(jpeg, typ);
+        self
+    }
+
+    /// Add a gain map (convenience for `MpfImageType::Undefined`).
+    ///
+    /// Gain maps are used by UltraHDR for HDR rendering. The image data
+    /// must be a complete JPEG file (typically grayscale).
+    #[must_use]
+    pub fn add_gainmap(self, jpeg: Vec<u8>) -> Self {
+        self.add_mpf_image(jpeg, super::extras::MpfImageType::Undefined)
+    }
+
+    /// Get the configured segments, if any.
+    #[must_use]
+    pub fn get_segments(&self) -> Option<&super::extras::EncoderSegments> {
+        self.segments.as_ref()
     }
 }
 
