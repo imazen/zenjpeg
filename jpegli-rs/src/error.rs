@@ -693,6 +693,26 @@ impl From<std::io::Error> for Error {
     }
 }
 
+#[cfg(feature = "ultrahdr")]
+impl From<ultrahdr_core::Error> for Error {
+    #[track_caller]
+    fn from(err: ultrahdr_core::Error) -> Self {
+        use ultrahdr_core::Error as UhdrError;
+        match err {
+            UhdrError::Stopped(reason) => Self::from(reason),
+            UhdrError::InvalidDimensions(w, h) => {
+                Self::invalid_dimensions(w, h, "invalid dimensions for UltraHDR")
+            }
+            UhdrError::DimensionMismatch { .. } => Self::decode_error(err.to_string()),
+            UhdrError::AllocationFailed(bytes) => {
+                Self::allocation_failed(bytes, "UltraHDR operation")
+            }
+            UhdrError::LimitExceeded(msg) => Self::decode_error(msg),
+            _ => Self::decode_error(err.to_string()),
+        }
+    }
+}
+
 impl From<crate::foundation::aligned_alloc::AllocError> for Error {
     #[track_caller]
     fn from(err: crate::foundation::aligned_alloc::AllocError) -> Self {

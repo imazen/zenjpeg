@@ -148,6 +148,18 @@ pub mod heuristics;
 #[cfg(feature = "decoder")]
 pub mod decoder;
 
+/// UltraHDR support - HDR gain map encoding and decoding.
+///
+/// Provides integration with `ultrahdr-core` for:
+/// - HDR to SDR tonemapping
+/// - Gain map computation and application
+/// - XMP metadata generation and parsing
+/// - Adaptive tonemapper for re-encoding
+///
+/// Enable with the `ultrahdr` feature flag.
+#[cfg(feature = "ultrahdr")]
+pub mod ultrahdr;
+
 // ============================================================================
 // Internal Implementation Modules
 // ============================================================================
