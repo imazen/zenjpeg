@@ -154,6 +154,104 @@ pub fn tonemapper_from_ultrahdr(extras: &DecodedExtras) -> Result<AdaptiveTonema
     Ok(AdaptiveTonemapper::from_gainmap(&metadata))
 }
 
+/// Full roundtrip: decode UltraHDR, reconstruct HDR, apply transform, re-encode.
+///
+/// This is a convenience function for editing workflows where you want to:
+/// 1. Decode an existing UltraHDR JPEG
+/// 2. Optionally modify the HDR content
+/// 3. Re-encode as UltraHDR with the same tonemapping relationship
+///
+/// # Arguments
+///
+/// * `jpeg_data` - Original UltraHDR JPEG bytes
+/// * `display_boost` - HDR reconstruction boost (4.0 typical)
+/// * `transform` - Optional closure to transform the HDR image (None = passthrough)
+/// * `gainmap_config` - Configuration for gain map computation
+/// * `encoder_config` - jpegli encoder configuration
+/// * `gainmap_quality` - JPEG quality for the gain map
+/// * `stop` - Cooperative cancellation token
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use jpegli::ultrahdr::{reencode_ultrahdr, GainMapConfig, Unstoppable};
+/// use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+///
+/// // Simple re-encode (no modification)
+/// let new_jpeg = reencode_ultrahdr(
+///     &original_jpeg,
+///     4.0,
+///     None::<fn(&mut UhdrRawImage)>,
+///     &GainMapConfig::default(),
+///     &EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter),
+///     75.0,
+///     Unstoppable,
+/// )?;
+///
+/// // Re-encode with HDR adjustment
+/// let new_jpeg = reencode_ultrahdr(
+///     &original_jpeg,
+///     4.0,
+///     Some(|hdr: &mut UhdrRawImage| {
+///         // Apply brightness boost, color grade, etc.
+///     }),
+///     &GainMapConfig::default(),
+///     &EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter),
+///     75.0,
+///     Unstoppable,
+/// )?;
+/// ```
+pub fn reencode_ultrahdr<F>(
+    jpeg_data: &[u8],
+    display_boost: f32,
+    transform: Option<F>,
+    gainmap_config: &ultrahdr_core::gainmap::GainMapConfig,
+    encoder_config: &crate::encoder::EncoderConfig,
+    gainmap_quality: f32,
+    stop: impl Stop,
+) -> Result<Vec<u8>>
+where
+    F: FnOnce(&mut RawImage),
+{
+    use crate::ultrahdr::encode::encode_ultrahdr_with_tonemapper;
+
+    // Decode
+    let decoded = Decoder::new().decode(jpeg_data)?;
+    let extras = decoded
+        .extras()
+        .ok_or_else(|| Error::decode_error("No extras preserved during decode".to_string()))?;
+
+    // Extract tonemapper before reconstruction
+    let tonemapper = tonemapper_from_ultrahdr(extras)?;
+
+    // Reconstruct HDR
+    let mut hdr = reconstruct_hdr(
+        decoded.pixels(),
+        decoded.width(),
+        decoded.height(),
+        extras,
+        display_boost,
+        HdrOutputFormat::LinearFloat,
+        &stop,
+    )?;
+    stop.check()?;
+
+    // Apply optional transform
+    if let Some(f) = transform {
+        f(&mut hdr);
+    }
+
+    // Re-encode with preserved tonemapping
+    encode_ultrahdr_with_tonemapper(
+        &hdr,
+        &tonemapper,
+        gainmap_config,
+        encoder_config,
+        gainmap_quality,
+        stop,
+    )
+}
+
 /// Decode a gain map JPEG to GainMap struct.
 fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
     let decoded = Decoder::new().decode(jpeg_data)?;
