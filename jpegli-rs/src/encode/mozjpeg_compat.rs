@@ -24,7 +24,7 @@
 /// Trellis quantization has O(n²) complexity per block. For high-entropy
 /// blocks (many non-zero coefficients at high quality), this can be slow.
 /// These modes control how aggressively to limit the search space.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TrellisSpeedMode {
     /// Full search on all blocks (slowest, optimal quality).
     /// Use when encoding time is not a concern.
@@ -34,6 +34,7 @@ pub enum TrellisSpeedMode {
     /// - nonzero > 55: lookback=8, candidates=3 (extreme entropy)
     /// - nonzero > 48: lookback=16, candidates=4 (high entropy)
     /// - otherwise: full search
+    #[default]
     Adaptive,
 
     /// Formula-based level (0-10), the original Rust implementation.
@@ -63,12 +64,6 @@ pub enum TrellisSpeedMode {
         /// Tier 2: maximum quantization candidates (e.g., 4)
         tier2_candidates: u8,
     },
-}
-
-impl Default for TrellisSpeedMode {
-    fn default() -> Self {
-        Self::Adaptive
-    }
 }
 
 impl TrellisSpeedMode {
@@ -119,29 +114,20 @@ impl TrellisSpeedMode {
         }
     }
 
-    /// Convert to mozjpeg-rs TrellisSpeedMode.
+    /// Convert to mozjpeg-rs speed_level (u8).
+    ///
+    /// mozjpeg-rs 0.5.1 uses a simple speed_level: u8 where:
+    /// - 0 = thorough (full search)
+    /// - 7 = default/adaptive
+    /// - 10 = fast
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub fn to_mozjpeg(&self) -> mozjpeg_rs::TrellisSpeedMode {
+    pub fn to_mozjpeg(&self) -> u8 {
         match *self {
-            Self::Thorough => mozjpeg_rs::TrellisSpeedMode::Thorough,
-            Self::Adaptive => mozjpeg_rs::TrellisSpeedMode::Adaptive,
-            Self::Level(l) => mozjpeg_rs::TrellisSpeedMode::Level(l),
-            Self::Custom {
-                tier1_threshold,
-                tier1_lookback,
-                tier1_candidates,
-                tier2_threshold,
-                tier2_lookback,
-                tier2_candidates,
-            } => mozjpeg_rs::TrellisSpeedMode::Custom {
-                tier1_threshold,
-                tier1_lookback,
-                tier1_candidates,
-                tier2_threshold,
-                tier2_lookback,
-                tier2_candidates,
-            },
+            Self::Thorough => 0,
+            Self::Adaptive => 7,
+            Self::Level(l) => l.min(10),
+            Self::Custom { .. } => 7, // Custom not supported in mozjpeg-rs 0.5.1, use default
         }
     }
 }
@@ -481,7 +467,7 @@ impl TrellisConfig {
             freq_split: 8, // Default, not exposed
             num_loops: self.num_loops,
             delta_dc_weight: 0.0, // Default, not exposed
-            speed_mode: self.speed_mode.to_mozjpeg(),
+            speed_level: self.speed_mode.to_mozjpeg(),
         }
     }
 }

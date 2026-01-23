@@ -55,9 +55,9 @@ fn encode_sequential(
     }
 
     for i in 0..y_blocks.len() {
-        let _ = encoder.encode_block(&y_blocks[i], 0, 0, 0);
-        let _ = encoder.encode_block(&cb_blocks[i], 1, 1, 1);
-        let _ = encoder.encode_block(&cr_blocks[i], 2, 1, 1);
+        encoder.encode_block(&y_blocks[i], 0, 0, 0);
+        encoder.encode_block(&cb_blocks[i], 1, 1, 1);
+        encoder.encode_block(&cr_blocks[i], 2, 1, 1);
         encoder.check_restart();
     }
 

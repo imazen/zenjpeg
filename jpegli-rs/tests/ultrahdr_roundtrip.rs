@@ -437,17 +437,17 @@ fn test_gainmap_various_sizes() {
             75.0,
             Unstoppable,
         )
-        .expect(&format!("Encoding failed for size {}", size));
+        .unwrap_or_else(|e| panic!("Encoding failed for size {}: {:?}", size, e));
 
         let decoded = Decoder::new()
             .decode(&jpeg)
-            .expect(&format!("Decoding failed for size {}", size));
+            .unwrap_or_else(|e| panic!("Decoding failed for size {}: {:?}", size, e));
 
         let extras = decoded.extras().expect("Should have extras");
         let gainmap = extras
             .decode_gainmap()
             .expect("Should have gain map")
-            .expect(&format!("Gain map decode failed for size {}", size));
+            .unwrap_or_else(|e| panic!("Gain map decode failed for size {}: {:?}", size, e));
 
         // Gainmap should be smaller than source (due to scale_factor)
         assert!(

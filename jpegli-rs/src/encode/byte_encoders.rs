@@ -1956,11 +1956,13 @@ mod tests {
         let mut found_exif = false;
         let mut pos = 2;
         while pos + 4 < jpeg.len() {
-            if jpeg[pos] == 0xFF && jpeg[pos + 1] == 0xE1 {
-                if jpeg.len() > pos + 10 && &jpeg[pos + 4..pos + 10] == b"Exif\0\0" {
-                    found_exif = true;
-                    break;
-                }
+            if jpeg[pos] == 0xFF
+                && jpeg[pos + 1] == 0xE1
+                && jpeg.len() > pos + 10
+                && &jpeg[pos + 4..pos + 10] == b"Exif\0\0"
+            {
+                found_exif = true;
+                break;
             }
             if jpeg[pos] == 0xFF && jpeg[pos + 1] != 0x00 && jpeg[pos + 1] != 0xFF {
                 let len = ((jpeg[pos + 2] as usize) << 8) | (jpeg[pos + 3] as usize);
