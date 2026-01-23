@@ -250,7 +250,7 @@ impl BytesEncoder {
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
-    pub fn finish(self) -> Result<Vec<u8>> {
+    pub fn finish(mut self) -> Result<Vec<u8>> {
         let rows_pushed = self.inner.rows_pushed() as u32;
         if rows_pushed != self.height {
             return Err(Error::incomplete_image(self.height, rows_pushed));
@@ -259,9 +259,37 @@ impl BytesEncoder {
         // Finish streaming encoder
         let mut jpeg = self.inner.finish()?;
 
-        // Use EncoderSegments if provided (new API)
-        if let Some(ref segments) = self.config.segments {
-            jpeg = inject_encoder_segments(jpeg, segments);
+        // When using EncoderSegments with MPF images, we need to merge individual
+        // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
+        // calling inject_encoder_segments. This ensures the MPF offset calculation
+        // includes all metadata that will be in the final output.
+        if let Some(mut segments) = self.config.segments.take() {
+            // Merge individual metadata into segments if MPF is present
+            // (MPF offset calculation needs all data to be accounted for)
+            if segments.has_mpf_images() {
+                if let Some(ref xmp_data) = self.config.xmp_data {
+                    if !xmp_data.is_empty() {
+                        // Convert raw XMP bytes to string for set_xmp
+                        if let Ok(xmp_str) = core::str::from_utf8(xmp_data) {
+                            segments = segments.set_xmp(xmp_str);
+                        }
+                    }
+                    self.config.xmp_data = None; // Mark as handled
+                }
+                if let Some(ref exif) = self.config.exif_data {
+                    if let Some(exif_bytes) = exif.to_bytes() {
+                        segments.set_exif_mut(exif_bytes);
+                    }
+                    self.config.exif_data = None; // Mark as handled
+                }
+                if let Some(ref icc_data) = self.config.icc_profile {
+                    if !icc_data.is_empty() {
+                        segments = segments.set_icc(icc_data.clone());
+                    }
+                    self.config.icc_profile = None; // Mark as handled
+                }
+            }
+            jpeg = inject_encoder_segments(jpeg, &segments);
         }
 
         // Fall back to individual metadata fields for backwards compatibility
@@ -1061,9 +1089,37 @@ impl YCbCrPlanarEncoder {
         // Finish streaming encoder
         let mut jpeg = self.inner.finish()?;
 
-        // Use EncoderSegments if provided (new API)
-        if let Some(ref segments) = self.config.segments {
-            jpeg = inject_encoder_segments(jpeg, segments);
+        // When using EncoderSegments with MPF images, we need to merge individual
+        // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
+        // calling inject_encoder_segments. This ensures the MPF offset calculation
+        // includes all metadata that will be in the final output.
+        if let Some(mut segments) = self.config.segments.take() {
+            // Merge individual metadata into segments if MPF is present
+            // (MPF offset calculation needs all data to be accounted for)
+            if segments.has_mpf_images() {
+                if let Some(ref xmp_data) = self.config.xmp_data {
+                    if !xmp_data.is_empty() {
+                        // Convert raw XMP bytes to string for set_xmp
+                        if let Ok(xmp_str) = core::str::from_utf8(xmp_data) {
+                            segments = segments.set_xmp(xmp_str);
+                        }
+                    }
+                    self.config.xmp_data = None; // Mark as handled
+                }
+                if let Some(ref exif) = self.config.exif_data {
+                    if let Some(exif_bytes) = exif.to_bytes() {
+                        segments.set_exif_mut(exif_bytes);
+                    }
+                    self.config.exif_data = None; // Mark as handled
+                }
+                if let Some(ref icc_data) = self.config.icc_profile {
+                    if !icc_data.is_empty() {
+                        segments = segments.set_icc(icc_data.clone());
+                    }
+                    self.config.icc_profile = None; // Mark as handled
+                }
+            }
+            jpeg = inject_encoder_segments(jpeg, &segments);
         }
 
         // Fall back to individual metadata fields for backwards compatibility
