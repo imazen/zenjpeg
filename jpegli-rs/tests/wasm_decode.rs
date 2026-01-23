@@ -51,7 +51,9 @@ fn test_wasm_decode_rgb() {
 
     // Decode RGB
     let decoder = Decoder::new();
-    let decoded = decoder.decode(&jpeg_data).expect("RGB decode should work in WASM");
+    let decoded = decoder
+        .decode(&jpeg_data)
+        .expect("RGB decode should work in WASM");
 
     assert_eq!(decoded.width, 8);
     assert_eq!(decoded.height, 8);
@@ -75,7 +77,8 @@ fn test_wasm_decode_grayscale_gainmap() {
     let decoder = Decoder::new();
 
     // This line crashes in browser WASM with "RuntimeError: unreachable"
-    let decoded = decoder.decode(GAINMAP_GRAY_64X64)
+    let decoded = decoder
+        .decode(GAINMAP_GRAY_64X64)
         .expect("Grayscale gain map decode should work in WASM");
 
     // Verify dimensions match expected gain map size
@@ -99,16 +102,20 @@ fn test_wasm_decode_grayscale_gainmap() {
 #[wasm_bindgen_test]
 fn test_wasm_decode_grayscale_explicit_format() {
     setup();
-    let decoder = Decoder::new()
-        .output_format(PixelFormat::Gray);
+    let decoder = Decoder::new().output_format(PixelFormat::Gray);
 
-    let decoded = decoder.decode(GAINMAP_GRAY_64X64)
+    let decoded = decoder
+        .decode(GAINMAP_GRAY_64X64)
         .expect("Explicit grayscale decode should work in WASM");
 
     assert_eq!(decoded.width, 64);
     assert_eq!(decoded.height, 64);
     assert_eq!(decoded.format, PixelFormat::Gray);
-    assert_eq!(decoded.data.len(), 64 * 64, "Grayscale should be 1 byte per pixel");
+    assert_eq!(
+        decoded.data.len(),
+        64 * 64,
+        "Grayscale should be 1 byte per pixel"
+    );
 }
 
 /// Test synthetic grayscale encode/decode roundtrip.
@@ -131,12 +138,14 @@ fn test_wasm_grayscale_roundtrip() {
     let mut enc = config
         .encode_from_bytes(64, 64, PixelLayout::Gray8Srgb)
         .expect("encoder setup");
-    enc.push_packed(&gray_data, enough::Unstoppable).expect("push");
+    enc.push_packed(&gray_data, enough::Unstoppable)
+        .expect("push");
     let jpeg_data = enc.finish().expect("finish encode");
 
     // Decode - this may crash in browser WASM
     let decoder = Decoder::new().output_format(PixelFormat::Gray);
-    let decoded = decoder.decode(&jpeg_data)
+    let decoded = decoder
+        .decode(&jpeg_data)
         .expect("Synthetic grayscale roundtrip should work");
 
     assert_eq!(decoded.width, 64);
@@ -154,7 +163,8 @@ fn test_wasm_decode_flower_gray() {
     const FLOWER_GRAY: &[u8] = include_bytes!("../fuzz/corpus/seed/flower_gray.jpg");
 
     let decoder = Decoder::new();
-    let decoded = decoder.decode(FLOWER_GRAY)
+    let decoded = decoder
+        .decode(FLOWER_GRAY)
         .expect("Flower gray decode should work in WASM");
 
     assert!(decoded.width > 0, "width should be positive");

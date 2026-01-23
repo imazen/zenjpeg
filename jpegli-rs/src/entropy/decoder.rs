@@ -817,10 +817,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         } else {
             // Ensure bits for DC value
             if self.reader.bits_available() < dc_cat
-                && (!self.reader.ensure_bits() || self.reader.bits_available() < dc_cat) {
-                    // Not enough bits for DC value - truncated
-                    return Ok(None);
-                }
+                && (!self.reader.ensure_bits() || self.reader.bits_available() < dc_cat)
+            {
+                // Not enough bits for DC value - truncated
+                return Ok(None);
+            }
             let bits = self.reader.read_bits_fast(dc_cat) as i32;
             super::huff_extend(bits, dc_cat as i32) as i16
         };
@@ -895,9 +896,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
 
                     // Read value bits - ensure we have enough
                     if self.reader.bits_available() < ac_cat
-                        && (!self.reader.ensure_bits() || self.reader.bits_available() < ac_cat) {
-                            break; // Not enough bits - truncated
-                        }
+                        && (!self.reader.ensure_bits() || self.reader.bits_available() < ac_cat)
+                    {
+                        break; // Not enough bits - truncated
+                    }
                     let bits = self.reader.read_bits_fast(ac_cat) as i32;
                     coeffs[i] = super::huff_extend(bits, ac_cat as i32) as i16;
                     last_nonzero = (i + 1) as u8;
@@ -934,9 +936,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 }
 
                 if self.reader.bits_available() < ac_cat
-                    && (!self.reader.ensure_bits() || self.reader.bits_available() < ac_cat) {
-                        break; // Not enough bits - truncated
-                    }
+                    && (!self.reader.ensure_bits() || self.reader.bits_available() < ac_cat)
+                {
+                    break; // Not enough bits - truncated
+                }
                 let bits = self.reader.read_bits_fast(ac_cat) as i32;
                 coeffs[i] = super::huff_extend(bits, ac_cat as i32) as i16;
                 last_nonzero = (i + 1) as u8;
