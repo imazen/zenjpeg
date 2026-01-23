@@ -567,6 +567,31 @@ impl EncoderSegments {
         self.replace(0xE0, data, SegmentType::Jfif)
     }
 
+    /// Set DPI for print workflows.
+    ///
+    /// Creates a JFIF APP0 segment with the specified DPI. Common values:
+    /// - 72: Screen/web (though browsers ignore this)
+    /// - 150: Draft print
+    /// - 300: Standard print
+    /// - 600: High-quality print
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let segments = EncoderSegments::new()
+    ///     .set_printer_dpi(300);
+    /// ```
+    #[must_use]
+    pub fn set_printer_dpi(self, dpi: u16) -> Self {
+        self.set_jfif(JfifInfo {
+            version_major: 1,
+            version_minor: 2,
+            density_units: DensityUnits::PixelsPerInch,
+            x_density: dpi,
+            y_density: dpi,
+        })
+    }
+
     /// Add comment.
     #[must_use]
     pub fn add_comment(mut self, comment: &str) -> Self {
@@ -1044,5 +1069,25 @@ mod tests {
         assert_eq!(detect_segment_type(0xE2, ICC_SIGNATURE), SegmentType::Icc);
         assert_eq!(detect_segment_type(0xFE, b"comment"), SegmentType::Comment);
         assert_eq!(detect_segment_type(0xE5, b"unknown"), SegmentType::Unknown);
+    }
+
+    #[test]
+    fn test_set_printer_dpi() {
+        let segments = EncoderSegments::new().set_printer_dpi(300);
+
+        assert!(segments.has(SegmentType::Jfif));
+        let jfif_data = segments.get(SegmentType::Jfif).unwrap();
+
+        // Verify JFIF structure: "JFIF\0" + version + units + density
+        assert!(jfif_data.starts_with(JFIF_SIGNATURE));
+        assert_eq!(jfif_data[5], 1); // version major
+        assert_eq!(jfif_data[6], 2); // version minor
+        assert_eq!(jfif_data[7], 1); // units = pixels per inch
+        // x_density = 300 = 0x012C (big-endian)
+        assert_eq!(jfif_data[8], 0x01);
+        assert_eq!(jfif_data[9], 0x2C);
+        // y_density = 300
+        assert_eq!(jfif_data[10], 0x01);
+        assert_eq!(jfif_data[11], 0x2C);
     }
 }
