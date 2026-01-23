@@ -277,7 +277,6 @@ fn upsample_row_h2_box(input: &[i16], in_width: usize, output: &mut [i16]) {
     }
 }
 
-
 /// Triangle filter 2x2 upsampling in i16 (4:2:0 → 4:4:4).
 ///
 /// Uses (3 * near + far + 2) >> 2 for proper rounding.
@@ -390,7 +389,8 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
         for i in 0..chunks {
             let offset = i * 16;
             let v_curr = _mm256_loadu_si256(curr_row[offset..].as_ptr() as *const __m256i);
-            let v_neighbor = _mm256_loadu_si256(v_neighbor_row[offset..].as_ptr() as *const __m256i);
+            let v_neighbor =
+                _mm256_loadu_si256(v_neighbor_row[offset..].as_ptr() as *const __m256i);
 
             let v_result = _mm256_srai_epi16(
                 _mm256_add_epi16(
@@ -455,7 +455,10 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
             let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
 
             _mm256_storeu_si256(out_row[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
-            _mm256_storeu_si256(out_row[out_offset + 16..].as_mut_ptr() as *mut __m256i, v_out1);
+            _mm256_storeu_si256(
+                out_row[out_offset + 16..].as_mut_ptr() as *mut __m256i,
+                v_out1,
+            );
         }
 
         // Scalar remainder for horizontal pass
@@ -679,7 +682,10 @@ pub fn upsample_h1v2_i16_fancy(
 /// NOTE: This is an alternative implementation kept for reference.
 /// The active implementation is `upsample_h2v2_i16_fancy_avx2`.
 #[allow(dead_code)]
-#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 pub fn upsample_h2v2_i16_fancy_simd(
     input: &[i16],
     in_width: usize,
@@ -735,7 +741,10 @@ pub fn upsample_h2v2_i16_fancy_simd(
 
 /// Vertical upsampling of a single row: (3*curr + neighbor + 2) >> 2
 #[allow(dead_code)]
-#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 #[target_feature(enable = "avx2")]
 unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mut [i16]) {
     #[cfg(target_arch = "x86")]
@@ -778,7 +787,10 @@ unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mu
 /// Horizontal upsampling of a single row: 1x width → 2x width with interleaving
 /// Uses (3*curr + neighbor + 2) >> 2 for triangle filter
 #[allow(dead_code)]
-#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 #[target_feature(enable = "avx2")]
 unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
     #[cfg(target_arch = "x86")]
@@ -838,7 +850,10 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
         let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31); // Second 16 outputs
 
         _mm256_storeu_si256(output[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
-        _mm256_storeu_si256(output[out_offset + 16..].as_mut_ptr() as *mut __m256i, v_out1);
+        _mm256_storeu_si256(
+            output[out_offset + 16..].as_mut_ptr() as *mut __m256i,
+            v_out1,
+        );
     }
 
     // Handle remainder with scalar
@@ -867,7 +882,8 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
     let last_in = in_width - 1;
     let last_out = last_in * 2;
     if last_out < out_width {
-        output[last_out] = ((input[last_in] as i32 * 3 + input[last_in.saturating_sub(1)] as i32 + 2) >> 2) as i16;
+        output[last_out] =
+            ((input[last_in] as i32 * 3 + input[last_in.saturating_sub(1)] as i32 + 2) >> 2) as i16;
     }
     if last_out + 1 < out_width {
         output[last_out + 1] = input[last_in];
@@ -876,7 +892,10 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
 
 /// Scalar fallback for horizontal upsampling
 #[allow(dead_code)]
-#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
     let in_width = input.len();
     let out_width = output.len();
@@ -888,11 +907,19 @@ fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
 
         let result = if out_x % 2 == 0 {
             // Left half - blend with left neighbor
-            let prev = if in_x > 0 { input[in_x - 1] as i32 } else { curr };
+            let prev = if in_x > 0 {
+                input[in_x - 1] as i32
+            } else {
+                curr
+            };
             (3 * curr + prev + 2) >> 2
         } else {
             // Right half - blend with right neighbor
-            let next = if in_x + 1 < in_width { input[in_x + 1] as i32 } else { curr };
+            let next = if in_x + 1 < in_width {
+                input[in_x + 1] as i32
+            } else {
+                curr
+            };
             (3 * curr + next + 2) >> 2
         };
         output[out_x] = result as i16;
