@@ -62,7 +62,7 @@ mod decode;
 mod encode;
 
 // Re-export the main workflow functions
-pub use decode::{reconstruct_hdr, tonemapper_from_ultrahdr, UltraHdrExtras};
+pub use decode::{reconstruct_hdr, reencode_ultrahdr, tonemapper_from_ultrahdr, UltraHdrExtras};
 pub use encode::{encode_ultrahdr, encode_ultrahdr_with_tonemapper};
 
 // Re-export core types from ultrahdr-core (aliased to avoid collisions)
