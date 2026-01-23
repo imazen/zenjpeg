@@ -623,7 +623,7 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-jpegli-rs = "0.9"
+jpegli-rs = "0.10"
 
 # Minimal (no CMS):
 jpegli-rs = { version = "0.9", default-features = false }
