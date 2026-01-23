@@ -41,6 +41,8 @@ yuv = { workspace = true, optional = true }
 archmage = { workspace = true, optional = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
+# UltraHDR (HDR gain map) encoding/decoding support
+ultrahdr-core = { path = "../../ultrahdr/ultrahdr-core", optional = true }
 
 [dev-dependencies]
 # WASM-compatible dev dependencies
@@ -82,7 +84,8 @@ codec-eval = { workspace = true }
 # Metadata crates (for integration testing)
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
-# ultrahdr = { workspace = true }  # Temporarily disabled - needs API update for 0.9.0
+# UltraHDR integration testing
+ultrahdr-core = { path = "../../ultrahdr/ultrahdr-core" }
 
 [features]
 default = ["std", "yuv", "unsafe_simd"]
@@ -131,6 +134,9 @@ experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 # Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
 # Uses 15-bit fixed-point Professional mode (max error: 0.5 levels, invisible after JPEG quantization)
 yuv = ["dep:yuv"]
+# UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
+# Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
+ultrahdr = ["dep:ultrahdr-core", "decoder", "std"]
 
 [[bench]]
 name = "encode"
