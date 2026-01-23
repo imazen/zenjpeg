@@ -427,14 +427,42 @@ jpegli-rs decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x
    - Uses scaled integer IDCT
    - Not bottleneck currently
 
+### Callgrind Analysis (2026-01-22)
+
+Run: `valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli 512`
+
+**Totals (512x512 baseline JPEG):**
+
+| Metric | jpegli-rs | zune-jpeg | Ratio |
+|--------|-----------|-----------|-------|
+| Instructions | 60.3M | 34.6M | **1.74x** |
+| Data refs | 16.4M | 9.5M | 1.72x |
+| Branches | 9.2M | 4.0M | 2.3x |
+| D1 miss rate | 2.3% | 3.7% | better |
+| Branch mispredict | 0.8% | 1.5% | better |
+
+**Decode-specific function comparison:**
+
+| Function | jpegli-rs | zune-jpeg | Notes |
+|----------|-----------|-----------|-------|
+| **Upsampling** | 10.5M (17%) | 115K (0.3%) | **91x more!** Scalar loop |
+| **YCbCr→RGB** | 4.4M (7%) | 1.0M (3%) | 4.4x more |
+| **IDCT** | 4.2M (7%) | 1.2M (3.5%) | 3.5x more |
+| **Entropy decode** | ~1.5M | ~1.7M | similar |
+| **memset** | 2.0M (3.4%) | 591K (1.7%) | 3.4x more |
+
+**Root cause:** Upsampling is **91x worse** because `upsample_h2v2_i16_fancy` is fully scalar,
+iterating pixel-by-pixel while zune uses AVX2 SIMD (`upsample_horizontal_avx2`).
+
 ### Decoder Optimization Path
 
 1. ✅ Branchless huff_extend (done)
-2. ✅ AVX2 upsampling (done)
-3. ✅ Autovectorized YCbCr conversion (done)
-4. 🔲 Eliminate coefficient array zeroing (zero-copy)
-5. 🔲 Macro-based Huffman (eliminate ScanRead enum)
-6. 🔲 SIMD color conversion (port from encoder)
+2. ✅ AVX2 upsampling (done) - **NOTE: Not actually used! See callgrind above**
+3. ✅ Autovectorized YCbCr conversion (done) - **Still 4.4x slower than zune**
+4. ✅ Zero-copy coefficient decode (5-7% speedup)
+5. 🔲 **SIMD upsampling interior loop** - Biggest remaining win (91x gap)
+6. 🔲 SIMD YCbCr→RGB (4.4x gap)
+7. 🔲 Macro-based Huffman (eliminate ScanRead enum)
 
 ## Failed Explorations
 
@@ -511,44 +539,40 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 
 **Files:** `jpegli-rs/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
 
-### Decoder Memset Optimization (2026-01-22)
+### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
 
-**Attempted:** Smart zeroing of coefficient buffer (zune-jpeg optimization).
+**Problem:** Original decoder returned `([i16; 64], u8)` by value, copying 128 bytes per block.
+Smart zeroing alone didn't help because copy dominated memory bandwidth.
 
-**Implementation:** Track `last_written` from previous block, only zero that many positions instead of all 64.
-For sparse blocks (typical), this saves ~50% of zeroing (e.g., 20 bytes instead of 128).
-
-**Result:** No measurable improvement despite correct implementation.
-
-**Why it didn't help:**
-1. Current API returns `([i16; 64], u8)` by value - copies 128 bytes per block
-2. Smart zeroing saves ~54 bytes average zeroing (from 128 to 74)
-3. But copy still writes 128 bytes regardless
-4. Copy dominates total memory bandwidth
-
-**Files changed:**
-- `entropy/decoder.rs`: Added `coeff_buffer` and `last_written` to `EntropyDecoder`
-- Reusable buffer instead of stack-allocated array
-- Track written positions for next block's targeted zeroing
-
-**What would actually help (zero-copy architecture):**
+**Solution:** Zero-copy `decode_block_into` API where caller provides reusable buffer:
 ```rust
-// Current (copies 128 bytes per block):
-fn decode_block() -> ([i16; 64], u8)
-
-// Zero-copy (writes directly to caller's buffer):
-fn decode_block_into(&mut self, coeffs: &mut [i16; 64]) -> u8
+fn decode_block_into(
+    &mut self,
+    coeffs: &mut [i16; 64],      // Caller-provided buffer
+    prev_coeff_count: u8,        // Zeroing hint from previous block
+    component: usize,
+    dc_table_idx: usize,
+    ac_table_idx: usize,
+) -> ScanResult<u8>              // Returns new coeff count
 ```
 
-With caller-provided buffer:
-1. Zero only `last_written` positions (not full 64)
-2. No 128-byte copy on return
-3. Caller can reuse same buffer across blocks
-4. Total bandwidth: ~20 bytes zeroing + ~20 bytes coefficients = 40 bytes
-   vs current: 128 bytes zeroing + 128 bytes copy = 256 bytes
+**Key insight:** Reusable buffers accumulate state from ALL previous blocks, not just the
+immediately previous one. If block N-2 wrote to position X, block N-1 didn't, and block N
+doesn't either, position X still has stale data. Fix: track MAXIMUM coefficient count since
+last restart marker, not just previous block's count.
 
-**Conclusion:** Smart zeroing is prerequisite but insufficient. Full benefit requires zero-copy
-API where caller manages buffer lifecycle. Kept implementation as foundation for future work.
+**Implementation:**
+- `entropy/decoder.rs`: Added `decode_block_into` with smart zeroing
+- `decode/parser.rs`: Added `prev_coeff_counts: [u8; 4]` per-component tracking
+- `decode/scanline.rs`: Added `coeffs_buf` reusable buffer and max-tracking
+
+**Results (2026-01-22):**
+- 512x512: ~5% improvement
+- 2048x2048: 6.5% improvement (17.9ms vs 19.2ms)
+
+Memory bandwidth reduction per block:
+- Before: 128 bytes zeroing + 128 bytes copy = 256 bytes
+- After: ~20 bytes targeted zeroing + 0 bytes copy = ~20 bytes
 
 ## Investigation Notes
 
