@@ -14,6 +14,7 @@ mod output;
 mod progressive;
 mod scan;
 
+use super::extras::{should_preserve_mpf_image, DecodedExtras, MpfImageType, PreserveConfig};
 use super::{JpegInfo, ScanInfo};
 use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
@@ -79,10 +80,19 @@ pub(super) struct JpegParser<'a> {
 
     // Security limits
     pub(super) max_pixels: u64,
+
+    // Extras preservation
+    preserve_config: Option<PreserveConfig>,
+    extras: Option<DecodedExtras>,
 }
 
 impl<'a> JpegParser<'a> {
-    pub(super) fn new(data: &'a [u8], max_pixels: u64) -> Result<Self> {
+    /// Create a new parser with optional extras preservation.
+    pub(super) fn new(
+        data: &'a [u8],
+        max_pixels: u64,
+        preserve_config: Option<&PreserveConfig>,
+    ) -> Result<Self> {
         // Check for SOI
         if data.len() < 2 || data[0] != 0xFF || data[1] != MARKER_SOI {
             return Err(Error::invalid_jpeg_data("missing SOI marker"));
@@ -90,6 +100,14 @@ impl<'a> JpegParser<'a> {
 
         // Extract ICC profile from raw data upfront
         let icc_profile = extract_icc_profile(data);
+
+        // Initialize extras if preservation is enabled
+        let (preserve_config, extras) = match preserve_config {
+            Some(config) if config.preserves_any_metadata() || config.preserves_any_mpf() => {
+                (Some(config.clone()), Some(DecodedExtras::new()))
+            }
+            _ => (None, None),
+        };
 
         Ok(Self {
             data,
@@ -110,7 +128,14 @@ impl<'a> JpegParser<'a> {
             prefer_streaming: true, // Default to streaming for RGB decode
             icc_profile,
             max_pixels,
+            preserve_config,
+            extras,
         })
+    }
+
+    /// Take the extras out of the parser (for use after decode).
+    pub(super) fn take_extras(&mut self) -> Option<DecodedExtras> {
+        self.extras.take().filter(|e| !e.is_empty())
     }
 
     // =========================================================================
@@ -217,8 +242,12 @@ impl<'a> JpegParser<'a> {
                 MARKER_DQT => self.parse_quant_table()?,
                 MARKER_DHT => self.parse_huffman_table()?,
                 MARKER_DRI => self.parse_restart_interval()?,
-                MARKER_EOI => break,
-                MARKER_APP0..=0xEF | MARKER_COM => self.skip_segment()?,
+                MARKER_EOI => {
+                    // Before exiting, extract MPF secondary images if configured
+                    self.extract_mpf_secondary_images()?;
+                    break;
+                }
+                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
                 _ => self.skip_segment()?,
             }
         }
@@ -274,13 +303,67 @@ impl<'a> JpegParser<'a> {
                 MARKER_DQT => self.parse_quant_table()?,
                 MARKER_DHT => self.parse_huffman_table()?,
                 MARKER_DRI => self.parse_restart_interval()?,
-                MARKER_APP0..=0xEF | MARKER_COM => self.skip_segment()?,
+                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
                 MARKER_EOI => {
                     return Err(Error::invalid_jpeg_data("unexpected EOI before SOS"));
                 }
                 _ => self.skip_segment()?,
             }
         }
+    }
+
+    /// Extract MPF secondary images after the primary image EOI.
+    fn extract_mpf_secondary_images(&mut self) -> Result<()> {
+        // Only process if we have MPF config and extras
+        let (config, extras) = match (&self.preserve_config, &mut self.extras) {
+            (Some(c), Some(e)) if c.preserves_any_mpf() => (c, e),
+            _ => return Ok(()),
+        };
+
+        // Get the MPF directory from preserved segments
+        let mpf_dir = match extras.mpf() {
+            Some(dir) => dir.clone(), // Clone to avoid borrow issues
+            None => return Ok(()),
+        };
+
+        // The current position should be right after the primary EOI
+        let primary_eoi_pos = self.position;
+
+        // Extract secondary images based on MPF entries
+        for (idx, entry) in mpf_dir.images.iter().enumerate() {
+            // Skip primary image (index 0 or BaselinePrimary type)
+            if idx == 0 || matches!(entry.image_type, MpfImageType::BaselinePrimary) {
+                continue;
+            }
+
+            // Check if we should preserve this image
+            if !should_preserve_mpf_image(config, idx, entry.image_type, entry.size) {
+                continue;
+            }
+
+            // Calculate absolute offset
+            // MPF offsets are relative to the MPF marker position, but for simplicity
+            // we use the primary EOI as a reference point since offsets are usually
+            // from the start of file for secondary images
+            let offset = if entry.offset == 0 {
+                // Offset 0 means immediately after primary image
+                primary_eoi_pos
+            } else {
+                entry.offset as usize
+            };
+
+            let end = offset.saturating_add(entry.size as usize);
+            if end <= self.data.len() {
+                let image_data = self.data[offset..end].to_vec();
+
+                // Verify it looks like a JPEG (starts with SOI)
+                if image_data.len() >= 2 && image_data[0] == 0xFF && image_data[1] == 0xD8 {
+                    extras.add_secondary_image(idx, entry.image_type, image_data);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // =========================================================================

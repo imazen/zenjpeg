@@ -20,6 +20,7 @@ pub mod idct;
 #[doc(hidden)]
 pub mod idct_int;
 
+mod extras;
 mod image;
 mod parser;
 mod scanline;
@@ -35,6 +36,14 @@ use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
 
+// Re-export extras types for public API
+#[allow(unused_imports)]
+pub use extras::{
+    AdobeColorTransform, AdobeInfo, DecodedExtras, DensityUnits, IccPreserve, JfifInfo,
+    MpfDirectory, MpfEntry, MpfImageType, PreserveConfig, PreservedMpfImage, PreservedSegment,
+    SegmentType, StandardProfile,
+};
+
 // Re-export types used in public struct fields so users can access them
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat};
 
@@ -45,7 +54,7 @@ use crate::color::icc::apply_icc_transform;
 use crate::foundation::alloc::{DEFAULT_MAX_MEMORY, DEFAULT_MAX_PIXELS};
 
 /// Decoder configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DecoderConfig {
     /// Output pixel format (None = use source format)
     pub output_format: Option<PixelFormat>,
@@ -61,6 +70,22 @@ pub struct DecoderConfig {
     /// Maximum total memory for allocations (for DoS protection).
     /// Default is 512 MB. Set to 0 for unlimited.
     pub max_memory: usize,
+    /// What metadata and secondary images to preserve during decode.
+    pub preserve: PreserveConfig,
+}
+
+impl core::fmt::Debug for DecoderConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DecoderConfig")
+            .field("output_format", &self.output_format)
+            .field("fancy_upsampling", &self.fancy_upsampling)
+            .field("block_smoothing", &self.block_smoothing)
+            .field("apply_icc", &self.apply_icc)
+            .field("max_pixels", &self.max_pixels)
+            .field("max_memory", &self.max_memory)
+            .field("preserve", &self.preserve)
+            .finish()
+    }
 }
 
 impl Default for DecoderConfig {
@@ -73,6 +98,7 @@ impl Default for DecoderConfig {
             apply_icc: cfg!(any(feature = "cms-lcms2", feature = "cms-moxcms")),
             max_pixels: DEFAULT_MAX_PIXELS,
             max_memory: DEFAULT_MAX_MEMORY,
+            preserve: PreserveConfig::default(),
         }
     }
 }
@@ -170,9 +196,50 @@ impl Decoder {
         self
     }
 
+    /// Configure what metadata and secondary images to preserve during decode.
+    ///
+    /// By default, most metadata (EXIF, XMP, ICC, IPTC) and gain maps are preserved.
+    /// Thumbnails and other MPF images are dropped by default.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use jpegli::decode::{Decoder, PreserveConfig};
+    ///
+    /// // Preserve nothing (minimal memory)
+    /// let decoder = Decoder::new().preserve(PreserveConfig::none());
+    ///
+    /// // Preserve everything
+    /// let decoder = Decoder::new().preserve(PreserveConfig::all());
+    ///
+    /// // Custom: keep gain maps under 500KB only
+    /// let config = PreserveConfig::default()
+    ///     .mpf_filter(|_idx, typ, size| {
+    ///         typ.is_gainmap() && size < 500_000
+    ///     });
+    /// let decoder = Decoder::new().preserve(config);
+    /// ```
+    #[must_use]
+    pub fn preserve(mut self, config: PreserveConfig) -> Self {
+        self.config.preserve = config;
+        self
+    }
+
+    /// Convenience: preserve nothing extra (minimal memory).
+    #[must_use]
+    pub fn preserve_none(self) -> Self {
+        self.preserve(PreserveConfig::none())
+    }
+
+    /// Convenience: preserve everything.
+    #[must_use]
+    pub fn preserve_all(self) -> Self {
+        self.preserve(PreserveConfig::all())
+    }
+
     /// Reads JPEG info without decoding.
     pub fn read_info(&self, data: &[u8]) -> Result<JpegInfo> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         parser.read_header()?;
         Ok(parser.info())
     }
@@ -248,7 +315,7 @@ impl Decoder {
     /// }
     /// ```
     pub fn scanline_reader<'a>(&self, data: &'a [u8]) -> Result<ScanlineReader<'a>> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         parser.read_header()?;
 
         // Only baseline supported for scanline reading
@@ -318,7 +385,7 @@ impl Decoder {
 
     /// Decodes a JPEG image.
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
         parser.decode()?;
 
         let info = parser.info();
@@ -355,11 +422,15 @@ impl Decoder {
             }
         }
 
+        // Extract preserved extras
+        let extras = parser.take_extras();
+
         Ok(DecodedImage {
             width: info.dimensions.width,
             height: info.dimensions.height,
             format: output_format,
             data: pixels,
+            extras,
         })
     }
 
@@ -381,7 +452,7 @@ impl Decoder {
     /// Note: ICC profile application is not supported for f32 output.
     /// If you need ICC profile transformation, decode to u8 first.
     pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - f32 decode needs coefficients for precision
         parser.prefer_streaming = false;
         parser.decode()?;
@@ -426,7 +497,7 @@ impl Decoder {
     /// println!("{}% of blocks differ", comparison.diff_block_pct());
     /// ```
     pub fn decode_coefficients(&self, data: &[u8]) -> Result<DecodedCoefficients> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - we need coefficients stored
         parser.prefer_streaming = false;
         parser.decode()?;
@@ -476,7 +547,7 @@ impl Decoder {
     /// - The image uses XYB color space (not YCbCr)
     /// - Parsing or decoding fails
     pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels)?;
+        let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - f32 YCbCr decode needs coefficients
         parser.prefer_streaming = false;
         parser.decode()?;

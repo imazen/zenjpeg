@@ -39,6 +39,13 @@ pub use crate::decode::{
     ScanlineReader,
 };
 
+// === Metadata preservation types ===
+pub use crate::decode::{
+    AdobeColorTransform, AdobeInfo, DecodedExtras, DensityUnits, IccPreserve, JfifInfo,
+    MpfDirectory, MpfEntry, MpfImageType, PreserveConfig, PreservedMpfImage, PreservedSegment,
+    SegmentType, StandardProfile,
+};
+
 // === Types used in public structs ===
 pub use crate::types::{ColorSpace, Dimensions, JpegMode, PixelFormat, Subsampling};
 
