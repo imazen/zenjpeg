@@ -41,36 +41,42 @@ yuv = { workspace = true, optional = true }
 archmage = { workspace = true, optional = true }
 
 [dev-dependencies]
+# WASM-compatible dev dependencies
+almost-enough = { workspace = true }
+test-case = { workspace = true }
+fast-ssim2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smallvec = "1.13"
+sha2 = "0.10"
+
+# WASM testing dependencies (browser + Node.js)
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = "0.2.108"
+wasm-bindgen-test = "0.3.58"
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+# Native-only dev dependencies (don't compile for WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
 jpegli-bench-utils = { path = "../jpegli-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
 # For FFI comparison testing against C++ jpegli (internal development only)
-# This dependency is NOT published to crates.io - it requires building the C++ jpegli
-# from source via cmake. Only works in a local checkout with the C++ submodule.
-# Tests using this are gated by #[cfg(feature = "ffi-tests")]
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
-almost-enough = { workspace = true }
 butteraugli = { workspace = true }
 chrono = "0.4"
 approx = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
-test-case = { workspace = true }
 png = { workspace = true }
 dssim = { workspace = true }
-fast-ssim2 = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
 bincode = { workspace = true }
 zune-jpeg = { workspace = true }
 mozjpeg-rs = { workspace = true }
 rayon = { workspace = true }
-smallvec = "1.13"
-sha2 = "0.10"
 yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy testing
 # For corpus comparison tests (requires local codec-eval crate)
 codec-eval = { workspace = true }
-# Note: turbojpeg conflicts with mozjpeg (duplicate libjpeg symbols)
-# turbojpeg = { workspace = true }
 # Metadata crates (for integration testing)
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
