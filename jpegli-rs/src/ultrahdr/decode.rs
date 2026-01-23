@@ -9,9 +9,9 @@ use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
     color::tonemap::AdaptiveTonemapper,
-    gainmap::{apply_gainmap, HdrOutputFormat},
+    gainmap::{apply_gainmap, HdrOutputFormat, InputConfig, StreamingHdrReconstructor},
     metadata::xmp::parse_xmp,
-    GainMap, GainMapMetadata, RawImage,
+    ColorGamut, GainMap, GainMapMetadata, RawImage,
 };
 
 /// Extension trait for [`DecodedExtras`] to check for UltraHDR content.
@@ -115,6 +115,71 @@ pub fn reconstruct_hdr(
         display_boost,
         output_format,
         stop,
+    )
+    .map_err(ultrahdr_to_jpegli_error)
+}
+
+/// Create a streaming HDR reconstructor for row-by-row processing.
+///
+/// This is more memory-efficient than [`reconstruct_hdr`] for large images,
+/// as it processes rows in batches rather than loading the entire image.
+///
+/// # Arguments
+///
+/// * `width` - Image width
+/// * `height` - Image height
+/// * `extras` - Decoded extras containing gain map and XMP metadata
+/// * `display_boost` - Target display capability (1.0=SDR, 4.0=typical HDR)
+/// * `output_format` - Desired HDR output format
+///
+/// # Returns
+///
+/// A [`StreamingHdrReconstructor`] that can process SDR rows into HDR rows.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use jpegli::ultrahdr::{create_hdr_reconstructor, HdrOutputFormat};
+///
+/// let reconstructor = create_hdr_reconstructor(
+///     width, height, extras, 4.0, HdrOutputFormat::LinearFloat,
+/// )?;
+///
+/// // Process rows in batches
+/// for batch_start in (0..height).step_by(16) {
+///     let batch_height = 16.min(height - batch_start);
+///     let sdr_batch = &sdr_pixels[batch_start as usize * row_stride..];
+///     let hdr_rows = reconstructor.process_rows(sdr_batch, batch_height)?;
+///     // Use hdr_rows...
+/// }
+/// ```
+pub fn create_hdr_reconstructor(
+    width: u32,
+    height: u32,
+    extras: &DecodedExtras,
+    display_boost: f32,
+    output_format: HdrOutputFormat,
+) -> Result<StreamingHdrReconstructor> {
+    // Parse metadata
+    let (metadata, _) = extras
+        .ultrahdr_metadata()
+        .ok_or_else(|| Error::decode_error("Not an UltraHDR image".to_string()))??;
+
+    // Decode gain map
+    let gainmap = extras
+        .decode_gainmap()
+        .ok_or_else(|| Error::decode_error("No gain map found".to_string()))??;
+
+    // Create reconstructor with RGB8 input config (typical jpegli decoder output)
+    StreamingHdrReconstructor::with_input_config(
+        gainmap,
+        metadata,
+        width,
+        height,
+        display_boost,
+        output_format,
+        ColorGamut::Bt709,
+        InputConfig::rgb8(width),
     )
     .map_err(ultrahdr_to_jpegli_error)
 }

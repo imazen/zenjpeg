@@ -9,9 +9,9 @@ use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
     color::tonemap::{tonemap_to_sdr, AdaptiveTonemapper, ToneMapConfig},
-    gainmap::{compute_gainmap, GainMapConfig},
+    gainmap::{compute_gainmap, EncoderInputConfig, GainMapConfig, StreamingGainMapComputer},
     metadata::xmp::generate_xmp,
-    ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
+    ColorGamut, ColorTransfer, GainMap, GainMapMetadata, PixelFormat as UhdrPixelFormat, RawImage,
 };
 
 /// Encode an HDR image as UltraHDR JPEG.
@@ -104,10 +104,75 @@ pub fn encode_ultrahdr_with_tonemapper(
     )
 }
 
+/// Create a streaming gain map computer for row-by-row processing.
+///
+/// This is more memory-efficient than the full-image [`compute_gainmap`] for large images,
+/// as it processes rows in batches rather than loading the entire image.
+///
+/// # Arguments
+///
+/// * `width` - Image width
+/// * `height` - Image height
+/// * `config` - Gain map computation configuration
+/// * `hdr_format` - HDR pixel format
+/// * `hdr_transfer` - HDR transfer function
+/// * `hdr_gamut` - HDR color gamut
+///
+/// # Returns
+///
+/// A [`StreamingGainMapComputer`] that can process HDR/SDR row pairs.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use jpegli::ultrahdr::{create_gainmap_computer, GainMapConfig, UhdrPixelFormat, UhdrColorTransfer, UhdrColorGamut};
+///
+/// let mut computer = create_gainmap_computer(
+///     width, height,
+///     &GainMapConfig::default(),
+///     UhdrPixelFormat::Rgba32F,
+///     UhdrColorTransfer::Linear,
+///     UhdrColorGamut::Bt709,
+/// )?;
+///
+/// // Process rows in batches
+/// for batch_start in (0..height).step_by(16) {
+///     let batch_height = 16.min(height - batch_start);
+///     let gm_rows = computer.process_rows(&hdr_batch, &sdr_batch, batch_height)?;
+///     // gm_rows contains completed gainmap rows (if any)
+/// }
+///
+/// // Finish and get the complete gainmap
+/// let (gainmap, metadata) = computer.finish()?;
+/// ```
+pub fn create_gainmap_computer(
+    width: u32,
+    height: u32,
+    config: &GainMapConfig,
+    hdr_format: UhdrPixelFormat,
+    hdr_transfer: ColorTransfer,
+    hdr_gamut: ColorGamut,
+) -> Result<StreamingGainMapComputer> {
+    let hdr_bpp = hdr_format.bytes_per_pixel().unwrap_or(16);
+    let input_config = EncoderInputConfig {
+        hdr_format,
+        hdr_stride: width * hdr_bpp as u32,
+        hdr_transfer,
+        hdr_gamut,
+        sdr_format: UhdrPixelFormat::Rgba8,
+        sdr_stride: width * 4,
+        sdr_gamut: ColorGamut::Bt709,
+        y_only: !config.multi_channel,
+    };
+
+    StreamingGainMapComputer::new(width, height, config.clone(), input_config)
+        .map_err(ultrahdr_to_jpegli_error)
+}
+
 /// Encode SDR image with pre-computed gain map.
 ///
 /// Lower-level function for when you already have the SDR and gain map.
-fn encode_with_gainmap(
+pub fn encode_with_gainmap(
     sdr: &RawImage,
     gainmap: &GainMap,
     metadata: &GainMapMetadata,
