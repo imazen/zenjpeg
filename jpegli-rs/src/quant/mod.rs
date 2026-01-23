@@ -1002,14 +1002,57 @@ impl DequantBiasStats {
 
             // Compute bias from equation (5) in paper:
             // bias = 0.5 * ((1 + gamma^2)/(1 - gamma^2) + 1/ln(gamma))
+            // Use polynomial approximation for ln() - works on all platforms including browser WASM
+            // where f64::ln() intrinsic crashes
             let gamma2_f64 = gamma2 as f64;
-            let gamma_f64 = gamma as f64;
+            let ln_gamma = ln_poly(gamma);
             biases[k] =
-                (0.5 * (((1.0 + gamma2_f64) / (1.0 - gamma2_f64)) + 1.0 / gamma_f64.ln())) as f32;
+                (0.5 * (((1.0 + gamma2_f64) / (1.0 - gamma2_f64)) + 1.0 / ln_gamma as f64)) as f32;
         }
 
         biases
     }
+}
+
+/// Polynomial approximation for natural logarithm.
+///
+/// Uses rational polynomial approximation via log2, based on archmage/jpegli coefficients.
+/// This works on all platforms including browser WASM where f64::ln() intrinsic crashes.
+///
+/// Accuracy: ~1e-5 relative error for typical gamma values (0.5 to 0.99).
+#[inline]
+fn ln_poly(x: f32) -> f32 {
+    // Coefficients from butteraugli/jpegli for log2 approximation
+    const P0: f32 = -1.850_383_34e-6;
+    const P1: f32 = 1.428_716_05;
+    const P2: f32 = 0.742_458_73;
+    const Q0: f32 = 0.990_328_14;
+    const Q1: f32 = 1.009_671_86;
+    const Q2: f32 = 0.174_093_43;
+    const LN2: f32 = core::f32::consts::LN_2;
+
+    // Extract exponent and mantissa from IEEE 754 bits
+    let x_bits = x.to_bits();
+    let offset: u32 = 0x3f2aaaab;
+    let exp_bits = x_bits.wrapping_sub(offset);
+    let exp_shifted = (exp_bits as i32) >> 23;
+
+    let mantissa_bits = x_bits.wrapping_sub((exp_shifted as u32) << 23);
+    let mantissa = f32::from_bits(mantissa_bits);
+    let exp_val = exp_shifted as f32;
+
+    let m = mantissa - 1.0;
+
+    // Horner's method for numerator: P2*m^2 + P1*m + P0
+    let yp = P2 * m + P1;
+    let yp = yp * m + P0;
+
+    // Horner's method for denominator: Q2*m^2 + Q1*m + Q0
+    let yq = Q2 * m + Q1;
+    let yq = yq * m + Q0;
+
+    // log2(x) = exp + P(m)/Q(m), then multiply by ln(2) to get ln(x)
+    (yp / yq + exp_val) * LN2
 }
 
 // CustomQuantMatrices and generate_quant_table_custom were removed in 0.9.0.
