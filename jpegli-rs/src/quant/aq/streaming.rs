@@ -749,7 +749,7 @@ impl StreamingAQ {
             let row_start = by_offset * blocks_w;
             let row_end = row_start + blocks_w;
 
-// Fuzzy erosion - compute_fuzzy_erosion_row_into does direct assignment, no zeroing needed
+            // Fuzzy erosion - compute_fuzzy_erosion_row_into does direct assignment, no zeroing needed
             let pe_y = global_by * 2;
             self.compute_fuzzy_erosion_row_into(pe_y, row_start, row_end);
 
