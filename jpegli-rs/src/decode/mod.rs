@@ -25,6 +25,8 @@ mod parser;
 mod scanline;
 mod upsample;
 
+// These types are public API for coefficient analysis
+#[allow(unused_imports)]
 pub use image::{
     CoefficientComparison, ComponentCoefficients, DecodedCoefficients, DecodedImage,
     DecodedImageF32, DecodedYCbCr,

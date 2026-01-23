@@ -355,9 +355,9 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
     use core::arch::x86_64::*;
 
     // Stack-allocated scratch for one row of vertical interpolation results
-    // Use MaybeUninit to avoid zeroing - we'll overwrite all values we use
+    // Zeroing is cheap compared to the SIMD work we're doing
     const MAX_SCRATCH: usize = 4096;
-    let mut scratch_storage: [i16; MAX_SCRATCH] = unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+    let mut scratch_storage = [0i16; MAX_SCRATCH];
 
     if in_width > MAX_SCRATCH {
         // Fall back to scalar for very wide images
@@ -518,7 +518,7 @@ fn upsample_row_h2_fancy_bilinear(
 
     // Process interior pixels in bulk (skip first and last input columns for edge handling)
     // Interior: in_x from 1 to in_width-2, which maps to out_x from 2 to out_width-4
-    let interior_start_out = 2;
+    let _interior_start_out = 2;
     let interior_end_out = if in_width >= 2 {
         ((in_width - 1) * 2).min(out_width)
     } else {
@@ -675,6 +675,10 @@ pub fn upsample_h1v2_i16_fancy(
 /// 2. Horizontal pass: (3*curr + neighbor + 2) >> 2 with interleaving
 ///
 /// Processes row-by-row to avoid scratch allocation.
+///
+/// NOTE: This is an alternative implementation kept for reference.
+/// The active implementation is `upsample_h2v2_i16_fancy_avx2`.
+#[allow(dead_code)]
 #[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
 pub fn upsample_h2v2_i16_fancy_simd(
     input: &[i16],
@@ -730,6 +734,7 @@ pub fn upsample_h2v2_i16_fancy_simd(
 }
 
 /// Vertical upsampling of a single row: (3*curr + neighbor + 2) >> 2
+#[allow(dead_code)]
 #[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
 #[target_feature(enable = "avx2")]
 unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mut [i16]) {
@@ -772,6 +777,7 @@ unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mu
 
 /// Horizontal upsampling of a single row: 1x width → 2x width with interleaving
 /// Uses (3*curr + neighbor + 2) >> 2 for triangle filter
+#[allow(dead_code)]
 #[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
 #[target_feature(enable = "avx2")]
 unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
@@ -837,7 +843,7 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
 
     // Handle remainder with scalar
     let processed_in = 1 + chunks * 16;
-    let processed_out = 2 + chunks * 32;
+    let _processed_out = 2 + chunks * 32;
 
     for in_x in processed_in..in_width {
         let out_x = in_x * 2;
@@ -869,6 +875,7 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
 }
 
 /// Scalar fallback for horizontal upsampling
+#[allow(dead_code)]
 #[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
     let in_width = input.len();

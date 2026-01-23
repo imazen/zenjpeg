@@ -1736,7 +1736,7 @@ impl<'a> JpegParser<'a> {
             let c_rows_this_mcu = c_strip_height.min(
                 (height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio,
             );
-            let c_cols_this_mcu = (y_cols_this_mcu + h_ratio - 1) / h_ratio;
+            let _c_cols_this_mcu = (y_cols_this_mcu + h_ratio - 1) / h_ratio;
 
             if fancy_upsampling {
                 match (h_ratio, v_ratio) {
