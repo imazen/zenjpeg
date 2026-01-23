@@ -484,3 +484,231 @@ pub fn upsample_h1v2_i16_fancy(
         }
     }
 }
+
+// ============================================================================
+// AVX2 SIMD Upsampling
+// ============================================================================
+
+/// AVX2-optimized 2x2 upsampling using separable filter approach.
+///
+/// Uses two-pass method like zune-jpeg:
+/// 1. Vertical pass: (3*curr + neighbor + 2) >> 2
+/// 2. Horizontal pass: (3*curr + neighbor + 2) >> 2 with interleaving
+///
+/// Processes row-by-row to avoid scratch allocation.
+#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+pub fn upsample_h2v2_i16_fancy_simd(
+    input: &[i16],
+    in_width: usize,
+    in_height: usize,
+    output: &mut [i16],
+    out_width: usize,
+    out_height: usize,
+) {
+    if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
+        return;
+    }
+
+    // Stack-allocated scratch for one row of vertical interpolation results
+    // This avoids heap allocation in the hot path
+    const MAX_SCRATCH: usize = 4096; // Enough for 8K images
+    let mut scratch_storage = [0i16; MAX_SCRATCH];
+
+    if in_width > MAX_SCRATCH {
+        // Fall back to scalar for very wide images
+        upsample_h2v2_i16_fancy(input, in_width, in_height, output, out_width, out_height);
+        return;
+    }
+
+    let scratch = &mut scratch_storage[..in_width];
+
+    // Process each output row pair
+    for out_y in 0..out_height {
+        let in_y = (out_y / 2).min(in_height.saturating_sub(1));
+        let is_top_half = out_y % 2 == 0;
+
+        // Vertical neighbor: above for top half, below for bottom half
+        let v_neighbor_y = if is_top_half {
+            in_y.saturating_sub(1)
+        } else {
+            (in_y + 1).min(in_height.saturating_sub(1))
+        };
+
+        let curr_row = &input[in_y * in_width..][..in_width];
+        let v_neighbor_row = &input[v_neighbor_y * in_width..][..in_width];
+        let out_row = &mut output[out_y * out_width..][..out_width];
+
+        // Vertical pass: compute vertically-interpolated row into scratch
+        unsafe {
+            upsample_vertical_row_avx2(curr_row, v_neighbor_row, scratch);
+        }
+
+        // Horizontal pass: horizontally interpolate scratch into output
+        unsafe {
+            upsample_horizontal_row_avx2(scratch, out_row);
+        }
+    }
+}
+
+/// Vertical upsampling of a single row: (3*curr + neighbor + 2) >> 2
+#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[target_feature(enable = "avx2")]
+unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mut [i16]) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    let width = curr.len();
+    let v_three = _mm256_set1_epi16(3);
+    let v_two = _mm256_set1_epi16(2);
+
+    // Process 16 i16 values at a time
+    let chunks = width / 16;
+    for i in 0..chunks {
+        let offset = i * 16;
+        let v_curr = _mm256_loadu_si256(curr[offset..].as_ptr() as *const __m256i);
+        let v_neighbor = _mm256_loadu_si256(neighbor[offset..].as_ptr() as *const __m256i);
+
+        // (3 * curr + neighbor + 2) >> 2
+        let v_result = _mm256_srai_epi16(
+            _mm256_add_epi16(
+                _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_neighbor),
+                v_two,
+            ),
+            2,
+        );
+
+        _mm256_storeu_si256(output[offset..].as_mut_ptr() as *mut __m256i, v_result);
+    }
+
+    // Handle remainder
+    let remainder_start = chunks * 16;
+    for x in remainder_start..width {
+        let c = curr[x] as i32;
+        let n = neighbor[x] as i32;
+        output[x] = ((3 * c + n + 2) >> 2) as i16;
+    }
+}
+
+/// Horizontal upsampling of a single row: 1x width → 2x width with interleaving
+/// Uses (3*curr + neighbor + 2) >> 2 for triangle filter
+#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+#[target_feature(enable = "avx2")]
+unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    let in_width = input.len();
+    let out_width = output.len();
+
+    if in_width < 18 {
+        // Fall back to scalar for small inputs
+        upsample_horizontal_row_scalar(input, output);
+        return;
+    }
+
+    let v_three = _mm256_set1_epi16(3);
+    let v_two = _mm256_set1_epi16(2);
+
+    // First two output pixels (edge case)
+    output[0] = input[0];
+    output[1] = ((input[0] as i32 * 3 + input[1] as i32 + 2) >> 2) as i16;
+
+    // Process interior: each iteration processes 16 input pixels → 32 output pixels
+    // We need prev[i], curr[i], next[i] which means loading with offset
+    let chunks = (in_width - 2) / 16;
+
+    for chunk in 0..chunks {
+        let in_offset = chunk * 16 + 1; // Start at index 1 (skip first)
+        let out_offset = 2 + chunk * 32; // Output starts at index 2
+
+        if out_offset + 32 > out_width {
+            break;
+        }
+
+        // Load overlapping windows: prev, curr, next
+        let v_prev = _mm256_loadu_si256(input[in_offset - 1..].as_ptr() as *const __m256i);
+        let v_curr = _mm256_loadu_si256(input[in_offset..].as_ptr() as *const __m256i);
+        let v_next = _mm256_loadu_si256(input[in_offset + 1..].as_ptr() as *const __m256i);
+
+        // Common term: 3*curr + 2
+        let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
+
+        // Even outputs (left half): (3*curr + prev + 2) >> 2
+        let v_even = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_prev), 2);
+
+        // Odd outputs (right half): (3*curr + next + 2) >> 2
+        let v_odd = _mm256_srai_epi16(_mm256_add_epi16(v_common, v_next), 2);
+
+        // Interleave even and odd to get final output order
+        // unpacklo/hi interleave within 128-bit lanes, then permute to fix order
+        let v_lo = _mm256_unpacklo_epi16(v_even, v_odd); // [e0,o0,e1,o1,e2,o2,e3,o3, e8,o8,e9,o9,...]
+        let v_hi = _mm256_unpackhi_epi16(v_even, v_odd); // [e4,o4,e5,o5,e6,o6,e7,o7, e12,o12,...]
+
+        // Fix lane order: low lanes of both, then high lanes of both
+        let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20); // First 16 outputs
+        let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31); // Second 16 outputs
+
+        _mm256_storeu_si256(output[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
+        _mm256_storeu_si256(output[out_offset + 16..].as_mut_ptr() as *mut __m256i, v_out1);
+    }
+
+    // Handle remainder with scalar
+    let processed_in = 1 + chunks * 16;
+    let processed_out = 2 + chunks * 32;
+
+    for in_x in processed_in..in_width {
+        let out_x = in_x * 2;
+        if out_x >= out_width {
+            break;
+        }
+
+        let curr = input[in_x] as i32;
+        let prev = input[in_x.saturating_sub(1)] as i32;
+        let next = input[(in_x + 1).min(in_width - 1)] as i32;
+
+        if out_x < out_width {
+            output[out_x] = ((3 * curr + prev + 2) >> 2) as i16;
+        }
+        if out_x + 1 < out_width {
+            output[out_x + 1] = ((3 * curr + next + 2) >> 2) as i16;
+        }
+    }
+
+    // Last two output pixels (edge case)
+    let last_in = in_width - 1;
+    let last_out = last_in * 2;
+    if last_out < out_width {
+        output[last_out] = ((input[last_in] as i32 * 3 + input[last_in.saturating_sub(1)] as i32 + 2) >> 2) as i16;
+    }
+    if last_out + 1 < out_width {
+        output[last_out + 1] = input[last_in];
+    }
+}
+
+/// Scalar fallback for horizontal upsampling
+#[cfg(all(feature = "unsafe_simd", any(target_arch = "x86", target_arch = "x86_64")))]
+fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
+    let in_width = input.len();
+    let out_width = output.len();
+
+    for out_x in 0..out_width {
+        let in_x = out_x / 2;
+        let in_x = in_x.min(in_width.saturating_sub(1));
+        let curr = input[in_x] as i32;
+
+        let result = if out_x % 2 == 0 {
+            // Left half - blend with left neighbor
+            let prev = if in_x > 0 { input[in_x - 1] as i32 } else { curr };
+            (3 * curr + prev + 2) >> 2
+        } else {
+            // Right half - blend with right neighbor
+            let next = if in_x + 1 < in_width { input[in_x + 1] as i32 } else { curr };
+            (3 * curr + next + 2) >> 2
+        };
+        output[out_x] = result as i16;
+    }
+}
