@@ -457,12 +457,15 @@ iterating pixel-by-pixel while zune uses AVX2 SIMD (`upsample_horizontal_avx2`).
 ### Decoder Optimization Path
 
 1. ✅ Branchless huff_extend (done)
-2. ✅ AVX2 upsampling (done) - **NOTE: Not actually used! See callgrind above**
-3. ✅ Autovectorized YCbCr conversion (done) - **Still 4.4x slower than zune**
+2. ✅ AVX2 upsampling (done) - **94% reduction** (10.5M → 0.7M instructions)
+3. ✅ Autovectorized YCbCr conversion (done)
 4. ✅ Zero-copy coefficient decode (5-7% speedup)
-5. 🔲 **SIMD upsampling interior loop** - Biggest remaining win (91x gap)
-6. 🔲 SIMD YCbCr→RGB (4.4x gap)
+5. 🔲 **AVX2 IDCT** - Now biggest gap: 7M vs zune's 1.2M = **5.8x slower**
+6. 🔲 Reduce memset overhead (2.6M instructions, 5.6%)
 7. 🔲 Macro-based Huffman (eliminate ScanRead enum)
+
+**Current status (2026-01-22):** 46.3M instructions (was 60.3M), zune is 34.6M.
+Gap reduced from 1.74x to 1.34x in instruction count.
 
 ## Failed Explorations
 
