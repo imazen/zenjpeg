@@ -693,8 +693,8 @@ mod wide_simd {
 
 /// Perform integer IDCT with automatic SIMD dispatch.
 ///
-/// Uses the portable `wide` crate implementation with `multiversion` for
-/// cross-platform SIMD support (AVX2, SSE4.1, NEON).
+/// Uses AVX2 intrinsics on x86_64 with runtime detection, or falls back
+/// to the portable `wide` crate implementation for other architectures.
 ///
 /// # Arguments
 /// * `coeffs` - Input dequantized DCT coefficients (not modified)
@@ -702,7 +702,17 @@ mod wide_simd {
 /// * `stride` - Stride between output rows
 #[inline]
 pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    // Use portable wide implementation (multiversion handles dispatch)
+    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    {
+        if is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 detected at runtime
+            unsafe {
+                avx2::idct_int_avx2(coeffs, output, stride);
+            }
+            return;
+        }
+    }
+    // Fallback to portable wide implementation
     wide_simd::idct_int_wide(coeffs, output, stride);
 }
 
@@ -728,8 +738,10 @@ pub unsafe fn idct_int_avx2_raw(coeffs: &mut [i32; 64], output: &mut [i16], stri
 /// Selects the optimal IDCT implementation based on how many non-zero
 /// coefficients are in the block (in zigzag scan order):
 /// - count <= 1: DC-only (just broadcast DC value)
-/// - count <= 10: 4x4 IDCT (upper-left block only)
-/// - count > 10: Full 8x8 IDCT with portable SIMD
+/// - count > 1: Full 8x8 IDCT with AVX2 (x86_64) or portable SIMD
+///
+/// Note: The 4x4 IDCT optimization for sparse blocks was removed because
+/// the scalar 4x4 path was slower than the SIMD 8x8 path on modern CPUs.
 ///
 /// # Arguments
 /// * `coeffs` - Input dequantized DCT coefficients (modified in place for 4x4)
@@ -741,11 +753,20 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
     if coeff_count <= 1 {
         // DC-only fast path
         idct_int_dc_only(coeffs[0], output, stride);
-    } else if coeff_count <= 10 {
-        // 4x4 IDCT - coefficients only in upper-left 4x4 block
-        idct_int_4x4(coeffs, output, stride);
     } else {
-        // Full 8x8 IDCT with portable SIMD (multiversion handles dispatch)
+        // Full 8x8 IDCT with SIMD (AVX2 on x86_64, wide otherwise)
+        // Note: AVX2 IDCT with DC-only check is faster than tiered 4x4 scalar
+        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+        {
+            if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 detected at runtime
+                unsafe {
+                    avx2::idct_int_avx2(coeffs, output, stride);
+                }
+                return;
+            }
+        }
+        // Fallback to portable SIMD
         wide_simd::idct_int_wide(coeffs, output, stride);
     }
 }
