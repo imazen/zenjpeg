@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use enough::Stop;
 use ultrahdr_core::{
     color::tonemap::AdaptiveTonemapper,
-    gainmap::{apply_gainmap, HdrOutputFormat, InputConfig, StreamingHdrReconstructor},
+    gainmap::{apply_gainmap, DecodeInput, HdrOutputFormat, RowDecoder},
     metadata::xmp::parse_xmp,
     ColorGamut, GainMap, GainMapMetadata, RawImage,
 };
@@ -134,7 +134,7 @@ pub fn reconstruct_hdr(
 ///
 /// # Returns
 ///
-/// A [`StreamingHdrReconstructor`] that can process SDR rows into HDR rows.
+/// A [`RowDecoder`] that can process SDR rows into HDR rows.
 ///
 /// # Example
 ///
@@ -159,7 +159,7 @@ pub fn create_hdr_reconstructor(
     extras: &DecodedExtras,
     display_boost: f32,
     output_format: HdrOutputFormat,
-) -> Result<StreamingHdrReconstructor> {
+) -> Result<RowDecoder> {
     // Parse metadata
     let (metadata, _) = extras
         .ultrahdr_metadata()
@@ -171,7 +171,7 @@ pub fn create_hdr_reconstructor(
         .ok_or_else(|| Error::decode_error("No gain map found".to_string()))??;
 
     // Create reconstructor with RGB8 input config (typical jpegli decoder output)
-    StreamingHdrReconstructor::with_input_config(
+    RowDecoder::with_input_config(
         gainmap,
         metadata,
         width,
@@ -179,7 +179,7 @@ pub fn create_hdr_reconstructor(
         display_boost,
         output_format,
         ColorGamut::Bt709,
-        InputConfig::rgb8(width),
+        DecodeInput::rgb8(width),
     )
     .map_err(ultrahdr_to_jpegli_error)
 }
