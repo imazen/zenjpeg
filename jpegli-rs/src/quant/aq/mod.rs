@@ -784,7 +784,7 @@ fn gamma_modulation_scalar(
 ) -> f32 {
     let val = input_scaled[y * width + x];
     let log_arg = val.mul_add(K_GAMMA_MOD_SCALE, K_GAMMA_MOD_BIAS).max(1e-9);
-    let modulation = K_GAMMA_MOD_GAMMA * log_arg.ln();
+    let modulation = K_GAMMA_MOD_GAMMA * super::ln_poly(log_arg);
     current_val + modulation
 }
 
