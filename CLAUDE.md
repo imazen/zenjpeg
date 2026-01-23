@@ -297,11 +297,12 @@ To eliminate: would need 1 extra pixel of buffer padding for wraparound reads.
 
 **Benchmark:** `cargo bench -p jpegli-rs --bench aq_simd --features "archmage-simd,test-utils"`
 
-**Key finding:** The `wide` crate uses `cfg(target_feature)` (compile-time check), NOT
-`#[target_feature]` (function-level attribute). This means `#[multiversed]` dispatch
-doesn't help - wide falls back to SSE (128-bit xmm) without global AVX2.
+**Key finding:** The `wide` crate usually autovectorizes well, but sometimes picks
+intrinsics that LLVM won't re-autovectorize to wider registers. This is operation-
+dependent - most `wide` code benefits from `#[multiversed]` dispatch, but some paths
+may stay at SSE-width even when AVX2 is enabled at the function level.
 
-**Isolated primitive benchmarks** (misleading):
+**Isolated primitive benchmarks**:
 - `ratio_of_derivatives_x8`: wide 2.1ns, archmage 11.5ns - wide 5.5x faster
 - `hf_modulation_sum_8x8`: wide 12.9ns, archmage 9.3ns - archmage 1.4x faster
 
@@ -316,12 +317,12 @@ causing YMM register spills at call boundaries.
 
 **Verification:** `cargo asm` shows 0 ymm usages without global AVX2, 83 ymm usages with it.
 
-**Conclusion:** For production builds without global target-cpu flags, `wide` crate
-underperforms significantly. Options:
+**Conclusion:** The `wide` crate autovectorizes well for most operations. When profiling
+shows a specific function underperforming, check the assembly - some `wide` intrinsic
+choices may not re-autovectorize. Options for those cases:
 1. Build with `-C target-cpu=x86-64-v3` (requires AVX2 at runtime)
-2. Use archmage with `#[arcane]` macro for AQ functions
-3. Use raw intrinsics guarded by runtime feature detection
-4. **Use `multiversion` crate for autovectorization** (see below)
+2. Rewrite as scalar code inside `#[multiversion]` for LLVM autovectorization
+3. Use archmage with `#[arcane]` for explicit intrinsics (watch for inlining issues)
 
 ### Autovectorization with multiversion (2026-01-21)
 
@@ -396,10 +397,11 @@ Autovectorization fails for:
 streaming AQ path (`streaming.rs:31`). The slower gamma/hf/per_block functions
 continue to use the wide-based SIMD.
 
-**Why wide is slower for pre_erosion:** The `wide` crate uses `cfg(target_feature)`
-for compile-time detection. Without global `-C target-cpu=x86-64-v3`, it falls back
-to SSE even inside `#[multiversed]` functions. The `multiversion` crate uses
-`#[target_feature]` which enables proper AVX2 codegen.
+**Why wide is slower for pre_erosion:** In this specific case, `wide`'s intrinsic
+choices don't re-autovectorize to AVX2 inside `#[multiversed]` functions. The scalar
+autovec version lets LLVM make optimal choices for each target. This is operation-
+dependent - most `wide` code autovectorizes fine, but `pre_erosion_row` hit a case
+where scalar + `#[multiversion]` wins.
 
 **Files:** `jpegli-rs/src/quant/aq/autovec.rs`, `jpegli-rs/examples/bench_autovec_aq.rs`
 
