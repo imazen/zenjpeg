@@ -474,19 +474,64 @@ impl<'a> BitReader<'a> {
     }
 
     /// Skip bits without any checks. Only call after successful peek.
+    /// NOTE: This must keep bit_buffer in sync for refill() to work correctly.
     #[inline(always)]
     pub fn skip_bits_fast(&mut self, count: u8) {
         self.bits_in_buffer -= count;
         self.aligned_buffer <<= count;
+        // Keep bit_buffer in sync (needed for refill to work correctly)
+        let mask = if self.bits_in_buffer >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.bits_in_buffer).wrapping_sub(1)
+        };
+        self.bit_buffer &= mask;
     }
 
     /// Read bits without refill. Only call when you know enough bits are available.
     /// Returns the bits and consumes them.
+    /// NOTE: This must keep bit_buffer in sync for refill() to work correctly.
     #[inline(always)]
     pub fn read_bits_fast(&mut self, count: u8) -> u32 {
         let bits = (self.aligned_buffer >> (64 - count)) as u32;
         self.bits_in_buffer -= count;
         self.aligned_buffer <<= count;
+        // Keep bit_buffer in sync (needed for refill to work correctly)
+        let mask = if self.bits_in_buffer >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.bits_in_buffer).wrapping_sub(1)
+        };
+        self.bit_buffer &= mask;
+        bits
+    }
+
+    /// Ensure we have at least 32 bits in the buffer.
+    /// Returns true if successful, false if we hit a marker or end of data.
+    /// This is the key for fast decoding - call once at start of block,
+    /// then use read_bits_fast for individual reads.
+    #[inline(always)]
+    pub fn ensure_bits(&mut self) -> bool {
+        if self.bits_in_buffer < 32 {
+            let _ = self.refill();
+        }
+        self.bits_in_buffer >= 32
+    }
+
+    /// Peek at top N bits without consuming. No refill check.
+    #[inline(always)]
+    pub fn peek_top(&self, count: u8) -> u32 {
+        (self.aligned_buffer >> (64 - count)) as u32
+    }
+
+    /// Get bits with rotate trick (like zune-jpeg's get_bits).
+    /// This is marginally faster for some use cases.
+    #[inline(always)]
+    pub fn get_bits_rotate(&mut self, n_bits: u8) -> i32 {
+        let mask = (1_u64 << n_bits) - 1;
+        self.aligned_buffer = self.aligned_buffer.rotate_left(u32::from(n_bits));
+        let bits = (self.aligned_buffer & mask) as i32;
+        self.bits_in_buffer = self.bits_in_buffer.wrapping_sub(n_bits);
         bits
     }
 

@@ -407,6 +407,16 @@ impl HuffmanDecodeTable {
         None
     }
 
+    /// Get fast AC table as a slice, or empty slice if not built.
+    /// This avoids Option checks in the hot decode loop.
+    #[inline(always)]
+    pub fn fast_ac_slice(&self) -> &[i16] {
+        match &self.fast_ac {
+            Some(ref arr) => arr.as_slice(),
+            None => &[],
+        }
+    }
+
     /// Slow decode path for codes longer than FAST_BITS.
     /// Input: 16 bits from top of buffer, code_length starts at FAST_BITS + 1.
     /// Returns (symbol, code_length) or None if invalid.

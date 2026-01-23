@@ -13,7 +13,7 @@ use super::decode_value;
 
 /// Decodes a Huffman symbol from the bit reader using the provided table.
 /// This is a standalone function to avoid borrow conflicts in decode_block.
-#[inline]
+#[inline(always)]
 fn decode_huffman_symbol(reader: &mut BitReader, table: &HuffmanDecodeTable) -> ScanResult<u8> {
     // Try fast lookup first (most common path)
     if let Some(bits) = reader.peek_bits_refill(HuffmanDecodeTable::FAST_BITS as u8) {
@@ -333,6 +333,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
     /// - count <= 1: DC-only block
     /// - count <= 10: Use 4x4 IDCT
     /// - count > 10: Use full 8x8 IDCT
+    #[inline(always)]
     pub fn decode_block_with_count(
         &mut self,
         component: usize,
@@ -342,6 +343,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         // Get table references once (tables are borrowed, no copying)
         let dc_table = self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
         let ac_table = self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
+
+        // Pre-fetch fast_ac slice to avoid Option check in hot loop
+        let fast_ac = ac_table.fast_ac_slice();
+        let has_fast_ac = !fast_ac.is_empty();
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
@@ -355,12 +360,18 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         let dc_diff = if dc_cat == 0 {
             0
         } else {
-            let bits = match self.reader.read_bits(dc_cat)? {
-                ScanRead::Value(v) => v as u16,
-                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+            // Fast path: we just did peek_bits_refill(9), so we likely have enough bits
+            let bits = if self.reader.bits_available() >= dc_cat {
+                self.reader.read_bits_fast(dc_cat)
+            } else {
+                match self.reader.read_bits(dc_cat)? {
+                    ScanRead::Value(v) => v,
+                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                }
             };
-            decode_value(dc_cat, bits)
+            // Use branchless huff_extend instead of decode_value
+            super::huff_extend(bits as i32, dc_cat as i32) as i16
         };
 
         // Use wrapping_add to handle malformed input gracefully without panicking
@@ -381,15 +392,22 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 let idx = bits9 as usize;
 
                 // Try fast AC decode first (combined Huffman + sign extend)
-                if let Some((value, run, total_bits)) = ac_table.fast_decode_ac(idx) {
-                    self.reader.skip_bits_fast(total_bits);
-                    i += run as usize;
-                    if i < DCT_BLOCK_SIZE {
-                        coeffs[i] = value;
-                        last_nonzero = (i + 1) as u8;
-                        i += 1;
+                // Use direct slice access instead of method call
+                if has_fast_ac {
+                    let fast_ac_entry = fast_ac[idx];
+                    if fast_ac_entry != 0 {
+                        let value = fast_ac_entry >> 8;
+                        let run = ((fast_ac_entry >> 4) & 0xF) as usize;
+                        let total_bits = (fast_ac_entry & 0xF) as u8;
+                        self.reader.skip_bits_fast(total_bits);
+                        i += run;
+                        if i < DCT_BLOCK_SIZE {
+                            coeffs[i] = value;
+                            last_nonzero = (i + 1) as u8;
+                            i += 1;
+                        }
+                        continue;
                     }
-                    continue;
                 }
 
                 // Try regular fast Huffman lookup
@@ -404,7 +422,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                         break;
                     }
 
-                    let run = symbol >> 4;
+                    let run = (symbol >> 4) as usize;
                     let ac_cat = symbol & 0x0F;
 
                     if ac_cat == 0 {
@@ -416,19 +434,26 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                             break;
                         }
                     } else {
-                        i += run as usize;
+                        i += run;
                         if i >= DCT_BLOCK_SIZE {
                             return Err(Error::invalid_jpeg_data(
                                 "AC coefficient index out of bounds",
                             ));
                         }
 
-                        let bits = match self.reader.read_bits(ac_cat)? {
-                            ScanRead::Value(v) => v as u16,
-                            ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                            ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                        // Fast path: after peek_bits_refill(9) + skip(code_length), we often have
+                        // enough bits to read ac_cat (max 15) without refill
+                        let bits = if self.reader.bits_available() >= ac_cat {
+                            self.reader.read_bits_fast(ac_cat)
+                        } else {
+                            match self.reader.read_bits(ac_cat)? {
+                                ScanRead::Value(v) => v,
+                                ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                                ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                            }
                         };
-                        coeffs[i] = decode_value(ac_cat, bits);
+                        // Use branchless huff_extend
+                        coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
                         last_nonzero = (i + 1) as u8;
                         i += 1;
                     }
@@ -448,7 +473,7 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                 break;
             }
 
-            let run = symbol >> 4;
+            let run = (symbol >> 4) as usize;
             let ac_cat = symbol & 0x0F;
 
             if ac_cat == 0 {
@@ -460,25 +485,232 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     break;
                 }
             } else {
-                i += run as usize;
+                i += run;
                 if i >= DCT_BLOCK_SIZE {
                     return Err(Error::invalid_jpeg_data(
                         "AC coefficient index out of bounds",
                     ));
                 }
 
-                let bits = match self.reader.read_bits(ac_cat)? {
-                    ScanRead::Value(v) => v as u16,
-                    ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
-                    ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                // Fast path when we have enough bits
+                let bits = if self.reader.bits_available() >= ac_cat {
+                    self.reader.read_bits_fast(ac_cat)
+                } else {
+                    match self.reader.read_bits(ac_cat)? {
+                        ScanRead::Value(v) => v,
+                        ScanRead::EndOfScan => return Ok(ScanRead::EndOfScan),
+                        ScanRead::Truncated => return Ok(ScanRead::Truncated),
+                    }
                 };
-                coeffs[i] = decode_value(ac_cat, bits);
+                // Use branchless huff_extend
+                coeffs[i] = super::huff_extend(bits as i32, ac_cat as i32) as i16;
                 last_nonzero = (i + 1) as u8;
                 i += 1;
             }
         }
 
         Ok(ScanRead::Value((coeffs, last_nonzero)))
+    }
+
+    /// Fast decode optimized for baseline JPEG (non-progressive).
+    ///
+    /// This version minimizes enum matching overhead by:
+    /// 1. Pre-checking for markers before starting
+    /// 2. Using branchless huff_extend
+    /// 3. Batching refills
+    /// 4. Direct slice access for fast_ac table
+    ///
+    /// Returns `None` if a marker was hit (end of scan), otherwise returns
+    /// `(coefficients, coeff_count)`.
+    #[inline(never)] // Prevent inlining to keep code cache pressure low
+    pub fn decode_block_fast(
+        &mut self,
+        component: usize,
+        dc_table_idx: usize,
+        ac_table_idx: usize,
+    ) -> Result<Option<([i16; DCT_BLOCK_SIZE], u8)>> {
+        // Early exit if we already hit a marker
+        if self.reader.marker_found().is_some() {
+            return Ok(None);
+        }
+
+        // Get table references once
+        let dc_table = self.dc_tables[dc_table_idx]
+            .ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table = self.ac_tables[ac_table_idx]
+            .ok_or_else(|| Error::internal("AC table not set"))?;
+
+        // Get fast_ac slice once (empty slice if not built)
+        let fast_ac = ac_table.fast_ac_slice();
+        let has_fast_ac = !fast_ac.is_empty();
+
+        let mut coeffs = [0i16; DCT_BLOCK_SIZE];
+
+        // === Decode DC ===
+        // Ensure we have enough bits for DC decode
+        if !self.reader.ensure_bits() {
+            // Not enough bits - check if marker or truncated
+            return Ok(if self.reader.marker_found().is_some() {
+                None
+            } else {
+                // Truncated - return zeros
+                Some((coeffs, 1))
+            });
+        }
+
+        // Fast DC decode
+        let bits9 = self.reader.peek_top(HuffmanDecodeTable::FAST_BITS as u8);
+        let dc_lookup = dc_table.fast_lookup[bits9 as usize];
+
+        let dc_cat = if dc_lookup >= 0 {
+            let symbol = (dc_lookup & 0xFF) as u8;
+            let len = (dc_lookup >> 8) as u8;
+            self.reader.skip_bits_fast(len);
+            symbol
+        } else {
+            // Slow path - use the existing method
+            match decode_huffman_symbol(&mut self.reader, dc_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan | ScanRead::Truncated => return Ok(None),
+            }
+        };
+
+        let dc_diff = if dc_cat == 0 {
+            0i16
+        } else {
+            // Ensure bits for DC value
+            if self.reader.bits_available() < dc_cat {
+                if !self.reader.ensure_bits() || self.reader.bits_available() < dc_cat {
+                    // Not enough bits for DC value - truncated
+                    return Ok(None);
+                }
+            }
+            let bits = self.reader.read_bits_fast(dc_cat) as i32;
+            super::huff_extend(bits, dc_cat as i32) as i16
+        };
+
+        coeffs[0] = self.prev_dc[component].wrapping_add(dc_diff);
+        self.prev_dc[component] = coeffs[0];
+
+        // === Decode AC coefficients ===
+        let mut last_nonzero: u8 = 1;
+        let mut i = 1usize;
+
+        while i < DCT_BLOCK_SIZE {
+            // Batch refill - ensure 32 bits before inner loop
+            if !self.reader.ensure_bits() {
+                // Check if we hit a marker
+                if self.reader.marker_found().is_some() {
+                    break;
+                }
+                // Otherwise truncated - use what we have
+            }
+
+            // Peek 9 bits for fast lookup
+            let bits9 = self.reader.peek_top(HuffmanDecodeTable::FAST_BITS as u8) as usize;
+
+            // Try fast AC first (combined run+value+length)
+            if has_fast_ac {
+                let fast_ac_entry = fast_ac[bits9];
+                if fast_ac_entry != 0 {
+                    let value = fast_ac_entry >> 8;
+                    let run = ((fast_ac_entry >> 4) & 0xF) as usize;
+                    let total_bits = (fast_ac_entry & 0xF) as u8;
+                    self.reader.skip_bits_fast(total_bits);
+                    i += run;
+                    if i < DCT_BLOCK_SIZE {
+                        coeffs[i] = value;
+                        last_nonzero = (i + 1) as u8;
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Regular fast Huffman lookup
+            let ac_lookup = ac_table.fast_lookup[bits9];
+            if ac_lookup >= 0 {
+                let symbol = (ac_lookup & 0xFF) as u8;
+                let code_length = (ac_lookup >> 8) as u8;
+                self.reader.skip_bits_fast(code_length);
+
+                if symbol == 0 {
+                    // EOB
+                    break;
+                }
+
+                let run = (symbol >> 4) as usize;
+                let ac_cat = symbol & 0x0F;
+
+                if ac_cat == 0 {
+                    if run == 15 {
+                        // ZRL
+                        i += 16;
+                    } else {
+                        break;
+                    }
+                } else {
+                    i += run;
+                    if i >= DCT_BLOCK_SIZE {
+                        return Err(Error::invalid_jpeg_data(
+                            "AC coefficient index out of bounds",
+                        ));
+                    }
+
+                    // Read value bits - ensure we have enough
+                    if self.reader.bits_available() < ac_cat {
+                        if !self.reader.ensure_bits() || self.reader.bits_available() < ac_cat {
+                            break; // Not enough bits - truncated
+                        }
+                    }
+                    let bits = self.reader.read_bits_fast(ac_cat) as i32;
+                    coeffs[i] = super::huff_extend(bits, ac_cat as i32) as i16;
+                    last_nonzero = (i + 1) as u8;
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Slow path for long codes
+            let symbol = match decode_huffman_symbol(&mut self.reader, ac_table)? {
+                ScanRead::Value(v) => v,
+                ScanRead::EndOfScan | ScanRead::Truncated => break,
+            };
+
+            if symbol == 0 {
+                break;
+            }
+
+            let run = (symbol >> 4) as usize;
+            let ac_cat = symbol & 0x0F;
+
+            if ac_cat == 0 {
+                if run == 15 {
+                    i += 16;
+                } else {
+                    break;
+                }
+            } else {
+                i += run;
+                if i >= DCT_BLOCK_SIZE {
+                    return Err(Error::invalid_jpeg_data(
+                        "AC coefficient index out of bounds",
+                    ));
+                }
+
+                if self.reader.bits_available() < ac_cat {
+                    if !self.reader.ensure_bits() || self.reader.bits_available() < ac_cat {
+                        break; // Not enough bits - truncated
+                    }
+                }
+                let bits = self.reader.read_bits_fast(ac_cat) as i32;
+                coeffs[i] = super::huff_extend(bits, ac_cat as i32) as i16;
+                last_nonzero = (i + 1) as u8;
+                i += 1;
+            }
+        }
+
+        Ok(Some((coeffs, last_nonzero)))
     }
 
     /// Returns the underlying bit reader position.
