@@ -199,8 +199,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         ac_table_idx: usize,
     ) -> ScanResult<[i16; DCT_BLOCK_SIZE]> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
-        let ac_table = self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
+        let dc_table =
+            self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table =
+            self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
         let mut coeffs = [0i16; DCT_BLOCK_SIZE];
 
@@ -350,8 +352,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         ac_table_idx: usize,
     ) -> ScanResult<([i16; DCT_BLOCK_SIZE], u8)> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
-        let ac_table = self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
+        let dc_table =
+            self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table =
+            self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
         // Pre-fetch fast_ac slice to avoid Option check in hot loop
         let fast_ac = ac_table.fast_ac_slice();
@@ -584,10 +588,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         ac_table_idx: usize,
     ) -> ScanResult<u8> {
         // Get table references once (tables are borrowed, no copying)
-        let dc_table = self.dc_tables[dc_table_idx]
-            .ok_or_else(|| Error::internal("DC table not set"))?;
-        let ac_table = self.ac_tables[ac_table_idx]
-            .ok_or_else(|| Error::internal("AC table not set"))?;
+        let dc_table =
+            self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table =
+            self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
         // Pre-fetch fast_ac slice to avoid Option check in hot loop
         let fast_ac = ac_table.fast_ac_slice();
@@ -768,10 +772,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
         }
 
         // Get table references once
-        let dc_table = self.dc_tables[dc_table_idx]
-            .ok_or_else(|| Error::internal("DC table not set"))?;
-        let ac_table = self.ac_tables[ac_table_idx]
-            .ok_or_else(|| Error::internal("AC table not set"))?;
+        let dc_table =
+            self.dc_tables[dc_table_idx].ok_or_else(|| Error::internal("DC table not set"))?;
+        let ac_table =
+            self.ac_tables[ac_table_idx].ok_or_else(|| Error::internal("AC table not set"))?;
 
         // Get fast_ac slice once (empty slice if not built)
         let fast_ac = ac_table.fast_ac_slice();
@@ -812,12 +816,11 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
             0i16
         } else {
             // Ensure bits for DC value
-            if self.reader.bits_available() < dc_cat {
-                if !self.reader.ensure_bits() || self.reader.bits_available() < dc_cat {
+            if self.reader.bits_available() < dc_cat
+                && (!self.reader.ensure_bits() || self.reader.bits_available() < dc_cat) {
                     // Not enough bits for DC value - truncated
                     return Ok(None);
                 }
-            }
             let bits = self.reader.read_bits_fast(dc_cat) as i32;
             super::huff_extend(bits, dc_cat as i32) as i16
         };
@@ -891,11 +894,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     }
 
                     // Read value bits - ensure we have enough
-                    if self.reader.bits_available() < ac_cat {
-                        if !self.reader.ensure_bits() || self.reader.bits_available() < ac_cat {
+                    if self.reader.bits_available() < ac_cat
+                        && (!self.reader.ensure_bits() || self.reader.bits_available() < ac_cat) {
                             break; // Not enough bits - truncated
                         }
-                    }
                     let bits = self.reader.read_bits_fast(ac_cat) as i32;
                     coeffs[i] = super::huff_extend(bits, ac_cat as i32) as i16;
                     last_nonzero = (i + 1) as u8;
@@ -931,11 +933,10 @@ impl<'data, 'tables> EntropyDecoder<'data, 'tables> {
                     ));
                 }
 
-                if self.reader.bits_available() < ac_cat {
-                    if !self.reader.ensure_bits() || self.reader.bits_available() < ac_cat {
+                if self.reader.bits_available() < ac_cat
+                    && (!self.reader.ensure_bits() || self.reader.bits_available() < ac_cat) {
                         break; // Not enough bits - truncated
                     }
-                }
                 let bits = self.reader.read_bits_fast(ac_cat) as i32;
                 coeffs[i] = super::huff_extend(bits, ac_cat as i32) as i16;
                 last_nonzero = (i + 1) as u8;

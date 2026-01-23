@@ -1,5 +1,5 @@
-use std::io::Cursor;
 use std::hint::black_box;
+use std::io::Cursor;
 use std::time::Instant;
 
 fn main() {
@@ -16,10 +16,12 @@ fn main() {
         }
     }
 
-    use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     use enough::Unstoppable;
+    use jpegli::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
     let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
-    let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb).unwrap();
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .unwrap();
     enc.push_packed(&data, Unstoppable).unwrap();
     let jpeg = enc.finish().unwrap();
     eprintln!("JPEG size: {} bytes", jpeg.len());
@@ -56,7 +58,10 @@ fn main() {
     }
     let zune_elapsed = start.elapsed();
     let zune_per_iter = zune_elapsed / iterations;
-    eprintln!("  Total: {:?}, Per-iteration: {:?}", zune_elapsed, zune_per_iter);
+    eprintln!(
+        "  Total: {:?}, Per-iteration: {:?}",
+        zune_elapsed, zune_per_iter
+    );
 
     // Profile jpegli-rs
     eprintln!("=== Profiling jpegli-rs ({} iterations) ===", iterations);
@@ -69,7 +74,10 @@ fn main() {
     }
     let jpegli_elapsed = start.elapsed();
     let jpegli_per_iter = jpegli_elapsed / iterations;
-    eprintln!("  Total: {:?}, Per-iteration: {:?}", jpegli_elapsed, jpegli_per_iter);
+    eprintln!(
+        "  Total: {:?}, Per-iteration: {:?}",
+        jpegli_elapsed, jpegli_per_iter
+    );
 
     eprintln!("\n=== Summary ===");
     eprintln!("zune-jpeg:  {:?}/decode", zune_per_iter);

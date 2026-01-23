@@ -385,7 +385,8 @@ impl Decoder {
 
     /// Decodes a JPEG image.
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
-        let mut parser = JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
+        let mut parser =
+            JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
         parser.decode()?;
 
         let info = parser.info();

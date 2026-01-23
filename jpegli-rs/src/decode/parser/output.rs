@@ -392,9 +392,8 @@ impl<'a> JpegParser<'a> {
             // Upsample chroma to match Y resolution
             let y_rows_this_mcu = y_strip_height.min(height.saturating_sub(imcu_row * mcu_height));
             let y_cols_this_mcu = width.min(y_strip_width);
-            let c_rows_this_mcu = c_strip_height.min(
-                (height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio,
-            );
+            let c_rows_this_mcu = c_strip_height
+                .min((height.saturating_sub(imcu_row * mcu_height) + v_ratio - 1) / v_ratio);
             let _c_cols_this_mcu = (y_cols_this_mcu + h_ratio - 1) / h_ratio;
 
             if fancy_upsampling {
@@ -454,7 +453,9 @@ impl<'a> JpegParser<'a> {
                             y_rows_this_mcu,
                         );
                     }
-                    _ => unreachable!("unsupported ratio should be filtered by can_use_fast_i16_subsampled"),
+                    _ => unreachable!(
+                        "unsupported ratio should be filtered by can_use_fast_i16_subsampled"
+                    ),
                 }
             } else {
                 // Box filter (simple pixel duplication)

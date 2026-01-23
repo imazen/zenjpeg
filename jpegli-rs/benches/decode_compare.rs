@@ -52,7 +52,8 @@ fn bench_decode_comparison(c: &mut Criterion) {
             &jpeg_baseline,
             |b, data| {
                 b.iter(|| {
-                    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
+                    let options =
+                        DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
                     let cursor = Cursor::new(black_box(data.as_slice()));
                     let mut decoder = JpegDecoder::new_with_options(cursor, options);
                     decoder.decode().expect("decode failed")
@@ -83,7 +84,8 @@ fn bench_decode_comparison(c: &mut Criterion) {
             &jpeg_progressive,
             |b, data| {
                 b.iter(|| {
-                    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
+                    let options =
+                        DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
                     let cursor = Cursor::new(black_box(data.as_slice()));
                     let mut decoder = JpegDecoder::new_with_options(cursor, options);
                     decoder.decode().expect("decode failed")

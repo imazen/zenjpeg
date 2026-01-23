@@ -1,7 +1,7 @@
 //! Tests for decoder extras preservation.
 
-use jpegli::decoder::{Decoder, PreserveConfig, SegmentType, MpfImageType};
-use jpegli::encoder::{EncoderConfig, ChromaSubsampling, PixelLayout, Unstoppable};
+use jpegli::decoder::{Decoder, MpfImageType, PreserveConfig, SegmentType};
+use jpegli::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Unstoppable};
 
 /// Create a simple test image.
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
@@ -70,7 +70,9 @@ fn test_extras_empty_when_preserve_none() {
 
     // Encode
     let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
-    let mut enc = config.encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).expect("encoder");
+    let mut enc = config
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
     enc.push_packed(&pixels, Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 
@@ -93,14 +95,14 @@ fn test_extras_preserved_with_default_config() {
 
     // Encode
     let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
-    let mut enc = config.encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb).expect("encoder");
+    let mut enc = config
+        .encode_from_bytes(64, 64, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
     enc.push_packed(&pixels, Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 
     // Decode with default preservation
-    let decoded = Decoder::new()
-        .decode(&jpeg)
-        .expect("decode");
+    let decoded = Decoder::new().decode(&jpeg).expect("decode");
 
     // Should have extras if there are any segments to preserve
     // Note: A minimal JPEG might not have JFIF, EXIF, etc.
@@ -178,7 +180,9 @@ fn test_decoded_image_has_extras_method() {
     let pixels = create_test_image(32, 32);
 
     let config = EncoderConfig::ycbcr(85, ChromaSubsampling::None);
-    let mut enc = config.encode_from_bytes(32, 32, PixelLayout::Rgb8Srgb).expect("encoder");
+    let mut enc = config
+        .encode_from_bytes(32, 32, PixelLayout::Rgb8Srgb)
+        .expect("encoder");
     enc.push_packed(&pixels, Unstoppable).expect("push");
     let jpeg = enc.finish().expect("encode");
 

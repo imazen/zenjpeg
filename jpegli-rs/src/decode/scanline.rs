@@ -354,7 +354,11 @@ impl<'a> ScanlineReader<'a> {
                         self.prev_coeff_counts[comp_idx] =
                             self.prev_coeff_counts[comp_idx].max(coeff_count);
 
-                        dequantize_unzigzag_i32_into(&self.coeffs_buf, quant, &mut self.dequant_buf);
+                        dequantize_unzigzag_i32_into(
+                            &self.coeffs_buf,
+                            quant,
+                            &mut self.dequant_buf,
+                        );
 
                         // Calculate destination offset in strip buffer
                         let (strip, stride) = match comp_idx {

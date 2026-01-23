@@ -264,7 +264,7 @@ impl<'a> JpegParser<'a> {
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
                                         prev_coeff_counts[*comp_idx] = 64; // Force full zero next
-                                        // Log but don't fail on padding block errors
+                                                                           // Log but don't fail on padding block errors
                                         #[cfg(debug_assertions)]
                                         eprintln!(
                                             "DEBUG: Padding block ({},{}) error: {:?}",
