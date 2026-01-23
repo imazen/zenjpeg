@@ -1021,7 +1021,7 @@ impl DequantBiasStats {
 ///
 /// Accuracy: ~1e-5 relative error for typical gamma values (0.5 to 0.99).
 #[inline]
-fn ln_poly(x: f32) -> f32 {
+pub(crate) fn ln_poly(x: f32) -> f32 {
     // Coefficients from butteraugli/jpegli for log2 approximation
     const P0: f32 = -1.850_383_34e-6;
     const P1: f32 = 1.428_716_05;
