@@ -558,6 +558,7 @@ mod decode_coverage {
             apply_icc: false,
             max_pixels: 1000000,
             max_memory: 100 * 1024 * 1024,
+            ..Default::default()
         };
 
         let decoder = Decoder::from_config(config);

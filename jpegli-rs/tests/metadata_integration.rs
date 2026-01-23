@@ -240,6 +240,7 @@ mod native_metadata_tests {
     }
 
     #[test]
+    #[cfg(feature = "ultrahdr")]
     fn native_metadata_compatible_with_ultrahdr() {
         use ultrahdr::jpeg::parse_jpeg_segments;
 
@@ -723,6 +724,7 @@ mod img_parts_tests {
 // ultrahdr integration tests
 // ============================================================================
 
+#[cfg(feature = "ultrahdr")]
 mod ultrahdr_tests {
     use super::*;
     use ultrahdr::jpeg::parse_jpeg_segments;
@@ -916,6 +918,7 @@ mod cross_crate_tests {
     }
 
     #[test]
+    #[cfg(feature = "ultrahdr")]
     fn img_parts_modified_jpeg_parseable_by_ultrahdr() {
         use ultrahdr::jpeg::parse_jpeg_segments;
 

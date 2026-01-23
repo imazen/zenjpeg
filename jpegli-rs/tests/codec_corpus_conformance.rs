@@ -959,7 +959,8 @@ fn test_full_fuzz_corpus() {
         };
 
         // Use catch_unwind to detect panics
-        let result = std::panic::catch_unwind(|| decoder.decode(&data));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decoder.decode(&data)));
 
         match result {
             Ok(Ok(_)) => success += 1,

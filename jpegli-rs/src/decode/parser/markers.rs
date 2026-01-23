@@ -2,6 +2,7 @@
 //!
 //! This module handles parsing of JPEG marker segments during header reading.
 
+use crate::decode::extras::{detect_segment_type, should_preserve_segment};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::validate_dimensions;
 use crate::foundation::consts::{
@@ -35,7 +36,7 @@ impl<'a> JpegParser<'a> {
                 MARKER_DQT => self.parse_quant_table()?,
                 MARKER_DHT => self.parse_huffman_table()?,
                 MARKER_DRI => self.parse_restart_interval()?,
-                MARKER_APP0..=0xEF | MARKER_COM => self.skip_segment()?,
+                MARKER_APP0..=0xEF | MARKER_COM => self.process_app_or_com(marker)?,
                 MARKER_EOI => {
                     return Err(Error::invalid_jpeg_data(
                         "unexpected EOI before frame header",
@@ -263,6 +264,30 @@ impl<'a> JpegParser<'a> {
             return Err(Error::invalid_jpeg_data("segment length too short"));
         }
         self.position += length - 2;
+        Ok(())
+    }
+
+    /// Process an APP or COM marker, optionally preserving its data.
+    pub(super) fn process_app_or_com(&mut self, marker: u8) -> Result<()> {
+        let length = self.read_u16()? as usize;
+        if length < 2 {
+            return Err(Error::invalid_jpeg_data("segment length too short"));
+        }
+        let data_len = length - 2;
+
+        // Check if we should preserve this segment
+        if let (Some(config), Some(extras)) = (&self.preserve_config, &mut self.extras) {
+            if self.position + data_len <= self.data.len() {
+                let data = &self.data[self.position..self.position + data_len];
+                let segment_type = detect_segment_type(marker, data);
+
+                if should_preserve_segment(config, segment_type) {
+                    extras.add_segment(marker, data.to_vec(), segment_type);
+                }
+            }
+        }
+
+        self.position += data_len;
         Ok(())
     }
 }

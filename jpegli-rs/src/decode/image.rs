@@ -4,10 +4,11 @@
 
 use crate::types::PixelFormat;
 
+use super::extras::DecodedExtras;
 use wide::f32x8;
 
 /// A decoded image with dimensions and pixel data.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct DecodedImage {
     /// Image width in pixels
@@ -18,6 +19,20 @@ pub struct DecodedImage {
     pub format: PixelFormat,
     /// Raw pixel data in the specified format
     pub data: Vec<u8>,
+    /// Preserved metadata and secondary images (if preservation was enabled)
+    pub(crate) extras: Option<DecodedExtras>,
+}
+
+impl core::fmt::Debug for DecodedImage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DecodedImage")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("format", &self.format)
+            .field("data_len", &self.data.len())
+            .field("has_extras", &self.extras.is_some())
+            .finish()
+    }
 }
 
 impl DecodedImage {
@@ -55,6 +70,27 @@ impl DecodedImage {
     #[must_use]
     pub fn stride(&self) -> usize {
         self.width as usize * self.bytes_per_pixel()
+    }
+
+    /// Access preserved extras (metadata and secondary images).
+    ///
+    /// Returns `None` if preservation wasn't configured or if there were
+    /// no segments to preserve.
+    #[must_use]
+    pub fn extras(&self) -> Option<&DecodedExtras> {
+        self.extras.as_ref()
+    }
+
+    /// Take ownership of preserved extras.
+    #[must_use]
+    pub fn take_extras(&mut self) -> Option<DecodedExtras> {
+        self.extras.take()
+    }
+
+    /// Decompose the image into its parts.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, u32, u32, PixelFormat, Option<DecodedExtras>) {
+        (self.data, self.width, self.height, self.format, self.extras)
     }
 }
 
@@ -159,6 +195,7 @@ impl DecodedImageF32 {
             height: self.height,
             format: self.format,
             data,
+            extras: None,
         }
     }
 
