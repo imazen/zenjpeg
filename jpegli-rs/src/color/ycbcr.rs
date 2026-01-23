@@ -1160,17 +1160,214 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 
     let len = y_plane.len();
 
-    // Allocate temporary planes for R, G, B
-    // This allows autovectorization of the conversion step
-    let mut r_plane = vec![0u8; len];
-    let mut g_plane = vec![0u8; len];
-    let mut b_plane = vec![0u8; len];
+    // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
+    #[cfg(all(
+        feature = "unsafe_simd",
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
+    {
+        if is_x86_feature_detected!("avx2") {
+            // Safety: AVX2 feature detected, pointers are valid for the slice lengths
+            unsafe {
+                ycbcr_planes_i16_to_rgb_u8_avx2(y_plane, cb_plane, cr_plane, rgb);
+            }
+            return;
+        }
+    }
 
-    // Convert YCbCr to separate R, G, B planes (autovectorized)
-    ycbcr_to_rgb_planes_autovec(y_plane, cb_plane, cr_plane, &mut r_plane, &mut g_plane, &mut b_plane);
+    // Scalar fallback - process directly without temp allocations
+    for i in 0..len {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
 
-    // Interleave R, G, B into RGB output (autovectorized)
-    interleave_rgb_planes(&r_plane, &g_plane, &b_plane, rgb);
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+
+        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+
+        let idx = i * 3;
+        rgb[idx] = r.clamp(0, 255) as u8;
+        rgb[idx + 1] = g.clamp(0, 255) as u8;
+        rgb[idx + 2] = b.clamp(0, 255) as u8;
+    }
+}
+
+/// AVX2 batch conversion of YCbCr planes to interleaved RGB.
+/// Processes 16 pixels at a time with direct pointer loads.
+#[cfg(all(
+    feature = "unsafe_simd",
+    any(target_arch = "x86", target_arch = "x86_64")
+))]
+#[target_feature(enable = "avx2")]
+unsafe fn ycbcr_planes_i16_to_rgb_u8_avx2(
+    y_plane: &[i16],
+    cb_plane: &[i16],
+    cr_plane: &[i16],
+    rgb: &mut [u8],
+) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    let len = y_plane.len();
+    let chunks = len / 16;
+
+    // Preload constants outside the loop
+    let bias = _mm256_set1_epi16(128);
+    let y_coeff = _mm256_set1_epi32(Y_CF_INT);
+    let rounding = _mm256_set1_epi32(YUV_ROUND);
+    let cr_to_r = _mm256_set1_epi32(CR_TO_R_INT);
+    let cr_to_g = _mm256_set1_epi32(CR_TO_G_INT);
+    let cb_to_g = _mm256_set1_epi32(CB_TO_G_INT);
+    let cb_to_b = _mm256_set1_epi32(CB_TO_B_INT);
+    let zero = _mm256_setzero_si256();
+
+    // Shuffle masks for RGB interleaving
+    let sh_r = _mm256_setr_epi8(
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5,
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5,
+    );
+    let sh_g = _mm256_setr_epi8(
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10,
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10,
+    );
+    let sh_b = _mm256_setr_epi8(
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15,
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15,
+    );
+    let m0 = _mm256_setr_epi8(
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+    );
+    let m1 = _mm256_setr_epi8(
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0,
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0,
+    );
+
+    let y_ptr = y_plane.as_ptr();
+    let cb_ptr = cb_plane.as_ptr();
+    let cr_ptr = cr_plane.as_ptr();
+    let rgb_ptr = rgb.as_mut_ptr();
+
+    for chunk in 0..chunks {
+        let in_offset = chunk * 16;
+        let out_offset = chunk * 48;
+
+        // Load directly from pointers
+        let y_vec = _mm256_loadu_si256(y_ptr.add(in_offset).cast());
+        let cb_vec = _mm256_loadu_si256(cb_ptr.add(in_offset).cast());
+        let cr_vec = _mm256_loadu_si256(cr_ptr.add(in_offset).cast());
+
+        // Subtract 128 from Cb and Cr
+        let cb_centered = _mm256_sub_epi16(cb_vec, bias);
+        let cr_centered = _mm256_sub_epi16(cr_vec, bias);
+
+        // Zero-extend Y to 32-bit
+        let y_lo = _mm256_unpacklo_epi16(y_vec, zero);
+        let y_hi = _mm256_unpackhi_epi16(y_vec, zero);
+
+        // y_scaled = y * Y_CF + rounding
+        let y_scaled_lo = _mm256_add_epi32(_mm256_mullo_epi32(y_lo, y_coeff), rounding);
+        let y_scaled_hi = _mm256_add_epi32(_mm256_mullo_epi32(y_hi, y_coeff), rounding);
+
+        // Sign-extend Cb/Cr to 32-bit
+        let cb_sign = _mm256_srai_epi16(cb_centered, 15);
+        let cr_sign = _mm256_srai_epi16(cr_centered, 15);
+        let cb_lo = _mm256_unpacklo_epi16(cb_centered, cb_sign);
+        let cb_hi = _mm256_unpackhi_epi16(cb_centered, cb_sign);
+        let cr_lo = _mm256_unpacklo_epi16(cr_centered, cr_sign);
+        let cr_hi = _mm256_unpackhi_epi16(cr_centered, cr_sign);
+
+        // R = (y_scaled + cr * CR_TO_R) >> 14
+        let r_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cr_lo, cr_to_r)),
+            14,
+        );
+        let r_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cr_hi, cr_to_r)),
+            14,
+        );
+
+        // G = (y_scaled + cr * CR_TO_G + cb * CB_TO_G) >> 14
+        let g_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_lo,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_lo, cr_to_g),
+                    _mm256_mullo_epi32(cb_lo, cb_to_g),
+                ),
+            ),
+            14,
+        );
+        let g_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(
+                y_scaled_hi,
+                _mm256_add_epi32(
+                    _mm256_mullo_epi32(cr_hi, cr_to_g),
+                    _mm256_mullo_epi32(cb_hi, cb_to_g),
+                ),
+            ),
+            14,
+        );
+
+        // B = (y_scaled + cb * CB_TO_B) >> 14
+        let b_lo = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_lo, _mm256_mullo_epi32(cb_lo, cb_to_b)),
+            14,
+        );
+        let b_hi = _mm256_srai_epi32(
+            _mm256_add_epi32(y_scaled_hi, _mm256_mullo_epi32(cb_hi, cb_to_b)),
+            14,
+        );
+
+        // Pack i32 -> i16 -> u8
+        let r_16 = _mm256_packs_epi32(r_lo, r_hi);
+        let g_16 = _mm256_packs_epi32(g_lo, g_hi);
+        let b_16 = _mm256_packs_epi32(b_lo, b_hi);
+
+        let r_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(r_16, zero), 0b11_01_10_00);
+        let g_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(g_16, zero), 0b11_01_10_00);
+        let b_8 = _mm256_permute4x64_epi64(_mm256_packus_epi16(b_16, zero), 0b11_01_10_00);
+
+        // Interleave RGB
+        let r0 = _mm256_shuffle_epi8(r_8, sh_r);
+        let g0 = _mm256_shuffle_epi8(g_8, sh_g);
+        let b0 = _mm256_shuffle_epi8(b_8, sh_b);
+
+        let p0 = _mm256_blendv_epi8(_mm256_blendv_epi8(r0, g0, m0), b0, m1);
+        let p1 = _mm256_blendv_epi8(_mm256_blendv_epi8(g0, b0, m0), r0, m1);
+        let p2 = _mm256_blendv_epi8(_mm256_blendv_epi8(b0, r0, m0), g0, m1);
+
+        let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
+        let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
+
+        // Store 48 bytes
+        let out_ptr = rgb_ptr.add(out_offset);
+        _mm256_storeu_si256(out_ptr.cast(), rgb0);
+        _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
+    }
+
+    // Handle remainder with scalar
+    let remainder_start = chunks * 16;
+    for i in remainder_start..len {
+        let y_val = i32::from(y_plane[i]);
+        let cb_val = i32::from(cb_plane[i]) - 128;
+        let cr_val = i32::from(cr_plane[i]) - 128;
+
+        let y_scaled = y_val * Y_CF_INT + YUV_ROUND;
+
+        let r = (y_scaled + cr_val * CR_TO_R_INT) >> 14;
+        let g = (y_scaled + cr_val * CR_TO_G_INT + cb_val * CB_TO_G_INT) >> 14;
+        let b = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
+
+        let idx = i * 3;
+        rgb[idx] = r.clamp(0, 255) as u8;
+        rgb[idx + 1] = g.clamp(0, 255) as u8;
+        rgb[idx + 2] = b.clamp(0, 255) as u8;
+    }
 }
 
 #[cfg(test)]
