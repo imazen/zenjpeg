@@ -65,11 +65,11 @@ spin = "0.9"
 # Stack-allocated bounded vectors (no heap allocation for small fixed-size collections)
 tinyvec = { version = "1.10", features = ["alloc"] }
 
-# Fast linear-sRGB conversion
-linear-srgb = "0.3.1"
+# Fast linear-sRGB conversion (mage feature for FMA-accelerated SIMD)
+linear-srgb = { path = "/home/lilith/work/linear-srgb", features = ["mage"] }
 
 # Token-based safe SIMD intrinsics
-archmage = { version = "0.1.3", features = ["safe_unaligned_simd"] }
+archmage = { path = "/home/lilith/work/archmage", features = ["macros", "std"] }
 
 # Error tracing with location tracking
 whereat = "0.1.3"
