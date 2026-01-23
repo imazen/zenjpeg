@@ -14,8 +14,14 @@
 
 #[cfg(feature = "profile")]
 use std::cell::RefCell;
+#[cfg(feature = "profile")]
 use std::collections::HashMap;
+#[cfg(feature = "profile")]
 use std::time::{Duration, Instant};
+
+// Stub Duration for non-profile builds (only used in no-op functions)
+#[cfg(not(feature = "profile"))]
+use core::time::Duration;
 
 #[cfg(feature = "profile")]
 thread_local! {
@@ -23,12 +29,18 @@ thread_local! {
     static STACK: RefCell<Vec<(&'static str, Instant)>> = RefCell::new(Vec::new());
 }
 
+#[cfg(feature = "profile")]
 #[derive(Default)]
 pub struct ProfileStats {
     timings: HashMap<&'static str, Timing>,
     call_order: Vec<&'static str>,
 }
 
+#[cfg(not(feature = "profile"))]
+#[derive(Default)]
+pub struct ProfileStats;
+
+#[cfg(feature = "profile")]
 #[derive(Default, Clone)]
 struct Timing {
     total: Duration,
@@ -125,12 +137,14 @@ impl ProfileStats {
 }
 
 /// RAII guard for timing a scope
+#[cfg(feature = "profile")]
 pub struct ProfileGuard {
-    #[cfg(feature = "profile")]
     name: &'static str,
-    #[cfg(feature = "profile")]
     start: Instant,
 }
+
+#[cfg(not(feature = "profile"))]
+pub struct ProfileGuard;
 
 impl ProfileGuard {
     #[cfg(feature = "profile")]
@@ -145,7 +159,7 @@ impl ProfileGuard {
     #[cfg(not(feature = "profile"))]
     #[inline(always)]
     pub fn new(_name: &'static str) -> Self {
-        Self {}
+        Self
     }
 }
 
