@@ -549,9 +549,7 @@ pub fn compute_fuzzy_erosion_blocks_autovec(
         }
 
         // Store results
-        for i in 0..8 {
-            out[bx + i] = sum[i];
-        }
+        out[bx..bx + 8].copy_from_slice(&sum);
 
         bx += 8;
         processed += 8;

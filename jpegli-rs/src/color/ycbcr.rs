@@ -1098,7 +1098,12 @@ unsafe fn ycbcr_to_rgb_i16_x16_avx2(
 /// This function is decorated with `#[multiversion]` to generate optimized versions
 /// for different SIMD instruction sets (AVX2, SSE4.1, NEON) with runtime dispatch.
 /// Writing to separate planes allows better autovectorization than interleaved output.
-#[multiversion::multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
+#[multiversion::multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx",
+    "x86_64+sse4.1",
+    "aarch64+neon"
+))]
 fn ycbcr_to_rgb_planes_autovec(
     y_plane: &[i16],
     cb_plane: &[i16],
@@ -1121,20 +1126,20 @@ fn ycbcr_to_rgb_planes_autovec(
         let b_raw = (y_scaled + cb_val * CB_TO_B_INT) >> 14;
 
         // Clamp to [0, 255]
-        r_out[i] = r_raw.max(0).min(255) as u8;
-        g_out[i] = g_raw.max(0).min(255) as u8;
-        b_out[i] = b_raw.max(0).min(255) as u8;
+        r_out[i] = r_raw.clamp(0, 255) as u8;
+        g_out[i] = g_raw.clamp(0, 255) as u8;
+        b_out[i] = b_raw.clamp(0, 255) as u8;
     }
 }
 
 /// Interleave R, G, B planes into RGB buffer.
-#[multiversion::multiversion(targets("x86_64+avx2+fma", "x86_64+avx", "x86_64+sse4.1", "aarch64+neon"))]
-fn interleave_rgb_planes(
-    r: &[u8],
-    g: &[u8],
-    b: &[u8],
-    rgb: &mut [u8],
-) {
+#[multiversion::multiversion(targets(
+    "x86_64+avx2+fma",
+    "x86_64+avx",
+    "x86_64+sse4.1",
+    "aarch64+neon"
+))]
+fn interleave_rgb_planes(r: &[u8], g: &[u8], b: &[u8], rgb: &mut [u8]) {
     let len = r.len();
     for i in 0..len {
         let out_idx = i * 3;
@@ -1227,24 +1232,24 @@ unsafe fn ycbcr_planes_i16_to_rgb_u8_avx2(
 
     // Shuffle masks for RGB interleaving
     let sh_r = _mm256_setr_epi8(
-        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5,
-        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5,
+        0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14,
+        9, 4, 15, 10, 5,
     );
     let sh_g = _mm256_setr_epi8(
-        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10,
-        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10,
+        5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3,
+        14, 9, 4, 15, 10,
     );
     let sh_b = _mm256_setr_epi8(
-        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15,
-        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15,
+        10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8, 3, 14, 9, 4, 15, 10, 5, 0, 11, 6, 1, 12, 7, 2, 13, 8,
+        3, 14, 9, 4, 15,
     );
     let m0 = _mm256_setr_epi8(
-        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
-        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+        0, 0, -1, 0, 0,
     );
     let m1 = _mm256_setr_epi8(
-        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0,
-        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0,
+        0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
+        -1, 0, 0, -1, 0,
     );
 
     let y_ptr = y_plane.as_ptr();

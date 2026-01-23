@@ -386,7 +386,7 @@ impl<'a> JpegParser<'a> {
         } else if self.num_components == 3 {
             // Check for RGB component IDs
             let ids: Vec<u8> = self.components[..3].iter().map(|c| c.id).collect();
-            if ids == [82, 71, 66] || ids == [b'R', b'G', b'B'] {
+            if ids == [b'R', b'G', b'B'] {
                 ColorSpace::Rgb
             } else {
                 ColorSpace::YCbCr
