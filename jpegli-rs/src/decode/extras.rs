@@ -27,6 +27,11 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::OnceCell;
 
+// Re-export shared types from encoder extras
+pub use crate::encode::extras::{
+    AdobeColorTransform, AdobeInfo, DensityUnits, JfifInfo, MpfImageType, SegmentType,
+};
+
 /// Configuration for what to preserve during decode.
 #[derive(Clone)]
 pub struct PreserveConfig {
@@ -287,31 +292,6 @@ impl PreserveConfig {
     }
 }
 
-/// Type of preserved segment.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SegmentType {
-    /// APP0 JFIF
-    Jfif,
-    /// APP1 EXIF
-    Exif,
-    /// APP1 XMP (primary)
-    Xmp,
-    /// APP1 XMP extended chunk
-    XmpExtended,
-    /// APP2 ICC profile chunk
-    Icc,
-    /// APP2 MPF directory
-    Mpf,
-    /// APP13 IPTC/IIM
-    Iptc,
-    /// APP14 Adobe
-    Adobe,
-    /// COM comment
-    Comment,
-    /// Unknown APP marker
-    Unknown,
-}
-
 /// A preserved segment from the JPEG.
 #[derive(Clone, Debug)]
 pub struct PreservedSegment {
@@ -332,83 +312,6 @@ pub struct PreservedMpfImage {
     pub image_type: MpfImageType,
     /// Complete JPEG data (SOI to EOI)
     pub data: Vec<u8>,
-}
-
-/// MPF image type codes (CIPA DC-007).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MpfImageType {
-    /// Undefined (0x000000) - used for gain maps in UltraHDR
-    Undefined,
-    /// Primary baseline image (0x030000)
-    BaselinePrimary,
-    /// VGA-equivalent thumbnail (0x010001)
-    LargeThumbnailVga,
-    /// Full HD-equivalent thumbnail (0x010002)
-    LargeThumbnailFullHd,
-    /// Panorama component (0x020001)
-    Panorama,
-    /// Depth/disparity map (0x020002)
-    Disparity,
-    /// Multi-angle view (0x020003)
-    MultiAngle,
-    /// Unknown type code
-    Other(u32),
-}
-
-impl MpfImageType {
-    /// Create from MPF type code.
-    #[must_use]
-    pub fn from_type_code(code: u32) -> Self {
-        match code {
-            0x000000 => Self::Undefined,
-            0x030000 => Self::BaselinePrimary,
-            0x010001 => Self::LargeThumbnailVga,
-            0x010002 => Self::LargeThumbnailFullHd,
-            0x020001 => Self::Panorama,
-            0x020002 => Self::Disparity,
-            0x020003 => Self::MultiAngle,
-            _ => Self::Other(code),
-        }
-    }
-
-    /// Convert to MPF type code.
-    #[must_use]
-    pub fn to_type_code(self) -> u32 {
-        match self {
-            Self::Undefined => 0x000000,
-            Self::BaselinePrimary => 0x030000,
-            Self::LargeThumbnailVga => 0x010001,
-            Self::LargeThumbnailFullHd => 0x010002,
-            Self::Panorama => 0x020001,
-            Self::Disparity => 0x020002,
-            Self::MultiAngle => 0x020003,
-            Self::Other(code) => code,
-        }
-    }
-
-    /// Is this a thumbnail/preview type?
-    #[must_use]
-    pub fn is_thumbnail(&self) -> bool {
-        matches!(self, Self::LargeThumbnailVga | Self::LargeThumbnailFullHd)
-    }
-
-    /// Is this a gain map (Undefined type)?
-    #[must_use]
-    pub fn is_gainmap(&self) -> bool {
-        matches!(self, Self::Undefined)
-    }
-
-    /// Is this a depth/disparity map?
-    #[must_use]
-    pub fn is_depth(&self) -> bool {
-        matches!(self, Self::Disparity)
-    }
-
-    /// Is this a multi-frame type (panorama, multi-angle)?
-    #[must_use]
-    pub fn is_multiframe(&self) -> bool {
-        matches!(self, Self::Panorama | Self::MultiAngle)
-    }
 }
 
 /// MPF directory parsed from APP2.
@@ -433,52 +336,6 @@ pub struct MpfEntry {
     pub dependent_image1: Option<u16>,
     /// Dependent image 2 index (if any)
     pub dependent_image2: Option<u16>,
-}
-
-/// JFIF segment info.
-#[derive(Clone, Debug)]
-pub struct JfifInfo {
-    /// Major version
-    pub version_major: u8,
-    /// Minor version
-    pub version_minor: u8,
-    /// Density units
-    pub density_units: DensityUnits,
-    /// Horizontal density/DPI
-    pub x_density: u16,
-    /// Vertical density/DPI
-    pub y_density: u16,
-}
-
-/// JFIF density units.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DensityUnits {
-    /// No units (aspect ratio only)
-    None,
-    /// Pixels per inch
-    PixelsPerInch,
-    /// Pixels per centimeter
-    PixelsPerCm,
-}
-
-/// Adobe APP14 segment info.
-#[derive(Clone, Debug)]
-pub struct AdobeInfo {
-    /// Version
-    pub version: u16,
-    /// Color transform flag
-    pub color_transform: AdobeColorTransform,
-}
-
-/// Adobe color transform values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AdobeColorTransform {
-    /// Unknown/RGB (0)
-    Unknown,
-    /// YCbCr (1)
-    YCbCr,
-    /// YCCK (2)
-    Ycck,
 }
 
 /// Well-known standard ICC profiles.
@@ -628,9 +485,7 @@ impl DecodedExtras {
     /// MPF directory (parsed from APP2).
     #[must_use]
     pub fn mpf(&self) -> Option<&MpfDirectory> {
-        self.mpf_cache
-            .get_or_init(|| self.parse_mpf())
-            .as_ref()
+        self.mpf_cache.get_or_init(|| self.parse_mpf()).as_ref()
     }
 
     // === MPF secondary images ===
@@ -670,10 +525,96 @@ impl DecodedExtras {
 
     // === For encoder round-trip ===
 
-    /// Convert preserved segments to format suitable for encoder injection.
+    /// Convert to encoder segments for round-trip encoding.
+    ///
+    /// Includes: JFIF, EXIF, XMP, ICC, IPTC, Adobe, Comments
+    /// Excludes: MPF directory (encoder regenerates it), unknown segments
+    ///
+    /// Secondary images (gain maps, depth maps) are included.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use jpegli::decoder::Decoder;
+    /// use jpegli::encoder::{EncoderConfig, ChromaSubsampling};
+    ///
+    /// let decoded = Decoder::new().decode(&original)?;
+    /// let extras = decoded.extras().unwrap();
+    ///
+    /// let output = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter)
+    ///     .with_segments(extras.to_encoder_segments())
+    ///     .encode_oneshot(&pixels, w, h, layout)?;
+    /// ```
+    #[must_use]
+    pub fn to_encoder_segments(&self) -> crate::encode::extras::EncoderSegments {
+        use crate::encode::extras::EncoderSegments;
+
+        let mut segments = EncoderSegments::new();
+
+        // Copy metadata segments (exclude MPF directory and unknown)
+        for seg in &self.segments {
+            match seg.segment_type {
+                SegmentType::Jfif
+                | SegmentType::Exif
+                | SegmentType::Xmp
+                | SegmentType::XmpExtended
+                | SegmentType::Icc
+                | SegmentType::Iptc
+                | SegmentType::Adobe
+                | SegmentType::Comment => {
+                    segments.add_mut(seg.marker, seg.data.clone(), seg.segment_type);
+                }
+                SegmentType::Mpf => {
+                    // Skip - encoder regenerates MPF directory
+                }
+                SegmentType::Unknown => {
+                    // Skip unknown by default
+                }
+            }
+        }
+
+        // Copy secondary images
+        for img in &self.secondary_images {
+            segments.add_mpf_image_mut(img.data.clone(), img.image_type);
+        }
+
+        segments
+    }
+
+    /// Convert to encoder segments with custom filter.
+    ///
+    /// The filter function receives each preserved segment and returns true
+    /// to include it in the output.
+    #[must_use]
+    pub fn to_encoder_segments_filtered<F>(
+        &self,
+        filter: F,
+    ) -> crate::encode::extras::EncoderSegments
+    where
+        F: Fn(&PreservedSegment) -> bool,
+    {
+        use crate::encode::extras::EncoderSegments;
+
+        let mut segments = EncoderSegments::new();
+
+        for seg in &self.segments {
+            if seg.segment_type != SegmentType::Mpf && filter(seg) {
+                segments.add_mut(seg.marker, seg.data.clone(), seg.segment_type);
+            }
+        }
+
+        // Copy secondary images
+        for img in &self.secondary_images {
+            segments.add_mpf_image_mut(img.data.clone(), img.image_type);
+        }
+
+        segments
+    }
+
+    /// Convert to raw segment tuples (legacy API).
     /// Maintains original order, excludes MPF (encoder regenerates it).
     #[must_use]
-    pub fn to_encoder_segments(&self) -> Vec<(u8, Vec<u8>)> {
+    pub fn to_raw_segments(&self) -> Vec<(u8, Vec<u8>)> {
         self.segments
             .iter()
             .filter(|seg| seg.segment_type != SegmentType::Mpf)
@@ -739,7 +680,11 @@ impl DecodedExtras {
 
         // Sort by offset and concatenate
         chunks.sort_by_key(|(off, _)| *off);
-        let extended_data: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).copied().collect();
+        let extended_data: Vec<u8> = chunks
+            .into_iter()
+            .flat_map(|(_, data)| data)
+            .copied()
+            .collect();
         let extended_str = core::str::from_utf8(&extended_data).ok()?;
 
         Some(format!("{}{}", primary_str, extended_str))
@@ -775,7 +720,11 @@ impl DecodedExtras {
 
         // Sort by chunk number and concatenate
         chunks.sort_by_key(|(num, _)| *num);
-        let profile: Vec<u8> = chunks.into_iter().flat_map(|(_, data)| data).copied().collect();
+        let profile: Vec<u8> = chunks
+            .into_iter()
+            .flat_map(|(_, data)| data)
+            .copied()
+            .collect();
 
         Some(profile)
     }
@@ -796,7 +745,12 @@ impl DecodedExtras {
     }
 
     /// Add a secondary image (internal use during parsing).
-    pub(crate) fn add_secondary_image(&mut self, mpf_index: usize, image_type: MpfImageType, data: Vec<u8>) {
+    pub(crate) fn add_secondary_image(
+        &mut self,
+        mpf_index: usize,
+        image_type: MpfImageType,
+        data: Vec<u8>,
+    ) {
         self.secondary_images.push(PreservedMpfImage {
             mpf_index,
             image_type,
@@ -1066,7 +1020,9 @@ pub(crate) fn should_preserve_mpf_image(
 
     match image_type {
         MpfImageType::Undefined => config.mpf_gainmaps,
-        MpfImageType::LargeThumbnailVga | MpfImageType::LargeThumbnailFullHd => config.mpf_thumbnails,
+        MpfImageType::LargeThumbnailVga | MpfImageType::LargeThumbnailFullHd => {
+            config.mpf_thumbnails
+        }
         MpfImageType::Panorama | MpfImageType::MultiAngle => config.mpf_multiframe,
         MpfImageType::Disparity => config.mpf_depth,
         MpfImageType::BaselinePrimary => false, // Primary is the main decode result

@@ -72,6 +72,7 @@ pub mod byte_encoders;
 pub mod encoder_config;
 pub mod encoder_types;
 pub mod exif;
+pub mod extras;
 
 /// Default quantization and zero-bias tables for customization.
 ///
@@ -125,6 +126,8 @@ pub use encoder_types::{
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
 pub use exif::{Exif, ExifFields, Orientation};
+#[allow(unused_imports)] // Public API re-exports
+pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
 pub use mozjpeg_tables::{MozjpegTables, QuantTablePreset};
