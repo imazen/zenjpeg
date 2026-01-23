@@ -876,6 +876,7 @@ dependencies = [
  "tinyvec",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "web-sys",
  "whereat",
  "wide 1.1.1",
  "yuv",
