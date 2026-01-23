@@ -1,6 +1,6 @@
 [package]
 name = "jpegli-rs"
-version = "0.10.1"
+version = "0.11.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/imazen/jpegli-rs"
@@ -42,7 +42,7 @@ archmage = { workspace = true, optional = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # UltraHDR (HDR gain map) encoding/decoding support
-ultrahdr-core = { path = "../../ultrahdr/ultrahdr-core", optional = true }
+ultrahdr-core = { version = "0.1.0", optional = true }
 
 [dev-dependencies]
 # WASM-compatible dev dependencies
@@ -85,7 +85,7 @@ codec-eval = { workspace = true }
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
 # UltraHDR integration testing
-ultrahdr-core = { path = "../../ultrahdr/ultrahdr-core" }
+ultrahdr-core = { version = "0.1.0" }
 
 [features]
 default = ["std", "yuv", "unsafe_simd"]

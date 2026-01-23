@@ -1,5 +1,17 @@
 # jpegli-rs
 
+> **⚠️ This crate is being renamed to [`zenjpeg`](https://crates.io/crates/zenjpeg).**
+>
+> After six rewrites and significant divergence from the original jpegli, we're renaming to better reflect that this is now an independent project. Please migrate to `zenjpeg` for future updates.
+>
+> ```toml
+> # Old (deprecated)
+> jpegli-rs = "0.11"
+>
+> # New (recommended)
+> zenjpeg = "0.12"
+> ```
+
 [![Crates.io](https://img.shields.io/crates/v/jpegli-rs.svg)](https://crates.io/crates/jpegli-rs)
 [![Documentation](https://docs.rs/jpegli-rs/badge.svg)](https://docs.rs/jpegli-rs)
 [![CI](https://github.com/imazen/jpegli-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jpegli-rs/actions/workflows/ci.yml)
@@ -9,31 +21,44 @@ A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
 ## Heritage and Divergence
 
-This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. It's been rewritten a few times and has diverged to the point it should probably be renamed. 
+This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree/main/lib/jpegli), Google's improved JPEG encoder from the JPEG XL project. After six rewrites it has diverged significantly and is being renamed to **zenjpeg**.
 
-**Ideas we adopted from jpegli:**
+**Ideas adopted from jpegli:**
 - Adaptive quantization (content-aware bit allocation)
-- XYB color space with ICC profiles
+- XYB color space with ICC profiles (note: XYB support is currently poor, ~5 SSIMULACRA2 behind C++)
 - Perceptually-tuned quantization tables
 - Zero-bias strategies for coefficient rounding
 
+**Ideas adopted from mozjpeg:**
+- Overshoot deringing for documents/graphics
+- Trellis quantization for optimal coefficient selection
+- Hybrid approach combining jpegli's AQ with mozjpeg's trellis
+
 **Where we went our own way:**
 - Pure Rust, `#![forbid(unsafe_code)]` by default (unsafe SIMD is opt-in)
-- Streaming encoder API for memory efficiency
+- Streaming encoder API for memory efficiency (process images row-by-row)
 - Portable SIMD via `wide` crate instead of platform intrinsics
 - Parallel encoding support
+- UltraHDR support (HDR gain maps for backward-compatible HDR JPEGs)
 - Independent optimizations and bug fixes
 
 ## Features
 
 - **Pure Rust** - No C/C++ dependencies, builds anywhere Rust does
 - **Perceptual optimization** - Adaptive quantization for better visual quality at smaller sizes
+- **Trellis quantization** - Optimal coefficient selection from mozjpeg
 - **Overshoot deringing** - Eliminates ringing artifacts on documents and graphics (enabled by default)
 - **Backward compatible** - Produces standard JPEG files readable by any decoder
 - **SIMD accelerated** - Portable SIMD via `wide` crate
-- **Streaming API** - Memory-efficient row-by-row encoding
+- **Streaming API** - Memory-efficient row-by-row encoding for large images
 - **Parallel encoding** - Multi-threaded for large images (1024x1024+)
+- **UltraHDR support** - Encode/decode HDR gain maps (optional `ultrahdr` feature)
 - **Color management** - Optional ICC profile support
+
+## Known Limitations
+
+- **XYB color space** - Currently ~5 SSIMULACRA2 points behind C++ jpegli. Use YCbCr for best quality.
+- **Decoder speed** - Prioritizes precision (12-bit pipeline) over speed; ~8x slower than zune-jpeg.
 
 ## API Reference
 
@@ -614,6 +639,7 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `decoder` | No | Enable decoder API (prerelease, API will change) |
+| `ultrahdr` | No | UltraHDR HDR gain map encoding/decoding (requires `decoder`) |
 | `cms-lcms2` | Yes | Color management via lcms2 |
 | `cms-moxcms` | No | Pure Rust color management |
 | `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
@@ -623,13 +649,16 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-jpegli-rs = "0.10"
+jpegli-rs = "0.11"
+
+# With UltraHDR support:
+jpegli-rs = { version = "0.11", features = ["ultrahdr"] }
 
 # Minimal (no CMS):
-jpegli-rs = { version = "0.9", default-features = false }
+jpegli-rs = { version = "0.11", default-features = false }
 
 # With unsafe SIMD (x86_64 only):
-jpegli-rs = { version = "0.9", features = ["unsafe_simd"] }
+jpegli-rs = { version = "0.11", features = ["unsafe_simd"] }
 ```
 
 ## Encoder Status

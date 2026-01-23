@@ -83,7 +83,7 @@ almost-enough = { version = "0.3", features = ["std"] }
 
 # Published crates
 butteraugli = { version = "0.3", features = ["unsafe-perf"] }
-mozjpeg-rs = "0.2.5"
+mozjpeg-rs = "0.5.1"
 
 # Metadata crates (for integration testing)
 kamadak-exif = "0.6"
