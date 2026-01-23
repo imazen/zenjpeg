@@ -267,7 +267,8 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
 
     let data = if channels == 1 {
         // Extract just the R (or first) channel
-        pixels.chunks(3).map(|p| p[0]).collect()
+        // Use chunks_exact to avoid panic on incomplete final chunk
+        pixels.chunks_exact(3).map(|p| p[0]).collect()
     } else {
         pixels
     };
@@ -282,8 +283,9 @@ fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
 
 /// Check if decoded RGB content is actually grayscale (R==G==B for all pixels).
 fn is_grayscale_content(pixels: &[u8]) -> bool {
+    // Use chunks_exact to avoid incomplete final chunk
     pixels
-        .chunks(3)
+        .chunks_exact(3)
         .take(100) // Sample first 100 pixels
         .all(|p| p[0] == p[1] && p[1] == p[2])
 }
@@ -297,8 +299,9 @@ fn create_sdr_rawimage(pixels: &[u8], width: u32, height: u32) -> Result<RawImag
         (ultrahdr_core::PixelFormat::Rgba8, pixels.to_vec())
     } else if pixels.len() == expected_rgb {
         // Convert RGB to RGBA
+        // Use chunks_exact to guarantee 3 elements per chunk (size already validated)
         let mut rgba = Vec::with_capacity(expected_rgba);
-        for chunk in pixels.chunks(3) {
+        for chunk in pixels.chunks_exact(3) {
             rgba.push(chunk[0]);
             rgba.push(chunk[1]);
             rgba.push(chunk[2]);

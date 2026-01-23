@@ -182,6 +182,23 @@ fn tonemap_hdr_to_sdr(hdr: &RawImage, config: &ToneMapConfig) -> Result<RawImage
     let width = hdr.width;
     let height = hdr.height;
 
+    // Validate input buffer size
+    let bytes_per_pixel = match hdr.format {
+        UhdrPixelFormat::Rgba32F => 16,
+        UhdrPixelFormat::Rgba16F => 8,
+        UhdrPixelFormat::Rgba8 => 4,
+        UhdrPixelFormat::Rgb8 => 3,
+        _ => {
+            return Err(Error::unsupported_feature(
+                "Unsupported HDR pixel format for tonemapping",
+            ))
+        }
+    };
+    let expected_size = (height * hdr.stride) as usize;
+    if hdr.data.len() < expected_size {
+        return Err(Error::invalid_buffer_size(expected_size, hdr.data.len()));
+    }
+
     // Create output SDR image
     let mut sdr =
         RawImage::new(width, height, UhdrPixelFormat::Rgba8).map_err(ultrahdr_to_jpegli_error)?;
@@ -191,19 +208,19 @@ fn tonemap_hdr_to_sdr(hdr: &RawImage, config: &ToneMapConfig) -> Result<RawImage
     // Process each pixel
     for y in 0..height {
         for x in 0..width {
-            let hdr_linear = get_linear_rgb(hdr, x, y);
+            let hdr_linear = get_linear_rgb_safe(hdr, x, y, bytes_per_pixel);
 
             // Tonemap using ultrahdr-core's unified function
             let sdr_linear = tonemap_to_sdr(hdr_linear, hdr.transfer, config);
 
-            // Apply sRGB OETF and write
+            // Apply sRGB OETF and write (bounds already validated by RawImage::new)
             let out_idx = (y * sdr.stride + x * 4) as usize;
-            sdr.data[out_idx] = (srgb_oetf(sdr_linear[0]) * 255.0).round().clamp(0.0, 255.0) as u8;
-            sdr.data[out_idx + 1] =
-                (srgb_oetf(sdr_linear[1]) * 255.0).round().clamp(0.0, 255.0) as u8;
-            sdr.data[out_idx + 2] =
-                (srgb_oetf(sdr_linear[2]) * 255.0).round().clamp(0.0, 255.0) as u8;
-            sdr.data[out_idx + 3] = 255;
+            if let Some(slice) = sdr.data.get_mut(out_idx..out_idx + 4) {
+                slice[0] = (srgb_oetf(sdr_linear[0]) * 255.0).round().clamp(0.0, 255.0) as u8;
+                slice[1] = (srgb_oetf(sdr_linear[1]) * 255.0).round().clamp(0.0, 255.0) as u8;
+                slice[2] = (srgb_oetf(sdr_linear[2]) * 255.0).round().clamp(0.0, 255.0) as u8;
+                slice[3] = 255;
+            }
         }
     }
 
@@ -211,57 +228,61 @@ fn tonemap_hdr_to_sdr(hdr: &RawImage, config: &ToneMapConfig) -> Result<RawImage
 }
 
 /// Extract linear RGB from an HDR image at the given pixel position.
-fn get_linear_rgb(img: &RawImage, x: u32, y: u32) -> [f32; 3] {
+/// Uses bounds-checked access to avoid panics on malformed data.
+fn get_linear_rgb_safe(img: &RawImage, x: u32, y: u32, bytes_per_pixel: usize) -> [f32; 3] {
+    let idx = (y * img.stride + x * bytes_per_pixel as u32) as usize;
+
     match img.format {
         UhdrPixelFormat::Rgba32F => {
-            let idx = (y * img.stride + x * 16) as usize;
-            let r = f32::from_le_bytes([
-                img.data[idx],
-                img.data[idx + 1],
-                img.data[idx + 2],
-                img.data[idx + 3],
-            ]);
-            let g = f32::from_le_bytes([
-                img.data[idx + 4],
-                img.data[idx + 5],
-                img.data[idx + 6],
-                img.data[idx + 7],
-            ]);
-            let b = f32::from_le_bytes([
-                img.data[idx + 8],
-                img.data[idx + 9],
-                img.data[idx + 10],
-                img.data[idx + 11],
-            ]);
-            [r, g, b]
+            // Need 12 bytes for RGB (skip alpha)
+            if let Some(slice) = img.data.get(idx..idx + 12) {
+                let r = f32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]);
+                let g = f32::from_le_bytes([slice[4], slice[5], slice[6], slice[7]]);
+                let b = f32::from_le_bytes([slice[8], slice[9], slice[10], slice[11]]);
+                [r, g, b]
+            } else {
+                [0.18, 0.18, 0.18] // Mid-gray fallback
+            }
         }
         UhdrPixelFormat::Rgba16F => {
-            let idx = (y * img.stride + x * 8) as usize;
-            let r = half_to_f32(&img.data[idx..idx + 2]);
-            let g = half_to_f32(&img.data[idx + 2..idx + 4]);
-            let b = half_to_f32(&img.data[idx + 4..idx + 6]);
-            [r, g, b]
+            // Need 6 bytes for RGB (skip alpha)
+            if let Some(slice) = img.data.get(idx..idx + 6) {
+                let r = half_to_f32_safe(slice.get(0..2));
+                let g = half_to_f32_safe(slice.get(2..4));
+                let b = half_to_f32_safe(slice.get(4..6));
+                [r, g, b]
+            } else {
+                [0.18, 0.18, 0.18]
+            }
         }
         UhdrPixelFormat::Rgba8 | UhdrPixelFormat::Rgb8 => {
-            let bpp = if img.format == UhdrPixelFormat::Rgba8 {
-                4
+            // Need 3 bytes for RGB
+            if let Some(slice) = img.data.get(idx..idx + 3) {
+                let r = slice[0] as f32 / 255.0;
+                let g = slice[1] as f32 / 255.0;
+                let b = slice[2] as f32 / 255.0;
+                // Assume sRGB for 8-bit, apply EOTF
+                [srgb_eotf(r), srgb_eotf(g), srgb_eotf(b)]
             } else {
-                3
-            };
-            let idx = (y * img.stride + x * bpp as u32) as usize;
-            let r = img.data[idx] as f32 / 255.0;
-            let g = img.data[idx + 1] as f32 / 255.0;
-            let b = img.data[idx + 2] as f32 / 255.0;
-            // Assume sRGB for 8-bit, apply EOTF
-            [srgb_eotf(r), srgb_eotf(g), srgb_eotf(b)]
+                [0.18, 0.18, 0.18]
+            }
         }
         _ => [0.18, 0.18, 0.18], // Fallback to mid-gray
     }
 }
 
-/// Convert half-precision float bytes to f32.
-fn half_to_f32(bytes: &[u8]) -> f32 {
-    let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
+/// Convert half-precision float bytes to f32 (bounds-checked).
+fn half_to_f32_safe(bytes: Option<&[u8]>) -> f32 {
+    let Some(bytes) = bytes else {
+        return 0.0;
+    };
+    let Some(&b0) = bytes.first() else {
+        return 0.0;
+    };
+    let Some(&b1) = bytes.get(1) else {
+        return 0.0;
+    };
+    let bits = u16::from_le_bytes([b0, b1]);
     // Manual half-float conversion (avoiding dependency on half crate)
     let sign = ((bits >> 15) & 1) as u32;
     let exp = ((bits >> 10) & 0x1F) as u32;
@@ -346,16 +367,23 @@ mod tests {
     }
 
     #[test]
-    fn test_half_to_f32() {
+    fn test_half_to_f32_safe() {
+        // Test None
+        assert_eq!(half_to_f32_safe(None), 0.0);
+
         // Test zero
-        assert_eq!(half_to_f32(&[0, 0]), 0.0);
+        assert_eq!(half_to_f32_safe(Some(&[0, 0])), 0.0);
 
         // Test one (0x3C00)
-        let one = half_to_f32(&[0x00, 0x3C]);
+        let one = half_to_f32_safe(Some(&[0x00, 0x3C]));
         assert!((one - 1.0).abs() < 0.001);
 
         // Test negative one (0xBC00)
-        let neg_one = half_to_f32(&[0x00, 0xBC]);
+        let neg_one = half_to_f32_safe(Some(&[0x00, 0xBC]));
         assert!((neg_one + 1.0).abs() < 0.001);
+
+        // Test incomplete slice (should return 0.0)
+        assert_eq!(half_to_f32_safe(Some(&[0x00])), 0.0);
+        assert_eq!(half_to_f32_safe(Some(&[])), 0.0);
     }
 }
