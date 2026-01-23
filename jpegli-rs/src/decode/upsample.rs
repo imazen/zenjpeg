@@ -3,7 +3,6 @@
 //! Implements triangle filter (3:1 weighting) upsampling for various
 //! chroma subsampling modes (4:2:2, 4:4:0, 4:2:0).
 
-use multiversion::multiversion;
 use wide::f32x8;
 
 /// Fancy upsampling with triangle filter (3:1 weights).
