@@ -671,6 +671,10 @@ impl<'a> JpegParser<'a> {
         let restart_interval = self.restart_interval as u32;
         let mut next_restart_num = 0u8;
 
+        // Track previous coefficient count per component for smart zeroing (zero-copy optimization).
+        // Start with 64 to force full zeroing on first block of each component.
+        let mut prev_coeff_counts: [u8; 4] = [64; 4];
+
         for mcu_y in 0..mcu_rows {
             for mcu_x in 0..mcu_cols {
                 // Check for restart marker
@@ -683,6 +687,8 @@ impl<'a> JpegParser<'a> {
                     next_restart_num = (next_restart_num + 1) & 7;
                     // Reset DC predictors
                     decoder.reset_dc();
+                    // Reset smart zeroing hints (force full zero after restart)
+                    prev_coeff_counts = [64; 4];
                 }
 
                 // For each component in the scan
@@ -728,27 +734,32 @@ impl<'a> JpegParser<'a> {
                                 // For padding blocks in multi-component images, use speculative decoding
                                 // Most encoders include them, but some might not
                                 let saved_state = decoder.save_state();
-                                match decoder.decode_block_with_count(
+                                // Zero-copy decode directly into coefficient storage
+                                match decoder.decode_block_into(
+                                    &mut self.coeffs[*comp_idx][block_idx],
+                                    prev_coeff_counts[*comp_idx],
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
                                 ) {
-                                    Ok(ScanRead::Value((coeffs, count))) => {
+                                    Ok(ScanRead::Value(count)) => {
                                         // Encoder included padding block
-                                        self.coeffs[*comp_idx][block_idx] = coeffs;
                                         self.coeff_counts[*comp_idx][block_idx] = count;
+                                        prev_coeff_counts[*comp_idx] = count;
                                     }
                                     Ok(ScanRead::EndOfScan | ScanRead::Truncated) => {
                                         // Encoder omitted padding block - restore state and fill zeros
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
+                                        prev_coeff_counts[*comp_idx] = 64; // Force full zero next
                                     }
                                     Err(_e) => {
                                         // Other error - also restore and skip
                                         decoder.restore_state(saved_state);
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
+                                        prev_coeff_counts[*comp_idx] = 64; // Force full zero next
                                         // Log but don't fail on padding block errors
                                         #[cfg(debug_assertions)]
                                         eprintln!(
@@ -758,22 +769,25 @@ impl<'a> JpegParser<'a> {
                                     }
                                 }
                             } else {
-                                // Use original decode path (fast path still has issues)
-                                let (coeffs, count) = match decoder.decode_block_with_count(
+                                // Zero-copy decode: write directly to coefficient storage
+                                let count = match decoder.decode_block_into(
+                                    &mut self.coeffs[*comp_idx][block_idx],
+                                    prev_coeff_counts[*comp_idx],
                                     *comp_idx,
                                     *dc_table as usize,
                                     *ac_table as usize,
                                 )? {
-                                    ScanRead::Value(v) => v,
+                                    ScanRead::Value(c) => c,
                                     // EndOfScan/Truncated mid-decode - fill with zeros
                                     ScanRead::EndOfScan | ScanRead::Truncated => {
                                         self.coeffs[*comp_idx][block_idx] = [0i16; 64];
                                         self.coeff_counts[*comp_idx][block_idx] = 1;
+                                        prev_coeff_counts[*comp_idx] = 64; // Force full zero next time
                                         continue;
                                     }
                                 };
-                                self.coeffs[*comp_idx][block_idx] = coeffs;
                                 self.coeff_counts[*comp_idx][block_idx] = count;
+                                prev_coeff_counts[*comp_idx] = count;
                             }
                         }
                     }
@@ -889,8 +903,11 @@ impl<'a> JpegParser<'a> {
         let restart_interval = self.restart_interval as u32;
         let mut next_restart_num = 0u8;
 
-        // Reusable dequantization buffer - avoids allocation per block
+        // Reusable buffers - avoids allocation per block
         let mut dequant_buf = [0i32; DCT_BLOCK_SIZE];
+        let mut coeffs = [0i16; DCT_BLOCK_SIZE];
+        // Track previous coefficient count per component for smart zeroing
+        let mut prev_coeff_counts: [u8; 4] = [64; 4];
 
         // Process MCU row by row
         for mcu_y in 0..mcu_rows {
@@ -902,18 +919,27 @@ impl<'a> JpegParser<'a> {
                     decoder.read_restart_marker(next_restart_num)?;
                     next_restart_num = (next_restart_num + 1) & 7;
                     decoder.reset_dc();
+                    prev_coeff_counts = [64; 4]; // Force full zero after restart
                 }
 
                 // Decode, dequantize, and IDCT each component's block directly to strip
                 for (comp_idx, dc_table, ac_table) in scan_components {
-                    let (coeffs, coeff_count) = match decoder.decode_block_with_count(
+                    // Zero-copy decode into reusable buffer with smart zeroing
+                    let coeff_count = match decoder.decode_block_into(
+                        &mut coeffs,
+                        prev_coeff_counts[*comp_idx],
                         *comp_idx,
                         *dc_table as usize,
                         *ac_table as usize,
                     )? {
-                        ScanRead::Value(v) => v,
-                        ScanRead::EndOfScan | ScanRead::Truncated => continue, // End of scan mid-block, skip remaining
+                        ScanRead::Value(c) => c,
+                        ScanRead::EndOfScan | ScanRead::Truncated => {
+                            prev_coeff_counts[*comp_idx] = 64;
+                            continue; // End of scan mid-block, skip remaining
+                        }
                     };
+                    // Track maximum, not just previous, for reusable buffer correctness
+                    prev_coeff_counts[*comp_idx] = prev_coeff_counts[*comp_idx].max(coeff_count);
 
                     let quant = match *comp_idx {
                         0 => quant_y,

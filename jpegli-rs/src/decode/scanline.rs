@@ -112,8 +112,11 @@ pub struct ScanlineReader<'a> {
     mcu_count: u32,
     next_restart_num: u8,
 
-    // Reusable buffer
+    // Reusable buffers for zero-copy decode
     dequant_buf: [i32; DCT_BLOCK_SIZE],
+    coeffs_buf: [i16; DCT_BLOCK_SIZE],
+    /// Track previous coefficient count per component for smart zeroing
+    prev_coeff_counts: [u8; 4],
 
     // Info
     is_xyb: bool,
@@ -221,6 +224,8 @@ impl<'a> ScanlineReader<'a> {
             mcu_count: 0,
             next_restart_num: 0,
             dequant_buf: [0i32; DCT_BLOCK_SIZE],
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4], // Start with full zeroing
             is_xyb,
         })
     }
@@ -310,6 +315,7 @@ impl<'a> ScanlineReader<'a> {
                 decoder.read_restart_marker(self.next_restart_num)?;
                 self.next_restart_num = (self.next_restart_num + 1) & 7;
                 decoder.reset_dc();
+                self.prev_coeff_counts = [64; 4]; // Force full zero after restart
             }
 
             // Decode each component's blocks
@@ -327,13 +333,28 @@ impl<'a> ScanlineReader<'a> {
                 // Decode h_blocks * v_blocks blocks for this component
                 for v in 0..v_blocks {
                     for h in 0..h_blocks {
-                        let (coeffs, coeff_count) =
-                            match decoder.decode_block_with_count(comp_idx, dc_idx, ac_idx)? {
-                                ScanRead::Value(v) => v,
-                                ScanRead::EndOfScan | ScanRead::Truncated => continue, // End of scan mid-block
-                            };
+                        // Zero-copy decode into reusable buffer with smart zeroing
+                        // Note: prev_coeff_counts tracks the MAXIMUM coeff count seen since
+                        // last restart, not just the previous block's count. This ensures
+                        // we zero all positions that might have stale data.
+                        let coeff_count = match decoder.decode_block_into(
+                            &mut self.coeffs_buf,
+                            self.prev_coeff_counts[comp_idx],
+                            comp_idx,
+                            dc_idx,
+                            ac_idx,
+                        )? {
+                            ScanRead::Value(c) => c,
+                            ScanRead::EndOfScan | ScanRead::Truncated => {
+                                self.prev_coeff_counts[comp_idx] = 64;
+                                continue; // End of scan mid-block
+                            }
+                        };
+                        // Track maximum, not just previous, for reusable buffer correctness
+                        self.prev_coeff_counts[comp_idx] =
+                            self.prev_coeff_counts[comp_idx].max(coeff_count);
 
-                        dequantize_unzigzag_i32_into(&coeffs, quant, &mut self.dequant_buf);
+                        dequantize_unzigzag_i32_into(&self.coeffs_buf, quant, &mut self.dequant_buf);
 
                         // Calculate destination offset in strip buffer
                         let (strip, stride) = match comp_idx {
