@@ -99,7 +99,7 @@
 2. Compare three decoders:
    ```rust
    // Decode with jpegli-rs
-   let rust_result = jpegli::Decoder::new().decode(&jpeg)?;
+   let rust_result = zenjpeg::Decoder::new().decode(&jpeg)?;
 
    // Decode with zune-jpeg
    let zune_result = zune_jpeg::JpegDecoder::new(&jpeg).decode()?;

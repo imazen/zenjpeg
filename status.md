@@ -226,17 +226,17 @@ if let Some(strengths) = aq.flush() {
 
 ```bash
 # Run all tests
-cargo test --release -p jpegli-rs
+cargo test --release -p zenjpeg
 
 # Streaming AQ parity tests
-cargo test --release -p jpegli-rs --lib streaming
+cargo test --release -p zenjpeg --lib streaming
 
 # Allocation tracking
-cargo run --release -p jpegli-rs --example alloc_tracker
+cargo run --release -p zenjpeg --example alloc_tracker
 
 # C++ parity (requires submodule)
-cargo test --release -p jpegli-rs --features ffi-tests --test comprehensive_cpp_comparison -- --nocapture --ignored
+cargo test --release -p zenjpeg --features ffi-tests --test comprehensive_cpp_comparison -- --nocapture --ignored
 
 # Benchmark strip vs full-plane
-cargo run --release -p jpegli-rs --example bench_strip_vs_full
+cargo run --release -p zenjpeg --example bench_strip_vs_full
 ```

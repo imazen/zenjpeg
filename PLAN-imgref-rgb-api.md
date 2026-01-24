@@ -780,7 +780,7 @@ pub enum Error {
 ### Basic Encoding
 
 ```rust
-use jpegli::{EncoderConfig, Quality, RGB8};
+use zenjpeg::{EncoderConfig, Quality, RGB8};
 use imgref::ImgVec;
 
 // Load/create image
@@ -814,7 +814,7 @@ let jpeg = EncoderConfig::new().encode(region)?;
 ### Decode to Owned Image
 
 ```rust
-use jpegli::{DecoderConfig, RGB8};
+use zenjpeg::{DecoderConfig, RGB8};
 
 let img: ImgVec<RGB8> = DecoderConfig::new().decode(&jpeg_data)?;
 println!("Decoded {}x{}", img.width(), img.height());

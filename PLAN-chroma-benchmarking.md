@@ -180,7 +180,7 @@ Likely outcomes:
 ## File Structure
 
 ```
-jpegli-rs/src/
+zenjpeg/src/
 ├── encode.rs              # Public Encoder, uses optimal pipeline internally
 ├── chroma/
 │   ├── mod.rs             # Internal chroma module
@@ -190,7 +190,7 @@ jpegli-rs/src/
 └── tests/
     └── chroma_quality.rs  # Quality comparison tests
 
-jpegli-rs/benches/
+zenjpeg/benches/
 └── chroma_benchmark.rs    # Criterion benchmarks for all pipelines
 ```
 

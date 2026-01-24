@@ -1,4 +1,4 @@
-# JPEG Encoding Option Constraints (jpegli-rs)
+# JPEG Encoding Option Constraints (zenjpeg)
 
 What we **actually support**, not theoretical JPEG capabilities.
 

@@ -651,7 +651,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 ## 10. Usage Examples
 
 ```rust
-use jpegli::{EncoderConfig, PixelLayout, ChromaSubsampling, Quality};
+use zenjpeg::{EncoderConfig, PixelLayout, ChromaSubsampling, Quality};
 use enough::Never;
 use rgb::{RGB, RGBA};
 
@@ -747,7 +747,7 @@ let jpeg = enc.finish()?;
 // Planar YCbCr (video decoder output)
 // ============================================
 
-use jpegli::YCbCrPlanes;
+use zenjpeg::YCbCrPlanes;
 
 let planes = YCbCrPlanes {
     y: &y_plane,
@@ -781,7 +781,7 @@ async fn encode_async(
     w: u32,
     h: u32,
     cancel: tokio_util::sync::CancellationToken,
-) -> jpegli::Result<Vec<u8>> {
+) -> zenjpeg::Result<Vec<u8>> {
     tokio::task::spawn_blocking(move || {
         let mut enc = config.encode_from_rgb::<RGB<u8>>(w, h)?;
 
@@ -793,7 +793,7 @@ async fn encode_async(
         }
 
         enc.finish()
-    }).await.map_err(|_| jpegli::Error::Internal("task join failed".into()))?
+    }).await.map_err(|_| zenjpeg::Error::Internal("task join failed".into()))?
 }
 ```
 

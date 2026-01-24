@@ -261,7 +261,7 @@ fn estimate_bits_detailed(&self, quant_table: &[u16; 64]) -> u64 {
 
 ## References
 
-- Current strip processing: `jpegli-rs/src/encode/strip.rs`
-- Quant table generation: `jpegli-rs/src/quant/mod.rs`
-- AQ computation: `jpegli-rs/src/quant/aq/mod.rs`
-- Streaming AQ: `jpegli-rs/src/quant/aq/streaming.rs`
+- Current strip processing: `zenjpeg/src/encode/strip.rs`
+- Quant table generation: `zenjpeg/src/quant/mod.rs`
+- AQ computation: `zenjpeg/src/quant/aq/mod.rs`
+- Streaming AQ: `zenjpeg/src/quant/aq/streaming.rs`

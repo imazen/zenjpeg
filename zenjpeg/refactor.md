@@ -1,4 +1,4 @@
-# jpegli-rs Crate Refactoring Plan
+# zenjpeg Crate Refactoring Plan
 
 ## Goals
 1. Split files over 2000 lines into logical modules

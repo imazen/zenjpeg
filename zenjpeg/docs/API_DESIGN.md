@@ -62,12 +62,12 @@ JpegEncoder::new(width: u32, height: u32) -> StreamingEncoderBuilder
 ### Convenience Functions
 
 ```rust
-jpegli::encode_rgb(w, h, data, quality) -> Result<Vec<u8>>
-jpegli::encode_rgba(w, h, data, quality) -> Result<Vec<u8>>
-jpegli::encode_gray(w, h, data, quality) -> Result<Vec<u8>>
-jpegli::decode(data) -> Result<DecodedImage>
-jpegli::decode_f32(data) -> Result<DecodedImageF32>
-jpegli::decode_to_format(data, format) -> Result<DecodedImage>
+zenjpeg::encode_rgb(w, h, data, quality) -> Result<Vec<u8>>
+zenjpeg::encode_rgba(w, h, data, quality) -> Result<Vec<u8>>
+zenjpeg::encode_gray(w, h, data, quality) -> Result<Vec<u8>>
+zenjpeg::decode(data) -> Result<DecodedImage>
+zenjpeg::decode_f32(data) -> Result<DecodedImageF32>
+zenjpeg::decode_to_format(data, format) -> Result<DecodedImage>
 ```
 
 ---
@@ -213,7 +213,7 @@ impl Encoder {
 ### Proxy Server Usage Pattern
 
 ```rust
-use jpegli::{EncoderConfig, Subsampling};
+use zenjpeg::{EncoderConfig, Subsampling};
 use std::sync::Arc;
 
 // Create shared config once at startup

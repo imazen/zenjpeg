@@ -414,7 +414,7 @@ impl DecodedImage {
 ### Basic UltraHDR Decode
 
 ```rust
-use jpegli::decoder::{Decoder, PixelFormat};
+use zenjpeg::decoder::{Decoder, PixelFormat};
 
 // Default config preserves XMP and gain maps
 let result = Decoder::new()

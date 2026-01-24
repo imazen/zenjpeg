@@ -6,14 +6,14 @@ Date: 2026-01-22
 
 ## Executive Summary
 
-Refactor the jpegli-rs decoder to achieve zune-jpeg-level performance while maintaining the codec-design API guidelines. Key changes:
+Refactor the zenjpeg decoder to achieve zune-jpeg-level performance while maintaining the codec-design API guidelines. Key changes:
 
 1. **True streaming decode** - MCU-row-at-a-time, no coefficient buffering for baseline
 2. **Integer IDCT** - Replace f32 IDCT with tiered i32 IDCT (1x1, 4x4, 8x8)
 3. **Fast AC lookup** - Single-table decode + sign extend
 4. **Layered API** - Simple functions + builder + streaming
 
-## Performance Analysis: zune-jpeg vs jpegli-rs
+## Performance Analysis: zune-jpeg vs zenjpeg
 
 ### Why zune-jpeg is Fast
 
@@ -27,7 +27,7 @@ Refactor the jpegli-rs decoder to achieve zune-jpeg-level performance while main
 4. **Efficient Bitstream** - 4-byte refill path when no 0xFF markers, MSB bit layout
 5. **Minimal Allocations** - Pre-allocated MCU row buffers, no per-block allocations
 
-### Current jpegli-rs Bottlenecks
+### Current zenjpeg Bottlenecks
 
 1. **Coefficient Storage** - Stores all coefficients before IDCT (except ScanlineReader)
 2. **Float IDCT** - Uses f32 IDCT (slower than integer, no shortcuts)
@@ -37,9 +37,9 @@ Refactor the jpegli-rs decoder to achieve zune-jpeg-level performance while main
 
 ## Benchmark Results (2026-01-22)
 
-Run with: `cargo bench -p jpegli-rs --bench decode_compare --features decoder`
+Run with: `cargo bench -p zenjpeg --bench decode_compare --features decoder`
 
-| Size | Mode | zune-jpeg | jpegli-rs | Ratio |
+| Size | Mode | zune-jpeg | zenjpeg | Ratio |
 |------|------|-----------|-----------|-------|
 | 256x256 | baseline | 94 µs | 554 µs | **5.9x slower** |
 | 256x256 | progressive | 214 µs | 758 µs | **3.5x slower** |

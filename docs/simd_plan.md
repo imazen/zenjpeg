@@ -44,7 +44,7 @@ output.rows[i] = result;
 ## New Types (Already Implemented)
 
 ```rust
-// jpegli-rs/src/simd_types.rs
+// zenjpeg/src/simd_types.rs
 
 /// 8x8 f32 block as 8 rows of f32x8 (32-byte aligned)
 pub struct Block8x8f {
@@ -70,9 +70,9 @@ pub struct QuantTableSimd {
 **Goal**: Use `Block8x8f` in DCT and quantization.
 
 **Files to modify**:
-- `jpegli-rs/src/dct.rs` - Return `Block8x8f` from `forward_dct_8x8`
-- `jpegli-rs/src/quant/mod.rs` - Use `QuantTableSimd` for quantization
-- `jpegli-rs/src/encode/blocks.rs` - Update block processing
+- `zenjpeg/src/dct.rs` - Return `Block8x8f` from `forward_dct_8x8`
+- `zenjpeg/src/quant/mod.rs` - Use `QuantTableSimd` for quantization
+- `zenjpeg/src/encode/blocks.rs` - Update block processing
 
 **Key changes**:
 
@@ -110,8 +110,8 @@ fn quantize_block_simd(dct: &Block8x8f, quant: &QuantTableSimd) -> Block8x8i16 {
 **Goal**: Store quantized blocks as `Block8x8i16` instead of `[i16; 64]`.
 
 **Files to modify**:
-- `jpegli-rs/src/encode/blocks.rs` - Change block vector types
-- `jpegli-rs/src/entropy/encoder.rs` - Read from `Block8x8i16`
+- `zenjpeg/src/encode/blocks.rs` - Change block vector types
+- `zenjpeg/src/entropy/encoder.rs` - Read from `Block8x8i16`
 
 **Key changes**:
 
@@ -161,9 +161,9 @@ impl SimdPlane {
 ```
 
 **Files to modify**:
-- `jpegli-rs/src/encode_simd.rs` - Color conversion outputs SimdPlane
-- `jpegli-rs/src/encode/baseline.rs` - Use SimdPlane
-- `jpegli-rs/src/encode/blocks.rs` - Extract blocks from SimdPlane
+- `zenjpeg/src/encode_simd.rs` - Color conversion outputs SimdPlane
+- `zenjpeg/src/encode/baseline.rs` - Use SimdPlane
+- `zenjpeg/src/encode/blocks.rs` - Extract blocks from SimdPlane
 
 **Key benefit**: Block extraction becomes 8 direct loads instead of 64 scattered loads.
 

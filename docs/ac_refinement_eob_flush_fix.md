@@ -2,7 +2,7 @@
 
 **Date**: 2026-01-04
 **Working Commit**: Building on commit 784e7c97 (Docker readme update formatting)
-**Files Changed**: `jpegli-rs/src/huffman_opt.rs`
+**Files Changed**: `zenjpeg/src/huffman_opt.rs`
 
 ## Bug Description
 
@@ -78,6 +78,6 @@ Both print token-by-token output for AC refinement scans.
 
 ## Related Files
 
-- `/home/lilith/work/jpegli-rs/jpegli-rs/src/huffman_opt.rs` - tokenization
-- `/home/lilith/work/jpegli-rs/jpegli-rs/src/entropy.rs` - encoding
+- `/home/lilith/work/jpegli-rs/zenjpeg/src/huffman_opt.rs` - tokenization
+- `/home/lilith/work/jpegli-rs/zenjpeg/src/entropy.rs` - encoding
 - `/home/lilith/work/jpegli-rs/internal/jpegli-cpp/lib/jpegli/entropy_coding.cc` - C++ reference

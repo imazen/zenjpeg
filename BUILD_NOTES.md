@@ -106,7 +106,7 @@ Instead of capturing test data files, we use FFI to call C++ functions directly 
    }
    ```
 
-3. **Rust FFI bindings** (`jpegli-rs/src/ffi.rs`):
+3. **Rust FFI bindings** (`zenjpeg/src/ffi.rs`):
    ```rust
    #[link(name = "jpegli-ffi")]
    extern "C" {
