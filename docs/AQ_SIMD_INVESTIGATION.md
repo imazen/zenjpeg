@@ -86,13 +86,13 @@ HWY_NAMESPACE_END
 ### Source Files
 
 ```
-jpegli-rs/src/quant/aq/
+zenjpeg/src/quant/aq/
 ├── mod.rs              # AQ module root
 ├── simd.rs             # SIMD implementations (wide crate)
 ├── streaming.rs        # Streaming AQ processor
 └── tables.rs           # Precomputed tables
 
-jpegli-rs/src/encode/
+zenjpeg/src/encode/
 ├── strip.rs            # Strip processor (calls AQ)
 └── deringing.rs        # Deringing preprocessing
 ```
@@ -161,23 +161,23 @@ cd /home/lilith/work/jpegli-rs
 cargo install cargo-asm
 
 # View assembly for specific function (default target)
-cargo asm -p jpegli-rs --lib "jpegli::quant::aq::simd::pre_erosion_row" 2>/dev/null | head -100
+cargo asm -p zenjpeg --lib "zenjpeg::quant::aq::simd::pre_erosion_row" 2>/dev/null | head -100
 
 # With x86-64-v3 (AVX2 + FMA)
-RUSTFLAGS="-C target-cpu=x86-64-v3" cargo asm -p jpegli-rs --lib \
-    "jpegli::quant::aq::simd::pre_erosion_row" 2>/dev/null | head -100
+RUSTFLAGS="-C target-cpu=x86-64-v3" cargo asm -p zenjpeg --lib \
+    "zenjpeg::quant::aq::simd::pre_erosion_row" 2>/dev/null | head -100
 
 # With x86-64-v4 (AVX-512)
-RUSTFLAGS="-C target-cpu=x86-64-v4" cargo asm -p jpegli-rs --lib \
-    "jpegli::quant::aq::simd::pre_erosion_row" 2>/dev/null | head -100
+RUSTFLAGS="-C target-cpu=x86-64-v4" cargo asm -p zenjpeg --lib \
+    "zenjpeg::quant::aq::simd::pre_erosion_row" 2>/dev/null | head -100
 
 # Count register usage (xmm=128-bit, ymm=256-bit, zmm=512-bit)
-RUSTFLAGS="-C target-cpu=x86-64-v4" cargo asm -p jpegli-rs --lib \
-    "jpegli::quant::aq::simd::pre_erosion_row" 2>/dev/null | \
+RUSTFLAGS="-C target-cpu=x86-64-v4" cargo asm -p zenjpeg --lib \
+    "zenjpeg::quant::aq::simd::pre_erosion_row" 2>/dev/null | \
     grep -oE "(xmm|ymm|zmm)[0-9]+" | sort | uniq -c | sort -rn
 
 # List all functions matching pattern
-cargo asm -p jpegli-rs --lib 2>&1 | grep -i "aq\|erosion\|modulation"
+cargo asm -p zenjpeg --lib 2>&1 | grep -i "aq\|erosion\|modulation"
 ```
 
 ### Comparing Instruction Mix
@@ -187,16 +187,16 @@ cargo asm -p jpegli-rs --lib 2>&1 | grep -i "aq\|erosion\|modulation"
 compare_asm() {
     local func=$1
     echo "=== Rust default ==="
-    cargo asm -p jpegli-rs --lib "$func" 2>/dev/null | \
+    cargo asm -p zenjpeg --lib "$func" 2>/dev/null | \
         grep -oE "^[[:space:]]+[a-z]+" | sort | uniq -c | sort -rn | head -15
 
     echo ""
     echo "=== Rust x86-64-v4 ==="
-    RUSTFLAGS="-C target-cpu=x86-64-v4" cargo asm -p jpegli-rs --lib "$func" 2>/dev/null | \
+    RUSTFLAGS="-C target-cpu=x86-64-v4" cargo asm -p zenjpeg --lib "$func" 2>/dev/null | \
         grep -oE "^[[:space:]]+[a-z]+" | sort | uniq -c | sort -rn | head -15
 }
 
-compare_asm "jpegli::quant::aq::simd::pre_erosion_row"
+compare_asm "zenjpeg::quant::aq::simd::pre_erosion_row"
 ```
 
 ---
@@ -284,10 +284,10 @@ taskset -c 0 cargo bench ...
 
 ```bash
 # FFI comparison (most accurate - same data, no I/O)
-RUSTFLAGS="-C target-cpu=x86-64-v4" cargo bench -p jpegli-rs --bench cpp_comparison
+RUSTFLAGS="-C target-cpu=x86-64-v4" cargo bench -p zenjpeg --bench cpp_comparison
 
 # Profile with cjpegli-compatible settings
-RUSTFLAGS="-C target-cpu=x86-64-v4" cargo run --release -p jpegli-rs \
+RUSTFLAGS="-C target-cpu=x86-64-v4" cargo run --release -p zenjpeg \
     --example cjpegli_rs_profile -- IMAGE.png -p 0 --num_reps 50
 
 # Flamegraph + perf report
@@ -448,7 +448,7 @@ After optimization, verify correctness:
 
 ```bash
 # Run parity tests
-cargo test --release -p jpegli-rs --test comprehensive_cpp_comparison -- --nocapture --ignored
+cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --nocapture --ignored
 
 # Check output matches
 cargo run --release --example cjpegli_rs_profile -- test.png out_rust.jpg -p 0 -d 1.0
@@ -479,9 +479,9 @@ just parity               # C++ parity test
 
 ### Files to Modify
 
-- `jpegli-rs/src/quant/aq/simd.rs` - Main SIMD implementations
-- `jpegli-rs/src/quant/aq/streaming.rs` - Streaming processor
-- `jpegli-rs/Cargo.toml` - Add unsafe_simd or archmage-simd feature
+- `zenjpeg/src/quant/aq/simd.rs` - Main SIMD implementations
+- `zenjpeg/src/quant/aq/streaming.rs` - Streaming processor
+- `zenjpeg/Cargo.toml` - Add unsafe_simd or archmage-simd feature
 
 ---
 
@@ -697,7 +697,7 @@ Added `archmage-simd` feature with token-based safe intrinsics for `pre_erosion_
 
 ### Benchmark Results
 
-**Isolated function benchmark** (`cargo bench -p jpegli-rs --bench aq_simd --features "archmage-simd,test-utils"`):
+**Isolated function benchmark** (`cargo bench -p zenjpeg --bench aq_simd --features "archmage-simd,test-utils"`):
 
 | Width | wide crate | archmage | Speedup |
 |-------|-----------|----------|---------|
@@ -717,7 +717,7 @@ Added `archmage-simd` feature with token-based safe intrinsics for `pre_erosion_
 
 ### Code Structure
 
-**File:** `jpegli-rs/src/quant/aq/simd.rs`
+**File:** `zenjpeg/src/quant/aq/simd.rs`
 
 ```rust
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
@@ -910,7 +910,7 @@ token system (`Avx2FmaToken::try_new()`) provides proper runtime AVX2+FMA detect
 ### Files Modified
 
 ```
-jpegli-rs/src/quant/aq/simd.rs
+zenjpeg/src/quant/aq/simd.rs
 ├── archmage_impl module (lines 908-1358)
 │   ├── mage_pre_erosion_row_padded_inner
 │   ├── mage_pre_erosion_row_padded (public)
@@ -920,7 +920,7 @@ jpegli-rs/src/quant/aq/simd.rs
 │   └── mage_per_block_modulations_row (public)
 └── pub use statements for archmage functions
 
-jpegli-rs/src/quant/aq/streaming.rs
+zenjpeg/src/quant/aq/streaming.rs
 ├── archmage_token field in StreamingAQ
 ├── Token initialization in new()
 ├── Conditional dispatch in compute_and_accumulate_pre_erosion
@@ -956,10 +956,10 @@ jpegli-rs/src/quant/aq/streaming.rs
 cargo test -p jpegli-rs --features "archmage-simd,test-utils" --lib streaming --release
 
 # Benchmark comparison
-cargo build --release -p jpegli-rs --example cjpegli_rs_profile --features "test-utils"
+cargo build --release -p zenjpeg --example cjpegli_rs_profile --features "test-utils"
 ./target/release/examples/cjpegli_rs_profile IMAGE.png --disable_output -q 75 --num_reps 200
 
-cargo build --release -p jpegli-rs --example cjpegli_rs_profile --features "test-utils,archmage-simd"
+cargo build --release -p zenjpeg --example cjpegli_rs_profile --features "test-utils,archmage-simd"
 ./target/release/examples/cjpegli_rs_profile IMAGE.png --disable_output -q 75 --num_reps 200
 
 # Verify numerical parity

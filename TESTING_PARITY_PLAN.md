@@ -205,7 +205,7 @@ jpegli/fuzz/
 // fuzz_targets/decode_jpeg.rs
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use jpegli::Decoder;
+use zenjpeg::Decoder;
 
 fuzz_target!(|data: &[u8]| {
     let decoder = Decoder::new();

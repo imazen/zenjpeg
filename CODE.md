@@ -6,7 +6,7 @@ This file preserves investigation context that might otherwise be lost.
 
 ## Bug: HF Modulation Index Wrap in Rightmost Blocks
 
-**File:** `jpegli-rs/src/quant/aq/simd.rs:566`
+**File:** `zenjpeg/src/quant/aq/simd.rs:566`
 **Status:** FIXED
 **Date:** 2025-01-10
 
@@ -131,7 +131,7 @@ The `Encoder` type now wraps `StreamingEncoder` exclusively.
 
 ## Bug: Progressive Non-Interleaved Block Count Mismatch
 
-**File:** `jpegli-rs/src/encode/progressive.rs`
+**File:** `zenjpeg/src/encode/progressive.rs`
 **Status:** FIXED
 **Date:** 2026-01-10
 
@@ -279,10 +279,10 @@ Overall: Rust is ~90% slower than C++ across configurations.
 
 ### Files Involved
 
-- `jpegli-rs/src/quant/aq/simd.rs` - AQ SIMD implementation
-- `jpegli-rs/src/dct/forward.rs` - Forward DCT
-- `jpegli-rs/src/entropy/encoder.rs` - Huffman encoding
-- `jpegli-rs/src/huffman/encode.rs` - Huffman table construction
+- `zenjpeg/src/quant/aq/simd.rs` - AQ SIMD implementation
+- `zenjpeg/src/dct/forward.rs` - Forward DCT
+- `zenjpeg/src/entropy/encoder.rs` - Huffman encoding
+- `zenjpeg/src/huffman/encode.rs` - Huffman table construction
 
 ---
 
@@ -346,7 +346,7 @@ for j in 0..8 {
 
 ### Files to Modify
 
-- `jpegli-rs/src/color.rs:465` - `ycbcr_planes_f32_to_rgb_u8`
+- `zenjpeg/src/color.rs:465` - `ycbcr_planes_f32_to_rgb_u8`
 
 ### Comparison: Encoder vs Decoder Bottlenecks
 
@@ -416,12 +416,12 @@ The YCbCr path is 25% faster by bypassing color conversion (which was 15.8% of d
 
 ### Files Modified
 
-- `jpegli-rs/src/decode/mod.rs` - Added `DecodedYCbCr`, `decode_to_ycbcr_f32()`, `to_ycbcr_planes_f32()`
-- `jpegli-rs/src/encode/strip.rs` - Added `process_strip_ycbcr_f32()`, `process_strip_ycbcr_f32_subsampled()`
-- `jpegli-rs/src/encode/streaming.rs` - Added `push_ycbcr_strip_f32()`, `push_ycbcr_strip_f32_subsampled()`
-- `jpegli-rs/src/lib.rs` - Exported `DecodedYCbCr`
-- `jpegli-rs/tests/ycbcr_f32_api.rs` - Test coverage
-- `jpegli-rs/examples/ycbcr_benchmark.rs` - Performance benchmark
+- `zenjpeg/src/decode/mod.rs` - Added `DecodedYCbCr`, `decode_to_ycbcr_f32()`, `to_ycbcr_planes_f32()`
+- `zenjpeg/src/encode/strip.rs` - Added `process_strip_ycbcr_f32()`, `process_strip_ycbcr_f32_subsampled()`
+- `zenjpeg/src/encode/streaming.rs` - Added `push_ycbcr_strip_f32()`, `push_ycbcr_strip_f32_subsampled()`
+- `zenjpeg/src/lib.rs` - Exported `DecodedYCbCr`
+- `zenjpeg/tests/ycbcr_f32_api.rs` - Test coverage
+- `zenjpeg/examples/ycbcr_benchmark.rs` - Performance benchmark
 
 ---
 
@@ -628,7 +628,7 @@ C++ `HfModulation` (adaptive_quantization.cc:295-324):
 ### Test Command
 
 ```bash
-cargo test --release -p jpegli-rs@0.9.0 --test edge_tile_ssim2_comparison -- --nocapture --ignored
+cargo test --release -p zenjpeg@0.9.0 --test edge_tile_ssim2_comparison -- --nocapture --ignored
 ```
 
 ---

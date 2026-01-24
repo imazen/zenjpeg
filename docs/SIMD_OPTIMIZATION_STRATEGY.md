@@ -63,7 +63,7 @@ For baseline 4:4:4 encoding (2K image):
 
 ### 1. Element-by-Element Vector Construction (Critical)
 
-**Location:** `jpegli-rs/src/encode_simd.rs:633`
+**Location:** `zenjpeg/src/encode_simd.rs:633`
 
 **Problem:**
 ```rust
@@ -89,7 +89,7 @@ unsafe {
 
 ### 2. DCT Row-by-Row Processing
 
-**Location:** `jpegli-rs/src/dct.rs:411-424`
+**Location:** `zenjpeg/src/dct.rs:411-424`
 
 **Problem:**
 ```rust
@@ -115,7 +115,7 @@ for row in 0..8 {
 
 ### 4. Transpose Uses Scalar Scatter
 
-**Location:** `jpegli-rs/src/dct.rs:381-403`
+**Location:** `zenjpeg/src/dct.rs:381-403`
 
 **Problem:**
 ```rust
@@ -164,10 +164,10 @@ C++ Highway patterns to port from `internal/jpegli-cpp/lib/jpegli/`:
 After each change:
 ```bash
 # Correctness
-cargo test --release -p jpegli-rs
+cargo test --release -p zenjpeg
 
 # Parity with C++
-cargo test --release -p jpegli-rs --features ffi-tests --test cpp_parity_locked
+cargo test --release -p zenjpeg --features ffi-tests --test cpp_parity_locked
 cargo run --release --features cms --example cpp_parity_matrix
 
 # Performance (Rust-only, for optimization tracking)

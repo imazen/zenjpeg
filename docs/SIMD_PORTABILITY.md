@@ -229,12 +229,12 @@ to use SIMD - it uses compile-time `#[cfg]`, not runtime detection. Without this
 
 ## Files Modified
 
-- `jpegli-rs/examples/simd_parity_test.rs` - Side-by-side comparison tests
+- `zenjpeg/examples/simd_parity_test.rs` - Side-by-side comparison tests
 - `docs/SIMD_PORTABILITY.md` - This document
 
 ## Related Files
 
-- `jpegli-rs/src/decode/idct_int.rs` - Integer IDCT with AVX2
-- `jpegli-rs/src/color/ycbcr.rs` - YCbCr color conversion
-- `jpegli-rs/src/encode_simd.rs` - Encoding SIMD functions
-- `jpegli-rs/src/encode/dct.rs` - Forward DCT with multiversion
+- `zenjpeg/src/decode/idct_int.rs` - Integer IDCT with AVX2
+- `zenjpeg/src/color/ycbcr.rs` - YCbCr color conversion
+- `zenjpeg/src/encode_simd.rs` - Encoding SIMD functions
+- `zenjpeg/src/encode/dct.rs` - Forward DCT with multiversion

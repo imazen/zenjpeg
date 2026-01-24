@@ -9,15 +9,15 @@ The v2 API's `PixelLayout::YCbCr8` and `PixelLayout::YCbCrF32` variants don't wo
 3. For YCbCrF32 (12 bytes/pixel), this causes `InvalidBufferSize { expected: 3072, actual: 12288 }`
 
 **Location of buffer validation failure:**
-- `jpegli-rs/src/encode/streaming.rs:1009-1014` - validates against wrong `bytes_per_row`
+- `zenjpeg/src/encode/streaming.rs:1009-1014` - validates against wrong `bytes_per_row`
 
 ## Root Cause
 
 ```rust
-// jpegli-rs/src/encode/v2/types.rs:507-508
+// zenjpeg/src/encode/v2/types.rs:507-508
 Self::YCbCr8 | Self::YCbCrF32 => crate::types::PixelFormat::Rgb,  // WRONG
 
-// jpegli-rs/src/encode/streaming.rs:865
+// zenjpeg/src/encode/streaming.rs:865
 let bytes_per_row = width * builder.pixel_format.bytes_per_pixel();  // Uses 3 instead of 12
 ```
 
@@ -25,7 +25,7 @@ let bytes_per_row = width * builder.pixel_format.bytes_per_pixel();  // Uses 3 i
 
 ### Step 1: Add YCbCr variants to legacy PixelFormat
 
-**File:** `jpegli-rs/src/types.rs`
+**File:** `zenjpeg/src/types.rs`
 
 ```rust
 pub enum PixelFormat {
@@ -41,7 +41,7 @@ pub enum PixelFormat {
 
 ### Step 2: Update PixelFormat methods
 
-**File:** `jpegli-rs/src/types.rs`
+**File:** `zenjpeg/src/types.rs`
 
 ```rust
 impl PixelFormat {
@@ -80,13 +80,13 @@ impl PixelFormat {
 
 ### Step 3: Add ColorSpace::YCbCr variant (if needed)
 
-**File:** `jpegli-rs/src/types.rs`
+**File:** `zenjpeg/src/types.rs`
 
 Check if `ColorSpace` enum exists and add `YCbCr` variant if not present.
 
 ### Step 4: Update PixelLayout.to_legacy()
 
-**File:** `jpegli-rs/src/encode/v2/types.rs`
+**File:** `zenjpeg/src/encode/v2/types.rs`
 
 ```rust
 pub fn to_legacy(&self) -> crate::types::PixelFormat {
@@ -100,7 +100,7 @@ pub fn to_legacy(&self) -> crate::types::PixelFormat {
 
 ### Step 5: Handle YCbCr in strip processor
 
-**File:** `jpegli-rs/src/encode/strip/convert.rs`
+**File:** `zenjpeg/src/encode/strip/convert.rs`
 
 Add handlers in `convert_strip_to_ycbcr()` match statement:
 
@@ -165,20 +165,20 @@ match self.pixel_format {
 
 Search for all `match.*pixel_format` and `match.*PixelFormat` to ensure YCbCr8/YCbCrF32 are handled:
 
-- `jpegli-rs/src/encode/strip/convert.rs` - gamma-aware downsampling (skip for YCbCr)
-- `jpegli-rs/src/encode/strip/mod.rs` - any format-specific logic
+- `zenjpeg/src/encode/strip/convert.rs` - gamma-aware downsampling (skip for YCbCr)
+- `zenjpeg/src/encode/strip/mod.rs` - any format-specific logic
 - Any XYB-related code (YCbCr input incompatible with XYB mode)
 
 ### Step 7: Enable test
 
-**File:** `jpegli-rs/tests/encode_api.rs`
+**File:** `zenjpeg/tests/encode_api.rs`
 
 Remove `#[ignore]` from `test_encode_ycbcr_f32_input`.
 
 ### Step 8: Verify
 
 ```bash
-cargo test --release -p jpegli-rs test_encode_ycbcr
+cargo test --release -p zenjpeg test_encode_ycbcr
 cargo clippy -- -D warnings
 ```
 

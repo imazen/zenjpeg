@@ -88,7 +88,7 @@ ninja jpegli-static cjpegli
 
 # 3. Enable FFI tests in jpegli-rs
 cd ../../..
-# Edit jpegli-rs/Cargo.toml:
+# Edit zenjpeg/Cargo.toml:
 #   Uncomment: jpegli-internals-sys = { path = "..." }
 #   Change: ffi-tests = ["dep:jpegli-internals-sys"]
 

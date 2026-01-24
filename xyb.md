@@ -93,7 +93,7 @@ void jpegli_set_xyb_mode(j_compress_ptr cinfo);
 **Source:** `lib/jpegli/encode.cc:744-747`
 ```cpp
 void jpegli_set_xyb_mode(j_compress_ptr cinfo) {
-  CheckState(cinfo, jpegli::kEncStart);
+  CheckState(cinfo, zenjpeg::kEncStart);
   cinfo->master->xyb_mode = true;
 }
 ```

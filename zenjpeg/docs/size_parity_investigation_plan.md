@@ -56,7 +56,7 @@ Small per-pixel differences accumulate across the image, producing different DCT
    - Compare scalar-only results
 
 ### Files to Examine
-- `jpegli-rs/src/xyb.rs` - Rust XYB implementation
+- `zenjpeg/src/xyb.rs` - Rust XYB implementation
 - `jpegli-cpp/lib/jxl/enc_xyb.cc` - C++ reference
 - `jpegli-cpp/lib/jxl/enc_xyb-inl.h` - C++ SIMD implementation
 
@@ -101,9 +101,9 @@ The Huffman optimization algorithm produces slightly different code assignments 
    - Check if symbol ordering within same length differs
 
 ### Files to Examine
-- `jpegli-rs/src/huffman_opt.rs` - Rust optimization
+- `zenjpeg/src/huffman_opt.rs` - Rust optimization
 - `jpegli-cpp/lib/jpegli/huffman.cc` - C++ reference
-- `jpegli-rs/tests/huffman_cpp_comparison.rs` - Existing comparison tests
+- `zenjpeg/tests/huffman_cpp_comparison.rs` - Existing comparison tests
 
 ### Expected Outcome
 Identify specific differences in Huffman table generation that cause the +2-3% gap.
@@ -148,9 +148,9 @@ XYB mode uses different quantization or coefficient distribution that interacts 
    - Identify which component(s) contribute to bloat
 
 ### Files to Examine
-- `jpegli-rs/src/xyb.rs` - XYB color conversion
-- `jpegli-rs/src/quant.rs` - Quantization tables
-- `jpegli-rs/src/icc.rs` - ICC profile embedding
+- `zenjpeg/src/xyb.rs` - XYB color conversion
+- `zenjpeg/src/quant.rs` - Quantization tables
+- `zenjpeg/src/icc.rs` - ICC profile embedding
 - `jpegli-cpp/lib/jxl/enc_xyb.cc` - C++ XYB reference
 
 ### Expected Outcome
@@ -189,8 +189,8 @@ Progressive XYB combines issues from both XYB color conversion and progressive s
    - Check if XYB-specific coefficient patterns expose edge cases
 
 ### Files to Examine
-- `jpegli-rs/src/scan_script.rs` - Progressive scan organization
-- `jpegli-rs/src/encode.rs` - XYB progressive encoding path
+- `zenjpeg/src/scan_script.rs` - Progressive scan organization
+- `zenjpeg/src/encode.rs` - XYB progressive encoding path
 
 ### Expected Outcome
 Determine if XYB progressive gap is from:

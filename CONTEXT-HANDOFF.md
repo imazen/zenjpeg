@@ -21,19 +21,19 @@ Added `ultrahdr` feature to jpegli-rs integrating `ultrahdr-core` for HDR gain m
 ## New Files
 
 ```
-jpegli-rs/src/ultrahdr/
+zenjpeg/src/ultrahdr/
 ├── mod.rs      # Re-exports from ultrahdr-core
 ├── encode.rs   # encode_ultrahdr(), encode_with_gainmap(), create_gainmap_computer()
 └── decode.rs   # reconstruct_hdr(), create_hdr_reconstructor(), UltraHdrExtras trait
 
-jpegli-rs/tests/ultrahdr_roundtrip.rs  # 9 integration tests
+zenjpeg/tests/ultrahdr_roundtrip.rs  # 9 integration tests
 ```
 
 ## Key API (ultrahdr feature)
 
 ### Encoding
 ```rust
-use jpegli::ultrahdr::{encode_ultrahdr, GainMapConfig, ToneMapConfig, Unstoppable};
+use zenjpeg::ultrahdr::{encode_ultrahdr, GainMapConfig, ToneMapConfig, Unstoppable};
 
 let jpeg = encode_ultrahdr(&hdr, &GainMapConfig::default(), &ToneMapConfig::default(),
     &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter), 75.0, Unstoppable)?;
@@ -41,7 +41,7 @@ let jpeg = encode_ultrahdr(&hdr, &GainMapConfig::default(), &ToneMapConfig::defa
 
 ### Decoding
 ```rust
-use jpegli::ultrahdr::{reconstruct_hdr, UltraHdrExtras, HdrOutputFormat};
+use zenjpeg::ultrahdr::{reconstruct_hdr, UltraHdrExtras, HdrOutputFormat};
 
 let decoded = Decoder::new().decode(&jpeg)?;
 if decoded.extras().map(|e| e.is_ultrahdr()).unwrap_or(false) {
@@ -78,8 +78,8 @@ jpegli-rs updated to match in commit `15dbdf1`.
 ## SIMD Status
 
 All SIMD intact - no changes to:
-- `jpegli-rs/src/quant/aq/simd.rs` (3362 lines) - AQ SIMD
-- `jpegli-rs/src/encode/mage_simd.rs` (1938 lines) - DCT SIMD
+- `zenjpeg/src/quant/aq/simd.rs` (3362 lines) - AQ SIMD
+- `zenjpeg/src/encode/mage_simd.rs` (1938 lines) - DCT SIMD
 - Only change: whitespace fix in `streaming.rs` comment
 
 ## Tests

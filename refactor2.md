@@ -158,7 +158,7 @@ From `StreamingEncoder::finish()`:
 
 ## Constraints
 
-- Public API (`jpegli::encoder::*`) unchanged
+- Public API (`zenjpeg::encoder::*`) unchanged
 - `StreamingEncoder` deprecated but functional
 - All tests pass
 - No duplicate code
