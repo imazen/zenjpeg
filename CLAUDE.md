@@ -1,4 +1,4 @@
-# jpegli-rs Project Guide
+# zenjpeg Project Guide
 
 Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 
@@ -49,7 +49,7 @@ All features enabled by default. Tests auto-find corpus at `~/work/codec-eval/co
 ### Quick Parity Check
 ```bash
 # Comprehensive test: 10 images × 50 quality levels (live cjpegli FFI)
-cargo test --release -p jpegli-rs --test comprehensive_cpp_comparison -- --nocapture --ignored
+cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --nocapture --ignored
 ```
 
 Expected results (using `jpegli_set_distance` for 3-table parity):
@@ -64,10 +64,10 @@ Previous results showed ~4% differences due to `jpeg_set_quality()` using 2 tabl
 ### All C++ Comparison Tests
 ```bash
 # Run ALL comparison tests with live C++ FFI
-cargo test --release -p jpegli-rs -- comparison --nocapture --ignored
+cargo test --release -p zenjpeg -- comparison --nocapture --ignored
 
 # Corpus-based comparison (CID22 images)
-cargo test --release -p jpegli-rs --test corpus_cpp_comparison -- --nocapture --ignored
+cargo test --release -p zenjpeg --test corpus_cpp_comparison -- --nocapture --ignored
 
 # XYB mode comparison (larger differences expected: 0.2-3%)
 cargo run --release --example xyb_parity_test
@@ -94,20 +94,20 @@ cargo run --release --example jpeg_inspect -- --validate image.jpg
 ## Project Structure
 
 ```
-jpegli-rs/
-├── jpegli-rs/           # Main library crate
+zenjpeg/
+├── zenjpeg/           # Main library crate
 │   ├── src/             # Encoder, decoder, color conversion
 │   ├── examples/        # Debugging tools (see examples/README.md)
 │   ├── tests/           # Integration tests
 │   └── benches/         # Criterion benchmarks
-├── jpegli-bench-utils/  # Shared utilities for benchmarks/examples
+├── zenjpeg-bench-utils/  # Shared utilities for benchmarks/examples
 ├── internal/jpegli-cpp/ # C++ jpegli submodule (for parity testing)
 └── docs/                # Additional documentation
 ```
 
 ## Examples & Debugging Tools
 
-See **`jpegli-rs/examples/README.md`** for complete documentation.
+See **`zenjpeg/examples/README.md`** for complete documentation.
 
 ### Most Useful Tools
 
@@ -159,7 +159,7 @@ cargo run --release --example xyb_vs_ycbcr_butteraugli
 
 ## Profiling Results (4K image, 2026-01-21)
 
-Run with: `cargo flamegraph --release -p jpegli-rs --example flamegraph_profile -- 4k`
+Run with: `cargo flamegraph --release -p zenjpeg --example flamegraph_profile -- 4k`
 Then: `perf report --stdio --no-children -g none --percent-limit 1.0 2>/dev/null`
 
 | Function | % Time | Notes |
@@ -224,7 +224,7 @@ check) takes only 1.6M. Removed the tiering - always use AVX2 8x8 for non-DC blo
 
 ## C++ Performance Gap (2026-01-21)
 
-Run with: `cargo bench -p jpegli-rs --bench cpp_comparison`
+Run with: `cargo bench -p zenjpeg --bench cpp_comparison`
 
 **WARNING**: The `comprehensive_cpp_comparison` test uses subprocess timing (unfair).
 Use the FFI benchmark above for accurate library-to-library comparison.
@@ -273,7 +273,7 @@ Remaining 527 allocations/encode are inherent to Huffman table generation (13 sc
 
 **Problem**: StreamingAQ was discarding MCU-aligned padding from input strips.
 
-**Solution** (`jpegli-rs/src/quant/aq/streaming.rs`):
+**Solution** (`zenjpeg/src/quant/aq/streaming.rs`):
 - Added `padded_width` field (blocks_w × 8) for MCU-aligned buffer stride
 - y_imcu_buffers now allocated with padded_width instead of width
 - Pass padded_width to per_block_modulations_row for aligned SIMD access
@@ -295,7 +295,7 @@ To eliminate: would need 1 extra pixel of buffer padding for wraparound reads.
 
 ### wide vs archmage SIMD Analysis (2026-01-20)
 
-**Benchmark:** `cargo bench -p jpegli-rs --bench aq_simd --features "archmage-simd,test-utils"`
+**Benchmark:** `cargo bench -p zenjpeg --bench aq_simd --features "archmage-simd,test-utils"`
 
 **Key finding:** The `wide` crate usually autovectorizes well, but sometimes picks
 intrinsics that LLVM won't re-autovectorize to wider registers. This is operation-
@@ -329,7 +329,7 @@ choices may not re-autovectorize. Options for those cases:
 **KEY DISCOVERY:** Pure scalar Rust code can be autovectorized to match manual SIMD
 by using the `multiversion` crate for runtime dispatch.
 
-**Benchmark results** (8x8 f32 transpose, `jpegli-rs/examples/autovec_transpose.rs`):
+**Benchmark results** (8x8 f32 transpose, `zenjpeg/examples/autovec_transpose.rs`):
 
 | Implementation | Time | Speedup |
 |---------------|------|---------|
@@ -370,11 +370,11 @@ fn process(data: &mut [f32]) {
 **IMPORTANT:** Simple loops autovectorize better than explicit chunked loops.
 The `for i in 0..8` pattern often prevents vectorization. Let the compiler decide.
 
-**Files:** `jpegli-rs/examples/autovec_transpose.rs`
+**Files:** `zenjpeg/examples/autovec_transpose.rs`
 
 ### Autovec vs Wide Crate AQ Benchmark (2026-01-21)
 
-**Benchmark:** `cargo run --release -p jpegli-rs --example bench_autovec_aq`
+**Benchmark:** `cargo run --release -p zenjpeg --example bench_autovec_aq`
 
 **Results** (width=4096, 512 blocks):
 
@@ -403,19 +403,19 @@ autovec version lets LLVM make optimal choices for each target. This is operatio
 dependent - most `wide` code autovectorizes fine, but `pre_erosion_row` hit a case
 where scalar + `#[multiversion]` wins.
 
-**Files:** `jpegli-rs/src/quant/aq/autovec.rs`, `jpegli-rs/examples/bench_autovec_aq.rs`
+**Files:** `zenjpeg/src/quant/aq/autovec.rs`, `zenjpeg/examples/bench_autovec_aq.rs`
 
 ## Decoder Performance Gap (2026-01-22)
 
-Run with: `cargo bench -p jpegli-rs --bench decode_compare`
+Run with: `cargo bench -p zenjpeg --bench decode_compare`
 
 ### Summary
 
-jpegli-rs decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x slower** for progressive JPEG.
+zenjpeg decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x slower** for progressive JPEG.
 
 **Baseline JPEG (sequential Huffman):**
 
-| Size | zune-jpeg | jpegli-rs | Ratio |
+| Size | zune-jpeg | zenjpeg | Ratio |
 |------|-----------|-----------|-------|
 | 256x256 | 82 µs | 337 µs | 4.1x |
 | 512x512 | 285 µs | 1.31 ms | 4.6x |
@@ -424,7 +424,7 @@ jpegli-rs decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x
 
 **Progressive JPEG:**
 
-| Size | zune-jpeg | jpegli-rs | Ratio |
+| Size | zune-jpeg | zenjpeg | Ratio |
 |------|-----------|-----------|-------|
 | 256x256 | 240 µs | 519 µs | 2.2x |
 | 512x512 | 860 µs | 2.03 ms | 2.4x |
@@ -433,9 +433,9 @@ jpegli-rs decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x
 
 **Throughput comparison (2048x2048):**
 - zune-jpeg baseline: 1104 MP/s
-- jpegli-rs baseline: 219 MP/s
+- zenjpeg baseline: 219 MP/s
 - zune-jpeg progressive: 458 MP/s
-- jpegli-rs progressive: 131 MP/s
+- zenjpeg progressive: 131 MP/s
 
 ### Known Performance Issues
 
@@ -462,7 +462,7 @@ Run: `valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli
 
 **Totals (512x512 baseline JPEG):**
 
-| Metric | jpegli-rs | zune-jpeg | Ratio |
+| Metric | zenjpeg | zune-jpeg | Ratio |
 |--------|-----------|-----------|-------|
 | Instructions | 60.3M | 34.6M | **1.74x** |
 | Data refs | 16.4M | 9.5M | 1.72x |
@@ -472,7 +472,7 @@ Run: `valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli
 
 **Decode-specific function comparison:**
 
-| Function | jpegli-rs | zune-jpeg | Notes |
+| Function | zenjpeg | zune-jpeg | Notes |
 |----------|-----------|-----------|-------|
 | **Upsampling** | 10.5M (17%) | 115K (0.3%) | **91x more!** Scalar loop |
 | **YCbCr→RGB** | 4.4M (7%) | 1.0M (3%) | 4.4x more |
@@ -541,8 +541,8 @@ Gap reduced from 1.74x to 1.34x in instruction count.
 - Would need to process multiple blocks in parallel, not just vectorize one block
 - Complexity not justified for ~5% of encode time
 
-**Files:** `jpegli-rs/src/quant/aq/simd.rs:1377` (massive version, unused),
-`jpegli-rs/src/quant/aq/streaming.rs:631` (original scalar, in use)
+**Files:** `zenjpeg/src/quant/aq/simd.rs:1377` (massive version, unused),
+`zenjpeg/src/quant/aq/streaming.rs:631` (original scalar, in use)
 
 ### AVX-512 Dual-Block DCT (2026-01-21)
 
@@ -569,7 +569,7 @@ with AVX-512 arithmetic, transpose with extract/AVX2/insert pattern.
 **Conclusion:** AVX-512 benefits require naturally 16-wide workloads. 8x8 DCT is inherently
 8-wide, making AVX2 the optimal register width. Dual-block packing just adds overhead.
 
-**Files:** `jpegli-rs/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
+**Files:** `zenjpeg/src/encode/mage_simd.rs:600-775` (kept for reference, not used in encoder)
 
 ### Decoder Zero-Copy Architecture (2026-01-22) - IMPLEMENTED
 
@@ -628,7 +628,7 @@ Rust configuration:
 
 **Tools added:**
 - `jpegli_set_distance` FFI binding in `jpegli-internals-sys`
-- `EncoderConfig::distance(f32)` in `jpegli-bench-utils` for distance-based encoding
+- `EncoderConfig::distance(f32)` in `zenjpeg-bench-utils` for distance-based encoding
 - `cargo run --release --example compare_dct_coefficients` - DCT coefficient comparison
 - `cargo run --release --example coeff_synthetic_test` - Solid color coefficient test
 
@@ -880,11 +880,11 @@ API will have breaking changes.
 
 | File | Purpose |
 |------|---------|
-| `jpegli-rs/src/encode/mod.rs` | Encoder pipeline |
-| `jpegli-rs/src/decode/mod.rs` | Decoder pipeline |
-| `jpegli-rs/src/color/xyb.rs` | XYB color conversion |
-| `jpegli-rs/src/quant/aq/mod.rs` | Adaptive quantization |
-| `jpegli-rs/src/huffman/mod.rs` | Huffman encoding |
+| `zenjpeg/src/encode/mod.rs` | Encoder pipeline |
+| `zenjpeg/src/decode/mod.rs` | Decoder pipeline |
+| `zenjpeg/src/color/xyb.rs` | XYB color conversion |
+| `zenjpeg/src/quant/aq/mod.rs` | Adaptive quantization |
+| `zenjpeg/src/huffman/mod.rs` | Huffman encoding |
 
 ## External Dependencies
 
@@ -894,8 +894,8 @@ API will have breaking changes.
 
 ## Detailed Documentation
 
-- **`jpegli-rs/README.md` - API Reference** (encoder/decoder usage with examples)
-- `jpegli-rs/examples/README.md` - Examples and debugging tools
-- `jpegli-rs/docs/ADAPTIVE_QUANTIZATION.md` - AQ algorithm details
-- `jpegli-rs/docs/API_DESIGN.md` - Full API surface and proposed enhancements
+- **`zenjpeg/README.md` - API Reference** (encoder/decoder usage with examples)
+- `zenjpeg/examples/README.md` - Examples and debugging tools
+- `zenjpeg/docs/ADAPTIVE_QUANTIZATION.md` - AQ algorithm details
+- `zenjpeg/docs/API_DESIGN.md` - Full API surface and proposed enhancements
 - `docs/SECURITY.md` - Security considerations

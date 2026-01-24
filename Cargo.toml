@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "jpegli-rs",
-    "jpegli-bench-utils",
+    "zenjpeg",
+    "zenjpeg-bench-utils",
     "internal/jpegli-internals-sys",
 ]
 
@@ -10,8 +10,8 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/imazen/jpegli-rs"
-description = "Pure Rust JPEG encoder/decoder - port of Google's jpegli"
+repository = "https://github.com/imazen/zenjpeg"
+description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
 
 [workspace.dependencies]
 # Core
