@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-01-23
+## [0.2.0] - 2026-01-23
 
-Initial release of `zenjpeg`, renamed from `jpegli-rs`.
+Renamed from `jpegli-rs` with Quick Start documentation.
 
 ### Changed
 
