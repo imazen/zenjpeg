@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-01-23
+## [0.1.0] - 2026-01-23
+
+Initial release of `zenjpeg`, renamed from `jpegli-rs`.
 
 ### Changed
 
@@ -24,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed `spin` crate dependency** - Huffman encode tables now use `const fn` initialization
   - Reduces dependency count and improves compile times
   - No functional change; tables are computed at compile time instead of lazily at runtime
+
+---
+
+# Historical changelog from jpegli-rs
 
 ## [0.11.1] - 2026-01-22
 
