@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-01-23
+
+### Changed
+
+- **`archmage-simd` feature is now enabled by default** for improved performance
+  - Provides ~6% faster encoding on x86_64 via token-based safe SIMD intrinsics
+  - Can be disabled with `default-features = false` if the extra compile time is unwanted
+
+### Removed
+
+- **Removed `spin` crate dependency** - Huffman encode tables now use `const fn` initialization
+  - Reduces dependency count and improves compile times
+  - No functional change; tables are computed at compile time instead of lazily at runtime
+
+## [0.11.1] - 2026-01-22
+
+### Fixed
+
+- Updated mozjpeg-rs to 0.5.1
+
+## [0.11.0] - 2026-01-22
+
+### Added
+
+- **UltraHDR support** via `ultrahdr` feature
+  - `ultrahdr::encode_ultrahdr()` - Encode HDR images with gainmaps
+  - `ultrahdr::reencode_ultrahdr()` - Re-encode existing UltraHDR JPEGs
+  - Streaming interfaces for low-memory processing
+  - Requires `decoder` feature
+
+### Fixed
+
+- WASM compatibility: replaced `ln()` with polynomial approximation for browser support
+- Various clippy warnings
+
+## [0.10.1] - 2026-01-21
+
+### Performance
+
+- Removed unnecessary fuzzy erosion zeroing in AQ computation
+
+## [0.10.0] - 2026-01-21
+
+### Added
+
+- WASM SIMD128 support - builds and runs with `RUSTFLAGS="-C target-feature=+simd128"`
+- AArch64 NEON support via `#[multiversion]` runtime dispatch
+
+### Changed
+
+- All SIMD functions now use `#[multiversed]` for portable acceleration across x86_64, AArch64, and WASM
+
 ## [0.9.0] - 2026-01-20
 
 ### Breaking Changes
