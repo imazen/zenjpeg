@@ -1,0 +1,225 @@
+[package]
+name = "zenjpeg"
+version = "0.12.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/imazen/zenjpeg"
+documentation = "https://docs.rs/zenjpeg"
+readme = "README.md"
+description = "Pure Rust JPEG encoder/decoder with perceptual optimizations"
+keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
+categories = ["multimedia::images", "encoding"]
+authors = ["Lilith River <lilith@imazen.io>"]
+rust-version = "1.92"
+
+[lib]
+name = "zenjpeg"
+
+[dependencies]
+wide = { workspace = true }
+aligned-vec = { workspace = true }
+bytemuck = { workspace = true }
+rgb = { workspace = true }
+imgref = { workspace = true }
+multiversion = { workspace = true }
+multiversed = { workspace = true }
+enough = { workspace = true }
+tinyvec = { workspace = true }  # Stack-allocated bounded vectors
+linear-srgb = { workspace = true }  # Fast linear↔sRGB conversion
+whereat = { workspace = true }  # Error tracing with location tracking
+thiserror = { workspace = true }  # Error derive macros
+lcms2 = { workspace = true, optional = true }
+moxcms = { workspace = true, optional = true }
+zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
+rayon = { workspace = true, optional = true }  # For parallel encoding
+# Hybrid trellis quantization from mozjpeg
+mozjpeg-rs = { workspace = true, optional = true }
+# Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
+yuv = { workspace = true, optional = true }
+# Token-based safe SIMD intrinsics
+archmage = { workspace = true, optional = true }
+# WASM console logging for debugging browser-specific issues
+web-sys = { version = "0.3", features = ["console"], optional = true }
+# UltraHDR (HDR gain map) encoding/decoding support
+ultrahdr-core = { version = "0.1.0", optional = true }
+
+[dev-dependencies]
+# WASM-compatible dev dependencies
+almost-enough = { workspace = true }
+test-case = { workspace = true }
+fast-ssim2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smallvec = "1.13"
+sha2 = "0.10"
+
+# WASM testing dependencies (browser + Node.js)
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen = "0.2.108"
+wasm-bindgen-test = "0.3.58"
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+# Native-only dev dependencies (don't compile for WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
+zenjpeg-bench-utils = { path = "../zenjpeg-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
+# For FFI comparison testing against C++ jpegli (internal development only)
+jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
+butteraugli = { workspace = true }
+chrono = "0.4"
+approx = { workspace = true }
+proptest = { workspace = true }
+criterion = { workspace = true }
+png = { workspace = true }
+dssim = { workspace = true }
+bincode = { workspace = true }
+zune-jpeg = { workspace = true }
+mozjpeg-rs = { workspace = true }
+rayon = { workspace = true }
+yuv = { workspace = true }  # For YCbCr conversion benchmarking and accuracy testing
+# For corpus comparison tests (requires local codec-eval crate)
+codec-eval = { workspace = true }
+# Metadata crates (for integration testing)
+kamadak-exif = { workspace = true }
+img-parts = { workspace = true }
+# UltraHDR integration testing
+ultrahdr-core = { version = "0.1.0" }
+
+[features]
+default = ["std", "yuv", "unsafe_simd", "archmage-simd"]
+# Enable std library support (io::Write, std::error::Error impl).
+# Disable for no_std environments - only requires core + alloc.
+std = []
+# Enable the decoder API. The decoder is still in prerelease with frequent breaking changes.
+# When disabled, no decoder types or functions are available in the public API.
+decoder = []
+parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/quantization)
+# Opt-in raw AVX2/SSE intrinsics for x86_64. Provides ~10-20% speedup on supported CPUs.
+# Without this, all SIMD uses safe `wide` crate which auto-vectorizes on all platforms.
+unsafe_simd = []
+# Token-based safe SIMD using archmage (alternative to unsafe_simd)
+# Provides same intrinsics with compile-time safety via capability tokens
+archmage-simd = ["dep:archmage"]
+cms = ["cms-lcms2"]  # Default CMS backend
+# FFI tests against C++ jpegli for parity verification (local development only)
+# Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
+# Tests check for this feature with #[cfg(feature = "ffi-tests")]
+ffi-tests = []
+# Enable corpus comparison tests (requires local codec-corpus directory)
+corpus-tests = []
+cms-lcms2 = ["dep:lcms2", "dep:zune-jpeg"]
+cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
+# Enable debug token serialization for C++ comparison
+debug-tokens = []
+# Enable internal profiling instrumentation (scope timers)
+profile = []
+# Enable test utilities (image generation, quality verification)
+# Requires std for file path operations
+test-utils = ["std"]
+# Enable WASM SIMD128 tests (requires wasm runtime with SIMD support)
+# Build with: RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1
+# Supported runtimes (2025): Wasmtime, Wasmer, Node.js, all major browsers
+wasm-simd = []
+# Enable sharp-yuv comparison tests (requires yuv crate, not in default deps)
+sharp-yuv = []
+# Enable mozjpeg-compatible quantization table presets (Robidoux, MSSIM, Klein, etc.)
+# Provides MozjpegTables::generate() helper for producing tables compatible with mozjpeg
+mozjpeg-tables = []
+# Enable WASM console tracing for debugging browser-specific issues
+wasm-trace = ["dep:web-sys"]
+# Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
+experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
+# Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
+# Uses 15-bit fixed-point Professional mode (max error: 0.5 levels, invisible after JPEG quantization)
+yuv = ["dep:yuv"]
+# UltraHDR (HDR gain map) support - requires decoder for gain map reconstruction
+# Provides: tonemap, compute_gainmap, apply_gainmap, XMP metadata, adaptive tonemapper
+ultrahdr = ["dep:ultrahdr-core", "decoder", "std"]
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "decode"
+harness = false
+required-features = ["decoder"]
+
+[[bench]]
+name = "cpp_comparison"
+harness = false
+
+[[bench]]
+name = "quick"
+harness = false
+
+[[bench]]
+name = "profile_ycbcr"
+harness = false
+
+[[bench]]
+name = "simd_blocks"
+harness = false
+
+[[bench]]
+name = "dct"
+harness = false
+
+[[bench]]
+name = "encode_matrix"
+harness = false
+
+[[bench]]
+name = "simd_load"
+harness = false
+
+[[bench]]
+name = "bitwriter_bench"
+harness = false
+
+[[bench]]
+name = "mage_simd"
+harness = false
+required-features = ["archmage-simd"]
+
+[[bench]]
+name = "vec_variants"
+harness = false
+
+[[bench]]
+name = "aq_simd"
+harness = false
+required-features = ["test-utils"]
+
+[[bench]]
+name = "decode_compare"
+harness = false
+required-features = ["decoder"]
+
+[lints]
+workspace = true
+
+# Examples that require test-utils feature
+[[example]]
+name = "generate_cpp_reference"
+required-features = ["test-utils"]
+
+[[example]]
+name = "low_q_report"
+required-features = ["test-utils"]
+
+# C++ comparison tools
+[[example]]
+name = "cpp_parity_matrix"
+required-features = ["decoder", "test-utils", "cms"]
+
+# Tests requiring FFI (libjpeg linkage)
+[[test]]
+name = "quality_matrix"
+required-features = ["ffi-tests"]
+
+# XYB debugging tools (for investigating quality gap vs C++ jpegli)
+[[example]]
+name = "compare_xyb_constants"
+required-features = ["test-utils", "ffi-tests"]

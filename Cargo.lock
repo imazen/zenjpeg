@@ -806,81 +806,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "jpegli-bench-utils"
-version = "0.1.0"
-dependencies = [
- "butteraugli",
- "dssim",
- "enough",
- "fast-ssim2",
- "imgref",
- "jpegli-internals-sys",
- "jpegli-rs",
- "libc",
- "moxcms 0.6.4",
- "png",
- "rgb",
- "zune-jpeg",
-]
-
-[[package]]
 name = "jpegli-internals-sys"
 version = "0.1.0"
 dependencies = [
  "cc",
  "cmake",
  "libc",
-]
-
-[[package]]
-name = "jpegli-rs"
-version = "0.11.1"
-dependencies = [
- "aligned-vec",
- "almost-enough",
- "approx",
- "archmage",
- "bincode",
- "butteraugli",
- "bytemuck",
- "chrono",
- "codec-eval",
- "console_error_panic_hook",
- "criterion",
- "dssim",
- "enough",
- "fast-ssim2",
- "getrandom",
- "img-parts",
- "imgref",
- "jpegli-bench-utils",
- "jpegli-internals-sys",
- "kamadak-exif",
- "lcms2",
- "linear-srgb",
- "moxcms 0.6.4",
- "mozjpeg-rs",
- "multiversed",
- "multiversion",
- "png",
- "proptest",
- "rayon",
- "rgb",
- "serde",
- "serde_json",
- "sha2",
- "smallvec",
- "test-case",
- "thiserror",
- "tinyvec",
- "ultrahdr-core",
- "wasm-bindgen",
- "wasm-bindgen-test",
- "web-sys",
- "whereat",
- "wide 1.1.1",
- "yuv",
- "zune-jpeg",
 ]
 
 [[package]]
@@ -1994,6 +1925,75 @@ name = "yuvxyb-math"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "453f24cf9e21be2148954a438c72fb999da42b1d128105bfd73ce91e1c6c7d33"
+
+[[package]]
+name = "zenjpeg"
+version = "0.12.0"
+dependencies = [
+ "aligned-vec",
+ "almost-enough",
+ "approx",
+ "archmage",
+ "bincode",
+ "butteraugli",
+ "bytemuck",
+ "chrono",
+ "codec-eval",
+ "console_error_panic_hook",
+ "criterion",
+ "dssim",
+ "enough",
+ "fast-ssim2",
+ "getrandom",
+ "img-parts",
+ "imgref",
+ "jpegli-internals-sys",
+ "kamadak-exif",
+ "lcms2",
+ "linear-srgb",
+ "moxcms 0.6.4",
+ "mozjpeg-rs",
+ "multiversed",
+ "multiversion",
+ "png",
+ "proptest",
+ "rayon",
+ "rgb",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "test-case",
+ "thiserror",
+ "tinyvec",
+ "ultrahdr-core",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+ "web-sys",
+ "whereat",
+ "wide 1.1.1",
+ "yuv",
+ "zenjpeg-bench-utils",
+ "zune-jpeg",
+]
+
+[[package]]
+name = "zenjpeg-bench-utils"
+version = "0.1.0"
+dependencies = [
+ "butteraugli",
+ "dssim",
+ "enough",
+ "fast-ssim2",
+ "imgref",
+ "jpegli-internals-sys",
+ "libc",
+ "moxcms 0.6.4",
+ "png",
+ "rgb",
+ "zenjpeg",
+ "zune-jpeg",
+]
 
 [[package]]
 name = "zerocopy"

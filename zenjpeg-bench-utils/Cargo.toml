@@ -1,0 +1,48 @@
+[package]
+name = "zenjpeg-bench-utils"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/imazen/zenjpeg"
+description = "Benchmarking and comparison utilities for zenjpeg"
+keywords = ["jpeg", "benchmark", "testing"]
+categories = ["development-tools::testing"]
+publish = false  # Internal development crate
+
+[dependencies]
+# Cancellation support
+enough = { workspace = true }
+
+# Image buffer types
+rgb = { workspace = true }
+imgref = { workspace = true }
+
+# Image I/O
+png = { workspace = true }
+
+# JPEG decoding (de-facto standard decoder for comparisons)
+zune-jpeg = { workspace = true }
+
+# Color management
+moxcms = { workspace = true }
+
+# Quality metrics
+dssim = { workspace = true }
+fast-ssim2 = { workspace = true }
+butteraugli = { workspace = true }
+
+# For test image discovery and encoding (decoder required for comparison utilities)
+zenjpeg = { path = "../zenjpeg", default-features = false, features = ["test-utils", "decoder"] }
+
+# C++ jpegli FFI bindings (optional)
+jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }
+libc = { workspace = true, optional = true }
+
+[features]
+default = []
+experimental-hybrid-trellis = ["zenjpeg/experimental-hybrid-trellis"]
+# Enable C++ jpegli encoding via FFI (uses jpegli_* symbols directly)
+cjpegli-ffi = ["dep:jpegli-internals-sys", "dep:libc"]
+
+[lints]
+workspace = true
