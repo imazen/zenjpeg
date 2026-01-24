@@ -50,6 +50,31 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 - **XYB color space** - Currently ~5 SSIMULACRA2 points behind C++ jpegli. Use YCbCr for best quality.
 - **Decoder speed** - Prioritizes precision (12-bit pipeline) over speed; ~8x slower than zune-jpeg.
 
+## Quick Start
+
+### Encode
+
+```rust
+use zenjpeg::encoder::{EncoderConfig, PixelLayout, ChromaSubsampling, Unstoppable};
+
+let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
+let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+enc.push_packed(&rgb_bytes, Unstoppable)?;
+let jpeg_bytes: Vec<u8> = enc.finish()?;
+```
+
+### Decode
+
+Requires `features = ["decoder"]` (prerelease API).
+
+```rust
+use zenjpeg::decoder::Decoder;
+
+let image = Decoder::new().decode(&jpeg_bytes)?;
+let rgb_pixels: &[u8] = image.pixels();
+let (width, height) = image.dimensions();
+```
+
 ## API Reference
 
 ### Encoder API
