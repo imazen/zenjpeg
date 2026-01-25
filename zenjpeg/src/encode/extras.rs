@@ -774,12 +774,20 @@ pub(crate) fn write_encoder_segments(output: &mut Vec<u8>, segments: &EncoderSeg
 
 /// Generate MPF directory segment for secondary images.
 ///
-/// Returns the MPF APP2 segment data (without marker/length) and
-/// the offset within the segment where image offsets need to be patched.
+/// Returns the MPF APP2 segment data (without marker/length).
+///
+/// # Arguments
+/// * `num_images` - Number of secondary images
+/// * `primary_size` - Total size of the primary JPEG in bytes
+/// * `image_sizes` - Size and type of each secondary image
+/// * `mpf_insert_offset` - File offset where the MPF segment will be inserted.
+///   The TIFF header will be at `mpf_insert_offset + 8` (after marker, length, and "MPF\0").
+///   Per CIPA DC-007, secondary image offsets must be relative to this TIFF header position.
 pub(crate) fn generate_mpf_directory(
     num_images: usize,
     primary_size: u32,
     image_sizes: &[(u32, MpfImageType)],
+    mpf_insert_offset: usize,
 ) -> Vec<u8> {
     // MPF structure:
     // - "MPF\0" signature (4 bytes)
@@ -836,7 +844,11 @@ pub(crate) fn generate_mpf_directory(
     write_mp_entry(&mut data, 0x030000, primary_size, 0, 0, 0);
 
     // Secondary image entries
-    let mut current_offset = primary_size;
+    // Per CIPA DC-007, offsets are relative to the TIFF header position
+    // TIFF header is at mpf_insert_offset + 8 (marker + length + "MPF\0")
+    let tiff_header_pos = mpf_insert_offset + 8;
+    // Use saturating_sub for size estimation calls where primary_size may be 0
+    let mut current_offset = (primary_size as usize).saturating_sub(tiff_header_pos) as u32;
     for (size, typ) in image_sizes {
         let type_code = typ.to_type_code();
         write_mp_entry(&mut data, type_code, *size, current_offset, 0, 0);
@@ -903,16 +915,19 @@ pub(crate) fn inject_encoder_segments(jpeg: Vec<u8>, segments: &EncoderSegments)
             .map(|img| (img.data.len() as u32, img.image_type))
             .collect();
 
+        // MPF segment will be inserted after SOI (2 bytes) and segment_bytes
+        let mpf_insert_offset = 2 + segment_bytes.len();
+
         // Generate MPF directory (without knowing exact primary size yet)
         // We'll generate it, then calculate actual size
-        let mpf_data_temp = generate_mpf_directory(mpf_images.len(), 0, &image_sizes);
+        let mpf_data_temp = generate_mpf_directory(mpf_images.len(), 0, &image_sizes, mpf_insert_offset);
         let mpf_segment_size = 2 + 2 + mpf_data_temp.len(); // marker + length + data
 
         // Now calculate actual primary size
         let primary_size = jpeg.len() + segment_bytes.len() + mpf_segment_size;
 
         // Regenerate MPF directory with correct primary size
-        let mpf_data = generate_mpf_directory(mpf_images.len(), primary_size as u32, &image_sizes);
+        let mpf_data = generate_mpf_directory(mpf_images.len(), primary_size as u32, &image_sizes, mpf_insert_offset);
 
         // Build final output
         let total_size = primary_size + mpf_images.iter().map(|i| i.data.len()).sum::<usize>();
@@ -1053,12 +1068,60 @@ mod tests {
     #[test]
     fn test_mpf_directory_generation() {
         let image_sizes = vec![(5000, MpfImageType::Undefined)];
-        let mpf_data = generate_mpf_directory(1, 10000, &image_sizes);
+        // MPF insert offset of 100 (simulating after SOI + some segments)
+        let mpf_data = generate_mpf_directory(1, 10000, &image_sizes, 100);
 
         // Should start with MPF signature
         assert!(mpf_data.starts_with(MPF_SIGNATURE));
         // Should contain TIFF header
         assert_eq!(&mpf_data[4..6], b"II"); // Little-endian
+    }
+
+    #[test]
+    fn test_mpf_secondary_offset_is_relative_to_tiff_header() {
+        // Per CIPA DC-007, secondary image offsets must be relative to the TIFF header,
+        // not absolute file positions. This was a bug that was fixed.
+        //
+        // Setup: MPF inserted at position 200, primary image total size 5000
+        let mpf_insert_offset = 200;
+        let primary_size = 5000u32;
+        let secondary_size = 1000u32;
+        let image_sizes = vec![(secondary_size, MpfImageType::Undefined)];
+
+        let mpf_data = generate_mpf_directory(1, primary_size, &image_sizes, mpf_insert_offset);
+
+        // Parse the generated MPF to extract the secondary image offset
+        // Structure: MPF\0 (4) + II (2) + 0x2A00 (2) + IFD offset (4) = 12 bytes
+        // Then IFD: count (2) + 3 entries (36) + next IFD (4) = 42 bytes
+        // Then MP entries: primary (16) + secondary (16) = 32 bytes
+        // Secondary offset is at bytes 8-11 of the secondary MP entry
+
+        // Find MP entries - they start at offset 54 (12 + 42)
+        // Primary entry: bytes 54-69
+        // Secondary entry: bytes 70-85
+        // Secondary offset is at bytes 78-81 (secondary entry bytes 8-11)
+        let secondary_offset_bytes = &mpf_data[78..82];
+        let secondary_offset = u32::from_le_bytes(secondary_offset_bytes.try_into().unwrap());
+
+        // TIFF header is at mpf_insert_offset + 8 (marker + length + "MPF\0")
+        // The TIFF header position in the file: 200 + 8 = 208
+        // Secondary image starts at file position: 5000
+        // Expected offset relative to TIFF header: 5000 - 208 = 4792
+        let tiff_header_pos = mpf_insert_offset + 8;
+        let expected_offset = primary_size as usize - tiff_header_pos;
+
+        assert_eq!(
+            secondary_offset, expected_offset as u32,
+            "Secondary image offset should be {} (relative to TIFF header at {}), but got {}",
+            expected_offset, tiff_header_pos, secondary_offset
+        );
+
+        // Also verify it's NOT the absolute position (the old bug)
+        assert_ne!(
+            secondary_offset, primary_size,
+            "Secondary offset should NOT be the absolute file position ({})",
+            primary_size
+        );
     }
 
     #[test]
