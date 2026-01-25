@@ -1,101 +1,111 @@
-# Context Handoff - zenjpeg UltraHDR Integration
+# Context Handoff - zenjpeg UltraHDR Streaming
 
-## Session Summary
+## Session Summary (2026-01-25)
 
-Added `ultrahdr` feature to zenjpeg integrating `ultrahdr-core` for HDR gain map support.
+Fixed critical MPF offset bug in both zenjpeg and ultrahdr-core that prevented gain map extraction from third-party UltraHDR files (e.g., gen-dress.jpg from Android).
 
-## Recent Commits (newest first)
+## Bug Fixed: MPF Secondary Image Offsets
 
-```
-97c80ba docs: clean up CLAUDE.md
-15dbdf1 refactor(ultrahdr): update to renamed streaming API
-5957920 Revert "perf: use linear-srgb mage module for FMA-accelerated sRGB conversion"
-35bfdd4 test(ultrahdr): add thorough grayscale and gainmap verification tests
-98d2d71 feat(ultrahdr): add streaming interfaces for low-memory processing
-284b3a4 style: rustfmt formatting
-94f5cb7 fix(ultrahdr): remove potential panics with bounds-checked access
-718568e feat(ultrahdr): add reencode_ultrahdr() and roundtrip tests
-8c471a2 feat(ultrahdr): add UltraHDR encoding/decoding support
-```
+**Root cause:** MPF offsets for secondary images are relative to the TIFF header within the MPF segment (after "MPF\0"), NOT absolute file offsets or relative to APP2 marker.
 
-## New Files
+**Calculation:** `absolute_offset = tiff_header_pos + mpf_entry_offset`
 
-```
-zenjpeg/src/ultrahdr/
-├── mod.rs      # Re-exports from ultrahdr-core
-├── encode.rs   # encode_ultrahdr(), encode_with_gainmap(), create_gainmap_computer()
-└── decode.rs   # reconstruct_hdr(), create_hdr_reconstructor(), UltraHdrExtras trait
+For gen-dress.jpg:
+- MPF marker at offset 69431
+- TIFF header at 69439 (marker + 4 for length + 4 for "MPF\0")
+- MPF entry offset: 2860045
+- Correct gain map SOI: 69439 + 2860045 = 2929484
 
-zenjpeg/tests/ultrahdr_roundtrip.rs  # 9 integration tests
-```
+### zenjpeg Fix
 
-## Key API (ultrahdr feature)
+**Files modified:**
+- `zenjpeg/src/decode/parser/mod.rs` - Added `mpf_header_pos: usize` field
+- `zenjpeg/src/decode/parser/markers.rs` - Record position when processing APP2 MPF
 
-### Encoding
 ```rust
-use zenjpeg::ultrahdr::{encode_ultrahdr, GainMapConfig, ToneMapConfig, Unstoppable};
-
-let jpeg = encode_ultrahdr(&hdr, &GainMapConfig::default(), &ToneMapConfig::default(),
-    &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter), 75.0, Unstoppable)?;
+// In extract_mpf_secondary_images:
+let mpf_base = self.mpf_header_pos;
+let offset = if entry.offset == 0 {
+    primary_eoi_pos
+} else if mpf_base > 0 {
+    mpf_base + entry.offset as usize
+} else {
+    entry.offset as usize
+};
 ```
 
-### Decoding
-```rust
-use zenjpeg::ultrahdr::{reconstruct_hdr, UltraHdrExtras, HdrOutputFormat};
+### ultrahdr-core Fix
 
-let decoded = Decoder::new().decode(&jpeg)?;
-if decoded.extras().map(|e| e.is_ultrahdr()).unwrap_or(false) {
-    let hdr = reconstruct_hdr(decoded.pixels(), w, h, extras, 4.0, HdrOutputFormat::LinearFloat, Unstoppable)?;
+**Files modified:**
+- `ultrahdr-core/src/metadata/mpf.rs` - Multiple fixes:
+  1. Parser: Track `tiff_header_pos` and use for offset calculation
+  2. Encoder: Fixed VERSION tag (was appended after IFD entry, corrupting structure)
+  3. Encoder: Fixed MP_ENTRY offset calculation (+16 not +8)
+  4. Changed `parse_mpf()` return from `(offset, size)` to `(start, end)`
+  5. Added `mpf_insert_offset` parameter to `create_mpf_header()`
+
+- `ultrahdr/src/container.rs` - Use TIFF header position for offset calculations
+- `ultrahdr/src/encode.rs` - Updated to use new API
+
+## Tests Added
+
+- `zenjpeg/tests/grayscale_decode_test.rs` - Tests for:
+  - `test_ultrahdr_gainmap_extraction` - Verify gain map bytes extracted
+  - `test_gainmap_grayscale_decode_streaming` - Full decode of grayscale gain map
+
+## Next Steps: Streaming Encoder
+
+The plan at `/home/lilith/.claude/plans/wise-forging-sonnet.md` defines the streaming encoder API.
+
+### UltraHdrEncoder API (from plan)
+
+```rust
+pub struct UltraHdrEncoder {
+    // Internally uses RowEncoder or StreamEncoder from ultrahdr-core
+}
+
+impl UltraHdrEncoder {
+    pub fn new(
+        width: u32,
+        height: u32,
+        mode: UltraHdrEncodeMode,
+        config: UltraHdrEncodeConfig,
+    ) -> Result<Self>;
+
+    pub fn push_hdr_rows(&mut self, pixels: &[f32], rows: usize) -> Result<()>;
+    pub fn push_sdr_rows(&mut self, pixels: &[u8], rows: usize) -> Result<()>;
+    pub fn finish(self) -> Result<Vec<u8>>;
 }
 ```
 
-### Streaming (low-memory)
-```rust
-// For decode: RowDecoder - full gainmap in memory, process SDR rows -> HDR rows
-let decoder = create_hdr_reconstructor(w, h, extras, 4.0, HdrOutputFormat::LinearFloat)?;
+### Files to Create/Modify
 
-// For encode: RowEncoder - process HDR/SDR row pairs -> gainmap
-let encoder = create_gainmap_computer(w, h, &config, format, transfer, gamut)?;
+1. **New:** `zenjpeg/src/ultrahdr/streaming_encode.rs` - Core streaming encoder
+2. **Modify:** `zenjpeg/src/ultrahdr/mod.rs` - Re-export streaming types
 
-// Dual streaming: StreamDecoder/StreamEncoder - parallel decode of base+gainmap
-```
+### Implementation Notes
 
-## ultrahdr-core API Renames (just completed)
+- Use `RowEncoder` from ultrahdr-core for HDR→SDR+gainmap computation
+- Integrate with zenjpeg's `ScanlineEncoder` for streaming JPEG output
+- MPF header creation now requires insert offset (fixed in this session)
+- Consider `assemble_ultrahdr()` utility for post-encoding MPF insertion
 
-The user renamed streaming APIs in ultrahdr-core:
-- `StreamingHdrReconstructor` → `RowDecoder`
-- `StreamingGainMapComputer` → `RowEncoder`
-- `InputConfig` → `DecodeInput`
-- `EncoderInputConfig` → `EncodeInput`
-- Added: `StreamDecoder`, `StreamEncoder` for dual streaming
+## Commits This Session
 
-zenjpeg updated to match in commit `15dbdf1`.
+Check git log in both repos:
+- `/home/lilith/work/zenjpeg/` - MPF parser fix + grayscale tests
+- `/home/lilith/work/ultrahdr/` - MPF parser/encoder fixes
 
-## Known Issues
-
-1. **XYB quality gap** - ~5 SSIMULACRA2 behind C++ in XYB mode. Root cause TBD.
-
-## SIMD Status
-
-All SIMD intact - no changes to:
-- `zenjpeg/src/quant/aq/simd.rs` (3362 lines) - AQ SIMD
-- `zenjpeg/src/encode/mage_simd.rs` (1938 lines) - DCT SIMD
-- Only change: whitespace fix in `streaming.rs` comment
-
-## Tests
+## Test Commands
 
 ```bash
-cargo test -p zenjpeg --features ultrahdr --test ultrahdr_roundtrip  # 9 tests pass
-cargo build -p zenjpeg --features ultrahdr  # builds clean
+# zenjpeg tests
+cargo test -p zenjpeg --features ultrahdr --test grayscale_decode_test
+
+# ultrahdr-core tests
+cd ~/work/ultrahdr && cargo test -p ultrahdr-core
+cd ~/work/ultrahdr && cargo test -p ultrahdr
+
+# Real-world test file
+# /mnt/v/gen-dress.jpg - Android UltraHDR photo
 ```
-
-## Next Steps
-
-- User may want to add more streaming examples
-- Memory analysis for large images (40MP = ~800MB peak for full-image path)
-- Consider adding `encode_ultrahdr_streaming()` for truly low-memory large image encode
-
-## Dependencies
-
-- `ultrahdr-core` at `~/work/ultrahdr/ultrahdr-core` (path dependency)
-- Requires `decoder` feature (gain map reconstruction needs decode)
