@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Setup script for jpegli-rs FFI tests
+# Setup script for zenjpeg FFI tests
 #
 # This script:
 #   1. Initializes the jpegli-cpp git submodule
@@ -138,7 +138,7 @@ build_cpp() {
 enable_ffi_feature() {
     info "Enabling ffi-tests feature..."
 
-    CARGO_TOML="$REPO_ROOT/jpegli-rs/Cargo.toml"
+    CARGO_TOML="$REPO_ROOT/zenjpeg/Cargo.toml"
 
     # Check if already enabled
     if grep -q '^jpegli-internals-sys = { path' "$CARGO_TOML"; then
@@ -166,10 +166,10 @@ run_tests() {
     cd "$REPO_ROOT"
 
     # Build with ffi-tests feature
-    cargo build --features ffi-tests -p jpegli-rs
+    cargo build --features ffi-tests -p zenjpeg
 
     # Run tests
-    cargo test --features ffi-tests -p jpegli-rs -- --nocapture
+    cargo test --features ffi-tests -p zenjpeg -- --nocapture
 
     info "FFI tests complete!"
 }
@@ -177,7 +177,7 @@ run_tests() {
 # Main
 main() {
     echo "============================================"
-    echo "  jpegli-rs FFI Test Setup"
+    echo "  zenjpeg FFI Test Setup"
     echo "============================================"
     echo
 
@@ -198,7 +198,7 @@ main() {
     info "Setup complete!"
     echo
     echo "To run FFI tests again:"
-    echo "  cargo test --features ffi-tests -p jpegli-rs"
+    echo "  cargo test --features ffi-tests -p zenjpeg"
     echo
     echo "To generate C++ test data:"
     echo "  cd internal/jpegli-cpp/build"

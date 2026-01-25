@@ -1,11 +1,11 @@
 //! Multi-decoder compatibility test.
 //!
-//! Tests that JPEGs encoded by jpegli-rs can be correctly decoded by major
+//! Tests that JPEGs encoded by zenjpeg can be correctly decoded by major
 //! JPEG decoders in the Rust ecosystem, and that the quality metrics are
 //! appropriate for the encoding quality level.
 //!
 //! Decoders tested:
-//! - jpegli-rs (our decoder, 12-bit precision f32 pipeline)
+//! - zenjpeg (our decoder, 12-bit precision f32 pipeline)
 //! - zune-jpeg (fastest pure Rust decoder, integer IDCT)
 //!
 //! Run with:
@@ -112,14 +112,14 @@ fn decode_jpegli(data: &[u8]) -> Option<DecoderResult> {
     let decoder = zenjpeg::decoder::Decoder::new();
     match decoder.decode(data) {
         Ok(img) => Some(DecoderResult {
-            decoder_name: "jpegli-rs".to_string(),
+            decoder_name: "zenjpeg".to_string(),
             pixels: img.data,
             width: img.width as usize,
             height: img.height as usize,
             decode_time_us: start.elapsed().as_micros() as u64,
         }),
         Err(e) => {
-            eprintln!("jpegli-rs decode failed: {}", e);
+            eprintln!("zenjpeg decode failed: {}", e);
             None
         }
     }
@@ -198,7 +198,7 @@ fn test_all_decoders(
 
     // Collect all decoder results
     let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
-        ("jpegli-rs", decode_jpegli),
+        ("zenjpeg", decode_jpegli),
         ("zune-jpeg", decode_zune_jpeg),
     ];
 
@@ -322,13 +322,13 @@ fn test_multi_decoder_compatibility() {
     ];
 
     println!("\n=== Multi-Decoder Compatibility Test ===\n");
-    println!("{:<25} {:>12} {:>12}", "Config", "jpegli-rs", "zune-jpeg");
+    println!("{:<25} {:>12} {:>12}", "Config", "zenjpeg", "zune-jpeg");
     println!("{}", "-".repeat(55));
 
     let mut all_passed = true;
 
     for config in &configs {
-        // Encode with jpegli-rs
+        // Encode with zenjpeg
         let encoder_config = EncoderConfig::ycbcr(config.quality as f32, config.subsampling)
             .progressive(config.progressive);
         let jpeg_data = encode_rgb(width as u32, height as u32, &original, &encoder_config)
@@ -340,7 +340,7 @@ fn test_multi_decoder_compatibility() {
         let max_allowed = max_butteraugli_for_quality(config.quality);
 
         print!("{:<25}", config.name);
-        for decoder_name in &["jpegli-rs", "zune-jpeg"] {
+        for decoder_name in &["zenjpeg", "zune-jpeg"] {
             if let Some((butteraugli, _, _)) = results.get(*decoder_name) {
                 let status = if *butteraugli <= max_allowed {
                     "OK"
@@ -463,7 +463,7 @@ fn benchmark_decoders() {
 
     let iterations = 50;
     let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
-        ("jpegli-rs", decode_jpegli),
+        ("zenjpeg", decode_jpegli),
         ("zune-jpeg", decode_zune_jpeg),
     ];
 
@@ -510,7 +510,7 @@ fn test_grayscale_compatibility() {
 
     // All decoders should handle RGB that happens to be grayscale
     let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
-        ("jpegli-rs", decode_jpegli),
+        ("zenjpeg", decode_jpegli),
         ("zune-jpeg", decode_zune_jpeg),
     ];
 

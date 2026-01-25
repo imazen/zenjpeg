@@ -116,7 +116,7 @@ fn compute_dssim(orig: &[u8], decoded: &[u8], width: usize, height: usize) -> f6
 
 fn find_frymire() -> Option<PathBuf> {
     let paths = [
-        PathBuf::from("jpegli-rs/tests/images/frymire.png"),
+        PathBuf::from("zenjpeg/tests/images/frymire.png"),
         PathBuf::from("tests/images/frymire.png"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/images/frymire.png"),
     ];

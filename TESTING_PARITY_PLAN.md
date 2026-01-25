@@ -363,7 +363,7 @@ Compare against:
 Output format matching C++ `benchmark_xl`:
 ```
 Codec      | BPP  | E MP/s | D MP/s | SSIM2
-jpegli-rs  | 1.23 | 45.2   | 89.1   | 87.4
+zenjpeg  | 1.23 | 45.2   | 89.1   | 87.4
 mozjpeg    | 1.25 | 12.3   | 85.2   | 87.1
 ```
 

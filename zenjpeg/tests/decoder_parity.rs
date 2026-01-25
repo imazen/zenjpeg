@@ -107,7 +107,7 @@ fn decode_reference(jpeg: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 /// Decode with C++ djpegli (if available)
 #[allow(dead_code)] // Available for C++ parity tests when enabled
 fn decode_cpp(jpeg_path: &str) -> Option<(Vec<u8>, u32, u32)> {
-    let djpegli = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/djpegli";
+    let djpegli = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/build/tools/djpegli";
     if !std::path::Path::new(djpegli).exists() {
         return None;
     }

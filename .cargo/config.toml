@@ -1,4 +1,4 @@
-# Cargo configuration for jpegli-rs
+# Cargo configuration for zenjpeg
 # See: https://doc.rust-lang.org/cargo/reference/config.html
 
 # WASM SIMD128 Support

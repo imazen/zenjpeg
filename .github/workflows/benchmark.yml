@@ -61,12 +61,12 @@ jobs:
       - name: Run encode benchmarks (native)
         if: ${{ !matrix.wasm }}
         run: |
-          cargo bench --bench encode -p jpegli-rs --target ${{ matrix.target }} -- --noplot --save-baseline main 2>&1 | tee bench_output.txt
+          cargo bench --bench encode -p zenjpeg --target ${{ matrix.target }} -- --noplot --save-baseline main 2>&1 | tee bench_output.txt
 
       - name: Run decode benchmarks (native)
         if: ${{ !matrix.wasm }}
         run: |
-          cargo bench --bench decode -p jpegli-rs --target ${{ matrix.target }} -- --noplot --save-baseline main 2>&1 | tee -a bench_output.txt
+          cargo bench --bench decode -p zenjpeg --target ${{ matrix.target }} -- --noplot --save-baseline main 2>&1 | tee -a bench_output.txt
 
       # WASM benchmarks using wasmtime
       - name: Build WASM benchmark

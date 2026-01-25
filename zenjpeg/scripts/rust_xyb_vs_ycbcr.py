@@ -66,7 +66,7 @@ def main():
     
     # Build encoder
     subprocess.run(['cargo', 'build', '--release'], 
-                   cwd='/home/lilith/work/jpegli-rs-ac-trellis/jpegli-rs',
+                   cwd='/home/lilith/work/zenjpeg-ac-trellis/zenjpeg',
                    capture_output=True)
     
     print(f"Rust jpegli: XYB vs YCbCr (ICC-aware decode)")
@@ -85,7 +85,7 @@ def main():
             result = subprocess.run([
                 'cargo', 'run', '--release', '--example', 'encode_xyb', '--',
                 input_path, str(xyb_path), str(q)
-            ], cwd='/home/lilith/work/jpegli-rs-ac-trellis/jpegli-rs', capture_output=True)
+            ], cwd='/home/lilith/work/zenjpeg-ac-trellis/zenjpeg', capture_output=True)
             
             # For YCbCr, create a simple encoder script
             ycbcr_script = f'''

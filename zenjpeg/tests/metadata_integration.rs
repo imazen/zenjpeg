@@ -1,6 +1,6 @@
 //! Integration tests for metadata compatibility with popular Rust crates.
 //!
-//! Tests verify that jpegli-rs output is compatible with:
+//! Tests verify that zenjpeg output is compatible with:
 //! - `kamadak-exif`: EXIF parsing (verifies JPEG structure doesn't confuse parsers)
 //! - `img-parts`: JPEG segment manipulation (ICC profile extraction/injection)
 //! - `ultrahdr`: Ultra HDR JPEG encoding (using jpegli as base encoder)
@@ -136,7 +136,7 @@ mod native_metadata_tests {
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
     <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
-      <dc:creator>jpegli-rs test</dc:creator>
+      <dc:creator>zenjpeg test</dc:creator>
     </rdf:Description>
   </rdf:RDF>
 </x:xmpmeta>
@@ -728,9 +728,9 @@ mod img_parts_tests {
 // ultrahdr integration tests
 // ============================================================================
 // NOTE: These tests are disabled because they depend on the `jpeg` module from
-// the full `ultrahdr` crate, but jpegli-rs only depends on `ultrahdr-core`.
+// the full `ultrahdr` crate, but zenjpeg only depends on `ultrahdr-core`.
 // The jpeg parsing/manipulation functions aren't available in ultrahdr-core.
-// Re-enable when ultrahdr-core exposes the jpeg module or jpegli-rs depends
+// Re-enable when ultrahdr-core exposes the jpeg module or zenjpeg depends
 // on the full ultrahdr crate.
 
 // Disabled: ultrahdr_tests module - requires jpeg module from full ultrahdr crate

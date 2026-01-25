@@ -1,6 +1,6 @@
 //! Integration tests for decoding external JPEG files.
 //!
-//! Verifies that jpegli-rs decoder produces output matching zune-jpeg
+//! Verifies that zenjpeg decoder produces output matching zune-jpeg
 //! for JPEGs encoded by external tools (ImageMagick, etc.)
 
 use dssim::Dssim;

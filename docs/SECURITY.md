@@ -1,8 +1,8 @@
-# jpegli-rs Security Analysis & Priorities
+# zenjpeg Security Analysis & Priorities
 
 ## Executive Summary
 
-This document outlines security vulnerabilities in jpegli-rs and remediation priorities based on libjpeg-turbo's battle-tested approach.
+This document outlines security vulnerabilities in zenjpeg and remediation priorities based on libjpeg-turbo's battle-tested approach.
 
 ## libjpeg-turbo Reference
 

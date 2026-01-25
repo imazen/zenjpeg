@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document specifies additions to jpegli-rs for injecting metadata segments and assembling MPF (Multi-Picture Format) secondary images during encode. Designed to complement `decoder-extras-spec.md` with seamless data transfer between decode and encode for round-trip workflows.
+This document specifies additions to zenjpeg for injecting metadata segments and assembling MPF (Multi-Picture Format) secondary images during encode. Designed to complement `decoder-extras-spec.md` with seamless data transfer between decode and encode for round-trip workflows.
 
 ## Goals
 
@@ -562,7 +562,7 @@ The ultrahdr crate provides:
 - `apply_gainmap()` / `compute_gainmap()` - pixel math
 - `tonemap()` - HDR → SDR
 
-jpegli-rs provides:
+zenjpeg provides:
 - Decode/encode with segment preservation
 - MPF assembly/extraction
 - ICC/XMP chunking

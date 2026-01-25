@@ -33,9 +33,9 @@ jobs:
         run: |
           cargo llvm-cov clean --workspace
           # Run lib tests with coverage
-          cargo llvm-cov --no-report -p jpegli-rs --lib --all-features
+          cargo llvm-cov --no-report -p zenjpeg --lib --all-features
           # Run integration tests (non-ignored only - these don't need C++ build)
-          cargo llvm-cov --no-report -p jpegli-rs --tests --all-features -- --skip ignored
+          cargo llvm-cov --no-report -p zenjpeg --tests --all-features -- --skip ignored
           # Generate combined report
           cargo llvm-cov report --lcov --output-path lcov.info
 
@@ -78,7 +78,7 @@ jobs:
       - name: Run codec coverage tests
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report -p jpegli-rs --test codec_coverage --all-features
+          cargo llvm-cov --no-report -p zenjpeg --test codec_coverage --all-features
           cargo llvm-cov report --json --output-path codec-coverage.json
 
       - name: Check encode/decode coverage

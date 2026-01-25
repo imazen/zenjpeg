@@ -63,8 +63,8 @@ fn main() {
         zune_elapsed, zune_per_iter
     );
 
-    // Profile jpegli-rs
-    eprintln!("=== Profiling jpegli-rs ({} iterations) ===", iterations);
+    // Profile zenjpeg
+    eprintln!("=== Profiling zenjpeg ({} iterations) ===", iterations);
     let start = Instant::now();
     for _ in 0..iterations {
         use zenjpeg::decode::Decoder;
@@ -81,7 +81,7 @@ fn main() {
 
     eprintln!("\n=== Summary ===");
     eprintln!("zune-jpeg:  {:?}/decode", zune_per_iter);
-    eprintln!("jpegli-rs:  {:?}/decode", jpegli_per_iter);
+    eprintln!("zenjpeg:  {:?}/decode", jpegli_per_iter);
     let ratio = jpegli_elapsed.as_secs_f64() / zune_elapsed.as_secs_f64();
-    eprintln!("Ratio: {:.2}x (jpegli-rs / zune-jpeg)", ratio);
+    eprintln!("Ratio: {:.2}x (zenjpeg / zune-jpeg)", ratio);
 }

@@ -6,7 +6,7 @@
 //! 3. Encoding/decoding with both Rust and C++
 //! 4. Comparing SSIMULACRA2 of the tiled edge regions
 //!
-//! Run with: cargo test --release -p jpegli-rs --test edge_tile_ssim2_comparison -- --nocapture --ignored
+//! Run with: cargo test --release -p zenjpeg --test edge_tile_ssim2_comparison -- --nocapture --ignored
 
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;

@@ -98,7 +98,7 @@
 
 2. Compare three decoders:
    ```rust
-   // Decode with jpegli-rs
+   // Decode with zenjpeg
    let rust_result = zenjpeg::Decoder::new().decode(&jpeg)?;
 
    // Decode with zune-jpeg
@@ -109,7 +109,7 @@
    ```
 
 3. Compare outputs:
-   - If zune-jpeg succeeds but jpegli-rs fails → algorithm bug
+   - If zune-jpeg succeeds but zenjpeg fails → algorithm bug
    - If both fail → might be C++ encoding issue
    - Compare pixel values where both succeed
 
@@ -133,7 +133,7 @@
 cargo run --example test_progressive_decode -- cpp_prog_ycbcr.jpg
 
 # Should output:
-# ✓ jpegli-rs decoded successfully
+# ✓ zenjpeg decoded successfully
 # ✓ zune-jpeg decoded successfully
 # ✓ Max pixel difference: 0 (exact match)
 ```
@@ -156,7 +156,7 @@ cargo run --example test_progressive_decode -- cpp_prog_ycbcr.jpg
    ```
 
 2. Decode with all three decoders:
-   - jpegli-rs (our decoder)
+   - zenjpeg (our decoder)
    - zune-jpeg (pure Rust validation)
    - jpeg-decoder (pure Rust validation)
 
@@ -578,13 +578,13 @@ Expected output:
 ```
 Testing: cpp_progressive.jpg
 
-jpegli-rs decoder:
+zenjpeg decoder:
   ✗ Failed: UnexpectedEof at scan 7
 
 zune-jpeg decoder:
   ✓ Success: 510x532, 816480 bytes
 
-Conclusion: jpegli-rs decoder has bugs
+Conclusion: zenjpeg decoder has bugs
 ```
 
 Then debug until both decoders produce identical output.

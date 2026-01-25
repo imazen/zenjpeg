@@ -3,7 +3,7 @@ name = "jpegli-internals-sys"
 version = "0.1.0"
 edition = "2021"
 license = "BSD-3-Clause"
-repository = "https://github.com/imazen/jpegli-rs"
+repository = "https://github.com/imazen/zenjpeg"
 description = "FFI bindings to instrumented jpegli C++ internals for parity testing"
 links = "jpegli_internals_ffi"
 build = "build.rs"
@@ -11,7 +11,7 @@ build = "build.rs"
 # ⚠️ NOT PUBLISHED TO CRATES.IO - INTERNAL DEVELOPMENT ONLY
 #
 # This crate provides FFI bindings to the C++ jpegli implementation for
-# verifying that the pure Rust jpegli-rs produces identical output.
+# verifying that the pure Rust zenjpeg produces identical output.
 #
 # Requirements:
 #   1. Git submodule: git submodule update --init --recursive internal/jpegli-cpp

@@ -32,8 +32,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Clippy (jpegli-rs only)
-        run: cargo clippy -p jpegli-rs --all-features -- -D warnings
+      - name: Clippy (zenjpeg only)
+        run: cargo clippy -p zenjpeg --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.os }}-${{ matrix.arch }})
@@ -65,9 +65,9 @@ jobs:
         with:
           key: ${{ matrix.os }}-${{ matrix.arch }}
       - name: Build
-        run: cargo build -p jpegli-rs --all-features
+        run: cargo build -p zenjpeg --all-features
       - name: Run tests
-        run: cargo test -p jpegli-rs --lib --all-features
+        run: cargo test -p zenjpeg --lib --all-features
 
   test-features:
     name: Test feature combinations
@@ -79,13 +79,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test no default features
-        run: cargo test -p jpegli-rs --no-default-features
+        run: cargo test -p zenjpeg --no-default-features
       - name: Test std only
-        run: cargo test -p jpegli-rs --no-default-features --features std
+        run: cargo test -p zenjpeg --no-default-features --features std
       - name: Test cms-lcms2
-        run: cargo test -p jpegli-rs --no-default-features --features std,cms-lcms2
+        run: cargo test -p zenjpeg --no-default-features --features std,cms-lcms2
       - name: Test cms-moxcms
-        run: cargo test -p jpegli-rs --no-default-features --features std,cms-moxcms
+        run: cargo test -p zenjpeg --no-default-features --features std,cms-moxcms
 
   msrv:
     name: MSRV (1.92)
@@ -97,7 +97,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92
       - uses: Swatinem/rust-cache@v2
       - name: Check MSRV
-        run: cargo check -p jpegli-rs --all-features
+        run: cargo check -p zenjpeg --all-features
 
   docs:
     name: Documentation
@@ -109,7 +109,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build docs
-        run: cargo doc -p jpegli-rs --all-features --no-deps
+        run: cargo doc -p zenjpeg --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -141,4 +141,4 @@ jobs:
             -DJPEGXL_ENABLE_SJPEG=OFF ..
           ninja jpegli-static cjpegli
       - name: Run parity tests
-        run: cargo test -p jpegli-rs --release -- --ignored
+        run: cargo test -p zenjpeg --release -- --ignored

@@ -4,7 +4,7 @@
 //! ```sh
 //! CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
 //! RUSTFLAGS="-C target-feature=+simd128" \
-//! cargo run --release -p jpegli-rs --example wasm_simd_test \
+//! cargo run --release -p zenjpeg --example wasm_simd_test \
 //!     --target wasm32-wasip1 --no-default-features --features "std,decoder"
 //! ```
 

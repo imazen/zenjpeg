@@ -18,7 +18,7 @@
 //! Test image: tests/images/frymire.png (1118x1105, high chroma complexity)
 //!
 //! To regenerate values:
-//!   cargo run --release -p jpegli-rs --example get_locked_values
+//!   cargo run --release -p zenjpeg --example get_locked_values
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

@@ -1,5 +1,5 @@
 //! Low quality comparison report generator
-//! Uses jpegli-rs decoder for YCbCr, Python/Pillow for XYB (ICC handling)
+//! Uses zenjpeg decoder for YCbCr, Python/Pillow for XYB (ICC handling)
 //! Compares both DSSIM and Butteraugli metrics
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
@@ -32,7 +32,7 @@ fn compute_butter(original: &[u8], distorted: &[u8], width: usize, height: usize
     result.score
 }
 
-/// Decode JPEG using jpegli-rs decoder (works for YCbCr)
+/// Decode JPEG using zenjpeg decoder (works for YCbCr)
 fn decode_jpegli(data: &[u8]) -> Option<Vec<u8>> {
     let decoder = zenjpeg::decoder::Decoder::new().apply_icc(true);
     decoder.decode(data).ok().map(|r| r.data)
@@ -119,7 +119,7 @@ fn main() {
     let mut results: Vec<TestResult> = Vec::new();
     let qualities: Vec<u8> = vec![20, 30, 40, 50, 60, 70, 80, 90];
 
-    println!("\nEncoding YCbCr mode (using jpegli-rs decoder)...");
+    println!("\nEncoding YCbCr mode (using zenjpeg decoder)...");
     for &q in &qualities {
         // C++ YCbCr
         let cpp_path = format!("/tmp/cpp_ycbcr_q{}.jpg", q);
@@ -283,9 +283,9 @@ tr:nth-child(even) { background: #fafafa; }
 </style>
 </head>
 <body>
-<h1>jpegli-rs vs C++ jpegli: Low Quality Comparison</h1>
+<h1>zenjpeg vs C++ jpegli: Low Quality Comparison</h1>
 <p>Image: flower_small.rgb.png (510×532)</p>
-<p>Decoder: jpegli-rs for YCbCr, Python/Pillow+ICC for XYB</p>
+<p>Decoder: zenjpeg for YCbCr, Python/Pillow+ICC for XYB</p>
 "#);
 
     html.push_str(

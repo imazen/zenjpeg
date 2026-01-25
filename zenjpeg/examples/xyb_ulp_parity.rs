@@ -171,7 +171,7 @@ fn cbrtf_fast_2iter(x: f32) -> f32 {
 // Rust XYB implementations to test
 // ============================================================================
 
-/// Current jpegli-rs implementation
+/// Current zenjpeg implementation
 fn rust_current(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     zenjpeg::color::xyb::linear_rgb_to_xyb(r, g, b)
 }

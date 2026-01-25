@@ -446,7 +446,7 @@ fn test_encode_large_image() {
 
 #[test]
 fn test_encode_no_jfif_header() {
-    // jpegli-rs intentionally omits the JFIF APP0 marker to match C++ jpegli behavior.
+    // zenjpeg intentionally omits the JFIF APP0 marker to match C++ jpegli behavior.
     // This saves 18 bytes per file.
     let img = generate_gradient_d(64, 64, 3);
     let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);

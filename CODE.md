@@ -425,7 +425,7 @@ The YCbCr path is 25% faster by bypassing color conversion (which was 15.8% of d
 
 ---
 
-## Performance Analysis: zune-jpeg vs jpegli-rs Decoder
+## Performance Analysis: zune-jpeg vs zenjpeg Decoder
 
 **Date:** 2026-01-12
 **Status:** Analysis complete, optimizations categorized
@@ -435,8 +435,8 @@ The YCbCr path is 25% faster by bypassing color conversion (which was 15.8% of d
 | Decoder | 2048×2048 | MP/s | Relative |
 |---------|-----------|------|----------|
 | zune-jpeg | 3.7ms | 1146 | 18× faster |
-| jpegli-rs YCbCr | 65.5ms | 64 | 1.25× faster than RGB |
-| jpegli-rs RGB | 81.9ms | 51 | baseline |
+| zenjpeg YCbCr | 65.5ms | 64 | 1.25× faster than RGB |
+| zenjpeg RGB | 81.9ms | 51 | baseline |
 
 ### zune-jpeg Optimization Techniques
 
@@ -492,7 +492,7 @@ fast_ac[i] = (k << 8) + (run << 4) + (len + mag_bits);
 
 | Optimization | Component | Speedup Est. | Notes |
 |--------------|-----------|--------------|-------|
-| DC-only shortcut | IDCT | 5-15% | Already implemented in jpegli-rs |
+| DC-only shortcut | IDCT | 5-15% | Already implemented in zenjpeg |
 | In-register transpose | IDCT | 10-20% | Avoid memory round-trip |
 | Combined AC lookup | Entropy | 5-10% | Decode symbol+magnitude together |
 | 4-byte fast refill | Entropy | 5-10% | Skip marker check for common case |

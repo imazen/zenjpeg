@@ -3,7 +3,7 @@ use jpegli::{Encoder, PixelFormat, Quality, types::Subsampling, ChromaDownsampli
 use jpegli::decode::Decoder;
 
 fn main() {
-    let png_data = std::fs::read("/home/lilith/work/jpegli-rs-simd/jpegli-rs/tests/images/1.png").expect("read png");
+    let png_data = std::fs::read("/home/lilith/work/zenjpeg-simd/zenjpeg/tests/images/1.png").expect("read png");
     let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size()];

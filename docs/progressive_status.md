@@ -21,7 +21,7 @@ The CLAUDE.md documentation claiming "refinement broken" is **OUTDATED**. All YC
 - **Scans**: 13
 - **Successive Approximation**: YES ✓
 - **All decoders**: ✓ PASS
-  - jpegli-rs: ✓
+  - zenjpeg: ✓
   - zune-jpeg: ✓
   - mozjpeg: ✓
   - jpeg-decoder: ✓
@@ -41,19 +41,19 @@ The CLAUDE.md documentation claiming "refinement broken" is **OUTDATED**. All YC
 - **Scans**: 15 (3 DC non-interleaved + 12 AC)
 - **Successive Approximation**: YES ✓
 - **Decoder Results** (BEFORE fixes):
-  - jpegli-rs: ✗ **UnexpectedEof** ("not enough bits to read")
+  - zenjpeg: ✗ **UnexpectedEof** ("not enough bits to read")
   - zune-jpeg: ✓ PASS
   - mozjpeg: ✗ **PANIC/CRASH**
   - jpeg-decoder: ✗ **"scan makes use of unset dc huffman table"**
 
 **Decoder Results** (AFTER scan header fix - commit 50d2cf4):
-  - jpegli-rs: ✗ **UnexpectedEof** ("not enough bits to read")
+  - zenjpeg: ✗ **UnexpectedEof** ("not enough bits to read")
   - zune-jpeg: ✓ PASS
   - mozjpeg: ✓ **PASS** ← FIXED!
   - jpeg-decoder: ✗ **"unexpected huffman code"** (different error)
 
 **Decoder Results** (AFTER encoding fix - commit ac4ab61):
-  - jpegli-rs: ✓ **PASS** ← FIXED!
+  - zenjpeg: ✓ **PASS** ← FIXED!
   - zune-jpeg: ✓ PASS
   - mozjpeg: ✓ PASS
   - jpeg-decoder: ✓ **PASS** ← FIXED!
@@ -104,7 +104,7 @@ The CLAUDE.md documentation claiming "refinement broken" is **OUTDATED**. All YC
    - **Commits**: 50d2cf4 (scan headers) + ac4ab61 (encoding logic)
    - **Bug**: Table mismatch between scan headers and encoding
    - **Fix**: All XYB components now use Huffman table 0 consistently
-   - **Result**: All 4 decoders pass (jpegli-rs, zune-jpeg, mozjpeg, jpeg-decoder)
+   - **Result**: All 4 decoders pass (zenjpeg, zune-jpeg, mozjpeg, jpeg-decoder)
 
 ## What's Broken ❌
 

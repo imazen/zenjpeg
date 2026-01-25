@@ -1,4 +1,4 @@
-//! Benchmarking and comparison utilities for jpegli-rs.
+//! Benchmarking and comparison utilities for zenjpeg.
 //!
 //! This crate provides shared infrastructure for examples and benchmarks:
 //! - Synthetic test image generation
@@ -1268,7 +1268,7 @@ pub fn load_corpus(dir: &std::path::Path, max_files: Option<usize>) -> Vec<Image
 /// Distinguishes between Rust and C++ implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncoderImpl {
-    /// jpegli-rs: Pure Rust port of Google's jpegli
+    /// zenjpeg: Pure Rust port of Google's jpegli
     JpegliRs,
     /// cjpegli: Original C++ jpegli via FFI (requires cjpegli-ffi feature)
     CJpegli,
@@ -1279,7 +1279,7 @@ impl EncoderImpl {
     #[must_use]
     pub const fn short_name(&self) -> &'static str {
         match self {
-            Self::JpegliRs => "jpegli-rs",
+            Self::JpegliRs => "zenjpeg",
             Self::CJpegli => "cjpegli",
         }
     }
@@ -1432,7 +1432,7 @@ pub struct EncoderConfig {
     /// This uses `jpegli_set_distance` in C++ (3 tables) instead of
     /// `jpeg_set_quality` (2 tables), ensuring proper parity testing.
     pub distance: Option<f32>,
-    /// Enable hybrid trellis quantization (jpegli-rs only, requires feature)
+    /// Enable hybrid trellis quantization (zenjpeg only, requires feature)
     pub hybrid: bool,
 }
 
@@ -1493,7 +1493,7 @@ impl EncoderConfig {
     /// Enable hybrid trellis quantization.
     ///
     /// Requires the `experimental-hybrid-trellis` feature to be enabled.
-    /// Only applies to jpegli-rs encoder.
+    /// Only applies to zenjpeg encoder.
     #[must_use]
     pub fn hybrid(mut self, enabled: bool) -> Self {
         self.hybrid = enabled;
@@ -1502,7 +1502,7 @@ impl EncoderConfig {
 
     /// Generate a descriptive name for this configuration.
     ///
-    /// Format: `encoder-color[-hybrid]-scan-subsampling` (e.g., "jpegli-rs-ycbcr-hybrid-progressive-420")
+    /// Format: `encoder-color[-hybrid]-scan-subsampling` (e.g., "zenjpeg-ycbcr-hybrid-progressive-420")
     #[must_use]
     pub fn name(&self) -> String {
         let hybrid_suffix = if self.hybrid { "-hybrid" } else { "" };
@@ -1518,7 +1518,7 @@ impl EncoderConfig {
 
     /// Generate a short name (encoder + color + hybrid).
     ///
-    /// Format: `encoder-color[-hybrid]` (e.g., "jpegli-rs-ycbcr-hybrid")
+    /// Format: `encoder-color[-hybrid]` (e.g., "zenjpeg-ycbcr-hybrid")
     #[must_use]
     pub fn short_name(&self) -> String {
         let hybrid_suffix = if self.hybrid { "-hybrid" } else { "" };
@@ -1568,13 +1568,13 @@ impl EncoderConfig {
 
         let mut enc = config
             .encode_from_bytes(img.width as u32, img.height as u32, PixelLayout::Rgb8Srgb)
-            .map_err(|e| format!("jpegli-rs encode setup failed: {e}"))?;
+            .map_err(|e| format!("zenjpeg encode setup failed: {e}"))?;
 
         enc.push_packed(&img.pixels, enough::Unstoppable)
-            .map_err(|e| format!("jpegli-rs encode failed: {e}"))?;
+            .map_err(|e| format!("zenjpeg encode failed: {e}"))?;
 
         enc.finish()
-            .map_err(|e| format!("jpegli-rs encode finish failed: {e}"))
+            .map_err(|e| format!("zenjpeg encode finish failed: {e}"))
     }
 
     /// Encode using C++ jpegli via FFI (requires cjpegli-ffi feature).
@@ -1678,7 +1678,7 @@ impl EncoderConfig {
                 jpeg_simple_progression(cinfo_ptr);
             }
 
-            // Enable Huffman optimization (matches jpegli-rs default)
+            // Enable Huffman optimization (matches zenjpeg default)
             (*cinfo_ptr).optimize_coding = 1;
 
             // Start compression
@@ -1724,25 +1724,25 @@ impl EncoderConfig {
 // Convenience Encoder Functions (Explicit Names)
 // ============================================================================
 
-/// Encode with jpegli-rs using YCbCr color space (default settings).
+/// Encode with zenjpeg using YCbCr color space (default settings).
 pub fn encode_jpegli_rs_ycbcr(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::JpegliRs)
         .color(ColorMode::YCbCr)
         .quality(quality)
         .encode(img)
-        .expect("jpegli-rs ycbcr encode")
+        .expect("zenjpeg ycbcr encode")
 }
 
-/// Encode with jpegli-rs using XYB color space.
+/// Encode with zenjpeg using XYB color space.
 pub fn encode_jpegli_rs_xyb(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::JpegliRs)
         .color(ColorMode::Xyb)
         .quality(quality)
         .encode(img)
-        .expect("jpegli-rs xyb encode")
+        .expect("zenjpeg xyb encode")
 }
 
-/// Encode with jpegli-rs, YCbCr, progressive, 4:4:4 subsampling.
+/// Encode with zenjpeg, YCbCr, progressive, 4:4:4 subsampling.
 pub fn encode_jpegli_rs_ycbcr_progressive_444(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::JpegliRs)
         .color(ColorMode::YCbCr)
@@ -1750,10 +1750,10 @@ pub fn encode_jpegli_rs_ycbcr_progressive_444(img: &ImageData, quality: u8) -> V
         .subsampling(ChromaSubsampling::S444)
         .quality(quality)
         .encode(img)
-        .expect("jpegli-rs ycbcr progressive 444 encode")
+        .expect("zenjpeg ycbcr progressive 444 encode")
 }
 
-/// Encode with jpegli-rs, YCbCr, baseline, 4:2:0 subsampling.
+/// Encode with zenjpeg, YCbCr, baseline, 4:2:0 subsampling.
 pub fn encode_jpegli_rs_ycbcr_baseline_420(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::JpegliRs)
         .color(ColorMode::YCbCr)
@@ -1761,10 +1761,10 @@ pub fn encode_jpegli_rs_ycbcr_baseline_420(img: &ImageData, quality: u8) -> Vec<
         .subsampling(ChromaSubsampling::S420)
         .quality(quality)
         .encode(img)
-        .expect("jpegli-rs ycbcr baseline 420 encode")
+        .expect("zenjpeg ycbcr baseline 420 encode")
 }
 
-/// Encode with jpegli-rs, XYB, progressive, 4:4:4 subsampling.
+/// Encode with zenjpeg, XYB, progressive, 4:4:4 subsampling.
 pub fn encode_jpegli_rs_xyb_progressive_444(img: &ImageData, quality: u8) -> Vec<u8> {
     EncoderConfig::new(EncoderImpl::JpegliRs)
         .color(ColorMode::Xyb)
@@ -1772,7 +1772,7 @@ pub fn encode_jpegli_rs_xyb_progressive_444(img: &ImageData, quality: u8) -> Vec
         .subsampling(ChromaSubsampling::S444)
         .quality(quality)
         .encode(img)
-        .expect("jpegli-rs xyb progressive 444 encode")
+        .expect("zenjpeg xyb progressive 444 encode")
 }
 
 /// Encode with C++ jpegli via FFI (requires cjpegli-ffi feature).
@@ -2891,8 +2891,8 @@ mod tests {
             .scan(ScanMode::Progressive)
             .subsampling(ChromaSubsampling::S444);
 
-        assert_eq!(config.name(), "jpegli-rs-xyb-progressive-444");
-        assert_eq!(config.short_name(), "jpegli-rs-xyb");
+        assert_eq!(config.name(), "zenjpeg-xyb-progressive-444");
+        assert_eq!(config.short_name(), "zenjpeg-xyb");
 
         let config2 = EncoderConfig::new(EncoderImpl::CJpegli)
             .color(ColorMode::YCbCr)
@@ -2908,7 +2908,7 @@ mod tests {
             .scan(ScanMode::Progressive)
             .subsampling(ChromaSubsampling::S420);
 
-        assert_eq!(config3.name(), "jpegli-rs-ycbcr-hybrid-progressive-420");
-        assert_eq!(config3.short_name(), "jpegli-rs-ycbcr-hybrid");
+        assert_eq!(config3.name(), "zenjpeg-ycbcr-hybrid-progressive-420");
+        assert_eq!(config3.short_name(), "zenjpeg-ycbcr-hybrid");
     }
 }

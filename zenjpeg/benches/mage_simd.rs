@@ -1,6 +1,6 @@
 //! Benchmark comparing wide crate vs archmage-simd implementations
 //!
-//! Run with: cargo bench -p jpegli-rs --bench mage_simd --features "archmage-simd"
+//! Run with: cargo bench -p zenjpeg --bench mage_simd --features "archmage-simd"
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 

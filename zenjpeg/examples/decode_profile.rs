@@ -89,7 +89,7 @@ fn main() {
     );
 
     let jpegli_mpps = bench_jpegli(&jpeg_data, iterations);
-    println!("jpegli-rs: {:.1} MP/s", jpegli_mpps);
+    println!("zenjpeg: {:.1} MP/s", jpegli_mpps);
 
     if !jpegli_only {
         let zune_mpps = bench_zune(&jpeg_data, iterations);

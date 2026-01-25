@@ -1,11 +1,15 @@
-jpegli-rs
-=========
+zenjpeg
+=======
 
 This Rust port is licensed under the GNU Affero General Public License v3.0 or later.
 A commercial license is available from https://imageresizing.net/pricing
 
 This software is based on jpegli from the JPEG XL project, which is licensed under
 the BSD 3-Clause License. The original copyright notice is preserved below.
+
+The original C++ jpegli code is Copyright (c) the JPEG XL Project Authors and is
+used under the BSD 3-Clause License. This Rust port was written independently but
+follows the same algorithms and design principles.
 
 
 ORIGINAL JPEGLI LICENSE (BSD 3-Clause)

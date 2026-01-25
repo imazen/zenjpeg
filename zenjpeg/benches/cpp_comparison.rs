@@ -1,4 +1,4 @@
-//! Criterion benchmarks comparing Rust jpegli-rs vs C++ cjpegli via FFI.
+//! Criterion benchmarks comparing Rust zenjpeg vs C++ cjpegli via FFI.
 //!
 //! # Usage
 //!

@@ -1,4 +1,4 @@
-# jpegli-rs Status Report
+# zenjpeg Status Report
 
 **Generated:** 2026-01-09 20:15:00 MST
 **Branch:** avx2-dct-intrinsics

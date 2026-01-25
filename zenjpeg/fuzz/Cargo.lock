@@ -187,13 +187,13 @@ name = "jpegli-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
- "jpegli-rs",
+ "zenjpeg",
  "libfuzzer-sys",
  "zune-jpeg",
 ]
 
 [[package]]
-name = "jpegli-rs"
+name = "zenjpeg"
 version = "0.2.1"
 dependencies = [
  "arrayref",

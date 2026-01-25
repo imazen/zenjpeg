@@ -1,5 +1,5 @@
 #!/bin/bash
-# Compare AQ maps between Rust jpegli-rs and C++ cjpegli
+# Compare AQ maps between Rust zenjpeg and C++ cjpegli
 # Usage: ./compare_aq_maps.sh <input.png> [quality]
 
 set -e
@@ -22,9 +22,9 @@ echo "Encoding with C++ cjpegli..."
 DUMP_AQ_MAP="$CPP_AQ" ./internal/jpegli-cpp/build/tools/cjpegli \
     "$INPUT" "$CPP_OUT" -q "$QUALITY" 2>&1 | grep -v "^$" || true
 
-# Encode with Rust jpegli-rs (dumps AQ map)
-echo "Encoding with Rust jpegli-rs..."
-DUMP_AQ_MAP="$RUST_AQ" cargo run --release -p jpegli-rs --example encode_simple -- \
+# Encode with Rust zenjpeg (dumps AQ map)
+echo "Encoding with Rust zenjpeg..."
+DUMP_AQ_MAP="$RUST_AQ" cargo run --release -p zenjpeg --example encode_simple -- \
     "$INPUT" "$RUST_OUT" "$QUALITY" 2>&1 | grep -v "^$" || true
 
 echo

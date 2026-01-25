@@ -1,4 +1,4 @@
-# Setup script for jpegli-rs FFI tests (Windows)
+# Setup script for zenjpeg FFI tests (Windows)
 #
 # This script:
 #   1. Initializes the jpegli-cpp git submodule
@@ -130,7 +130,7 @@ function Build-Cpp {
 function Enable-FfiFeature {
     Write-Info "Enabling ffi-tests feature..."
 
-    $cargoToml = Join-Path $RepoRoot "jpegli-rs\Cargo.toml"
+    $cargoToml = Join-Path $RepoRoot "zenjpeg\Cargo.toml"
     $content = Get-Content $cargoToml -Raw
 
     if ($content -match '(?m)^jpegli-internals-sys = \{ path') {
@@ -156,10 +156,10 @@ function Run-Tests {
 
     Push-Location $RepoRoot
     try {
-        cargo build --features ffi-tests -p jpegli-rs
+        cargo build --features ffi-tests -p zenjpeg
         if ($LASTEXITCODE -ne 0) { Write-Err "Build failed" }
 
-        cargo test --features ffi-tests -p jpegli-rs -- --nocapture
+        cargo test --features ffi-tests -p zenjpeg -- --nocapture
         if ($LASTEXITCODE -ne 0) { Write-Err "Tests failed" }
 
         Write-Info "FFI tests complete!"
@@ -170,7 +170,7 @@ function Run-Tests {
 
 # Main
 Write-Host "============================================"
-Write-Host "  jpegli-rs FFI Test Setup (Windows)"
+Write-Host "  zenjpeg FFI Test Setup (Windows)"
 Write-Host "============================================"
 Write-Host
 
@@ -191,5 +191,5 @@ Write-Host "============================================"
 Write-Info "Setup complete!"
 Write-Host
 Write-Host "To run FFI tests again:"
-Write-Host "  cargo test --features ffi-tests -p jpegli-rs"
+Write-Host "  cargo test --features ffi-tests -p zenjpeg"
 Write-Host "============================================"

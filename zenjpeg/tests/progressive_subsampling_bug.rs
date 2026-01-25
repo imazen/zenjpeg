@@ -66,7 +66,7 @@ fn test_progressive_subsampling_external_decoder_compat() {
 
         assert!(
             our_result.is_ok(),
-            "Progressive {} failed jpegli-rs decode: {:?}",
+            "Progressive {} failed zenjpeg decode: {:?}",
             name,
             our_result.err()
         );

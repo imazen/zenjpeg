@@ -196,7 +196,7 @@ fn find_corpus_images(max_images: usize) -> Vec<std::path::PathBuf> {
     // PRIORITY: Add frymire.png first - it has odd dimensions (1118x1105)
     // which exercises edge cases in AQ code (1118%8=6, 1105%8=1)
     let frymire_paths = [
-        std::path::PathBuf::from("jpegli-rs/tests/images/frymire.png"),
+        std::path::PathBuf::from("zenjpeg/tests/images/frymire.png"),
         std::path::PathBuf::from("tests/images/frymire.png"),
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/images/frymire.png"),
     ];

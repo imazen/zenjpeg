@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-01-23
 
-Renamed from `jpegli-rs` with Quick Start documentation.
+Renamed from `zenjpeg` with Quick Start documentation.
 
 ### Changed
 
-- **Crate renamed from `jpegli-rs` to `zenjpeg`**
+- **Crate renamed from `zenjpeg` to `zenjpeg`**
   - Import path changed from `use jpegli::` to `use zenjpeg::`
   - After six rewrites and significant divergence from the original jpegli, the new name better reflects this is an independent project
 
@@ -29,7 +29,7 @@ Renamed from `jpegli-rs` with Quick Start documentation.
 
 ---
 
-# Historical changelog from jpegli-rs
+# Historical changelog from zenjpeg
 
 ## [0.11.1] - 2026-01-22
 
@@ -320,7 +320,7 @@ _Internal refactoring release - no public API changes_
   - ~50% lower peak memory vs legacy Encoder
   - 16-20% faster than legacy Encoder at 1080p+ resolutions
   - Full progressive mode support
-- Multi-decoder compatibility test: validates jpegli-rs output works with jpeg-decoder, zune-jpeg, and mozjpeg
+- Multi-decoder compatibility test: validates zenjpeg output works with jpeg-decoder, zune-jpeg, and mozjpeg
 - Butteraugli-based quality thresholds in decoder compatibility tests
 - **Quality conversion API**: `QualityConversion` and `QualityComparisonMetric` for matching other encoders
   - `QualityConversion::mozjpeg_equivalent()` - Convert mozjpeg quality to equivalent jpegli quality
@@ -352,7 +352,7 @@ _Internal refactoring release - no public API changes_
 
 ### Notes
 
-- **Decoder Laplacian biases (expected behavior)**: The jpegli-rs decoder produces slightly
+- **Decoder Laplacian biases (expected behavior)**: The zenjpeg decoder produces slightly
   different output than standard decoders (jpeg-decoder, zune-jpeg) because it uses Laplacian
   dequantization biases matching C++ djpegli. This shifts reconstructed values toward zero
   and typically improves quality for photographic content. For synthetic test images, this
@@ -415,7 +415,7 @@ _Internal refactoring release - no public API changes_
 - SIMD acceleration via `wide` crate
 - Butteraugli quality metric integration
 
-[0.4.0]: https://github.com/imazen/jpegli-rs/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/imazen/jpegli-rs/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/imazen/jpegli-rs/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/imazen/jpegli-rs/releases/tag/v0.1.0
+[0.4.0]: https://github.com/imazen/zenjpeg/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/imazen/zenjpeg/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/imazen/zenjpeg/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/imazen/zenjpeg/releases/tag/v0.1.0

@@ -73,7 +73,7 @@ fn encode_gray(
     enc.finish()
 }
 
-/// Decode with jpegli-rs
+/// Decode with zenjpeg
 fn decode_jpegli(data: &[u8]) -> bool {
     Decoder::new().decode(data).is_ok()
 }

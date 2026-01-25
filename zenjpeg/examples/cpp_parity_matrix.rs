@@ -1,4 +1,4 @@
-//! File size and quality parity comparison: Rust jpegli-rs vs C++ cjpegli
+//! File size and quality parity comparison: Rust zenjpeg vs C++ cjpegli
 //!
 //! Compares output file sizes and SSIMULACRA2 quality scores.
 //! Does NOT compare timing (unfair: subprocess vs library call).
@@ -512,7 +512,7 @@ fn main() {
             "--help" | "-h" => {
                 println!("Usage: cpp_parity_matrix [OPTIONS] [IMAGE]");
                 println!();
-                println!("Compares Rust jpegli-rs vs C++ cjpegli output parity.");
+                println!("Compares Rust zenjpeg vs C++ cjpegli output parity.");
                 println!("Does NOT compare timing (unfair: subprocess vs library).");
                 println!();
                 println!("Options:");
