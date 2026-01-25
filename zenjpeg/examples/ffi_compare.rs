@@ -4,7 +4,7 @@
 //! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
-use jpegli_bench_utils::{
+use zenjpeg_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode,
 };
 use std::fs;
