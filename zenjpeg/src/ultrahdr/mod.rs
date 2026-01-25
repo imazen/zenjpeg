@@ -96,3 +96,6 @@ pub use ultrahdr_core::{
 
 // Re-export the Stop trait from enough (same one used by jpegli)
 pub use enough::Stop;
+
+// Re-export streaming UltraHDR reader types from decode module
+pub use crate::decode::{GainMapMemory, UltraHdrMode, UltraHdrReader, UltraHdrReaderConfig};

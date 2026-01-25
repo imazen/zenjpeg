@@ -26,6 +26,9 @@ mod parser;
 mod scanline;
 mod upsample;
 
+#[cfg(feature = "ultrahdr")]
+mod ultrahdr_reader;
+
 // These types are public API for coefficient analysis
 #[allow(unused_imports)]
 pub use image::{
@@ -35,6 +38,11 @@ pub use image::{
 use parser::JpegParser;
 
 pub use scanline::{ScanlineInfo, ScanlineReader};
+
+// UltraHDR streaming reader
+#[cfg(feature = "ultrahdr")]
+#[allow(unused_imports)] // Re-exports for public API
+pub use ultrahdr_reader::{GainMapMemory, UltraHdrMode, UltraHdrReader, UltraHdrReaderConfig};
 
 // Re-export extras types for public API
 #[allow(unused_imports)]
@@ -583,6 +591,83 @@ impl Decoder {
             height: info.dimensions.height,
             icc_profile,
         })
+    }
+
+    /// Creates a streaming reader for UltraHDR JPEGs.
+    ///
+    /// This allows decoding UltraHDR images row-by-row with configurable output modes:
+    /// - **SDR-only**: Fastest decode, ignores gain map
+    /// - **HDR**: Applies gain map to reconstruct HDR output
+    /// - **SDR+HDR**: Dual output for preview + processing workflows
+    /// - **SDR+GainMap**: For editing workflows that preserve gain maps
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::decode::{Decoder, UltraHdrReaderConfig, UltraHdrMode};
+    ///
+    /// let config = UltraHdrReaderConfig::new()
+    ///     .mode(UltraHdrMode::Hdr)
+    ///     .display_boost(4.0);
+    ///
+    /// let mut reader = Decoder::new().ultrahdr_reader(&jpeg_data, config)?;
+    ///
+    /// while !reader.is_finished() {
+    ///     let rows = reader.read_rows(16, None, Some(&mut hdr_buf), None)?;
+    ///     // Process HDR rows...
+    /// }
+    /// ```
+    ///
+    /// # Memory Efficiency
+    ///
+    /// For a 4K image (3840×2160):
+    /// - SdrOnly: ~500 KB peak
+    /// - Hdr (Full): ~1 MB peak
+    /// - Hdr (Streaming): ~515 KB peak
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The JPEG cannot be parsed
+    /// - The image is not a baseline JPEG
+    /// - The image is grayscale
+    #[cfg(feature = "ultrahdr")]
+    pub fn ultrahdr_reader<'a>(
+        &self,
+        data: &'a [u8],
+        config: UltraHdrReaderConfig,
+    ) -> Result<UltraHdrReader<'a>> {
+        // Parse the JPEG header and get scanline reader
+        let mut parser = JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
+        parser.read_header()?;
+
+        // Only baseline supported for scanline reading
+        if parser.mode != JpegMode::Baseline {
+            return Err(Error::unsupported_feature(
+                "ultrahdr reader only supports baseline JPEG",
+            ));
+        }
+
+        if parser.num_components != 3 {
+            return Err(Error::unsupported_feature(
+                "ultrahdr reader requires 3-component YCbCr image",
+            ));
+        }
+
+        // Extract gain map from MPF secondary images (if present)
+        let (gainmap_data, metadata) = parser.extract_gainmap_early(data)?;
+
+        // Create base scanline reader
+        let base_reader = self.scanline_reader(data)?;
+
+        // Extract extras if preserving metadata
+        let extras = if config.preserve_metadata {
+            parser.take_extras()
+        } else {
+            None
+        };
+
+        UltraHdrReader::new(data, config, base_reader, extras, gainmap_data, metadata)
     }
 }
 

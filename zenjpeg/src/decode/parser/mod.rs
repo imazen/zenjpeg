@@ -138,6 +138,67 @@ impl<'a> JpegParser<'a> {
         self.extras.take().filter(|e| !e.is_empty())
     }
 
+    /// Extract gain map data and metadata early (before full decode).
+    ///
+    /// This is used by the UltraHDR streaming reader to get the gain map
+    /// without having to fully decode the image first.
+    #[cfg(feature = "ultrahdr")]
+    pub(super) fn extract_gainmap_early(
+        &mut self,
+        full_data: &[u8],
+    ) -> Result<(Option<Vec<u8>>, Option<ultrahdr_core::GainMapMetadata>)> {
+        use ultrahdr_core::metadata::xmp::parse_xmp;
+
+        // Get extras (or return None, None if not present)
+        let Some(ref extras) = self.extras else {
+            return Ok((None, None));
+        };
+
+        // Parse XMP for metadata
+        let metadata = extras.xmp().and_then(|xmp| {
+            // Check if this is actually UltraHDR XMP
+            if !xmp.contains("hdrgm:Version") && !xmp.contains("hdrgm:GainMapMax") {
+                return None;
+            }
+            parse_xmp(xmp).ok().map(|(m, _)| m)
+        });
+
+        // If no metadata, this isn't an UltraHDR image
+        if metadata.is_none() {
+            return Ok((None, None));
+        }
+
+        // Get MPF directory to find gain map location
+        let gainmap_data = if let Some(mpf_dir) = extras.mpf() {
+            // Find the gain map entry (type Undefined)
+            let mut found = None;
+            for (idx, entry) in mpf_dir.images.iter().enumerate() {
+                if idx == 0 {
+                    continue; // Skip primary
+                }
+                if entry.image_type.is_gainmap() {
+                    // Calculate offset - MPF offsets are typically absolute from file start
+                    let offset = entry.offset as usize;
+                    let end = offset.saturating_add(entry.size as usize);
+                    if end <= full_data.len() {
+                        let data = &full_data[offset..end];
+                        // Verify it looks like a JPEG
+                        if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+                            found = Some(data.to_vec());
+                            break;
+                        }
+                    }
+                }
+            }
+            found
+        } else {
+            // No MPF directory - try to find gain map from preserved secondary images
+            extras.gainmap().map(|data| data.to_vec())
+        };
+
+        Ok((gainmap_data, metadata))
+    }
+
     // =========================================================================
     // Core I/O utilities
     // =========================================================================

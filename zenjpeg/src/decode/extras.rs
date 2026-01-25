@@ -824,7 +824,7 @@ fn parse_adobe(data: &[u8]) -> Option<AdobeInfo> {
 }
 
 /// Parse MPF directory from APP2 data.
-fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
+pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
     // Format: "MPF\0" + endianness marker + ...
     const MPF_SIG: &[u8] = b"MPF\0";
     if data.len() < MPF_SIG.len() + 8 {
