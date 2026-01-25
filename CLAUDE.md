@@ -11,6 +11,139 @@ Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 3. **No changes to existing function signatures**
 4. **Doc links use full paths** - `[`encoder::EncoderConfig`]` not `[`EncoderConfig`]`
 
+## Pixel Data API Rules (CRITICAL - NON-NEGOTIABLE)
+
+**Every API that touches pixel data MUST follow these rules. NO EXCEPTIONS.**
+
+### Type-Safe Pixel Formats (MANDATORY)
+
+**NEVER use raw `&[u8]` or `&[f32]` for pixel data without explicit format information.**
+
+Use the `rgb` crate types or equivalent to encode channel count, order, and bit depth:
+
+```rust
+// GOOD - Type encodes format
+fn encode_rows(&mut self, rows: &[rgb::RGB<u8>], count: usize) -> Result<()>;
+fn encode_rows(&mut self, rows: &[rgb::RGB<u16>], count: usize) -> Result<()>;
+fn encode_rows(&mut self, rows: &[rgb::RGBA<f32>], count: usize) -> Result<()>;
+
+// BAD - Format is ambiguous, caller will get it wrong
+fn encode_rows(&mut self, data: &[u8], width: usize) -> Result<()>;
+```
+
+For strided/planar data, use `imgref::ImgRef` or explicit parameters:
+
+```rust
+// GOOD - Stride is explicit and type-safe
+fn process(&mut self, img: ImgRef<'_, rgb::RGB<u16>>) -> Result<()>;
+fn process(&mut self, data: &[rgb::RGB<u16>], width: usize, height: usize, stride: usize) -> Result<()>;
+
+// BAD - Stride assumed, will break on padded buffers
+fn process(&mut self, data: &[u8], width: usize, height: usize) -> Result<()>;
+```
+
+### Precision Requirements (MANDATORY)
+
+**zenjpeg is a professional codec. 8-bit internal precision is UNACCEPTABLE.**
+
+- **Internal processing**: 16-bit minimum, 32-bit float preferred
+- **DCT/quantization**: f32 or i32, NEVER i16 for intermediates
+- **Color conversion**: f32 linear light, NEVER gamma-encoded arithmetic
+- **API input/output**: Support u8, u16, f32 - but DOCUMENT the precision implications
+
+```rust
+// GOOD - High precision internal, flexible external
+pub fn push_rows_u8(&mut self, rows: &[rgb::RGB<u8>]) -> Result<()>;   // Converts to f32 internally
+pub fn push_rows_u16(&mut self, rows: &[rgb::RGB<u16>]) -> Result<()>; // Converts to f32 internally
+pub fn push_rows_f32(&mut self, rows: &[rgb::RGB<f32>]) -> Result<()>; // Native precision
+
+// BAD - Precision loss hidden from caller
+pub fn push_rows(&mut self, rows: &[u8]) -> Result<()>; // What happens to my 16-bit data?
+```
+
+### Color Space Awareness (MANDATORY)
+
+**EVERY pixel-touching function must consider color space. Even if "agnostic", document it.**
+
+Think about:
+- **Working space**: What color space are we computing in? Linear? Gamma?
+- **ICC profile**: Is there an embedded profile? Do we honor it?
+- **CICP**: Are we writing/reading CICP tags? (primaries, transfer, matrix)
+- **Primaries**: sRGB? P3? Rec.2020? BT.601 vs BT.709 YCbCr matrix?
+- **Transfer function**: Linear? sRGB? PQ? HLG?
+
+```rust
+// GOOD - Color space is explicit
+pub fn push_rows(&mut self, rows: &[rgb::RGB<f32>], colorspace: ColorSpace) -> Result<()>;
+
+// ACCEPTABLE - Documented assumption
+/// Assumes sRGB primaries with sRGB transfer function.
+/// For wide-gamut input, convert to sRGB first or use `push_rows_with_colorspace`.
+pub fn push_rows_srgb(&mut self, rows: &[rgb::RGB<u8>]) -> Result<()>;
+
+// BAD - Color space ignored, precision lost, user confused
+pub fn push_rows(&mut self, rows: &[u8]) -> Result<()>;
+```
+
+### Memory Architecture (MANDATORY)
+
+**WHOLE-IMAGE BUFFERING IS FORBIDDEN. STREAMING ONLY.**
+
+1. **No one-shot APIs** - All encode/decode must be streaming row-by-row
+2. **No `Vec<Vec<T>>`** - Use flat buffers with stride, or ring buffers
+3. **Borrow, don't clone** - Take `&[T]` not `Vec<T>`, return into caller's buffer
+4. **Fallible allocation** - Use `try_reserve()`, return `Result` on OOM
+5. **Buffer pool friendly** - Allow caller to provide pre-allocated buffers
+
+```rust
+// GOOD - Streaming, borrows, fallible
+pub fn push_rows(&mut self, rows: &[rgb::RGB<u16>]) -> Result<usize>;
+pub fn read_rows(&mut self, out: &mut [rgb::RGB<u16>]) -> Result<usize>;
+
+// GOOD - Caller provides buffer, no internal allocation
+pub fn finish_into(self, output: &mut Vec<u8>) -> Result<()>;
+
+// BAD - Whole image, allocates, clones
+pub fn encode(image: Vec<Vec<u8>>) -> Vec<u8>;
+
+// BAD - Hidden allocation, not fallible
+pub fn decode(&self) -> Vec<u8>;  // What if it's 100MP? OOM panic!
+```
+
+### Ring Buffer / Pool Architecture
+
+Design for buffer reuse:
+
+```rust
+// GOOD - Reusable encoder, buffer pool friendly
+let mut encoder = StreamingEncoder::new(width, height, config)?;
+let mut row_buf = vec![rgb::RGB::<u16>::default(); width]; // Caller's buffer, reused
+
+for row in source.rows() {
+    row_buf.copy_from_slice(row);
+    encoder.push_rows(&row_buf, 1)?;
+}
+
+// GOOD - Output into pre-allocated buffer
+let mut output = Vec::with_capacity(estimated_size);
+encoder.finish_into(&mut output)?;
+```
+
+### Summary: The Non-Negotiables
+
+| Rule | Requirement |
+|------|-------------|
+| **Pixel format** | Type-safe (`rgb::RGB<T>`, `imgref::ImgRef`) - NEVER raw bytes |
+| **Stride** | Explicit parameter or `imgref` - NEVER assumed |
+| **Precision** | 16-32 bit internal - NEVER 8-bit arithmetic on pixels |
+| **Color space** | Explicit or documented - NEVER silently ignored |
+| **Streaming** | Row-by-row only - NEVER whole-image buffering |
+| **Allocation** | Fallible (`try_reserve`) - NEVER panic on OOM |
+| **Ownership** | Borrow (`&[T]`) - NEVER clone pixel data |
+| **Buffers** | Caller-provided option - NEVER force internal allocation |
+
+**If you're about to write an API that violates these rules, STOP and redesign.**
+
 ## Performance Rules (CRITICAL)
 
 **Never compromise sequential performance for parallel gains:**
@@ -802,33 +935,92 @@ ninja cjpegli djpegli
 cargo test --release --features ffi-tests
 ```
 
-## Color Space Constraints
+## Color Space Architecture (CRITICAL)
 
-### RGB→YCbCr Matrix: BT.601 Only
+### The Fundamental Truth
 
-**CRITICAL**: The RGB→YCbCr conversion matrix MUST remain BT.601 for cross-decoder compatibility.
+**Color space is NOT optional metadata. It defines the meaning of pixel values.**
 
-When encoding wide-gamut images (Display P3, Adobe RGB, etc.):
-- The ICC profile tells decoders how to interpret the *decoded* RGB values
-- The YCbCr encoding uses the **same standard BT.601 matrix** as sRGB
-- Do NOT use colorspace-specific RGB→YCbCr matrices
+A pixel value of `(255, 128, 0)` means COMPLETELY DIFFERENT COLORS in:
+- sRGB (a specific orange)
+- Display P3 (a more saturated orange)
+- Rec.2020 (an even more saturated orange)
+- Linear sRGB (a MUCH brighter orange, wrong gamma)
 
-**Correct P3 encoding pipeline:**
+**If your code ignores color space, it is BROKEN. Period.**
+
+### RGB→YCbCr Matrix: BT.601 Only (JPEG Constraint)
+
+**CRITICAL**: JPEG encoding ALWAYS uses BT.601 RGB→YCbCr, regardless of input gamut.
+
 ```
-sRGB u8 → linearize → f32 linear sRGB
-                          ↓
-              gamut expansion (f32 linear)
-                          ↓
-                   f32 linear P3
-                          ↓
-              apply P3 gamma → f32 gamma P3
-                          ↓
-         jpegli (standard BT.601 RGB→YCbCr)  ← NOT a P3-specific matrix
-                          ↓
-                 JPEG + P3 ICC profile
+BT.601: Y = 0.299R + 0.587G + 0.114B  (ALWAYS for JPEG)
 ```
 
-The ICC profile is metadata only - it doesn't change the YCbCr encoding math.
+The ICC profile embedded in the JPEG tells decoders what gamut the *decoded* RGB is in.
+The YCbCr encoding math doesn't change - only the interpretation of the final RGB.
+
+**Correct wide-gamut encoding pipeline:**
+```
+Input (any colorspace)
+    │
+    ▼ [1] Apply EOTF (linearize)
+Linear RGB in source primaries
+    │
+    ▼ [2] Convert primaries (3x3 matrix)
+Linear RGB in output primaries
+    │
+    ▼ [3] Apply OETF (e.g., sRGB gamma)
+Gamma-encoded RGB in output primaries
+    │
+    ▼ [4] BT.601 RGB→YCbCr  ← ALWAYS BT.601!
+YCbCr
+    │
+    ▼ [5] JPEG encode + embed ICC profile
+JPEG file (ICC profile describes output primaries)
+```
+
+### Color Space Checklist
+
+For EVERY pixel-processing function, answer:
+
+1. **What primaries?** (sRGB/BT.709, P3, Rec.2020, AdobeRGB)
+2. **What transfer function?** (Linear, sRGB, PQ, HLG, Gamma 2.2/2.4)
+3. **What white point?** (D65, D50, DCI)
+4. **Are we doing math?** → Convert to LINEAR first!
+5. **Are we storing/transmitting?** → Apply appropriate OETF
+6. **Is there an ICC profile?** → Honor it or document why not
+7. **Should we write CICP?** → For video-derived content, yes
+
+### UltraHDR Color Pipeline
+
+For UltraHDR, the codec handles ONLY:
+- JPEG encoding (SDR base + gain map)
+- MPF structure (multi-picture format)
+- XMP metadata embedding
+- ICC profile embedding
+
+The codec does NOT handle (caller's responsibility):
+- HDR to SDR tonemapping
+- Gain map computation
+- Color space conversions
+- ICC profile generation
+
+```rust
+// Caller does all color processing
+let sdr = my_tonemapper.process(&hdr_linear_p3);  // Caller's tonemapper
+let gainmap = compute_gainmap(&hdr, &sdr);         // Caller's gain map
+let icc = p3_icc_profile();                        // Caller's ICC
+
+// Codec just encodes and assembles
+let mut encoder = StreamingUltraHdrEncoder::new(w, h, gm_w, gm_h, config)?;
+encoder.set_icc_profile(Some(&icc));
+for row in 0..height {
+    encoder.push_sdr_rows(&sdr_row, 1)?;
+    encoder.push_gainmap_rows(&gm_row, 1)?;
+}
+let jpeg = encoder.finish(&metadata)?;
+```
 
 ## Quality Metrics
 
