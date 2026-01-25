@@ -166,7 +166,7 @@ XYB's perceptual quantization allows more efficient bit allocation, especially f
 - [ColorAide XYB Documentation](https://facelessuser.github.io/coloraide/colors/xyb/)
 - [libjxl Color API](https://libjxl.readthedocs.io/en/latest/api_color.html)
 
-## Implementation Notes for jpegli-rs
+## Implementation Notes for zenjpeg
 
 To implement XYB support:
 

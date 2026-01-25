@@ -1,4 +1,4 @@
-# jpegli-rs Encoder Allocation Map
+# zenjpeg Encoder Allocation Map
 
 Analysis of memory allocations during JPEG encoding. For a 1920x1080 RGB image.
 

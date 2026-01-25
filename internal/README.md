@@ -1,8 +1,8 @@
 # Internal FFI Testing Infrastructure
 
-This directory contains tools for verifying that `jpegli-rs` produces output identical to the original C++ jpegli implementation.
+This directory contains tools for verifying that `zenjpeg` produces output identical to the original C++ jpegli implementation.
 
-**These tools are for development/verification only - not required for using jpegli-rs.**
+**These tools are for development/verification only - not required for using zenjpeg.**
 
 ## Quick Start
 
@@ -86,7 +86,7 @@ cmake -G Ninja \
     ..
 ninja jpegli-static cjpegli
 
-# 3. Enable FFI tests in jpegli-rs
+# 3. Enable FFI tests in zenjpeg
 cd ../../..
 # Edit zenjpeg/Cargo.toml:
 #   Uncomment: jpegli-internals-sys = { path = "..." }
@@ -136,4 +136,4 @@ intermediate computation matches.
 can't be bundled in a crates.io package. The FFI tests are for verifying
 the pure Rust implementation during development, not for end users.
 
-The published `jpegli-rs` crate is pure Rust and works without any of this.
+The published `zenjpeg` crate is pure Rust and works without any of this.

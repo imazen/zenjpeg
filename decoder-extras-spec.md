@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document specifies additions to jpegli-rs for preserving and accessing JPEG metadata segments and MPF (Multi-Picture Format) secondary images during decode. These features enable round-trip editing workflows where metadata must be preserved, and support for formats like UltraHDR that embed secondary images.
+This document specifies additions to zenjpeg for preserving and accessing JPEG metadata segments and MPF (Multi-Picture Format) secondary images during decode. These features enable round-trip editing workflows where metadata must be preserved, and support for formats like UltraHDR that embed secondary images.
 
 ## Goals
 

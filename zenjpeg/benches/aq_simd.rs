@@ -1,6 +1,6 @@
 //! Benchmark comparing wide vs archmage for outer-level AQ functions
 //!
-//! Run with: cargo bench -p jpegli-rs --bench aq_simd --features "archmage-simd,test-utils"
+//! Run with: cargo bench -p zenjpeg --bench aq_simd --features "archmage-simd,test-utils"
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 

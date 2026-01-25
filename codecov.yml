@@ -1,4 +1,4 @@
-# Codecov configuration for jpegli-rs
+# Codecov configuration for zenjpeg
 # https://docs.codecov.io/docs/codecov-yaml
 
 coverage:
@@ -20,41 +20,41 @@ coverage:
 flags:
   encode:
     paths:
-      - jpegli-rs/src/encode.rs
-      - jpegli-rs/src/entropy.rs
-      - jpegli-rs/src/huffman.rs
-      - jpegli-rs/src/huffman_opt.rs
-      - jpegli-rs/src/dct.rs
-      - jpegli-rs/src/quant.rs
-      - jpegli-rs/src/adaptive_quant.rs
-      - jpegli-rs/src/color.rs
-      - jpegli-rs/src/xyb.rs
-      - jpegli-rs/src/scan_script.rs
+      - zenjpeg/src/encode.rs
+      - zenjpeg/src/entropy.rs
+      - zenjpeg/src/huffman.rs
+      - zenjpeg/src/huffman_opt.rs
+      - zenjpeg/src/dct.rs
+      - zenjpeg/src/quant.rs
+      - zenjpeg/src/adaptive_quant.rs
+      - zenjpeg/src/color.rs
+      - zenjpeg/src/xyb.rs
+      - zenjpeg/src/scan_script.rs
     carryforward: true
 
   decode:
     paths:
-      - jpegli-rs/src/decode.rs
-      - jpegli-rs/src/idct.rs
-      - jpegli-rs/src/entropy.rs
-      - jpegli-rs/src/huffman.rs
-      - jpegli-rs/src/color.rs
-      - jpegli-rs/src/icc.rs
+      - zenjpeg/src/decode.rs
+      - zenjpeg/src/idct.rs
+      - zenjpeg/src/entropy.rs
+      - zenjpeg/src/huffman.rs
+      - zenjpeg/src/color.rs
+      - zenjpeg/src/icc.rs
     carryforward: true
 
   core:
     paths:
-      - jpegli-rs/src/types.rs
-      - jpegli-rs/src/error.rs
-      - jpegli-rs/src/consts.rs
-      - jpegli-rs/src/bitstream.rs
+      - zenjpeg/src/types.rs
+      - zenjpeg/src/error.rs
+      - zenjpeg/src/consts.rs
+      - zenjpeg/src/bitstream.rs
     carryforward: true
 
 # Ignore test utilities and examples from coverage requirements
 ignore:
-  - "jpegli-rs/src/test_utils.rs"
-  - "jpegli-rs/examples/**"
-  - "jpegli-rs/benches/**"
+  - "zenjpeg/src/test_utils.rs"
+  - "zenjpeg/examples/**"
+  - "zenjpeg/benches/**"
   - "internal/**"
 
 comment:

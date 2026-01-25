@@ -103,7 +103,7 @@ fn zune_jpeg_decodes_progressive_xyb() {
     assert_eq!(pixels.len(), 8 * 8 * 3, "8x8 RGB image = 192 bytes");
 }
 
-/// Test that jpegli-rs can decode progressive XYB JPEGs.
+/// Test that zenjpeg can decode progressive XYB JPEGs.
 ///
 /// XYB progressive JPEGs use non-standard component IDs ('R'=82, 'G'=71, 'B'=66).
 /// The decoder must properly handle EndOfScanData during progressive DC scans
@@ -114,7 +114,7 @@ fn jpegli_decodes_progressive_xyb() {
 
     assert!(
         result.is_ok(),
-        "jpegli-rs should decode progressive XYB: {:?}",
+        "zenjpeg should decode progressive XYB: {:?}",
         result.err()
     );
     let image = result.unwrap();
@@ -123,7 +123,7 @@ fn jpegli_decodes_progressive_xyb() {
     assert_eq!(image.data.len(), 8 * 8 * 3);
 }
 
-/// Test that jpegli-rs can decode baseline (non-progressive) XYB JPEGs.
+/// Test that zenjpeg can decode baseline (non-progressive) XYB JPEGs.
 /// This works correctly - the bug is only in progressive decoding.
 #[test]
 fn jpegli_decodes_baseline_xyb() {
@@ -145,11 +145,11 @@ fn jpegli_decodes_baseline_xyb() {
         "jpegli XYB should be baseline by default"
     );
 
-    // Decode with jpegli-rs
+    // Decode with zenjpeg
     let result = zenjpeg::decoder::Decoder::new().decode(&jpeg_data);
     assert!(
         result.is_ok(),
-        "jpegli-rs should decode baseline XYB: {:?}",
+        "zenjpeg should decode baseline XYB: {:?}",
         result.err()
     );
 }

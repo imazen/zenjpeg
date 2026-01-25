@@ -1,6 +1,6 @@
 # SIMD Portability Analysis: WASM and ARM NEON Support
 
-This document analyzes Intel-specific SIMD code in jpegli-rs that needs portable alternatives for WASM and ARM NEON targets.
+This document analyzes Intel-specific SIMD code in zenjpeg that needs portable alternatives for WASM and ARM NEON targets.
 
 ## Executive Summary
 

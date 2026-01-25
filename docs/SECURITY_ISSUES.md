@@ -1,6 +1,6 @@
 # Security Issue Tracker
 
-This document tracks security vulnerabilities in C++ jpegli/libjxl and their status in jpegli-rs.
+This document tracks security vulnerabilities in C++ jpegli/libjxl and their status in zenjpeg.
 
 ## CVE Vulnerabilities
 
@@ -164,7 +164,7 @@ We don't cache a `raw_height` that could become inconsistent with actual allocat
 
 ---
 
-## jpegli-rs Security Fixes
+## zenjpeg Security Fixes
 
 ### Decoder Hardening (2024-12)
 
@@ -218,7 +218,7 @@ These CVEs affect libjpeg-turbo and may inform our security posture.
 
 **Root Cause**: Heap overflow in `h2v2_merged_upsample_internal()` when processing 12-bit lossless JPEG with out-of-range sample data.
 
-**Rust Analysis**: jpegli-rs only supports 8-bit precision. 12-bit mode not implemented.
+**Rust Analysis**: zenjpeg only supports 8-bit precision. 12-bit mode not implemented.
 
 ---
 
@@ -380,7 +380,7 @@ Original IJG libjpeg vulnerabilities.
 
 ## Vulnerability Class Summary
 
-| Vulnerability Class | libjpeg-turbo | mozjpeg | IJG | jpegli-rs Status |
+| Vulnerability Class | libjpeg-turbo | mozjpeg | IJG | zenjpeg Status |
 |---------------------|---------------|---------|-----|------------------|
 | Integer overflow in size calc | CVE-2019-2201, CVE-2018-20330 | CVE-2020-1895 | - | ✅ Fixed (`50b104ee`) |
 | Heap overflow (12-bit) | CVE-2023-2804 | - | - | ✅ N/A (8-bit only) |

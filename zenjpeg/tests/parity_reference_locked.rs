@@ -224,7 +224,7 @@ fn encode_rust(
 }
 
 fn encode_cpp(png_path: &str, quality: u8, subsampling: &str) -> Option<Vec<u8>> {
-    let cjpegli = "/home/lilith/work/jpegli-rs/internal/jpegli-cpp/build/tools/cjpegli";
+    let cjpegli = "/home/lilith/work/zenjpeg/internal/jpegli-cpp/build/tools/cjpegli";
     if !std::path::Path::new(cjpegli).exists() {
         return None;
     }

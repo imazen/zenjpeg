@@ -2,7 +2,7 @@ INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 3937001140
 INFO: Loaded 1 modules   (5150 inline 8-bit counters): 5150 [0x5c30842f47c0, 0x5c30842f5bde), 
 INFO: Loaded 1 PC tables (5150 PCs): 5150 [0x5c30842f5be0,0x5c3084309dc0), 
-INFO:        7 files found in /home/lilith/work/jpegli/jpegli-rs/jpegli/fuzz/corpus/seed/
+INFO:        7 files found in /home/lilith/work/jpegli/zenjpeg/jpegli/fuzz/corpus/seed/
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 696659 bytes
 INFO: seed corpus: files: 7 min: 311b max: 696659b total: 2379471b rss: 32Mb
 #8	pulse  cov: 895 ft: 1611 corp: 6/1643Kb exec/s: 0 rss: 482Mb

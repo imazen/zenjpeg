@@ -95,12 +95,12 @@ fn test_progressive_xyb_non_aligned_dimensions() {
         }
     }
 
-    // Decode with jpegli-rs
+    // Decode with zenjpeg
     let result = Decoder::new().apply_icc(true).decode(&jpeg);
 
     match result {
         Ok(img) => println!(
-            "Q{}: jpegli-rs decoded {}x{}",
+            "Q{}: zenjpeg decoded {}x{}",
             quality, img.width, img.height
         ),
         Err(e) => panic!("Q{}: DECODE ERROR: {:?}", quality, e),

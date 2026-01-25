@@ -8,8 +8,8 @@
 //!
 //! Options:
 //!   --encoder <name>    Encoder to test. Can specify multiple times. Default: all
-//!                       Available: jpegli-rs-ycbcr, jpegli-rs-ycbcr-hybrid, jpegli-rs-xyb,
-//!                                  jpegli-rs-ycbcr-444, jpegli-rs-ycbcr-hybrid-444
+//!                       Available: zenjpeg-ycbcr, zenjpeg-ycbcr-hybrid, zenjpeg-xyb,
+//!                                  zenjpeg-ycbcr-444, zenjpeg-ycbcr-hybrid-444
 //!   --quality <n>       Single quality level (0-100). Default: sweep 10-95
 //!   --metric <name>     Metric to use (dssim, ssim2, butteraugli, all). Default: all
 //!   --output <file>     Output CSV file
@@ -20,7 +20,7 @@
 //! Examples:
 //!   # Quick YCbCr vs hybrid comparison
 //!   cargo run --release --example quality_compare --features experimental-hybrid-trellis -- \
-//!     --encoder jpegli-rs-ycbcr --encoder hybrid --quick image.png
+//!     --encoder zenjpeg-ycbcr --encoder hybrid --quick image.png
 //!
 //!   # Full Pareto curve to CSV
 //!   cargo run --release --example quality_compare -- --pareto --output results.csv image.png
@@ -160,7 +160,7 @@ fn parse_args() -> Config {
 
     let image_path = image_path.unwrap_or_else(|| {
         eprintln!("Usage: quality_compare [OPTIONS] <image.png>");
-        eprintln!("  --encoder <name>   jpegli-rs-ycbcr, jpegli-rs-xyb, cjpegli");
+        eprintln!("  --encoder <name>   zenjpeg-ycbcr, zenjpeg-xyb, cjpegli");
         eprintln!("  --quality <n>      Quality level 0-100");
         eprintln!("  --metric <name>    dssim, ssim2, butteraugli, all");
         eprintln!("  --output <file>    CSV output file");
@@ -182,30 +182,30 @@ fn parse_args() -> Config {
 
 fn parse_encoder(name: &str) -> EncoderConfig {
     match name {
-        "jpegli-rs-ycbcr" | "jpegli-ycbcr" | "jpegli" => {
+        "zenjpeg-ycbcr" | "jpegli-ycbcr" | "jpegli" => {
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::YCbCr)
         }
-        "jpegli-rs-ycbcr-hybrid" | "jpegli-ycbcr-hybrid" | "jpegli-hybrid" | "hybrid" => {
+        "zenjpeg-ycbcr-hybrid" | "jpegli-ycbcr-hybrid" | "jpegli-hybrid" | "hybrid" => {
             EncoderConfig::new(EncoderImpl::JpegliRs)
                 .color(ColorMode::YCbCr)
                 .hybrid(true)
         }
-        "jpegli-rs-xyb" | "jpegli-xyb" | "xyb" => {
+        "zenjpeg-xyb" | "jpegli-xyb" | "xyb" => {
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::Xyb)
         }
         "cjpegli" => EncoderConfig::new(EncoderImpl::CJpegli).color(ColorMode::YCbCr),
-        "jpegli-rs-ycbcr-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
+        "zenjpeg-ycbcr-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::YCbCr)
             .subsampling(ChromaSubsampling::S444),
-        "jpegli-rs-ycbcr-hybrid-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
+        "zenjpeg-ycbcr-hybrid-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::YCbCr)
             .subsampling(ChromaSubsampling::S444)
             .hybrid(true),
-        "jpegli-rs-xyb-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
+        "zenjpeg-xyb-444" => EncoderConfig::new(EncoderImpl::JpegliRs)
             .color(ColorMode::Xyb)
             .subsampling(ChromaSubsampling::S444),
         _ => {
-            eprintln!("Unknown encoder: {}. Using jpegli-rs-ycbcr", name);
+            eprintln!("Unknown encoder: {}. Using zenjpeg-ycbcr", name);
             EncoderConfig::new(EncoderImpl::JpegliRs).color(ColorMode::YCbCr)
         }
     }

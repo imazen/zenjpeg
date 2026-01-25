@@ -471,7 +471,7 @@ pub fn get_cpp_testdata_path(filename: &str) -> Option<PathBuf> {
                 .join("../internal/jpegli-cpp")
                 .join(filename),
             PathBuf::from(&manifest).join("testdata").join(filename),
-            // Check workspace root (parent of jpegli-rs crate)
+            // Check workspace root (parent of zenjpeg crate)
             PathBuf::from(&manifest).join("..").join(filename),
         ];
         for path in candidates {

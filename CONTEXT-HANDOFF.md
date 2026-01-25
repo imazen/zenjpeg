@@ -1,8 +1,8 @@
-# Context Handoff - jpegli-rs UltraHDR Integration
+# Context Handoff - zenjpeg UltraHDR Integration
 
 ## Session Summary
 
-Added `ultrahdr` feature to jpegli-rs integrating `ultrahdr-core` for HDR gain map support.
+Added `ultrahdr` feature to zenjpeg integrating `ultrahdr-core` for HDR gain map support.
 
 ## Recent Commits (newest first)
 
@@ -69,7 +69,7 @@ The user renamed streaming APIs in ultrahdr-core:
 - `EncoderInputConfig` → `EncodeInput`
 - Added: `StreamDecoder`, `StreamEncoder` for dual streaming
 
-jpegli-rs updated to match in commit `15dbdf1`.
+zenjpeg updated to match in commit `15dbdf1`.
 
 ## Known Issues
 
@@ -85,8 +85,8 @@ All SIMD intact - no changes to:
 ## Tests
 
 ```bash
-cargo test -p jpegli-rs --features ultrahdr --test ultrahdr_roundtrip  # 9 tests pass
-cargo build -p jpegli-rs --features ultrahdr  # builds clean
+cargo test -p zenjpeg --features ultrahdr --test ultrahdr_roundtrip  # 9 tests pass
+cargo build -p zenjpeg --features ultrahdr  # builds clean
 ```
 
 ## Next Steps

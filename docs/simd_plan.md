@@ -1,4 +1,4 @@
-# SIMD Optimization Plan for jpegli-rs
+# SIMD Optimization Plan for zenjpeg
 
 ## Executive Summary
 

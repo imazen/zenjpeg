@@ -2,7 +2,7 @@
 //!
 //! These tests verify that the deringing algorithm (pioneered by @kornel in mozjpeg)
 //! reduces artifacts on images with sharp black/white transitions.
-//! Deringing is enabled by default in jpegli-rs.
+//! Deringing is enabled by default in zenjpeg.
 
 use dssim::Dssim;
 use zenjpeg::{

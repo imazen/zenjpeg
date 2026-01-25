@@ -1,4 +1,4 @@
-//! Performance comparison: yuv crate vs jpegli-rs RGB→YCbCr conversion
+//! Performance comparison: yuv crate vs zenjpeg RGB→YCbCr conversion
 //!
 //! Run with: cargo run --release --example yuv_perf_compare
 //!
@@ -155,7 +155,7 @@ where
 
 fn main() {
     println!("RGB→YCbCr 4:2:0 Performance Comparison\n");
-    println!("Comparing jpegli-rs (f32) vs yuv crate (SIMD-optimized integer)\n");
+    println!("Comparing zenjpeg (f32) vs yuv crate (SIMD-optimized integer)\n");
 
     let test_sizes = [
         (512, 512, 100),
@@ -174,7 +174,7 @@ fn main() {
     for (width, height, iterations) in test_sizes {
         println!("\n{}x{}:", width, height);
 
-        let jpegli_mps = benchmark("jpegli-rs", width, height, iterations, convert_jpegli_f32);
+        let jpegli_mps = benchmark("zenjpeg", width, height, iterations, convert_jpegli_f32);
         let yuv_mps = benchmark("yuv crate", width, height, iterations, convert_yuv_crate);
 
         let speedup = yuv_mps / jpegli_mps;
@@ -188,7 +188,7 @@ fn main() {
     }
 
     println!("\n\nNotes:");
-    println!("- jpegli-rs uses f32 math throughout (matches jpegli C++ precision)");
+    println!("- zenjpeg uses f32 math throughout (matches jpegli C++ precision)");
     println!("- yuv crate uses integer SIMD (AVX2/SSE/NEON) with fixed-point math");
     println!("- Both use BT.601 full-range coefficients");
     println!("- Both output 4:2:0 subsampled planes");

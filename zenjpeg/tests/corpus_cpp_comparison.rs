@@ -85,7 +85,7 @@ fn decode_jpeg(data: &[u8]) -> codec_eval::Result<ImageData> {
 /// Register Rust jpegli encoder with decoder
 fn register_rust_jpegli(session: &mut EvalSession) {
     session.add_codec_with_decode(
-        "jpegli-rs",
+        "zenjpeg",
         env!("CARGO_PKG_VERSION"),
         // Encoder
         Box::new(|image, request| {
@@ -101,16 +101,16 @@ fn register_rust_jpegli(session: &mut EvalSession) {
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)
                 .map_err(|e| codec_eval::Error::Codec {
-                    codec: "jpegli-rs".to_string(),
+                    codec: "zenjpeg".to_string(),
                     message: format!("{}", e),
                 })?;
             enc.push_packed(&rgb_data, enough::Unstoppable)
                 .map_err(|e| codec_eval::Error::Codec {
-                    codec: "jpegli-rs".to_string(),
+                    codec: "zenjpeg".to_string(),
                     message: format!("{}", e),
                 })?;
             let encoded = enc.finish().map_err(|e| codec_eval::Error::Codec {
-                codec: "jpegli-rs".to_string(),
+                codec: "zenjpeg".to_string(),
                 message: format!("{}", e),
             })?;
 
@@ -311,7 +311,7 @@ fn test_corpus_comparison() {
                 // Find results for Q90
                 for result in &report.results {
                     if (result.quality - 90.0).abs() < 0.1 {
-                        if result.codec_id == "jpegli-rs" {
+                        if result.codec_id == "zenjpeg" {
                             total_rust_bytes += result.file_size as u64;
                             if let Some(dssim) = result.metrics.dssim {
                                 total_rust_dssim += dssim;
@@ -354,7 +354,7 @@ fn test_corpus_comparison() {
         println!("| Codec | Avg Size | Avg DSSIM |");
         println!("|-------|----------|-----------|");
         println!(
-            "| jpegli-rs  | {:.0} bytes | {:.6} |",
+            "| zenjpeg  | {:.0} bytes | {:.6} |",
             avg_rust_bytes, avg_rust_dssim
         );
         println!(

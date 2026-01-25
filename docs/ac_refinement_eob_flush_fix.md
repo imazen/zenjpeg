@@ -64,7 +64,7 @@ if newly_nonzero {
 
 Test command that exposed the bug:
 ```bash
-cd jpegli-rs && cargo test --test progressive_encoding -- q10 --nocapture
+cd zenjpeg && cargo test --test progressive_encoding -- q10 --nocapture
 ```
 
 The test image was a 64x64 noise image with noise_mul=13 at Q10 progressive mode.
@@ -78,6 +78,6 @@ Both print token-by-token output for AC refinement scans.
 
 ## Related Files
 
-- `/home/lilith/work/jpegli-rs/zenjpeg/src/huffman_opt.rs` - tokenization
-- `/home/lilith/work/jpegli-rs/zenjpeg/src/entropy.rs` - encoding
-- `/home/lilith/work/jpegli-rs/internal/jpegli-cpp/lib/jpegli/entropy_coding.cc` - C++ reference
+- `/home/lilith/work/zenjpeg/zenjpeg/src/huffman_opt.rs` - tokenization
+- `/home/lilith/work/zenjpeg/zenjpeg/src/entropy.rs` - encoding
+- `/home/lilith/work/zenjpeg/internal/jpegli-cpp/lib/jpegli/entropy_coding.cc` - C++ reference

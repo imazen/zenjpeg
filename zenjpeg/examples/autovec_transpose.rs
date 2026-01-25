@@ -9,8 +9,8 @@
 //!
 //! The `multiversion` crate enables this at runtime without global target flags.
 //!
-//! Run with: cargo asm -p jpegli-rs --example autovec_transpose --release transpose_naive
-//! Compare:  cargo asm -p jpegli-rs --example autovec_transpose --release transpose_multiversion
+//! Run with: cargo asm -p zenjpeg --example autovec_transpose --release transpose_naive
+//! Compare:  cargo asm -p zenjpeg --example autovec_transpose --release transpose_multiversion
 
 #![allow(dead_code)]
 
@@ -355,6 +355,6 @@ fn main() {
     );
 
     println!("\nTo compare assembly:");
-    println!("  cargo asm -p jpegli-rs --example autovec_transpose --release transpose_naive");
-    println!("  cargo asm -p jpegli-rs --example autovec_transpose --release transpose_chunked");
+    println!("  cargo asm -p zenjpeg --example autovec_transpose --release transpose_naive");
+    println!("  cargo asm -p zenjpeg --example autovec_transpose --release transpose_chunked");
 }

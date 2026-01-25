@@ -536,7 +536,7 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     decoder.decode().expect("decode failed")
 }
 
-/// Decode using jpegli-rs with ICC profile support (required for XYB)
+/// Decode using zenjpeg with ICC profile support (required for XYB)
 fn decode_jpeg_jpegli(data: &[u8]) -> Vec<u8> {
     zenjpeg::decoder::Decoder::new()
         .apply_icc(true)
@@ -902,7 +902,7 @@ fn test_ycbcr_440_progressive() {
 }
 
 /// XYB baseline quality test.
-/// Uses jpegli-rs decoder with ICC/CMS support for correct XYB→sRGB conversion.
+/// Uses zenjpeg decoder with ICC/CMS support for correct XYB→sRGB conversion.
 #[test]
 fn test_xyb_444_baseline() {
     let path = get_frymire_path();
@@ -932,7 +932,7 @@ fn test_xyb_444_baseline() {
 }
 
 /// XYB progressive quality test.
-/// Uses jpegli-rs decoder with ICC/CMS support for correct XYB→sRGB conversion.
+/// Uses zenjpeg decoder with ICC/CMS support for correct XYB→sRGB conversion.
 #[test]
 fn test_xyb_444_progressive() {
     let path = get_frymire_path();
@@ -1090,7 +1090,7 @@ fn generate_reference_values() {
 // BENCHMARK: RUST VS C++ PERFORMANCE
 // ============================================================================
 
-/// Benchmark comparing Rust jpegli-rs vs C++ cjpegli CLI.
+/// Benchmark comparing Rust zenjpeg vs C++ cjpegli CLI.
 ///
 /// **Note on CLI overhead**: This benchmark uses the cjpegli CLI tool which
 /// includes process spawn and file I/O overhead. While this doesn't measure

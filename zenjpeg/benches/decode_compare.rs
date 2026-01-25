@@ -1,8 +1,8 @@
-//! Decoder comparison benchmark: jpegli-rs vs zune-jpeg.
+//! Decoder comparison benchmark: zenjpeg vs zune-jpeg.
 //!
 //! Run with:
 //! ```sh
-//! cargo bench -p jpegli-rs --bench decode_compare --features decoder
+//! cargo bench -p zenjpeg --bench decode_compare --features decoder
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -61,7 +61,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
             },
         );
 
-        // jpegli-rs baseline
+        // zenjpeg baseline
         #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("jpegli-baseline", format!("{}x{}", width, height)),
@@ -93,7 +93,7 @@ fn bench_decode_comparison(c: &mut Criterion) {
             },
         );
 
-        // jpegli-rs progressive
+        // zenjpeg progressive
         #[cfg(feature = "decoder")]
         group.bench_with_input(
             BenchmarkId::new("jpegli-progressive", format!("{}x{}", width, height)),

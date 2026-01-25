@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-**Problem:** Rust jpegli-rs AQ functions consume 24% of encode time vs C++ jpegli's 8% (3x relative overhead).
+**Problem:** Rust zenjpeg AQ functions consume 24% of encode time vs C++ jpegli's 8% (3x relative overhead).
 
 **Current state (2026-01-21):**
 - Default build (wide only): 21.2ms, 73.8 MP/s
@@ -125,7 +125,7 @@ let result = a * b + c;  // May or may not use FMA
 ### Disassembling C++ jpegli (Highway)
 
 ```bash
-cd /home/lilith/work/jpegli-rs/internal/jpegli-cpp
+cd /home/lilith/work/zenjpeg/internal/jpegli-cpp
 
 # Build with specific target (default is usually native)
 mkdir -p build-v3 && cd build-v3
@@ -155,7 +155,7 @@ objdump -d build-v4/lib/libjpegli-static.a | grep -E "vmov|vadd|vmul|vfma|vperm"
 ### Disassembling Rust (cargo asm)
 
 ```bash
-cd /home/lilith/work/jpegli-rs
+cd /home/lilith/work/zenjpeg
 
 # Install cargo-asm if needed
 cargo install cargo-asm
@@ -291,7 +291,7 @@ RUSTFLAGS="-C target-cpu=x86-64-v4" cargo run --release -p zenjpeg \
     --example cjpegli_rs_profile -- IMAGE.png -p 0 --num_reps 50
 
 # Flamegraph + perf report
-RUSTFLAGS="-C target-cpu=x86-64-v4" cargo flamegraph --release -p jpegli-rs \
+RUSTFLAGS="-C target-cpu=x86-64-v4" cargo flamegraph --release -p zenjpeg \
     --example cjpegli_rs_profile -- IMAGE.png -p 0 --num_reps 50
 perf report --stdio --no-children -g none --percent-limit 0.5 2>/dev/null
 ```
@@ -953,7 +953,7 @@ zenjpeg/src/quant/aq/streaming.rs
 
 ```bash
 # Run streaming AQ tests
-cargo test -p jpegli-rs --features "archmage-simd,test-utils" --lib streaming --release
+cargo test -p zenjpeg --features "archmage-simd,test-utils" --lib streaming --release
 
 # Benchmark comparison
 cargo build --release -p zenjpeg --example cjpegli_rs_profile --features "test-utils"

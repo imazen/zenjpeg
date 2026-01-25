@@ -1,4 +1,4 @@
-# SIMD Optimization Strategy for jpegli-rs
+# SIMD Optimization Strategy for zenjpeg
 
 ## Current Performance (After Optimizations)
 

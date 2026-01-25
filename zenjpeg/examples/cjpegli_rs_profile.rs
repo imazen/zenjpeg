@@ -1,4 +1,4 @@
-//! cjpegli-rs-profile: CLI profiling tool matching cjpegli defaults.
+//! czenjpeg-profile: CLI profiling tool matching cjpegli defaults.
 //!
 //! Loads image once, compresses N times for accurate timing.
 //! Matches cjpegli defaults: [YUV d1.000 AQ p2 OPT]

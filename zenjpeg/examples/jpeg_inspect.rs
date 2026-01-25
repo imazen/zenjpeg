@@ -441,8 +441,8 @@ fn validate_jpeg(data: &[u8], path: &str) {
         Err(e) => println!("ERROR: {:?}", e),
     }
 
-    // Test with jpegli-rs decoder
-    print!("  jpegli-rs:  ");
+    // Test with zenjpeg decoder
+    print!("  zenjpeg:  ");
     match zenjpeg::decoder::Decoder::new().decode(data) {
         Ok(img) => println!(
             "OK ({}x{}, {} bytes)",

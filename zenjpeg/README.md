@@ -7,7 +7,7 @@
 
 A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
-> **Note:** This crate was previously published as `jpegli-rs`. If migrating, update your imports from `use jpegli::` to `use zenjpeg::`.
+> **Note:** This crate was previously published as `zenjpeg`. If migrating, update your imports from `use jpegli::` to `use zenjpeg::`.
 
 ## Heritage and Divergence
 

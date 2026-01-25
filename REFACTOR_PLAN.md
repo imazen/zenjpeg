@@ -1,4 +1,4 @@
-# jpegli-rs Refactoring Plan
+# zenjpeg Refactoring Plan
 
 Goal: Organize by encoder/decoder separation, algorithm family, and intuitive structure.
 Target: No file over 2000 lines.

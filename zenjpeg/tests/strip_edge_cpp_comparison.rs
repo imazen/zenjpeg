@@ -3,7 +3,7 @@
 //! Uses REAL corpus images cropped to partial MCU dimensions.
 //! Enforces strict 1% size tolerance to catch edge handling bugs.
 //!
-//! Run with: cargo test --release -p jpegli-rs --test strip_edge_cpp_comparison -- --nocapture --ignored
+//! Run with: cargo test --release -p zenjpeg --test strip_edge_cpp_comparison -- --nocapture --ignored
 
 use dssim::Dssim;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};

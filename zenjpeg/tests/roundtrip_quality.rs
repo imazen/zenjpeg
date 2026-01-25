@@ -1,6 +1,6 @@
 //! Integration tests for roundtrip quality verification.
 //!
-//! These tests encode with jpegli-rs and decode with jpeg-decoder (reference),
+//! These tests encode with zenjpeg and decode with jpeg-decoder (reference),
 //! then verify quality using DSSIM.
 
 use dssim::Dssim;
