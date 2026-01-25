@@ -87,7 +87,8 @@ img-parts = { workspace = true }
 ultrahdr-core = { version = "0.1.0" }
 
 [features]
-default = ["std", "yuv", "unsafe_simd", "archmage-simd"]
+default = ["std", "yuv", "unsafe_simd"]
+# Note: archmage-simd disabled from default - causes Huffman encoding bugs
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
