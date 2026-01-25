@@ -84,6 +84,8 @@ pub(super) struct JpegParser<'a> {
     // Extras preservation
     preserve_config: Option<PreserveConfig>,
     extras: Option<DecodedExtras>,
+    /// Position of MPF TIFF header (after "MPF\0") for calculating absolute offsets
+    mpf_header_pos: usize,
 }
 
 impl<'a> JpegParser<'a> {
@@ -130,6 +132,7 @@ impl<'a> JpegParser<'a> {
             max_pixels,
             preserve_config,
             extras,
+            mpf_header_pos: 0,
         })
     }
 
@@ -467,6 +470,10 @@ impl<'a> JpegParser<'a> {
         // The current position should be right after the primary EOI
         let primary_eoi_pos = self.position;
 
+        // MPF offsets for secondary images are relative to the TIFF header within MPF
+        // (after "MPF\0" signature). We need to add the base position to get absolute offsets.
+        let mpf_base = self.mpf_header_pos;
+
         // Extract secondary images based on MPF entries
         for (idx, entry) in mpf_dir.images.iter().enumerate() {
             // Skip primary image (index 0 or BaselinePrimary type)
@@ -480,13 +487,15 @@ impl<'a> JpegParser<'a> {
             }
 
             // Calculate absolute offset
-            // MPF offsets are relative to the MPF marker position, but for simplicity
-            // we use the primary EOI as a reference point since offsets are usually
-            // from the start of file for secondary images
+            // MPF offsets for secondary images are relative to the TIFF header (after "MPF\0")
             let offset = if entry.offset == 0 {
                 // Offset 0 means immediately after primary image
                 primary_eoi_pos
+            } else if mpf_base > 0 {
+                // Add base position to get absolute file offset
+                mpf_base + entry.offset as usize
             } else {
+                // Fallback: treat as absolute offset (shouldn't happen if MPF was properly parsed)
                 entry.offset as usize
             };
 
