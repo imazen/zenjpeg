@@ -140,61 +140,138 @@ impl<'a> JpegParser<'a> {
 
     /// Extract gain map data and metadata early (before full decode).
     ///
-    /// This is used by the UltraHDR streaming reader to get the gain map
-    /// without having to fully decode the image first.
+    /// This scans the entire JPEG for XMP and MPF markers, since these
+    /// may appear after the frame header (SOF) and thus not be parsed
+    /// during `read_header()`.
     #[cfg(feature = "ultrahdr")]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
     ) -> Result<(Option<Vec<u8>>, Option<ultrahdr_core::GainMapMetadata>)> {
+        use super::extras::{detect_segment_type, parse_mpf_directory, MpfDirectory, SegmentType};
         use ultrahdr_core::metadata::xmp::parse_xmp;
 
-        // Get extras (or return None, None if not present)
-        let Some(ref extras) = self.extras else {
-            return Ok((None, None));
-        };
+        const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+        const MPF_SIG: &[u8] = b"MPF\0";
 
-        // Parse XMP for metadata
-        let metadata = extras.xmp().and_then(|xmp| {
-            // Check if this is actually UltraHDR XMP
+        let mut xmp_data: Option<String> = None;
+        let mut mpf_directory: Option<MpfDirectory> = None;
+        let mut mpf_header_pos: usize = 0; // Position of MP header (after "MPF\0")
+
+        // Scan through the entire JPEG for XMP and MPF markers
+        // We can't rely on self.extras because read_header() stops at SOF
+        let mut pos = 2; // After SOI
+        while pos < full_data.len() - 1 {
+            // Find marker
+            if full_data[pos] != 0xFF {
+                pos += 1;
+                continue;
+            }
+            pos += 1;
+            if pos >= full_data.len() {
+                break;
+            }
+
+            let marker = full_data[pos];
+            pos += 1;
+
+            // Skip padding bytes
+            if marker == 0xFF || marker == 0x00 {
+                continue;
+            }
+
+            // EOI
+            if marker == MARKER_EOI {
+                break;
+            }
+
+            // Markers without length
+            if marker >= 0xD0 && marker <= 0xD7 {
+                // RST markers
+                continue;
+            }
+
+            // Read length
+            if pos + 2 > full_data.len() {
+                break;
+            }
+            let length = ((full_data[pos] as usize) << 8) | (full_data[pos + 1] as usize);
+            if length < 2 {
+                break;
+            }
+            pos += 2;
+            let data_len = length - 2;
+
+            if pos + data_len > full_data.len() {
+                break;
+            }
+
+            let seg_data = &full_data[pos..pos + data_len];
+
+            match marker {
+                0xE1 => {
+                    // APP1 - might be XMP
+                    if detect_segment_type(marker, seg_data) == SegmentType::Xmp {
+                        if seg_data.starts_with(XMP_NS) && xmp_data.is_none() {
+                            if let Ok(s) = core::str::from_utf8(&seg_data[XMP_NS.len()..]) {
+                                xmp_data = Some(s.to_string());
+                            }
+                        }
+                    }
+                }
+                0xE2 => {
+                    // APP2 - might be MPF
+                    if detect_segment_type(marker, seg_data) == SegmentType::Mpf
+                        && mpf_directory.is_none()
+                    {
+                        mpf_directory = parse_mpf_directory(seg_data);
+                        // Record the position of the MP header (right after "MPF\0")
+                        // This is needed to calculate absolute offsets
+                        if seg_data.starts_with(MPF_SIG) {
+                            mpf_header_pos = pos + MPF_SIG.len();
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            pos += data_len;
+        }
+
+        // Parse metadata from XMP
+        let metadata = xmp_data.as_ref().and_then(|xmp| {
             if !xmp.contains("hdrgm:Version") && !xmp.contains("hdrgm:GainMapMax") {
                 return None;
             }
             parse_xmp(xmp).ok().map(|(m, _)| m)
         });
 
-        // If no metadata, this isn't an UltraHDR image
+        // If no metadata, not an UltraHDR image
         if metadata.is_none() {
             return Ok((None, None));
         }
 
-        // Get MPF directory to find gain map location
-        let gainmap_data = if let Some(mpf_dir) = extras.mpf() {
-            // Find the gain map entry (type Undefined)
-            let mut found = None;
-            for (idx, entry) in mpf_dir.images.iter().enumerate() {
+        // Extract gain map JPEG from MPF directory
+        // MPF offsets are relative to the start of the MP header (right after "MPF\0")
+        let gainmap_data = mpf_directory.and_then(|mpf| {
+            for (idx, entry) in mpf.images.iter().enumerate() {
                 if idx == 0 {
-                    continue; // Skip primary
+                    continue; // Skip primary (offset 0 means the main image)
                 }
-                if entry.image_type.is_gainmap() {
-                    // Calculate offset - MPF offsets are typically absolute from file start
-                    let offset = entry.offset as usize;
-                    let end = offset.saturating_add(entry.size as usize);
+                if entry.image_type.is_gainmap() && entry.offset > 0 {
+                    // Calculate absolute offset: MPF header position + relative offset
+                    let absolute_offset = mpf_header_pos + entry.offset as usize;
+                    let end = absolute_offset.saturating_add(entry.size as usize);
                     if end <= full_data.len() {
-                        let data = &full_data[offset..end];
-                        // Verify it looks like a JPEG
+                        let data = &full_data[absolute_offset..end];
                         if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
-                            found = Some(data.to_vec());
-                            break;
+                            return Some(data.to_vec());
                         }
                     }
                 }
             }
-            found
-        } else {
-            // No MPF directory - try to find gain map from preserved secondary images
-            extras.gainmap().map(|data| data.to_vec())
-        };
+            None
+        });
 
         Ok((gainmap_data, metadata))
     }

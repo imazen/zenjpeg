@@ -763,6 +763,7 @@ fn is_grayscale_content(pixels: &[u8]) -> bool {
 #[cfg(all(test, feature = "ultrahdr"))]
 mod tests {
     use super::*;
+    use crate::decode::Decoder;
 
     #[test]
     fn test_config_builder() {
@@ -790,5 +791,86 @@ mod tests {
         let edit = UltraHdrReaderConfig::editing();
         assert_eq!(edit.mode, UltraHdrMode::SdrAndGainMap);
         assert!(edit.preserve_metadata);
+    }
+
+    /// Test with a real UltraHDR image if available.
+    #[test]
+    #[ignore = "requires test file at /mnt/v/gen-dress.jpg"]
+    fn test_real_ultrahdr_sdr_decode() {
+        let path = std::path::Path::new("/mnt/v/gen-dress.jpg");
+        if !path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(path).expect("failed to read test file");
+
+        // Test SDR-only mode (should work even with gain map)
+        let config = UltraHdrReaderConfig::sdr_only();
+        let mut reader = Decoder::new()
+            .ultrahdr_reader(&data, config)
+            .expect("failed to create reader");
+
+        assert!(reader.is_ultrahdr());
+        let dims = reader.dimensions();
+        assert!(dims.width > 0);
+        assert!(dims.height > 0);
+
+        // Allocate output buffer
+        let row_size = dims.width as usize * 3;
+        let mut sdr_buf = vec![0u8; row_size * 16]; // 16 rows at a time
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let rows = reader
+                .read_rows(16, Some(&mut sdr_buf), None, None)
+                .expect("failed to read rows");
+            total_rows += rows;
+        }
+
+        assert_eq!(total_rows, dims.height as usize);
+    }
+
+    /// Test HDR decode with Full memory strategy.
+    #[test]
+    #[ignore = "requires test file at /mnt/v/gen-dress.jpg"]
+    fn test_real_ultrahdr_hdr_decode() {
+        let path = std::path::Path::new("/mnt/v/gen-dress.jpg");
+        if !path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(path).expect("failed to read test file");
+
+        // Test HDR mode with default settings
+        let config = UltraHdrReaderConfig::hdr_default();
+        let mut reader = Decoder::new()
+            .ultrahdr_reader(&data, config)
+            .expect("failed to create reader");
+
+        assert!(reader.is_ultrahdr());
+        assert!(reader.metadata().is_some());
+
+        let dims = reader.dimensions();
+        let hdr_row_size = dims.width as usize * 4; // RGBA f32
+
+        let mut hdr_buf = vec![0.0f32; hdr_row_size];
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let rows = reader
+                .read_rows(1, None, Some(&mut hdr_buf), None)
+                .expect("failed to read rows");
+            if rows > 0 {
+                total_rows += rows;
+
+                // Verify HDR values are reasonable (in linear light, 0-∞)
+                for &v in &hdr_buf[..hdr_row_size] {
+                    assert!(v.is_finite(), "HDR value should be finite");
+                    // HDR values can be > 1.0 for bright areas
+                }
+            }
+        }
+
+        assert_eq!(total_rows, dims.height as usize);
     }
 }
