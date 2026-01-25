@@ -8,6 +8,16 @@ This document describes a redesigned streaming HDR architecture with:
 3. **Multiple output formats** (f32, i16, u8)
 4. **BT.601 constraint awareness** (JPEG always uses fixed YCbCr matrix)
 
+## API Requirements (See CLAUDE.md)
+
+**All pixel APIs MUST follow these rules:**
+
+- **Type-safe pixels**: Use `rgb::RGB<T>` or `rgb::RGBA<T>`, NEVER raw `&[u8]`
+- **Stride ALWAYS required**: Via `imgref::ImgRef` or explicit `stride_pixels` parameter
+- **Caller owns buffers**: Write into caller-provided `&mut [T]`, don't allocate
+- **Fallible allocation**: Use `try_reserve()`, return `Result` on OOM
+- **16-32 bit precision**: Internal processing MUST be f32 or i32, NEVER u8 arithmetic
+
 ## Color Pipeline Architecture
 
 ### The BT.601 Constraint
@@ -184,8 +194,11 @@ pub trait StreamingTonemapper: Send {
     /// Process HDR rows and produce SDR rows.
     ///
     /// # Arguments
-    /// - `hdr_rows`: Input linear RGB f32, `[R,G,B,R,G,B,...]`, length = width * 3 * count
-    /// - `sdr_out`: Output buffer, same size as input
+    /// - `hdr_rows`: Input linear RGB f32, with stride (use imgref or explicit stride)
+    /// - `hdr_stride`: Stride in pixels (not bytes!) for input buffer
+    /// - `sdr_out`: Output buffer, caller-provided, same layout as input
+    /// - `sdr_stride`: Stride in pixels for output buffer
+    /// - `width`: Actual pixel width (may be less than stride)
     /// - `row_index`: Index of first input row (for position-aware algorithms)
     /// - `count`: Number of input rows
     ///
@@ -196,16 +209,19 @@ pub trait StreamingTonemapper: Send {
     /// For lagged: may buffer input, output may be delayed
     fn process_rows(
         &mut self,
-        hdr_rows: &[f32],
-        sdr_out: &mut [f32],
+        hdr_rows: &[rgb::RGB<f32>],
+        hdr_stride: usize,
+        sdr_out: &mut [rgb::RGB<f32>],
+        sdr_stride: usize,
+        width: usize,
         row_index: usize,
         count: usize,
     ) -> (usize, usize);
 
     /// Flush remaining buffered rows after all input is processed.
     ///
-    /// May need to be called multiple times until it returns 0.
-    fn flush(&mut self, sdr_out: &mut [f32]) -> usize;
+    /// Caller provides output buffer with stride. May need multiple calls until returns 0.
+    fn flush(&mut self, sdr_out: &mut [rgb::RGB<f32>], stride: usize, width: usize) -> usize;
 
     /// Optional metadata learned during tonemapping (peak luminance, etc.)
     fn metadata(&self) -> Option<TonemapperMetadata> { None }
@@ -250,23 +266,27 @@ impl<T: PixelTonemapper> StreamingTonemapper for PixelTonemapperAdapter<T> {
 
     fn process_rows(
         &mut self,
-        hdr_rows: &[f32],
-        sdr_out: &mut [f32],
+        hdr_rows: &[rgb::RGB<f32>],
+        hdr_stride: usize,
+        sdr_out: &mut [rgb::RGB<f32>],
+        sdr_stride: usize,
+        width: usize,
         _row_index: usize,
         count: usize,
     ) -> (usize, usize) {
-        for i in 0..(count * self.width) {
-            let idx = i * 3;
-            let hdr = [hdr_rows[idx], hdr_rows[idx+1], hdr_rows[idx+2]];
-            let sdr = self.inner.tonemap(hdr);
-            sdr_out[idx] = sdr[0];
-            sdr_out[idx+1] = sdr[1];
-            sdr_out[idx+2] = sdr[2];
+        for row in 0..count {
+            let hdr_row_start = row * hdr_stride;
+            let sdr_row_start = row * sdr_stride;
+            for x in 0..width {
+                let hdr = hdr_rows[hdr_row_start + x];
+                let sdr = self.inner.tonemap([hdr.r, hdr.g, hdr.b]);
+                sdr_out[sdr_row_start + x] = rgb::RGB { r: sdr[0], g: sdr[1], b: sdr[2] };
+            }
         }
         (count, count)
     }
 
-    fn flush(&mut self, _sdr_out: &mut [f32]) -> usize { 0 }
+    fn flush(&mut self, _sdr_out: &mut [rgb::RGB<f32>], _stride: usize, _width: usize) -> usize { 0 }
 }
 ```
 
@@ -474,14 +494,26 @@ impl<T: StreamingTonemapper> StreamingHdrEncoder<T> {
 
     /// Push HDR rows into the encoder.
     ///
-    /// Input format depends on `config.input_colorspace.transfer`:
+    /// # Arguments
+    /// - `hdr_input`: HDR pixel data with stride, type encodes format
+    /// - `stride`: Stride in PIXELS (not bytes!)
+    /// - `width`: Actual pixel width (may be less than stride)
+    /// - `count`: Number of rows
+    ///
+    /// Input transfer function depends on `config.input_colorspace.transfer`:
     /// - Linear: f32 linear light values
     /// - Srgb: f32 gamma-encoded [0,1]
     /// - Pq: f32 PQ-encoded [0,1]
     /// - Hlg: f32 HLG-encoded [0,1]
     ///
     /// Returns number of rows encoded to JPEG (may be delayed due to lag).
-    pub fn push_rows(&mut self, hdr_input: &[f32], count: usize) -> Result<usize> {
+    pub fn push_rows(
+        &mut self,
+        hdr_input: &[rgb::RGB<f32>],
+        stride: usize,
+        width: usize,
+        count: usize,
+    ) -> Result<usize> {
         // [1] Linearize input if needed
         let linear = self.linearize_input(hdr_input);
 
@@ -656,26 +688,29 @@ pub struct StreamingHdrDecoder<'a> {
 }
 
 impl<'a> StreamingHdrDecoder<'a> {
-    /// Read rows into output buffers
+    /// Read rows into caller-provided output buffers.
     ///
-    /// - `hdr_out`: HDR output in `config.output_format`, width * channels * count
-    /// - `sdr_out`: Optional SDR output (RGB8), width * 3 * count
+    /// # Arguments
+    /// - `hdr_out`: Caller's HDR buffer, format per `config.output_format`
+    /// - `hdr_stride`: Stride in PIXELS for HDR output
+    /// - `sdr_out`: Optional caller's SDR buffer (RGB8)
+    /// - `sdr_stride`: Stride in PIXELS for SDR output
+    /// - `width`: Actual pixel width (from decoder, may be less than stride)
+    /// - `max_rows`: Maximum rows to read
+    ///
+    /// Returns actual rows read (may be less at end of image).
     pub fn read_rows(
         &mut self,
-        count: usize,
-        hdr_out: &mut [f32],  // or generic over output type
-        sdr_out: Option<&mut [u8]>,
+        hdr_out: &mut [rgb::RGB<f32>],
+        hdr_stride: usize,
+        sdr_out: Option<&mut [rgb::RGB<u8>]>,
+        sdr_stride: usize,
+        max_rows: usize,
     ) -> Result<usize> {
-        let actual = count.min(self.height - self.current_row);
+        let actual = max_rows.min(self.height - self.current_row);
 
-        // Read SDR rows
-        let mut sdr_buf = vec![0u8; self.width * 3 * actual];
-        self.sdr_reader.read_rows_rgb8(&mut sdr_buf)?;
-
-        // Optionally copy to SDR output
-        if let Some(sdr) = sdr_out {
-            sdr[..sdr_buf.len()].copy_from_slice(&sdr_buf);
-        }
+        // Read SDR rows into caller's buffer or temp buffer
+        // (implementation handles stride internally)
 
         // Reconstruct HDR if gain map available
         if let Some(ref gain) = self.gain_map {
