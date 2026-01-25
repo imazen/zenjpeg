@@ -1,935 +1,541 @@
-# Streaming HDR Encoder/Decoder Design
+# Streaming UltraHDR Codec Design
 
-## Overview
+## Philosophy: Separation of Concerns
 
-This document describes a redesigned streaming HDR architecture with:
-1. **Pluggable tonemappers** with variable lag (0 rows, N rows, or full image)
-2. **Proper color space handling** (primaries + transfer functions)
-3. **Multiple output formats** (f32, i16, u8)
-4. **BT.601 constraint awareness** (JPEG always uses fixed YCbCr matrix)
+**The codec handles JPEG. The caller handles HDR.**
 
-## API Requirements (See CLAUDE.md)
+| Codec Responsibility | Caller Responsibility |
+|---------------------|----------------------|
+| JPEG encode/decode | HDR → SDR tonemapping |
+| MPF structure (multi-picture) | Gain map computation |
+| XMP metadata embedding | Color space conversion |
+| ICC profile embedding | Tonemapper lag buffering |
+| Streaming row I/O | Working space decisions |
 
-**All pixel APIs MUST follow these rules:**
+This separation means:
+- **Simpler codec** - no color science, no tonemapping algorithms
+- **Flexible caller** - use GPU tonemapping, custom algorithms, whatever
+- **Testable** - codec tests don't need HDR test images
+- **No lag complexity in codec** - caller buffers rows if their tonemapper needs it
 
-- **Type-safe pixels**: Use `rgb::RGB<T>` or `rgb::RGBA<T>`, NEVER raw `&[u8]`
-- **Stride ALWAYS required**: Via `imgref::ImgRef` or explicit `stride_pixels` parameter
-- **Caller owns buffers**: Write into caller-provided `&mut [T]`, don't allocate
-- **Fallible allocation**: Use `try_reserve()`, return `Result` on OOM
-- **16-32 bit precision**: Internal processing MUST be f32 or i32, NEVER u8 arithmetic
+## API Requirements (MANDATORY)
 
-## Color Pipeline Architecture
+See `CLAUDE.md` for full rules. Summary:
 
-### The BT.601 Constraint
+| Rule | Requirement |
+|------|-------------|
+| **Pixel format** | `rgb::RGB<T>` or `rgb::RGBA<T>` - NEVER raw `&[u8]` |
+| **Stride** | ALWAYS via `imgref` or explicit `stride_pixels` param |
+| **Precision** | 16-32 bit internal - NEVER 8-bit pixel arithmetic |
+| **Streaming** | Row-by-row only - NEVER whole-image buffering |
+| **Allocation** | Fallible (`try_reserve`) - NEVER panic on OOM |
+| **Buffers** | Caller provides output buffers - NEVER allocate when avoidable |
 
-**CRITICAL**: JPEG encoding ALWAYS uses BT.601 RGB→YCbCr, regardless of input gamut.
+## Streaming UltraHDR Encoder
 
-```
-BT.601 RGB→YCbCr matrix (always used):
-Y  = 0.299R + 0.587G + 0.114B
-Cb = -0.169R - 0.331G + 0.500B + 128
-Cr = 0.500R - 0.419G - 0.081B + 128
-```
+### What It Does
 
-The ICC profile embedded in the JPEG tells decoders what gamut the *decoded* RGB is in.
-The YCbCr encoding math doesn't change - only the interpretation of the final RGB.
+1. Accepts SDR rows (caller already tonemapped)
+2. Accepts gain map rows (caller already computed)
+3. Encodes both as streaming JPEGs internally
+4. Assembles final UltraHDR with MPF + XMP
 
-### Full Encoding Pipeline
+### What It Does NOT Do
 
-```
-HDR Input (any colorspace)
-    │
-    ▼ [1] apply_eotf(input.transfer)
-Linear RGB in source primaries
-    │
-    ▼ [2] convert_primaries(src → working)  [if needed]
-Linear RGB in working primaries
-    │
-    ├──────────────────────────────────┐
-    │                                  │
-    ▼                                  │
-Tonemapper (with lag)            Buffer HDR
-    │                              (for gain)
-    │                                  │
-    ▼                                  │
-SDR Linear RGB                         │
-    │                                  │
-    ▼ [3] compute_gain(hdr/sdr) ◄──────┘
-    │
-    ├──────────────────────────┐
-    ▼                          ▼
-SDR path                   Gain Map path
-    │                          │
-    ▼ [4] convert_primaries    │
-    │     (working → output)   │
-    │                          │
-    ▼ [5] apply_oetf           │
-    │     (output.transfer)    │
-    │                          │
-    ▼ [6] BT.601 RGB→YCbCr     ▼
-    │     (ALWAYS!)        Encode grayscale
-    │                          │
-    ▼                          │
-JPEG encode                    │
-    │                          │
-    ▼ [7] Embed ICC profile    │
-    │     (output primaries)   │
-    │                          │
-    └──────────┬───────────────┘
-               ▼
-        Assemble UltraHDR
-        (SDR + XMP + MPF + Gain Map)
-```
+- Tonemapping (caller's job)
+- Gain map computation (caller's job)
+- Color space conversion (caller's job)
+- Buffering for tonemapper lag (caller's job)
 
-### Color Space Types
+### API
 
 ```rust
-/// Color primaries (gamut definition)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum ColorPrimaries {
-    #[default]
-    Srgb,       // sRGB / BT.709 (identical primaries)
-    DisplayP3,  // DCI-P3 with D65 white point
-    Rec2020,    // ITU-R BT.2020 (very wide for HDR)
-    AdobeRgb,   // Adobe RGB 1998
-}
+use rgb::{RGB, RGBA};
+use imgref::{ImgRef, ImgRefMut};
 
-/// Transfer function (EOTF for decode, OETF for encode)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum TransferFunction {
-    Linear,     // Gamma 1.0 (scene-referred linear light)
-    #[default]
-    Srgb,       // sRGB piecewise (~2.2 with linear toe)
-    Pq,         // SMPTE ST 2084 (HDR10, up to 10000 nits)
-    Hlg,        // ITU-R BT.2100 HLG (broadcast HDR)
-    Gamma22,    // Pure 2.2 power function
-    Gamma24,    // Pure 2.4 power function (BT.1886)
-}
-
-/// Full color space = primaries + transfer
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ColorSpace {
-    pub primaries: ColorPrimaries,
-    pub transfer: TransferFunction,
-}
-
-impl ColorSpace {
-    pub const SRGB: Self = Self { primaries: ColorPrimaries::Srgb, transfer: TransferFunction::Srgb };
-    pub const LINEAR_SRGB: Self = Self { primaries: ColorPrimaries::Srgb, transfer: TransferFunction::Linear };
-    pub const DISPLAY_P3: Self = Self { primaries: ColorPrimaries::DisplayP3, transfer: TransferFunction::Srgb };
-    pub const LINEAR_P3: Self = Self { primaries: ColorPrimaries::DisplayP3, transfer: TransferFunction::Linear };
-    pub const REC2020_PQ: Self = Self { primaries: ColorPrimaries::Rec2020, transfer: TransferFunction::Pq };
-    pub const REC2020_HLG: Self = Self { primaries: ColorPrimaries::Rec2020, transfer: TransferFunction::Hlg };
-    pub const LINEAR_REC2020: Self = Self { primaries: ColorPrimaries::Rec2020, transfer: TransferFunction::Linear };
-}
-```
-
-## Tonemapper Trait with Variable Lag
-
-### Lag Specification
-
-```rust
-/// How much buffering a tonemapper needs before producing output
-#[derive(Clone, Copy, Debug, Default)]
-pub enum TonemapperLag {
-    /// Zero lag - output available immediately per row
-    /// Examples: Reinhard, ACES filmic, linear clamp
-    #[default]
-    Zero,
-
-    /// Fixed row count lag (lookahead window)
-    /// Examples: Local histogram-based, bilateral filter
-    Rows(usize),
-
-    /// Percentage of image height (0.0 - 1.0)
-    /// Examples: Adaptive local contrast
-    Percent(f32),
-
-    /// Full image buffering required
-    /// Examples: Global histogram, percentile-based exposure
-    Full,
-}
-
-impl TonemapperLag {
-    pub fn to_rows(&self, height: usize) -> usize {
-        match *self {
-            TonemapperLag::Zero => 0,
-            TonemapperLag::Rows(n) => n,
-            TonemapperLag::Percent(p) => (height as f32 * p.clamp(0.0, 1.0)) as usize,
-            TonemapperLag::Full => height,
-        }
-    }
-}
-```
-
-### Streaming Tonemapper Trait
-
-```rust
-/// A tonemapper that operates on streaming row data with configurable lag.
-///
-/// # Lifetime Contract
-/// 1. `init()` called once at start with image dimensions
-/// 2. `process_rows()` called repeatedly with input HDR rows
-/// 3. `flush()` called after all input to drain buffered rows
-///
-/// # Color Space Contract
-/// - Input: Linear RGB in `input_primaries()` gamut
-/// - Output: Linear RGB in `output_primaries()` gamut
-/// - The encoder handles EOTF/OETF and gamut conversions around the tonemapper
-pub trait StreamingTonemapper: Send {
-    /// Lag before first output row is available
-    fn lag(&self) -> TonemapperLag;
-
-    /// Required input color primaries (always linear transfer)
-    fn input_primaries(&self) -> ColorPrimaries;
-
-    /// Output color primaries (always linear transfer)
-    fn output_primaries(&self) -> ColorPrimaries;
-
-    /// Initialize for a specific image size
-    fn init(&mut self, width: usize, height: usize);
-
-    /// Process HDR rows and produce SDR rows.
-    ///
-    /// # Arguments
-    /// - `hdr_rows`: Input linear RGB f32, with stride (use imgref or explicit stride)
-    /// - `hdr_stride`: Stride in pixels (not bytes!) for input buffer
-    /// - `sdr_out`: Output buffer, caller-provided, same layout as input
-    /// - `sdr_stride`: Stride in pixels for output buffer
-    /// - `width`: Actual pixel width (may be less than stride)
-    /// - `row_index`: Index of first input row (for position-aware algorithms)
-    /// - `count`: Number of input rows
-    ///
-    /// # Returns
-    /// `(consumed, produced)` - rows consumed from input, rows written to output
-    ///
-    /// For zero-lag: consumed == produced == count
-    /// For lagged: may buffer input, output may be delayed
-    fn process_rows(
-        &mut self,
-        hdr_rows: &[rgb::RGB<f32>],
-        hdr_stride: usize,
-        sdr_out: &mut [rgb::RGB<f32>],
-        sdr_stride: usize,
-        width: usize,
-        row_index: usize,
-        count: usize,
-    ) -> (usize, usize);
-
-    /// Flush remaining buffered rows after all input is processed.
-    ///
-    /// Caller provides output buffer with stride. May need multiple calls until returns 0.
-    fn flush(&mut self, sdr_out: &mut [rgb::RGB<f32>], stride: usize, width: usize) -> usize;
-
-    /// Optional metadata learned during tonemapping (peak luminance, etc.)
-    fn metadata(&self) -> Option<TonemapperMetadata> { None }
-}
-
-/// Metadata that a tonemapper can provide after processing
-#[derive(Clone, Debug, Default)]
-pub struct TonemapperMetadata {
-    pub hdr_peak_luminance: Option<f32>,  // nits
-    pub hdr_avg_luminance: Option<f32>,   // nits
-    pub dynamic_range_stops: Option<f32>,
-    pub custom: Option<Vec<u8>>,
-}
-```
-
-### Simple Pixel Tonemapper Adapter
-
-For zero-lag per-pixel tonemappers:
-
-```rust
-/// Per-pixel tonemapper (zero lag, no buffering)
-pub trait PixelTonemapper: Send {
-    /// Tonemap a single pixel. Input/output are linear RGB.
-    fn tonemap(&self, hdr: [f32; 3]) -> [f32; 3];
-}
-
-/// Adapter to use PixelTonemapper as StreamingTonemapper
-pub struct PixelTonemapperAdapter<T: PixelTonemapper> {
-    inner: T,
-    primaries: ColorPrimaries,
-    width: usize,
-}
-
-impl<T: PixelTonemapper> StreamingTonemapper for PixelTonemapperAdapter<T> {
-    fn lag(&self) -> TonemapperLag { TonemapperLag::Zero }
-    fn input_primaries(&self) -> ColorPrimaries { self.primaries }
-    fn output_primaries(&self) -> ColorPrimaries { self.primaries }
-
-    fn init(&mut self, width: usize, _height: usize) {
-        self.width = width;
-    }
-
-    fn process_rows(
-        &mut self,
-        hdr_rows: &[rgb::RGB<f32>],
-        hdr_stride: usize,
-        sdr_out: &mut [rgb::RGB<f32>],
-        sdr_stride: usize,
-        width: usize,
-        _row_index: usize,
-        count: usize,
-    ) -> (usize, usize) {
-        for row in 0..count {
-            let hdr_row_start = row * hdr_stride;
-            let sdr_row_start = row * sdr_stride;
-            for x in 0..width {
-                let hdr = hdr_rows[hdr_row_start + x];
-                let sdr = self.inner.tonemap([hdr.r, hdr.g, hdr.b]);
-                sdr_out[sdr_row_start + x] = rgb::RGB { r: sdr[0], g: sdr[1], b: sdr[2] };
-            }
-        }
-        (count, count)
-    }
-
-    fn flush(&mut self, _sdr_out: &mut [rgb::RGB<f32>], _stride: usize, _width: usize) -> usize { 0 }
-}
-```
-
-### Example Tonemappers
-
-```rust
-/// Simple Reinhard tonemapper (zero lag)
-pub struct ReinhardTonemapper {
-    white_point: f32,  // Luminance that maps to 1.0
-}
-
-impl PixelTonemapper for ReinhardTonemapper {
-    fn tonemap(&self, hdr: [f32; 3]) -> [f32; 3] {
-        let wp2 = self.white_point * self.white_point;
-        hdr.map(|c| c * (1.0 + c / wp2) / (1.0 + c))
-    }
-}
-
-/// Local histogram tonemapper (N-row lag for lookahead)
-pub struct LocalHistogramTonemapper {
-    lookahead_rows: usize,
-    // ... histogram state, ring buffers
-}
-
-impl StreamingTonemapper for LocalHistogramTonemapper {
-    fn lag(&self) -> TonemapperLag {
-        TonemapperLag::Rows(self.lookahead_rows)
-    }
-    // ... implementation with row buffering
-}
-
-/// Global auto-exposure tonemapper (full-image lag)
-pub struct GlobalAutoExposure {
-    target_middle_gray: f32,
-    // ... accumulated stats
-}
-
-impl StreamingTonemapper for GlobalAutoExposure {
-    fn lag(&self) -> TonemapperLag { TonemapperLag::Full }
-
-    fn process_rows(&mut self, hdr: &[f32], _sdr: &mut [f32], ...) -> (usize, usize) {
-        // First pass: accumulate statistics, don't output yet
-        self.accumulate_stats(hdr);
-        (count, 0)  // Consume input, produce nothing
-    }
-
-    fn flush(&mut self, sdr_out: &mut [f32]) -> usize {
-        // Now we know the exposure, emit all buffered rows
-        // ...
-    }
-}
-```
-
-## Streaming HDR Encoder
-
-### Configuration
-
-```rust
-/// Configuration for streaming HDR encoding
+/// Configuration for UltraHDR encoding
 #[derive(Clone, Debug)]
-pub struct StreamingHdrConfig {
-    /// Input color space (how to interpret input data)
-    pub input_colorspace: ColorSpace,
-
-    /// Working primaries for tonemapping (typically Rec.2020 for wide gamut)
-    pub working_primaries: ColorPrimaries,
-
-    /// Output SDR color space (embedded as ICC profile)
-    pub output_colorspace: ColorSpace,
-
-    /// Gain map computation settings
-    pub gainmap_config: GainMapConfig,
-
-    /// JPEG quality for SDR base image
+pub struct UltraHdrEncoderConfig {
+    /// JPEG quality for SDR base image (0-100)
     pub sdr_quality: f32,
-
-    /// JPEG quality for gain map
+    /// JPEG quality for gain map (0-100)
     pub gainmap_quality: f32,
+    /// Chroma subsampling for SDR
+    pub sdr_subsampling: ChromaSubsampling,
+    /// Use optimized Huffman tables
+    pub optimize_coding: bool,
 }
 
-impl Default for StreamingHdrConfig {
+impl Default for UltraHdrEncoderConfig {
     fn default() -> Self {
         Self {
-            input_colorspace: ColorSpace::LINEAR_REC2020,
-            working_primaries: ColorPrimaries::Rec2020,
-            output_colorspace: ColorSpace::SRGB,
-            gainmap_config: GainMapConfig::default(),
             sdr_quality: 85.0,
             gainmap_quality: 75.0,
+            sdr_subsampling: ChromaSubsampling::Cs420,
+            optimize_coding: true,
         }
     }
 }
 
-impl StreamingHdrConfig {
-    /// P3 HDR input → sRGB SDR output
-    pub fn p3_to_srgb() -> Self {
-        Self {
-            input_colorspace: ColorSpace::LINEAR_P3,
-            working_primaries: ColorPrimaries::DisplayP3,
-            output_colorspace: ColorSpace::SRGB,
-            ..Default::default()
-        }
-    }
-
-    /// P3 HDR input → P3 SDR output (wide gamut SDR)
-    pub fn p3_to_p3() -> Self {
-        Self {
-            input_colorspace: ColorSpace::LINEAR_P3,
-            working_primaries: ColorPrimaries::DisplayP3,
-            output_colorspace: ColorSpace::DISPLAY_P3,
-            ..Default::default()
-        }
-    }
-
-    /// Rec.2020 PQ input → sRGB SDR output
-    pub fn rec2020_pq_to_srgb() -> Self {
-        Self {
-            input_colorspace: ColorSpace::REC2020_PQ,
-            working_primaries: ColorPrimaries::Rec2020,
-            output_colorspace: ColorSpace::SRGB,
-            ..Default::default()
-        }
-    }
-}
-```
-
-### Encoder State Machine
-
-```rust
-/// Streaming UltraHDR encoder with pluggable tonemapper
-pub struct StreamingHdrEncoder<T: StreamingTonemapper> {
-    config: StreamingHdrConfig,
-    width: usize,
-    height: usize,
-
-    // Tonemapper
-    tonemapper: T,
-    lag_rows: usize,
-
-    // Ring buffers for lag management
-    hdr_ring: RingBuffer<f32>,    // Buffer HDR until SDR ready
-
-    // Position tracking
-    hdr_rows_in: usize,
-    sdr_rows_out: usize,
-    rows_encoded: usize,
-
-    // Color conversion matrices (precomputed)
-    input_to_working: Option<Matrix3x3>,
-    working_to_output: Option<Matrix3x3>,
-
-    // JPEG encoders (created lazily)
-    sdr_encoder: Option<StreamingJpegEncoder>,
-    gainmap_encoder: Option<StreamingJpegEncoder>,
-
-    // Gain map state
-    gainmap_computer: Option<RowEncoder>,
+/// Streaming UltraHDR encoder
+///
+/// Manages two internal JPEG streams (SDR base + gain map) and assembles
+/// them into a single UltraHDR file at finish.
+pub struct StreamingUltraHdrEncoder {
+    // Internal state - not public
+    sdr_encoder: StreamingJpegEncoder,
+    gm_encoder: StreamingJpegEncoder,
+    icc_profile: Option<Vec<u8>>,
+    sdr_rows_pushed: usize,
+    gm_rows_pushed: usize,
 }
 
-impl<T: StreamingTonemapper> StreamingHdrEncoder<T> {
-    pub fn new(
-        width: usize,
-        height: usize,
-        config: StreamingHdrConfig,
-        tonemapper: T,
-    ) -> Result<Self> {
-        let mut tm = tonemapper;
-        tm.init(width, height);
-
-        let lag_rows = tm.lag().to_rows(height);
-
-        // Verify tonemapper color space compatibility
-        if config.working_primaries != tm.input_primaries() {
-            // Need to convert input → working → tonemapper input
-            // (or require they match)
-        }
-
-        // Precompute color matrices
-        let input_to_working = compute_gamut_matrix(
-            config.input_colorspace.primaries,
-            config.working_primaries,
-        );
-        let working_to_output = compute_gamut_matrix(
-            tm.output_primaries(),
-            config.output_colorspace.primaries,
-        );
-
-        Ok(Self {
-            config,
-            width,
-            height,
-            tonemapper: tm,
-            lag_rows,
-            hdr_ring: RingBuffer::new(width * 3, lag_rows + 16),
-            hdr_rows_in: 0,
-            sdr_rows_out: 0,
-            rows_encoded: 0,
-            input_to_working,
-            working_to_output,
-            sdr_encoder: None,
-            gainmap_encoder: None,
-            gainmap_computer: None,
-        })
-    }
-
-    /// Push HDR rows into the encoder.
+impl StreamingUltraHdrEncoder {
+    /// Create a new streaming UltraHDR encoder.
     ///
     /// # Arguments
-    /// - `hdr_input`: HDR pixel data with stride, type encodes format
+    /// - `sdr_width`, `sdr_height`: SDR image dimensions
+    /// - `gm_width`, `gm_height`: Gain map dimensions (often 1/4 or 1/8 of SDR)
+    /// - `config`: Encoder configuration
+    pub fn new(
+        sdr_width: u32,
+        sdr_height: u32,
+        gm_width: u32,
+        gm_height: u32,
+        config: UltraHdrEncoderConfig,
+    ) -> Result<Self>;
+
+    /// Set ICC profile for the SDR image.
+    ///
+    /// - `None` = sRGB assumed (no profile embedded)
+    /// - `Some(bytes)` = embed this ICC profile
+    ///
+    /// Call before pushing any rows.
+    pub fn set_icc_profile(&mut self, icc: Option<&[u8]>);
+
+    /// Push SDR rows into the encoder.
+    ///
+    /// # Arguments
+    /// - `data`: SDR pixel data, gamma-encoded RGB
     /// - `stride`: Stride in PIXELS (not bytes!)
-    /// - `width`: Actual pixel width (may be less than stride)
-    /// - `count`: Number of rows
+    /// - `width`: Actual pixel width (must match constructor)
+    /// - `count`: Number of rows to push
     ///
-    /// Input transfer function depends on `config.input_colorspace.transfer`:
-    /// - Linear: f32 linear light values
-    /// - Srgb: f32 gamma-encoded [0,1]
-    /// - Pq: f32 PQ-encoded [0,1]
-    /// - Hlg: f32 HLG-encoded [0,1]
-    ///
-    /// Returns number of rows encoded to JPEG (may be delayed due to lag).
-    pub fn push_rows(
+    /// Caller is responsible for:
+    /// - Tonemapping HDR → SDR before calling
+    /// - Color space conversion to output gamut
+    /// - Applying output OETF (e.g., sRGB gamma)
+    pub fn push_sdr_rows(
         &mut self,
-        hdr_input: &[rgb::RGB<f32>],
+        data: &[RGB<u8>],
         stride: usize,
         width: usize,
         count: usize,
-    ) -> Result<usize> {
-        // [1] Linearize input if needed
-        let linear = self.linearize_input(hdr_input);
+    ) -> Result<()>;
 
-        // [2] Convert to working primaries
-        let working = self.to_working_primaries(&linear);
+    /// Push SDR rows (16-bit version for higher precision input).
+    pub fn push_sdr_rows_u16(
+        &mut self,
+        data: &[RGB<u16>],
+        stride: usize,
+        width: usize,
+        count: usize,
+    ) -> Result<()>;
 
-        // Store HDR in ring buffer (needed for gain map after SDR ready)
-        self.hdr_ring.push(&working, count);
-        self.hdr_rows_in += count;
+    /// Push gain map rows into the encoder.
+    ///
+    /// # Arguments
+    /// - `data`: Gain map values (grayscale, 0-255)
+    /// - `stride`: Stride in PIXELS
+    /// - `width`: Actual pixel width (must match gm_width from constructor)
+    /// - `count`: Number of rows to push
+    ///
+    /// Caller is responsible for:
+    /// - Computing gain = log2(HDR / SDR) scaled to 0-255
+    /// - Handling gain map resolution (typically 1/4 or 1/8 of SDR)
+    pub fn push_gainmap_rows(
+        &mut self,
+        data: &[u8],  // Grayscale, not RGB
+        stride: usize,
+        width: usize,
+        count: usize,
+    ) -> Result<()>;
 
-        // [3] Process through tonemapper
-        let mut sdr_linear = vec![0.0f32; working.len()];
-        let (consumed, produced) = self.tonemapper.process_rows(
-            &working,
-            &mut sdr_linear,
-            self.hdr_rows_in - count,
-            count,
-        );
+    /// Push multi-channel gain map rows (RGB gain map).
+    pub fn push_gainmap_rows_rgb(
+        &mut self,
+        data: &[RGB<u8>],
+        stride: usize,
+        width: usize,
+        count: usize,
+    ) -> Result<()>;
 
-        // Process available rows (where we have both HDR and SDR)
-        let mut total_encoded = 0;
-        if produced > 0 {
-            total_encoded = self.encode_available_rows(&sdr_linear[..produced * self.width * 3], produced)?;
-        }
+    /// Current SDR row position.
+    pub fn sdr_rows_pushed(&self) -> usize;
 
-        Ok(total_encoded)
-    }
+    /// Current gain map row position.
+    pub fn gainmap_rows_pushed(&self) -> usize;
 
-    fn encode_available_rows(&mut self, sdr_linear: &[f32], count: usize) -> Result<usize> {
-        // Pop corresponding HDR rows from ring buffer
-        let hdr_linear = self.hdr_ring.pop(count);
-
-        // Compute gain map: gain = HDR / SDR (both in linear working primaries)
-        let gain = self.compute_gain(&hdr_linear, sdr_linear, count);
-
-        // [4] Convert SDR to output primaries
-        let sdr_output = self.to_output_primaries(sdr_linear);
-
-        // [5] Apply output OETF (e.g., sRGB gamma)
-        let sdr_gamma = self.apply_oetf(&sdr_output);
-
-        // [6] Encode to JPEG (BT.601 RGB→YCbCr applied internally)
-        self.encode_sdr_rows(&sdr_gamma, count)?;
-        self.encode_gain_rows(&gain, count)?;
-
-        self.rows_encoded += count;
-        Ok(count)
-    }
-
-    /// Finish encoding and return complete UltraHDR JPEG
-    pub fn finish(mut self) -> Result<Vec<u8>> {
-        // Flush tonemapper
-        loop {
-            let mut sdr_buf = vec![0.0f32; self.width * 3 * 64];
-            let flushed = self.tonemapper.flush(&mut sdr_buf);
-            if flushed == 0 { break; }
-            self.encode_available_rows(&sdr_buf[..flushed * self.width * 3], flushed)?;
-        }
-
-        // Finish JPEG encoders
-        let sdr_jpeg = self.sdr_encoder.take().unwrap().finish()?;
-        let gain_jpeg = self.gainmap_encoder.take().unwrap().finish()?;
-
-        // [7] Assemble with ICC profile for output primaries
-        let icc = self.get_output_icc_profile();
-        let metadata = self.build_gainmap_metadata();
-
-        assemble_ultrahdr(sdr_jpeg, gain_jpeg, metadata, icc)
-    }
-
-    fn linearize_input(&self, data: &[f32]) -> Vec<f32> {
-        match self.config.input_colorspace.transfer {
-            TransferFunction::Linear => data.to_vec(),
-            TransferFunction::Srgb => data.iter().map(|&v| srgb_eotf(v)).collect(),
-            TransferFunction::Pq => data.iter().map(|&v| pq_eotf(v)).collect(),
-            TransferFunction::Hlg => data.iter().map(|&v| hlg_eotf(v)).collect(),
-            TransferFunction::Gamma22 => data.iter().map(|&v| v.powf(2.2)).collect(),
-            TransferFunction::Gamma24 => data.iter().map(|&v| v.powf(2.4)).collect(),
-        }
-    }
-
-    fn apply_oetf(&self, linear: &[f32]) -> Vec<f32> {
-        match self.config.output_colorspace.transfer {
-            TransferFunction::Linear => linear.to_vec(),
-            TransferFunction::Srgb => linear.iter().map(|&v| srgb_oetf(v)).collect(),
-            TransferFunction::Pq => linear.iter().map(|&v| pq_oetf(v)).collect(),
-            TransferFunction::Hlg => linear.iter().map(|&v| hlg_oetf(v)).collect(),
-            TransferFunction::Gamma22 => linear.iter().map(|&v| v.powf(1.0/2.2)).collect(),
-            TransferFunction::Gamma24 => linear.iter().map(|&v| v.powf(1.0/2.4)).collect(),
-        }
-    }
-
-    fn get_output_icc_profile(&self) -> Option<Vec<u8>> {
-        match self.config.output_colorspace.primaries {
-            ColorPrimaries::Srgb => None,  // sRGB is assumed, no profile needed
-            ColorPrimaries::DisplayP3 => Some(display_p3_icc_profile()),
-            ColorPrimaries::Rec2020 => Some(rec2020_icc_profile()),
-            ColorPrimaries::AdobeRgb => Some(adobe_rgb_icc_profile()),
-        }
-    }
+    /// Finish encoding and write to caller's buffer.
+    ///
+    /// # Arguments
+    /// - `output`: Caller-provided buffer (will be cleared and filled)
+    /// - `metadata`: Gain map metadata for XMP
+    ///
+    /// Both SDR and gain map must be fully pushed before calling.
+    pub fn finish_into(
+        self,
+        output: &mut Vec<u8>,
+        metadata: &GainMapMetadata,
+    ) -> Result<()>;
 }
 ```
 
-## Streaming HDR Decoder
-
-### Configuration
+### Usage Example
 
 ```rust
-/// Configuration for streaming HDR decode
-#[derive(Clone, Debug)]
-pub struct StreamingHdrDecoderConfig {
-    /// Output color space for reconstructed HDR
-    pub output_colorspace: ColorSpace,
+use zenjpeg::ultrahdr::{StreamingUltraHdrEncoder, UltraHdrEncoderConfig, GainMapMetadata};
+use rgb::RGB;
 
-    /// Output pixel format
-    pub output_format: HdrPixelFormat,
+// Caller does all HDR processing BEFORE calling the codec
+let mut tonemapper = MyTonemapper::new();  // Caller's tonemapper
+let mut gm_computer = MyGainMapComputer::new();  // Caller's gain map
 
-    /// Display boost factor (1.0 = SDR, 4.0 = typical HDR, 8.0 = high-end)
-    pub display_boost: f32,
+// Create encoder
+let mut encoder = StreamingUltraHdrEncoder::new(
+    width, height,           // SDR dimensions
+    width / 4, height / 4,   // Gain map at 1/4 resolution
+    UltraHdrEncoderConfig::default(),
+)?;
 
-    /// Also produce SDR output (for dual-output workflows)
-    pub also_output_sdr: bool,
+// Set ICC profile if not sRGB
+encoder.set_icc_profile(Some(&display_p3_icc));
 
-    /// Memory strategy for gain map
-    pub gain_map_memory: GainMapMemory,
+// Caller's buffers with stride for SIMD alignment
+let sdr_stride = (width as usize + 15) & !15;
+let gm_stride = (width as usize / 4 + 15) & !15;
+let mut sdr_buf = vec![RGB::default(); sdr_stride];
+let mut gm_buf = vec![0u8; gm_stride];
+
+// Stream rows - caller handles tonemapper lag
+for row in 0..height {
+    // Caller reads HDR, tonemaps, writes to sdr_buf
+    let hdr_row = source.read_hdr_row(row);
+    tonemapper.tonemap_row(&hdr_row, &mut sdr_buf[..width as usize]);
+
+    // Push SDR row with stride
+    encoder.push_sdr_rows(&sdr_buf, sdr_stride, width as usize, 1)?;
+
+    // Gain map at 1/4 resolution
+    if row % 4 == 0 {
+        gm_computer.compute_row(&hdr_row, &sdr_buf, &mut gm_buf[..width as usize / 4]);
+        encoder.push_gainmap_rows(&gm_buf, gm_stride, width as usize / 4, 1)?;
+    }
 }
 
-/// Output pixel format for HDR
-#[derive(Clone, Copy, Debug, Default)]
-pub enum HdrPixelFormat {
-    /// Linear light f32 RGB/RGBA [0, peak_nits]
-    #[default]
-    LinearF32,
-    LinearF32A,
-
-    /// PQ-encoded f32 RGB [0, 1]
-    PqF32,
-
-    /// HLG-encoded f32 RGB [0, 1]
-    HlgF32,
-
-    /// Linear light i16 RGB (1.0 = 10000, for 0.0001 precision)
-    LinearI16,
-
-    /// Half-precision float
-    LinearF16,
-}
+// Finish into caller's buffer
+let mut output = Vec::new();
+output.try_reserve(estimated_size)?;  // Fallible!
+encoder.finish_into(&mut output, &gm_computer.metadata())?;
 ```
 
-### Decoder
+## Streaming UltraHDR Decoder
+
+### What It Does
+
+1. Decodes SDR JPEG rows on demand
+2. Decodes gain map JPEG rows on demand (if present)
+3. Provides metadata and ICC profile access
+
+### What It Does NOT Do
+
+- Apply gain map (caller's job)
+- Color space conversion (caller's job)
+- HDR reconstruction (caller's job)
+
+### API
 
 ```rust
 /// Streaming UltraHDR decoder
-pub struct StreamingHdrDecoder<'a> {
-    config: StreamingHdrDecoderConfig,
-
-    // Base JPEG decoder
-    sdr_reader: ScanlineReader<'a>,
-
-    // Gain map state
-    gain_map: Option<GainMapState>,
-    metadata: Option<GainMapMetadata>,
-
-    // Color conversion
-    sdr_primaries: ColorPrimaries,  // From ICC profile or assume sRGB
-    output_matrix: Option<Matrix3x3>,
-
-    // Position
-    width: usize,
-    height: usize,
-    current_row: usize,
+///
+/// Provides streaming access to SDR base image and gain map separately.
+/// Caller is responsible for HDR reconstruction.
+pub struct StreamingUltraHdrDecoder<'a> {
+    // Internal state
 }
 
-impl<'a> StreamingHdrDecoder<'a> {
-    /// Read rows into caller-provided output buffers.
+impl<'a> StreamingUltraHdrDecoder<'a> {
+    /// Create decoder from JPEG data.
+    pub fn new(data: &'a [u8]) -> Result<Self>;
+
+    /// Check if this is an UltraHDR image (has gain map metadata).
+    pub fn is_ultrahdr(&self) -> bool;
+
+    /// SDR image dimensions.
+    pub fn sdr_dimensions(&self) -> (u32, u32);
+
+    /// Gain map dimensions (if present).
+    pub fn gainmap_dimensions(&self) -> Option<(u32, u32)>;
+
+    /// Get gain map metadata (if present).
+    pub fn metadata(&self) -> Option<&GainMapMetadata>;
+
+    /// Get ICC profile (if present).
+    pub fn icc_profile(&self) -> Option<&[u8]>;
+
+    /// Current SDR row position.
+    pub fn sdr_row(&self) -> usize;
+
+    /// Current gain map row position.
+    pub fn gainmap_row(&self) -> usize;
+
+    /// Read SDR rows into caller's buffer.
     ///
     /// # Arguments
-    /// - `hdr_out`: Caller's HDR buffer, format per `config.output_format`
-    /// - `hdr_stride`: Stride in PIXELS for HDR output
-    /// - `sdr_out`: Optional caller's SDR buffer (RGB8)
-    /// - `sdr_stride`: Stride in PIXELS for SDR output
-    /// - `width`: Actual pixel width (from decoder, may be less than stride)
+    /// - `out`: Caller's output buffer
+    /// - `stride`: Stride in PIXELS
+    /// - `width`: Expected width (for validation)
     /// - `max_rows`: Maximum rows to read
     ///
-    /// Returns actual rows read (may be less at end of image).
-    pub fn read_rows(
+    /// Returns actual rows read.
+    pub fn read_sdr_rows(
         &mut self,
-        hdr_out: &mut [rgb::RGB<f32>],
-        hdr_stride: usize,
-        sdr_out: Option<&mut [rgb::RGB<u8>]>,
-        sdr_stride: usize,
+        out: &mut [RGB<u8>],
+        stride: usize,
+        width: usize,
         max_rows: usize,
-    ) -> Result<usize> {
-        let actual = max_rows.min(self.height - self.current_row);
+    ) -> Result<usize>;
 
-        // Read SDR rows into caller's buffer or temp buffer
-        // (implementation handles stride internally)
+    /// Read SDR rows as 16-bit (for higher precision).
+    pub fn read_sdr_rows_u16(
+        &mut self,
+        out: &mut [RGB<u16>],
+        stride: usize,
+        width: usize,
+        max_rows: usize,
+    ) -> Result<usize>;
 
-        // Reconstruct HDR if gain map available
-        if let Some(ref gain) = self.gain_map {
-            self.reconstruct_hdr(&sdr_buf, actual, hdr_out, gain)?;
-        } else {
-            // No gain map - convert SDR to HDR format
-            self.sdr_to_hdr_fallback(&sdr_buf, actual, hdr_out);
-        }
+    /// Read gain map rows into caller's buffer.
+    ///
+    /// # Arguments
+    /// - `out`: Caller's output buffer (grayscale)
+    /// - `stride`: Stride in PIXELS
+    /// - `width`: Expected width
+    /// - `max_rows`: Maximum rows to read
+    ///
+    /// Returns actual rows read.
+    pub fn read_gainmap_rows(
+        &mut self,
+        out: &mut [u8],
+        stride: usize,
+        width: usize,
+        max_rows: usize,
+    ) -> Result<usize>;
 
-        self.current_row += actual;
-        Ok(actual)
-    }
+    /// Read RGB gain map rows.
+    pub fn read_gainmap_rows_rgb(
+        &mut self,
+        out: &mut [RGB<u8>],
+        stride: usize,
+        width: usize,
+        max_rows: usize,
+    ) -> Result<usize>;
 
-    fn reconstruct_hdr(
-        &self,
-        sdr: &[u8],
-        rows: usize,
-        hdr_out: &mut [f32],
-        gain: &GainMapState,
-    ) -> Result<()> {
-        let meta = self.metadata.as_ref().unwrap();
+    /// Check if SDR stream is finished.
+    pub fn sdr_finished(&self) -> bool;
 
-        for row in 0..rows {
-            for x in 0..self.width {
-                let sdr_idx = (row * self.width + x) * 3;
-
-                // SDR → linear (apply sRGB EOTF)
-                let sdr_r = srgb_eotf(sdr[sdr_idx] as f32 / 255.0);
-                let sdr_g = srgb_eotf(sdr[sdr_idx + 1] as f32 / 255.0);
-                let sdr_b = srgb_eotf(sdr[sdr_idx + 2] as f32 / 255.0);
-
-                // Get gain value (interpolated if gain map is smaller)
-                let gain_val = gain.sample(x, self.current_row + row, self.width, self.height);
-
-                // Apply gain: HDR = SDR * 2^(gain * boost)
-                let boost = self.config.display_boost;
-                let multiplier = 2.0f32.powf(gain_val * boost);
-
-                let hdr_r = sdr_r * multiplier;
-                let hdr_g = sdr_g * multiplier;
-                let hdr_b = sdr_b * multiplier;
-
-                // Convert to output primaries if needed
-                let (out_r, out_g, out_b) = if let Some(ref m) = self.output_matrix {
-                    m.transform([hdr_r, hdr_g, hdr_b])
-                } else {
-                    (hdr_r, hdr_g, hdr_b)
-                };
-
-                // Apply output transfer function
-                self.write_output_pixel(hdr_out, row, x, out_r, out_g, out_b);
-            }
-        }
-        Ok(())
-    }
-
-    fn write_output_pixel(&self, out: &mut [f32], row: usize, x: usize, r: f32, g: f32, b: f32) {
-        match self.config.output_format {
-            HdrPixelFormat::LinearF32 => {
-                let idx = (row * self.width + x) * 3;
-                out[idx] = r;
-                out[idx + 1] = g;
-                out[idx + 2] = b;
-            }
-            HdrPixelFormat::LinearF32A => {
-                let idx = (row * self.width + x) * 4;
-                out[idx] = r;
-                out[idx + 1] = g;
-                out[idx + 2] = b;
-                out[idx + 3] = 1.0;
-            }
-            HdrPixelFormat::PqF32 => {
-                let idx = (row * self.width + x) * 3;
-                out[idx] = pq_oetf(r);
-                out[idx + 1] = pq_oetf(g);
-                out[idx + 2] = pq_oetf(b);
-            }
-            // ... other formats
-        }
-    }
+    /// Check if gain map stream is finished.
+    pub fn gainmap_finished(&self) -> bool;
 }
 ```
 
-## Color Space Conversion Details
-
-### Gamut Conversion Matrices
-
-All conversions go through XYZ as intermediate:
+### Usage Example
 
 ```rust
-// Primaries → XYZ matrices (D65 white point)
-const SRGB_TO_XYZ: [[f32; 3]; 3] = [
-    [0.4124564, 0.3575761, 0.1804375],
-    [0.2126729, 0.7151522, 0.0721750],
-    [0.0193339, 0.1191920, 0.9503041],
-];
+use zenjpeg::ultrahdr::StreamingUltraHdrDecoder;
+use rgb::RGB;
 
-const P3_TO_XYZ: [[f32; 3]; 3] = [
-    [0.4865709, 0.2656677, 0.1982173],
-    [0.2289746, 0.6917385, 0.0792869],
-    [0.0000000, 0.0451134, 1.0439444],
-];
+let mut decoder = StreamingUltraHdrDecoder::new(&jpeg_data)?;
 
-const REC2020_TO_XYZ: [[f32; 3]; 3] = [
-    [0.6369580, 0.1446169, 0.1688810],
-    [0.2627002, 0.6779981, 0.0593017],
-    [0.0000000, 0.0280727, 1.0609851],
-];
+if !decoder.is_ultrahdr() {
+    // Fall back to regular JPEG decode
+    return decode_regular_jpeg(&jpeg_data);
+}
 
-fn compute_gamut_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Option<Matrix3x3> {
-    if from == to { return None; }
+let (sdr_w, sdr_h) = decoder.sdr_dimensions();
+let (gm_w, gm_h) = decoder.gainmap_dimensions().unwrap();
+let metadata = decoder.metadata().unwrap();
 
-    let from_to_xyz = match from {
-        ColorPrimaries::Srgb => SRGB_TO_XYZ,
-        ColorPrimaries::DisplayP3 => P3_TO_XYZ,
-        ColorPrimaries::Rec2020 => REC2020_TO_XYZ,
-        // ...
-    };
+// Caller's buffers with stride
+let sdr_stride = (sdr_w as usize + 15) & !15;
+let gm_stride = (gm_w as usize + 15) & !15;
+let hdr_stride = sdr_stride;
 
-    let xyz_to_to = match to {
-        ColorPrimaries::Srgb => XYZ_TO_SRGB,
-        ColorPrimaries::DisplayP3 => XYZ_TO_P3,
-        ColorPrimaries::Rec2020 => XYZ_TO_REC2020,
-        // ...
-    };
+let mut sdr_buf = vec![RGB::<u8>::default(); sdr_stride * 16];  // 16 rows
+let mut gm_buf = vec![0u8; gm_stride * 4];  // 4 rows (1/4 res)
+let mut hdr_buf = vec![RGB::<f32>::default(); hdr_stride * 16];
 
-    Some(matrix_multiply(xyz_to_to, from_to_xyz))
+// Caller's HDR reconstruction (using ultrahdr-core or custom)
+let mut reconstructor = HdrReconstructor::new(metadata, display_boost);
+
+while !decoder.sdr_finished() {
+    // Read SDR rows
+    let sdr_rows = decoder.read_sdr_rows(&mut sdr_buf, sdr_stride, sdr_w as usize, 16)?;
+
+    // Read corresponding gain map rows (at lower resolution)
+    let gm_rows_needed = (sdr_rows + 3) / 4;  // 1/4 resolution
+    let gm_rows = decoder.read_gainmap_rows(&mut gm_buf, gm_stride, gm_w as usize, gm_rows_needed)?;
+
+    // Caller reconstructs HDR (NOT the codec's job)
+    reconstructor.apply_gainmap(
+        &sdr_buf[..sdr_rows * sdr_stride],
+        sdr_stride,
+        &gm_buf[..gm_rows * gm_stride],
+        gm_stride,
+        &mut hdr_buf[..sdr_rows * hdr_stride],
+        hdr_stride,
+        sdr_w as usize,
+        sdr_rows,
+    )?;
+
+    // Process HDR rows...
 }
 ```
 
-### Transfer Functions
+## GainMapMetadata
+
+The metadata structure (from XMP) that describes how to interpret the gain map:
 
 ```rust
-// sRGB (IEC 61966-2-1)
-fn srgb_eotf(v: f32) -> f32 {
-    if v <= 0.04045 { v / 12.92 }
-    else { ((v + 0.055) / 1.055).powf(2.4) }
-}
+/// Gain map metadata from XMP
+#[derive(Clone, Debug)]
+pub struct GainMapMetadata {
+    /// Version of the gain map format
+    pub version: String,
 
-fn srgb_oetf(v: f32) -> f32 {
-    if v <= 0.0031308 { v * 12.92 }
-    else { 1.055 * v.powf(1.0/2.4) - 0.055 }
-}
+    /// Base rendition is HDR (vs SDR)
+    pub base_rendition_is_hdr: bool,
 
-// PQ (SMPTE ST 2084) - assumes 10000 nit peak
-const PQ_M1: f32 = 0.1593017578125;
-const PQ_M2: f32 = 78.84375;
-const PQ_C1: f32 = 0.8359375;
-const PQ_C2: f32 = 18.8515625;
-const PQ_C3: f32 = 18.6875;
+    /// Gain map min/max values (log2 scale)
+    pub gain_map_min: [f32; 3],  // Per-channel or single value
+    pub gain_map_max: [f32; 3],
 
-fn pq_eotf(v: f32) -> f32 {
-    let vp = v.max(0.0).powf(1.0 / PQ_M2);
-    let num = (vp - PQ_C1).max(0.0);
-    let den = PQ_C2 - PQ_C3 * vp;
-    10000.0 * (num / den).powf(1.0 / PQ_M1)
-}
+    /// Gamma for gain map encoding
+    pub gamma: f32,
 
-fn pq_oetf(nits: f32) -> f32 {
-    let y = (nits / 10000.0).max(0.0);
-    let yp = y.powf(PQ_M1);
-    ((PQ_C1 + PQ_C2 * yp) / (1.0 + PQ_C3 * yp)).powf(PQ_M2)
-}
+    /// Offset values
+    pub offset_sdr: f32,
+    pub offset_hdr: f32,
 
-// HLG (ITU-R BT.2100)
-fn hlg_eotf(v: f32) -> f32 {
-    if v <= 0.5 { (v * v) / 3.0 }
-    else { (((v - 0.55991073) / 0.17883277).exp() + 0.28466892) / 12.0 }
-}
-
-fn hlg_oetf(linear: f32) -> f32 {
-    let l = linear.max(0.0);
-    if l <= 1.0/12.0 { (3.0 * l).sqrt() }
-    else { 0.17883277 * (12.0 * l - 0.28466892).ln() + 0.55991073 }
-}
-```
-
-## i16 Output Format
-
-For memory-constrained scenarios, support i16 output:
-
-```rust
-/// i16 linear format: value of 10000 = 1.0 linear light
-/// Range: [-32768, 32767] → [-3.2768, 3.2767] linear
-/// Precision: 0.0001 linear light units
-const I16_SCALE: f32 = 10000.0;
-
-fn f32_to_linear_i16(v: f32) -> i16 {
-    (v * I16_SCALE).clamp(-32768.0, 32767.0) as i16
-}
-
-fn linear_i16_to_f32(v: i16) -> f32 {
-    v as f32 / I16_SCALE
+    /// HDR capacity (max boost)
+    pub hdr_capacity_min: f32,
+    pub hdr_capacity_max: f32,
 }
 ```
 
 ## Implementation Plan
 
-1. **Phase 1: Color Space Infrastructure**
-   - Add `ColorPrimaries`, `TransferFunction`, `ColorSpace` types
-   - Implement gamut conversion matrices
-   - Implement all EOTF/OETF functions
+### Phase 1: Refactor Existing UltraHDR Module
 
-2. **Phase 2: Tonemapper Trait**
-   - Define `StreamingTonemapper` trait
-   - Implement `PixelTonemapperAdapter`
-   - Port existing tonemapper to new trait
+**Goal**: Remove HDR processing from codec, keep only JPEG + MPF + XMP
 
-3. **Phase 3: Streaming Encoder**
-   - Implement `StreamingHdrEncoder` with lag management
-   - Add ring buffer for HDR row storage
-   - Integrate gain map computation
+1. **Remove from codec** (move to examples/tests if needed for reference):
+   - `encode_ultrahdr()` - full workflow with tonemapping
+   - `encode_ultrahdr_with_tonemapper()` - adaptive tonemapper
+   - `tonemap_hdr_to_sdr()` - tonemapping
+   - `create_gainmap_computer()` - gain map computation wrapper
+   - `reconstruct_hdr()` - HDR reconstruction
+   - `reencode_ultrahdr()` - full roundtrip
 
-4. **Phase 4: Streaming Decoder Enhancement**
-   - Update `StreamingHdrDecoder` with color space awareness
-   - Add i16 output format support
-   - Add output colorspace conversion
+2. **Keep in codec**:
+   - `encode_with_gainmap()` → refactor to streaming `StreamingUltraHdrEncoder`
+   - MPF assembly logic
+   - XMP generation/parsing
+   - ICC profile embedding
 
-5. **Phase 5: Testing**
-   - Color space roundtrip tests
-   - Tonemapper lag tests (0, N, Full)
-   - Cross-decoder compatibility tests
+3. **Update decoder**:
+   - `UltraHdrReader` → refactor to `StreamingUltraHdrDecoder`
+   - Remove `HdrDecoderState` (reconstruction is caller's job)
+   - Keep metadata extraction, gain map JPEG extraction
+
+### Phase 2: Implement Streaming Encoder
+
+1. Create `StreamingUltraHdrEncoder` with:
+   - Two internal `StreamingJpegEncoder` instances
+   - `push_sdr_rows()` with stride
+   - `push_gainmap_rows()` with stride
+   - `finish_into()` that assembles MPF
+
+2. Add type-safe pixel inputs:
+   - `&[RGB<u8>]` for 8-bit
+   - `&[RGB<u16>]` for 16-bit
+   - Always require stride parameter
+
+3. Fallible allocation:
+   - `finish_into(&mut Vec<u8>)` - caller provides buffer
+   - Internal buffers use `try_reserve()`
+
+### Phase 3: Implement Streaming Decoder
+
+1. Create `StreamingUltraHdrDecoder` with:
+   - Separate SDR and gain map scanline readers
+   - `read_sdr_rows()` with stride
+   - `read_gainmap_rows()` with stride
+   - Metadata and ICC access
+
+2. Remove HDR reconstruction from codec:
+   - No `display_boost` parameter
+   - No gain map application
+   - Just raw SDR + raw gain map output
+
+### Phase 4: Update ultrahdr-core Integration
+
+1. Keep `ultrahdr-core` as optional dependency for users who want:
+   - Ready-made tonemapping
+   - Ready-made gain map computation
+   - Ready-made HDR reconstruction
+
+2. Provide examples showing how to use `ultrahdr-core` with new streaming API
+
+### Phase 5: Testing
+
+1. **Codec tests** (no HDR knowledge needed):
+   - SDR + gain map → UltraHDR → SDR + gain map roundtrip
+   - Verify MPF structure correct
+   - Verify XMP metadata preserved
+   - Stride handling correct
+
+2. **Integration tests** (with ultrahdr-core):
+   - Full HDR → UltraHDR → HDR roundtrip
+   - Quality metrics (SSIMULACRA2, Butteraugli)
+
+### File Changes
+
+| File | Action |
+|------|--------|
+| `ultrahdr/mod.rs` | Simplify re-exports |
+| `ultrahdr/encode.rs` | Remove tonemapping, keep MPF assembly |
+| `ultrahdr/decode.rs` | Remove reconstruction, keep metadata |
+| `decode/ultrahdr_reader.rs` | Refactor to `StreamingUltraHdrDecoder` |
+| `examples/ultrahdr_*.rs` | Update to use new API |
+| `tests/ultrahdr_*.rs` | Split codec tests from integration tests |
+
+## Memory Budget
+
+For a 4K image (3840×2160):
+
+| Component | Memory |
+|-----------|--------|
+| SDR scanline buffer (16 rows, stride-aligned) | ~240 KB |
+| Gain map scanline buffer (4 rows at 1/4 res) | ~15 KB |
+| Internal JPEG buffers (2 encoders) | ~100 KB |
+| **Total codec memory** | **~355 KB** |
+
+HDR processing memory (caller's responsibility):
+| Component | Memory |
+|-----------|--------|
+| HDR row buffer (f32, 16 rows) | ~960 KB |
+| Tonemapper state (varies) | varies |
+| **Total caller memory** | **~1 MB+** |
+
+The codec stays lean. Caller decides how much to buffer for their tonemapper.
