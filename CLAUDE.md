@@ -19,27 +19,28 @@ Pure Rust port of Google's jpegli JPEG encoder/decoder from the JPEG XL project.
 
 **NEVER use raw `&[u8]` or `&[f32]` for pixel data without explicit format information.**
 
-Use the `rgb` crate types or equivalent to encode channel count, order, and bit depth:
+Use the `rgb` crate types or equivalent to encode channel count, order, and bit depth.
+
+**STRIDE IS ALWAYS REQUIRED. NO EXCEPTIONS.**
+
+Use `imgref::ImgRef`/`ImgRefMut` (preferred) or explicit stride parameter (in pixels, not bytes):
 
 ```rust
-// GOOD - Type encodes format
-fn encode_rows(&mut self, rows: &[rgb::RGB<u8>], count: usize) -> Result<()>;
-fn encode_rows(&mut self, rows: &[rgb::RGB<u16>], count: usize) -> Result<()>;
-fn encode_rows(&mut self, rows: &[rgb::RGBA<f32>], count: usize) -> Result<()>;
+// BEST - imgref handles stride, type encodes format
+fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<u8>>) -> Result<()>;
+fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<u16>>) -> Result<()>;
+fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGBA<f32>>) -> Result<()>;
+fn read_rows(&mut self, out: ImgRefMut<'_, rgb::RGB<u8>>) -> Result<usize>;
 
-// BAD - Format is ambiguous, caller will get it wrong
-fn encode_rows(&mut self, data: &[u8], width: usize) -> Result<()>;
-```
+// GOOD - Explicit stride in pixels (not bytes!)
+fn push_rows(&mut self, data: &[rgb::RGB<u16>], width: usize, stride_pixels: usize, count: usize) -> Result<()>;
+fn read_rows(&mut self, out: &mut [rgb::RGB<u16>], width: usize, stride_pixels: usize, count: usize) -> Result<usize>;
 
-For strided/planar data, use `imgref::ImgRef` or explicit parameters:
+// BAD - No stride, will break on padded buffers
+fn push_rows(&mut self, data: &[rgb::RGB<u8>], count: usize) -> Result<()>;
 
-```rust
-// GOOD - Stride is explicit and type-safe
-fn process(&mut self, img: ImgRef<'_, rgb::RGB<u16>>) -> Result<()>;
-fn process(&mut self, data: &[rgb::RGB<u16>], width: usize, height: usize, stride: usize) -> Result<()>;
-
-// BAD - Stride assumed, will break on padded buffers
-fn process(&mut self, data: &[u8], width: usize, height: usize) -> Result<()>;
+// TERRIBLE - No format, no stride, completely ambiguous
+fn push_rows(&mut self, data: &[u8], width: usize) -> Result<()>;
 ```
 
 ### Precision Requirements (MANDATORY)
@@ -52,13 +53,16 @@ fn process(&mut self, data: &[u8], width: usize, height: usize) -> Result<()>;
 - **API input/output**: Support u8, u16, f32 - but DOCUMENT the precision implications
 
 ```rust
-// GOOD - High precision internal, flexible external
-pub fn push_rows_u8(&mut self, rows: &[rgb::RGB<u8>]) -> Result<()>;   // Converts to f32 internally
-pub fn push_rows_u16(&mut self, rows: &[rgb::RGB<u16>]) -> Result<()>; // Converts to f32 internally
-pub fn push_rows_f32(&mut self, rows: &[rgb::RGB<f32>]) -> Result<()>; // Native precision
+// GOOD - High precision internal, flexible external, stride via imgref
+pub fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<u8>>) -> Result<()>;   // Converts to f32 internally
+pub fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<u16>>) -> Result<()>; // Converts to f32 internally
+pub fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<f32>>) -> Result<()>; // Native precision
 
-// BAD - Precision loss hidden from caller
-pub fn push_rows(&mut self, rows: &[u8]) -> Result<()>; // What happens to my 16-bit data?
+// GOOD - Explicit stride alternative
+pub fn push_rows(&mut self, data: &[rgb::RGB<u16>], width: usize, stride: usize, count: usize) -> Result<()>;
+
+// BAD - No stride, precision loss hidden
+pub fn push_rows(&mut self, rows: &[u8]) -> Result<()>; // What happens to my 16-bit data? What's the stride?
 ```
 
 ### Color Space Awareness (MANDATORY)
@@ -73,15 +77,18 @@ Think about:
 - **Transfer function**: Linear? sRGB? PQ? HLG?
 
 ```rust
-// GOOD - Color space is explicit
-pub fn push_rows(&mut self, rows: &[rgb::RGB<f32>], colorspace: ColorSpace) -> Result<()>;
+// GOOD - Color space explicit, stride via imgref
+pub fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<f32>>, colorspace: ColorSpace) -> Result<()>;
 
-// ACCEPTABLE - Documented assumption
+// GOOD - Explicit stride + colorspace
+pub fn push_rows(&mut self, data: &[rgb::RGB<f32>], width: usize, stride: usize, count: usize, colorspace: ColorSpace) -> Result<()>;
+
+// ACCEPTABLE - Documented assumption, still has stride
 /// Assumes sRGB primaries with sRGB transfer function.
 /// For wide-gamut input, convert to sRGB first or use `push_rows_with_colorspace`.
-pub fn push_rows_srgb(&mut self, rows: &[rgb::RGB<u8>]) -> Result<()>;
+pub fn push_rows_srgb(&mut self, rows: ImgRef<'_, rgb::RGB<u8>>) -> Result<()>;
 
-// BAD - Color space ignored, precision lost, user confused
+// BAD - No stride, no colorspace, no type safety
 pub fn push_rows(&mut self, rows: &[u8]) -> Result<()>;
 ```
 
@@ -93,56 +100,80 @@ pub fn push_rows(&mut self, rows: &[u8]) -> Result<()>;
 2. **No `Vec<Vec<T>>`** - Use flat buffers with stride, or ring buffers
 3. **Borrow, don't clone** - Take `&[T]` not `Vec<T>`, return into caller's buffer
 4. **Fallible allocation** - Use `try_reserve()`, return `Result` on OOM
-5. **Buffer pool friendly** - Allow caller to provide pre-allocated buffers
+5. **Buffer pool friendly** - Caller provides target buffers, we write into them
+6. **Stride always explicit** - Via `imgref` or parameter
 
 ```rust
-// GOOD - Streaming, borrows, fallible
-pub fn push_rows(&mut self, rows: &[rgb::RGB<u16>]) -> Result<usize>;
-pub fn read_rows(&mut self, out: &mut [rgb::RGB<u16>]) -> Result<usize>;
+// GOOD - Streaming, borrows, stride via imgref, writes to caller's buffer
+pub fn push_rows(&mut self, rows: ImgRef<'_, rgb::RGB<u16>>) -> Result<()>;
+pub fn read_rows(&mut self, out: ImgRefMut<'_, rgb::RGB<u16>>) -> Result<usize>;
 
-// GOOD - Caller provides buffer, no internal allocation
+// GOOD - Explicit stride, caller's buffer
+pub fn push_rows(&mut self, data: &[rgb::RGB<u16>], width: usize, stride: usize, count: usize) -> Result<()>;
+pub fn read_rows(&mut self, out: &mut [rgb::RGB<u16>], width: usize, stride: usize, max_rows: usize) -> Result<usize>;
+
+// GOOD - Caller provides output buffer, no internal allocation
 pub fn finish_into(self, output: &mut Vec<u8>) -> Result<()>;
 
-// BAD - Whole image, allocates, clones
+// BAD - Whole image, allocates, clones, no stride
 pub fn encode(image: Vec<Vec<u8>>) -> Vec<u8>;
 
-// BAD - Hidden allocation, not fallible
+// BAD - Hidden allocation, not fallible, no stride
 pub fn decode(&self) -> Vec<u8>;  // What if it's 100MP? OOM panic!
 ```
 
 ### Ring Buffer / Pool Architecture
 
-Design for buffer reuse:
+Design for buffer reuse. Caller owns all buffers, encoder/decoder writes into them:
 
 ```rust
-// GOOD - Reusable encoder, buffer pool friendly
+// GOOD - Caller owns input buffer with explicit stride
 let mut encoder = StreamingEncoder::new(width, height, config)?;
-let mut row_buf = vec![rgb::RGB::<u16>::default(); width]; // Caller's buffer, reused
+let stride = (width + 15) & !15;  // Align to 16 pixels for SIMD
+let mut row_buf = vec![rgb::RGB::<u16>::default(); stride * batch_size];
 
-for row in source.rows() {
-    row_buf.copy_from_slice(row);
-    encoder.push_rows(&row_buf, 1)?;
+for chunk in source.chunks(batch_size) {
+    // Copy into caller's buffer (or read directly if source is strided)
+    for (i, row) in chunk.iter().enumerate() {
+        row_buf[i * stride..(i * stride + width)].copy_from_slice(row);
+    }
+    encoder.push_rows(&row_buf, width, stride, chunk.len())?;
 }
 
-// GOOD - Output into pre-allocated buffer
-let mut output = Vec::with_capacity(estimated_size);
+// GOOD - Caller owns output buffer
+let mut output = Vec::new();
+output.try_reserve(estimated_size)?;  // Fallible!
 encoder.finish_into(&mut output)?;
+
+// GOOD - Decoder writes into caller's buffer with stride
+let mut decoder = StreamingDecoder::new(&jpeg_data)?;
+let out_stride = (decoder.width() + 15) & !15;
+let mut out_buf = vec![rgb::RGB::<u8>::default(); out_stride * batch_size];
+
+while !decoder.is_finished() {
+    let rows_read = decoder.read_rows(&mut out_buf, decoder.width(), out_stride, batch_size)?;
+    process_rows(&out_buf[..rows_read * out_stride]);
+}
 ```
 
 ### Summary: The Non-Negotiables
 
 | Rule | Requirement |
 |------|-------------|
-| **Pixel format** | Type-safe (`rgb::RGB<T>`, `imgref::ImgRef`) - NEVER raw bytes |
-| **Stride** | Explicit parameter or `imgref` - NEVER assumed |
+| **Pixel format** | Type-safe (`rgb::RGB<T>`, `rgb::RGBA<T>`) - NEVER raw `&[u8]` |
+| **Stride** | ALWAYS via `imgref` or explicit parameter (pixels, not bytes) - NEVER omitted |
 | **Precision** | 16-32 bit internal - NEVER 8-bit arithmetic on pixels |
-| **Color space** | Explicit or documented - NEVER silently ignored |
+| **Color space** | Explicit parameter or documented assumption - NEVER silently ignored |
 | **Streaming** | Row-by-row only - NEVER whole-image buffering |
 | **Allocation** | Fallible (`try_reserve`) - NEVER panic on OOM |
-| **Ownership** | Borrow (`&[T]`) - NEVER clone pixel data |
-| **Buffers** | Caller-provided option - NEVER force internal allocation |
+| **Ownership** | Borrow input (`&[T]`), write to caller's output (`&mut [T]`) - NEVER clone |
+| **Target buffers** | Caller provides output buffers - NEVER allocate internally when avoidable |
 
-**If you're about to write an API that violates these rules, STOP and redesign.**
+**If you're about to write an API that omits stride, STOP. Add stride. Always.**
+
+**If you're about to write an API that allocates output, STOP. Take a target buffer.**
+
+**If you're about to write an API with raw bytes, STOP. Use `rgb::RGB<T>` or similar.**
 
 ## Performance Rules (CRITICAL)
 
@@ -1012,14 +1043,25 @@ let sdr = my_tonemapper.process(&hdr_linear_p3);  // Caller's tonemapper
 let gainmap = compute_gainmap(&hdr, &sdr);         // Caller's gain map
 let icc = p3_icc_profile();                        // Caller's ICC
 
-// Codec just encodes and assembles
+// Codec just encodes and assembles - note stride is ALWAYS provided
 let mut encoder = StreamingUltraHdrEncoder::new(w, h, gm_w, gm_h, config)?;
 encoder.set_icc_profile(Some(&icc));
+
+let sdr_stride = (w + 15) & !15;  // Caller's buffer layout
+let gm_stride = (gm_w + 15) & !15;
+
 for row in 0..height {
-    encoder.push_sdr_rows(&sdr_row, 1)?;
-    encoder.push_gainmap_rows(&gm_row, 1)?;
+    // Push with explicit width and stride
+    encoder.push_sdr_rows(&sdr_row_buf, w, sdr_stride, 1)?;
+    if row % gm_scale == 0 {
+        encoder.push_gainmap_rows(&gm_row_buf, gm_w, gm_stride, 1)?;
+    }
 }
-let jpeg = encoder.finish(&metadata)?;
+
+// Caller provides output buffer
+let mut output = Vec::new();
+output.try_reserve(estimated_size)?;
+encoder.finish_into(&mut output, &metadata)?;
 ```
 
 ## Quality Metrics
