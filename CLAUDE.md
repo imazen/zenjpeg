@@ -1080,6 +1080,22 @@ output.try_reserve(estimated_size)?;
 encoder.finish_into(&mut output, &metadata)?;
 ```
 
+### UltraHDR Conformance Notes
+
+zenjpeg uses `ultrahdr-core` for XMP metadata parsing and gain map computation. There are known
+differences from Google's libultrahdr reference implementation:
+
+| Behavior | libultrahdr | zenjpeg/ultrahdr-core |
+|----------|-------------|----------------------|
+| `BaseRenditionIsHDR="True"` | Rejected | Accepted (bug) |
+| Required XMP fields validation | Strict | Lenient |
+| JPEG boundary detection | JpegScanner | MPF + SOI/EOI fallback |
+
+**Practical impact**: Standard Ultra HDR files work correctly. Edge cases with `BaseRenditionIsHDR="True"`
+or missing required XMP fields may behave incorrectly.
+
+See the [ultrahdr README](https://github.com/imazen/ultrahdr#known-differences-from-libultrahdr) for details.
+
 ## Quality Metrics
 
 **Use DSSIM or SSIMULACRA2, never PSNR.** PSNR doesn't correlate with perceptual quality.
