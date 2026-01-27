@@ -96,7 +96,11 @@ fn analyze_distribution_change(path: &str, label: &str) {
 
         eprintln!(
             "{:>7}% {:>9.1}% {:>9.2} {:>11.4} {:>11.2}%",
-            pct, cov, ent, kl, top10_change * 100.0
+            pct,
+            cov,
+            ent,
+            kl,
+            top10_change * 100.0
         );
     }
 

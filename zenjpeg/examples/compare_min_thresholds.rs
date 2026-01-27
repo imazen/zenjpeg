@@ -24,7 +24,10 @@ fn main() {
         })
         .collect();
 
-    eprintln!("Testing {} images with different min_percent values\n", test_images.len());
+    eprintln!(
+        "Testing {} images with different min_percent values\n",
+        test_images.len()
+    );
 
     let min_percents = [25, 30, 35, 40, 50];
     let memory_limit = 1024 * 1024; // 1MB
@@ -77,7 +80,8 @@ fn main() {
 
             let trans_pct = encoder.transition_percent().unwrap_or(100.0);
             let result = encoder.finish().unwrap();
-            let overhead = 100.0 * (result.len() as f64 - baseline_size as f64) / baseline_size as f64;
+            let overhead =
+                100.0 * (result.len() as f64 - baseline_size as f64) / baseline_size as f64;
 
             overheads.push(overhead);
             trans_pcts.push(trans_pct);
@@ -88,17 +92,32 @@ fn main() {
         let over_4_count = overheads.iter().filter(|&&o| o > 4.0).count();
         let mean_trans = trans_pcts.iter().sum::<f64>() / trans_pcts.len() as f64;
 
-        results.push((min_pct, mean_overhead, max_overhead, over_4_count, mean_trans));
+        results.push((
+            min_pct,
+            mean_overhead,
+            max_overhead,
+            over_4_count,
+            mean_trans,
+        ));
     }
 
     // Print comparison
-    eprintln!("{:>10} {:>12} {:>12} {:>12} {:>15}",
-        "Min %", "Mean OH", "Max OH", "Fail >4%", "Mean Trans%");
+    eprintln!(
+        "{:>10} {:>12} {:>12} {:>12} {:>15}",
+        "Min %", "Mean OH", "Max OH", "Fail >4%", "Mean Trans%"
+    );
     eprintln!("{}", "-".repeat(65));
 
     for (min_pct, mean_oh, max_oh, fail_count, mean_trans) in &results {
-        eprintln!("{:>9}% {:>11.2}% {:>11.2}% {:>8}/{:<4} {:>14.1}%",
-            min_pct, mean_oh, max_oh, fail_count, test_images.len(), mean_trans);
+        eprintln!(
+            "{:>9}% {:>11.2}% {:>11.2}% {:>8}/{:<4} {:>14.1}%",
+            min_pct,
+            mean_oh,
+            max_oh,
+            fail_count,
+            test_images.len(),
+            mean_trans
+        );
     }
 
     eprintln!("\nNotes:");

@@ -105,11 +105,7 @@ fn analyze_image(path: &str, is_pathological: bool) {
 
         eprintln!(
             "{:>7}% {:>9.1}% {:>9.2} {:>9.2}% {:>10}",
-            thresh,
-            ac_cov,
-            ac_ent,
-            overhead,
-            note
+            thresh, ac_cov, ac_ent, overhead, note
         );
     }
 
