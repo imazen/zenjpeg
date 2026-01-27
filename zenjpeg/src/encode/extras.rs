@@ -920,14 +920,20 @@ pub(crate) fn inject_encoder_segments(jpeg: Vec<u8>, segments: &EncoderSegments)
 
         // Generate MPF directory (without knowing exact primary size yet)
         // We'll generate it, then calculate actual size
-        let mpf_data_temp = generate_mpf_directory(mpf_images.len(), 0, &image_sizes, mpf_insert_offset);
+        let mpf_data_temp =
+            generate_mpf_directory(mpf_images.len(), 0, &image_sizes, mpf_insert_offset);
         let mpf_segment_size = 2 + 2 + mpf_data_temp.len(); // marker + length + data
 
         // Now calculate actual primary size
         let primary_size = jpeg.len() + segment_bytes.len() + mpf_segment_size;
 
         // Regenerate MPF directory with correct primary size
-        let mpf_data = generate_mpf_directory(mpf_images.len(), primary_size as u32, &image_sizes, mpf_insert_offset);
+        let mpf_data = generate_mpf_directory(
+            mpf_images.len(),
+            primary_size as u32,
+            &image_sizes,
+            mpf_insert_offset,
+        );
 
         // Build final output
         let total_size = primary_size + mpf_images.iter().map(|i| i.data.len()).sum::<usize>();

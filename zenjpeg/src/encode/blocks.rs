@@ -289,9 +289,9 @@ impl ComputedConfig {
         }
 
         // Sequential encoding path (default, or when parallel feature disabled)
-        // Estimate output size: ~100 bytes per block for typical quality
+        // Estimate output size: ~3 bytes/block average; Vec doubles if more needed
         let total_blocks = y_blocks.len() + cb_blocks.len() + cr_blocks.len();
-        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 3);
 
         // Set up Huffman tables - optimized if provided, standard otherwise
         if let Some(tables) = tables {
@@ -624,9 +624,9 @@ impl ComputedConfig {
         // Zero block for padding
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
-        // Estimate output size
+        // Estimate output size (~3 bytes/block average; Vec doubles if more needed)
         let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
-        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 3);
 
         // Use the same optimized table for all components
         encoder.set_dc_table(0, &dc_table.table);
@@ -709,9 +709,9 @@ impl ComputedConfig {
         // Zero block for padding
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
 
-        // Estimate output size
+        // Estimate output size (~3 bytes/block average; Vec doubles if more needed)
         let total_blocks = x_blocks.len() + y_blocks.len() + b_blocks.len();
-        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 100);
+        let mut encoder = EntropyEncoder::with_capacity(total_blocks * 3);
 
         // Use standard luminance tables for all components in XYB mode
         encoder.set_dc_table(0, HuffmanEncodeTable::std_dc_luminance());
