@@ -712,8 +712,9 @@ impl Decoder {
             ));
         }
 
-        // Extract gain map from MPF secondary images (if present)
-        let (gainmap_data, metadata) = parser.extract_gainmap_early(data)?;
+        // Extract gain map byte range from MPF secondary images (if present)
+        // Uses byte range instead of copying for zero-copy access
+        let (gainmap_range, metadata) = parser.extract_gainmap_early(data)?;
 
         // Create base scanline reader
         let base_reader = self.scanline_reader(data)?;
@@ -725,7 +726,7 @@ impl Decoder {
             None
         };
 
-        UltraHdrReader::new(data, config, base_reader, extras, gainmap_data, metadata)
+        UltraHdrReader::new(data, config, base_reader, extras, gainmap_range, metadata)
     }
 }
 

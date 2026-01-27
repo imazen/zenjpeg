@@ -141,16 +141,19 @@ impl<'a> JpegParser<'a> {
         self.extras.take().filter(|e| !e.is_empty())
     }
 
-    /// Extract gain map data and metadata early (before full decode).
+    /// Extract gain map byte range and metadata early (before full decode).
     ///
     /// This scans the entire JPEG for XMP and MPF markers, since these
     /// may appear after the frame header (SOF) and thus not be parsed
     /// during `read_header()`.
+    ///
+    /// Returns byte range `(start, end)` into `full_data` instead of copying,
+    /// enabling zero-copy access to the gain map JPEG.
     #[cfg(feature = "ultrahdr")]
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
-    ) -> Result<(Option<Vec<u8>>, Option<ultrahdr_core::GainMapMetadata>)> {
+    ) -> Result<(Option<(usize, usize)>, Option<ultrahdr_core::GainMapMetadata>)> {
         use super::extras::{detect_segment_type, parse_mpf_directory, MpfDirectory, SegmentType};
         use ultrahdr_core::metadata::xmp::parse_xmp;
 
@@ -254,9 +257,9 @@ impl<'a> JpegParser<'a> {
             return Ok((None, None));
         }
 
-        // Extract gain map JPEG from MPF directory
+        // Extract gain map JPEG byte range from MPF directory
         // MPF offsets are relative to the start of the MP header (right after "MPF\0")
-        let mut gainmap_data = mpf_directory.and_then(|mpf| {
+        let mut gainmap_range = mpf_directory.and_then(|mpf| {
             for (idx, entry) in mpf.images.iter().enumerate() {
                 if idx == 0 {
                     continue; // Skip primary (offset 0 means the main image)
@@ -268,7 +271,7 @@ impl<'a> JpegParser<'a> {
                     if end <= full_data.len() {
                         let data = &full_data[absolute_offset..end];
                         if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
-                            return Some(data.to_vec());
+                            return Some((absolute_offset, end));
                         }
                     }
                 }
@@ -280,11 +283,11 @@ impl<'a> JpegParser<'a> {
         // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
         // This handles non-standard MPF structures from some Android camera apps.
         #[cfg(feature = "ultrahdr")]
-        if gainmap_data.is_none() && metadata.is_some() {
-            gainmap_data = find_secondary_jpeg(full_data);
+        if gainmap_range.is_none() && metadata.is_some() {
+            gainmap_range = find_secondary_jpeg_range(full_data);
         }
 
-        Ok((gainmap_data, metadata))
+        Ok((gainmap_range, metadata))
     }
 
     // =========================================================================
@@ -623,17 +626,16 @@ impl<'a> JpegParser<'a> {
     }
 }
 
-/// Find the second JPEG in a multi-picture file by scanning for SOI/EOI markers.
+/// Find the second JPEG's byte range in a multi-picture file by scanning for SOI/EOI markers.
 ///
 /// This is a fallback for when MPF parsing fails but XMP metadata indicates UltraHDR.
 /// Some Android camera apps produce non-standard MPF structures that fail to parse,
 /// but we can still find the gain map JPEG by looking for JPEG boundaries.
 ///
-/// Returns the second JPEG's data if found, or None if not found.
+/// Returns the second JPEG's byte range `(start, end)` if found, or None if not found.
 #[cfg(feature = "ultrahdr")]
-fn find_secondary_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
     const SOI: [u8; 2] = [0xFF, 0xD8]; // Start of Image
-    const EOI: [u8; 2] = [0xFF, 0xD9]; // End of Image
 
     // Find all JPEG boundaries (SOI to EOI)
     let mut boundaries: Vec<(usize, usize)> = Vec::new();
@@ -690,11 +692,11 @@ fn find_secondary_jpeg(data: &[u8]) -> Option<Vec<u8>> {
         }
     }
 
-    // If we found at least 2 JPEGs, return the second one (the gain map)
+    // If we found at least 2 JPEGs, return the second one's range (the gain map)
     if boundaries.len() >= 2 {
         let (start, end) = boundaries[1];
         if end <= data.len() {
-            return Some(data[start..end].to_vec());
+            return Some((start, end));
         }
     }
 
