@@ -87,6 +87,8 @@ pub struct StreamingEncoderBuilder {
     min_entropy: Option<f64>,
     /// Minimum AC symbol coverage required before allowing transition (%, default 30.0)
     min_coverage: Option<f64>,
+    /// Minimum percentage of rows before transition is allowed (0-100)
+    min_transition_percent: Option<usize>,
 }
 
 impl StreamingEncoderBuilder {
@@ -119,6 +121,7 @@ impl StreamingEncoderBuilder {
             transition_after_rows: None,
             min_entropy: None,
             min_coverage: None,
+            min_transition_percent: None,
         }
     }
 
@@ -519,10 +522,25 @@ impl StreamingEncoderBuilder {
     /// avoiding pathological cases where the image start has very different
     /// content than the rest (e.g., gradient sky).
     ///
-    /// Default thresholds: entropy=4.0 bits, coverage=30%
+    /// Default thresholds: entropy=4.0 bits, coverage=30%, min 50% of rows
     #[must_use]
     pub fn require_stable_distribution(self) -> Self {
-        self.min_entropy(4.0).min_coverage(30.0)
+        self.min_entropy(4.0)
+            .min_coverage(30.0)
+            .min_transition_percent(50)
+    }
+
+    /// Sets minimum percentage of rows that must be processed before transition.
+    ///
+    /// Even if memory limit is reached and heuristics pass, transition will be
+    /// delayed until at least this percentage of rows has been processed.
+    ///
+    /// Recommended value: 25% for most images to ensure sufficient data for
+    /// stable Huffman table optimization.
+    #[must_use]
+    pub fn min_transition_percent(mut self, percent: usize) -> Self {
+        self.min_transition_percent = Some(percent.min(100));
+        self
     }
 
     /// Starts a streaming encoder for row-by-row input.
@@ -954,6 +972,8 @@ pub struct StreamingEncoder {
     min_entropy: Option<f64>,
     /// Minimum AC symbol coverage required before allowing transition (%)
     min_coverage: Option<f64>,
+    /// Minimum percentage of rows before transition is allowed
+    min_transition_percent: Option<usize>,
 }
 
 impl StreamingEncoder {
@@ -1173,6 +1193,7 @@ impl StreamingEncoder {
             transition_after_rows: builder.transition_after_rows,
             min_entropy: builder.min_entropy,
             min_coverage: builder.min_coverage,
+            min_transition_percent: builder.min_transition_percent,
         })
     }
 
@@ -1292,14 +1313,19 @@ impl StreamingEncoder {
         if let Some(limit) = self.memory_limit {
             let current_usage = self.estimate_block_storage();
             if current_usage >= limit {
-                // Check distribution stability heuristics if configured
-                let passes_heuristics = self.check_distribution_heuristics();
+                // First check: minimum percentage requirement
+                // This prevents transition on too little data regardless of heuristics
+                let min_pct_ok = if let Some(min_pct) = self.min_transition_percent {
+                    let min_rows = (self.height as usize * min_pct) / 100;
+                    self.current_y >= min_rows
+                } else {
+                    true // No minimum set, always OK
+                };
 
-                if passes_heuristics {
+                // Only check heuristics if minimum percentage is met
+                if min_pct_ok && self.check_distribution_heuristics() {
                     return self.transition_to_streaming();
                 }
-                // Otherwise, continue buffering even if over memory limit
-                // (the heuristics will eventually pass or we'll hit 50% of image)
 
                 // Safety valve: always transition after 50% of image regardless of heuristics
                 let rows_processed = self.current_y;

@@ -256,6 +256,9 @@ fn test_streaming_outlier_investigation() {
     let outlier_images = [
         "/home/lilith/work/codec-corpus/clic2025/validation/11f2b039b293758398b1a7a8afa64bb2.png",
         "/home/lilith/work/codec-corpus/clic2025/validation/aed95e005df28e790519eefb6eb1e565.png",
+        // New outliers that heuristics don't help
+        "/home/lilith/work/codec-corpus/clic2025/validation/d79d465ac77c36518e0f0d626bf97ec4.png",
+        "/home/lilith/work/codec-corpus/clic2025/validation/5e5ce43575fa67fdc0dd37146d7f479e.png",
     ];
 
     let thresholds = [10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90];
@@ -328,6 +331,8 @@ fn test_streaming_heuristics() {
         ("/home/lilith/work/codec-corpus/clic2025/validation/100a02c269c5948392f283b2aa3bb4da.png", "normal"),
         ("/home/lilith/work/codec-corpus/clic2025/validation/11f2b039b293758398b1a7a8afa64bb2.png", "pathological-1"),
         ("/home/lilith/work/codec-corpus/clic2025/validation/aed95e005df28e790519eefb6eb1e565.png", "pathological-2"),
+        ("/home/lilith/work/codec-corpus/clic2025/validation/d79d465ac77c36518e0f0d626bf97ec4.png", "outlier-no-help"),
+        ("/home/lilith/work/codec-corpus/clic2025/validation/5e5ce43575fa67fdc0dd37146d7f479e.png", "outlier-barely-over"),
     ];
 
     for (img_path, label) in &test_cases {
@@ -438,6 +443,180 @@ fn test_streaming_heuristics() {
         let improvement = overhead_no_heur - overhead_heur;
         if improvement > 0.5 {
             eprintln!("  → Heuristics improved overhead by {:.1}%", improvement);
+        }
+    }
+}
+
+/// Comprehensive test with heuristics across full CLIC 2025 corpus.
+/// Compares overhead with and without heuristic gating.
+#[test]
+#[ignore]
+fn test_streaming_heuristics_clic2025_comprehensive() {
+    use zenjpeg::encode::encoder_types::Quality;
+
+    let clic_dir = "/home/lilith/work/codec-corpus/clic2025/validation";
+
+    // Get all PNG files in the directory
+    let test_images: Vec<_> = std::fs::read_dir(clic_dir)
+        .expect("Failed to read CLIC validation directory")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension()?.to_str()? == "png" {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    eprintln!("Found {} images in CLIC 2025 validation set", test_images.len());
+
+    // Track results: (image_name, overhead_no_heur, overhead_with_heur)
+    let mut results: Vec<(String, f64, f64)> = Vec::new();
+
+    // Memory limit for testing (1MB is reasonable for bounded-memory streaming)
+    let memory_limit = 1024 * 1024;
+
+    for (img_idx, img_path) in test_images.iter().enumerate() {
+        let img_name = img_path.file_name().unwrap().to_str().unwrap();
+
+        // Load image
+        let decoder = png::Decoder::new(std::fs::File::open(img_path).unwrap());
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        let pixels = &buf[..info.buffer_size()];
+
+        let width = info.width;
+        let height = info.height;
+
+        if img_idx % 8 == 0 {
+            eprintln!("Processing image {}/{}: {} ({}x{})",
+                img_idx + 1, test_images.len(), img_name, width, height);
+        }
+
+        // Baseline for this image
+        let baseline = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .encode(pixels)
+            .unwrap();
+        let baseline_size = baseline.len();
+
+        let row_size = width as usize * 3;
+
+        // Without heuristics
+        let mut encoder_no_heur = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .memory_limit(memory_limit)
+            .start()
+            .unwrap();
+
+        for y in 0..height as usize {
+            let start = y * row_size;
+            let end = start + row_size;
+            encoder_no_heur.push_row(&pixels[start..end]).unwrap();
+        }
+        let result_no_heur = encoder_no_heur.finish().unwrap();
+        let overhead_no_heur = 100.0 * (result_no_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
+
+        // With heuristics
+        let mut encoder_heur = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .memory_limit(memory_limit)
+            .require_stable_distribution()
+            .start()
+            .unwrap();
+
+        for y in 0..height as usize {
+            let start = y * row_size;
+            let end = start + row_size;
+            encoder_heur.push_row(&pixels[start..end]).unwrap();
+        }
+        let result_heur = encoder_heur.finish().unwrap();
+        let overhead_heur = 100.0 * (result_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
+
+        results.push((img_name.to_string(), overhead_no_heur, overhead_heur));
+    }
+
+    // Print summary
+    eprintln!("\n{}", "=".repeat(80));
+    eprintln!("SUMMARY: {} images @ Q85, memory_limit=1MB", test_images.len());
+    eprintln!("{}", "=".repeat(80));
+
+    // Calculate statistics
+    let no_heur_overheads: Vec<f64> = results.iter().map(|(_, o, _)| *o).collect();
+    let heur_overheads: Vec<f64> = results.iter().map(|(_, _, o)| *o).collect();
+
+    let mean_no_heur = no_heur_overheads.iter().sum::<f64>() / no_heur_overheads.len() as f64;
+    let mean_heur = heur_overheads.iter().sum::<f64>() / heur_overheads.len() as f64;
+
+    let max_no_heur = no_heur_overheads.iter().cloned().fold(f64::MIN, f64::max);
+    let max_heur = heur_overheads.iter().cloned().fold(f64::MIN, f64::max);
+
+    let mut sorted_no_heur = no_heur_overheads.clone();
+    sorted_no_heur.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_no_heur = sorted_no_heur[sorted_no_heur.len() / 2];
+
+    let mut sorted_heur = heur_overheads.clone();
+    sorted_heur.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_heur = sorted_heur[sorted_heur.len() / 2];
+
+    // Count images within 4% threshold
+    let within_4_no_heur = no_heur_overheads.iter().filter(|&&o| o <= 4.0).count();
+    let within_4_heur = heur_overheads.iter().filter(|&&o| o <= 4.0).count();
+
+    eprintln!("\n{:>25} {:>12} {:>12}", "Metric", "No Heuristics", "With Heuristics");
+    eprintln!("{}", "-".repeat(55));
+    eprintln!("{:>25} {:>11.2}% {:>11.2}%", "Mean overhead", mean_no_heur, mean_heur);
+    eprintln!("{:>25} {:>11.2}% {:>11.2}%", "Median overhead", median_no_heur, median_heur);
+    eprintln!("{:>25} {:>11.2}% {:>11.2}%", "Max overhead", max_no_heur, max_heur);
+    eprintln!("{:>25} {:>8}/{:<4} {:>8}/{:<4}", "Within 4%",
+        within_4_no_heur, test_images.len(), within_4_heur, test_images.len());
+
+    // Show worst cases
+    eprintln!("\nWorst 5 images (by max overhead):");
+    let mut by_no_heur: Vec<_> = results.iter().collect();
+    by_no_heur.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    eprintln!("{:>40} {:>12} {:>12} {:>10}", "Image", "No Heur", "With Heur", "Improvement");
+    eprintln!("{}", "-".repeat(80));
+    for (name, no_heur, heur) in by_no_heur.iter().take(5) {
+        let improvement = no_heur - heur;
+        let name_short: String = name.chars().take(38).collect();
+        eprintln!("{:>40} {:>11.2}% {:>11.2}% {:>+9.1}%", name_short, no_heur, heur, improvement);
+    }
+
+    // Show images where heuristics helped most
+    let mut by_improvement: Vec<_> = results.iter().map(|(n, no_h, h)| (n, no_h - h)).collect();
+    by_improvement.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    eprintln!("\nTop 5 images where heuristics helped most:");
+    eprintln!("{:>40} {:>15}", "Image", "Improvement");
+    eprintln!("{}", "-".repeat(60));
+    for (name, improvement) in by_improvement.iter().take(5) {
+        let name_short: String = name.chars().take(38).collect();
+        eprintln!("{:>40} {:>+14.1}%", name_short, improvement);
+    }
+
+    // Final verdict
+    eprintln!("\n{}", "=".repeat(80));
+    if max_heur <= 4.0 {
+        eprintln!("✓ With heuristics: ALL {} images within 4% overhead (max: {:.2}%)",
+            test_images.len(), max_heur);
+    } else {
+        let over_4: Vec<_> = results.iter()
+            .filter(|(_, _, h)| *h > 4.0)
+            .collect();
+        eprintln!("✗ With heuristics: {} images exceed 4% overhead", over_4.len());
+        for (name, _, h) in over_4.iter().take(5) {
+            eprintln!("    {} → {:.2}%", name, h);
         }
     }
 }
