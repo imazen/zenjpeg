@@ -1,23 +1,63 @@
-# Context Handoff - Bounded-Memory Streaming Heuristics
+# Context Handoff - Semi-Optimal Huffman Tables for Streaming JPEG
 
-## Session Summary (2026-01-27)
+## Problem Statement
 
-Implemented custom Huffman tables API for bounded-memory streaming encoding, enabling corpus-based table optimization.
+Bounded-memory streaming JPEG encoding faces a chicken-and-egg problem:
 
-## New API: Custom Huffman Tables
+1. **Optimal Huffman tables** require seeing ALL image data first (two-pass encoding)
+2. **Standard JPEG tables** work for any image but have 5-10% overhead
+3. **Partial-data optimization** (build tables from first N% of image) fails on "pathological" images where early content differs from later content
 
-### Types Added
+We want tables that are:
+- Usable immediately (no buffering the whole image)
+- Better than standard tables (< 5% overhead)
+- Robust across diverse image content
+
+## Solution: Corpus-Based "Universal" Tables
+
+Build Huffman tables from frequency distributions aggregated across a representative corpus. These tables can be used for any new image with predictable overhead.
+
+### API Implemented
 
 ```rust
-/// A complete set of frequency counters for Huffman table optimization.
+use zenjpeg::encode::{HuffmanFrequencyCounts, StreamingEncoder, EncodingResult};
+
+// Step 1: Collect frequency counts from corpus
+let mut corpus_counts = HuffmanFrequencyCounts::new();
+for image_path in corpus {
+    let result: EncodingResult = encode_image(image_path)?;
+    corpus_counts.add(&result.frequency_counts);
+}
+
+// Step 2: Generate tables from combined counts
+let universal_tables = corpus_counts.generate_tables()?;
+
+// Step 3: Use for streaming encoding
+let encoder = StreamingEncoder::new(width, height)
+    .quality(Quality::ApproxJpegli(85.0))
+    .memory_limit(1024 * 1024)  // Bounded memory
+    .custom_huffman_tables(universal_tables)
+    .start()?;
+```
+
+### Types
+
+```rust
+/// Frequency counters for all 4 Huffman tables
 pub struct HuffmanFrequencyCounts {
-    pub dc_luma: FrequencyCounter,
-    pub ac_luma: FrequencyCounter,
+    pub dc_luma: FrequencyCounter,    // 12 symbols (categories 0-11)
+    pub ac_luma: FrequencyCounter,    // 162 symbols (EOB, ZRL, run/size)
     pub dc_chroma: FrequencyCounter,
     pub ac_chroma: FrequencyCounter,
 }
 
-/// Result from encoding that includes both JPEG data and Huffman statistics.
+impl HuffmanFrequencyCounts {
+    pub fn new() -> Self;
+    pub fn add(&mut self, other: &Self);           // Combine counts
+    pub fn generate_tables(&self) -> Result<OptimizedHuffmanTables>;
+}
+
+/// Result from finish_with_tables()
 pub struct EncodingResult {
     pub jpeg: Vec<u8>,
     pub frequency_counts: HuffmanFrequencyCounts,
@@ -25,106 +65,104 @@ pub struct EncodingResult {
 }
 ```
 
-### Builder Methods Added
+### Builder Methods
 
 ```rust
-// Use pre-built custom tables (highest priority)
 StreamingEncoder::new(w, h)
+    // Use pre-built tables directly (highest priority)
     .custom_huffman_tables(tables)
-    .start()?;
 
-// Generate tables from custom frequency counts
-StreamingEncoder::new(w, h)
+    // OR: Generate tables from provided counts
     .custom_frequency_counts(counts)
+
+    // OR: Use JPEG standard tables (fallback)
+    .use_standard_huffman_tables(true)
+
     .start()?;
 ```
 
-### Finish Method Added
+## Key Findings
 
-```rust
-// Get JPEG + frequency counts + tables used
-let result = encoder.finish_with_tables()?;
-println!("JPEG size: {}", result.jpeg.len());
-println!("AC entropy: {:.2}", result.frequency_counts.ac_luma.entropy());
-```
+### Partial-Data Optimization Fails for Some Images
 
-### Use Cases
+Testing on CLIC 2025 validation set (32 images):
 
-1. **Build "universal" tables from corpus:**
-   ```rust
-   let mut corpus_counts = HuffmanFrequencyCounts::new();
-   for image in corpus {
-       let result = encode_image(image)?;
-       corpus_counts.add(&result.frequency_counts);
-   }
-   let corpus_tables = corpus_counts.generate_tables()?;
-   ```
+| Transition % | Failures (>4% overhead) | Max Overhead |
+|--------------|------------------------|--------------|
+| 15% | 4/32 | 18.2% |
+| 25% | 2/32 | 14.6% |
+| 50% | 0/32 | 3.6% |
 
-2. **Use corpus tables for streaming encoding:**
-   ```rust
-   let encoder = StreamingEncoder::new(w, h)
-       .memory_limit(1024 * 1024)
-       .custom_huffman_tables(corpus_tables)
-       .start()?;
-   // Tables used immediately - no optimization pass needed
-   ```
+**Root cause**: Some images have frequency distributions that continue changing throughout. Early data isn't representative.
 
-3. **Analyze symbol distributions:**
-   ```rust
-   let result = encoder.finish_with_tables()?;
-   let ac_entropy = result.frequency_counts.ac_luma.entropy();
-   let dc_coverage = result.frequency_counts.dc_luma.dc_symbol_coverage();
-   ```
+Example pathological image:
+- 25%: KL divergence 0.015, passes heuristics
+- 100%: KL divergence 0.55, significantly different distribution
 
-## Previous Session Findings
+### Heuristics Don't Catch All Cases
 
-### Transition Reason Tracking
+Current heuristics (entropy + symbol coverage) detect "not enough data" but NOT "unrepresentative data":
+- Low entropy → likely smooth region → wait for more data ✓
+- Low coverage → few symbol types seen → wait for more data ✓
+- High entropy + high coverage but WRONG distribution → not detected ✗
 
-Added `TransitionReason` enum to understand WHY images transition to streaming mode:
+### Standard Tables Baseline
 
-```rust
-pub enum TransitionReason {
-    ForcedByRows,       // Testing API forced transition
-    HeuristicsPassed,   // Memory limit + heuristics OK
-    MinPercentReached,  // min_transition_percent gate only
-    SafetyValve,        // 50% safety valve
-    NoTransition,       // Full buffering mode
-}
-```
+JPEG standard tables overhead varies by content:
+- Photographic: 5-8%
+- Graphics/text: 8-12%
+- Noise/high-frequency: 3-5%
 
-### CLIC 2025 Test Results (32 images)
+## Research Questions
 
-| Min % | Failures | Max Overhead | Mean Trans% |
-|-------|----------|--------------|-------------|
-| 25% | 2/32 | 14.62% | 47.1% |
-| 30% | 1/32 | 13.41% | 47.8% |
-| 35% | 1/32 | 7.91% | 48.4% |
-| 40% | 1/32 | 6.24% | 49.0% |
-| **50%** | **0/32** | **3.62%** | **50.2%** |
+1. **Optimal corpus size**: How many images needed for convergent tables?
+2. **Quality-specific tables**: Should tables differ by quality level?
+3. **Content-specific tables**: Separate tables for photos vs graphics?
+4. **Adaptive quantization impact**: Does jpegli's AQ + zero-bias change optimal tables?
 
-### Pathological Image Analysis
+## Files
 
-Two images pass heuristics at 25% but produce poor tables because their early frequency distributions are NOT representative - the distribution continues to diverge significantly through the image.
+### Core Implementation
+- `zenjpeg/src/encode/streaming.rs` - HuffmanFrequencyCounts, EncodingResult, builder methods
 
-## Files Modified This Session
+### Examples
+- `zenjpeg/examples/custom_huffman_tables.rs` - Demo of corpus-based tables
+- `zenjpeg/examples/compare_table_strategies.rs` - Compare optimized vs standard
+- `zenjpeg/examples/analyze_distribution_change.rs` - KL divergence analysis
+- `zenjpeg/examples/compare_min_thresholds.rs` - Transition % comparison
 
-- `zenjpeg/src/encode/streaming.rs` - Added HuffmanFrequencyCounts, EncodingResult, builder methods, finish_with_tables()
-- `zenjpeg/src/encode/mod.rs` - Re-exported new types
-- `zenjpeg/examples/custom_huffman_tables.rs` - Demo of the new API
+### Test Data
+- CLIC 2025 validation: `/home/lilith/work/codec-corpus/clic2025/validation/` (32 PNG images)
 
-## Test Commands
+## Commands
 
 ```bash
-# Run the custom Huffman tables example
+# Run custom tables demo
 cargo run --release -p zenjpeg --features test-utils --example custom_huffman_tables
 
-# Run library tests
-cargo test --release -p zenjpeg --features test-utils --lib
+# Compare table strategies on CLIC corpus
+cargo run --release -p zenjpeg --features test-utils --example compare_table_strategies
+
+# Analyze distribution stability
+cargo run --release -p zenjpeg --features test-utils --example analyze_distribution_change
+
+# Run streaming threshold tests
+cargo test --release -p zenjpeg --features test-utils --test streaming_threshold -- --nocapture --ignored
 ```
 
 ## Next Steps
 
-1. Test corpus-based tables on CLIC 2025 validation set
-2. Compare overhead: corpus tables vs optimized-from-partial vs standard tables
-3. Find optimal corpus size for convergent tables
-4. Consider whether tables should be tuned per-quality-level
+### Immediate
+1. Build tables from CLIC 2025 training set (larger corpus)
+2. Measure overhead on validation set with corpus tables
+3. Compare: corpus tables vs partial-25% vs partial-50% vs standard
+
+### Research
+1. Test if quality level affects optimal table structure
+2. Measure whether AQ/zero-bias changes symbol distribution significantly vs libjpeg
+3. Consider clustering images by content type for specialized tables
+
+### Production
+1. Ship default "universal" tables derived from large corpus
+2. Allow users to provide custom tables for domain-specific optimization
+3. Document expected overhead ranges for different scenarios
