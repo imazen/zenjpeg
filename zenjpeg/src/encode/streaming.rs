@@ -1183,39 +1183,56 @@ impl StreamingEncoder {
     /// 5. Sets streaming_mode = true
     fn transition_to_streaming(&mut self) -> Result<()> {
         use crate::foundation::bitstream::BitWriter;
-        use crate::huffman::optimize::OptimizedTable;
-        use crate::huffman::{
-            HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
-            STD_AC_LUMINANCE_BITS, STD_AC_LUMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
-            STD_DC_CHROMINANCE_VALUES, STD_DC_LUMINANCE_BITS, STD_DC_LUMINANCE_VALUES,
-        };
 
-        // For streaming mode, use standard Huffman tables instead of building from partial data.
-        // This ensures all valid symbols have codes assigned, even those that might not appear
-        // in the initial data but could appear later. The standard tables are guaranteed to
-        // cover all valid DC (0-11) and AC (run/size) symbols.
+        // Get frequency counters from processor and clone them so we can modify
+        let (dc_luma_freq, ac_luma_freq, dc_chroma_freq, ac_chroma_freq) =
+            self.processor.frequency_counters();
+
+        // Clone and ensure coverage for all valid symbols.
+        // This creates partially-optimized tables that:
+        // 1. Favor the observed symbol frequencies (shorter codes for common symbols)
+        // 2. Have codes for ALL valid symbols (longer codes for unseen ones)
         //
-        // NOTE: This is less efficient than optimized tables (~5-15% larger files), but
-        // guarantees correctness in streaming mode where we can't scan all data upfront.
-        let dc_luma = OptimizedTable {
-            table: HuffmanEncodeTable::std_dc_luminance().clone(),
-            bits: STD_DC_LUMINANCE_BITS,
-            values: STD_DC_LUMINANCE_VALUES.to_vec(),
-        };
-        let ac_luma = OptimizedTable {
-            table: HuffmanEncodeTable::std_ac_luminance().clone(),
-            bits: STD_AC_LUMINANCE_BITS,
-            values: STD_AC_LUMINANCE_VALUES.to_vec(),
-        };
-        let dc_chroma = OptimizedTable {
-            table: HuffmanEncodeTable::std_dc_chrominance().clone(),
-            bits: STD_DC_CHROMINANCE_BITS,
-            values: STD_DC_CHROMINANCE_VALUES.to_vec(),
-        };
-        let ac_chroma = OptimizedTable {
-            table: HuffmanEncodeTable::std_ac_chrominance().clone(),
-            bits: STD_AC_CHROMINANCE_BITS,
-            values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+        // Without ensure_*_coverage(), zero-frequency symbols get no code assigned,
+        // causing silent encoding failures when those symbols appear later.
+        let mut dc_luma_freq = dc_luma_freq.clone();
+        let mut ac_luma_freq = ac_luma_freq.clone();
+        dc_luma_freq.ensure_dc_coverage();
+        ac_luma_freq.ensure_ac_coverage();
+
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
+        let ac_luma = ac_luma_freq.generate_table_with_method(huffman_method)?;
+
+        let is_color = !self.config.pixel_format.is_grayscale();
+        let (dc_chroma, ac_chroma) = if is_color {
+            let mut dc_chroma_freq = dc_chroma_freq.clone();
+            let mut ac_chroma_freq = ac_chroma_freq.clone();
+            dc_chroma_freq.ensure_dc_coverage();
+            ac_chroma_freq.ensure_ac_coverage();
+            (
+                dc_chroma_freq.generate_table_with_method(huffman_method)?,
+                ac_chroma_freq.generate_table_with_method(huffman_method)?,
+            )
+        } else {
+            // Use standard tables for grayscale (won't be used)
+            use crate::huffman::optimize::OptimizedTable;
+            use crate::huffman::{
+                HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
+                STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
+            };
+            (
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                    bits: STD_DC_CHROMINANCE_BITS,
+                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+                },
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                    bits: STD_AC_CHROMINANCE_BITS,
+                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+                },
+            )
         };
 
         let tables = crate::huffman::optimize::OptimizedHuffmanTables {
@@ -1224,8 +1241,6 @@ impl StreamingEncoder {
             dc_chroma,
             ac_chroma,
         };
-
-        let is_color = !self.config.pixel_format.is_grayscale();
 
         // Initialize output buffer
         let mut output = Vec::new();

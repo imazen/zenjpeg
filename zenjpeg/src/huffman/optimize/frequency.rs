@@ -127,6 +127,49 @@ impl FrequencyCounter {
         self.counts[..256].iter().filter(|&&c| c > 0).count()
     }
 
+    /// Ensures all valid DC symbols (0-11) have at least frequency 1.
+    ///
+    /// Call this before generating a DC Huffman table from partial data
+    /// to ensure all valid category symbols have codes assigned.
+    pub fn ensure_dc_coverage(&mut self) {
+        // DC symbols are categories 0-11 (for DC coefficient differences)
+        for symbol in 0..=11 {
+            if self.counts[symbol] == 0 {
+                self.counts[symbol] = 1;
+            }
+        }
+    }
+
+    /// Ensures all valid AC symbols have at least frequency 1.
+    ///
+    /// Call this before generating an AC Huffman table from partial data
+    /// to ensure all valid run/size symbols have codes assigned.
+    ///
+    /// Valid AC symbols are:
+    /// - 0x00: EOB (End of Block)
+    /// - 0xF0: ZRL (Zero Run Length - 16 zeros)
+    /// - (run << 4) | size: where run=0-15, size=1-10
+    pub fn ensure_ac_coverage(&mut self) {
+        // EOB (End of Block)
+        if self.counts[0x00] == 0 {
+            self.counts[0x00] = 1;
+        }
+        // ZRL (Zero Run Length - 16 zeros)
+        if self.counts[0xF0] == 0 {
+            self.counts[0xF0] = 1;
+        }
+        // All valid (run, size) combinations
+        // run: 0-15, size: 1-10 (size 0 is only valid for EOB/ZRL)
+        for run in 0..=15u8 {
+            for size in 1..=10u8 {
+                let symbol = (run << 4) | size;
+                if self.counts[symbol as usize] == 0 {
+                    self.counts[symbol as usize] = 1;
+                }
+            }
+        }
+    }
+
     /// Generates an optimal Huffman table from the collected frequencies.
     ///
     /// This implements Section K.2 of the JPEG specification.
