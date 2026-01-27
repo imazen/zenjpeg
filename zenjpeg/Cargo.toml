@@ -63,10 +63,11 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # Native-only dev dependencies (don't compile for WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
-zenjpeg-bench-utils = { path = "../zenjpeg-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
+# TEMPORARILY DISABLED - jpegli-cpp submodule not built
+# zenjpeg-bench-utils = { path = "../zenjpeg-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
 # For FFI comparison testing against C++ jpegli (internal development only)
-jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
-butteraugli = { workspace = true }
+# jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
+# butteraugli = { workspace = true }
 chrono = "0.4"
 approx = { workspace = true }
 proptest = { workspace = true }

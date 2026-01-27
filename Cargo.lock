@@ -1935,7 +1935,6 @@ dependencies = [
  "approx",
  "archmage",
  "bincode",
- "butteraugli",
  "bytemuck",
  "chrono",
  "codec-eval",
@@ -1947,7 +1946,6 @@ dependencies = [
  "getrandom",
  "img-parts",
  "imgref",
- "jpegli-internals-sys",
  "kamadak-exif",
  "lcms2",
  "linear-srgb",
@@ -1973,7 +1971,6 @@ dependencies = [
  "whereat",
  "wide 1.1.1",
  "yuv",
- "zenjpeg-bench-utils",
  "zune-jpeg",
 ]
 
