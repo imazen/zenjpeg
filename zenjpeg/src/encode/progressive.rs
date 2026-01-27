@@ -249,13 +249,39 @@ impl ComputedConfig {
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.encode_progressive_from_blocks_into(
+            y_blocks,
+            cb_blocks,
+            cr_blocks,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            &mut output,
+        )?;
+        Ok(output)
+    }
+
+    /// Encodes progressive JPEG from pre-processed blocks into provided buffer.
+    ///
+    /// Same as `encode_progressive_from_blocks` but writes directly to provided buffer.
+    pub(crate) fn encode_progressive_from_blocks_into(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
         let width = self.width as usize;
         let height = self.height as usize;
 
-        let mut output = crate::foundation::alloc::try_with_capacity(
-            width * height / 4,
-            "progressive from blocks output",
-        )?;
+        output.clear();
+        output.try_reserve(width * height / 4).map_err(|_| {
+            Error::allocation_failed(width * height / 4, "progressive from blocks output")
+        })?;
 
         let is_color = !self.pixel_format.is_grayscale();
         let num_components = if is_color { 3 } else { 1 };
@@ -330,30 +356,30 @@ impl ComputedConfig {
         // ========== WRITE JPEG STRUCTURE ==========
         if self.use_xyb {
             // XYB mode: use XYB-specific headers
-            self.write_header_xyb(&mut output)?;
+            self.write_header_xyb(output)?;
             // Write APP14 Adobe marker for RGB colorspace (required by decoders)
-            self.write_app14_adobe(&mut output, 0)?; // 0 = RGB (no transform)
-                                                     // Write XYB ICC profile so decoders can interpret the colors correctly
-            self.write_icc_profile(&mut output, &XYB_ICC_PROFILE)?;
-            self.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
-            self.write_frame_header_xyb_progressive(&mut output)?;
+            self.write_app14_adobe(output, 0)?; // 0 = RGB (no transform)
+                                                // Write XYB ICC profile so decoders can interpret the colors correctly
+            self.write_icc_profile(output, &XYB_ICC_PROFILE)?;
+            self.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
+            self.write_frame_header_xyb_progressive(output)?;
         } else {
             // YCbCr mode: use standard headers
-            self.write_header(&mut output)?;
-            self.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
-            self.write_frame_header(&mut output)?; // Uses SOF2 for progressive
+            self.write_header(output)?;
+            self.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
+            self.write_frame_header(output)?; // Uses SOF2 for progressive
         }
 
         // Write initial Huffman tables
         let mut next_dht_index = self.write_huffman_tables_progressive_initial(
-            &mut output,
+            output,
             &tables,
             num_dc_tables,
             4, // max_initial_ac
         )?;
 
         if self.restart_interval > 0 {
-            self.write_restart_interval(&mut output)?;
+            self.write_restart_interval(output)?;
         }
 
         // ========== PASS 2: REPLAY TOKENS ==========
@@ -368,7 +394,7 @@ impl ComputedConfig {
                             .get(cluster_idx)
                             .copied()
                             .unwrap_or(cluster_idx % 4);
-                        self.write_single_ac_table(&mut output, &tables[table_idx], ac_slot)?;
+                        self.write_single_ac_table(output, &tables[table_idx], ac_slot)?;
                         next_dht_index += 1;
                     }
                 }
@@ -376,7 +402,7 @@ impl ComputedConfig {
 
             // Write SOS header
             self.write_progressive_scan_header_with_slot_ids(
-                &mut output,
+                output,
                 scan_idx,
                 scan,
                 is_color,
@@ -406,6 +432,6 @@ impl ComputedConfig {
         output.push(0xFF);
         output.push(MARKER_EOI);
 
-        Ok(output)
+        Ok(())
     }
 }
