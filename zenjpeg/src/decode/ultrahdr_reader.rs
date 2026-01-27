@@ -239,9 +239,7 @@ impl UltraHdrReaderConfig {
     /// Configure for HDR decode with typical display settings.
     #[must_use]
     pub fn hdr_default() -> Self {
-        Self::new()
-            .mode(UltraHdrMode::Hdr)
-            .display_boost(4.0)
+        Self::new().mode(UltraHdrMode::Hdr).display_boost(4.0)
     }
 
     /// Configure for editing workflow (SDR + gain map preservation).
@@ -380,7 +378,9 @@ impl<'a> UltraHdrReader<'a> {
                 // Get gainmap dimensions by reading its header
                 let gm_info = crate::decode::Decoder::new()
                     .read_info(gainmap_data)
-                    .map_err(|e| Error::decode_error(format!("Failed to read gainmap info: {}", e)))?;
+                    .map_err(|e| {
+                        Error::decode_error(format!("Failed to read gainmap info: {}", e))
+                    })?;
 
                 let gm_width = gm_info.dimensions.width;
                 let gm_height = gm_info.dimensions.height;
@@ -412,13 +412,14 @@ impl<'a> UltraHdrReader<'a> {
                 // created from a pointer to the stored data.
                 let gainmap_ptr = gainmap_owned.as_ptr();
                 let gainmap_len = gainmap_owned.len();
-                let gainmap_slice: &'static [u8] = unsafe {
-                    core::slice::from_raw_parts(gainmap_ptr, gainmap_len)
-                };
+                let gainmap_slice: &'static [u8] =
+                    unsafe { core::slice::from_raw_parts(gainmap_ptr, gainmap_len) };
 
                 let gm_reader = crate::decode::Decoder::new()
                     .scanline_reader(gainmap_slice)
-                    .map_err(|e| Error::decode_error(format!("Failed to create gainmap reader: {}", e)))?;
+                    .map_err(|e| {
+                        Error::decode_error(format!("Failed to create gainmap reader: {}", e))
+                    })?;
 
                 self.hdr_state = Some(HdrDecoderState::StreamDecoder {
                     decoder: Box::new(stream_decoder),
@@ -497,15 +498,9 @@ impl<'a> UltraHdrReader<'a> {
         }
 
         match self.config.mode {
-            UltraHdrMode::SdrOnly => {
-                self.read_sdr_only(actual_rows, sdr_output)
-            }
-            UltraHdrMode::Hdr => {
-                self.read_hdr_only(actual_rows, hdr_output)
-            }
-            UltraHdrMode::SdrAndHdr => {
-                self.read_sdr_and_hdr(actual_rows, sdr_output, hdr_output)
-            }
+            UltraHdrMode::SdrOnly => self.read_sdr_only(actual_rows, sdr_output),
+            UltraHdrMode::Hdr => self.read_hdr_only(actual_rows, hdr_output),
+            UltraHdrMode::SdrAndHdr => self.read_sdr_and_hdr(actual_rows, sdr_output, hdr_output),
             UltraHdrMode::SdrAndGainMap => {
                 self.read_sdr_and_gainmap(actual_rows, sdr_output, gainmap_output)
             }
@@ -515,7 +510,9 @@ impl<'a> UltraHdrReader<'a> {
     /// Read SDR-only rows.
     fn read_sdr_only(&mut self, rows: usize, sdr_output: Option<&mut [u8]>) -> Result<usize> {
         let Some(output) = sdr_output else {
-            return Err(Error::internal("SDR output buffer required for SdrOnly mode"));
+            return Err(Error::internal(
+                "SDR output buffer required for SdrOnly mode",
+            ));
         };
 
         let width = self.base_reader.width() as usize;
@@ -555,10 +552,14 @@ impl<'a> UltraHdrReader<'a> {
         hdr_output: Option<&mut [f32]>,
     ) -> Result<usize> {
         let Some(sdr_out) = sdr_output else {
-            return Err(Error::internal("SDR output buffer required for SdrAndHdr mode"));
+            return Err(Error::internal(
+                "SDR output buffer required for SdrAndHdr mode",
+            ));
         };
         let Some(hdr_out) = hdr_output else {
-            return Err(Error::internal("HDR output buffer required for SdrAndHdr mode"));
+            return Err(Error::internal(
+                "HDR output buffer required for SdrAndHdr mode",
+            ));
         };
 
         let width = self.base_reader.width() as usize;
@@ -586,7 +587,9 @@ impl<'a> UltraHdrReader<'a> {
         _gainmap_output: Option<&mut [u8]>,
     ) -> Result<usize> {
         let Some(sdr_out) = sdr_output else {
-            return Err(Error::internal("SDR output buffer required for SdrAndGainMap mode"));
+            return Err(Error::internal(
+                "SDR output buffer required for SdrAndGainMap mode",
+            ));
         };
 
         let width = self.base_reader.width() as usize;
@@ -628,7 +631,11 @@ impl<'a> UltraHdrReader<'a> {
                 let copy_len = hdr_output.len().min(hdr_floats.len());
                 hdr_output[..copy_len].copy_from_slice(&hdr_floats[..copy_len]);
             }
-            HdrDecoderState::StreamDecoder { decoder, gainmap_reader, .. } => {
+            HdrDecoderState::StreamDecoder {
+                decoder,
+                gainmap_reader,
+                ..
+            } => {
                 // Feed gain map rows if needed
                 while let Some(_gm_row_needed) = decoder.next_gainmap_row_needed() {
                     // Read gain map row
@@ -643,7 +650,8 @@ impl<'a> UltraHdrReader<'a> {
                     }
 
                     // Push to decoder
-                    decoder.push_gainmap_row(&gm_row)
+                    decoder
+                        .push_gainmap_row(&gm_row)
                         .map_err(|e| Error::decode_error(e.to_string()))?;
                 }
 

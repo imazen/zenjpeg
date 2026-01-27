@@ -333,39 +333,62 @@ impl Decoder {
             ));
         }
 
-        if parser.num_components != 3 {
+        // Support grayscale (1) and color (3) images
+        if parser.num_components != 1 && parser.num_components != 3 {
             return Err(Error::unsupported_feature(
-                "scanline reader requires 3-component YCbCr image",
+                "scanline reader requires 1-component (grayscale) or 3-component (YCbCr) image",
             ));
         }
 
-        // Extract sampling factors
-        let h_samp = [
-            parser.components[0].h_samp_factor,
-            parser.components[1].h_samp_factor,
-            parser.components[2].h_samp_factor,
-        ];
-        let v_samp = [
-            parser.components[0].v_samp_factor,
-            parser.components[1].v_samp_factor,
-            parser.components[2].v_samp_factor,
-        ];
+        let is_grayscale = parser.num_components == 1;
+
+        // Extract sampling factors - use defaults for missing components in grayscale
+        let h_samp = if is_grayscale {
+            [parser.components[0].h_samp_factor, 1, 1]
+        } else {
+            [
+                parser.components[0].h_samp_factor,
+                parser.components[1].h_samp_factor,
+                parser.components[2].h_samp_factor,
+            ]
+        };
+        let v_samp = if is_grayscale {
+            [parser.components[0].v_samp_factor, 1, 1]
+        } else {
+            [
+                parser.components[0].v_samp_factor,
+                parser.components[1].v_samp_factor,
+                parser.components[2].v_samp_factor,
+            ]
+        };
 
         // Validate sampling factors - support 4:4:4, 4:2:2, and 4:2:0
-        let max_h = h_samp.iter().copied().max().unwrap_or(1);
-        let max_v = v_samp.iter().copied().max().unwrap_or(1);
+        let max_h = h_samp[..parser.num_components as usize]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1);
+        let max_v = v_samp[..parser.num_components as usize]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(1);
         if max_h > 2 || max_v > 2 {
             return Err(Error::unsupported_feature(
                 "scanline reader only supports sampling factors up to 2x2",
             ));
         }
 
-        // Extract quant table indices
-        let quant_indices = [
-            parser.components[0].quant_table_idx as usize,
-            parser.components[1].quant_table_idx as usize,
-            parser.components[2].quant_table_idx as usize,
-        ];
+        // Extract quant table indices - use 0 for missing components in grayscale
+        let quant_indices = if is_grayscale {
+            [parser.components[0].quant_table_idx as usize, 0, 0]
+        } else {
+            [
+                parser.components[0].quant_table_idx as usize,
+                parser.components[1].quant_table_idx as usize,
+                parser.components[2].quant_table_idx as usize,
+            ]
+        };
 
         // Find SOS marker to get table mapping and scan data position
         let scan_info = parser.find_scan_info()?;
@@ -392,6 +415,16 @@ impl Decoder {
     }
 
     /// Decodes a JPEG image.
+    ///
+    /// **Deprecated**: This method allocates the entire decoded image in memory.
+    /// For large images or memory-constrained environments, use
+    /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
+    /// into caller-provided buffers.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use scanline_reader() for streaming decode into caller's buffer"
+    )]
+    #[allow(deprecated)]
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
         let mut parser =
             JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
@@ -460,6 +493,14 @@ impl Decoder {
     ///
     /// Note: ICC profile application is not supported for f32 output.
     /// If you need ICC profile transformation, decode to u8 first.
+    ///
+    /// **Deprecated**: This method allocates the entire decoded image in memory.
+    /// For large images, use streaming APIs for memory-efficient decoding.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use streaming APIs for memory-efficient decoding"
+    )]
+    #[allow(deprecated)]
     pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - f32 decode needs coefficients for precision
@@ -505,6 +546,14 @@ impl Decoder {
     /// let comparison = coeffs.compare(&other_coeffs);
     /// println!("{}% of blocks differ", comparison.diff_block_pct());
     /// ```
+    ///
+    /// **Deprecated**: This method allocates all coefficients in memory.
+    /// For analysis of large images, consider streaming APIs.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use streaming APIs for memory-efficient decoding"
+    )]
+    #[allow(deprecated)]
     pub fn decode_coefficients(&self, data: &[u8]) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - we need coefficients stored
@@ -555,6 +604,14 @@ impl Decoder {
     /// - The image is grayscale (only 1 component)
     /// - The image uses XYB color space (not YCbCr)
     /// - Parsing or decoding fails
+    ///
+    /// **Deprecated**: This method allocates all YCbCr planes in memory.
+    /// For large images, use streaming APIs for memory-efficient decoding.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use streaming APIs for memory-efficient decoding"
+    )]
+    #[allow(deprecated)]
     pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - f32 YCbCr decode needs coefficients
@@ -638,7 +695,8 @@ impl Decoder {
         config: UltraHdrReaderConfig,
     ) -> Result<UltraHdrReader<'a>> {
         // Parse the JPEG header and get scanline reader
-        let mut parser = JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
+        let mut parser =
+            JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
         parser.read_header()?;
 
         // Only baseline supported for scanline reading

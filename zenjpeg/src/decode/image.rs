@@ -1,6 +1,10 @@
 //! Decoded image types for JPEG decoding.
 //!
 //! This module contains the output types returned by the decoder.
+//!
+//! **NOTE**: The whole-image return types in this module (`DecodedImage`,
+//! `DecodedImageF32`, etc.) are deprecated. Use streaming APIs like
+//! `Decoder::scanline_reader()` for memory-efficient decoding.
 
 use crate::types::PixelFormat;
 
@@ -8,6 +12,14 @@ use super::extras::DecodedExtras;
 use wide::f32x8;
 
 /// A decoded image with dimensions and pixel data.
+///
+/// **Deprecated**: This type allocates the entire decoded image in memory.
+/// For large images, use `Decoder::scanline_reader()` to decode row-by-row
+/// into caller-provided buffers.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use Decoder::scanline_reader() for streaming decode into caller's buffer"
+)]
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct DecodedImage {
@@ -104,6 +116,13 @@ impl DecodedImage {
 /// - HDR workflows
 /// - Scientific/medical imaging applications
 /// - Input to machine learning models
+///
+/// **Deprecated**: This type allocates the entire decoded image in memory.
+/// For large images, use streaming APIs to decode row-by-row.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use streaming APIs for memory-efficient decoding"
+)]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DecodedImageF32 {
@@ -252,6 +271,13 @@ impl DecodedImageF32 {
 /// - Re-encoding without color space round-trip
 /// - Custom color space transformations
 /// - Maximum performance when RGB is not needed
+///
+/// **Deprecated**: This type allocates the entire decoded image in memory.
+/// For large images, use streaming APIs to decode row-by-row.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use streaming APIs for memory-efficient decoding"
+)]
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DecodedYCbCr {
@@ -368,6 +394,13 @@ impl ComponentCoefficients {
 /// let y_dc = coeffs.components[0].block(0)[0];
 /// println!("Y DC: {}", y_dc);
 /// ```
+///
+/// **Deprecated**: This type allocates all coefficients in memory.
+/// For analysis of large images, consider streaming APIs.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use streaming APIs for memory-efficient decoding"
+)]
 #[derive(Debug, Clone)]
 pub struct DecodedCoefficients {
     /// Image width in pixels
