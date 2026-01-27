@@ -267,6 +267,9 @@ pub struct UltraHdrReader<'a> {
     /// Base JPEG scanline reader
     base_reader: ScanlineReader<'a>,
 
+    /// Reference to original JPEG data (for zero-copy gain map access)
+    data: &'a [u8],
+
     /// Whether this is actually an UltraHDR image (has gain map)
     is_ultrahdr: bool,
 
@@ -279,8 +282,9 @@ pub struct UltraHdrReader<'a> {
     /// Internal state for HDR reconstruction
     hdr_state: Option<HdrDecoderState>,
 
-    /// Gain map JPEG data (for SdrAndGainMap mode or Full memory strategy)
-    gainmap_data: Option<Vec<u8>>,
+    /// Gain map JPEG byte range in original data (start, end)
+    /// Uses byte range instead of Vec<u8> for zero-copy access
+    gainmap_range: Option<(usize, usize)>,
 }
 
 /// Internal state for HDR reconstruction.
@@ -307,24 +311,25 @@ impl<'a> UltraHdrReader<'a> {
         config: UltraHdrReaderConfig,
         base_reader: ScanlineReader<'a>,
         extras: Option<DecodedExtras>,
-        gainmap_data: Option<Vec<u8>>,
+        gainmap_range: Option<(usize, usize)>,
         metadata: Option<GainMapMetadata>,
     ) -> Result<Self> {
-        let is_ultrahdr = metadata.is_some() && gainmap_data.is_some();
+        let is_ultrahdr = metadata.is_some() && gainmap_range.is_some();
 
         let mut reader = Self {
             config,
             base_reader,
+            data,
             is_ultrahdr,
             metadata,
             extras,
             hdr_state: None,
-            gainmap_data,
+            gainmap_range,
         };
 
         // Initialize HDR state if needed
         if reader.needs_hdr_processing() && reader.is_ultrahdr {
-            reader.init_hdr_state(data)?;
+            reader.init_hdr_state()?;
         }
 
         Ok(reader)
@@ -339,14 +344,17 @@ impl<'a> UltraHdrReader<'a> {
     }
 
     /// Initialize the HDR decoder state.
-    fn init_hdr_state(&mut self, _data: &[u8]) -> Result<()> {
+    fn init_hdr_state(&mut self) -> Result<()> {
         let metadata = self.metadata.as_ref().ok_or_else(|| {
             Error::decode_error("Missing gain map metadata for HDR decode".to_string())
         })?;
 
-        let gainmap_data = self.gainmap_data.as_ref().ok_or_else(|| {
+        let (gm_start, gm_end) = self.gainmap_range.ok_or_else(|| {
             Error::decode_error("Missing gain map data for HDR decode".to_string())
         })?;
+
+        // Get gain map JPEG slice from original data (zero-copy)
+        let gainmap_data = &self.data[gm_start..gm_end];
 
         match self.config.memory_strategy {
             GainMapMemory::Full => {
@@ -405,7 +413,8 @@ impl<'a> UltraHdrReader<'a> {
 
                 // Create a scanline reader for the gainmap
                 // We need to own the gainmap data for the reader's lifetime
-                let gainmap_owned: Vec<u8> = gainmap_data.clone();
+                // This is the ONLY place we copy - streaming mode needs owned data
+                let gainmap_owned: Vec<u8> = gainmap_data.to_vec();
 
                 // SAFETY: We store the owned data alongside the reader, ensuring
                 // the data lives as long as the reader. The reader reference is
@@ -704,12 +713,26 @@ impl<'a> UltraHdrReader<'a> {
         self.extras.take()
     }
 
-    /// Get the raw gain map JPEG data if available.
+    /// Get the raw gain map JPEG data as a borrowed slice (zero-copy).
     ///
     /// This is useful for SdrAndGainMap mode where you want to
     /// preserve the original gain map for later re-encoding.
+    ///
+    /// Returns `None` if this is not an UltraHDR image or if the
+    /// gain map has already been taken.
+    pub fn gainmap_jpeg(&self) -> Option<&'a [u8]> {
+        self.gainmap_range.map(|(start, end)| &self.data[start..end])
+    }
+
+    /// Get the raw gain map JPEG data as owned bytes.
+    ///
+    /// This copies the gain map data. Prefer [`gainmap_jpeg()`](Self::gainmap_jpeg)
+    /// for zero-copy access when possible.
+    ///
+    /// Returns `None` if this is not an UltraHDR image or if the
+    /// gain map has already been taken.
     pub fn take_gainmap_data(&mut self) -> Option<Vec<u8>> {
-        self.gainmap_data.take()
+        self.gainmap_range.take().map(|(start, end)| self.data[start..end].to_vec())
     }
 }
 
