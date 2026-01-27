@@ -2,9 +2,81 @@
 
 ## Session Summary (2026-01-27)
 
-Investigated heuristics for bounded-memory streaming JPEG encoding. Added transition reason tracking and analyzed pathological images that pass heuristics but produce poor Huffman tables.
+Implemented custom Huffman tables API for bounded-memory streaming encoding, enabling corpus-based table optimization.
 
-## Key Findings
+## New API: Custom Huffman Tables
+
+### Types Added
+
+```rust
+/// A complete set of frequency counters for Huffman table optimization.
+pub struct HuffmanFrequencyCounts {
+    pub dc_luma: FrequencyCounter,
+    pub ac_luma: FrequencyCounter,
+    pub dc_chroma: FrequencyCounter,
+    pub ac_chroma: FrequencyCounter,
+}
+
+/// Result from encoding that includes both JPEG data and Huffman statistics.
+pub struct EncodingResult {
+    pub jpeg: Vec<u8>,
+    pub frequency_counts: HuffmanFrequencyCounts,
+    pub huffman_tables: OptimizedHuffmanTables,
+}
+```
+
+### Builder Methods Added
+
+```rust
+// Use pre-built custom tables (highest priority)
+StreamingEncoder::new(w, h)
+    .custom_huffman_tables(tables)
+    .start()?;
+
+// Generate tables from custom frequency counts
+StreamingEncoder::new(w, h)
+    .custom_frequency_counts(counts)
+    .start()?;
+```
+
+### Finish Method Added
+
+```rust
+// Get JPEG + frequency counts + tables used
+let result = encoder.finish_with_tables()?;
+println!("JPEG size: {}", result.jpeg.len());
+println!("AC entropy: {:.2}", result.frequency_counts.ac_luma.entropy());
+```
+
+### Use Cases
+
+1. **Build "universal" tables from corpus:**
+   ```rust
+   let mut corpus_counts = HuffmanFrequencyCounts::new();
+   for image in corpus {
+       let result = encode_image(image)?;
+       corpus_counts.add(&result.frequency_counts);
+   }
+   let corpus_tables = corpus_counts.generate_tables()?;
+   ```
+
+2. **Use corpus tables for streaming encoding:**
+   ```rust
+   let encoder = StreamingEncoder::new(w, h)
+       .memory_limit(1024 * 1024)
+       .custom_huffman_tables(corpus_tables)
+       .start()?;
+   // Tables used immediately - no optimization pass needed
+   ```
+
+3. **Analyze symbol distributions:**
+   ```rust
+   let result = encoder.finish_with_tables()?;
+   let ac_entropy = result.frequency_counts.ac_luma.entropy();
+   let dc_coverage = result.frequency_counts.dc_luma.dc_symbol_coverage();
+   ```
+
+## Previous Session Findings
 
 ### Transition Reason Tracking
 
@@ -20,8 +92,6 @@ pub enum TransitionReason {
 }
 ```
 
-New methods: `transition_reason()`, `transition_info()` (e.g., "50% (safety)")
-
 ### CLIC 2025 Test Results (32 images)
 
 | Min % | Failures | Max Overhead | Mean Trans% |
@@ -32,68 +102,29 @@ New methods: `transition_reason()`, `transition_info()` (e.g., "50% (safety)")
 | 40% | 1/32 | 6.24% | 49.0% |
 | **50%** | **0/32** | **3.62%** | **50.2%** |
 
-**Key insight:** Mean transition is ~47-50% regardless of minimum because most images have low early entropy/coverage (fail heuristics) and wait for safety valve. Setting min=50% guarantees 0 failures with no change to average behavior.
-
 ### Pathological Image Analysis
 
-Two images pass heuristics at 25% but produce poor tables:
-
-1. **5e5ce...** (2048×1641): 4.50% overhead at 25%, needs 30%+ for <4%
-2. **d79d...** (1638×2048): 14.62% overhead at 25%, needs **50%** for <4%
-
-**Root cause:** These images have high early entropy/coverage (pass heuristics) but their early frequency distributions are NOT representative. The distribution continues to diverge significantly through the image.
-
-| Image | KL at 25% | KL at 100% | Problem |
-|-------|-----------|------------|---------|
-| pathological1 | 0.004 | 0.11 | Slow convergence |
-| pathological2 | 0.015 | **0.55** | Major distribution shift |
-| normal | 0.035 | 0.15 | Stabilizes early |
-
-Current heuristics (entropy/coverage) measure "variety" but NOT "representativeness".
-
-## Recommendations
-
-### Option 1: Raise min_transition_percent to 50% (RECOMMENDED)
-
-- Guarantees 0 failures on CLIC 2025 corpus
-- No change to average behavior (most images wait for 50% anyway)
-- Simplest implementation (just change default)
-
-### Option 2: Add distribution divergence tracking (COMPLEX)
-
-- Take snapshot at min% (e.g., 25%)
-- Compare current distribution to snapshot
-- If divergence > threshold, wait longer
-- Could allow earlier transition for truly stable images
-- More complex, may not be worth it given Option 1 works
+Two images pass heuristics at 25% but produce poor tables because their early frequency distributions are NOT representative - the distribution continues to diverge significantly through the image.
 
 ## Files Modified This Session
 
-- `zenjpeg/src/encode/streaming.rs` - Added TransitionReason tracking
-- `zenjpeg/tests/streaming_threshold.rs` - Updated tests to report reasons
-- `zenjpeg/examples/analyze_pathological.rs` - Analyze failing images
-- `zenjpeg/examples/analyze_distribution_change.rs` - KL divergence analysis
-- `zenjpeg/examples/compare_min_thresholds.rs` - Compare min% values
+- `zenjpeg/src/encode/streaming.rs` - Added HuffmanFrequencyCounts, EncodingResult, builder methods, finish_with_tables()
+- `zenjpeg/src/encode/mod.rs` - Re-exported new types
+- `zenjpeg/examples/custom_huffman_tables.rs` - Demo of the new API
 
 ## Test Commands
 
 ```bash
-# Comprehensive heuristics test (CLIC 2025)
-cargo test --release -p zenjpeg --features test-utils --test streaming_threshold comprehensive -- --ignored --nocapture
+# Run the custom Huffman tables example
+cargo run --release -p zenjpeg --features test-utils --example custom_huffman_tables
 
-# Analyze pathological images
-cargo run --release -p zenjpeg --features test-utils --example analyze_pathological
-
-# Distribution divergence analysis
-cargo run --release -p zenjpeg --features test-utils --example analyze_distribution_change
-
-# Compare minimum threshold percentages
-cargo run --release -p zenjpeg --features test-utils --example compare_min_thresholds
+# Run library tests
+cargo test --release -p zenjpeg --features test-utils --lib
 ```
 
 ## Next Steps
 
-1. Decide: Use 50% minimum (simple, safe) or implement divergence tracking (complex, marginal benefit)
-2. If 50%: Update default `min_transition_percent` in builder
-3. Document the tradeoffs in API docs
-4. Consider if there are other corpus images that might fail at 50%
+1. Test corpus-based tables on CLIC 2025 validation set
+2. Compare overhead: corpus tables vs optimized-from-partial vs standard tables
+3. Find optimal corpus size for convergent tables
+4. Consider whether tables should be tuned per-quality-level

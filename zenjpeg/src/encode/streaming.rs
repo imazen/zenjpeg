@@ -42,6 +42,109 @@ use crate::quant::{self, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, PixelFormat, Subsampling};
 use enough::{Stop, Unstoppable};
 
+use crate::huffman::optimize::{FrequencyCounter, OptimizedHuffmanTables};
+
+/// A complete set of frequency counters for Huffman table optimization.
+///
+/// Contains DC and AC counters for both luminance and chrominance.
+/// Can be used to build custom Huffman tables or to supply pre-computed
+/// frequency distributions to the encoder.
+#[derive(Clone, Debug)]
+pub struct HuffmanFrequencyCounts {
+    /// DC luminance frequency counter
+    pub dc_luma: FrequencyCounter,
+    /// AC luminance frequency counter
+    pub ac_luma: FrequencyCounter,
+    /// DC chrominance frequency counter
+    pub dc_chroma: FrequencyCounter,
+    /// AC chrominance frequency counter
+    pub ac_chroma: FrequencyCounter,
+}
+
+impl HuffmanFrequencyCounts {
+    /// Creates a new set of empty frequency counters.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            dc_luma: FrequencyCounter::new(),
+            ac_luma: FrequencyCounter::new(),
+            dc_chroma: FrequencyCounter::new(),
+            ac_chroma: FrequencyCounter::new(),
+        }
+    }
+
+    /// Generates optimized Huffman tables from these frequency counts.
+    ///
+    /// This ensures coverage for all valid DC/AC symbols before generating,
+    /// so the resulting tables can encode any valid JPEG symbol.
+    pub fn generate_tables(&self) -> crate::error::Result<OptimizedHuffmanTables> {
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+
+        let mut dc_luma = self.dc_luma.clone();
+        let mut ac_luma = self.ac_luma.clone();
+        let mut dc_chroma = self.dc_chroma.clone();
+        let mut ac_chroma = self.ac_chroma.clone();
+
+        dc_luma.ensure_dc_coverage();
+        ac_luma.ensure_ac_coverage();
+        dc_chroma.ensure_dc_coverage();
+        ac_chroma.ensure_ac_coverage();
+
+        Ok(OptimizedHuffmanTables {
+            dc_luma: dc_luma.generate_table_with_method(huffman_method)?,
+            ac_luma: ac_luma.generate_table_with_method(huffman_method)?,
+            dc_chroma: dc_chroma.generate_table_with_method(huffman_method)?,
+            ac_chroma: ac_chroma.generate_table_with_method(huffman_method)?,
+        })
+    }
+
+    /// Adds counts from another set of frequency counters.
+    pub fn add(&mut self, other: &HuffmanFrequencyCounts) {
+        self.dc_luma.add(&other.dc_luma);
+        self.ac_luma.add(&other.ac_luma);
+        self.dc_chroma.add(&other.dc_chroma);
+        self.ac_chroma.add(&other.ac_chroma);
+    }
+
+    /// Combines two sets of frequency counts into a new set.
+    #[must_use]
+    pub fn combined(&self, other: &HuffmanFrequencyCounts) -> Self {
+        Self {
+            dc_luma: self.dc_luma.combined(&other.dc_luma),
+            ac_luma: self.ac_luma.combined(&other.ac_luma),
+            dc_chroma: self.dc_chroma.combined(&other.dc_chroma),
+            ac_chroma: self.ac_chroma.combined(&other.ac_chroma),
+        }
+    }
+}
+
+impl Default for HuffmanFrequencyCounts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result from encoding that includes both JPEG data and Huffman statistics.
+///
+/// Returned by [`StreamingEncoder::finish_with_tables`].
+#[derive(Debug)]
+pub struct EncodingResult {
+    /// The encoded JPEG data.
+    pub jpeg: Vec<u8>,
+    /// Final frequency counts from the entire image.
+    ///
+    /// These are the raw counts observed during encoding, before any
+    /// coverage padding. Use for building "universal" tables from
+    /// multiple images.
+    pub frequency_counts: HuffmanFrequencyCounts,
+    /// Huffman tables that were used for encoding.
+    ///
+    /// For optimized encoding, these are generated from partial or
+    /// full frequency data. For standard tables mode, these are the
+    /// JPEG standard tables.
+    pub huffman_tables: OptimizedHuffmanTables,
+}
+
 /// Builder for creating a streaming encoder.
 ///
 /// Use [`StreamingEncoder::new()`] to start building.
@@ -89,6 +192,14 @@ pub struct StreamingEncoderBuilder {
     min_coverage: Option<f64>,
     /// Minimum percentage of rows before transition is allowed (0-100)
     min_transition_percent: Option<usize>,
+    /// Use standard Huffman tables when heuristics fail (fallback for pathological images)
+    use_standard_tables_fallback: bool,
+    /// Custom Huffman tables to use instead of generating from image data.
+    custom_huffman_tables: Option<OptimizedHuffmanTables>,
+    /// Custom frequency counts to generate Huffman tables from.
+    /// Takes precedence over optimizing from image data, but custom_huffman_tables
+    /// takes precedence over this.
+    custom_frequency_counts: Option<HuffmanFrequencyCounts>,
 }
 
 impl StreamingEncoderBuilder {
@@ -122,6 +233,9 @@ impl StreamingEncoderBuilder {
             min_entropy: None,
             min_coverage: None,
             min_transition_percent: None,
+            use_standard_tables_fallback: false,
+            custom_huffman_tables: None,
+            custom_frequency_counts: None,
         }
     }
 
@@ -540,6 +654,98 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn min_transition_percent(mut self, percent: usize) -> Self {
         self.min_transition_percent = Some(percent.min(100));
+        self
+    }
+
+    /// Use standard Huffman tables instead of optimized tables from partial data.
+    ///
+    /// When enabled, the encoder will use JPEG standard Huffman tables instead
+    /// of generating tables from accumulated frequency data. This provides
+    /// bounded overhead (~5-10%) even for pathological images where early
+    /// frequencies are not representative.
+    ///
+    /// Use this when:
+    /// - You need guaranteed bounded overhead regardless of image content
+    /// - Early transition is more important than optimal compression
+    /// - You're encoding images with potentially pathological content
+    ///
+    /// The overhead with standard tables is typically 5-10% compared to
+    /// optimized tables, but provides consistent results across all images.
+    #[must_use]
+    pub fn use_standard_huffman_tables(mut self, enable: bool) -> Self {
+        self.use_standard_tables_fallback = enable;
+        self
+    }
+
+    /// Uses custom Huffman tables instead of generating from image data.
+    ///
+    /// This allows using pre-computed "universal" tables that work well across
+    /// a corpus of images. The tables are used directly without modification.
+    ///
+    /// This takes precedence over:
+    /// - `custom_frequency_counts()` - ignored if tables provided
+    /// - Optimized tables from image data
+    /// - Standard tables (if `use_standard_huffman_tables(true)`)
+    ///
+    /// # Use Cases
+    ///
+    /// - **Consistent encoding**: Use the same tables across all images
+    /// - **Pre-optimized tables**: Use tables tuned for specific content types
+    /// - **Bounded-memory streaming**: Avoid table optimization overhead
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Load tables from previous corpus analysis
+    /// let tables = load_universal_tables()?;
+    ///
+    /// let jpeg = StreamingEncoder::new(640, 480)
+    ///     .quality(85)
+    ///     .custom_huffman_tables(tables)
+    ///     .encode(&pixels)?;
+    /// ```
+    #[must_use]
+    pub fn custom_huffman_tables(mut self, tables: OptimizedHuffmanTables) -> Self {
+        self.custom_huffman_tables = Some(tables);
+        self
+    }
+
+    /// Uses custom frequency counts to generate Huffman tables.
+    ///
+    /// The tables will be generated from these counts at encoding time.
+    /// This is useful for building "universal" tables from a corpus of images.
+    ///
+    /// Unlike `custom_huffman_tables()`, this generates tables using the
+    /// same algorithm as optimized encoding, but from your supplied counts
+    /// instead of from the image being encoded.
+    ///
+    /// This is ignored if `custom_huffman_tables()` is also set.
+    ///
+    /// # Use Cases
+    ///
+    /// - **Corpus-based tables**: Combine counts from multiple images
+    /// - **Incremental learning**: Update counts as you encode more images
+    /// - **Domain-specific tables**: Build tables tuned for specific content
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Combine counts from multiple images
+    /// let mut corpus_counts = HuffmanFrequencyCounts::new();
+    /// for image in corpus {
+    ///     let result = encode_and_get_counts(image)?;
+    ///     corpus_counts.add(&result.frequency_counts);
+    /// }
+    ///
+    /// // Use combined counts for new encodes
+    /// let jpeg = StreamingEncoder::new(640, 480)
+    ///     .quality(85)
+    ///     .custom_frequency_counts(corpus_counts.clone())
+    ///     .encode(&pixels)?;
+    /// ```
+    #[must_use]
+    pub fn custom_frequency_counts(mut self, counts: HuffmanFrequencyCounts) -> Self {
+        self.custom_frequency_counts = Some(counts);
         self
     }
 
@@ -978,6 +1184,14 @@ pub struct StreamingEncoder {
     transition_at_row: Option<usize>,
     /// Reason for transition (for diagnostics)
     transition_reason: Option<TransitionReason>,
+    /// Use standard Huffman tables instead of optimized from partial data
+    use_standard_tables: bool,
+    /// Custom Huffman tables to use (takes precedence over all other table sources)
+    custom_huffman_tables: Option<OptimizedHuffmanTables>,
+    /// Custom frequency counts to generate tables from
+    custom_frequency_counts: Option<HuffmanFrequencyCounts>,
+    /// Final tables used for encoding (stored for finish_with_tables)
+    final_tables: Option<OptimizedHuffmanTables>,
 }
 
 /// Reason why streaming transition occurred.
@@ -1216,6 +1430,10 @@ impl StreamingEncoder {
             min_transition_percent: builder.min_transition_percent,
             transition_at_row: None,
             transition_reason: None,
+            use_standard_tables: builder.use_standard_tables_fallback,
+            custom_huffman_tables: builder.custom_huffman_tables,
+            custom_frequency_counts: builder.custom_frequency_counts,
+            final_tables: None,
         })
     }
 
@@ -1475,63 +1693,29 @@ impl StreamingEncoder {
         // Record transition point for diagnostics
         self.transition_at_row = Some(self.current_y);
 
-        // Get frequency counters from processor and clone them so we can modify
-        let (dc_luma_freq, ac_luma_freq, dc_chroma_freq, ac_chroma_freq) =
-            self.processor.frequency_counters();
+        // Build Huffman tables, checking sources in priority order:
+        // 1. custom_huffman_tables - use directly
+        // 2. custom_frequency_counts - generate tables from provided counts
+        // 3. use_standard_tables - use JPEG standard tables
+        // 4. default - optimize from accumulated image frequency data
+        let tables = if let Some(tables) = self.custom_huffman_tables.take() {
+            // Use pre-built custom tables directly
+            tables
+        } else if let Some(ref counts) = self.custom_frequency_counts {
+            // Generate tables from custom frequency counts
+            counts.generate_tables()?
+        } else if self.use_standard_tables {
+            // Use JPEG standard tables
+            Self::build_standard_tables()
+        } else {
+            // Generate from accumulated image data (original logic)
+            self.build_tables_from_image_data()?
+        };
 
-        // Clone and ensure coverage for all valid symbols.
-        // This creates partially-optimized tables that:
-        // 1. Favor the observed symbol frequencies (shorter codes for common symbols)
-        // 2. Have codes for ALL valid symbols (longer codes for unseen ones)
-        //
-        // Without ensure_*_coverage(), zero-frequency symbols get no code assigned,
-        // causing silent encoding failures when those symbols appear later.
-        let mut dc_luma_freq = dc_luma_freq.clone();
-        let mut ac_luma_freq = ac_luma_freq.clone();
-        dc_luma_freq.ensure_dc_coverage();
-        ac_luma_freq.ensure_ac_coverage();
-
-        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
-        let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
-        let ac_luma = ac_luma_freq.generate_table_with_method(huffman_method)?;
+        // Store tables for finish_with_tables
+        self.final_tables = Some(tables.clone());
 
         let is_color = !self.config.pixel_format.is_grayscale();
-        let (dc_chroma, ac_chroma) = if is_color {
-            let mut dc_chroma_freq = dc_chroma_freq.clone();
-            let mut ac_chroma_freq = ac_chroma_freq.clone();
-            dc_chroma_freq.ensure_dc_coverage();
-            ac_chroma_freq.ensure_ac_coverage();
-            (
-                dc_chroma_freq.generate_table_with_method(huffman_method)?,
-                ac_chroma_freq.generate_table_with_method(huffman_method)?,
-            )
-        } else {
-            // Use standard tables for grayscale (won't be used)
-            use crate::huffman::optimize::OptimizedTable;
-            use crate::huffman::{
-                HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
-                STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
-            };
-            (
-                OptimizedTable {
-                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
-                    bits: STD_DC_CHROMINANCE_BITS,
-                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
-                },
-                OptimizedTable {
-                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
-                    bits: STD_AC_CHROMINANCE_BITS,
-                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
-                },
-            )
-        };
-
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables {
-            dc_luma,
-            ac_luma,
-            dc_chroma,
-            ac_chroma,
-        };
 
         // Initialize output buffer
         let mut output = Vec::new();
@@ -1593,6 +1777,101 @@ impl StreamingEncoder {
         self.streaming_mode = true;
 
         Ok(())
+    }
+
+    /// Builds JPEG standard Huffman tables.
+    fn build_standard_tables() -> OptimizedHuffmanTables {
+        use crate::huffman::optimize::OptimizedTable;
+        use crate::huffman::{
+            HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
+            STD_AC_LUMINANCE_BITS, STD_AC_LUMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
+            STD_DC_CHROMINANCE_VALUES, STD_DC_LUMINANCE_BITS, STD_DC_LUMINANCE_VALUES,
+        };
+
+        OptimizedHuffmanTables {
+            dc_luma: OptimizedTable {
+                table: HuffmanEncodeTable::std_dc_luminance().clone(),
+                bits: STD_DC_LUMINANCE_BITS,
+                values: STD_DC_LUMINANCE_VALUES.to_vec(),
+            },
+            ac_luma: OptimizedTable {
+                table: HuffmanEncodeTable::std_ac_luminance().clone(),
+                bits: STD_AC_LUMINANCE_BITS,
+                values: STD_AC_LUMINANCE_VALUES.to_vec(),
+            },
+            dc_chroma: OptimizedTable {
+                table: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                bits: STD_DC_CHROMINANCE_BITS,
+                values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+            },
+            ac_chroma: OptimizedTable {
+                table: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                bits: STD_AC_CHROMINANCE_BITS,
+                values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+            },
+        }
+    }
+
+    /// Builds optimized Huffman tables from accumulated image frequency data.
+    fn build_tables_from_image_data(&self) -> Result<OptimizedHuffmanTables> {
+        use crate::huffman::optimize::OptimizedTable;
+
+        // Get frequency counters from processor
+        let (dc_luma_freq, ac_luma_freq, dc_chroma_freq, ac_chroma_freq) =
+            self.processor.frequency_counters();
+
+        // Clone and ensure coverage for all valid symbols.
+        // This creates partially-optimized tables that:
+        // 1. Favor the observed symbol frequencies (shorter codes for common symbols)
+        // 2. Have codes for ALL valid symbols (longer codes for unseen ones)
+        //
+        // Without ensure_*_coverage(), zero-frequency symbols get no code assigned,
+        // causing silent encoding failures when those symbols appear later.
+        let mut dc_luma_freq = dc_luma_freq.clone();
+        let mut ac_luma_freq = ac_luma_freq.clone();
+        dc_luma_freq.ensure_dc_coverage();
+        ac_luma_freq.ensure_ac_coverage();
+
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
+        let ac_luma = ac_luma_freq.generate_table_with_method(huffman_method)?;
+
+        let is_color = !self.config.pixel_format.is_grayscale();
+        let (dc_chroma, ac_chroma) = if is_color {
+            let mut dc_chroma_freq = dc_chroma_freq.clone();
+            let mut ac_chroma_freq = ac_chroma_freq.clone();
+            dc_chroma_freq.ensure_dc_coverage();
+            ac_chroma_freq.ensure_ac_coverage();
+            (
+                dc_chroma_freq.generate_table_with_method(huffman_method)?,
+                ac_chroma_freq.generate_table_with_method(huffman_method)?,
+            )
+        } else {
+            // Use standard tables for grayscale (won't be used)
+            use crate::huffman::{
+                HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
+                STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
+            };
+            (
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                    bits: STD_DC_CHROMINANCE_BITS,
+                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+                },
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                    bits: STD_AC_CHROMINANCE_BITS,
+                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+                },
+            )
+        };
+
+        Ok(OptimizedHuffmanTables {
+            dc_luma,
+            ac_luma,
+            dc_chroma,
+            ac_chroma,
+        })
     }
 
     /// Encodes blocks in MCU order and returns the final DC prediction values.
@@ -2383,6 +2662,123 @@ impl StreamingEncoder {
         Ok(output)
     }
 
+    /// Finishes encoding and returns both JPEG data and Huffman statistics.
+    ///
+    /// This is the same as [`finish`] but also returns the frequency counts
+    /// and Huffman tables that were used for encoding. This is useful for:
+    ///
+    /// - **Building universal tables**: Collect frequency counts from many
+    ///   images, combine them, and generate tables optimized for a corpus
+    /// - **Analysis**: Understand what symbols are most common for a content type
+    /// - **Debugging**: Verify tables are being generated correctly
+    ///
+    /// # Returns
+    ///
+    /// An [`EncodingResult`] containing:
+    /// - `jpeg`: The encoded JPEG data
+    /// - `frequency_counts`: Raw frequency counts observed during encoding
+    /// - `huffman_tables`: The Huffman tables used for encoding
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut encoder = StreamingEncoder::new(640, 480)
+    ///     .quality(85)
+    ///     .start()?;
+    ///
+    /// for row in &pixels.chunks(640 * 3) {
+    ///     encoder.push_row(row)?;
+    /// }
+    ///
+    /// let result = encoder.finish_with_tables()?;
+    /// println!("JPEG size: {} bytes", result.jpeg.len());
+    /// println!("AC luma entropy: {:.2} bits", result.frequency_counts.ac_luma.entropy());
+    /// ```
+    pub fn finish_with_tables(mut self) -> Result<EncodingResult> {
+        // Extract frequency counts BEFORE finishing (processor gets consumed)
+        let frequency_counts = {
+            let (dc_luma, ac_luma, dc_chroma, ac_chroma) = self.processor.frequency_counters();
+            HuffmanFrequencyCounts {
+                dc_luma: dc_luma.clone(),
+                ac_luma: ac_luma.clone(),
+                dc_chroma: dc_chroma.clone(),
+                ac_chroma: ac_chroma.clone(),
+            }
+        };
+
+        // Calculate total rows received
+        let total_rows = self.current_y + self.rows_buffered;
+        if total_rows < self.height {
+            return Err(Error::io_error(format!(
+                "only {} of {} rows were pushed",
+                total_rows, self.height
+            )));
+        }
+
+        // Flush any remaining rows
+        if self.rows_buffered > 0 {
+            self.flush_strip_with_stop(&Unstoppable)?;
+        }
+
+        // Handle streaming mode
+        if self.streaming_mode {
+            let tables = self
+                .final_tables
+                .take()
+                .or_else(|| self.streaming_tables.clone())
+                .ok_or_else(|| Error::internal("streaming_tables not set"))?;
+
+            let mut output = Vec::new();
+            // Need to take ownership for finish_streaming
+            self.finish_streaming(&mut output)?;
+
+            return Ok(EncodingResult {
+                jpeg: output,
+                frequency_counts,
+                huffman_tables: tables,
+            });
+        }
+
+        // Non-streaming mode: build tables for returning
+        let huffman_tables = if let Some(tables) = self.custom_huffman_tables.take() {
+            tables
+        } else if let Some(ref counts) = self.custom_frequency_counts {
+            counts.generate_tables()?
+        } else {
+            // Generate from the frequency counts we already captured
+            frequency_counts.generate_tables()?
+        };
+
+        // Non-streaming mode: build JPEG from buffered blocks
+        let config = self.config;
+        let y_quant = self.y_quant;
+        let cb_quant = self.cb_quant;
+        let cr_quant = self.cr_quant;
+        let width = self.width;
+        let height = self.height;
+
+        let strip_output = self.processor.finalize()?;
+
+        let mut output = Vec::new();
+        Self::build_jpeg_from_blocks_into(
+            &config,
+            &y_quant,
+            &cb_quant,
+            &cr_quant,
+            width,
+            height,
+            strip_output,
+            &mut output,
+            Unstoppable,
+        )?;
+
+        Ok(EncodingResult {
+            jpeg: output,
+            frequency_counts,
+            huffman_tables,
+        })
+    }
+
     /// Finishes encoding, writing directly to the provided buffer.
     ///
     /// This avoids an extra allocation compared to `finish()`. The buffer
@@ -2399,11 +2795,7 @@ impl StreamingEncoder {
     }
 
     /// Finishes encoding into provided buffer with cancellation support.
-    pub fn finish_into_with_stop(
-        mut self,
-        output: &mut Vec<u8>,
-        stop: impl Stop,
-    ) -> Result<()> {
+    pub fn finish_into_with_stop(mut self, output: &mut Vec<u8>, stop: impl Stop) -> Result<()> {
         stop.check()?;
 
         // Calculate total rows received
@@ -3013,7 +3405,12 @@ mod tests {
         let width = 2000u32;
         let height = 1500u32;
 
-        eprintln!("Image size: {}x{} ({:.1} MP)", width, height, (width * height) as f64 / 1e6);
+        eprintln!(
+            "Image size: {}x{} ({:.1} MP)",
+            width,
+            height,
+            (width * height) as f64 / 1e6
+        );
 
         // Generate test pixels
         let pixels: Vec<u8> = (0..height as usize)
@@ -3068,7 +3465,10 @@ mod tests {
             }
 
             eprintln!("Streaming mode: {}", encoder.is_streaming());
-            assert!(encoder.is_streaming(), "Should have transitioned with 2MB limit");
+            assert!(
+                encoder.is_streaming(),
+                "Should have transitioned with 2MB limit"
+            );
             let result = encoder.finish().unwrap();
             eprintln!("Output: {} KB", result.len() / 1024);
         }
@@ -3092,7 +3492,10 @@ mod tests {
             }
 
             eprintln!("Streaming mode: {}", encoder.is_streaming());
-            assert!(encoder.is_streaming(), "Should have transitioned with 5MB limit");
+            assert!(
+                encoder.is_streaming(),
+                "Should have transitioned with 5MB limit"
+            );
             let result = encoder.finish().unwrap();
             eprintln!("Output: {} KB", result.len() / 1024);
         }
@@ -3169,7 +3572,11 @@ mod tests {
         }
         let streaming = encoder.is_streaming();
         let result = encoder.finish().unwrap();
-        eprintln!("Output: {} KB, streaming={}", result.len() / 1024, streaming);
+        eprintln!(
+            "Output: {} KB, streaming={}",
+            result.len() / 1024,
+            streaming
+        );
     }
 
     /// Test quality comparison between streaming and non-streaming mode.
@@ -3198,7 +3605,8 @@ mod tests {
                     // Mix of gradient and checkerboard for entropy variation
                     let checker = ((x / 8) + (y / 8)) % 2;
                     let r = (((x * 255) / width as usize) as u8).wrapping_add((checker * 30) as u8);
-                    let g = (((y * 255) / height as usize) as u8).wrapping_add((checker * 20) as u8);
+                    let g =
+                        (((y * 255) / height as usize) as u8).wrapping_add((checker * 20) as u8);
                     let b = ((((x + y) * 127) / (width as usize + height as usize)) as u8)
                         .wrapping_add((checker * 25) as u8);
                     [r, g, b]
@@ -3268,10 +3676,7 @@ mod tests {
                 if output.status.success() {
                     eprintln!("djpeg decoded bounded.jpg successfully!");
                 } else {
-                    eprintln!(
-                        "djpeg failed: {}",
-                        String::from_utf8_lossy(&output.stderr)
-                    );
+                    eprintln!("djpeg failed: {}", String::from_utf8_lossy(&output.stderr));
                 }
             }
             Err(e) => eprintln!("djpeg not available: {}", e),
@@ -3280,14 +3685,12 @@ mod tests {
         // Decode both to compare using zune-jpeg
         // (our decoder has issues with streaming-mode Huffman tables)
         use zune_jpeg::zune_core::bytestream::ZCursor;
-        let standard_decoded =
-            zune_jpeg::JpegDecoder::new(ZCursor::new(&standard_result))
-                .decode()
-                .expect("zune-jpeg failed to decode standard");
-        let bounded_decoded =
-            zune_jpeg::JpegDecoder::new(ZCursor::new(&bounded_result))
-                .decode()
-                .expect("zune-jpeg failed to decode bounded");
+        let standard_decoded = zune_jpeg::JpegDecoder::new(ZCursor::new(&standard_result))
+            .decode()
+            .expect("zune-jpeg failed to decode standard");
+        let bounded_decoded = zune_jpeg::JpegDecoder::new(ZCursor::new(&bounded_result))
+            .decode()
+            .expect("zune-jpeg failed to decode bounded");
 
         // Compare pixel values
         let mut max_diff = 0i32;
@@ -3316,7 +3719,8 @@ mod tests {
         };
 
         eprintln!("\nDecoded comparison:");
-        eprintln!("  Pixels with differences: {} ({:.2}%)",
+        eprintln!(
+            "  Pixels with differences: {} ({:.2}%)",
             diff_count,
             100.0 * diff_count as f64 / standard_decoded.len() as f64
         );

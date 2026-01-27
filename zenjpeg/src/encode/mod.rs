@@ -132,6 +132,10 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[allow(unused_imports)] // Public API re-exports
 pub use mozjpeg_tables::{MozjpegTables, QuantTablePreset};
 
+// Streaming encoder types
+#[allow(unused_imports)] // Public API re-exports
+pub use streaming::{EncodingResult, HuffmanFrequencyCounts, StreamingEncoder};
+
 use crate::error::Result;
 
 // Internal config types
