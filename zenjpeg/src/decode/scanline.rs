@@ -52,14 +52,22 @@ pub struct ScanlineInfo {
 ///
 /// Decodes JPEG images row by row, only decoding MCU rows as needed.
 /// This minimizes memory usage and allows early processing of image data.
+///
+/// For progressive JPEGs, the image is fully decoded upfront and served
+/// from a buffer, since progressive encoding requires all scans to be
+/// processed before final pixels are available.
 pub struct ScanlineReader<'a> {
-    // Raw JPEG data
+    // Raw JPEG data (unused in buffered mode)
     data: &'a [u8],
 
     // Image dimensions
     width: u32,
     height: u32,
     num_components: u8,
+
+    // Buffered mode for progressive JPEGs
+    // When Some, we serve from this buffer instead of decoding on-the-fly
+    buffered_rgb: Option<Vec<u8>>,
 
     // MCU structure
     #[allow(dead_code)]
@@ -215,6 +223,7 @@ impl<'a> ScanlineReader<'a> {
             width,
             height,
             num_components,
+            buffered_rgb: None, // Streaming mode
             mcu_rows,
             mcu_cols,
             strip_width,
@@ -250,6 +259,65 @@ impl<'a> ScanlineReader<'a> {
             prev_coeff_counts: [64; 4], // Start with full zeroing
             is_xyb,
         })
+    }
+
+    /// Creates a new scanline reader in buffered mode (for progressive JPEGs).
+    ///
+    /// In buffered mode, the image has already been decoded and we serve
+    /// rows from the pre-decoded buffer.
+    pub(crate) fn new_buffered(
+        data: &'a [u8],
+        width: u32,
+        height: u32,
+        num_components: u8,
+        pixels: Vec<u8>,
+        is_xyb: bool,
+    ) -> Self {
+        let is_grayscale = num_components == 1;
+        let subsampling = Subsampling::S444; // Buffered mode doesn't need subsampling info
+
+        Self {
+            data,
+            width,
+            height,
+            num_components,
+            buffered_rgb: Some(pixels),
+            // Streaming fields are unused in buffered mode but need defaults
+            mcu_rows: 0,
+            mcu_cols: 0,
+            strip_width: 0,
+            mcu_height: 8,
+            h_samp: [1, 1, 1],
+            v_samp: [1, 1, 1],
+            max_h_samp: 1,
+            max_v_samp: 1,
+            subsampling,
+            current_row: 0,
+            current_mcu_row: 0,
+            row_in_mcu: 0,
+            mcu_row_decoded: false,
+            y_strip: Vec::new(),
+            cb_strip: Vec::new(),
+            cr_strip: Vec::new(),
+            chroma_strip_width: 0,
+            chroma_strip_height: 0,
+            cb_upsampled: Vec::new(),
+            cr_upsampled: Vec::new(),
+            quant_tables: [None, None, None, None],
+            quant_indices: [0, 0, 0],
+            dc_tables: [None, None, None, None],
+            ac_tables: [None, None, None, None],
+            table_mapping: [(0, 0), (0, 0), (0, 0)],
+            scan_data_start: 0,
+            decoder_state: None,
+            restart_interval: 0,
+            mcu_count: 0,
+            next_restart_num: 0,
+            dequant_buf: [0i32; DCT_BLOCK_SIZE],
+            coeffs_buf: [0i16; DCT_BLOCK_SIZE],
+            prev_coeff_counts: [64; 4],
+            is_xyb,
+        }
     }
 
     /// Returns the image width.
@@ -607,6 +675,24 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for RGB8"));
         }
 
+        // Buffered mode: serve from pre-decoded buffer (progressive JPEGs)
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+            let row_bytes = width * 3;
+
+            while rows_written < max_rows && self.current_row < self.height as usize {
+                let src_offset = self.current_row * row_bytes;
+                let out_row = output.rows_mut().nth(rows_written).unwrap();
+                out_row[..row_bytes].copy_from_slice(&buffer[src_offset..src_offset + row_bytes]);
+
+                rows_written += 1;
+                self.current_row += 1;
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -665,6 +751,31 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for RGBX8"));
         }
 
+        // Buffered mode: serve from pre-decoded RGB buffer, expanding to RGBX
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+            let src_row_bytes = width * 3;
+
+            while rows_written < max_rows && self.current_row < self.height as usize {
+                let src_offset = self.current_row * src_row_bytes;
+                let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                // Expand RGB to RGBX
+                for x in 0..width {
+                    out_row[x * 4] = buffer[src_offset + x * 3];
+                    out_row[x * 4 + 1] = buffer[src_offset + x * 3 + 1];
+                    out_row[x * 4 + 2] = buffer[src_offset + x * 3 + 2];
+                    out_row[x * 4 + 3] = 255;
+                }
+
+                rows_written += 1;
+                self.current_row += 1;
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -722,6 +833,31 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for RGBA f32"));
         }
 
+        // Buffered mode: serve from pre-decoded RGB buffer, convert to linear f32
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+            let src_row_bytes = width * 3;
+
+            while rows_written < max_rows && self.current_row < self.height as usize {
+                let src_offset = self.current_row * src_row_bytes;
+                let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                // Convert RGB8 to linear RGBA f32
+                for x in 0..width {
+                    out_row[x * 4] = srgb_to_linear(buffer[src_offset + x * 3]);
+                    out_row[x * 4 + 1] = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
+                    out_row[x * 4 + 2] = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
+                    out_row[x * 4 + 3] = 1.0;
+                }
+
+                rows_written += 1;
+                self.current_row += 1;
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -774,6 +910,9 @@ impl<'a> ScanlineReader<'a> {
     /// Each plane receives normalized values in range [0, 1] for Y, [-0.5, 0.5] for Cb/Cr.
     /// Chroma values are upsampled to full resolution for subsampled images.
     /// Returns the number of rows actually written.
+    ///
+    /// Note: For progressive JPEGs (buffered mode), this converts from RGB back to YCbCr
+    /// using BT.601 coefficients, which may introduce small rounding differences.
     pub fn read_rows_ycbcr_planes(
         &mut self,
         y_plane: &mut [f32],
@@ -788,6 +927,57 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("stride too small for image width"));
         }
 
+        // Buffered mode: convert RGB back to YCbCr
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+
+            if self.num_components == 1 {
+                // Grayscale: Y only, Cb/Cr are zero
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * width;
+                    let out_offset = rows_written * stride;
+
+                    for x in 0..width {
+                        y_plane[out_offset + x] = buffer[src_offset + x] as f32 / 255.0;
+                        cb_plane[out_offset + x] = 0.0;
+                        cr_plane[out_offset + x] = 0.0;
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            } else {
+                // Color: convert RGB to YCbCr using BT.601
+                let src_row_bytes = width * 3;
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * src_row_bytes;
+                    let out_offset = rows_written * stride;
+
+                    for x in 0..width {
+                        let r = buffer[src_offset + x * 3] as f32;
+                        let g = buffer[src_offset + x * 3 + 1] as f32;
+                        let b = buffer[src_offset + x * 3 + 2] as f32;
+
+                        // BT.601 RGB to YCbCr (normalized output)
+                        // Y  =  0.299*R + 0.587*G + 0.114*B
+                        // Cb = -0.169*R - 0.331*G + 0.500*B
+                        // Cr =  0.500*R - 0.419*G - 0.081*B
+                        y_plane[out_offset + x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+                        cb_plane[out_offset + x] =
+                            (-0.169 * r - 0.331 * g + 0.500 * b) / 255.0;
+                        cr_plane[out_offset + x] =
+                            (0.500 * r - 0.419 * g - 0.081 * b) / 255.0;
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -841,6 +1031,44 @@ impl<'a> ScanlineReader<'a> {
             return Err(Error::internal("output buffer too narrow for grayscale"));
         }
 
+        // Buffered mode: serve from pre-decoded buffer
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+
+            if self.num_components == 1 {
+                // Grayscale buffer (1 byte per pixel)
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * width;
+                    let out_row = output.rows_mut().nth(rows_written).unwrap();
+                    out_row[..width].copy_from_slice(&buffer[src_offset..src_offset + width]);
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            } else {
+                // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
+                let src_row_bytes = width * 3;
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * src_row_bytes;
+                    let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                    for x in 0..width {
+                        let r = buffer[src_offset + x * 3] as u32;
+                        let g = buffer[src_offset + x * 3 + 1] as u32;
+                        let b = buffer[src_offset + x * 3 + 2] as u32;
+                        // BT.601: Y = 0.299*R + 0.587*G + 0.114*B (scaled by 1000)
+                        out_row[x] = ((299 * r + 587 * g + 114 * b) / 1000) as u8;
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -892,6 +1120,47 @@ impl<'a> ScanlineReader<'a> {
             ));
         }
 
+        // Buffered mode: serve from pre-decoded buffer
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+
+            if self.num_components == 1 {
+                // Grayscale buffer (1 byte per pixel)
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * width;
+                    let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                    for x in 0..width {
+                        out_row[x] = buffer[src_offset + x] as f32 / 255.0;
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            } else {
+                // Color buffer (RGB8): convert to grayscale using BT.601 coefficients
+                let src_row_bytes = width * 3;
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * src_row_bytes;
+                    let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                    for x in 0..width {
+                        let r = buffer[src_offset + x * 3] as f32;
+                        let g = buffer[src_offset + x * 3 + 1] as f32;
+                        let b = buffer[src_offset + x * 3 + 2] as f32;
+                        // BT.601: Y = 0.299*R + 0.587*G + 0.114*B
+                        out_row[x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -939,6 +1208,48 @@ impl<'a> ScanlineReader<'a> {
             ));
         }
 
+        // Buffered mode: serve from pre-decoded buffer with linearization
+        if let Some(ref buffer) = self.buffered_rgb {
+            let mut rows_written = 0;
+
+            if self.num_components == 1 {
+                // Grayscale buffer (1 byte per pixel)
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * width;
+                    let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                    for x in 0..width {
+                        out_row[x] = srgb_to_linear(buffer[src_offset + x]);
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            } else {
+                // Color buffer (RGB8): convert to linear grayscale
+                let src_row_bytes = width * 3;
+                while rows_written < max_rows && self.current_row < self.height as usize {
+                    let src_offset = self.current_row * src_row_bytes;
+                    let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+                    for x in 0..width {
+                        // Linearize each channel first, then compute luminance
+                        let r = srgb_to_linear(buffer[src_offset + x * 3]);
+                        let g = srgb_to_linear(buffer[src_offset + x * 3 + 1]);
+                        let b = srgb_to_linear(buffer[src_offset + x * 3 + 2]);
+                        // BT.601 in linear space
+                        out_row[x] = 0.299 * r + 0.587 * g + 0.114 * b;
+                    }
+
+                    rows_written += 1;
+                    self.current_row += 1;
+                }
+            }
+
+            return Ok(rows_written);
+        }
+
+        // Streaming mode: decode on-the-fly
         let mut rows_written = 0;
 
         while rows_written < max_rows && self.current_row < self.height as usize {
@@ -1847,5 +2158,153 @@ mod tests {
         // Verify linear conversion: sRGB 128 ≈ linear 0.2159
         // Find pixels close to 128 and verify they're near 0.2159 in linear
         // (Since JPEG is lossy, we can't be exact, but the relationship should hold)
+    }
+
+    /// Encode to progressive JPEG using the encoder
+    fn encode_progressive_rgb(width: u32, height: u32, pixels: &[u8], quality: f32) -> Vec<u8> {
+        use crate::encode::v2::{ChromaSubsampling, EncoderConfig, PixelLayout};
+        use enough::Unstoppable;
+        // Use progressive mode
+        let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+            .unwrap();
+        enc.push_packed(pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn test_scanline_reader_progressive() {
+        // Test that progressive JPEG works via buffered mode
+        let width = 16u32;
+        let height = 16u32;
+        let mut input_pixels = vec![0u8; (width * height * 3) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                input_pixels[idx] = ((x * 16) % 256) as u8; // R
+                input_pixels[idx + 1] = ((y * 16) % 256) as u8; // G
+                input_pixels[idx + 2] = 128; // B
+            }
+        }
+
+        // Encode as progressive JPEG
+        let progressive_jpeg = encode_progressive_rgb(width, height, &input_pixels, 95.0);
+
+        // Verify it's actually progressive by checking SOF marker
+        assert!(
+            progressive_jpeg
+                .windows(2)
+                .any(|w| w == [0xFF, 0xC2]), // SOF2 = progressive
+            "JPEG should be progressive (SOF2)"
+        );
+
+        // Decode via scanline reader
+        let decoder = crate::decode::Decoder::new();
+        let mut reader = decoder
+            .scanline_reader(&progressive_jpeg)
+            .expect("scanline_reader should support progressive via buffered mode");
+
+        assert_eq!(reader.width(), width);
+        assert_eq!(reader.height(), height);
+
+        // Read all rows
+        let mut scanline_pixels = vec![0u8; (width * height * 3) as usize];
+        let mut rows_read = 0;
+        while rows_read < height as usize {
+            let remaining = height as usize - rows_read;
+            let output = ImgRefMut::new(
+                &mut scanline_pixels[rows_read * width as usize * 3..],
+                width as usize * 3,
+                remaining,
+            );
+            let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+            if count == 0 {
+                break;
+            }
+            rows_read += count;
+        }
+
+        assert_eq!(rows_read, height as usize, "Should read all rows");
+
+        // Compare with full-frame decode
+        #[allow(deprecated)]
+        let decoded = decoder.decode(&progressive_jpeg).expect("decode failed");
+        #[allow(deprecated)]
+        let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
+
+        // Should be identical (same decode path for progressive)
+        assert_eq!(
+            max_diff, 0,
+            "Scanline reader should match full-frame decode for progressive JPEG (max diff={}, diff_count={})",
+            max_diff, diff_count
+        );
+    }
+
+    #[test]
+    fn test_scanline_reader_progressive_grayscale() {
+        // Test that progressive grayscale JPEG works via buffered mode
+        let width = 16u32;
+        let height = 16u32;
+        let mut input_pixels = vec![0u8; (width * height) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) as usize;
+                input_pixels[idx] = ((x * 16 + y * 8) % 256) as u8;
+            }
+        }
+
+        // Encode grayscale as progressive JPEG
+        use crate::encode::v2::{EncoderConfig, PixelLayout};
+        use enough::Unstoppable;
+        let config = EncoderConfig::grayscale(95.0).progressive(true);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .unwrap();
+        enc.push_packed(&input_pixels, Unstoppable).unwrap();
+        let progressive_jpeg = enc.finish().unwrap();
+
+        // Verify it's actually progressive
+        assert!(
+            progressive_jpeg
+                .windows(2)
+                .any(|w| w == [0xFF, 0xC2]),
+            "JPEG should be progressive (SOF2)"
+        );
+
+        // Decode via scanline reader
+        let decoder = crate::decode::Decoder::new();
+        let mut reader = decoder
+            .scanline_reader(&progressive_jpeg)
+            .expect("scanline_reader should support progressive grayscale");
+
+        // Read grayscale rows
+        let mut scanline_pixels = vec![0u8; (width * height) as usize];
+        let mut rows_read = 0;
+        while rows_read < height as usize {
+            let remaining = height as usize - rows_read;
+            let output = ImgRefMut::new(
+                &mut scanline_pixels[rows_read * width as usize..],
+                width as usize,
+                remaining,
+            );
+            let count = reader.read_rows_gray8(output).expect("read_rows_gray8 failed");
+            if count == 0 {
+                break;
+            }
+            rows_read += count;
+        }
+
+        assert_eq!(rows_read, height as usize, "Should read all rows");
+
+        // The grayscale values should be reasonable (can't compare exactly since
+        // the full-frame decoder uses PixelFormat::Rgb which converts grayscale to RGB)
+        let mean: f64 = scanline_pixels.iter().map(|&x| x as f64).sum::<f64>()
+            / scanline_pixels.len() as f64;
+        assert!(
+            mean > 50.0 && mean < 200.0,
+            "Grayscale mean should be reasonable: {}",
+            mean
+        );
     }
 }

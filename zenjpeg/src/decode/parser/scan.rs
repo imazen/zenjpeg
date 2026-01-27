@@ -101,6 +101,14 @@ impl<'a> JpegParser<'a> {
 
     /// Decode a baseline sequential scan (all coefficients at once).
     pub(super) fn decode_scan(&mut self, scan_components: &[(usize, u8, u8)]) -> Result<()> {
+        // DNL mode (height=0 in SOF) requires dynamic buffer growth during decode,
+        // which is not yet implemented. For now, we need height before decoding.
+        if self.height == 0 {
+            return Err(Error::unsupported_feature(
+                "DNL mode (height=0 in SOF) not yet supported for scan decoding",
+            ));
+        }
+
         // Calculate max sampling factors to determine MCU structure
         let mut max_h_samp = 1u8;
         let mut max_v_samp = 1u8;
@@ -338,6 +346,13 @@ impl<'a> JpegParser<'a> {
         &mut self,
         scan_components: &[(usize, u8, u8)],
     ) -> Result<Vec<u8>> {
+        // DNL mode not supported for streaming decode
+        if self.height == 0 {
+            return Err(Error::unsupported_feature(
+                "DNL mode (height=0 in SOF) not supported for streaming decode",
+            ));
+        }
+
         let width = self.width as usize;
         let height = self.height as usize;
 

@@ -20,8 +20,8 @@ use crate::color::icc::{extract_icc_profile, is_xyb_profile};
 use crate::error::{Error, Result};
 use crate::foundation::alloc::checked_size_2d;
 use crate::foundation::consts::{
-    DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_EOI,
-    MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
+    DCT_BLOCK_SIZE, MARKER_APP0, MARKER_COM, MARKER_DHT, MARKER_DNL, MARKER_DQT, MARKER_DRI,
+    MARKER_EOI, MARKER_SOI, MARKER_SOS, MAX_COMPONENTS, MAX_HUFFMAN_TABLES, MAX_QUANT_TABLES,
 };
 use crate::huffman::HuffmanDecodeTable;
 use crate::types::{ColorSpace, Component, Dimensions, JpegMode};
@@ -391,10 +391,20 @@ impl<'a> JpegParser<'a> {
                     self.parse_scan()?;
                     // After scan, look for more markers
                 }
+                MARKER_DNL => {
+                    // Define Number of Lines - update height if it was 0 in SOF
+                    self.parse_dnl()?;
+                }
                 MARKER_DQT => self.parse_quant_table()?,
                 MARKER_DHT => self.parse_huffman_table()?,
                 MARKER_DRI => self.parse_restart_interval()?,
                 MARKER_EOI => {
+                    // Validate that we have a valid height (either from SOF or DNL)
+                    if self.height == 0 {
+                        return Err(Error::invalid_jpeg_data(
+                            "image height is 0 (DNL marker missing or invalid)",
+                        ));
+                    }
                     // Before exiting, extract MPF secondary images if configured
                     self.extract_mpf_secondary_images()?;
                     break;
