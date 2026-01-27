@@ -871,9 +871,12 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
     let num_entries = read_u16(ifd_pos) as usize;
 
     // Find MP Entry tag (0xB002)
+    // Some MPF generators produce non-standard structures with extra bytes between entries,
+    // so we scan for the tag pattern instead of assuming fixed 12-byte entry spacing.
     let mut mp_entry_offset = None;
     let mut mp_entry_count = 0u32;
 
+    // First try standard 12-byte entry spacing
     for i in 0..num_entries {
         let entry_pos = ifd_pos + 2 + i * 12;
         if data.len() < entry_pos + 12 {
@@ -886,6 +889,34 @@ pub(crate) fn parse_mpf_directory(data: &[u8]) -> Option<MpfDirectory> {
             mp_entry_count = read_u32(entry_pos + 4);
             mp_entry_offset = Some(read_u32(entry_pos + 8) as usize + offset);
             break;
+        }
+    }
+
+    // If not found with standard spacing, scan for the 0xB002 tag pattern
+    // This handles malformed MPF structures (e.g., from some Android camera apps)
+    if mp_entry_offset.is_none() {
+        let tag_bytes = if is_little_endian {
+            [0x02, 0xB0] // 0xB002 in little-endian
+        } else {
+            [0xB0, 0x02] // 0xB002 in big-endian
+        };
+
+        // Scan from after the entry count through the expected IFD area
+        // Limit search to a reasonable range (256 bytes covers most MPF structures)
+        let scan_start = ifd_pos + 2;
+        let scan_end = (scan_start + 256).min(data.len().saturating_sub(12));
+
+        for pos in scan_start..scan_end {
+            if data.len() >= pos + 12 && data[pos..pos + 2] == tag_bytes {
+                // Found the tag, verify it looks like a valid entry
+                let type_val = read_u16(pos + 2);
+                if type_val == 7 {
+                    // Type 7 = UNDEFINED, expected for MP Entry
+                    mp_entry_count = read_u32(pos + 4);
+                    mp_entry_offset = Some(read_u32(pos + 8) as usize + offset);
+                    break;
+                }
+            }
         }
     }
 
