@@ -7,9 +7,9 @@
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig};
 use zenjpeg::ultrahdr::{
-    encode_ultrahdr, reconstruct_hdr, reencode_ultrahdr, tonemapper_from_ultrahdr, GainMapConfig,
-    HdrOutputFormat, ToneMapConfig, UhdrColorGamut, UhdrColorTransfer, UhdrPixelFormat,
-    UhdrRawImage, UltraHdrExtras, Unstoppable,
+    encode_ultrahdr, tonemapper_from_ultrahdr, GainMapConfig, GainMapMemory, HdrOutputFormat,
+    ToneMapConfig, UhdrColorGamut, UhdrColorTransfer, UhdrPixelFormat, UhdrRawImage,
+    UltraHdrExtras, UltraHdrMode, UltraHdrReaderConfig, Unstoppable,
 };
 
 /// Create a simple HDR test image (linear RGB float).
@@ -100,56 +100,13 @@ fn test_encode_decode_roundtrip() {
     assert!(gainmap.height > 0);
 }
 
+// NOTE: reconstruct_hdr was removed from the API - use UltraHdrReader instead
 #[test]
+#[ignore = "reconstruct_hdr API was removed - use UltraHdrReader for HDR reconstruction"]
 fn test_hdr_reconstruction() {
-    let width = 32;
-    let height = 32;
-    let original_hdr = create_test_hdr(width, height);
-
-    // Encode
-    let jpeg = encode_ultrahdr(
-        &original_hdr,
-        &GainMapConfig::default(),
-        &ToneMapConfig::default(),
-        &EncoderConfig::ycbcr(90.0, ChromaSubsampling::None),
-        85.0,
-        Unstoppable,
-    )
-    .expect("Encoding failed");
-
-    // Decode
-    let decoded = Decoder::new().decode(&jpeg).expect("Decoding failed");
-    let extras = decoded.extras().expect("Should have extras");
-
-    // Reconstruct HDR
-    let reconstructed = reconstruct_hdr(
-        decoded.pixels(),
-        decoded.width(),
-        decoded.height(),
-        extras,
-        4.0, // Standard HDR display boost
-        HdrOutputFormat::LinearFloat,
-        Unstoppable,
-    )
-    .expect("HDR reconstruction failed");
-
-    assert_eq!(reconstructed.width, width);
-    assert_eq!(reconstructed.height, height);
-    assert_eq!(reconstructed.format, UhdrPixelFormat::Rgba32F);
-
-    // Verify HDR values are in reasonable range
-    // (exact match not expected due to lossy compression)
-    let pixels = &reconstructed.data;
-    for i in (0..pixels.len()).step_by(16) {
-        let r = f32::from_le_bytes([pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]);
-        let g = f32::from_le_bytes([pixels[i + 4], pixels[i + 5], pixels[i + 6], pixels[i + 7]]);
-        let b = f32::from_le_bytes([pixels[i + 8], pixels[i + 9], pixels[i + 10], pixels[i + 11]]);
-
-        // HDR values should be non-negative
-        assert!(r >= 0.0, "R should be non-negative: {}", r);
-        assert!(g >= 0.0, "G should be non-negative: {}", g);
-        assert!(b >= 0.0, "B should be non-negative: {}", b);
-    }
+    // This test used reconstruct_hdr() which no longer exists.
+    // Use UltraHdrReader with UltraHdrMode::Hdr for HDR reconstruction.
+    unimplemented!("reconstruct_hdr API was removed");
 }
 
 #[test]
@@ -190,40 +147,12 @@ fn test_tonemapper_extraction() {
         .expect("Tonemapper application should succeed");
 }
 
+// NOTE: reencode_ultrahdr was removed from the API
 #[test]
+#[ignore = "reencode_ultrahdr API was removed"]
 fn test_reencode_ultrahdr() {
-    let hdr = create_test_hdr(48, 48);
-
-    // Initial encode
-    let original_jpeg = encode_ultrahdr(
-        &hdr,
-        &GainMapConfig::default(),
-        &ToneMapConfig::default(),
-        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
-        75.0,
-        Unstoppable,
-    )
-    .expect("Initial encoding failed");
-
-    // Re-encode without modification
-    let reencoded = reencode_ultrahdr(
-        &original_jpeg,
-        4.0,
-        None::<fn(&mut UhdrRawImage)>,
-        &GainMapConfig::default(),
-        &EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter),
-        75.0,
-        Unstoppable,
-    )
-    .expect("Re-encoding failed");
-
-    // Verify re-encoded is valid UltraHDR
-    let decoded = Decoder::new()
-        .decode(&reencoded)
-        .expect("Decoding re-encoded failed");
-
-    let extras = decoded.extras().expect("Should have extras");
-    assert!(extras.is_ultrahdr(), "Re-encoded should still be UltraHDR");
+    // This test used reencode_ultrahdr() which no longer exists.
+    unimplemented!("reencode_ultrahdr API was removed");
 }
 
 #[test]
@@ -421,6 +350,61 @@ fn test_standalone_grayscale_encode_decode() {
             );
         }
     }
+}
+
+/// Test that UltraHdrReader correctly detects UltraHDR files.
+///
+/// This test currently FAILS because UltraHdrReader's `extract_gainmap_early()`
+/// does not find the gain map in this valid UltraHDR file, even though:
+/// - The file has correct XMP with hdrgm:Version, hdrgm:GainMapMax, etc.
+/// - The file has correct MPF marker with secondary image (type=Undefined=gainmap)
+/// - The native `ultrahdr_rs::Decoder` correctly detects it as UltraHDR
+///
+/// Bug: `extract_gainmap_early()` returns `(None, None)` for this file.
+///
+/// File structure (verified with xxd):
+/// - Offset 0x02: MPF marker (APP2) - indicates 2 images
+/// - Offset 0x62: ICC_PROFILE (APP2)
+/// - Offset 0x212: XMP (APP1) with hdrgm:* metadata
+/// - Offset 0x1a9d: Secondary JPEG (gain map, 801 bytes)
+#[test]
+fn test_ultrahdr_reader_detection_bug() {
+    let sample_path = "tests/images/ultrahdr_sample.jpg";
+    let data = std::fs::read(sample_path).expect("Failed to read test file");
+
+    // Verify with ultrahdr-rs crate directly - this WORKS
+    let ultrahdr_decoder =
+        ultrahdr_rs::Decoder::new(&data).expect("ultrahdr_rs::Decoder creation failed");
+    assert!(
+        ultrahdr_decoder.is_ultrahdr(),
+        "ultrahdr_rs::Decoder should detect this as UltraHDR"
+    );
+    assert!(
+        ultrahdr_decoder.metadata().is_some(),
+        "ultrahdr_rs::Decoder should find metadata"
+    );
+    assert!(
+        ultrahdr_decoder.gainmap_jpeg().is_some(),
+        "ultrahdr_rs::Decoder should find gainmap JPEG"
+    );
+
+    // Now test with UltraHdrReader - this FAILS
+    let config = UltraHdrReaderConfig::new()
+        .mode(UltraHdrMode::SdrAndGainMap)
+        .preserve_metadata(true);
+
+    let reader = Decoder::new()
+        .ultrahdr_reader(&data, config)
+        .expect("UltraHdrReader creation should succeed");
+
+    // BUG: This assertion fails - UltraHdrReader.is_ultrahdr() returns false
+    // even though the file is valid UltraHDR (as proven by ultrahdr_rs::Decoder above)
+    assert!(
+        reader.is_ultrahdr(),
+        "BUG: UltraHdrReader should detect this as UltraHDR, but returns false. \
+         The file is valid UltraHDR (confirmed by ultrahdr_rs::Decoder). \
+         extract_gainmap_early() is not finding the XMP metadata or MPF gain map."
+    );
 }
 
 #[test]

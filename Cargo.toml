@@ -90,7 +90,7 @@ kamadak-exif = "0.6"
 img-parts = "0.4"
 
 # Our ultrahdr crate (for integration testing)
-ultrahdr = { path = "/home/lilith/work/ultrahdr" }
+ultrahdr-rs = { path = "/home/lilith/work/ultrahdr/ultrahdr" }
 
 [profile.release]
 debug = true
