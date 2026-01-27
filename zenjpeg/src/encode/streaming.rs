@@ -1286,6 +1286,22 @@ impl StreamingEncoder {
         )
     }
 
+    /// Returns raw frequency counters for analysis (test-utils only).
+    ///
+    /// Returns (dc_luma, ac_luma, dc_chroma, ac_chroma) frequency counters.
+    #[cfg(feature = "test-utils")]
+    #[must_use]
+    pub fn frequency_counters(
+        &self,
+    ) -> (
+        &crate::huffman::optimize::FrequencyCounter,
+        &crate::huffman::optimize::FrequencyCounter,
+        &crate::huffman::optimize::FrequencyCounter,
+        &crate::huffman::optimize::FrequencyCounter,
+    ) {
+        self.processor.frequency_counters()
+    }
+
     /// Checks if the accumulated frequency distribution appears stable/representative.
     ///
     /// Returns true if:
