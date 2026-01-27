@@ -569,6 +569,47 @@ where scalar + `#[multiversion]` wins.
 
 **Files:** `zenjpeg/src/quant/aq/autovec.rs`, `zenjpeg/examples/bench_autovec_aq.rs`
 
+## WASM SIMD128 Performance (2026-01-27)
+
+Run with: `just wasm-bench` (or `just wasm-bench-simd` / `just wasm-bench-scalar`)
+
+### Summary
+
+WASM SIMD128 provides **1.6-1.7x encode speedup** and **1.5-2.0x decode speedup** over scalar.
+The `wide` crate's f32x4 maps to WASM v128 operations.
+
+**SIMD128 vs Scalar:**
+
+| Size | Encode SIMD | Encode Scalar | **Encode Speedup** | Decode SIMD | Decode Scalar | **Decode Speedup** |
+|------|-------------|---------------|--------------------|-------------|---------------|--------------------|
+| 64x64 | 40.74 MP/s | 26.13 MP/s | **1.56x** | 103.74 MP/s | 60.57 MP/s | **1.71x** |
+| 256x256 | 50.74 MP/s | 30.15 MP/s | **1.68x** | 135.81 MP/s | 67.84 MP/s | **2.00x** |
+| 512x512 | 50.88 MP/s | 29.56 MP/s | **1.72x** | 134.07 MP/s | 66.40 MP/s | **2.02x** |
+| 1024x1024 | 47.98 MP/s | 29.74 MP/s | **1.61x** | 144.32 MP/s | 92.96 MP/s | **1.55x** |
+
+**Key findings:**
+- `wide` crate f32x4 → WASM simd128 v128 mapping works well
+- f32x8 becomes two v128 operations (still faster than scalar)
+- No runtime CPU feature detection in WASM, so `#[multiversed]` doesn't dispatch
+- Build with `RUSTFLAGS="-C target-feature=+simd128"` to enable
+- wasmtime needs `--wasm simd` flag to enable SIMD execution
+
+**Build commands:**
+```sh
+# SIMD128 enabled
+CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
+RUSTFLAGS="-C target-feature=+simd128" \
+cargo run --release -p zenjpeg --example wasm_bench \
+    --target wasm32-wasip1 --no-default-features --features "std,decoder"
+
+# Scalar (no SIMD)
+CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" \
+cargo run --release -p zenjpeg --example wasm_bench \
+    --target wasm32-wasip1 --no-default-features --features "std,decoder"
+```
+
+**Files:** `zenjpeg/examples/wasm_bench.rs`
+
 ## Decoder Performance Gap (2026-01-22)
 
 Run with: `cargo bench -p zenjpeg --bench decode_compare`
