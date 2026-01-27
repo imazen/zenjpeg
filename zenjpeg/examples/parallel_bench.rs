@@ -3,9 +3,9 @@
 //! Run with: cargo run --release --features parallel --example parallel_bench
 
 #[cfg(feature = "parallel")]
-use zenjpeg::encode::parallel::parallel_dct_y_blocks;
-#[cfg(feature = "parallel")]
 use std::time::Instant;
+#[cfg(feature = "parallel")]
+use zenjpeg::encode::parallel::parallel_dct_y_blocks;
 
 fn main() {
     println!("Parallel vs Sequential DCT Benchmark\n");
@@ -116,8 +116,8 @@ fn extract_block_sequential(
     block_y: usize,
     padded_width: usize,
 ) -> zenjpeg::foundation::simd_types::Block8x8f {
-    use zenjpeg::foundation::simd_types::Block8x8f;
     use wide::f32x8;
+    use zenjpeg::foundation::simd_types::Block8x8f;
 
     let start_x = block_x * 8;
     let start_y = block_y * 8;

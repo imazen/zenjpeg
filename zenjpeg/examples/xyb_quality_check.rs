@@ -3,13 +3,13 @@
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use std::fs;
+use std::io::Write;
+use std::process::Command;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{EncoderConfig, PixelLayout, XybSubsampling},
 };
-use std::fs;
-use std::io::Write;
-use std::process::Command;
 
 fn main() {
     let png_path = "../internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png";

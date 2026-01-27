@@ -12,11 +12,11 @@
 #[allow(unused_imports)]
 use zenjpeg::encoder::ChromaSubsampling;
 
-use zenjpeg::color::rgb_to_ycbcr_f32;
 use yuv::{
     rgb_to_sharp_yuv420, rgb_to_yuv420, SharpYuvGammaTransfer, YuvChromaSubsampling,
     YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
 };
+use zenjpeg::color::rgb_to_ycbcr_f32;
 
 /// Generate test patterns for comparison
 fn generate_test_patterns() -> Vec<(&'static str, Vec<u8>, usize, usize)> {

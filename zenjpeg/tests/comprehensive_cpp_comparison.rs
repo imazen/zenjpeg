@@ -7,7 +7,6 @@
 //! IMPORTANT: Uses `jpegli_set_distance()` for C++ (not `jpeg_set_quality()`)
 //! to ensure matching quant table configuration (3 tables for both).
 
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 use jpegli_bench_utils::{
     ChromaSubsampling as BenchChromaSubsampling, ColorMode, EncoderConfig as BenchEncoderConfig,
     EncoderImpl, ImageData, ScanMode,
@@ -15,6 +14,7 @@ use jpegli_bench_utils::{
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
 /// Convert quality (0-100) to butteraugli distance.
 /// Same formula as C++ jpegli_quality_to_distance.

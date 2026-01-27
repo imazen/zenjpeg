@@ -10,9 +10,9 @@
 //!
 //! To regenerate values: cargo test --test parity_reference_locked generate_all_values -- --ignored --nocapture
 
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::collections::HashMap;
 use std::process::Command;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Reference entry for a single encoder configuration
 #[derive(Debug, Clone, Copy)]

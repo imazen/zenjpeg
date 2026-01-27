@@ -6,8 +6,8 @@
 use enough::Unstoppable;
 use fast_ssim2::compute_ssimulacra2;
 use imgref::ImgVec;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 use std::process::Command;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).expect("open");

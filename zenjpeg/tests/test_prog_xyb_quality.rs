@@ -99,10 +99,7 @@ fn test_progressive_xyb_non_aligned_dimensions() {
     let result = Decoder::new().apply_icc(true).decode(&jpeg);
 
     match result {
-        Ok(img) => println!(
-            "Q{}: zenjpeg decoded {}x{}",
-            quality, img.width, img.height
-        ),
+        Ok(img) => println!("Q{}: zenjpeg decoded {}x{}", quality, img.width, img.height),
         Err(e) => panic!("Q{}: DECODE ERROR: {:?}", quality, e),
     }
 }

@@ -15,9 +15,9 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use dssim::Dssim;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::collections::HashMap;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Test configuration for a single encoding
 #[derive(Clone, Debug)]
@@ -197,10 +197,8 @@ fn test_all_decoders(
     let mut results: HashMap<String, (f64, f64, u64)> = HashMap::new();
 
     // Collect all decoder results
-    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
-        ("zenjpeg", decode_jpegli),
-        ("zune-jpeg", decode_zune_jpeg),
-    ];
+    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> =
+        vec![("zenjpeg", decode_jpegli), ("zune-jpeg", decode_zune_jpeg)];
 
     let mut decoder_results: Vec<DecoderResult> = Vec::new();
 
@@ -462,10 +460,8 @@ fn benchmark_decoders() {
     );
 
     let iterations = 50;
-    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
-        ("zenjpeg", decode_jpegli),
-        ("zune-jpeg", decode_zune_jpeg),
-    ];
+    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> =
+        vec![("zenjpeg", decode_jpegli), ("zune-jpeg", decode_zune_jpeg)];
 
     for (name, decoder_fn) in &decoder_fns {
         let start = std::time::Instant::now();
@@ -509,10 +505,8 @@ fn test_grayscale_compatibility() {
     println!("\n=== Grayscale Compatibility Test ===\n");
 
     // All decoders should handle RGB that happens to be grayscale
-    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> = vec![
-        ("zenjpeg", decode_jpegli),
-        ("zune-jpeg", decode_zune_jpeg),
-    ];
+    let decoder_fns: Vec<(&str, fn(&[u8]) -> Option<DecoderResult>)> =
+        vec![("zenjpeg", decode_jpegli), ("zune-jpeg", decode_zune_jpeg)];
 
     for (name, decoder_fn) in &decoder_fns {
         match decoder_fn(&jpeg_data) {

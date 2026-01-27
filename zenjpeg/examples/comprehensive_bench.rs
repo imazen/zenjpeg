@@ -5,11 +5,11 @@
 //! Run with: cargo run --release --example comprehensive_bench [image.png]
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use png::Decoder;
 use std::fs::File;
 use std::io::BufReader;
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Load a PNG and resize it to target dimensions using simple box filter
 fn load_and_resize(path: &str, target_w: usize, target_h: usize) -> Vec<u8> {

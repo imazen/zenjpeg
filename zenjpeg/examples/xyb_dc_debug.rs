@@ -3,8 +3,8 @@
 //! This test encodes a solid color image and compares the DC coefficients.
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 use std::process::Command;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn encode_rust_xyb_dump(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let config = EncoderConfig::xyb(quality, XybSubsampling::Full);

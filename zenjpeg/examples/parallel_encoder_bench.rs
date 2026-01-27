@@ -3,8 +3,8 @@
 //! Run with: cargo run --release --features parallel --example parallel_encoder_bench
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     println!("Full Encoder Benchmark (Parallel Y DCT)\n");

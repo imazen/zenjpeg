@@ -4,11 +4,11 @@
 //! then verify quality using DSSIM.
 
 use dssim::Dssim;
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::Path;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 /// Maximum acceptable DSSIM for quality 90 encoding.
 /// Lower is better; 0 = identical, typical good JPEG is < 0.01

@@ -4,10 +4,10 @@
 //! This test answers: "How many distinct colors can survive a roundtrip
 //! through jpegli for each input/output format combination?"
 
+use std::collections::HashSet;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use std::collections::HashSet;
 
 /// Test image dimensions
 const WIDTH: usize = 128;

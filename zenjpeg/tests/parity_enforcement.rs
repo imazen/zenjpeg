@@ -9,10 +9,10 @@
 //! 3. Fail loudly when parity regresses
 //! 4. Document expected gaps until they're fixed
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 /// Known baseline file size differences (Rust vs C++)
 /// These values were measured with matching settings:

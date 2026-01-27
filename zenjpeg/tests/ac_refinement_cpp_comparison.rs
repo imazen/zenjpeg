@@ -4,10 +4,10 @@
 //! The C++ output is generated using instrumentation in entropy_coding.cc with
 //! the DUMP_AC_REFINEMENT environment variable.
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 fn encode_rgb(width: u32, height: u32, data: &[u8], config: &EncoderConfig) -> Vec<u8> {
     let mut enc = config

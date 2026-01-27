@@ -6,8 +6,8 @@
 //! ```
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 use std::process::Command;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
     let image_path = std::env::args()

@@ -1,8 +1,8 @@
 //! Test edge padding with a synthetic image that has varied edge content
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::fs;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn save_png(path: &str, rgb: &[u8], width: usize, height: usize) {
     use std::io::BufWriter;

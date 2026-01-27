@@ -1,6 +1,6 @@
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn encode_rgb(
     width: u32,

@@ -4,12 +4,12 @@
 //!        cargo run --release --example decode_profile -- --jpegli-only
 
 use enough::Unstoppable;
+use std::env;
+use std::time::Instant;
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use std::env;
-use std::time::Instant;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;

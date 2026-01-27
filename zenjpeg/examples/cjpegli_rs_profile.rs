@@ -21,8 +21,8 @@
 //!   cargo run --release --example cjpegli_rs_profile -- image.png --disable_output --num_reps 500
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
 struct Args {
     input: String,

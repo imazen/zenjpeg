@@ -3,11 +3,11 @@
 //! Run with: cargo run --release --example ycbcr_benchmark
 
 use enough::Unstoppable;
+use std::time::{Duration, Instant};
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use std::time::{Duration, Instant};
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32) -> Vec<u8> {
     let mut data = vec![0u8; (width * height * 3) as usize];

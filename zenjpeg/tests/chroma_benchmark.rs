@@ -17,11 +17,11 @@
 //! - Encoding time: Performance
 
 use dssim::Dssim;
+use std::time::Instant;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, DownsamplingMethod, EncoderConfig, Error, PixelLayout},
 };
-use std::time::Instant;
 
 // Type aliases for backward compatibility with old names used in this file
 type ChromaDownsampling = DownsamplingMethod;

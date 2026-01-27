@@ -1,8 +1,8 @@
 //! Debug test for Gray16 linear encoding issue
 
+use std::collections::HashSet;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
-use std::collections::HashSet;
 
 fn encode(
     width: u32,

@@ -10,12 +10,12 @@
 //! Default distance: 1.0 (roughly equivalent to q90)
 
 use enough::Unstoppable;
-use zenjpeg::decode::Decoder;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 use jpegli_bench_utils::{
     ChromaSubsampling as BenchChromaSubsampling, ColorMode, EncoderConfig as BenchEncoderConfig,
     EncoderImpl, ImageData, ScanMode,
 };
+use zenjpeg::decode::Decoder;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).expect("open");

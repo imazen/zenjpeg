@@ -19,8 +19,8 @@
 //! ```
 
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::path::PathBuf;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 // Re-use old types for FFI compatibility
 use zenjpeg::decoder::{JpegMode, Subsampling};

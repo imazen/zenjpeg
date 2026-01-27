@@ -20,9 +20,9 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
+use test_utils::generate_gradient_d;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
-use test_utils::generate_gradient_d;
 
 /// Maximum quant value for baseline JPEG (8-bit DQT)
 const QUANT_MAX_BASELINE: u16 = 255;

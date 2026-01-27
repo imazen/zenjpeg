@@ -5,8 +5,8 @@
 //! - `img-parts`: JPEG segment manipulation (ICC profile extraction/injection)
 //! - `ultrahdr`: Ultra HDR JPEG encoding (using jpegli as base encoder)
 
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation};
 use rgb::RGB;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, Exif, Orientation};
 
 /// Create a test image with a gradient pattern.
 fn create_test_image(width: u32, height: u32) -> Vec<RGB<u8>> {

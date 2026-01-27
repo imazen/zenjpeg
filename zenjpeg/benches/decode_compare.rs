@@ -7,8 +7,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use enough::Unstoppable;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::io::Cursor;
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 use zune_jpeg::JpegDecoder;

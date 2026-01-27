@@ -2,10 +2,10 @@
 //!
 //! Compares sequential vs parallel entropy encoding performance.
 
+use std::time::Instant;
 use zenjpeg::entropy::encoder::EntropyEncoder;
 use zenjpeg::foundation::consts::DCT_BLOCK_SIZE;
 use zenjpeg::huffman::HuffmanEncodeTable;
-use std::time::Instant;
 
 #[cfg(feature = "parallel")]
 use zenjpeg::encode::parallel::{parallel_entropy_encode_444, ParallelEntropyConfig};

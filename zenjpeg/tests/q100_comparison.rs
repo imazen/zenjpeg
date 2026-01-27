@@ -2,11 +2,11 @@
 //!
 //! Usage: cargo test --release -p jpegli --test q100_comparison -- --nocapture --ignored
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 fn find_cjpegli() -> Option<PathBuf> {
     zenjpeg::test_utils::find_cjpegli()

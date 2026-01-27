@@ -6,11 +6,11 @@
 //! Run with: cargo test --release -p zenjpeg --test strip_edge_cpp_comparison -- --nocapture --ignored
 
 use dssim::Dssim;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn find_corpus_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();

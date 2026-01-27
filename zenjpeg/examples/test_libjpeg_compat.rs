@@ -1,6 +1,6 @@
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::process::Command;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn test_pattern(name: &str, data: &[u8], width: u32, height: u32, quality: f32) {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)

@@ -1,7 +1,7 @@
 //! Benchmark showing encoding performance at different image sizes
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn bench(width: usize, height: usize) -> (f64, usize) {
     let mut data = vec![0u8; width * height * 3];

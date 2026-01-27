@@ -5,10 +5,10 @@
 #![cfg(feature = "corpus-tests")]
 
 use codec_eval::{EvalConfig, EvalSession, ImageData, ViewingCondition};
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 fn find_cjpegli_path() -> Option<PathBuf> {
     zenjpeg::test_utils::find_cjpegli()
