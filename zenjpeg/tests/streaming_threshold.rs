@@ -477,8 +477,8 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
 
     eprintln!("Found {} images in CLIC 2025 validation set", test_images.len());
 
-    // Track results: (image_name, overhead_flat25, overhead_heur25, trans_flat, trans_heur)
-    let mut results: Vec<(String, f64, f64, Option<f64>, Option<f64>)> = Vec::new();
+    // Track results: (image_name, overhead_flat25, overhead_heur25, trans_flat_info, trans_heur_info)
+    let mut results: Vec<(String, f64, f64, String, String)> = Vec::new();
 
     // Memory limit for testing (1MB is reasonable for bounded-memory streaming)
     let memory_limit = 1024 * 1024;
@@ -527,7 +527,7 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
             let end = start + row_size;
             encoder_flat.push_row(&pixels[start..end]).unwrap();
         }
-        let trans_flat = encoder_flat.transition_percent();
+        let trans_flat_info = encoder_flat.transition_info();
         let result_flat = encoder_flat.finish().unwrap();
         let overhead_flat = 100.0 * (result_flat.len() as f64 - baseline_size as f64) / baseline_size as f64;
 
@@ -548,11 +548,11 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
             let end = start + row_size;
             encoder_heur.push_row(&pixels[start..end]).unwrap();
         }
-        let trans_heur = encoder_heur.transition_percent();
+        let trans_heur_info = encoder_heur.transition_info();
         let result_heur = encoder_heur.finish().unwrap();
         let overhead_heur = 100.0 * (result_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
 
-        results.push((img_name.to_string(), overhead_flat, overhead_heur, trans_flat, trans_heur));
+        results.push((img_name.to_string(), overhead_flat, overhead_heur, trans_flat_info, trans_heur_info));
     }
 
     // Print summary
@@ -561,11 +561,9 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
     eprintln!("(Shows value of heuristics at lower minimum percentage)");
     eprintln!("{}", "=".repeat(80));
 
-    // Calculate statistics - results are (name, flat_overhead, heur_overhead, trans_flat, trans_heur)
+    // Calculate statistics - results are (name, flat_overhead, heur_overhead, trans_flat_info, trans_heur_info)
     let flat_overheads: Vec<f64> = results.iter().map(|(_, o, _, _, _)| *o).collect();
     let heur_overheads: Vec<f64> = results.iter().map(|(_, _, o, _, _)| *o).collect();
-    let trans_flat: Vec<f64> = results.iter().filter_map(|(_, _, _, t, _)| *t).collect();
-    let trans_heur: Vec<f64> = results.iter().filter_map(|(_, _, _, _, t)| *t).collect();
 
     let mean_flat = flat_overheads.iter().sum::<f64>() / flat_overheads.len() as f64;
     let mean_heur = heur_overheads.iter().sum::<f64>() / heur_overheads.len() as f64;
@@ -581,14 +579,14 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
     sorted_heur.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median_heur = sorted_heur[sorted_heur.len() / 2];
 
-    // Transition percentage stats
-    let mean_trans_flat = trans_flat.iter().sum::<f64>() / trans_flat.len() as f64;
-    let mean_trans_heur = trans_heur.iter().sum::<f64>() / trans_heur.len() as f64;
-    let max_trans_heur = trans_heur.iter().cloned().fold(f64::MIN, f64::max);
-
     // Count images within 4% threshold
     let within_4_flat = flat_overheads.iter().filter(|&&o| o <= 4.0).count();
     let within_4_heur = heur_overheads.iter().filter(|&&o| o <= 4.0).count();
+
+    // Count transition reasons
+    let heur_passed = results.iter().filter(|(_, _, _, _, t)| t.contains("heuristics")).count();
+    let safety_valve = results.iter().filter(|(_, _, _, _, t)| t.contains("safety")).count();
+    let min_pct = results.iter().filter(|(_, _, _, _, t)| t.contains("min%")).count();
 
     eprintln!("\n{:>25} {:>12} {:>18}", "Metric", "Flat 25%", "25% + Heuristics");
     eprintln!("{}", "-".repeat(60));
@@ -598,38 +596,37 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
     eprintln!("{:>25} {:>8}/{:<4} {:>14}/{:<4}", "Within 4%",
         within_4_flat, test_images.len(), within_4_heur, test_images.len());
 
-    eprintln!("\nTransition statistics:");
-    eprintln!("  Flat 25%:         Mean {:.1}% (all at 25%)", mean_trans_flat);
-    eprintln!("  25% + heuristics: Mean {:.1}%, Max {:.1}%", mean_trans_heur, max_trans_heur);
+    eprintln!("\nTransition reasons (with heuristics):");
+    eprintln!("  Heuristics passed at 25%: {} images", heur_passed);
+    eprintln!("  Waited for safety (50%):  {} images", safety_valve);
+    eprintln!("  Min% only (no heuristics): {} images", min_pct);
 
-    // Show worst cases - results are (name, flat_overhead, heur_overhead, trans_flat, trans_heur)
+    // Show worst cases - results are (name, flat_overhead, heur_overhead, trans_flat_info, trans_heur_info)
     eprintln!("\nWorst 5 images (by flat 25% overhead):");
     let mut by_flat: Vec<_> = results.iter().collect();
     by_flat.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-    eprintln!("{:>40} {:>10} {:>10} {:>10} {:>8}", "Image", "Flat 25%", "w/Heur", "Improve", "Trans%");
-    eprintln!("{}", "-".repeat(85));
-    for (name, flat, heur, _, trans_heur) in by_flat.iter().take(5) {
+    eprintln!("{:>40} {:>10} {:>10} {:>10} {:>15}", "Image", "Flat 25%", "w/Heur", "Improve", "Transition");
+    eprintln!("{}", "-".repeat(90));
+    for (name, flat, heur, _, trans_heur_info) in by_flat.iter().take(5) {
         let improvement = flat - heur;
         let name_short: String = name.chars().take(38).collect();
-        let trans_str = trans_heur.map(|t| format!("{:.0}%", t)).unwrap_or_else(|| "N/A".to_string());
-        eprintln!("{:>40} {:>9.2}% {:>9.2}% {:>+9.1}% {:>8}",
-            name_short, flat, heur, improvement, trans_str);
+        eprintln!("{:>40} {:>9.2}% {:>9.2}% {:>+9.1}% {:>15}",
+            name_short, flat, heur, improvement, trans_heur_info);
     }
 
     // Show images where heuristics helped most
     let mut by_improvement: Vec<_> = results.iter()
-        .map(|(n, flat, heur, _, trans)| (n, flat - heur, *trans))
+        .map(|(n, flat, heur, _, trans)| (n, flat - heur, trans.as_str()))
         .collect();
     by_improvement.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
     eprintln!("\nTop 5 images where heuristics helped most:");
-    eprintln!("{:>40} {:>12} {:>8}", "Image", "Improvement", "Trans%");
-    eprintln!("{}", "-".repeat(65));
+    eprintln!("{:>40} {:>12} {:>15}", "Image", "Improvement", "Transition");
+    eprintln!("{}", "-".repeat(72));
     for (name, improvement, trans) in by_improvement.iter().take(5) {
         let name_short: String = name.chars().take(38).collect();
-        let trans_str = trans.map(|t| format!("{:.0}%", t)).unwrap_or_else(|| "N/A".to_string());
-        eprintln!("{:>40} {:>+11.1}% {:>8}", name_short, improvement, trans_str);
+        eprintln!("{:>40} {:>+11.1}% {:>15}", name_short, improvement, trans);
     }
 
     // Final verdict
@@ -643,8 +640,7 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
             .collect();
         eprintln!("✗ 25% + heuristics: {} images exceed 4% overhead", over_4.len());
         for (name, _, h, _, trans) in over_4.iter().take(5) {
-            let trans_str = trans.map(|t| format!(" @{:.0}%", t)).unwrap_or_default();
-            eprintln!("    {} → {:.2}%{}", name, h, trans_str);
+            eprintln!("    {} → {:.2}% [{}]", name, h, trans);
         }
     }
 

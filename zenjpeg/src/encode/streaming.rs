@@ -976,6 +976,24 @@ pub struct StreamingEncoder {
     min_transition_percent: Option<usize>,
     /// Row at which transition to streaming mode occurred (for diagnostics)
     transition_at_row: Option<usize>,
+    /// Reason for transition (for diagnostics)
+    transition_reason: Option<TransitionReason>,
+}
+
+/// Reason why streaming transition occurred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "test-utils"), doc(hidden))]
+pub enum TransitionReason {
+    /// Forced by transition_after_rows (testing API)
+    ForcedByRows,
+    /// Memory limit hit and heuristics passed (or no heuristics configured)
+    HeuristicsPassed,
+    /// Memory limit hit but waiting for min_transition_percent
+    MinPercentReached,
+    /// Safety valve at 50% of image
+    SafetyValve,
+    /// No streaming transition (full buffering mode)
+    NoTransition,
 }
 
 impl StreamingEncoder {
@@ -1197,6 +1215,7 @@ impl StreamingEncoder {
             min_coverage: builder.min_coverage,
             min_transition_percent: builder.min_transition_percent,
             transition_at_row: None,
+            transition_reason: None,
         })
     }
 
@@ -1301,6 +1320,33 @@ impl StreamingEncoder {
             .map(|row| 100.0 * row as f64 / self.height as f64)
     }
 
+    /// Returns the reason for streaming transition.
+    ///
+    /// Returns `None` if transition hasn't happened yet.
+    #[must_use]
+    pub fn transition_reason(&self) -> Option<TransitionReason> {
+        self.transition_reason
+    }
+
+    /// Returns both transition percentage and reason as a formatted string.
+    #[must_use]
+    pub fn transition_info(&self) -> String {
+        match (self.transition_percent(), self.transition_reason) {
+            (Some(pct), Some(reason)) => {
+                let reason_str = match reason {
+                    TransitionReason::ForcedByRows => "forced",
+                    TransitionReason::HeuristicsPassed => "heuristics",
+                    TransitionReason::MinPercentReached => "min%",
+                    TransitionReason::SafetyValve => "safety",
+                    TransitionReason::NoTransition => "none",
+                };
+                format!("{:.0}% ({})", pct, reason_str)
+            }
+            (Some(pct), None) => format!("{:.0}%", pct),
+            _ => "N/A".to_string(),
+        }
+    }
+
     /// Checks if memory limit is exceeded and transitions to streaming mode if needed.
     ///
     /// This should be called after each strip is processed. If the memory limit
@@ -1328,6 +1374,7 @@ impl StreamingEncoder {
         if let Some(threshold_rows) = self.transition_after_rows {
             let rows_processed = self.current_y;
             if rows_processed >= threshold_rows {
+                self.transition_reason = Some(TransitionReason::ForcedByRows);
                 return self.transition_to_streaming();
             }
         }
@@ -1345,8 +1392,18 @@ impl StreamingEncoder {
                     true // No minimum set, always OK
                 };
 
-                // Only check heuristics if minimum percentage is met
-                if min_pct_ok && self.check_distribution_heuristics() {
+                // Check heuristics
+                let heuristics_pass = self.check_distribution_heuristics();
+
+                // Determine transition reason
+                if min_pct_ok && heuristics_pass {
+                    // Both min_pct and heuristics are satisfied
+                    // Report which was the limiting factor
+                    if self.min_entropy.is_some() || self.min_coverage.is_some() {
+                        self.transition_reason = Some(TransitionReason::HeuristicsPassed);
+                    } else {
+                        self.transition_reason = Some(TransitionReason::MinPercentReached);
+                    }
                     return self.transition_to_streaming();
                 }
 
@@ -1354,6 +1411,7 @@ impl StreamingEncoder {
                 let rows_processed = self.current_y;
                 let half_image = self.height / 2;
                 if rows_processed >= half_image {
+                    self.transition_reason = Some(TransitionReason::SafetyValve);
                     return self.transition_to_streaming();
                 }
             }
