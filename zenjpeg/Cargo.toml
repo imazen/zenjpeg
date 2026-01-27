@@ -64,6 +64,8 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # C++ jpegli FFI for parity benchmarks (uses jpegli_* symbols directly)
 zenjpeg-bench-utils = { path = "../zenjpeg-bench-utils", default-features = false, features = ["cjpegli-ffi"] }
+# UltraHDR crate for detection comparison tests
+ultrahdr-rs = { workspace = true }
 # For FFI comparison testing against C++ jpegli (internal development only)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", features = ["butteraugli"] }
 butteraugli = { workspace = true }
