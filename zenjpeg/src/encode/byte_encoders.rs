@@ -241,6 +241,14 @@ impl BytesEncoder {
         self.height - self.inner.rows_pushed() as u32
     }
 
+    /// Get allocation statistics from the strip processor.
+    ///
+    /// This tracks all major allocations made during encoding setup.
+    #[must_use]
+    pub fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
+        self.inner.allocation_stats()
+    }
+
     /// Get the pixel layout.
     #[must_use]
     pub fn layout(&self) -> PixelLayout {
@@ -250,14 +258,32 @@ impl BytesEncoder {
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
-    pub fn finish(mut self) -> Result<Vec<u8>> {
+    pub fn finish(self) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.finish_into(&mut output)?;
+        Ok(output)
+    }
+
+    /// Finish encoding, writing directly to the provided buffer.
+    ///
+    /// This is the most efficient way to complete encoding as it avoids
+    /// intermediate allocations. The buffer is cleared before writing.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut output = Vec::new();
+    /// encoder.finish_into(&mut output)?;
+    /// // output now contains the JPEG data
+    /// ```
+    pub fn finish_into(mut self, output: &mut Vec<u8>) -> Result<()> {
         let rows_pushed = self.inner.rows_pushed() as u32;
         if rows_pushed != self.height {
             return Err(Error::incomplete_image(self.height, rows_pushed));
         }
 
-        // Finish streaming encoder
-        let mut jpeg = self.inner.finish()?;
+        // Finish streaming encoder directly into output
+        self.inner.finish_into(output)?;
 
         // When using EncoderSegments with MPF images, we need to merge individual
         // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
@@ -289,7 +315,7 @@ impl BytesEncoder {
                     self.config.icc_profile = None; // Mark as handled
                 }
             }
-            jpeg = inject_encoder_segments(jpeg, &segments);
+            inject_encoder_segments_inplace(output, &segments);
         }
 
         // Fall back to individual metadata fields for backwards compatibility
@@ -297,36 +323,28 @@ impl BytesEncoder {
         // (allows override of specific fields while keeping bulk segments)
         if let Some(ref exif) = self.config.exif_data {
             if let Some(exif_bytes) = exif.to_bytes() {
-                jpeg = inject_exif(jpeg, &exif_bytes);
+                inject_exif_inplace(output, &exif_bytes);
             }
         }
 
         if let Some(ref xmp_data) = self.config.xmp_data {
-            jpeg = inject_xmp(jpeg, xmp_data);
+            inject_xmp_inplace(output, xmp_data);
         }
 
         if let Some(ref icc_data) = self.config.icc_profile {
-            jpeg = inject_icc_profile(jpeg, icc_data);
+            inject_icc_profile_inplace(output, icc_data);
         }
 
-        Ok(jpeg)
+        Ok(())
     }
 
     /// Finish encoding to Write destination.
     #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
-        let jpeg = self.finish()?;
+        let mut jpeg = Vec::new();
+        self.finish_into(&mut jpeg)?;
         output.write_all(&jpeg)?;
         Ok(output)
-    }
-
-    /// Finish encoding, appending JPEG bytes to an existing Vec.
-    ///
-    /// Useful for no_std environments or buffer reuse.
-    pub fn finish_to_vec(self, output: &mut Vec<u8>) -> Result<()> {
-        let jpeg = self.finish()?;
-        output.extend_from_slice(&jpeg);
-        Ok(())
     }
 }
 
@@ -535,6 +553,96 @@ fn find_xmp_insert_position(jpeg: &[u8]) -> usize {
     pos
 }
 
+// ============================================================================
+// In-place metadata injection functions (for finish_into)
+// These use Vec::splice to avoid creating new Vecs
+// ============================================================================
+
+/// Inject ICC profile into a JPEG in-place using splice.
+fn inject_icc_profile_inplace(jpeg: &mut Vec<u8>, icc_data: &[u8]) {
+    if icc_data.is_empty() {
+        return;
+    }
+
+    // Find insertion point: after SOI and any APP0/APP1 markers
+    let insert_pos = find_icc_insert_position(jpeg);
+
+    // Build ICC APP2 marker segments
+    let icc_markers = build_icc_markers(icc_data);
+
+    // Insert using splice (shifts data once, more efficient than creating new Vec)
+    jpeg.splice(insert_pos..insert_pos, icc_markers);
+}
+
+/// Inject EXIF data into a JPEG in-place using splice.
+fn inject_exif_inplace(jpeg: &mut Vec<u8>, exif_data: &[u8]) {
+    if exif_data.is_empty() {
+        return;
+    }
+
+    // Truncate if too large
+    let exif_len = exif_data.len().min(MAX_EXIF_BYTES);
+
+    // Build EXIF APP1 marker
+    let mut marker = Vec::with_capacity(4 + 6 + exif_len);
+    marker.push(0xFF);
+    marker.push(0xE1); // APP1
+
+    // Length: 2 (length field) + 6 (signature) + data
+    let segment_length = 2 + 6 + exif_len;
+    marker.push((segment_length >> 8) as u8);
+    marker.push(segment_length as u8);
+
+    // EXIF signature
+    marker.extend_from_slice(EXIF_SIGNATURE);
+
+    // EXIF data
+    marker.extend_from_slice(&exif_data[..exif_len]);
+
+    // Insert after SOI (2 bytes) using splice
+    jpeg.splice(2..2, marker);
+}
+
+/// Inject XMP data into a JPEG in-place using splice.
+fn inject_xmp_inplace(jpeg: &mut Vec<u8>, xmp_data: &[u8]) {
+    if xmp_data.is_empty() {
+        return;
+    }
+
+    // Truncate if too large
+    let xmp_len = xmp_data.len().min(MAX_XMP_BYTES);
+
+    // Build XMP APP1 marker
+    let mut marker = Vec::with_capacity(4 + 29 + xmp_len);
+    marker.push(0xFF);
+    marker.push(0xE1); // APP1
+
+    // Length: 2 (length field) + 29 (namespace) + data
+    let segment_length = 2 + 29 + xmp_len;
+    marker.push((segment_length >> 8) as u8);
+    marker.push(segment_length as u8);
+
+    // XMP namespace
+    marker.extend_from_slice(XMP_NAMESPACE);
+
+    // XMP data
+    marker.extend_from_slice(&xmp_data[..xmp_len]);
+
+    // Find insertion point: after SOI and any existing EXIF APP1 markers
+    let insert_pos = find_xmp_insert_position(jpeg);
+
+    // Insert using splice
+    jpeg.splice(insert_pos..insert_pos, marker);
+}
+
+/// Inject encoder segments into a JPEG in-place.
+fn inject_encoder_segments_inplace(jpeg: &mut Vec<u8>, segments: &super::extras::EncoderSegments) {
+    // For now, use the existing function and replace contents
+    // This is still more efficient than the old finish_to_vec which allocated twice
+    let new_jpeg = inject_encoder_segments(core::mem::take(jpeg), segments);
+    *jpeg = new_jpeg;
+}
+
 /// Marker trait for supported rgb crate pixel types.
 pub trait Pixel: Copy + 'static + bytemuck::Pod {
     /// Equivalent PixelLayout for this type.
@@ -642,6 +750,14 @@ impl<P: Pixel> RgbEncoder<P> {
         self.inner.rows_remaining()
     }
 
+    /// Get allocation statistics from the strip processor.
+    ///
+    /// This tracks all major allocations made during encoding setup.
+    #[must_use]
+    pub fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
+        self.inner.allocation_stats()
+    }
+
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
@@ -649,17 +765,18 @@ impl<P: Pixel> RgbEncoder<P> {
         self.inner.finish()
     }
 
+    /// Finish encoding, writing directly to the provided buffer.
+    ///
+    /// This is the most efficient way to complete encoding as it avoids
+    /// intermediate allocations. The buffer is cleared before writing.
+    pub fn finish_into(self, output: &mut Vec<u8>) -> Result<()> {
+        self.inner.finish_into(output)
+    }
+
     /// Finish encoding to Write destination.
     #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, output: W) -> Result<W> {
         self.inner.finish_to(output)
-    }
-
-    /// Finish encoding, appending JPEG bytes to an existing Vec.
-    ///
-    /// Useful for no_std environments or buffer reuse.
-    pub fn finish_to_vec(self, output: &mut Vec<u8>) -> Result<()> {
-        self.inner.finish_to_vec(output)
     }
 }
 
@@ -1074,7 +1191,17 @@ impl YCbCrPlanarEncoder {
     // === Finish ===
 
     /// Finish encoding, return JPEG bytes.
-    pub fn finish(mut self) -> Result<Vec<u8>> {
+    pub fn finish(self) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.finish_into(&mut output)?;
+        Ok(output)
+    }
+
+    /// Finish encoding, writing directly to the provided buffer.
+    ///
+    /// This is the most efficient way to complete encoding as it avoids
+    /// intermediate allocations. The buffer is cleared before writing.
+    pub fn finish_into(mut self, output: &mut Vec<u8>) -> Result<()> {
         // Check if all rows were pushed
         if self.total_rows_pushed != self.height as usize {
             return Err(Error::incomplete_image(
@@ -1086,8 +1213,8 @@ impl YCbCrPlanarEncoder {
         // Flush any remaining buffered rows
         self.flush_buffer()?;
 
-        // Finish streaming encoder
-        let mut jpeg = self.inner.finish()?;
+        // Finish streaming encoder directly into output
+        self.inner.finish_into(output)?;
 
         // When using EncoderSegments with MPF images, we need to merge individual
         // metadata fields (xmp_data, exif_data, icc_profile) into segments BEFORE
@@ -1119,42 +1246,34 @@ impl YCbCrPlanarEncoder {
                     self.config.icc_profile = None; // Mark as handled
                 }
             }
-            jpeg = inject_encoder_segments(jpeg, &segments);
+            inject_encoder_segments_inplace(output, &segments);
         }
 
         // Fall back to individual metadata fields for backwards compatibility
         if let Some(ref exif) = self.config.exif_data {
             if let Some(exif_bytes) = exif.to_bytes() {
-                jpeg = inject_exif(jpeg, &exif_bytes);
+                inject_exif_inplace(output, &exif_bytes);
             }
         }
 
         if let Some(ref xmp_data) = self.config.xmp_data {
-            jpeg = inject_xmp(jpeg, xmp_data);
+            inject_xmp_inplace(output, xmp_data);
         }
 
         if let Some(ref icc_data) = self.config.icc_profile {
-            jpeg = inject_icc_profile(jpeg, icc_data);
+            inject_icc_profile_inplace(output, icc_data);
         }
 
-        Ok(jpeg)
+        Ok(())
     }
 
     /// Finish encoding to Write destination.
     #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {
-        let jpeg = self.finish()?;
+        let mut jpeg = Vec::new();
+        self.finish_into(&mut jpeg)?;
         output.write_all(&jpeg)?;
         Ok(output)
-    }
-
-    /// Finish encoding, appending JPEG bytes to an existing Vec.
-    ///
-    /// Useful for no_std environments or buffer reuse.
-    pub fn finish_to_vec(self, output: &mut Vec<u8>) -> Result<()> {
-        let jpeg = self.finish()?;
-        output.extend_from_slice(&jpeg);
-        Ok(())
     }
 }
 
@@ -1336,38 +1455,19 @@ mod tests {
     }
 
     #[test]
-    fn test_finish_to_vec() {
+    fn test_finish_into() {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
         let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
 
         let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
         enc.push_packed(&pixels, Unstoppable).unwrap();
 
-        // Finish to existing vec
+        // Finish into provided buffer
         let mut output = Vec::new();
-        enc.finish_to_vec(&mut output).unwrap();
+        enc.finish_into(&mut output).unwrap();
 
         assert!(!output.is_empty());
         assert_eq!(&output[0..2], &[0xFF, 0xD8]); // JPEG SOI marker
-    }
-
-    #[test]
-    fn test_finish_to_vec_append() {
-        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
-        let mut enc = config.encode_from_rgb::<RGB<u8>>(8, 8).unwrap();
-
-        let pixels: Vec<RGB<u8>> = vec![RGB::new(100, 150, 200); 64];
-        enc.push_packed(&pixels, Unstoppable).unwrap();
-
-        // Finish to vec with existing content
-        let mut output = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let prefix_len = output.len();
-        enc.finish_to_vec(&mut output).unwrap();
-
-        // Verify prefix preserved
-        assert_eq!(&output[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
-        // Verify JPEG appended
-        assert_eq!(&output[prefix_len..prefix_len + 2], &[0xFF, 0xD8]);
     }
 
     #[test]
