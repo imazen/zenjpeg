@@ -37,3 +37,22 @@ bench-cpp:
 # Quick parity check (10 images x 50 quality levels)
 parity:
     cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --nocapture --ignored
+
+# WASM SIMD128 benchmark
+wasm-bench-simd:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
+    RUSTFLAGS="-C target-feature=+simd128" \
+    cargo run --release -p zenjpeg --example wasm_bench \
+        --target wasm32-wasip1 --no-default-features --features "std,decoder"
+
+# WASM scalar (no SIMD) benchmark
+wasm-bench-scalar:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" \
+    cargo run --release -p zenjpeg --example wasm_bench \
+        --target wasm32-wasip1 --no-default-features --features "std,decoder"
+
+# Run both WASM benchmarks for comparison
+wasm-bench:
+    @echo "=== WASM SIMD128 ===" && just wasm-bench-simd
+    @echo ""
+    @echo "=== WASM Scalar ===" && just wasm-bench-scalar
