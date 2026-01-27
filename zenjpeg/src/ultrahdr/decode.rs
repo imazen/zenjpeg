@@ -6,12 +6,11 @@
 use crate::decode::DecodedExtras;
 use crate::decoder::Decoder;
 use crate::error::{Error, Result};
-use enough::Stop;
 use ultrahdr_core::{
     color::tonemap::AdaptiveTonemapper,
-    gainmap::{apply_gainmap, DecodeInput, HdrOutputFormat, RowDecoder},
+    gainmap::{DecodeInput, HdrOutputFormat, RowDecoder},
     metadata::xmp::parse_xmp,
-    ColorGamut, GainMap, GainMapMetadata, RawImage,
+    ColorGamut, GainMap, GainMapMetadata,
 };
 
 /// Extension trait for [`DecodedExtras`] to check for UltraHDR content.
@@ -57,66 +56,6 @@ impl UltraHdrExtras for DecodedExtras {
         // Decode it
         Some(decode_gainmap_jpeg(gainmap_jpeg))
     }
-}
-
-/// Reconstruct HDR from decoded UltraHDR JPEG.
-///
-/// This takes the decoded SDR pixels and extras (containing gain map),
-/// and produces an HDR image using the gain map reconstruction algorithm.
-///
-/// # Arguments
-///
-/// * `sdr_pixels` - Decoded SDR pixels from the base JPEG (RGB8 or RGBA8)
-/// * `width` - Image width
-/// * `height` - Image height
-/// * `extras` - Decoded extras containing gain map and XMP metadata
-/// * `display_boost` - Target display capability (1.0=SDR, 4.0=typical HDR)
-/// * `output_format` - Desired HDR output format
-/// * `stop` - Cooperative cancellation token
-///
-/// # Returns
-///
-/// HDR image in the requested format.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The image is not UltraHDR (no metadata or gain map)
-/// - Metadata parsing fails
-/// - Gain map decoding fails
-/// - HDR reconstruction fails
-pub fn reconstruct_hdr(
-    sdr_pixels: &[u8],
-    width: u32,
-    height: u32,
-    extras: &DecodedExtras,
-    display_boost: f32,
-    output_format: HdrOutputFormat,
-    stop: impl Stop,
-) -> Result<RawImage> {
-    // Parse metadata
-    let (metadata, _) = extras
-        .ultrahdr_metadata()
-        .ok_or_else(|| Error::decode_error("Not an UltraHDR image".to_string()))??;
-
-    // Decode gain map
-    let gainmap = extras
-        .decode_gainmap()
-        .ok_or_else(|| Error::decode_error("No gain map found".to_string()))??;
-
-    // Create SDR RawImage from pixels
-    let sdr = create_sdr_rawimage(sdr_pixels, width, height)?;
-
-    // Apply gain map to reconstruct HDR
-    apply_gainmap(
-        &sdr,
-        &gainmap,
-        &metadata,
-        display_boost,
-        output_format,
-        stop,
-    )
-    .map_err(ultrahdr_to_jpegli_error)
 }
 
 /// Create a streaming HDR reconstructor for row-by-row processing.
@@ -219,104 +158,6 @@ pub fn tonemapper_from_ultrahdr(extras: &DecodedExtras) -> Result<AdaptiveTonema
     Ok(AdaptiveTonemapper::from_gainmap(&metadata))
 }
 
-/// Full roundtrip: decode UltraHDR, reconstruct HDR, apply transform, re-encode.
-///
-/// This is a convenience function for editing workflows where you want to:
-/// 1. Decode an existing UltraHDR JPEG
-/// 2. Optionally modify the HDR content
-/// 3. Re-encode as UltraHDR with the same tonemapping relationship
-///
-/// # Arguments
-///
-/// * `jpeg_data` - Original UltraHDR JPEG bytes
-/// * `display_boost` - HDR reconstruction boost (4.0 typical)
-/// * `transform` - Optional closure to transform the HDR image (None = passthrough)
-/// * `gainmap_config` - Configuration for gain map computation
-/// * `encoder_config` - jpegli encoder configuration
-/// * `gainmap_quality` - JPEG quality for the gain map
-/// * `stop` - Cooperative cancellation token
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use zenjpeg::ultrahdr::{reencode_ultrahdr, GainMapConfig, Unstoppable};
-/// use zenjpeg::encoder::{EncoderConfig, ChromaSubsampling};
-///
-/// // Simple re-encode (no modification)
-/// let new_jpeg = reencode_ultrahdr(
-///     &original_jpeg,
-///     4.0,
-///     None::<fn(&mut UhdrRawImage)>,
-///     &GainMapConfig::default(),
-///     &EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter),
-///     75.0,
-///     Unstoppable,
-/// )?;
-///
-/// // Re-encode with HDR adjustment
-/// let new_jpeg = reencode_ultrahdr(
-///     &original_jpeg,
-///     4.0,
-///     Some(|hdr: &mut UhdrRawImage| {
-///         // Apply brightness boost, color grade, etc.
-///     }),
-///     &GainMapConfig::default(),
-///     &EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter),
-///     75.0,
-///     Unstoppable,
-/// )?;
-/// ```
-pub fn reencode_ultrahdr<F>(
-    jpeg_data: &[u8],
-    display_boost: f32,
-    transform: Option<F>,
-    gainmap_config: &ultrahdr_core::gainmap::GainMapConfig,
-    encoder_config: &crate::encoder::EncoderConfig,
-    gainmap_quality: f32,
-    stop: impl Stop,
-) -> Result<Vec<u8>>
-where
-    F: FnOnce(&mut RawImage),
-{
-    use crate::ultrahdr::encode::encode_ultrahdr_with_tonemapper;
-
-    // Decode
-    let decoded = Decoder::new().decode(jpeg_data)?;
-    let extras = decoded
-        .extras()
-        .ok_or_else(|| Error::decode_error("No extras preserved during decode".to_string()))?;
-
-    // Extract tonemapper before reconstruction
-    let tonemapper = tonemapper_from_ultrahdr(extras)?;
-
-    // Reconstruct HDR
-    let mut hdr = reconstruct_hdr(
-        decoded.pixels(),
-        decoded.width(),
-        decoded.height(),
-        extras,
-        display_boost,
-        HdrOutputFormat::LinearFloat,
-        &stop,
-    )?;
-    stop.check()?;
-
-    // Apply optional transform
-    if let Some(f) = transform {
-        f(&mut hdr);
-    }
-
-    // Re-encode with preserved tonemapping
-    encode_ultrahdr_with_tonemapper(
-        &hdr,
-        &tonemapper,
-        gainmap_config,
-        encoder_config,
-        gainmap_quality,
-        stop,
-    )
-}
-
 /// Decode a gain map JPEG to GainMap struct.
 fn decode_gainmap_jpeg(jpeg_data: &[u8]) -> Result<GainMap> {
     let decoded = Decoder::new().decode(jpeg_data)?;
@@ -353,39 +194,6 @@ fn is_grayscale_content(pixels: &[u8]) -> bool {
         .chunks_exact(3)
         .take(100) // Sample first 100 pixels
         .all(|p| p[0] == p[1] && p[1] == p[2])
-}
-
-/// Create an SDR RawImage from pixel bytes.
-fn create_sdr_rawimage(pixels: &[u8], width: u32, height: u32) -> Result<RawImage> {
-    let expected_rgb = (width * height * 3) as usize;
-    let expected_rgba = (width * height * 4) as usize;
-
-    let (format, data) = if pixels.len() == expected_rgba {
-        (ultrahdr_core::PixelFormat::Rgba8, pixels.to_vec())
-    } else if pixels.len() == expected_rgb {
-        // Convert RGB to RGBA
-        // Use chunks_exact to guarantee 3 elements per chunk (size already validated)
-        let mut rgba = Vec::with_capacity(expected_rgba);
-        for chunk in pixels.chunks_exact(3) {
-            rgba.push(chunk[0]);
-            rgba.push(chunk[1]);
-            rgba.push(chunk[2]);
-            rgba.push(255);
-        }
-        (ultrahdr_core::PixelFormat::Rgba8, rgba)
-    } else {
-        return Err(Error::invalid_buffer_size(expected_rgb, pixels.len()));
-    };
-
-    RawImage::from_data(
-        width,
-        height,
-        format,
-        ultrahdr_core::ColorGamut::Bt709,
-        ultrahdr_core::ColorTransfer::Srgb,
-        data,
-    )
-    .map_err(ultrahdr_to_jpegli_error)
 }
 
 /// Convert ultrahdr_core::Error to jpegli Error.

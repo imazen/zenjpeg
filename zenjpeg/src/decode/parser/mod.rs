@@ -408,12 +408,14 @@ impl<'a> JpegParser<'a> {
                     let _length = self.read_u16()?;
                     let num_components = self.read_u8()?;
 
-                    if num_components != 3 {
+                    // Support grayscale (1) and color (3) scans
+                    if num_components != 1 && num_components != 3 {
                         return Err(Error::unsupported_feature(
-                            "scanline reader requires 3 components in scan",
+                            "scanline reader requires 1 or 3 components in scan",
                         ));
                     }
 
+                    // Initialize with defaults for unused components (grayscale case)
                     let mut table_mapping = [(0usize, 0usize); 3];
 
                     for _i in 0..num_components as usize {

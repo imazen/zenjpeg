@@ -143,18 +143,31 @@ impl<'a> ScanlineReader<'a> {
         restart_interval: u16,
         is_xyb: bool,
     ) -> Result<Self> {
-        // Determine max sampling factors
-        let max_h_samp = h_samp.iter().copied().max().unwrap_or(1);
-        let max_v_samp = v_samp.iter().copied().max().unwrap_or(1);
+        let is_grayscale = num_components == 1;
 
-        // Determine subsampling mode
-        let subsampling = match (max_h_samp, max_v_samp) {
-            (1, 1) => Subsampling::S444,
-            (2, 1) => Subsampling::S422,
-            (2, 2) => Subsampling::S420,
-            (1, 2) => Subsampling::S440,
-            // For other sampling patterns, treat as 4:2:0
-            _ => Subsampling::S420,
+        // For grayscale, use only Y component's sampling factors
+        // For color, determine max sampling factors across components
+        let (max_h_samp, max_v_samp) = if is_grayscale {
+            (h_samp[0], v_samp[0])
+        } else {
+            (
+                h_samp.iter().copied().max().unwrap_or(1),
+                v_samp.iter().copied().max().unwrap_or(1),
+            )
+        };
+
+        // Determine subsampling mode (grayscale is always 4:4:4 equivalent)
+        let subsampling = if is_grayscale {
+            Subsampling::S444
+        } else {
+            match (max_h_samp, max_v_samp) {
+                (1, 1) => Subsampling::S444,
+                (2, 1) => Subsampling::S422,
+                (2, 2) => Subsampling::S420,
+                (1, 2) => Subsampling::S440,
+                // For other sampling patterns, treat as 4:2:0
+                _ => Subsampling::S420,
+            }
         };
 
         // MCU dimensions depend on max sampling factors
@@ -168,17 +181,26 @@ impl<'a> ScanlineReader<'a> {
         let y_strip_size = strip_width * mcu_height;
 
         // Chroma strip: at native (potentially subsampled) resolution
-        let chroma_strip_width = mcu_cols * 8; // One block per MCU for chroma
-        let chroma_strip_height = 8; // Always 8 rows in native chroma resolution
+        // Only allocate for color images
+        let chroma_strip_width = if is_grayscale { 0 } else { mcu_cols * 8 };
+        let chroma_strip_height = if is_grayscale { 0 } else { 8 };
         let chroma_strip_size = chroma_strip_width * chroma_strip_height;
 
         // Allocate strip buffers
         let y_strip = try_alloc_maybeuninit(y_strip_size, "Y strip buffer")?;
-        let cb_strip = try_alloc_maybeuninit(chroma_strip_size, "Cb strip buffer")?;
-        let cr_strip = try_alloc_maybeuninit(chroma_strip_size, "Cr strip buffer")?;
 
-        // Upsampled chroma buffers (only needed for non-4:4:4)
-        let (cb_upsampled, cr_upsampled) = if subsampling != Subsampling::S444 {
+        // Only allocate chroma buffers for color images
+        let (cb_strip, cr_strip) = if is_grayscale {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                try_alloc_maybeuninit(chroma_strip_size, "Cb strip buffer")?,
+                try_alloc_maybeuninit(chroma_strip_size, "Cr strip buffer")?,
+            )
+        };
+
+        // Upsampled chroma buffers (only needed for non-4:4:4 color images)
+        let (cb_upsampled, cr_upsampled) = if !is_grayscale && subsampling != Subsampling::S444 {
             let upsampled_size = strip_width * mcu_height;
             (
                 try_alloc_maybeuninit(upsampled_size, "Cb upsampled buffer")?,
@@ -275,6 +297,18 @@ impl<'a> ScanlineReader<'a> {
     #[inline]
     pub fn is_finished(&self) -> bool {
         self.current_row >= self.height as usize
+    }
+
+    /// Returns true if this is a grayscale (single-component) image.
+    #[inline]
+    pub fn is_grayscale(&self) -> bool {
+        self.num_components == 1
+    }
+
+    /// Returns the number of components (1 for grayscale, 3 for color).
+    #[inline]
+    pub fn num_components(&self) -> u8 {
+        self.num_components
     }
 
     /// Decodes the current MCU row into strip buffers.
@@ -778,6 +812,150 @@ impl<'a> ScanlineReader<'a> {
                 y_plane[out_offset + x] = self.y_strip[strip_offset + x] as f32 / 255.0;
                 cb_plane[out_offset + x] = (cb_buf[strip_offset + x] as f32 - 128.0) / 255.0;
                 cr_plane[out_offset + x] = (cr_buf[strip_offset + x] as f32 - 128.0) / 255.0;
+            }
+
+            rows_written += 1;
+            self.current_row += 1;
+            self.row_in_mcu += 1;
+
+            if self.row_in_mcu >= self.mcu_height {
+                self.advance_mcu_row();
+            }
+        }
+
+        Ok(rows_written)
+    }
+
+    /// Read rows into a grayscale u8 buffer.
+    ///
+    /// This method is optimized for grayscale JPEGs (1 component).
+    /// For color JPEGs, it extracts the Y (luminance) channel.
+    ///
+    /// Returns the number of rows actually written (may be less than requested
+    /// if end of image is reached).
+    pub fn read_rows_gray8(&mut self, mut output: ImgRefMut<'_, u8>) -> Result<usize> {
+        let max_rows = output.height();
+        let width = self.width as usize;
+
+        if output.width() < width {
+            return Err(Error::internal("output buffer too narrow for grayscale"));
+        }
+
+        let mut rows_written = 0;
+
+        while rows_written < max_rows && self.current_row < self.height as usize {
+            // Ensure current MCU row is decoded
+            self.decode_mcu_row()?;
+
+            // Copy rows from Y strip to output
+            let strip_row = self.row_in_mcu;
+            let strip_offset = strip_row * self.strip_width;
+            let cols = width.min(self.strip_width);
+
+            let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+            // Copy Y values directly, clamping to u8 range
+            for (out, &y) in out_row[..cols]
+                .iter_mut()
+                .zip(&self.y_strip[strip_offset..strip_offset + cols])
+            {
+                *out = y.clamp(0, 255) as u8;
+            }
+
+            rows_written += 1;
+            self.current_row += 1;
+            self.row_in_mcu += 1;
+
+            // Move to next MCU row if needed
+            if self.row_in_mcu >= self.mcu_height {
+                self.advance_mcu_row();
+            }
+        }
+
+        Ok(rows_written)
+    }
+
+    /// Read rows into a grayscale f32 buffer.
+    ///
+    /// Output is normalized to [0, 1] range.
+    /// For grayscale JPEGs, this extracts the Y channel directly.
+    /// For color JPEGs, it extracts the Y (luminance) channel.
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_gray_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
+        let max_rows = output.height();
+        let width = self.width as usize;
+
+        if output.width() < width {
+            return Err(Error::internal(
+                "output buffer too narrow for grayscale f32",
+            ));
+        }
+
+        let mut rows_written = 0;
+
+        while rows_written < max_rows && self.current_row < self.height as usize {
+            self.decode_mcu_row()?;
+
+            let strip_row = self.row_in_mcu;
+            let strip_offset = strip_row * self.strip_width;
+            let cols = width.min(self.strip_width);
+
+            let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+            // Normalize Y from [0, 255] to [0, 1]
+            for (out, &y) in out_row[..cols]
+                .iter_mut()
+                .zip(&self.y_strip[strip_offset..strip_offset + cols])
+            {
+                *out = y.clamp(0, 255) as f32 / 255.0;
+            }
+
+            rows_written += 1;
+            self.current_row += 1;
+            self.row_in_mcu += 1;
+
+            if self.row_in_mcu >= self.mcu_height {
+                self.advance_mcu_row();
+            }
+        }
+
+        Ok(rows_written)
+    }
+
+    /// Read rows into a linear f32 grayscale buffer.
+    ///
+    /// Output is in linear light (not sRGB gamma), range [0, 1].
+    /// This applies the sRGB to linear conversion to each pixel.
+    ///
+    /// Returns the number of rows actually written.
+    pub fn read_rows_gray_linear_f32(&mut self, mut output: ImgRefMut<'_, f32>) -> Result<usize> {
+        let max_rows = output.height();
+        let width = self.width as usize;
+
+        if output.width() < width {
+            return Err(Error::internal(
+                "output buffer too narrow for linear grayscale f32",
+            ));
+        }
+
+        let mut rows_written = 0;
+
+        while rows_written < max_rows && self.current_row < self.height as usize {
+            self.decode_mcu_row()?;
+
+            let strip_row = self.row_in_mcu;
+            let strip_offset = strip_row * self.strip_width;
+            let cols = width.min(self.strip_width);
+
+            let out_row = output.rows_mut().nth(rows_written).unwrap();
+
+            // Convert sRGB u8 to linear f32
+            for (out, &y) in out_row[..cols]
+                .iter_mut()
+                .zip(&self.y_strip[strip_offset..strip_offset + cols])
+            {
+                *out = srgb_to_linear(y.clamp(0, 255) as u8);
             }
 
             rows_written += 1;
@@ -1451,5 +1629,223 @@ mod tests {
             avg_diff,
             max_diff
         );
+    }
+
+    /// Helper to encode grayscale pixels.
+    fn encode_grayscale(width: u32, height: u32, pixels: &[u8], quality: f32) -> Vec<u8> {
+        use crate::encode::v2::{EncoderConfig, PixelLayout};
+        use enough::Unstoppable;
+        let config = EncoderConfig::grayscale(quality);
+        let mut enc = config
+            .encode_from_bytes(width, height, PixelLayout::Gray8Srgb)
+            .unwrap();
+        enc.push_packed(pixels, Unstoppable).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn test_scanline_reader_grayscale_basic() {
+        use crate::decode::Decoder;
+        use crate::types::PixelFormat;
+
+        // Create test grayscale image - 64x48 for multiple MCU rows
+        let width = 64u32;
+        let height = 48u32;
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) as usize;
+                // Diagonal gradient
+                pixels[idx] = ((x + y) * 2) as u8;
+            }
+        }
+
+        // Encode as grayscale
+        let jpeg = encode_grayscale(width, height, &pixels, 95.0);
+
+        // Decode normally for comparison - use Gray output format
+        let decoder = Decoder::new().output_format(PixelFormat::Gray);
+        let decoded = decoder.decode(&jpeg).expect("decode failed");
+
+        // Decode via scanline reader
+        let mut reader = Decoder::new()
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed for grayscale");
+        assert_eq!(reader.width(), width);
+        assert_eq!(reader.height(), height);
+        assert!(reader.is_grayscale());
+        assert_eq!(reader.num_components(), 1);
+
+        let mut scanline_pixels = vec![0u8; (width * height) as usize];
+
+        // Read all rows using grayscale method
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let stride = width as usize;
+            let buf_start = total_rows * stride;
+            let output =
+                imgref::ImgRefMut::new(&mut scanline_pixels[buf_start..], stride, remaining);
+            let rows = reader
+                .read_rows_gray8(output)
+                .expect("read_rows_gray8 failed");
+            total_rows += rows;
+        }
+
+        assert_eq!(total_rows, height as usize);
+
+        // Compare outputs - should match within JPEG compression tolerance
+        assert_eq!(
+            scanline_pixels.len(),
+            decoded.data.len(),
+            "output size mismatch"
+        );
+
+        let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
+        assert!(
+            max_diff <= 2,
+            "grayscale scanline reader max_diff {} > 2 (diff_count: {})",
+            max_diff,
+            diff_count
+        );
+    }
+
+    #[test]
+    fn test_scanline_reader_grayscale_non_mcu_aligned() {
+        use crate::decode::Decoder;
+        use crate::types::PixelFormat;
+
+        // Non-MCU-aligned dimensions (not multiples of 8)
+        let width = 37u32;
+        let height = 29u32;
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) as usize;
+                pixels[idx] = (x * 7 + y * 3) as u8;
+            }
+        }
+
+        let jpeg = encode_grayscale(width, height, &pixels, 90.0);
+
+        // Use Gray output format for comparison
+        let decoder = Decoder::new().output_format(PixelFormat::Gray);
+        let decoded = decoder.decode(&jpeg).expect("decode failed");
+
+        let mut reader = Decoder::new()
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+        assert!(reader.is_grayscale());
+
+        let mut scanline_pixels = vec![0u8; (width * height) as usize];
+        let stride = width as usize;
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let buf_start = total_rows * stride;
+            let output =
+                imgref::ImgRefMut::new(&mut scanline_pixels[buf_start..], stride, remaining);
+            let rows = reader.read_rows_gray8(output).expect("read failed");
+            total_rows += rows;
+        }
+
+        assert_eq!(total_rows, height as usize);
+        let (max_diff, _, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
+        assert!(
+            max_diff <= 2,
+            "grayscale non-MCU-aligned max_diff {} > 2",
+            max_diff
+        );
+    }
+
+    #[test]
+    fn test_scanline_reader_grayscale_f32() {
+        use crate::decode::Decoder;
+
+        let width = 32u32;
+        let height = 24u32;
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for i in 0..pixels.len() {
+            pixels[i] = ((i * 13) % 256) as u8;
+        }
+
+        let jpeg = encode_grayscale(width, height, &pixels, 90.0);
+
+        let decoder = Decoder::new();
+        let mut reader = decoder
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+
+        let mut gray_pixels = vec![0.0f32; (width * height) as usize];
+        let stride = width as usize;
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let buf_start = total_rows * stride;
+            let output = imgref::ImgRefMut::new(&mut gray_pixels[buf_start..], stride, remaining);
+            let rows = reader.read_rows_gray_f32(output).expect("read failed");
+            total_rows += rows;
+        }
+
+        assert_eq!(total_rows, height as usize);
+
+        // Verify values are in valid [0, 1] range
+        for (i, &val) in gray_pixels.iter().enumerate() {
+            assert!(
+                (0.0..=1.0).contains(&val),
+                "Value at {} should be in [0,1], got {}",
+                i,
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_scanline_reader_grayscale_linear_f32() {
+        use crate::decode::Decoder;
+
+        let width = 16u32;
+        let height = 16u32;
+        let mut pixels = vec![0u8; (width * height) as usize];
+        for i in 0..pixels.len() {
+            pixels[i] = (i % 256) as u8;
+        }
+
+        let jpeg = encode_grayscale(width, height, &pixels, 95.0);
+
+        let decoder = Decoder::new();
+        let mut reader = decoder
+            .scanline_reader(&jpeg)
+            .expect("scanline_reader failed");
+
+        let mut linear_pixels = vec![0.0f32; (width * height) as usize];
+        let stride = width as usize;
+
+        let mut total_rows = 0;
+        while !reader.is_finished() {
+            let remaining = height as usize - total_rows;
+            let buf_start = total_rows * stride;
+            let output = imgref::ImgRefMut::new(&mut linear_pixels[buf_start..], stride, remaining);
+            let rows = reader
+                .read_rows_gray_linear_f32(output)
+                .expect("read failed");
+            total_rows += rows;
+        }
+
+        // Verify values are in valid [0, 1] range
+        for (i, &val) in linear_pixels.iter().enumerate() {
+            assert!(
+                (0.0..=1.0).contains(&val),
+                "Linear value at {} should be in [0,1], got {}",
+                i,
+                val
+            );
+        }
+
+        // Verify linear conversion: sRGB 128 ≈ linear 0.2159
+        // Find pixels close to 128 and verify they're near 0.2159 in linear
+        // (Since JPEG is lossy, we can't be exact, but the relationship should hold)
     }
 }

@@ -34,38 +34,29 @@
 //! )?;
 //! ```
 //!
-//! # Example: Decode and reconstruct HDR
+//! # Example: Decode and reconstruct HDR (streaming)
 //!
 //! ```rust,ignore
-//! use zenjpeg::decoder::Decoder;
-//! use zenjpeg::ultrahdr::{reconstruct_hdr, HdrOutputFormat, UltraHdrExtras, Unstoppable};
+//! use zenjpeg::ultrahdr::{create_hdr_reconstructor, HdrOutputFormat, UltraHdrExtras};
 //!
-//! let decoded = Decoder::new().decode(&jpeg_data)?;
+//! // Use UltraHdrReader for streaming decode
+//! let mut reader = UltraHdrReader::new(&jpeg_data, config)?;
 //!
-//! // Check if it's UltraHDR
-//! if let Some(extras) = decoded.extras() {
-//!     if extras.is_ultrahdr() {
-//!         let hdr = reconstruct_hdr(
-//!             decoded.pixels(),
-//!             decoded.width(),
-//!             decoded.height(),
-//!             extras,
-//!             4.0, // display boost (1.0=SDR, 4.0=typical HDR)
-//!             HdrOutputFormat::LinearFloat,
-//!             Unstoppable,
-//!         )?;
-//!     }
-//! }
+//! // Or with separate decoder + reconstructor:
+//! let reconstructor = create_hdr_reconstructor(
+//!     width, height, &extras, 4.0, HdrOutputFormat::LinearFloat,
+//! )?;
+//!
+//! // Process rows
+//! let mut hdr_rows = vec![0f32; width as usize * 4 * batch_height];
+//! let hdr_batch = reconstructor.process_rows(&sdr_batch, batch_height as u32)?;
 //! ```
 
 mod decode;
 mod encode;
 
 // Re-export the main workflow functions
-pub use decode::{
-    create_hdr_reconstructor, reconstruct_hdr, reencode_ultrahdr, tonemapper_from_ultrahdr,
-    UltraHdrExtras,
-};
+pub use decode::{create_hdr_reconstructor, tonemapper_from_ultrahdr, UltraHdrExtras};
 pub use encode::{
     create_gainmap_computer, encode_ultrahdr, encode_ultrahdr_with_tonemapper, encode_with_gainmap,
 };
