@@ -610,6 +610,46 @@ cargo run --release -p zenjpeg --example wasm_bench \
 
 **Files:** `zenjpeg/examples/wasm_bench.rs`
 
+### WASM SIMD Intrinsics Investigation (2026-01-27)
+
+Investigated whether explicit `core::arch::wasm32` intrinsics could outperform the `wide` crate.
+
+**Findings:**
+
+1. **`wide` crate already uses v128 intrinsics** - When compiled with `+simd128`, the `wide`
+   crate's f32x4 wraps v128 directly and uses `f32x4_add`, `f32x4_mul`, etc.
+
+2. **f32x8::transpose has scalar fallback** - On non-AVX targets (including WASM), the
+   `wide` crate's `f32x8::transpose` uses a scalar fallback that extracts individual elements.
+   Explicit WASM v128 shuffle intrinsics are only 7% faster.
+
+3. **Transpose is only ~20% of DCT time** - Combined with the 7% improvement, explicit
+   WASM intrinsics would only improve DCT by ~1.4%. Not worth the complexity.
+
+4. **Archmage is x86_64 only** - The `archmage` crate uses `core::arch::x86_64` intrinsics
+   and cannot be used on WASM. No WASM equivalent exists.
+
+**Benchmark results (100K iterations):**
+
+| Operation | SIMD128 | Scalar | Notes |
+|-----------|---------|--------|-------|
+| 8x8 Transpose (wide) | 12.71 ns | 7.95 ns | Scalar faster! |
+| 8x8 Transpose (intrinsics) | 3.00 ns | N/A | 4.2x faster than wide |
+| 1D DCT (8 vals) | 0.77 ns | 0.61 ns | Scalar faster |
+| Full 8x8 DCT | 125.65 ns | 115.56 ns | Scalar faster |
+
+**Surprising result:** Isolated DCT benchmarks show scalar slightly faster than SIMD.
+However, full encoder shows SIMD 1.6x faster. The difference is likely:
+- Full encoder benefits from SIMD in quantization, entropy coding, color conversion
+- Isolated DCT benchmark has different memory/cache patterns
+- wasmtime's SIMD overhead may be amortized over larger operations
+
+**Conclusion:** The `wide` crate provides good WASM SIMD128 performance out of the box.
+Explicit intrinsics offer marginal improvement (~7% for transpose) not worth the complexity.
+Focus optimization efforts on the full encoder pipeline, not isolated operations.
+
+**Files:** `zenjpeg/examples/wasm_simd_transpose.rs`, `zenjpeg/examples/wasm_dct_bench.rs`
+
 ## Decoder Performance Gap (2026-01-22)
 
 Run with: `cargo bench -p zenjpeg --bench decode_compare`

@@ -56,3 +56,17 @@ wasm-bench:
     @echo "=== WASM SIMD128 ===" && just wasm-bench-simd
     @echo ""
     @echo "=== WASM Scalar ===" && just wasm-bench-scalar
+
+# WASM transpose benchmark (SIMD intrinsics vs wide crate)
+wasm-transpose:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
+    RUSTFLAGS="-C target-feature=+simd128" \
+    cargo run --release -p zenjpeg --example wasm_simd_transpose \
+        --target wasm32-wasip1 --no-default-features --features std
+
+# WASM DCT benchmark
+wasm-dct:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
+    RUSTFLAGS="-C target-feature=+simd128" \
+    cargo run --release -p zenjpeg --example wasm_dct_bench \
+        --target wasm32-wasip1 --no-default-features --features std
