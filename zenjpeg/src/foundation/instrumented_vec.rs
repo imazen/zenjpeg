@@ -234,9 +234,13 @@ impl<T> InstrumentedVec<T> {
 
     /// Consume and return inner Vec (skips drop logging).
     pub fn into_inner(self) -> Vec<T> {
-        let inner = unsafe { core::ptr::read(&self.inner) };
-        core::mem::forget(self);
-        inner
+        // Use ManuallyDrop to prevent running our Drop impl while extracting inner
+        let mut this = core::mem::ManuallyDrop::new(self);
+        // Take ownership of inner. This is safe because:
+        // 1. We wrapped self in ManuallyDrop so our Drop won't run
+        // 2. We're taking the only reference to inner via mutable borrow
+        // 3. The ManuallyDrop wrapper will be forgotten without any cleanup
+        core::mem::take(&mut this.inner)
     }
 
     /// Get inner Vec reference.
