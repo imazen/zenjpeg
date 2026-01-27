@@ -256,7 +256,7 @@ impl<'a> JpegParser<'a> {
 
         // Extract gain map JPEG from MPF directory
         // MPF offsets are relative to the start of the MP header (right after "MPF\0")
-        let gainmap_data = mpf_directory.and_then(|mpf| {
+        let mut gainmap_data = mpf_directory.and_then(|mpf| {
             for (idx, entry) in mpf.images.iter().enumerate() {
                 if idx == 0 {
                     continue; // Skip primary (offset 0 means the main image)
@@ -275,6 +275,14 @@ impl<'a> JpegParser<'a> {
             }
             None
         });
+
+        // Fallback: if MPF parsing failed but XMP metadata indicates UltraHDR,
+        // scan for JPEG boundaries (SOI/EOI markers) to find the secondary image.
+        // This handles non-standard MPF structures from some Android camera apps.
+        #[cfg(feature = "ultrahdr")]
+        if gainmap_data.is_none() && metadata.is_some() {
+            gainmap_data = find_secondary_jpeg(full_data);
+        }
 
         Ok((gainmap_data, metadata))
     }
@@ -613,4 +621,82 @@ impl<'a> JpegParser<'a> {
             quant_tables,
         })
     }
+}
+
+/// Find the second JPEG in a multi-picture file by scanning for SOI/EOI markers.
+///
+/// This is a fallback for when MPF parsing fails but XMP metadata indicates UltraHDR.
+/// Some Android camera apps produce non-standard MPF structures that fail to parse,
+/// but we can still find the gain map JPEG by looking for JPEG boundaries.
+///
+/// Returns the second JPEG's data if found, or None if not found.
+#[cfg(feature = "ultrahdr")]
+fn find_secondary_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+    const SOI: [u8; 2] = [0xFF, 0xD8]; // Start of Image
+    const EOI: [u8; 2] = [0xFF, 0xD9]; // End of Image
+
+    // Find all JPEG boundaries (SOI to EOI)
+    let mut boundaries: Vec<(usize, usize)> = Vec::new();
+    let mut pos = 0;
+
+    while pos < data.len().saturating_sub(1) {
+        // Find SOI marker
+        if data[pos] == SOI[0] && data[pos + 1] == SOI[1] {
+            let start = pos;
+            pos += 2;
+
+            // Find corresponding EOI marker
+            // We need to be careful to skip 0xFFD9 bytes inside entropy-coded data
+            // by properly parsing markers
+            while pos < data.len().saturating_sub(1) {
+                if data[pos] == 0xFF {
+                    let marker = data[pos + 1];
+                    if marker == 0xD9 {
+                        // EOI found
+                        let end = pos + 2;
+                        boundaries.push((start, end));
+                        pos = end;
+                        break;
+                    } else if marker == 0x00 {
+                        // Byte stuffing (0xFF 0x00), skip
+                        pos += 2;
+                    } else if marker == 0xFF {
+                        // Fill byte, skip single byte
+                        pos += 1;
+                    } else if marker == 0xD8 {
+                        // Another SOI - this might be an embedded JPEG
+                        // Don't skip, let outer loop handle it
+                        break;
+                    } else if (0xD0..=0xD7).contains(&marker) {
+                        // RST marker (no length)
+                        pos += 2;
+                    } else if (0xC0..=0xFE).contains(&marker) {
+                        // Marker with length field
+                        if pos + 4 > data.len() {
+                            break;
+                        }
+                        let len =
+                            ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+                        pos += 2 + len;
+                    } else {
+                        pos += 1;
+                    }
+                } else {
+                    pos += 1;
+                }
+            }
+        } else {
+            pos += 1;
+        }
+    }
+
+    // If we found at least 2 JPEGs, return the second one (the gain map)
+    if boundaries.len() >= 2 {
+        let (start, end) = boundaries[1];
+        if end <= data.len() {
+            return Some(data[start..end].to_vec());
+        }
+    }
+
+    None
 }
