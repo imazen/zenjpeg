@@ -3,8 +3,8 @@
 //! Run with: cargo run --release --example encoder_profile
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     println!("Encoder Stage Profiling\n");

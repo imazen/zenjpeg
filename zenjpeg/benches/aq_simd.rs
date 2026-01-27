@@ -5,7 +5,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 // Import production AQ functions (wide-based, multiversed)
-use zenjpeg::quant::aq::simd::{per_block_modulations_row, pre_erosion_row, pre_erosion_row_padded};
+use zenjpeg::quant::aq::simd::{
+    per_block_modulations_row, pre_erosion_row, pre_erosion_row_padded,
+};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use zenjpeg::quant::aq::simd::mage_pre_erosion_row_padded;

@@ -7,8 +7,8 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use zenjpeg::encode::dct::{aan_forward_dct_8x8, forward_dct_8x8};
 use std::time::Duration;
+use zenjpeg::encode::dct::{aan_forward_dct_8x8, forward_dct_8x8};
 
 /// Generate test blocks with realistic patterns
 fn generate_test_blocks(count: usize) -> Vec<[f32; 64]> {

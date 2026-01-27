@@ -5,9 +5,9 @@
 //! Default is 4K. Use "8k" argument for 8K profiling.
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::env;
 use std::hint::black_box;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn create_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];

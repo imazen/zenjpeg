@@ -8,11 +8,11 @@
 
 use std::path::Path;
 
-use zenjpeg::color::rgb_to_ycbcr_f32;
 use yuv::{
     rgb_to_yuv420, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
     YuvStandardMatrix,
 };
+use zenjpeg::color::rgb_to_ycbcr_f32;
 
 /// Load a test image (or generate synthetic)
 fn load_or_generate_test_image(width: usize, height: usize) -> (Vec<u8>, usize, usize) {

@@ -3,10 +3,10 @@
 //! This test ensures the Rust port produces comparable file sizes to C++.
 //! Differences > 5% are investigated as potential bugs.
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::process::Command;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 /// Generate test image of specified size
 fn create_gradient_image(width: usize, height: usize) -> Vec<u8> {

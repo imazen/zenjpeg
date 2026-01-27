@@ -18,13 +18,13 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use zenjpeg::decoder::{decode_jpeg_with_icc, JpegMode, Subsampling};
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
-use zenjpeg::test_utils::find_cjpegli;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use zenjpeg::decoder::{decode_jpeg_with_icc, JpegMode, Subsampling};
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
+use zenjpeg::test_utils::find_cjpegli;
 
 const SYNTHETIC_SIZES: &[(u32, u32, &str)] =
     &[(512, 512, "512"), (2048, 2048, "2K"), (4096, 4096, "4K")];

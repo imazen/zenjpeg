@@ -3,11 +3,11 @@
 //! Tests Rust vs C++ progressive encoding on various image types to identify
 //! patterns in where differences occur.
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 fn encode_rgb_progressive(width: u32, height: u32, data: &[u8], quality: f32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(true);

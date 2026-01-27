@@ -11,8 +11,8 @@
 
 use butteraugli::{compute_butteraugli, ButteraugliParams};
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use std::path::Path;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
     let image_path = std::env::args()

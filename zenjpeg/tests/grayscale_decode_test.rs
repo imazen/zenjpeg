@@ -77,14 +77,8 @@ fn test_grayscale_decode_to_rgb() {
     // Verify R=G=B for grayscale content
     let pixels = decoded.pixels();
     for chunk in pixels.chunks_exact(3).take(100) {
-        assert_eq!(
-            chunk[0], chunk[1],
-            "R should equal G for grayscale content"
-        );
-        assert_eq!(
-            chunk[1], chunk[2],
-            "G should equal B for grayscale content"
-        );
+        assert_eq!(chunk[0], chunk[1], "R should equal G for grayscale content");
+        assert_eq!(chunk[1], chunk[2], "G should equal B for grayscale content");
     }
 }
 
@@ -102,11 +96,7 @@ fn test_grayscale_scanline_reader() {
 
     match result {
         Ok(mut reader) => {
-            println!(
-                "Scanline reader: {}x{}",
-                reader.width(),
-                reader.height()
-            );
+            println!("Scanline reader: {}x{}", reader.width(), reader.height());
 
             let width = reader.width() as usize;
             let height = reader.height() as usize;
@@ -114,11 +104,8 @@ fn test_grayscale_scanline_reader() {
 
             let mut rows_read = 0;
             while rows_read < height {
-                let output = ImgRefMut::new(
-                    &mut pixels[rows_read * width..],
-                    width,
-                    height - rows_read,
-                );
+                let output =
+                    ImgRefMut::new(&mut pixels[rows_read * width..], width, height - rows_read);
                 // Note: scanline reader only supports RGB output currently
                 let n = reader.read_rows_rgb8(output).expect("read rows");
                 if n == 0 {
@@ -219,7 +206,10 @@ fn test_gainmap_grayscale_decode_streaming() {
         }
     };
 
-    println!("Testing gain map streaming decode ({} bytes)", gainmap_jpeg.len());
+    println!(
+        "Testing gain map streaming decode ({} bytes)",
+        gainmap_jpeg.len()
+    );
 
     // Try scanline reader on the gain map
     let decoder = Decoder::new();
@@ -257,7 +247,10 @@ fn test_gainmap_grayscale_decode_streaming() {
         }
         Err(e) => {
             // Expected: scanline reader requires 3-component image
-            println!("Scanline reader not supported for gain map (expected): {}", e);
+            println!(
+                "Scanline reader not supported for gain map (expected): {}",
+                e
+            );
         }
     }
 

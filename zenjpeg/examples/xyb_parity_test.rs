@@ -1,8 +1,8 @@
 //! Compare XYB output quality and size against C jpegli.
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 use std::process::Command;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
     let images = [

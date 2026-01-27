@@ -4,10 +4,10 @@
 //! C++ jpegli's `jpeg_set_quality()` uses 2 chroma tables, while
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
+use std::fs;
 use zenjpeg_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode,
 };
-use std::fs;
 
 /// Convert quality (0-100) to butteraugli distance.
 /// Same formula as C++ jpegli_quality_to_distance.

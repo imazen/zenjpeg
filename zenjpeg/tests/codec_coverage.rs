@@ -12,13 +12,13 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
-use zenjpeg::{
-    decoder::{Decoder, DecoderConfig, PixelFormat},
-    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
-};
 use test_utils::{
     generate_checkerboard, generate_color_bars, generate_gradient_d, generate_gradient_h,
     generate_gradient_v, generate_noise, generate_solid, generate_solid_rgb, TestImage,
+};
+use zenjpeg::{
+    decoder::{Decoder, DecoderConfig, PixelFormat},
+    encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
 
 // ============================================================================

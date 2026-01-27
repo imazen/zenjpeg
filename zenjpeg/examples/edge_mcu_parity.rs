@@ -15,16 +15,16 @@
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{
-    ChromaSubsampling as JpegliChromaSubsampling, EncoderConfig as JpegliEncoderConfig,
-    PixelLayout, Quality,
-};
 use jpegli_bench_utils::{
     create_edge_test_image, ChromaSubsampling, ColorMode, EdgeReplicationMode, EdgeTestConfig,
     EncoderConfig, EncoderImpl, ImageData, McuEdgeInfo, ScanMode,
 };
 use std::fs;
 use std::path::PathBuf;
+use zenjpeg::encoder::{
+    ChromaSubsampling as JpegliChromaSubsampling, EncoderConfig as JpegliEncoderConfig,
+    PixelLayout, Quality,
+};
 
 /// Convert quality (0-100) to butteraugli distance.
 /// Same formula as C++ jpegli_quality_to_distance.

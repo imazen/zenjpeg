@@ -3,10 +3,10 @@
 //! This test encodes jpegli/tests/images/1.png at various quality levels
 //! and writes the results to jpegli/tests/outputs/ for visual inspection.
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::fs;
 use std::path::PathBuf;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 /// Helper function to encode RGB data
 fn encode_rgb(

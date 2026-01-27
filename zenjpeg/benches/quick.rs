@@ -15,8 +15,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use enough::Unstoppable;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 use std::time::Duration;
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout, XybSubsampling};
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; width * height * 3];

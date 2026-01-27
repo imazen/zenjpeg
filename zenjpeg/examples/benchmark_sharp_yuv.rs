@@ -7,8 +7,8 @@
 //! performance/quality tradeoff of Sharp YUV.
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(width * height * 3);

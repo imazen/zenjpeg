@@ -137,7 +137,8 @@ fn test_decode_420_mcu_interleaved() {
 /// Test decoding grayscale JPEG
 #[test]
 fn test_decode_grayscale() {
-    let path = zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_gray.jpg");
+    let path =
+        zenjpeg::test_utils::get_testdata_dir().join("jxl/flower/flower.png.im_q85_gray.jpg");
     if !path.exists() {
         eprintln!("Skipping: test file not found. Set JPEGLI_TESTDATA env var.");
         return;

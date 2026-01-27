@@ -4,12 +4,12 @@
 //! output to C++ djpegli for various JPEG configurations.
 
 use dssim::Dssim;
+use rgb::RGBA8;
+use std::process::Command;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use rgb::RGBA8;
-use std::process::Command;
 
 // Map from test subsampling names to ChromaSubsampling
 #[allow(dead_code)] // May be used in future test configurations

@@ -7,12 +7,12 @@
 //!   kcachegrind callgrind.out.*  # To visualize
 
 use enough::Unstoppable;
+use std::env;
+use std::hint::black_box;
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use std::env;
-use std::hint::black_box;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;

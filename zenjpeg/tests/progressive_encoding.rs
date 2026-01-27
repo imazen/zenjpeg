@@ -6,10 +6,10 @@
 //! NOTE: We use zune-jpeg for decoder verification as it handles
 //! our progressive output correctly.
 
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use std::io::Cursor;
 use std::process::Command;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 /// Helper function to encode RGB data with given config
 fn encode_rgb(

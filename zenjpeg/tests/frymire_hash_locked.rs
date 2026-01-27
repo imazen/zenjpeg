@@ -10,11 +10,11 @@
 //!
 //! ⚠️ LOCKED TEST: Do NOT modify hash values without understanding the impact.
 
+use sha2::{Digest, Sha256};
+use std::fs;
 use zenjpeg::encoder::{
     ChromaSubsampling, DownsamplingMethod, EncoderConfig, PixelLayout, XybSubsampling,
 };
-use sha2::{Digest, Sha256};
-use std::fs;
 
 // =============================================================================
 // CONFIGURATION

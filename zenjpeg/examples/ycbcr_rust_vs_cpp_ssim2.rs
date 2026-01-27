@@ -1,8 +1,8 @@
 //! Compare Rust vs C++ YCbCr outputs using SSIMULACRA2
 
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::process::Command;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn load_test_image(path: &str) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path).expect("open");

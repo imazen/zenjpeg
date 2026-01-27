@@ -6,13 +6,13 @@
 //!
 //! Thresholds are intentionally tight to catch regressions.
 
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encoder::ChromaSubsampling;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout};
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
 
 /// Reference data for a single image at a single quality level
 #[derive(Debug, Clone, Serialize, Deserialize)]

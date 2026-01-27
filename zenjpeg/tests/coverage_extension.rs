@@ -6,11 +6,11 @@
 #[path = "../src/test_utils.rs"]
 mod test_utils;
 
+use test_utils::{generate_gradient_d, generate_noise};
 use zenjpeg::{
     decoder::{ColorSpace, Decoder, DecoderConfig, Dimensions},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality, XybSubsampling},
 };
-use test_utils::{generate_gradient_d, generate_noise};
 
 // ============================================================================
 // HELPER FUNCTIONS

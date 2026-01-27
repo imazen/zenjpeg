@@ -18,11 +18,11 @@
 
 use butteraugli::ButteraugliParams;
 use dssim::Dssim;
+use rgb::RGBA8;
+use std::fs;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
-use rgb::RGBA8;
-use std::fs;
 
 // =============================================================================
 // C++ REFERENCE VALUES

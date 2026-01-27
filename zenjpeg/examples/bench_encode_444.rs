@@ -1,8 +1,8 @@
 //! Benchmark 4:4:4 baseline encoding path
 use enough::Unstoppable;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::hint::black_box;
 use std::time::Instant;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a photo-like synthetic test image
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {

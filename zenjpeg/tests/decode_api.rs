@@ -7,11 +7,11 @@ mod test_utils;
 
 use test_utils::{generate_gradient_d, read_test_data, TestImage};
 
+use test_case::test_case;
 use zenjpeg::{
     decoder::{Decoder, PixelFormat},
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use test_case::test_case;
 
 // ============================================================================
 // Helper Functions

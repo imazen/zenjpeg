@@ -19,8 +19,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use enough::Unstoppable;
-use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 use std::time::Duration;
+use zenjpeg::encode::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 /// Generate a test image with realistic-ish content for profiling.
 /// Uses gradients and noise patterns that exercise color conversion paths.

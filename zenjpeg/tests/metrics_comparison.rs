@@ -5,10 +5,10 @@
 
 use dssim::Dssim;
 use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
-use zenjpeg::encoder::ChromaSubsampling;
-use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 use rgb::RGBA8;
 use std::fs;
+use zenjpeg::encoder::ChromaSubsampling;
+use zenjpeg::encoder::{EncoderConfig, PixelLayout};
 
 fn rgb_to_rgba(data: &[u8]) -> Vec<RGBA8> {
     data.chunks(3)

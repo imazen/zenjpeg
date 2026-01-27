@@ -11,11 +11,11 @@ use test_utils::{
     generate_gradient_h, generate_solid, generate_solid_rgb, max_pixel_diff, thresholds, TestImage,
 };
 
+use test_case::test_case;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use test_case::test_case;
 
 // ============================================================================
 // Helper Functions

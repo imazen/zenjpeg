@@ -3,8 +3,8 @@
 //! Tests the new Block8x8f and QuantTableSimd types.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use zenjpeg::foundation::simd_types::{Block8x8f, QuantTableSimd};
 use wide::f32x8;
+use zenjpeg::foundation::simd_types::{Block8x8f, QuantTableSimd};
 
 /// Old-style quantization (load/store dance)
 fn quantize_scalar(block: &[f32; 64], quant: &[f32; 64]) -> [i16; 64] {

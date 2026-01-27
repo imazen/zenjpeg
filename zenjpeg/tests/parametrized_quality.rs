@@ -9,11 +9,11 @@ mod test_utils;
 
 use test_utils::{distance_rms, generate_test_image, max_pixel_diff, thresholds, TestPattern};
 
+use test_case::test_case;
 use zenjpeg::{
     decoder::Decoder,
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
-use test_case::test_case;
 
 /// Helper function to encode RGB data
 fn encode_rgb(

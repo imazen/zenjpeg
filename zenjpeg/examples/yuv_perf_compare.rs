@@ -6,11 +6,11 @@
 
 use std::time::Instant;
 
-use zenjpeg::color::rgb_to_ycbcr_f32;
 use yuv::{
     rgb_to_yuv420, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
     YuvStandardMatrix,
 };
+use zenjpeg::color::rgb_to_ycbcr_f32;
 
 /// Generate a test image with varied content
 fn generate_test_image(width: usize, height: usize) -> Vec<u8> {
