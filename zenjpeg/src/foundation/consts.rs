@@ -58,6 +58,8 @@ pub const MARKER_DHT: u8 = 0xC4;
 pub const MARKER_DQT: u8 = 0xDB;
 /// Define Restart Interval
 pub const MARKER_DRI: u8 = 0xDD;
+/// Define Number of Lines (height defined after first scan)
+pub const MARKER_DNL: u8 = 0xDC;
 /// Start of Scan
 pub const MARKER_SOS: u8 = 0xDA;
 /// Restart marker base (0-7)

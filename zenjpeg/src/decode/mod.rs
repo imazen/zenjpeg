@@ -326,14 +326,30 @@ impl Decoder {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         parser.read_header()?;
 
-        // Only baseline supported for scanline reading
-        if parser.mode != JpegMode::Baseline {
+        // DNL mode (height=0 in SOF) not supported - scanline reader needs dimensions upfront
+        if parser.height == 0 {
             return Err(Error::unsupported_feature(
-                "scanline reader only supports baseline JPEG",
+                "scanline reader does not support DNL mode (height=0 in SOF)",
+            ));
+        }
+
+        // 12-bit precision (Extended Sequential) not yet fully supported
+        // The level shift and output scaling differ from 8-bit
+        if parser.precision != 8 {
+            return Err(Error::unsupported_feature(
+                "12-bit precision JPEG (Extended Sequential) is not yet supported. \
+                 Only 8-bit precision is currently implemented.",
             ));
         }
 
         // Support grayscale (1) and color (3) images
+        // CMYK/YCCK (4 components) is recognized but not yet supported for decode
+        if parser.num_components == 4 {
+            return Err(Error::unsupported_feature(
+                "CMYK/YCCK images (4-component) are not yet supported. \
+                 Consider converting to RGB JPEG first.",
+            ));
+        }
         if parser.num_components != 1 && parser.num_components != 3 {
             return Err(Error::unsupported_feature(
                 "scanline reader requires 1-component (grayscale) or 3-component (YCbCr) image",
@@ -341,7 +357,36 @@ impl Decoder {
         }
 
         let is_grayscale = parser.num_components == 1;
+        let is_xyb = parser.info().is_xyb;
 
+        // For progressive JPEGs, use buffered mode: fully decode then serve from buffer
+        if parser.mode == JpegMode::Progressive {
+            let width = parser.width;
+            let height = parser.height;
+            let num_components = parser.num_components;
+
+            // Fully decode the image
+            parser.decode()?;
+
+            // Convert to pixels (RGB for color, grayscale for 1-component)
+            let output_format = if is_grayscale {
+                PixelFormat::Gray
+            } else {
+                PixelFormat::Rgb
+            };
+            let pixels = parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling)?;
+
+            return Ok(ScanlineReader::new_buffered(
+                data,
+                width,
+                height,
+                num_components,
+                pixels,
+                is_xyb,
+            ));
+        }
+
+        // Baseline: use streaming mode
         // Extract sampling factors - use defaults for missing components in grayscale
         let h_samp = if is_grayscale {
             [parser.components[0].h_samp_factor, 1, 1]
@@ -362,7 +407,7 @@ impl Decoder {
             ]
         };
 
-        // Validate sampling factors - support 4:4:4, 4:2:2, and 4:2:0
+        // Check sampling factors
         let max_h = h_samp[..parser.num_components as usize]
             .iter()
             .copied()
@@ -373,9 +418,32 @@ impl Decoder {
             .copied()
             .max()
             .unwrap_or(1);
+
+        // For high sampling factors (>2x2), use buffered mode (like progressive)
+        // This is rare but valid - full-frame decoder handles it
         if max_h > 2 || max_v > 2 {
-            return Err(Error::unsupported_feature(
-                "scanline reader only supports sampling factors up to 2x2",
+            let width = parser.width;
+            let height = parser.height;
+            let num_components = parser.num_components;
+
+            // Fully decode the image
+            parser.decode()?;
+
+            // Convert to pixels
+            let output_format = if is_grayscale {
+                PixelFormat::Gray
+            } else {
+                PixelFormat::Rgb
+            };
+            let pixels = parser.to_pixels(output_format, is_xyb, self.config.fancy_upsampling)?;
+
+            return Ok(ScanlineReader::new_buffered(
+                data,
+                width,
+                height,
+                num_components,
+                pixels,
+                is_xyb,
             ));
         }
 
@@ -392,9 +460,6 @@ impl Decoder {
 
         // Find SOS marker to get table mapping and scan data position
         let scan_info = parser.find_scan_info()?;
-
-        // Get info before moving tables
-        let is_xyb = parser.info().is_xyb;
 
         ScanlineReader::new(
             data,

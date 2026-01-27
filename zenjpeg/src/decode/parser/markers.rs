@@ -67,12 +67,24 @@ impl<'a> JpegParser<'a> {
 
         // Validate dimensions against security limits
         // max_pixels == 0 means unlimited
+        // Note: height=0 is valid here - it means DNL marker will define height after first scan
         let effective_max = if self.max_pixels == 0 {
             u64::MAX
         } else {
             self.max_pixels
         };
-        validate_dimensions(self.width, self.height, effective_max)?;
+        if self.height == 0 {
+            // DNL mode: validate width only, height will be validated after DNL marker
+            if self.width == 0 {
+                return Err(Error::invalid_dimensions(
+                    self.width,
+                    self.height,
+                    "width cannot be zero",
+                ));
+            }
+        } else {
+            validate_dimensions(self.width, self.height, effective_max)?;
+        }
 
         self.num_components = self.read_u8()?;
 
@@ -254,6 +266,38 @@ impl<'a> JpegParser<'a> {
     pub(super) fn parse_restart_interval(&mut self) -> Result<()> {
         let _length = self.read_u16()?;
         self.restart_interval = self.read_u16()?;
+        Ok(())
+    }
+
+    /// Parse DNL (Define Number of Lines) marker.
+    ///
+    /// The DNL marker allows the height to be specified after the first scan,
+    /// which is useful for Motion JPEG and streaming encoders that don't know
+    /// the final height until encoding is complete.
+    ///
+    /// Per ITU-T T.81 section B.2.5:
+    /// - DNL marker appears after the first scan's entropy-coded data
+    /// - Only valid if height was 0 in the SOF marker
+    /// - Contains a 2-byte length followed by 2-byte number of lines
+    pub(super) fn parse_dnl(&mut self) -> Result<()> {
+        let length = self.read_u16()?;
+        if length != 4 {
+            return Err(Error::invalid_jpeg_data(
+                "DNL marker must have length 4",
+            ));
+        }
+
+        let num_lines = self.read_u16()? as u32;
+
+        // DNL is only valid if height was 0 in SOF
+        if self.height == 0 {
+            self.height = num_lines;
+        } else if self.height != num_lines {
+            // Height was already specified - this is technically invalid but we can
+            // either ignore it or error. Being lenient and ignoring it for robustness.
+            // Some encoders may emit DNL even when height was specified.
+        }
+
         Ok(())
     }
 

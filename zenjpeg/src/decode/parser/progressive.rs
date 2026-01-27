@@ -33,6 +33,13 @@ impl<'a> JpegParser<'a> {
         ah: u8,
         al: u8,
     ) -> Result<()> {
+        // DNL mode not supported for progressive decode
+        if self.height == 0 {
+            return Err(Error::unsupported_feature(
+                "DNL mode (height=0 in SOF) not supported for progressive decode",
+            ));
+        }
+
         // Calculate max sampling factors to determine MCU structure
         let mut max_h_samp = 1u8;
         let mut max_v_samp = 1u8;
