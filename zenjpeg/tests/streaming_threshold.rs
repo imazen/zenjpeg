@@ -317,6 +317,131 @@ fn test_streaming_outlier_investigation() {
     }
 }
 
+/// Test heuristics for detecting pathological frequency distributions.
+#[test]
+#[ignore]
+fn test_streaming_heuristics() {
+    use zenjpeg::encode::encoder_types::Quality;
+
+    // Test both a "normal" image and the pathological ones
+    let test_cases = [
+        ("/home/lilith/work/codec-corpus/clic2025/validation/100a02c269c5948392f283b2aa3bb4da.png", "normal"),
+        ("/home/lilith/work/codec-corpus/clic2025/validation/11f2b039b293758398b1a7a8afa64bb2.png", "pathological-1"),
+        ("/home/lilith/work/codec-corpus/clic2025/validation/aed95e005df28e790519eefb6eb1e565.png", "pathological-2"),
+    ];
+
+    for (img_path, label) in &test_cases {
+        eprintln!("\n{}", "=".repeat(70));
+        eprintln!("Image: {} ({})", img_path.split('/').last().unwrap(), label);
+
+        // Load image
+        let decoder = png::Decoder::new(std::fs::File::open(img_path).unwrap());
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        let pixels = &buf[..info.buffer_size()];
+
+        let width = info.width;
+        let height = info.height;
+        eprintln!("Dimensions: {}x{}", width, height);
+
+        // First, get baseline size
+        let baseline = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .encode(pixels)
+            .unwrap();
+        let baseline_size = baseline.len();
+
+        // Measure heuristics at different points by encoding partway and checking
+        eprintln!("\nHeuristics at different row percentages:");
+        eprintln!("{:>8} {:>10} {:>12}", "Rows%", "AC Cov%", "AC Entropy");
+        eprintln!("{}", "-".repeat(35));
+
+        for pct in [10, 15, 20, 25, 30, 40, 50] {
+            let rows_to_process = (height as usize * pct) / 100;
+
+            let mut encoder = StreamingEncoder::new(width, height)
+                .quality(Quality::ApproxJpegli(85.0))
+                .subsampling(Subsampling::S420)
+                .progressive(false)
+                .start()
+                .unwrap();
+
+            let row_size = width as usize * 3;
+            // Push rows up to the threshold
+            for y in 0..rows_to_process.min(height as usize) {
+                let start = y * row_size;
+                let end = start + row_size;
+                encoder.push_row(&pixels[start..end]).unwrap();
+            }
+
+            // Get heuristics at this point
+            let (ac_cov, ac_ent, _, _) = encoder.frequency_heuristics();
+            let stable = encoder.is_distribution_stable(4.0, 30.0);
+
+            let flag = if stable { "✓" } else { "✗" };
+            eprintln!("{:>7}% {:>9.1}% {:>11.2} {}",
+                pct, ac_cov, ac_ent, flag);
+        }
+
+        // Now test overhead with and without heuristic gating
+        eprintln!("\nOverhead comparison (memory_limit=1MB):");
+        eprintln!("{:>20} {:>10} {:>8}", "Mode", "Size", "Overhead");
+        eprintln!("{}", "-".repeat(42));
+
+        // Without heuristics
+        let mut encoder_no_heur = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .memory_limit(1024 * 1024) // 1MB
+            .start()
+            .unwrap();
+
+        let row_size = width as usize * 3;
+        for y in 0..height as usize {
+            let start = y * row_size;
+            let end = start + row_size;
+            encoder_no_heur.push_row(&pixels[start..end]).unwrap();
+        }
+        let result_no_heur = encoder_no_heur.finish().unwrap();
+        let overhead_no_heur = 100.0 * (result_no_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
+
+        let flag = if overhead_no_heur <= 4.0 { "✓" } else { "✗" };
+        eprintln!("{:>20} {:>8} KB {:>7.2}% {}", "No heuristics",
+            result_no_heur.len() / 1024, overhead_no_heur, flag);
+
+        // With heuristics (entropy=4.0, coverage=30%)
+        let mut encoder_heur = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .memory_limit(1024 * 1024) // 1MB
+            .require_stable_distribution() // entropy=4.0, coverage=30%
+            .start()
+            .unwrap();
+
+        for y in 0..height as usize {
+            let start = y * row_size;
+            let end = start + row_size;
+            encoder_heur.push_row(&pixels[start..end]).unwrap();
+        }
+        let result_heur = encoder_heur.finish().unwrap();
+        let overhead_heur = 100.0 * (result_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
+
+        let flag = if overhead_heur <= 4.0 { "✓" } else { "✗" };
+        eprintln!("{:>20} {:>8} KB {:>7.2}% {}", "With heuristics",
+            result_heur.len() / 1024, overhead_heur, flag);
+
+        let improvement = overhead_no_heur - overhead_heur;
+        if improvement > 0.5 {
+            eprintln!("  → Heuristics improved overhead by {:.1}%", improvement);
+        }
+    }
+}
+
 /// Test with memory-limit based transition (approximation of row percentage).
 #[test]
 #[ignore]

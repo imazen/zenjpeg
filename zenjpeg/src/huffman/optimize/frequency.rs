@@ -271,6 +271,100 @@ impl FrequencyCounter {
         result
     }
 
+    /// Computes Shannon entropy of the frequency distribution (in bits).
+    ///
+    /// Higher entropy means more uniform distribution (better for general use).
+    /// Lower entropy means concentrated distribution (potentially pathological).
+    ///
+    /// Returns 0.0 if histogram is empty.
+    #[must_use]
+    pub fn entropy(&self) -> f64 {
+        let total = self.total() as f64;
+        if total == 0.0 {
+            return 0.0;
+        }
+
+        let mut entropy = 0.0;
+        for &count in &self.counts[..256] {
+            if count > 0 {
+                let p = count as f64 / total;
+                entropy -= p * p.log2();
+            }
+        }
+        entropy
+    }
+
+    /// Computes the percentage of valid AC symbols that have been seen.
+    ///
+    /// Valid AC symbols are: EOB (0x00), ZRL (0xF0), and (run << 4 | size) for
+    /// run 0-15, size 1-10. Total: 162 valid symbols.
+    ///
+    /// Returns 0.0-100.0 percentage.
+    #[must_use]
+    pub fn ac_symbol_coverage(&self) -> f64 {
+        const TOTAL_VALID_AC: usize = 2 + 16 * 10; // EOB + ZRL + run/size combos = 162
+
+        let mut seen = 0usize;
+
+        // EOB
+        if self.counts[0x00] > 0 {
+            seen += 1;
+        }
+        // ZRL
+        if self.counts[0xF0] > 0 {
+            seen += 1;
+        }
+        // Run/size combinations
+        for run in 0..=15u8 {
+            for size in 1..=10u8 {
+                let symbol = (run << 4) | size;
+                if self.counts[symbol as usize] > 0 {
+                    seen += 1;
+                }
+            }
+        }
+
+        100.0 * seen as f64 / TOTAL_VALID_AC as f64
+    }
+
+    /// Computes the percentage of valid DC symbols (0-11) that have been seen.
+    #[must_use]
+    pub fn dc_symbol_coverage(&self) -> f64 {
+        let seen = (0..=11).filter(|&s| self.counts[s] > 0).count();
+        100.0 * seen as f64 / 12.0
+    }
+
+    /// Computes symmetric KL divergence (Jensen-Shannon divergence) between two histograms.
+    ///
+    /// Returns a value >= 0. Higher values indicate more different distributions.
+    /// Returns 0.0 if distributions are identical.
+    #[must_use]
+    pub fn divergence(&self, other: &FrequencyCounter) -> f64 {
+        let total_self = self.total() as f64;
+        let total_other = other.total() as f64;
+
+        if total_self == 0.0 || total_other == 0.0 {
+            return f64::MAX;
+        }
+
+        let mut divergence = 0.0;
+        for i in 0..256 {
+            let p = self.counts[i] as f64 / total_self;
+            let q = other.counts[i] as f64 / total_other;
+
+            if p > 0.0 || q > 0.0 {
+                let m = (p + q) / 2.0;
+                if p > 0.0 && m > 0.0 {
+                    divergence += p * (p / m).ln();
+                }
+                if q > 0.0 && m > 0.0 {
+                    divergence += q * (q / m).ln();
+                }
+            }
+        }
+        divergence / 2.0 // Jensen-Shannon is symmetric average
+    }
+
     /// Estimates the cost of encoding with this histogram.
     ///
     /// Cost = header_bits + data_bits

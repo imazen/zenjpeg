@@ -83,6 +83,10 @@ pub struct StreamingEncoderBuilder {
     memory_limit: Option<usize>,
     /// Force transition to streaming after this many rows (for testing)
     transition_after_rows: Option<usize>,
+    /// Minimum AC entropy required before allowing transition (bits, default 4.0)
+    min_entropy: Option<f64>,
+    /// Minimum AC symbol coverage required before allowing transition (%, default 30.0)
+    min_coverage: Option<f64>,
 }
 
 impl StreamingEncoderBuilder {
@@ -113,6 +117,8 @@ impl StreamingEncoderBuilder {
             trellis: None,
             memory_limit: None,
             transition_after_rows: None,
+            min_entropy: None,
+            min_coverage: None,
         }
     }
 
@@ -465,6 +471,58 @@ impl StreamingEncoderBuilder {
     pub fn transition_after_percent(self, percent: usize) -> Self {
         let rows = (self.height as usize * percent) / 100;
         self.transition_after_rows(rows.max(16)) // At least 1 MCU row (16 pixels)
+    }
+
+    /// Sets minimum entropy threshold for frequency distribution stability.
+    ///
+    /// Before transitioning to streaming mode, the encoder will check that
+    /// the accumulated AC frequency distribution has at least this entropy.
+    /// Low entropy indicates the data is concentrated on few symbols (e.g.,
+    /// smooth gradients), which may not be representative of the full image.
+    ///
+    /// Typical values:
+    /// - 4.0 bits: Conservative (requires moderate variety)
+    /// - 3.0 bits: Permissive (allows some concentration)
+    /// - 5.0 bits: Strict (requires high variety)
+    ///
+    /// Default: None (no entropy check)
+    #[must_use]
+    pub fn min_entropy(mut self, entropy: f64) -> Self {
+        self.min_entropy = Some(entropy);
+        self
+    }
+
+    /// Sets minimum symbol coverage threshold for frequency distribution stability.
+    ///
+    /// Before transitioning to streaming mode, the encoder will check that
+    /// at least this percentage of valid AC symbols have been seen.
+    /// Low coverage indicates the data uses only a subset of symbols,
+    /// which may lead to poor Huffman tables for unseen symbols.
+    ///
+    /// Range: 0.0-100.0 (percentage)
+    /// Typical values:
+    /// - 30.0%: Conservative (requires seeing ~50 of 162 valid symbols)
+    /// - 20.0%: Permissive
+    /// - 50.0%: Strict
+    ///
+    /// Default: None (no coverage check)
+    #[must_use]
+    pub fn min_coverage(mut self, coverage: f64) -> Self {
+        self.min_coverage = Some(coverage);
+        self
+    }
+
+    /// Sets both entropy and coverage thresholds with recommended defaults.
+    ///
+    /// This enables heuristic-based transition that delays streaming mode
+    /// until the frequency distribution appears representative. Useful for
+    /// avoiding pathological cases where the image start has very different
+    /// content than the rest (e.g., gradient sky).
+    ///
+    /// Default thresholds: entropy=4.0 bits, coverage=30%
+    #[must_use]
+    pub fn require_stable_distribution(self) -> Self {
+        self.min_entropy(4.0).min_coverage(30.0)
     }
 
     /// Starts a streaming encoder for row-by-row input.
@@ -892,6 +950,10 @@ pub struct StreamingEncoder {
     streaming_bits_in_buffer: u8,
     /// Force transition to streaming after this many rows (for testing)
     transition_after_rows: Option<usize>,
+    /// Minimum AC entropy required before allowing transition (bits)
+    min_entropy: Option<f64>,
+    /// Minimum AC symbol coverage required before allowing transition (%)
+    min_coverage: Option<f64>,
 }
 
 impl StreamingEncoder {
@@ -1109,6 +1171,8 @@ impl StreamingEncoder {
             streaming_bit_buffer: 0,
             streaming_bits_in_buffer: 0,
             transition_after_rows: builder.transition_after_rows,
+            min_entropy: builder.min_entropy,
+            min_coverage: builder.min_coverage,
         })
     }
 
@@ -1164,6 +1228,35 @@ impl StreamingEncoder {
         self.processor.estimate_block_storage()
     }
 
+    /// Returns frequency distribution heuristics for the accumulated data.
+    ///
+    /// Returns (ac_luma_coverage%, ac_luma_entropy, ac_chroma_coverage%, ac_chroma_entropy).
+    /// These can be used to detect pathological distributions before transitioning.
+    #[must_use]
+    pub fn frequency_heuristics(&self) -> (f64, f64, f64, f64) {
+        let (_, ac_luma, _, ac_chroma) = self.processor.frequency_counters();
+        (
+            ac_luma.ac_symbol_coverage(),
+            ac_luma.entropy(),
+            ac_chroma.ac_symbol_coverage(),
+            ac_chroma.entropy(),
+        )
+    }
+
+    /// Checks if the accumulated frequency distribution appears stable/representative.
+    ///
+    /// Returns true if:
+    /// - AC luma entropy >= min_entropy (default 4.0 bits)
+    /// - AC symbol coverage >= min_coverage (default 30%)
+    ///
+    /// Low entropy or coverage suggests we're in a smooth/gradient region
+    /// that may not be representative of the full image.
+    #[must_use]
+    pub fn is_distribution_stable(&self, min_entropy: f64, min_coverage: f64) -> bool {
+        let (ac_cov, ac_ent, _, _) = self.frequency_heuristics();
+        ac_ent >= min_entropy && ac_cov >= min_coverage
+    }
+
     /// Checks if memory limit is exceeded and transitions to streaming mode if needed.
     ///
     /// This should be called after each strip is processed. If the memory limit
@@ -1187,6 +1280,7 @@ impl StreamingEncoder {
         }
 
         // Check row-based threshold (for testing different transition points)
+        // This bypasses heuristics - used for threshold testing
         if let Some(threshold_rows) = self.transition_after_rows {
             let rows_processed = self.current_y;
             if rows_processed >= threshold_rows {
@@ -1194,15 +1288,54 @@ impl StreamingEncoder {
             }
         }
 
-        // Check memory limit
+        // Check memory limit with optional heuristic gating
         if let Some(limit) = self.memory_limit {
             let current_usage = self.estimate_block_storage();
             if current_usage >= limit {
-                return self.transition_to_streaming();
+                // Check distribution stability heuristics if configured
+                let passes_heuristics = self.check_distribution_heuristics();
+
+                if passes_heuristics {
+                    return self.transition_to_streaming();
+                }
+                // Otherwise, continue buffering even if over memory limit
+                // (the heuristics will eventually pass or we'll hit 50% of image)
+
+                // Safety valve: always transition after 50% of image regardless of heuristics
+                let rows_processed = self.current_y;
+                let half_image = self.height / 2;
+                if rows_processed >= half_image {
+                    return self.transition_to_streaming();
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Checks if distribution stability heuristics pass.
+    ///
+    /// Returns true if either:
+    /// - No heuristics are configured, or
+    /// - All configured heuristic thresholds are met
+    fn check_distribution_heuristics(&self) -> bool {
+        let (ac_cov, ac_ent, _, _) = self.frequency_heuristics();
+
+        // Check entropy threshold
+        if let Some(min_ent) = self.min_entropy {
+            if ac_ent < min_ent {
+                return false;
+            }
+        }
+
+        // Check coverage threshold
+        if let Some(min_cov) = self.min_coverage {
+            if ac_cov < min_cov {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Transitions to streaming mode.
