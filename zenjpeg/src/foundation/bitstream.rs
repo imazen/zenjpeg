@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 use crate::error::{Error, Result, ScanRead, ScanResult};
+use crate::foundation::instrumented_vec::{ProfiledVec, ProfiledVecExt};
 
 /// Bit writer for JPEG encoding.
 ///
@@ -14,7 +15,7 @@ use crate::error::{Error, Result, ScanRead, ScanResult};
 #[derive(Debug)]
 pub struct BitWriter {
     /// Output buffer
-    buffer: Vec<u8>,
+    buffer: ProfiledVec<u8>,
     /// Current bit accumulator (64-bit for reduced flush frequency)
     bit_buffer: u64,
     /// Number of bits in accumulator (0-56, we flush at 32+)
@@ -26,7 +27,7 @@ impl BitWriter {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            buffer: Vec::new(),
+            buffer: ProfiledVec::with_capacity_profiled(0, "BitWriter::new"),
             bit_buffer: 0,
             bits_in_buffer: 0,
         }
@@ -36,7 +37,7 @@ impl BitWriter {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            buffer: Vec::with_capacity(capacity),
+            buffer: ProfiledVec::with_capacity_profiled(capacity, "BitWriter::with_capacity"),
             bit_buffer: 0,
             bits_in_buffer: 0,
         }
@@ -216,10 +217,29 @@ impl BitWriter {
     }
 
     /// Returns the accumulated bytes.
+    ///
+    /// When `alloc-instrument` feature is enabled, logs utilization stats.
     #[must_use]
     pub fn into_bytes(mut self) -> Vec<u8> {
         self.flush();
-        self.buffer
+        #[cfg(feature = "alloc-instrument")]
+        {
+            let stats = self.buffer.stats();
+            let wasted = stats.wasted_bytes();
+            if wasted >= 1024 || stats.realloc_count > 0 {
+                eprintln!(
+                    "[alloc] {}: len={} cap={} ({:.0}% util, {}B wasted) init={} reallocs={}",
+                    stats.context,
+                    stats.final_len,
+                    stats.final_capacity,
+                    stats.utilization_pct(),
+                    wasted,
+                    stats.initial_capacity,
+                    stats.realloc_count,
+                );
+            }
+        }
+        self.buffer.into()
     }
 
     /// Returns a reference to the current buffer.

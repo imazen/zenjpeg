@@ -6,10 +6,19 @@
 //!
 //! Based on patterns from libjpeg-turbo's memory management and Rust's
 //! `try_reserve` API (stabilized in Rust 1.57).
+//!
+//! ## Allocation Profiling
+//!
+//! When the `alloc-instrument` feature is enabled, allocation functions return
+//! `ProfiledVec<T>` which logs utilization stats on drop. This helps identify
+//! over-allocated buffers.
 
 #![allow(dead_code)] // Tracking utilities and optional alloc helpers
 
 use crate::error::{Error, Result};
+
+// Re-export for use by callers who want to profile specific allocations
+pub use crate::foundation::instrumented_vec::{InstrumentedVec, ProfiledVec, ProfiledVecExt, VecStats};
 
 /// Maximum dimension for JPEG images (matches libjpeg-turbo's JPEG_MAX_DIMENSION).
 /// Slightly under 64K to prevent overflow in 16-bit calculations.
@@ -68,7 +77,7 @@ impl MemoryTracker {
         let new_total = self
             .allocated
             .checked_add(bytes)
-            .ok_or(Error::size_overflow(context))?;
+            .ok_or_else(|| Error::size_overflow(context))?;
 
         if new_total > self.limit {
             return Err(Error::allocation_failed(bytes, context));
@@ -385,7 +394,7 @@ pub fn try_alloc_vec_tracked<T: Default + Clone>(
 ) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -406,7 +415,9 @@ pub fn try_alloc_zeroed_f32_tracked(
     context: &'static str,
     stats: &mut AllocationStats,
 ) -> Result<Vec<f32>> {
-    let byte_size = count.checked_mul(4).ok_or(Error::size_overflow(context))?;
+    let byte_size = count
+        .checked_mul(4)
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -429,7 +440,7 @@ pub fn try_with_capacity_tracked<T>(
 ) -> Result<Vec<T>> {
     let byte_size = capacity
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(capacity)
@@ -451,7 +462,7 @@ pub fn try_alloc_dct_blocks_tracked(
 ) -> Result<Vec<[i16; 64]>> {
     let byte_size = count
         .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -470,14 +481,14 @@ pub fn checked_size(width: usize, height: usize, bytes_per_pixel: usize) -> Resu
     width
         .checked_mul(height)
         .and_then(|pixels| pixels.checked_mul(bytes_per_pixel))
-        .ok_or(Error::size_overflow("calculating buffer size"))
+        .ok_or_else(|| Error::size_overflow("calculating buffer size"))
 }
 
 /// Calculate size for a 2D array with overflow checking.
 #[inline]
 pub fn checked_size_2d(dim1: usize, dim2: usize) -> Result<usize> {
     dim1.checked_mul(dim2)
-        .ok_or(Error::size_overflow("calculating 2D size"))
+        .ok_or_else(|| Error::size_overflow("calculating 2D size"))
 }
 
 /// Validate image dimensions against limits.
@@ -505,7 +516,7 @@ pub fn validate_dimensions(width: u32, height: u32, max_pixels: u64) -> Result<(
 
     let total_pixels = (width as u64)
         .checked_mul(height as u64)
-        .ok_or(Error::size_overflow("calculating total pixels"))?;
+        .ok_or_else(|| Error::size_overflow("calculating total pixels"))?;
 
     if total_pixels > max_pixels {
         return Err(Error::image_too_large(total_pixels, max_pixels));
@@ -521,7 +532,7 @@ pub fn validate_dimensions(width: u32, height: u32, max_pixels: u64) -> Result<(
 pub fn try_alloc_vec<T: Default + Clone>(count: usize, context: &'static str) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -543,7 +554,9 @@ pub fn try_alloc_zeroed(count: usize, context: &'static str) -> Result<Vec<u8>> 
 /// Allocate a Vec of f32 zeros with fallible allocation.
 #[inline]
 pub fn try_alloc_zeroed_f32(count: usize, context: &'static str) -> Result<Vec<f32>> {
-    let byte_size = count.checked_mul(4).ok_or(Error::size_overflow(context))?;
+    let byte_size = count
+        .checked_mul(4)
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -557,9 +570,9 @@ pub fn try_alloc_zeroed_f32(count: usize, context: &'static str) -> Result<Vec<f
 pub fn try_with_capacity<T>(capacity: usize, context: &'static str) -> Result<Vec<T>> {
     let byte_size = capacity
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
-    let mut v = Vec::new();
+    let mut v = Vec::with_capacity(capacity);
     v.try_reserve_exact(capacity)
         .map_err(|_| Error::allocation_failed(byte_size, context))?;
     Ok(v)
@@ -582,7 +595,7 @@ pub fn try_alloc_maybeuninit<T: Default + Clone>(
 ) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -596,7 +609,7 @@ pub fn try_alloc_maybeuninit<T: Default + Clone>(
 pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[i16; 64]>> {
     let byte_size = count
         .checked_mul(64 * 2) // 64 i16 = 128 bytes per block
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -610,7 +623,7 @@ pub fn try_alloc_dct_blocks(count: usize, context: &'static str) -> Result<Vec<[
 pub fn try_alloc_filled<T: Clone>(count: usize, value: T, context: &'static str) -> Result<Vec<T>> {
     let byte_size = count
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(count)
@@ -625,7 +638,7 @@ pub fn try_clone_slice<T: Clone>(slice: &[T], context: &'static str) -> Result<V
     let byte_size = slice
         .len()
         .checked_mul(core::mem::size_of::<T>())
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(slice.len())
@@ -645,7 +658,7 @@ pub fn try_gray_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     let len = data
         .len()
         .checked_mul(3)
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(len)
@@ -666,7 +679,7 @@ pub fn try_rgba_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     let num_pixels = data.len() / 4;
     let len = num_pixels
         .checked_mul(3)
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(len)
@@ -703,7 +716,7 @@ pub fn try_bgra_to_rgb(data: &[u8], context: &'static str) -> Result<Vec<u8>> {
     let num_pixels = data.len() / 4;
     let len = num_pixels
         .checked_mul(3)
-        .ok_or(Error::size_overflow(context))?;
+        .ok_or_else(|| Error::size_overflow(context))?;
 
     let mut v = Vec::new();
     v.try_reserve_exact(len)

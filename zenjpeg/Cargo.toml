@@ -115,6 +115,9 @@ cms-moxcms = ["dep:moxcms", "dep:zune-jpeg"]
 debug-tokens = []
 # Enable internal profiling instrumentation (scope timers)
 profile = []
+# Enable Vec allocation instrumentation (logs utilization on drop)
+# Use for profiling allocation patterns - zero overhead when disabled
+alloc-instrument = ["std"]
 # Enable test utilities (image generation, quality verification)
 # Requires std for file path operations
 test-utils = ["std"]

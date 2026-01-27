@@ -593,14 +593,12 @@ impl StreamingEncoderBuilder {
         // 6. AQ strengths (one f32 per Y block)
         let aq_strengths = y_block_count * 4;
 
-        // 7. Token buffer (always allocated to store encoded coefficients)
-        // Each block produces ~50 symbols on average, each symbol is ~4 bytes.
-        // This buffer is used regardless of Huffman optimization setting because
-        // the encoder must buffer all coefficients before final output.
-        // Note: Huffman optimization may use slightly more memory for table building,
-        // but the token buffer dominates and is always needed.
+        // 7. Entropy encoder output buffer (baseline mode)
+        // Pre-allocated at ~3 bytes/block, grows if needed. Typical images use 0.5-3 bytes/block,
+        // worst case (high-frequency noise) uses ~7 bytes/block.
+        // Progressive mode uses smaller per-scan buffers instead.
         let total_blocks = y_block_count + c_block_count * 2;
-        let token_buffer = total_blocks * 50 * 4; // ~50 symbols per block, 4 bytes each
+        let entropy_output = total_blocks * 3;
 
         // 8. Output buffer estimate (grows during encoding)
         let output_estimate = width * height / 8; // ~1 bit per pixel rough estimate
@@ -618,7 +616,7 @@ impl StreamingEncoderBuilder {
             + y_blocks_i16
             + c_blocks_i16
             + aq_strengths
-            + token_buffer
+            + entropy_output
             + output_estimate
     }
 
@@ -719,11 +717,11 @@ impl StreamingEncoderBuilder {
         // 6. AQ strengths (one f32 per Y block)
         let aq_strengths = y_block_count * 4;
 
-        // 7. Token buffer - CEILING: worst-case ~90 tokens per block
-        // High-frequency blocks (noise, text, fine detail) produce more tokens.
-        // Each token is typically 4 bytes (symbol + context).
+        // 7. Entropy output buffer - CEILING: worst-case ~10 bytes per block
+        // High-frequency content (noise, text, fine detail) produces more output.
+        // Measured worst case is ~7 bytes/block, use 10 for ceiling.
         let total_blocks = y_block_count + c_block_count * 2;
-        let token_buffer = total_blocks * 90 * 4;
+        let entropy_output = total_blocks * 10;
 
         // 8. Output buffer - CEILING: worst-case is when image is incompressible
         // Quality 100 with noise can produce output larger than input.
@@ -752,7 +750,7 @@ impl StreamingEncoderBuilder {
             + y_blocks_i16
             + c_blocks_i16
             + aq_strengths
-            + token_buffer
+            + entropy_output
             + output_ceiling
             + huffman_tables
             + scan_overhead;
@@ -1017,6 +1015,15 @@ impl StreamingEncoder {
     #[must_use]
     pub(crate) fn strip_height(&self) -> usize {
         self.strip_height
+    }
+
+    /// Returns allocation statistics from the strip processor.
+    ///
+    /// This tracks all major allocations made during encoding setup,
+    /// including color plane buffers, DCT block storage, and AQ buffers.
+    #[must_use]
+    pub(crate) fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
+        self.processor.allocation_stats()
     }
 
     /// Pushes a single row of pixel data.
@@ -1384,7 +1391,33 @@ impl StreamingEncoder {
     }
 
     /// Finishes encoding with cancellation support.
-    pub(crate) fn finish_with_stop(mut self, stop: impl Stop) -> Result<Vec<u8>> {
+    pub(crate) fn finish_with_stop(self, stop: impl Stop) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        self.finish_into_with_stop(&mut output, stop)?;
+        Ok(output)
+    }
+
+    /// Finishes encoding, writing directly to the provided buffer.
+    ///
+    /// This avoids an extra allocation compared to `finish()`. The buffer
+    /// is cleared before writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Not all rows have been pushed
+    /// - JPEG generation fails
+    /// - Memory allocation fails
+    pub(crate) fn finish_into(self, output: &mut Vec<u8>) -> Result<()> {
+        self.finish_into_with_stop(output, Unstoppable)
+    }
+
+    /// Finishes encoding into provided buffer with cancellation support.
+    pub(crate) fn finish_into_with_stop(
+        mut self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+    ) -> Result<()> {
         stop.check()?;
 
         // Calculate total rows received
@@ -1414,8 +1447,8 @@ impl StreamingEncoder {
         // Finalize strip processing
         let strip_output = self.processor.finalize()?;
 
-        // Build JPEG output using the config's internal methods
-        Self::build_jpeg_from_blocks(
+        // Build JPEG output directly into provided buffer
+        Self::build_jpeg_from_blocks_into(
             &config,
             &y_quant,
             &cb_quant,
@@ -1423,6 +1456,7 @@ impl StreamingEncoder {
             width,
             height,
             strip_output,
+            output,
             stop,
         )
     }
@@ -1433,11 +1467,38 @@ impl StreamingEncoder {
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
-        _width: usize,
-        _height: usize,
+        width: usize,
+        height: usize,
         strip_output: crate::encode::strip::StripProcessorOutput,
         stop: impl Stop,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        Self::build_jpeg_from_blocks_into(
+            config,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            width,
+            height,
+            strip_output,
+            &mut output,
+            stop,
+        )?;
+        Ok(output)
+    }
+
+    /// Builds JPEG output from processed blocks into provided buffer.
+    fn build_jpeg_from_blocks_into(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        _width: usize,
+        _height: usize,
+        strip_output: crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+    ) -> Result<()> {
         stop.check()?;
 
         // Branch based on encoding mode (mirrors encode_strip_based in encode/mod.rs)
@@ -1450,18 +1511,26 @@ impl StreamingEncoder {
                     ));
                 }
                 // Use progressive encoding path
-                config.encode_progressive_from_blocks(
+                config.encode_progressive_from_blocks_into(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
                     &strip_output.cr_blocks,
                     y_quant,
                     cb_quant,
                     cr_quant,
+                    output,
                 )
             }
             _ => {
                 // Baseline encoding
-                Self::build_jpeg_baseline(config, y_quant, cb_quant, cr_quant, strip_output)
+                Self::build_jpeg_baseline_into(
+                    config,
+                    y_quant,
+                    cb_quant,
+                    cr_quant,
+                    strip_output,
+                    output,
+                )
             }
         }
     }
@@ -1474,23 +1543,47 @@ impl StreamingEncoder {
         cr_quant: &QuantTable,
         strip_output: crate::encode::strip::StripProcessorOutput,
     ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        Self::build_jpeg_baseline_into(
+            config,
+            y_quant,
+            cb_quant,
+            cr_quant,
+            strip_output,
+            &mut output,
+        )?;
+        Ok(output)
+    }
+
+    /// Builds baseline JPEG output from processed blocks into provided buffer.
+    fn build_jpeg_baseline_into(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
         let is_color = !config.pixel_format.is_grayscale();
         let width = config.width as usize;
         let height = config.height as usize;
 
-        let mut output = Vec::with_capacity(width * height / 4);
+        output.clear();
+        output
+            .try_reserve(width * height / 4)
+            .map_err(|_| Error::allocation_failed(width * height / 4, "baseline jpeg output"))?;
 
         // Branch based on XYB vs YCbCr mode
         let scan_data = if config.use_xyb {
             // XYB mode: uses different headers, tables, and encoding
-            config.write_header_xyb(&mut output)?;
-            config.write_app14_adobe(&mut output, 0)?;
-            config.write_icc_profile(&mut output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
-            config.write_quant_tables_xyb(&mut output, y_quant, cb_quant, cr_quant)?;
+            config.write_header_xyb(output)?;
+            config.write_app14_adobe(output, 0)?;
+            config.write_icc_profile(output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
+            config.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
             // Use SOF1 if any quant table needs 16-bit precision
             let is_extended =
                 y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
-            config.write_frame_header_xyb_ex(&mut output, is_extended)?;
+            config.write_frame_header_xyb_ex(output, is_extended)?;
 
             if config.optimize_huffman {
                 let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
@@ -1499,12 +1592,12 @@ impl StreamingEncoder {
                     &strip_output.cr_blocks,
                 )?;
 
-                config.write_huffman_tables_xyb_optimized(&mut output, &dc_table, &ac_table);
+                config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
 
                 if config.restart_interval > 0 {
-                    config.write_restart_interval(&mut output)?;
+                    config.write_restart_interval(output)?;
                 }
-                config.write_scan_header_xyb(&mut output)?;
+                config.write_scan_header_xyb(output)?;
 
                 config.encode_with_tables_xyb_raster(
                     &strip_output.y_blocks,
@@ -1514,12 +1607,12 @@ impl StreamingEncoder {
                     &ac_table,
                 )?
             } else {
-                config.write_huffman_tables(&mut output)?;
+                config.write_huffman_tables(output)?;
 
                 if config.restart_interval > 0 {
-                    config.write_restart_interval(&mut output)?;
+                    config.write_restart_interval(output)?;
                 }
-                config.write_scan_header_xyb(&mut output)?;
+                config.write_scan_header_xyb(output)?;
 
                 config.encode_with_tables_xyb_standard_raster(
                     &strip_output.y_blocks,
@@ -1529,12 +1622,12 @@ impl StreamingEncoder {
             }
         } else {
             // YCbCr mode: standard JPEG encoding
-            config.write_header(&mut output)?;
-            config.write_quant_tables(&mut output, y_quant, cb_quant, cr_quant)?;
+            config.write_header(output)?;
+            config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
             // Use SOF1 if any quant table needs 16-bit precision
             let is_extended =
                 y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
-            config.write_frame_header_ex(&mut output, is_extended)?;
+            config.write_frame_header_ex(output, is_extended)?;
 
             if config.optimize_huffman {
                 let tables = config.build_optimized_tables(
@@ -1544,12 +1637,12 @@ impl StreamingEncoder {
                     is_color,
                 )?;
 
-                config.write_huffman_tables_optimized(&mut output, &tables)?;
+                config.write_huffman_tables_optimized(output, &tables)?;
 
                 if config.restart_interval > 0 {
-                    config.write_restart_interval(&mut output)?;
+                    config.write_restart_interval(output)?;
                 }
-                config.write_scan_header(&mut output)?;
+                config.write_scan_header(output)?;
 
                 config.encode_with_tables(
                     &strip_output.y_blocks,
@@ -1559,12 +1652,12 @@ impl StreamingEncoder {
                     Some(&tables),
                 )?
             } else {
-                config.write_huffman_tables(&mut output)?;
+                config.write_huffman_tables(output)?;
 
                 if config.restart_interval > 0 {
-                    config.write_restart_interval(&mut output)?;
+                    config.write_restart_interval(output)?;
                 }
-                config.write_scan_header(&mut output)?;
+                config.write_scan_header(output)?;
 
                 config.encode_with_tables(
                     &strip_output.y_blocks,
@@ -1582,7 +1675,7 @@ impl StreamingEncoder {
         output.push(0xFF);
         output.push(crate::foundation::consts::MARKER_EOI);
 
-        Ok(output)
+        Ok(())
     }
 }
 
@@ -1659,10 +1752,10 @@ mod tests {
             .subsampling(Subsampling::S420)
             .estimate_memory_usage();
 
-        // Should be around 67 MB for 4K with 4:2:0 (includes token buffer)
-        // Allow some tolerance for implementation details
-        assert!(estimate > 60_000_000, "estimate {} too low", estimate);
-        assert!(estimate < 80_000_000, "estimate {} too high", estimate);
+        // 4K with 4:2:0: ~28 MB (blocks + entropy output + working buffers)
+        // Heaptrack measured ~28 MB for encoder alone (excluding input pixels)
+        assert!(estimate > 25_000_000, "estimate {} too low", estimate);
+        assert!(estimate < 40_000_000, "estimate {} too high", estimate);
     }
 
     #[test]
