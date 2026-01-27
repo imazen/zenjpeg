@@ -636,6 +636,46 @@ zenjpeg decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x s
    - Current impl: `streaming.rs:1574-1650` always reads from buffered `strip_output.*_blocks`
    - Fix: Add immediate-write mode for baseline + fixed Huffman (no two-pass needed)
 
+6. **Bounded-memory streaming heuristics (2026-01-27)**
+   - Problem: Partial Huffman optimization from early rows can cause 5-35% file size overhead
+   - Solution: Heuristic-gated transition with minimum row percentage
+
+   **Heuristics implemented:**
+   - `min_entropy(f64)`: Minimum AC entropy before transition (default: 4.0 bits)
+   - `min_coverage(f64)`: Minimum AC symbol coverage before transition (default: 30%)
+   - `min_transition_percent(usize)`: Minimum % of rows before transition (default: 50%)
+
+   **Test results across 32 CLIC 2025 validation images @ Q85:**
+
+   | Min %  | Mean    | Max     | Within 4% |
+   |--------|---------|---------|-----------|
+   | 0%     | 7.90%   | 36.55%  | 17/32     |
+   | 25%    | 1.21%   | 14.62%  | 30/32     |
+   | 30%    | 1.10%   | 13.41%  | 31/32     |
+   | 40%    | 0.83%   | 6.24%   | 31/32     |
+   | 50%    | 0.67%   | 3.62%   | 32/32 ✓   |
+
+   **Pathological image types:**
+   - Gradient sky images: Low entropy/coverage early, spikes then drops → entropy/coverage heuristics help
+   - Slow-to-converge images: High entropy/coverage early but distribution still evolving → min_percent helps
+
+   **API usage:**
+   ```rust
+   // Conservative (guarantees <4% overhead)
+   StreamingEncoder::new(w, h)
+       .memory_limit(1024 * 1024)
+       .require_stable_distribution()  // entropy=4.0, coverage=30%, min=50%
+       .start()
+
+   // Aggressive (up to ~6% overhead, more memory savings)
+   StreamingEncoder::new(w, h)
+       .memory_limit(1024 * 1024)
+       .min_entropy(4.0)
+       .min_coverage(30.0)
+       .min_transition_percent(40)
+       .start()
+   ```
+
 ### Callgrind Analysis (2026-01-22)
 
 Run: `valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli 512`
