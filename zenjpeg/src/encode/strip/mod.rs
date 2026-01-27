@@ -1672,6 +1672,7 @@ mod tests {
     /// This test checks heights 56-72 which cross the 64-pixel boundary (4 MCU rows).
     /// Validates that decoded output is close to original (PSNR-based check).
     #[test]
+    #[cfg(feature = "decoder")]
     fn test_strip_partial_mcu_heights() {
         use crate::encode::{EncoderConfig, PixelLayout};
         use enough::Unstoppable;

@@ -46,7 +46,8 @@ use enough::{Stop, Unstoppable};
 ///
 /// Use [`StreamingEncoder::new()`] to start building.
 #[derive(Debug, Clone)]
-pub(crate) struct StreamingEncoderBuilder {
+#[cfg_attr(not(feature = "test-utils"), doc(hidden))]
+pub struct StreamingEncoderBuilder {
     width: u32,
     height: u32,
     quality: Quality,
@@ -80,6 +81,8 @@ pub(crate) struct StreamingEncoderBuilder {
     trellis: Option<super::mozjpeg_compat::TrellisConfig>,
     /// Memory limit for bounded-memory streaming (bytes)
     memory_limit: Option<usize>,
+    /// Force transition to streaming after this many rows (for testing)
+    transition_after_rows: Option<usize>,
 }
 
 impl StreamingEncoderBuilder {
@@ -109,6 +112,7 @@ impl StreamingEncoderBuilder {
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
             memory_limit: None,
+            transition_after_rows: None,
         }
     }
 
@@ -131,7 +135,7 @@ impl StreamingEncoderBuilder {
     /// let enc = JpegEncoder::new(640, 480).quality(Quality::ApproxButteraugli(1.0));
     /// ```
     #[must_use]
-    pub(crate) fn quality(mut self, quality: impl Into<Quality>) -> Self {
+    pub fn quality(mut self, quality: impl Into<Quality>) -> Self {
         self.quality = quality.into();
         self
     }
@@ -154,7 +158,7 @@ impl StreamingEncoderBuilder {
     /// let enc = JpegEncoder::new(640, 480).distance(1.0);
     /// ```
     #[must_use]
-    pub(crate) fn distance(mut self, distance: f32) -> Self {
+    pub fn distance(mut self, distance: f32) -> Self {
         self.quality = Quality::ApproxButteraugli(distance);
         self
     }
@@ -176,7 +180,7 @@ impl StreamingEncoderBuilder {
     /// let enc = JpegEncoder::new(640, 480).progressive(true);
     /// ```
     #[must_use]
-    pub(crate) fn progressive(mut self, enable: bool) -> Self {
+    pub fn progressive(mut self, enable: bool) -> Self {
         if enable {
             self.mode = JpegMode::Progressive;
             self.optimize_huffman = true;
@@ -189,35 +193,35 @@ impl StreamingEncoderBuilder {
 
     /// Sets chroma subsampling.
     #[must_use]
-    pub(crate) fn subsampling(mut self, subsampling: Subsampling) -> Self {
+    pub fn subsampling(mut self, subsampling: Subsampling) -> Self {
         self.subsampling = subsampling;
         self
     }
 
     /// Sets the pixel format of input data.
     #[must_use]
-    pub(crate) fn pixel_format(mut self, format: PixelFormat) -> Self {
+    pub fn pixel_format(mut self, format: PixelFormat) -> Self {
         self.pixel_format = format;
         self
     }
 
     /// Sets the JPEG encoding mode.
     #[must_use]
-    pub(crate) fn mode(mut self, mode: JpegMode) -> Self {
+    pub fn mode(mut self, mode: JpegMode) -> Self {
         self.mode = mode;
         self
     }
 
     /// Enables optimized Huffman tables.
     #[must_use]
-    pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
+    pub fn optimize_huffman(mut self, enable: bool) -> Self {
         self.optimize_huffman = enable;
         self
     }
 
     /// Sets chroma downsampling method for subsampled modes.
     #[must_use]
-    pub(crate) fn chroma_downsampling(mut self, method: DownsamplingMethod) -> Self {
+    pub fn chroma_downsampling(mut self, method: DownsamplingMethod) -> Self {
         self.chroma_downsampling = method;
         self
     }
@@ -242,7 +246,7 @@ impl StreamingEncoderBuilder {
     ///     .encode(&pixels)?;
     /// ```
     #[must_use]
-    pub(crate) fn sharp_yuv(mut self, enable: bool) -> Self {
+    pub fn sharp_yuv(mut self, enable: bool) -> Self {
         self.chroma_downsampling = if enable {
             DownsamplingMethod::GammaAwareIterative
         } else {
@@ -253,7 +257,7 @@ impl StreamingEncoderBuilder {
 
     /// Sets the restart interval (MCUs between restart markers).
     #[must_use]
-    pub(crate) fn restart_interval(mut self, interval: u16) -> Self {
+    pub fn restart_interval(mut self, interval: u16) -> Self {
         self.restart_interval = interval;
         self
     }
@@ -274,7 +278,7 @@ impl StreamingEncoderBuilder {
     /// Requires the `parallel` feature to be enabled.
     #[cfg(feature = "parallel")]
     #[must_use]
-    pub(crate) fn parallel(mut self, enable: bool) -> Self {
+    pub fn parallel(mut self, enable: bool) -> Self {
         self.parallel = enable;
         self
     }
@@ -287,7 +291,7 @@ impl StreamingEncoderBuilder {
     /// Takes `Box<EncodingTables>` since custom tables are rarely used and
     /// the struct is ~1.5KB.
     #[must_use]
-    pub(crate) fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
+    pub fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
         self.encoding_tables = Some(tables);
         self
     }
@@ -304,7 +308,7 @@ impl StreamingEncoderBuilder {
     /// Note: Without ICC profile support in the decoder, images will display with
     /// incorrect colors. Use standard YCbCr mode for maximum compatibility.
     #[must_use]
-    pub(crate) fn use_xyb(mut self, enable: bool) -> Self {
+    pub fn use_xyb(mut self, enable: bool) -> Self {
         self.use_xyb = enable;
         self
     }
@@ -318,7 +322,7 @@ impl StreamingEncoderBuilder {
     ///
     /// Enabled by default. This technique was pioneered by @kornel in mozjpeg.
     #[must_use]
-    pub(crate) fn deringing(mut self, enable: bool) -> Self {
+    pub fn deringing(mut self, enable: bool) -> Self {
         self.deringing = enable;
         self
     }
@@ -331,7 +335,7 @@ impl StreamingEncoderBuilder {
     /// When disabled, quantization values are clamped to 255, producing
     /// baseline-compatible JPEGs (SOF0 marker) that work with all decoders.
     #[must_use]
-    pub(crate) fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
+    pub fn allow_16bit_quant_tables(mut self, enable: bool) -> Self {
         self.allow_16bit_quant_tables = enable;
         self
     }
@@ -341,7 +345,7 @@ impl StreamingEncoderBuilder {
     /// When enabled (default), uses 3 tables: Y, Cb, Cr.
     /// When disabled, uses 2 tables: Y, shared chroma.
     #[must_use]
-    pub(crate) fn separate_chroma_tables(mut self, enable: bool) -> Self {
+    pub fn separate_chroma_tables(mut self, enable: bool) -> Self {
         self.separate_chroma_tables = enable;
         self
     }
@@ -355,7 +359,7 @@ impl StreamingEncoderBuilder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub(crate) fn hybrid_trellis(mut self, enable: bool) -> Self {
+    pub fn hybrid_trellis(mut self, enable: bool) -> Self {
         self.hybrid_config = if enable {
             crate::hybrid::config::HybridConfig::default()
         } else {
@@ -372,7 +376,7 @@ impl StreamingEncoderBuilder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub(crate) fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
+    pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.hybrid_config = config;
         self
     }
@@ -401,7 +405,7 @@ impl StreamingEncoderBuilder {
     /// Requires the `experimental-hybrid-trellis` feature.
     #[cfg(feature = "experimental-hybrid-trellis")]
     #[must_use]
-    pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
+    pub fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);
         self
     }
@@ -438,9 +442,29 @@ impl StreamingEncoderBuilder {
     ///     .start()?;
     /// ```
     #[must_use]
-    pub(crate) fn memory_limit(mut self, limit: usize) -> Self {
+    pub fn memory_limit(mut self, limit: usize) -> Self {
         self.memory_limit = Some(limit);
         self
+    }
+
+    /// Forces transition to streaming mode after the specified number of rows.
+    ///
+    /// This is primarily for testing to measure file size overhead at different
+    /// transition points. In production, use `memory_limit()` instead.
+    #[must_use]
+    pub fn transition_after_rows(mut self, rows: usize) -> Self {
+        self.transition_after_rows = Some(rows);
+        self
+    }
+
+    /// Forces transition to streaming mode after the specified percentage of rows.
+    ///
+    /// Convenience method that calculates the row count from percentage.
+    /// For example, `transition_after_percent(25)` transitions after 25% of rows.
+    #[must_use]
+    pub fn transition_after_percent(self, percent: usize) -> Self {
+        let rows = (self.height as usize * percent) / 100;
+        self.transition_after_rows(rows.max(16)) // At least 1 MCU row (16 pixels)
     }
 
     /// Starts a streaming encoder for row-by-row input.
@@ -470,7 +494,7 @@ impl StreamingEncoderBuilder {
     /// Returns an error if:
     /// - Dimensions are zero or exceed maximum
     /// - Memory allocation fails
-    pub(crate) fn start(self) -> Result<StreamingEncoder> {
+    pub fn start(self) -> Result<StreamingEncoder> {
         StreamingEncoder::from_builder(self)
     }
 
@@ -496,7 +520,7 @@ impl StreamingEncoderBuilder {
     /// Returns an error if:
     /// - Buffer size doesn't match width × height × bytes_per_pixel
     /// - Encoding fails
-    pub(crate) fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
+    pub fn encode(self, data: &[u8]) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
         let bpp = self.pixel_format.bytes_per_pixel();
@@ -520,7 +544,7 @@ impl StreamingEncoderBuilder {
     /// Encodes a complete image buffer with cancellation support.
     ///
     /// Like `encode()`, but checks for cancellation between strips.
-    pub(crate) fn encode_with_stop(self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
+    pub fn encode_with_stop(self, data: &[u8], stop: impl Stop) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
         let bpp = self.pixel_format.bytes_per_pixel();
@@ -563,7 +587,7 @@ impl StreamingEncoderBuilder {
     /// println!("Estimated peak memory: {} MB", estimated / 1024 / 1024);
     /// ```
     #[must_use]
-    pub(crate) fn estimate_memory_usage(&self) -> usize {
+    pub fn estimate_memory_usage(&self) -> usize {
         let width = self.width as usize;
         let height = self.height as usize;
 
@@ -685,7 +709,7 @@ impl StreamingEncoderBuilder {
     /// assert!(actual_peak <= ceiling);
     /// ```
     #[must_use]
-    pub(crate) fn estimate_memory_ceiling(&self) -> usize {
+    pub fn estimate_memory_ceiling(&self) -> usize {
         let width = self.width as usize;
         let height = self.height as usize;
 
@@ -818,7 +842,8 @@ impl StreamingEncoderBuilder {
 /// 3. **Streaming phase**: Encodes new blocks immediately after quantization
 ///
 /// This allows optimized Huffman encoding with bounded memory usage.
-pub(crate) struct StreamingEncoder {
+#[cfg_attr(not(feature = "test-utils"), doc(hidden))]
+pub struct StreamingEncoder {
     /// Image width in pixels
     width: usize,
     /// Image height in pixels
@@ -865,6 +890,8 @@ pub(crate) struct StreamingEncoder {
     streaming_bit_buffer: u64,
     /// Number of valid bits in streaming_bit_buffer
     streaming_bits_in_buffer: u8,
+    /// Force transition to streaming after this many rows (for testing)
+    transition_after_rows: Option<usize>,
 }
 
 impl StreamingEncoder {
@@ -884,7 +911,7 @@ impl StreamingEncoder {
     /// ```
     #[must_use]
     #[allow(clippy::new_ret_no_self)] // Builder pattern: new() returns builder
-    pub(crate) fn new(width: u32, height: u32) -> StreamingEncoderBuilder {
+    pub fn new(width: u32, height: u32) -> StreamingEncoderBuilder {
         StreamingEncoderBuilder::new(width, height)
     }
 
@@ -1081,30 +1108,31 @@ impl StreamingEncoder {
             streaming_restart_count: 0,
             streaming_bit_buffer: 0,
             streaming_bits_in_buffer: 0,
+            transition_after_rows: builder.transition_after_rows,
         })
     }
 
     /// Returns the number of rows pushed so far.
     #[must_use]
-    pub(crate) fn rows_pushed(&self) -> usize {
+    pub fn rows_pushed(&self) -> usize {
         self.current_y + self.rows_buffered
     }
 
     /// Returns the expected number of bytes per row.
     #[must_use]
-    pub(crate) fn bytes_per_row(&self) -> usize {
+    pub fn bytes_per_row(&self) -> usize {
         self.bytes_per_row
     }
 
     /// Returns the total height of the image.
     #[must_use]
-    pub(crate) fn height(&self) -> usize {
+    pub fn height(&self) -> usize {
         self.height
     }
 
     /// Returns the strip height (internal processing unit).
     #[must_use]
-    pub(crate) fn strip_height(&self) -> usize {
+    pub fn strip_height(&self) -> usize {
         self.strip_height
     }
 
@@ -1113,7 +1141,7 @@ impl StreamingEncoder {
     /// This tracks all major allocations made during encoding setup,
     /// including color plane buffers, DCT block storage, and AQ buffers.
     #[must_use]
-    pub(crate) fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
+    pub fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
         self.processor.allocation_stats()
     }
 
@@ -1123,7 +1151,7 @@ impl StreamingEncoder {
     /// rather than being buffered. This happens after the memory limit is
     /// reached and the encoder transitions from accumulation to streaming.
     #[must_use]
-    pub(crate) fn is_streaming(&self) -> bool {
+    pub fn is_streaming(&self) -> bool {
         self.streaming_mode
     }
 
@@ -1132,7 +1160,7 @@ impl StreamingEncoder {
     /// This counts the memory used by quantized coefficient blocks (Y, Cb, Cr).
     /// Each block is 64 i16 coefficients = 128 bytes.
     #[must_use]
-    pub(crate) fn estimate_block_storage(&self) -> usize {
+    pub fn estimate_block_storage(&self) -> usize {
         self.processor.estimate_block_storage()
     }
 
@@ -1153,24 +1181,28 @@ impl StreamingEncoder {
     /// - JPEG header writing fails
     /// - Block encoding fails
     fn check_and_maybe_transition(&mut self) -> Result<()> {
-        // Skip if no memory limit set or already in streaming mode
-        let limit = match self.memory_limit {
-            Some(limit) => limit,
-            None => return Ok(()),
-        };
-
+        // Skip if already in streaming mode
         if self.streaming_mode {
             return Ok(());
         }
 
-        // Check if we've exceeded the limit
-        let current_usage = self.estimate_block_storage();
-        if current_usage < limit {
-            return Ok(());
+        // Check row-based threshold (for testing different transition points)
+        if let Some(threshold_rows) = self.transition_after_rows {
+            let rows_processed = self.current_y;
+            if rows_processed >= threshold_rows {
+                return self.transition_to_streaming();
+            }
         }
 
-        // Transition to streaming mode
-        self.transition_to_streaming()
+        // Check memory limit
+        if let Some(limit) = self.memory_limit {
+            let current_usage = self.estimate_block_storage();
+            if current_usage >= limit {
+                return self.transition_to_streaming();
+            }
+        }
+
+        Ok(())
     }
 
     /// Transitions to streaming mode.
@@ -1661,7 +1693,7 @@ impl StreamingEncoder {
     /// - Row length doesn't match expected bytes per row
     /// - All rows have already been pushed
     /// - Internal processing fails
-    pub(crate) fn push_row(&mut self, row: &[u8]) -> Result<()> {
+    pub fn push_row(&mut self, row: &[u8]) -> Result<()> {
         self.push_row_with_stop(row, Unstoppable)
     }
 
@@ -1669,7 +1701,7 @@ impl StreamingEncoder {
     ///
     /// The `stop` source is checked before processing each strip.
     /// Returns `Error::cancelled()` if cancellation is requested.
-    pub(crate) fn push_row_with_stop(&mut self, row: &[u8], stop: impl Stop) -> Result<()> {
+    pub fn push_row_with_stop(&mut self, row: &[u8], stop: impl Stop) -> Result<()> {
         // Check cancellation
         stop.check()?;
 
@@ -1710,7 +1742,7 @@ impl StreamingEncoder {
     /// - Data length doesn't match expected size
     /// - Too many rows would be pushed
     /// - Internal processing fails
-    pub(crate) fn push_rows(&mut self, data: &[u8], num_rows: usize) -> Result<()> {
+    pub fn push_rows(&mut self, data: &[u8], num_rows: usize) -> Result<()> {
         self.push_rows_with_stop(data, num_rows, Unstoppable)
     }
 
@@ -1719,7 +1751,7 @@ impl StreamingEncoder {
     /// This method is optimized to process complete strips directly from the input
     /// buffer without intermediate copies. Only partial strips at the beginning
     /// and end require buffering.
-    pub(crate) fn push_rows_with_stop(
+    pub fn push_rows_with_stop(
         &mut self,
         data: &[u8],
         num_rows: usize,
@@ -1834,7 +1866,7 @@ impl StreamingEncoder {
     /// - RGB rows are already buffered (can't mix RGB and YCbCr input)
     /// - Plane sizes don't match expected dimensions
     /// - XYB mode is enabled (requires RGB input)
-    pub(crate) fn push_ycbcr_strip_f32(
+    pub fn push_ycbcr_strip_f32(
         &mut self,
         y: &[f32],
         cb: &[f32],
@@ -1912,7 +1944,7 @@ impl StreamingEncoder {
     /// - 4:4:4: cb/cr at full width × full height
     /// - 4:2:2: cb/cr at width/2 × full height
     /// - 4:2:0: cb/cr at width/2 × height/2
-    pub(crate) fn push_ycbcr_strip_f32_subsampled(
+    pub fn push_ycbcr_strip_f32_subsampled(
         &mut self,
         y: &[f32],
         cb: &[f32],
@@ -2081,12 +2113,12 @@ impl StreamingEncoder {
     /// Returns an error if:
     /// - Not all rows have been pushed
     /// - JPEG generation fails
-    pub(crate) fn finish(self) -> Result<Vec<u8>> {
+    pub fn finish(self) -> Result<Vec<u8>> {
         self.finish_with_stop(Unstoppable)
     }
 
     /// Finishes encoding with cancellation support.
-    pub(crate) fn finish_with_stop(self, stop: impl Stop) -> Result<Vec<u8>> {
+    pub fn finish_with_stop(self, stop: impl Stop) -> Result<Vec<u8>> {
         let mut output = Vec::new();
         self.finish_into_with_stop(&mut output, stop)?;
         Ok(output)
@@ -2103,12 +2135,12 @@ impl StreamingEncoder {
     /// - Not all rows have been pushed
     /// - JPEG generation fails
     /// - Memory allocation fails
-    pub(crate) fn finish_into(self, output: &mut Vec<u8>) -> Result<()> {
+    pub fn finish_into(self, output: &mut Vec<u8>) -> Result<()> {
         self.finish_into_with_stop(output, Unstoppable)
     }
 
     /// Finishes encoding into provided buffer with cancellation support.
-    pub(crate) fn finish_into_with_stop(
+    pub fn finish_into_with_stop(
         mut self,
         output: &mut Vec<u8>,
         stop: impl Stop,
