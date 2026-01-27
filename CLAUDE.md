@@ -620,6 +620,22 @@ zenjpeg decoder is **4-5x slower** than zune-jpeg for baseline JPEG and **2-4x s
    - Uses scaled integer IDCT
    - Not bottleneck currently
 
+5. **Streaming encoder overhead allocation issue (2026-01-26)**
+   - `StreamingEncoder` pre-allocates storage for ALL DCT blocks upfront (`y_blocks`, `cb_blocks`, `cr_blocks`)
+   - Location: `zenjpeg/src/encode/strip/mod.rs:459-466`
+   - For 4000×3000 image at 4:2:0:
+     - `y_blocks`: 187,500 blocks × 128 bytes = **24 MB**
+     - `cb_blocks`: 47,000 blocks × 128 bytes = **6 MB**
+     - `cr_blocks`: 47,000 blocks × 128 bytes = **6 MB**
+     - Total: **~36 MB** just for block storage
+   - Additional buffers (`y_strip`, `cb_strip`, `cr_strip`, `all_aq_strengths`) add more
+   - Heaptrack verified: 68 MB peak for 4000×3000 UltraHDR encode vs theoretical ~4 MB for true streaming
+   - Root cause: Architecture buffers ALL blocks before encoding, even with `optimize_huffman=false`
+   - "Streaming" only streams INPUT rows, not OUTPUT blocks
+   - Baseline mode with fixed Huffman tables COULD support true streaming (write blocks immediately)
+   - Current impl: `streaming.rs:1574-1650` always reads from buffered `strip_output.*_blocks`
+   - Fix: Add immediate-write mode for baseline + fixed Huffman (no two-pass needed)
+
 ### Callgrind Analysis (2026-01-22)
 
 Run: `valgrind --tool=callgrind ./target/release/examples/valgrind_decode jpegli 512`
