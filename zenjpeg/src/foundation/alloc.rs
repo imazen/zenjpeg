@@ -18,7 +18,9 @@
 use crate::error::{Error, Result};
 
 // Re-export for use by callers who want to profile specific allocations
-pub use crate::foundation::instrumented_vec::{InstrumentedVec, ProfiledVec, ProfiledVecExt, VecStats};
+pub use crate::foundation::instrumented_vec::{
+    InstrumentedVec, ProfiledVec, ProfiledVecExt, VecStats,
+};
 
 /// Maximum dimension for JPEG images (matches libjpeg-turbo's JPEG_MAX_DIMENSION).
 /// Slightly under 64K to prevent overflow in 16-bit calculations.

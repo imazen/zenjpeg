@@ -78,6 +78,8 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Trellis quantization config (mozjpeg-compat API, requires `experimental-hybrid-trellis`)
     #[cfg(feature = "experimental-hybrid-trellis")]
     trellis: Option<super::mozjpeg_compat::TrellisConfig>,
+    /// Memory limit for bounded-memory streaming (bytes)
+    memory_limit: Option<usize>,
 }
 
 impl StreamingEncoderBuilder {
@@ -106,6 +108,7 @@ impl StreamingEncoderBuilder {
             custom_aq_map: None,
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
+            memory_limit: None,
         }
     }
 
@@ -400,6 +403,43 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn aq_map(mut self, map: crate::quant::aq::AQStrengthMap) -> Self {
         self.custom_aq_map = Some(map);
+        self
+    }
+
+    /// Sets a memory limit for bounded-memory streaming.
+    ///
+    /// When the accumulated block storage reaches this limit, the encoder
+    /// transitions to streaming mode:
+    ///
+    /// 1. Builds Huffman tables from accumulated symbol frequencies
+    /// 2. Writes JPEG header (SOI, DQT, SOF, DHT, SOS)
+    /// 3. Encodes all accumulated blocks and releases their storage
+    /// 4. Continues encoding new blocks immediately (no buffering)
+    ///
+    /// This allows optimized Huffman encoding with bounded memory usage.
+    ///
+    /// **Important**: Progressive mode is not compatible with bounded streaming
+    /// because progressive encoding requires multiple passes over all blocks.
+    /// Use baseline mode (`progressive(false)`) with memory limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `limit` - Maximum bytes for block storage. Recommended: at least
+    ///   `estimate_memory_usage() / 4` to accumulate enough data for good
+    ///   Huffman table optimization.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let encoder = StreamingEncoder::new(4000, 3000)
+    ///     .quality(85)
+    ///     .progressive(false)  // Required for bounded streaming
+    ///     .memory_limit(8 * 1024 * 1024)  // 8 MB limit
+    ///     .start()?;
+    /// ```
+    #[must_use]
+    pub(crate) fn memory_limit(mut self, limit: usize) -> Self {
+        self.memory_limit = Some(limit);
         self
     }
 
@@ -764,6 +804,20 @@ impl StreamingEncoderBuilder {
 ///
 /// Accepts rows incrementally and outputs JPEG at the end.
 /// Uses strip-based processing internally for low peak memory usage.
+///
+/// # Bounded-Memory Streaming
+///
+/// By default, the encoder buffers all quantized blocks until `finish()`.
+/// With `set_memory_limit()`, the encoder can transition to true streaming
+/// mode after accumulating enough data to build optimal Huffman tables:
+///
+/// 1. **Accumulation phase**: Buffers blocks and counts symbol frequencies
+/// 2. **Transition**: When memory limit reached, builds Huffman tables from
+///    accumulated frequencies, writes JPEG header, encodes buffered blocks,
+///    then releases block storage
+/// 3. **Streaming phase**: Encodes new blocks immediately after quantization
+///
+/// This allows optimized Huffman encoding with bounded memory usage.
 pub(crate) struct StreamingEncoder {
     /// Image width in pixels
     width: usize,
@@ -791,6 +845,22 @@ pub(crate) struct StreamingEncoder {
     y_quant: QuantTable,
     cb_quant: QuantTable,
     cr_quant: QuantTable,
+
+    // === Bounded-memory streaming fields ===
+    /// Memory limit for block storage (None = unlimited buffering)
+    memory_limit: Option<usize>,
+    /// True if we've transitioned to streaming mode (header written, blocks encoded immediately)
+    streaming_mode: bool,
+    /// Output buffer for streaming mode (holds JPEG data being built)
+    streaming_output: Option<Vec<u8>>,
+    /// Optimized Huffman tables (built during transition, used in streaming mode)
+    streaming_tables: Option<crate::huffman::optimize::OptimizedHuffmanTables>,
+    /// Previous DC values for entropy encoding continuity in streaming mode
+    streaming_prev_dc: [i16; 3],
+    /// MCU index for restart interval tracking in streaming mode
+    streaming_mcu_idx: usize,
+    /// Restart counter (0-7) for streaming mode
+    streaming_restart_count: u8,
 }
 
 impl StreamingEncoder {
@@ -977,6 +1047,13 @@ impl StreamingEncoder {
             separate_chroma_tables: builder.separate_chroma_tables,
         };
 
+        // Validate memory limit compatibility
+        if builder.memory_limit.is_some() && builder.mode == JpegMode::Progressive {
+            return Err(Error::unsupported_feature(
+                "memory_limit is not compatible with progressive mode (requires multiple passes)",
+            ));
+        }
+
         Ok(Self {
             width,
             height,
@@ -990,6 +1067,14 @@ impl StreamingEncoder {
             y_quant,
             cb_quant,
             cr_quant,
+            // Bounded-memory streaming fields
+            memory_limit: builder.memory_limit,
+            streaming_mode: false,
+            streaming_output: None,
+            streaming_tables: None,
+            streaming_prev_dc: [0; 3],
+            streaming_mcu_idx: 0,
+            streaming_restart_count: 0,
         })
     }
 
@@ -1024,6 +1109,426 @@ impl StreamingEncoder {
     #[must_use]
     pub(crate) fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
         self.processor.allocation_stats()
+    }
+
+    /// Returns whether the encoder is in streaming mode.
+    ///
+    /// In streaming mode, blocks are encoded immediately after quantization
+    /// rather than being buffered. This happens after the memory limit is
+    /// reached and the encoder transitions from accumulation to streaming.
+    #[must_use]
+    pub(crate) fn is_streaming(&self) -> bool {
+        self.streaming_mode
+    }
+
+    /// Estimates current block storage memory usage in bytes.
+    ///
+    /// This counts the memory used by quantized coefficient blocks (Y, Cb, Cr).
+    /// Each block is 64 i16 coefficients = 128 bytes.
+    #[must_use]
+    pub(crate) fn estimate_block_storage(&self) -> usize {
+        self.processor.estimate_block_storage()
+    }
+
+    /// Checks if memory limit is exceeded and transitions to streaming mode if needed.
+    ///
+    /// This should be called after each strip is processed. If the memory limit
+    /// is exceeded, this method:
+    /// 1. Builds Huffman tables from accumulated inline frequencies
+    /// 2. Writes JPEG header (SOI, APP0, DQT, SOF, DHT, SOS)
+    /// 3. Encodes all accumulated blocks
+    /// 4. Releases block storage
+    /// 5. Sets streaming_mode = true
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Huffman table generation fails
+    /// - JPEG header writing fails
+    /// - Block encoding fails
+    fn check_and_maybe_transition(&mut self) -> Result<()> {
+        // Skip if no memory limit set or already in streaming mode
+        let limit = match self.memory_limit {
+            Some(limit) => limit,
+            None => return Ok(()),
+        };
+
+        if self.streaming_mode {
+            return Ok(());
+        }
+
+        // Check if we've exceeded the limit
+        let current_usage = self.estimate_block_storage();
+        if current_usage < limit {
+            return Ok(());
+        }
+
+        // Transition to streaming mode
+        self.transition_to_streaming()
+    }
+
+    /// Transitions to streaming mode.
+    ///
+    /// This is the core bounded-memory streaming implementation:
+    /// 1. Builds Huffman tables from accumulated inline frequencies
+    /// 2. Writes JPEG header up through SOS marker
+    /// 3. Encodes all accumulated blocks
+    /// 4. Releases block storage
+    /// 5. Sets streaming_mode = true
+    fn transition_to_streaming(&mut self) -> Result<()> {
+        use crate::foundation::bitstream::BitWriter;
+
+        // Get inline frequencies from processor
+        let (dc_luma_freq, ac_luma_freq, dc_chroma_freq, ac_chroma_freq) =
+            self.processor.frequency_counters();
+
+        // Build Huffman tables from frequencies
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
+        let ac_luma = ac_luma_freq.generate_table_with_method(huffman_method)?;
+
+        let is_color = !self.config.pixel_format.is_grayscale();
+        let (dc_chroma, ac_chroma) = if is_color {
+            (
+                dc_chroma_freq.generate_table_with_method(huffman_method)?,
+                ac_chroma_freq.generate_table_with_method(huffman_method)?,
+            )
+        } else {
+            // Use standard tables for grayscale (won't be used)
+            use crate::huffman::optimize::OptimizedTable;
+            use crate::huffman::{
+                HuffmanEncodeTable, STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES,
+                STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
+            };
+            (
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                    bits: STD_DC_CHROMINANCE_BITS,
+                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+                },
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                    bits: STD_AC_CHROMINANCE_BITS,
+                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+                },
+            )
+        };
+
+        let tables = crate::huffman::optimize::OptimizedHuffmanTables {
+            dc_luma,
+            ac_luma,
+            dc_chroma,
+            ac_chroma,
+        };
+
+        // Initialize output buffer
+        let mut output = Vec::new();
+        if output.try_reserve(64 * 1024).is_err() {
+            return Err(Error::allocation_failed(
+                64 * 1024,
+                "streaming output buffer",
+            ));
+        }
+
+        // Write JPEG header using ComputedConfig methods
+        self.config.write_header(&mut output)?;
+        self.config.write_quant_tables(
+            &mut output,
+            &self.y_quant,
+            &self.cb_quant,
+            &self.cr_quant,
+        )?;
+        self.config.write_frame_header(&mut output)?;
+        self.config
+            .write_huffman_tables_optimized(&mut output, &tables)?;
+
+        // Write DRI if restart interval is set
+        if self.config.restart_interval > 0 {
+            self.config.write_restart_interval(&mut output)?;
+        }
+
+        // Write SOS marker (start of scan)
+        self.config.write_scan_header(&mut output)?;
+
+        // Encode accumulated blocks
+        let blocks = self.processor.take_blocks();
+        let mut writer = BitWriter::new();
+
+        // Encode all accumulated blocks in MCU order
+        let (prev_dc, mcu_idx, restart_count) = self.encode_blocks_mcu_order_ex(
+            &blocks.y_blocks,
+            &blocks.cb_blocks,
+            &blocks.cr_blocks,
+            &tables,
+            &mut writer,
+            is_color,
+            [0, 0, 0],
+            0,
+            0,
+        )?;
+
+        // Flush bit writer to output
+        writer.flush_without_eoi(&mut output)?;
+
+        // Save state for continuing in streaming mode
+        self.streaming_prev_dc = prev_dc;
+        self.streaming_mcu_idx = mcu_idx;
+        self.streaming_restart_count = restart_count;
+        self.streaming_output = Some(output);
+        self.streaming_tables = Some(tables);
+        self.streaming_mode = true;
+
+        Ok(())
+    }
+
+    /// Encodes blocks in MCU order and returns the final DC prediction values.
+    ///
+    /// # Arguments
+    /// * `y_blocks`, `cb_blocks`, `cr_blocks` - Blocks to encode (can be subset of image)
+    /// * `tables` - Huffman tables to use
+    /// * `writer` - BitWriter to write encoded data to
+    /// * `is_color` - Whether this is a color image
+    /// * `start_prev_dc` - Starting DC prediction values (Y, Cb, Cr)
+    /// * `start_mcu_idx` - Starting MCU index (for restart interval tracking)
+    ///
+    /// Returns: (final DC values, final MCU index, restart counter)
+    fn encode_blocks_mcu_order_ex(
+        &self,
+        y_blocks: &[[i16; 64]],
+        cb_blocks: &[[i16; 64]],
+        cr_blocks: &[[i16; 64]],
+        tables: &crate::huffman::optimize::OptimizedHuffmanTables,
+        writer: &mut crate::foundation::bitstream::BitWriter,
+        is_color: bool,
+        start_prev_dc: [i16; 3],
+        start_mcu_idx: usize,
+        start_restart_count: u8,
+    ) -> Result<([i16; 3], usize, u8)> {
+        use crate::entropy;
+
+        let (h_samp, v_samp) = match self.config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
+
+        let y_blocks_h = (self.width + 7) / 8;
+        let y_blocks_v = (self.height + 7) / 8;
+        let c_blocks_h = ((self.width + h_samp - 1) / h_samp + 7) / 8;
+        let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+        let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+
+        let mut prev_y_dc = start_prev_dc[0];
+        let mut prev_cb_dc = start_prev_dc[1];
+        let mut prev_cr_dc = start_prev_dc[2];
+
+        let restart_interval = self.config.restart_interval as usize;
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = start_mcu_idx;
+        let mut restart_count = start_restart_count;
+
+        const ZERO_BLOCK: [i16; 64] = [0i16; 64];
+
+        for mcu_y in 0..mcu_v {
+            for mcu_x in 0..mcu_h {
+                // Encode Y blocks in this MCU
+                for dy in 0..v_samp {
+                    for dx in 0..h_samp {
+                        let y_bx = mcu_x * h_samp + dx;
+                        let y_by = mcu_y * v_samp + dy;
+                        let block = if y_bx < y_blocks_h && y_by < y_blocks_v {
+                            let y_idx = y_by * y_blocks_h + y_bx;
+                            y_blocks.get(y_idx).unwrap_or(&ZERO_BLOCK)
+                        } else {
+                            &ZERO_BLOCK
+                        };
+
+                        entropy::encode_block_to_writer(
+                            block,
+                            &tables.dc_luma.table,
+                            &tables.ac_luma.table,
+                            prev_y_dc,
+                            writer,
+                        )?;
+                        prev_y_dc = block[0];
+                    }
+                }
+
+                // Encode Cb/Cr blocks
+                if is_color {
+                    let c_idx = mcu_y * c_blocks_h + mcu_x;
+                    let cb_block = cb_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
+                    let cr_block = cr_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
+
+                    entropy::encode_block_to_writer(
+                        cb_block,
+                        &tables.dc_chroma.table,
+                        &tables.ac_chroma.table,
+                        prev_cb_dc,
+                        writer,
+                    )?;
+                    prev_cb_dc = cb_block[0];
+
+                    entropy::encode_block_to_writer(
+                        cr_block,
+                        &tables.dc_chroma.table,
+                        &tables.ac_chroma.table,
+                        prev_cr_dc,
+                        writer,
+                    )?;
+                    prev_cr_dc = cr_block[0];
+                }
+
+                mcu_idx += 1;
+
+                // Handle restart markers
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    writer.flush_restart_marker(restart_count)?;
+                    restart_count = (restart_count + 1) % 8;
+                    prev_y_dc = 0;
+                    prev_cb_dc = 0;
+                    prev_cr_dc = 0;
+                }
+            }
+        }
+
+        Ok(([prev_y_dc, prev_cb_dc, prev_cr_dc], mcu_idx, restart_count))
+    }
+
+    /// Simple wrapper for encode_blocks_mcu_order_ex that starts from zero state.
+    fn encode_blocks_mcu_order(
+        &self,
+        y_blocks: &[[i16; 64]],
+        cb_blocks: &[[i16; 64]],
+        cr_blocks: &[[i16; 64]],
+        tables: &crate::huffman::optimize::OptimizedHuffmanTables,
+        writer: &mut crate::foundation::bitstream::BitWriter,
+        is_color: bool,
+    ) -> Result<(i16, i16, i16)> {
+        let (prev_dc, _, _) = self.encode_blocks_mcu_order_ex(
+            y_blocks,
+            cb_blocks,
+            cr_blocks,
+            tables,
+            writer,
+            is_color,
+            [0, 0, 0],
+            0,
+            0,
+        )?;
+        Ok((prev_dc[0], prev_dc[1], prev_dc[2]))
+    }
+
+    /// Static version of encode_blocks_mcu_order_ex that doesn't require &self.
+    ///
+    /// Used by finish_streaming where self.processor has been consumed.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_blocks_mcu_order_static(
+        y_blocks: &[[i16; 64]],
+        cb_blocks: &[[i16; 64]],
+        cr_blocks: &[[i16; 64]],
+        tables: &crate::huffman::optimize::OptimizedHuffmanTables,
+        writer: &mut crate::foundation::bitstream::BitWriter,
+        is_color: bool,
+        start_prev_dc: [i16; 3],
+        start_mcu_idx: usize,
+        start_restart_count: u8,
+        subsampling: Subsampling,
+        width: usize,
+        height: usize,
+        restart_interval: u16,
+    ) -> Result<([i16; 3], usize, u8)> {
+        use crate::entropy;
+
+        let (h_samp, v_samp) = match subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
+
+        let y_blocks_h = (width + 7) / 8;
+        let y_blocks_v = (height + 7) / 8;
+        let c_blocks_h = ((width + h_samp - 1) / h_samp + 7) / 8;
+        let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+        let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+
+        let mut prev_y_dc = start_prev_dc[0];
+        let mut prev_cb_dc = start_prev_dc[1];
+        let mut prev_cr_dc = start_prev_dc[2];
+
+        let restart_interval = restart_interval as usize;
+        let total_mcus = mcu_h * mcu_v;
+        let mut mcu_idx = start_mcu_idx;
+        let mut restart_count = start_restart_count;
+
+        const ZERO_BLOCK: [i16; 64] = [0i16; 64];
+
+        for mcu_y in 0..mcu_v {
+            for mcu_x in 0..mcu_h {
+                // Encode Y blocks in this MCU
+                for dy in 0..v_samp {
+                    for dx in 0..h_samp {
+                        let y_bx = mcu_x * h_samp + dx;
+                        let y_by = mcu_y * v_samp + dy;
+                        let block = if y_bx < y_blocks_h && y_by < y_blocks_v {
+                            let y_idx = y_by * y_blocks_h + y_bx;
+                            y_blocks.get(y_idx).unwrap_or(&ZERO_BLOCK)
+                        } else {
+                            &ZERO_BLOCK
+                        };
+
+                        entropy::encode_block_to_writer(
+                            block,
+                            &tables.dc_luma.table,
+                            &tables.ac_luma.table,
+                            prev_y_dc,
+                            writer,
+                        )?;
+                        prev_y_dc = block[0];
+                    }
+                }
+
+                // Encode Cb/Cr blocks
+                if is_color {
+                    let c_idx = mcu_y * c_blocks_h + mcu_x;
+                    let cb_block = cb_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
+                    let cr_block = cr_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
+
+                    entropy::encode_block_to_writer(
+                        cb_block,
+                        &tables.dc_chroma.table,
+                        &tables.ac_chroma.table,
+                        prev_cb_dc,
+                        writer,
+                    )?;
+                    prev_cb_dc = cb_block[0];
+
+                    entropy::encode_block_to_writer(
+                        cr_block,
+                        &tables.dc_chroma.table,
+                        &tables.ac_chroma.table,
+                        prev_cr_dc,
+                        writer,
+                    )?;
+                    prev_cr_dc = cr_block[0];
+                }
+
+                mcu_idx += 1;
+
+                // Handle restart markers
+                if restart_interval > 0 && mcu_idx < total_mcus && mcu_idx % restart_interval == 0 {
+                    writer.flush_restart_marker(restart_count)?;
+                    restart_count = (restart_count + 1) % 8;
+                    prev_y_dc = 0;
+                    prev_cb_dc = 0;
+                    prev_cr_dc = 0;
+                }
+            }
+        }
+
+        Ok(([prev_y_dc, prev_cb_dc, prev_cr_dc], mcu_idx, restart_count))
     }
 
     /// Pushes a single row of pixel data.
@@ -1376,6 +1881,67 @@ impl StreamingEncoder {
         self.current_y += self.rows_buffered;
         self.rows_buffered = 0;
 
+        // Check if we should transition to streaming mode (bounded-memory feature)
+        self.check_and_maybe_transition()?;
+
+        // If we're in streaming mode, encode the new blocks immediately
+        if self.streaming_mode {
+            self.encode_new_blocks_streaming()?;
+        }
+
+        Ok(())
+    }
+
+    /// Encodes newly quantized blocks in streaming mode.
+    ///
+    /// This is called after each strip when in streaming mode. It encodes
+    /// any new blocks that have been added since the last call.
+    fn encode_new_blocks_streaming(&mut self) -> Result<()> {
+        // Get the new blocks from the processor
+        let blocks = self.processor.take_blocks();
+
+        if blocks.y_blocks.is_empty() {
+            return Ok(());
+        }
+
+        let tables = self
+            .streaming_tables
+            .as_ref()
+            .ok_or_else(|| Error::internal("streaming_tables not set in streaming mode"))?;
+
+        let is_color = !self.config.pixel_format.is_grayscale();
+        let mut writer = crate::foundation::bitstream::BitWriter::new();
+
+        // Extract state before encoding (to avoid borrow conflicts)
+        let prev_dc = self.streaming_prev_dc;
+        let mcu_idx = self.streaming_mcu_idx;
+        let restart_count = self.streaming_restart_count;
+
+        // Encode the new blocks, continuing from saved state
+        let (new_prev_dc, new_mcu_idx, new_restart_count) = self.encode_blocks_mcu_order_ex(
+            &blocks.y_blocks,
+            &blocks.cb_blocks,
+            &blocks.cr_blocks,
+            tables,
+            &mut writer,
+            is_color,
+            prev_dc,
+            mcu_idx,
+            restart_count,
+        )?;
+
+        // Update state for next call
+        self.streaming_prev_dc = new_prev_dc;
+        self.streaming_mcu_idx = new_mcu_idx;
+        self.streaming_restart_count = new_restart_count;
+
+        // Flush to output buffer (get mutable ref after encode is done)
+        let output = self
+            .streaming_output
+            .as_mut()
+            .ok_or_else(|| Error::internal("streaming_output not set in streaming mode"))?;
+        writer.flush_without_eoi(output)?;
+
         Ok(())
     }
 
@@ -1436,7 +2002,13 @@ impl StreamingEncoder {
             self.flush_strip_with_stop(&stop)?;
         }
 
-        // Extract needed data before consuming processor
+        // Handle streaming mode: we've already written most of the JPEG,
+        // just need to encode remaining blocks and write EOI
+        if self.streaming_mode {
+            return self.finish_streaming(output);
+        }
+
+        // Non-streaming mode: build JPEG from buffered blocks
         let config = self.config;
         let y_quant = self.y_quant;
         let cb_quant = self.cb_quant;
@@ -1459,6 +2031,70 @@ impl StreamingEncoder {
             output,
             stop,
         )
+    }
+
+    /// Finishes encoding in streaming mode.
+    ///
+    /// The header and most scan data have already been written. This method:
+    /// 1. Encodes any remaining blocks
+    /// 2. Writes EOI marker
+    /// 3. Moves the streaming output to the provided buffer
+    fn finish_streaming(mut self, output: &mut Vec<u8>) -> Result<()> {
+        // Extract all state we need before finalize() consumes self.processor
+        let tables = self
+            .streaming_tables
+            .take()
+            .ok_or_else(|| Error::internal("streaming_tables not set"))?;
+        let mut streaming_output = self
+            .streaming_output
+            .take()
+            .ok_or_else(|| Error::internal("streaming_output not set"))?;
+        let is_color = !self.config.pixel_format.is_grayscale();
+        let prev_dc = self.streaming_prev_dc;
+        let mcu_idx = self.streaming_mcu_idx;
+        let restart_count = self.streaming_restart_count;
+        let subsampling = self.config.subsampling;
+        let width = self.width;
+        let height = self.height;
+        let restart_interval = self.config.restart_interval;
+
+        // Finalize strip processing to get any remaining blocks
+        let strip_output = self.processor.finalize()?;
+
+        // Encode any remaining blocks
+        if !strip_output.y_blocks.is_empty() {
+            let mut writer = crate::foundation::bitstream::BitWriter::new();
+
+            // Encode the remaining blocks, continuing from saved state
+            Self::encode_blocks_mcu_order_static(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables,
+                &mut writer,
+                is_color,
+                prev_dc,
+                mcu_idx,
+                restart_count,
+                subsampling,
+                width,
+                height,
+                restart_interval,
+            )?;
+
+            // Flush to output buffer
+            writer.flush_without_eoi(&mut streaming_output)?;
+        }
+
+        // Write EOI marker
+        streaming_output.push(0xFF);
+        streaming_output.push(crate::foundation::consts::MARKER_EOI);
+
+        // Move to the provided output buffer
+        output.clear();
+        *output = streaming_output;
+
+        Ok(())
     }
 
     /// Builds JPEG output from processed blocks.
@@ -1796,5 +2432,138 @@ mod tests {
             "output lengths differ"
         );
         assert_eq!(oneshot_result, streaming_result, "outputs differ");
+    }
+
+    #[test]
+    fn test_memory_limit_not_compatible_with_progressive() {
+        let result = StreamingEncoder::new(64, 64)
+            .progressive(true)
+            .memory_limit(1024)
+            .start();
+
+        assert!(
+            result.is_err(),
+            "Should have returned error for progressive with memory_limit"
+        );
+        match result {
+            Err(err) => {
+                assert!(
+                    err.to_string().contains("progressive"),
+                    "Error should mention progressive mode: {}",
+                    err
+                );
+            }
+            Ok(_) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_bounded_streaming_basic() {
+        // Create a test image large enough to trigger streaming transition
+        let width = 128u32;
+        let height = 128u32;
+        let pixels: Vec<u8> = (0..width * height * 3)
+            .map(|i| ((i * 17) % 256) as u8)
+            .collect();
+
+        // Encode without memory limit (standard buffering)
+        let standard_result = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false) // Baseline required for bounded streaming
+            .encode(&pixels)
+            .unwrap();
+
+        // Encode with very small memory limit (should trigger streaming early)
+        let mut bounded = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S420)
+            .progressive(false)
+            .memory_limit(1024) // 1KB limit - will trigger after first strip
+            .start()
+            .unwrap();
+
+        let row_size = width as usize * 3;
+        for y in 0..height as usize {
+            let start = y * row_size;
+            let end = start + row_size;
+            bounded.push_row(&pixels[start..end]).unwrap();
+        }
+
+        // Should have transitioned to streaming mode
+        assert!(
+            bounded.is_streaming(),
+            "Should have transitioned to streaming mode with 1KB limit"
+        );
+
+        let bounded_result = bounded.finish().unwrap();
+
+        // Both should produce valid JPEGs (sizes may differ due to different Huffman tables)
+        assert!(
+            standard_result.len() > 100,
+            "Standard result too small: {} bytes",
+            standard_result.len()
+        );
+        assert!(
+            bounded_result.len() > 100,
+            "Bounded result too small: {} bytes",
+            bounded_result.len()
+        );
+
+        // Verify JPEG structure
+        assert_eq!(standard_result[0..2], [0xFF, 0xD8], "Missing SOI marker");
+        assert_eq!(bounded_result[0..2], [0xFF, 0xD8], "Missing SOI marker");
+        assert_eq!(
+            standard_result[standard_result.len() - 2..],
+            [0xFF, 0xD9],
+            "Missing EOI marker"
+        );
+        assert_eq!(
+            bounded_result[bounded_result.len() - 2..],
+            [0xFF, 0xD9],
+            "Missing EOI marker"
+        );
+    }
+
+    #[test]
+    fn test_bounded_streaming_no_transition_if_below_limit() {
+        // Create a small test image
+        let width = 32u32;
+        let height = 32u32;
+        let pixels: Vec<u8> = (0..width * height * 3)
+            .map(|i| ((i * 17) % 256) as u8)
+            .collect();
+
+        // Use a large memory limit - should NOT transition to streaming
+        let mut encoder = StreamingEncoder::new(width, height)
+            .quality(Quality::ApproxJpegli(85.0))
+            .subsampling(Subsampling::S444)
+            .progressive(false)
+            .memory_limit(1024 * 1024) // 1MB - way more than needed for 32x32
+            .start()
+            .unwrap();
+
+        let row_size = width as usize * 3;
+        for y in 0..height as usize {
+            let start = y * row_size;
+            let end = start + row_size;
+            encoder.push_row(&pixels[start..end]).unwrap();
+        }
+
+        // Should NOT have transitioned (small image, large limit)
+        assert!(
+            !encoder.is_streaming(),
+            "Should NOT have transitioned with 1MB limit on 32x32 image"
+        );
+
+        let result = encoder.finish().unwrap();
+
+        // Verify valid JPEG
+        assert_eq!(result[0..2], [0xFF, 0xD8], "Missing SOI marker");
+        assert_eq!(
+            result[result.len() - 2..],
+            [0xFF, 0xD9],
+            "Missing EOI marker"
+        );
     }
 }

@@ -253,6 +253,38 @@ impl BitWriter {
     pub fn position(&self) -> usize {
         self.buffer.len()
     }
+
+    /// Flushes bits and appends to an external buffer without EOI marker.
+    ///
+    /// This is used by bounded-memory streaming to write scan data incrementally.
+    pub fn flush_without_eoi(&mut self, output: &mut Vec<u8>) -> crate::error::Result<()> {
+        self.flush();
+        output.try_reserve(self.buffer.len()).map_err(|_| {
+            crate::error::Error::allocation_failed(self.buffer.len(), "flush_without_eoi")
+        })?;
+        output.extend_from_slice(&self.buffer);
+        self.buffer.clear();
+        Ok(())
+    }
+
+    /// Writes a restart marker and resets bit state.
+    ///
+    /// This flushes any pending bits, writes the restart marker (RST0-RST7),
+    /// and resets the bit buffer.
+    pub fn flush_restart_marker(&mut self, restart_num: u8) -> crate::error::Result<()> {
+        // Flush pending bits
+        self.flush();
+
+        // Write restart marker (0xFFD0-0xFFD7)
+        self.buffer.push(0xFF);
+        self.buffer.push(0xD0 + (restart_num & 0x07));
+
+        // Reset bit state
+        self.bit_buffer = 0;
+        self.bits_in_buffer = 0;
+
+        Ok(())
+    }
 }
 
 impl Default for BitWriter {

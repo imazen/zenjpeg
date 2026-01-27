@@ -46,6 +46,7 @@ use crate::foundation::alloc::{
 };
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::{QuantTableSimd, ZeroBiasSimd};
+use crate::huffman::optimize::FrequencyCounter;
 use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{PixelFormat, Subsampling};
@@ -271,6 +272,26 @@ pub struct StripProcessor {
     // === Reusable AQ strengths buffer ===
     /// Buffer for AQ strengths from process_y_strip_into (avoids per-strip allocation)
     aq_strengths_buffer: Vec<f32>,
+
+    // === Inline frequency counting for bounded-memory streaming ===
+    /// DC luminance frequency counter
+    dc_luma_freq: FrequencyCounter,
+    /// AC luminance frequency counter
+    ac_luma_freq: FrequencyCounter,
+    /// DC chrominance frequency counter
+    dc_chroma_freq: FrequencyCounter,
+    /// AC chrominance frequency counter
+    ac_chroma_freq: FrequencyCounter,
+    /// Previous DC values for frequency counting (Y, Cb, Cr)
+    freq_prev_dc: [i16; 3],
+    /// MCU counter for restart interval handling during frequency counting
+    freq_mcu_count: usize,
+    /// Restart interval (0 = disabled)
+    restart_interval: u16,
+    /// Total MCUs in the image (for restart boundary checks)
+    total_mcus: usize,
+    /// Number of iMCU rows that have been counted for frequencies
+    freq_imcu_rows_counted: usize,
 }
 
 impl StripProcessor {
@@ -575,6 +596,28 @@ impl StripProcessor {
             // Reusable AQ strengths buffer (one iMCU row worth of blocks)
             // Size: blocks_per_row * v_samp_factor (max 2 for 4:2:0)
             aq_strengths_buffer: vec![0.0f32; padded_y_blocks_h * v_samp],
+
+            // Inline frequency counting for bounded-memory streaming
+            dc_luma_freq: FrequencyCounter::new(),
+            ac_luma_freq: FrequencyCounter::new(),
+            dc_chroma_freq: FrequencyCounter::new(),
+            ac_chroma_freq: FrequencyCounter::new(),
+            freq_prev_dc: [0; 3],
+            freq_mcu_count: 0,
+            restart_interval: _restart_interval,
+            // Total MCUs depends on subsampling mode
+            total_mcus: {
+                let (h_samp, v_samp) = match subsampling {
+                    Subsampling::S444 => (1, 1),
+                    Subsampling::S422 => (2, 1),
+                    Subsampling::S420 => (2, 2),
+                    Subsampling::S440 => (1, 2),
+                };
+                let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+                let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+                mcu_h * mcu_v
+            },
+            freq_imcu_rows_counted: 0,
         })
     }
 
@@ -582,6 +625,31 @@ impl StripProcessor {
     #[must_use]
     pub fn allocation_stats(&self) -> &AllocationStats {
         &self.alloc_stats
+    }
+
+    /// Estimates current block storage memory usage in bytes.
+    ///
+    /// This counts the memory used by quantized coefficient blocks (Y, Cb, Cr).
+    /// Each block is 64 i16 coefficients = 128 bytes.
+    #[must_use]
+    pub fn estimate_block_storage(&self) -> usize {
+        const BLOCK_SIZE: usize = DCT_BLOCK_SIZE * std::mem::size_of::<i16>();
+        (self.y_blocks.len() + self.cb_blocks.len() + self.cr_blocks.len()) * BLOCK_SIZE
+    }
+
+    /// Takes ownership of all quantized blocks, leaving empty vectors.
+    ///
+    /// This is used by bounded-memory streaming to encode accumulated blocks
+    /// and release their storage.
+    #[must_use]
+    pub fn take_blocks(&mut self) -> StripProcessorOutput {
+        StripProcessorOutput {
+            y_blocks: std::mem::take(&mut self.y_blocks),
+            cb_blocks: std::mem::take(&mut self.cb_blocks),
+            cr_blocks: std::mem::take(&mut self.cr_blocks),
+            aq_strengths: std::mem::take(&mut self.all_aq_strengths),
+            alloc_stats: AllocationStats::new(), // Fresh stats for remaining work
+        }
     }
 
     /// Returns the archmage SIMD token if available.
@@ -1316,6 +1384,205 @@ impl StripProcessor {
                 self.cr_blocks.push(zigzag);
             }
         }
+
+        // Count frequencies for the just-quantized iMCU row
+        self.count_frequencies_for_imcu_row();
+    }
+
+    /// Counts symbol frequencies for the most recently quantized iMCU row.
+    ///
+    /// This iterates through blocks in MCU order (matching encoder output) to ensure
+    /// DC differences are computed correctly. Called automatically after each
+    /// `quantize_pending_imcu()`.
+    ///
+    /// For bounded-memory streaming, this allows building Huffman tables without
+    /// storing all blocks until the end.
+    fn count_frequencies_for_imcu_row(&mut self) {
+        let (h_samp, v_samp) = match self.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+        };
+
+        let y_blocks_h = self.y_blocks_h;
+        let is_color = !self.pixel_format.is_grayscale();
+        let c_blocks_h = self.c_blocks_h;
+
+        // Compute how many complete iMCU rows we have now (based on quantized Y blocks)
+        // For 4:2:0: one iMCU = 2 Y block rows
+        let y_block_rows_done = self.y_blocks.len() / y_blocks_h.max(1);
+        let total_imcu_rows = (y_block_rows_done + v_samp - 1) / v_samp;
+
+        // Early exit if no new iMCU rows to count
+        if total_imcu_rows <= self.freq_imcu_rows_counted {
+            return;
+        }
+
+        // Number of MCUs per row
+        let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+
+        // Zero block for padding out-of-bounds MCU positions
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        // Process iMCU rows that haven't been counted yet
+        for imcu_y in self.freq_imcu_rows_counted..total_imcu_rows {
+            for mcu_x in 0..mcu_h {
+                // Y blocks in this MCU (2x2 for 4:2:0, 1x1 for 4:4:4, etc.)
+                for dy in 0..v_samp {
+                    for dx in 0..h_samp {
+                        let y_bx = mcu_x * h_samp + dx;
+                        let y_by = imcu_y * v_samp + dy;
+
+                        let block = if y_bx < y_blocks_h && y_by < self.y_blocks_v {
+                            let y_idx = y_by * y_blocks_h + y_bx;
+                            if y_idx < self.y_blocks.len() {
+                                &self.y_blocks[y_idx]
+                            } else {
+                                &ZERO_BLOCK
+                            }
+                        } else {
+                            &ZERO_BLOCK
+                        };
+
+                        Self::collect_block_frequencies_inline(
+                            block,
+                            self.freq_prev_dc[0],
+                            &mut self.dc_luma_freq,
+                            &mut self.ac_luma_freq,
+                        );
+                        self.freq_prev_dc[0] = block[0];
+                    }
+                }
+
+                // Chroma blocks
+                if is_color {
+                    let (cb_block, cr_block) = if mcu_x < c_blocks_h && imcu_y < self.c_blocks_v {
+                        let c_idx = imcu_y * c_blocks_h + mcu_x;
+                        let cb = if c_idx < self.cb_blocks.len() {
+                            &self.cb_blocks[c_idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        let cr = if c_idx < self.cr_blocks.len() {
+                            &self.cr_blocks[c_idx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        (cb, cr)
+                    } else {
+                        (&ZERO_BLOCK, &ZERO_BLOCK)
+                    };
+
+                    Self::collect_block_frequencies_inline(
+                        cb_block,
+                        self.freq_prev_dc[1],
+                        &mut self.dc_chroma_freq,
+                        &mut self.ac_chroma_freq,
+                    );
+                    self.freq_prev_dc[1] = cb_block[0];
+
+                    Self::collect_block_frequencies_inline(
+                        cr_block,
+                        self.freq_prev_dc[2],
+                        &mut self.dc_chroma_freq,
+                        &mut self.ac_chroma_freq,
+                    );
+                    self.freq_prev_dc[2] = cr_block[0];
+                }
+
+                // Handle restart interval
+                self.freq_mcu_count += 1;
+                if self.restart_interval > 0
+                    && self.freq_mcu_count < self.total_mcus
+                    && self.freq_mcu_count % self.restart_interval as usize == 0
+                {
+                    // Reset DC prediction at restart boundary
+                    self.freq_prev_dc = [0; 3];
+                }
+            }
+        }
+
+        // Update the count of iMCU rows we've processed
+        self.freq_imcu_rows_counted = total_imcu_rows;
+    }
+
+    /// Collects symbol frequencies from a single block.
+    ///
+    /// This is similar to `collect_block_frequencies_simd` in blocks.rs but
+    /// designed for inline use during incremental quantization.
+    #[inline]
+    fn collect_block_frequencies_inline(
+        coeffs: &[i16; DCT_BLOCK_SIZE],
+        prev_dc: i16,
+        dc_freq: &mut FrequencyCounter,
+        ac_freq: &mut FrequencyCounter,
+    ) {
+        // DC coefficient - limit category to 11 for 8-bit JPEG compatibility
+        let dc_diff = coeffs[0] - prev_dc;
+        let dc_category = crate::entropy::category(dc_diff).min(11);
+        dc_freq.count(dc_category);
+
+        // Find the last non-zero AC coefficient
+        let mut last_nonzero = 0usize;
+        for i in (1..64).rev() {
+            if coeffs[i] != 0 {
+                last_nonzero = i;
+                break;
+            }
+        }
+
+        // Fast path: all AC coefficients are zero
+        if last_nonzero == 0 {
+            ac_freq.count(0x00); // EOB
+            return;
+        }
+
+        // Encode AC coefficients
+        let mut run = 0u8;
+        for i in 1..=last_nonzero {
+            if coeffs[i] == 0 {
+                run += 1;
+            } else {
+                // Emit ZRL symbols for runs of 16+
+                while run >= 16 {
+                    ac_freq.count(0xF0); // ZRL
+                    run -= 16;
+                }
+
+                // Encode run/size symbol
+                let ac_category = crate::entropy::category(coeffs[i]);
+                let symbol = (run << 4) | ac_category;
+                ac_freq.count(symbol);
+                run = 0;
+            }
+        }
+
+        // EOB if there are trailing zeros
+        if last_nonzero < 63 {
+            ac_freq.count(0x00); // EOB
+        }
+    }
+
+    /// Returns the inline frequency counters for verification.
+    ///
+    /// This is useful for testing that inline frequency counting matches
+    /// the batch `build_optimized_tables()` approach.
+    #[must_use]
+    pub fn frequency_counters(
+        &self,
+    ) -> (
+        &FrequencyCounter,
+        &FrequencyCounter,
+        &FrequencyCounter,
+        &FrequencyCounter,
+    ) {
+        (
+            &self.dc_luma_freq,
+            &self.ac_luma_freq,
+            &self.dc_chroma_freq,
+            &self.ac_chroma_freq,
+        )
     }
 
     /// Finalizes encoding after all strips have been processed.
@@ -1538,5 +1805,303 @@ mod tests {
                 height
             );
         }
+    }
+
+    /// Test that inline frequency counting produces identical Huffman tables
+    /// to the batch approach in `build_optimized_tables`.
+    #[test]
+    fn test_inline_frequency_parity_420() {
+        use crate::encode::config::ComputedConfig;
+        use crate::encode::encoder_types::Quality;
+        use crate::quant::{generate_quant_table_ex, ZeroBiasParams};
+        use crate::types::{ColorSpace, JpegMode};
+
+        let width = 64usize;
+        let height = 64usize;
+
+        // Generate test image with gradients
+        let mut pixels = Vec::with_capacity(width * height * 3);
+        for y in 0..height {
+            for x in 0..width {
+                let r = ((x * 255) / width.max(1)) as u8;
+                let g = ((y * 255) / height.max(1)) as u8;
+                let b = (((x + y) * 127) / (width + height).max(1)) as u8;
+                pixels.push(r);
+                pixels.push(g);
+                pixels.push(b);
+            }
+        }
+
+        // Build processor and encode
+        let mut processor =
+            StripProcessor::new(width, height, Subsampling::S420, PixelFormat::Rgb).unwrap();
+
+        // Set quant tables
+        let quality = Quality::ApproxJpegli(85.0);
+        let y_quant = generate_quant_table_ex(quality, 0, ColorSpace::YCbCr, false, true, true);
+        let cb_quant = generate_quant_table_ex(quality, 1, ColorSpace::YCbCr, false, true, true);
+        let cr_quant = generate_quant_table_ex(quality, 2, ColorSpace::YCbCr, false, true, true);
+        let distance = quality.to_distance();
+        processor
+            .set_quant_tables(
+                y_quant.clone(),
+                cb_quant.clone(),
+                cr_quant.clone(),
+                ZeroBiasParams::for_ycbcr(distance, 0),
+                ZeroBiasParams::for_ycbcr(distance, 1),
+                ZeroBiasParams::for_ycbcr(distance, 2),
+            )
+            .unwrap();
+
+        // Process all rows
+        let strip_height = processor.strip_height();
+        let row_bytes = width * 3;
+        for y in (0..height).step_by(strip_height) {
+            let strip_rows = strip_height.min(height - y);
+            let strip_start = y * row_bytes;
+            let strip_end = (y + strip_rows) * row_bytes;
+            processor
+                .process_strip(&pixels[strip_start..strip_end], y)
+                .unwrap();
+        }
+
+        // Get inline frequencies
+        let (dc_luma_inline, ac_luma_inline, dc_chroma_inline, ac_chroma_inline) =
+            processor.frequency_counters();
+
+        // Clone frequencies before finalize (which consumes processor)
+        let dc_luma_inline = dc_luma_inline.clone();
+        let ac_luma_inline = ac_luma_inline.clone();
+        let dc_chroma_inline = dc_chroma_inline.clone();
+        let ac_chroma_inline = ac_chroma_inline.clone();
+
+        // Finalize and get blocks
+        let output = processor.finalize().unwrap();
+
+        // Create config for batch frequency counting
+        let config = ComputedConfig {
+            width: width as u32,
+            height: height as u32,
+            pixel_format: PixelFormat::Rgb,
+            quality,
+            subsampling: Subsampling::S420,
+            mode: JpegMode::Baseline,
+            optimize_huffman: true,
+            chroma_downsampling: Default::default(),
+            restart_interval: 0,
+            use_xyb: false,
+            #[cfg(feature = "parallel")]
+            parallel: false,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            hybrid_config: Default::default(),
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            custom_aq_map: None,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            trellis: None,
+            encoding_tables: None,
+            edge_padding: Default::default(),
+            original_width: None,
+            original_height: None,
+            allow_16bit_quant_tables: true,
+            separate_chroma_tables: true,
+        };
+
+        // Build optimized tables (this does batch frequency counting internally)
+        let tables = config
+            .build_optimized_tables(&output.y_blocks, &output.cb_blocks, &output.cr_blocks, true)
+            .unwrap();
+
+        // Generate tables from inline frequencies
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_luma_table = dc_luma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+        let ac_luma_table = ac_luma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+        let dc_chroma_table = dc_chroma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+        let ac_chroma_table = ac_chroma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+
+        // Compare bits arrays (the DHT representation)
+        assert_eq!(
+            dc_luma_table.bits, tables.dc_luma.bits,
+            "DC luma bits mismatch for 4:2:0"
+        );
+        assert_eq!(
+            ac_luma_table.bits, tables.ac_luma.bits,
+            "AC luma bits mismatch for 4:2:0"
+        );
+        assert_eq!(
+            dc_chroma_table.bits, tables.dc_chroma.bits,
+            "DC chroma bits mismatch for 4:2:0"
+        );
+        assert_eq!(
+            ac_chroma_table.bits, tables.ac_chroma.bits,
+            "AC chroma bits mismatch for 4:2:0"
+        );
+
+        // Compare values arrays
+        assert_eq!(
+            dc_luma_table.values, tables.dc_luma.values,
+            "DC luma values mismatch for 4:2:0"
+        );
+        assert_eq!(
+            ac_luma_table.values, tables.ac_luma.values,
+            "AC luma values mismatch for 4:2:0"
+        );
+        assert_eq!(
+            dc_chroma_table.values, tables.dc_chroma.values,
+            "DC chroma values mismatch for 4:2:0"
+        );
+        assert_eq!(
+            ac_chroma_table.values, tables.ac_chroma.values,
+            "AC chroma values mismatch for 4:2:0"
+        );
+    }
+
+    /// Test inline frequency parity for 4:4:4 subsampling
+    #[test]
+    fn test_inline_frequency_parity_444() {
+        use crate::encode::config::ComputedConfig;
+        use crate::encode::encoder_types::Quality;
+        use crate::quant::{generate_quant_table_ex, ZeroBiasParams};
+        use crate::types::{ColorSpace, JpegMode};
+
+        let width = 64usize;
+        let height = 64usize;
+
+        // Generate test image
+        let mut pixels = Vec::with_capacity(width * height * 3);
+        for y in 0..height {
+            for x in 0..width {
+                let r = ((x * 255) / width.max(1)) as u8;
+                let g = ((y * 255) / height.max(1)) as u8;
+                let b = (((x + y) * 127) / (width + height).max(1)) as u8;
+                pixels.push(r);
+                pixels.push(g);
+                pixels.push(b);
+            }
+        }
+
+        let mut processor =
+            StripProcessor::new(width, height, Subsampling::S444, PixelFormat::Rgb).unwrap();
+
+        let quality = Quality::ApproxJpegli(85.0);
+        let y_quant = generate_quant_table_ex(quality, 0, ColorSpace::YCbCr, false, false, true);
+        let cb_quant = generate_quant_table_ex(quality, 1, ColorSpace::YCbCr, false, false, true);
+        let cr_quant = generate_quant_table_ex(quality, 2, ColorSpace::YCbCr, false, false, true);
+        let distance = quality.to_distance();
+        processor
+            .set_quant_tables(
+                y_quant.clone(),
+                cb_quant.clone(),
+                cr_quant.clone(),
+                ZeroBiasParams::for_ycbcr(distance, 0),
+                ZeroBiasParams::for_ycbcr(distance, 1),
+                ZeroBiasParams::for_ycbcr(distance, 2),
+            )
+            .unwrap();
+
+        let strip_height = processor.strip_height();
+        let row_bytes = width * 3;
+        for y in (0..height).step_by(strip_height) {
+            let strip_rows = strip_height.min(height - y);
+            let strip_start = y * row_bytes;
+            let strip_end = (y + strip_rows) * row_bytes;
+            processor
+                .process_strip(&pixels[strip_start..strip_end], y)
+                .unwrap();
+        }
+
+        let (dc_luma_inline, ac_luma_inline, dc_chroma_inline, ac_chroma_inline) =
+            processor.frequency_counters();
+        let dc_luma_inline = dc_luma_inline.clone();
+        let ac_luma_inline = ac_luma_inline.clone();
+        let dc_chroma_inline = dc_chroma_inline.clone();
+        let ac_chroma_inline = ac_chroma_inline.clone();
+
+        let output = processor.finalize().unwrap();
+
+        let config = ComputedConfig {
+            width: width as u32,
+            height: height as u32,
+            pixel_format: PixelFormat::Rgb,
+            quality,
+            subsampling: Subsampling::S444,
+            mode: JpegMode::Baseline,
+            optimize_huffman: true,
+            chroma_downsampling: Default::default(),
+            restart_interval: 0,
+            use_xyb: false,
+            #[cfg(feature = "parallel")]
+            parallel: false,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            hybrid_config: Default::default(),
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            custom_aq_map: None,
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            trellis: None,
+            encoding_tables: None,
+            edge_padding: Default::default(),
+            original_width: None,
+            original_height: None,
+            allow_16bit_quant_tables: true,
+            separate_chroma_tables: true,
+        };
+
+        let tables = config
+            .build_optimized_tables(&output.y_blocks, &output.cb_blocks, &output.cr_blocks, true)
+            .unwrap();
+
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_luma_table = dc_luma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+        let ac_luma_table = ac_luma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+        let dc_chroma_table = dc_chroma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+        let ac_chroma_table = ac_chroma_inline
+            .generate_table_with_method(huffman_method)
+            .unwrap();
+
+        assert_eq!(
+            dc_luma_table.bits, tables.dc_luma.bits,
+            "DC luma bits mismatch"
+        );
+        assert_eq!(
+            ac_luma_table.bits, tables.ac_luma.bits,
+            "AC luma bits mismatch"
+        );
+        assert_eq!(
+            dc_chroma_table.bits, tables.dc_chroma.bits,
+            "DC chroma bits mismatch"
+        );
+        assert_eq!(
+            ac_chroma_table.bits, tables.ac_chroma.bits,
+            "AC chroma bits mismatch"
+        );
+        assert_eq!(
+            dc_luma_table.values, tables.dc_luma.values,
+            "DC luma values mismatch"
+        );
+        assert_eq!(
+            ac_luma_table.values, tables.ac_luma.values,
+            "AC luma values mismatch"
+        );
+        assert_eq!(
+            dc_chroma_table.values, tables.dc_chroma.values,
+            "DC chroma values mismatch"
+        );
+        assert_eq!(
+            ac_chroma_table.values, tables.ac_chroma.values,
+            "AC chroma values mismatch"
+        );
     }
 }
