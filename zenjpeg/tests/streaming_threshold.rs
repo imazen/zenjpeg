@@ -433,12 +433,17 @@ fn test_streaming_heuristics() {
             let end = start + row_size;
             encoder_heur.push_row(&pixels[start..end]).unwrap();
         }
+        // Get transition info before finish() consumes the encoder
+        let transition_pct = encoder_heur.transition_percent();
         let result_heur = encoder_heur.finish().unwrap();
         let overhead_heur = 100.0 * (result_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
 
         let flag = if overhead_heur <= 4.0 { "✓" } else { "✗" };
-        eprintln!("{:>20} {:>8} KB {:>7.2}% {}", "With heuristics",
-            result_heur.len() / 1024, overhead_heur, flag);
+        let trans_str = transition_pct
+            .map(|p| format!("@{:.0}%", p))
+            .unwrap_or_else(|| "N/A".to_string());
+        eprintln!("{:>20} {:>8} KB {:>7.2}% {} ({})",
+            "With heuristics", result_heur.len() / 1024, overhead_heur, flag, trans_str);
 
         let improvement = overhead_no_heur - overhead_heur;
         if improvement > 0.5 {
@@ -472,8 +477,8 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
 
     eprintln!("Found {} images in CLIC 2025 validation set", test_images.len());
 
-    // Track results: (image_name, overhead_no_heur, overhead_with_heur)
-    let mut results: Vec<(String, f64, f64)> = Vec::new();
+    // Track results: (image_name, overhead_no_heur, overhead_with_heur, transition_pct)
+    let mut results: Vec<(String, f64, f64, Option<f64>)> = Vec::new();
 
     // Memory limit for testing (1MB is reasonable for bounded-memory streaming)
     let memory_limit = 1024 * 1024;
@@ -539,10 +544,11 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
             let end = start + row_size;
             encoder_heur.push_row(&pixels[start..end]).unwrap();
         }
+        let transition_pct = encoder_heur.transition_percent();
         let result_heur = encoder_heur.finish().unwrap();
         let overhead_heur = 100.0 * (result_heur.len() as f64 - baseline_size as f64) / baseline_size as f64;
 
-        results.push((img_name.to_string(), overhead_no_heur, overhead_heur));
+        results.push((img_name.to_string(), overhead_no_heur, overhead_heur, transition_pct));
     }
 
     // Print summary
@@ -551,8 +557,11 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
     eprintln!("{}", "=".repeat(80));
 
     // Calculate statistics
-    let no_heur_overheads: Vec<f64> = results.iter().map(|(_, o, _)| *o).collect();
-    let heur_overheads: Vec<f64> = results.iter().map(|(_, _, o)| *o).collect();
+    let no_heur_overheads: Vec<f64> = results.iter().map(|(_, o, _, _)| *o).collect();
+    let heur_overheads: Vec<f64> = results.iter().map(|(_, _, o, _)| *o).collect();
+    let transition_pcts: Vec<f64> = results.iter()
+        .filter_map(|(_, _, _, t)| *t)
+        .collect();
 
     let mean_no_heur = no_heur_overheads.iter().sum::<f64>() / no_heur_overheads.len() as f64;
     let mean_heur = heur_overheads.iter().sum::<f64>() / heur_overheads.len() as f64;
@@ -568,6 +577,13 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
     sorted_heur.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median_heur = sorted_heur[sorted_heur.len() / 2];
 
+    // Transition percentage stats
+    let mean_trans = if !transition_pcts.is_empty() {
+        transition_pcts.iter().sum::<f64>() / transition_pcts.len() as f64
+    } else { 0.0 };
+    let min_trans = transition_pcts.iter().cloned().fold(f64::MAX, f64::min);
+    let max_trans = transition_pcts.iter().cloned().fold(f64::MIN, f64::max);
+
     // Count images within 4% threshold
     let within_4_no_heur = no_heur_overheads.iter().filter(|&&o| o <= 4.0).count();
     let within_4_heur = heur_overheads.iter().filter(|&&o| o <= 4.0).count();
@@ -580,29 +596,35 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
     eprintln!("{:>25} {:>8}/{:<4} {:>8}/{:<4}", "Within 4%",
         within_4_no_heur, test_images.len(), within_4_heur, test_images.len());
 
+    eprintln!("\nTransition statistics (with heuristics):");
+    eprintln!("  Mean: {:.1}%, Min: {:.1}%, Max: {:.1}%", mean_trans, min_trans, max_trans);
+
     // Show worst cases
-    eprintln!("\nWorst 5 images (by max overhead):");
+    eprintln!("\nWorst 5 images (by overhead without heuristics):");
     let mut by_no_heur: Vec<_> = results.iter().collect();
     by_no_heur.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-    eprintln!("{:>40} {:>12} {:>12} {:>10}", "Image", "No Heur", "With Heur", "Improvement");
-    eprintln!("{}", "-".repeat(80));
-    for (name, no_heur, heur) in by_no_heur.iter().take(5) {
+    eprintln!("{:>40} {:>10} {:>10} {:>10} {:>8}", "Image", "No Heur", "With Heur", "Improve", "Trans%");
+    eprintln!("{}", "-".repeat(85));
+    for (name, no_heur, heur, trans) in by_no_heur.iter().take(5) {
         let improvement = no_heur - heur;
         let name_short: String = name.chars().take(38).collect();
-        eprintln!("{:>40} {:>11.2}% {:>11.2}% {:>+9.1}%", name_short, no_heur, heur, improvement);
+        let trans_str = trans.map(|t| format!("{:.0}%", t)).unwrap_or_else(|| "N/A".to_string());
+        eprintln!("{:>40} {:>9.2}% {:>9.2}% {:>+9.1}% {:>8}",
+            name_short, no_heur, heur, improvement, trans_str);
     }
 
     // Show images where heuristics helped most
-    let mut by_improvement: Vec<_> = results.iter().map(|(n, no_h, h)| (n, no_h - h)).collect();
+    let mut by_improvement: Vec<_> = results.iter().map(|(n, no_h, h, t)| (n, no_h - h, *t)).collect();
     by_improvement.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
     eprintln!("\nTop 5 images where heuristics helped most:");
-    eprintln!("{:>40} {:>15}", "Image", "Improvement");
-    eprintln!("{}", "-".repeat(60));
-    for (name, improvement) in by_improvement.iter().take(5) {
+    eprintln!("{:>40} {:>12} {:>8}", "Image", "Improvement", "Trans%");
+    eprintln!("{}", "-".repeat(65));
+    for (name, improvement, trans) in by_improvement.iter().take(5) {
         let name_short: String = name.chars().take(38).collect();
-        eprintln!("{:>40} {:>+14.1}%", name_short, improvement);
+        let trans_str = trans.map(|t| format!("{:.0}%", t)).unwrap_or_else(|| "N/A".to_string());
+        eprintln!("{:>40} {:>+11.1}% {:>8}", name_short, improvement, trans_str);
     }
 
     // Final verdict
@@ -612,11 +634,12 @@ fn test_streaming_heuristics_clic2025_comprehensive() {
             test_images.len(), max_heur);
     } else {
         let over_4: Vec<_> = results.iter()
-            .filter(|(_, _, h)| *h > 4.0)
+            .filter(|(_, _, h, _)| *h > 4.0)
             .collect();
         eprintln!("✗ With heuristics: {} images exceed 4% overhead", over_4.len());
-        for (name, _, h) in over_4.iter().take(5) {
-            eprintln!("    {} → {:.2}%", name, h);
+        for (name, _, h, trans) in over_4.iter().take(5) {
+            let trans_str = trans.map(|t| format!(" @{:.0}%", t)).unwrap_or_default();
+            eprintln!("    {} → {:.2}%{}", name, h, trans_str);
         }
     }
 }

@@ -974,6 +974,8 @@ pub struct StreamingEncoder {
     min_coverage: Option<f64>,
     /// Minimum percentage of rows before transition is allowed
     min_transition_percent: Option<usize>,
+    /// Row at which transition to streaming mode occurred (for diagnostics)
+    transition_at_row: Option<usize>,
 }
 
 impl StreamingEncoder {
@@ -1194,6 +1196,7 @@ impl StreamingEncoder {
             min_entropy: builder.min_entropy,
             min_coverage: builder.min_coverage,
             min_transition_percent: builder.min_transition_percent,
+            transition_at_row: None,
         })
     }
 
@@ -1276,6 +1279,26 @@ impl StreamingEncoder {
     pub fn is_distribution_stable(&self, min_entropy: f64, min_coverage: f64) -> bool {
         let (ac_cov, ac_ent, _, _) = self.frequency_heuristics();
         ac_ent >= min_entropy && ac_cov >= min_coverage
+    }
+
+    /// Returns the row at which transition to streaming mode occurred.
+    ///
+    /// Returns `None` if:
+    /// - No memory limit was set (full buffering mode)
+    /// - Transition hasn't happened yet
+    /// - Encoding completed without transitioning (image fit in memory limit)
+    #[must_use]
+    pub fn transition_row(&self) -> Option<usize> {
+        self.transition_at_row
+    }
+
+    /// Returns the percentage of rows at which transition occurred.
+    ///
+    /// Returns `None` if transition hasn't happened.
+    #[must_use]
+    pub fn transition_percent(&self) -> Option<f64> {
+        self.transition_at_row
+            .map(|row| 100.0 * row as f64 / self.height as f64)
     }
 
     /// Checks if memory limit is exceeded and transitions to streaming mode if needed.
@@ -1374,6 +1397,9 @@ impl StreamingEncoder {
     /// 5. Sets streaming_mode = true
     fn transition_to_streaming(&mut self) -> Result<()> {
         use crate::foundation::bitstream::BitWriter;
+
+        // Record transition point for diagnostics
+        self.transition_at_row = Some(self.current_y);
 
         // Get frequency counters from processor and clone them so we can modify
         let (dc_luma_freq, ac_luma_freq, dc_chroma_freq, ac_chroma_freq) =
