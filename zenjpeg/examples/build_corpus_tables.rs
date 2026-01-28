@@ -22,7 +22,11 @@ use zenjpeg::types::Subsampling;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const QUALITY_TIERS: &[u8] = &[75, 85, 95];
+// Q0-Q85 step 5, Q89-Q100 step 1
+const QUALITY_TIERS: &[u8] = &[
+    0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
+    89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+];
 const OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/corpus_tables";
 
 fn main() -> Result<()> {
