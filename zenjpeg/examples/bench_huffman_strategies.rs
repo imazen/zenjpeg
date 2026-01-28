@@ -38,11 +38,12 @@ fn main() -> Result<()> {
             let mut total_optimal = Duration::ZERO;
             let mut total_pretrained = Duration::ZERO;
             let mut total_partial = Duration::ZERO;
+            let mut total_stream_fixed = Duration::ZERO;
             let mut count = 0;
 
-            println!("{:>12} {:>9}  {:>9} {:>9} {:>9}  {:>7} {:>7} {:>7}",
-                "Image", "Size", "Optimal", "Pretrain", "Partial", "OptKB", "PreKB", "ParKB");
-            println!("{}", "-".repeat(95));
+            println!("{:>12} {:>9}  {:>9} {:>9} {:>9} {:>9}",
+                "Image", "Size", "Optimal", "Pretrain", "Partial", "StrmFix");
+            println!("{}", "-".repeat(75));
 
             for entry in &images {
                 let path = entry.path();
@@ -52,27 +53,27 @@ fn main() -> Result<()> {
                 let r = bench_image(&pixels, w, h)?;
 
                 println!(
-                    "{:>12} {:>4}x{:<4}  {:>8.1}ms {:>8.1}ms {:>8.1}ms  {:>6} {:>6} {:>6}",
+                    "{:>12} {:>4}x{:<4}  {:>8.1}ms {:>8.1}ms {:>8.1}ms {:>8.1}ms",
                     name, w, h,
                     r.optimal.as_secs_f64() * 1000.0,
                     r.pretrained.as_secs_f64() * 1000.0,
                     r.partial.as_secs_f64() * 1000.0,
-                    r.optimal_size / 1024,
-                    r.pretrained_size / 1024,
-                    r.partial_size / 1024,
+                    r.stream_fixed.as_secs_f64() * 1000.0,
                 );
 
                 total_optimal += r.optimal;
                 total_pretrained += r.pretrained;
                 total_partial += r.partial;
+                total_stream_fixed += r.stream_fixed;
                 count += 1;
             }
 
-            println!("\n{:>12} {:>9}  {:>8.1}ms {:>8.1}ms {:>8.1}ms",
+            println!("\n{:>12} {:>9}  {:>8.1}ms {:>8.1}ms {:>8.1}ms {:>8.1}ms",
                 "AVERAGE", "",
                 total_optimal.as_secs_f64() * 1000.0 / count as f64,
                 total_pretrained.as_secs_f64() * 1000.0 / count as f64,
                 total_partial.as_secs_f64() * 1000.0 / count as f64,
+                total_stream_fixed.as_secs_f64() * 1000.0 / count as f64,
             );
         }
     }
@@ -84,16 +85,11 @@ fn main() -> Result<()> {
 
     let r = bench_image(&pixels, w, h)?;
     println!(
-        "8K synthetic  optimal:{:>6.1}ms  pretrained:{:>6.1}ms  partial:{:>6.1}ms",
+        "8K synthetic  optimal:{:>6.1}ms  pretrain:{:>6.1}ms  partial:{:>6.1}ms  strm+fix:{:>6.1}ms",
         r.optimal.as_secs_f64() * 1000.0,
         r.pretrained.as_secs_f64() * 1000.0,
         r.partial.as_secs_f64() * 1000.0,
-    );
-    println!(
-        "              sizes:   {:>6}KB             {:>6}KB            {:>6}KB",
-        r.optimal_size / 1024,
-        r.pretrained_size / 1024,
-        r.partial_size / 1024,
+        r.stream_fixed.as_secs_f64() * 1000.0,
     );
 
     // Also test 4K
@@ -103,16 +99,11 @@ fn main() -> Result<()> {
 
     let r = bench_image(&pixels, w, h)?;
     println!(
-        "4K synthetic  optimal:{:>6.1}ms  pretrained:{:>6.1}ms  partial:{:>6.1}ms",
+        "4K synthetic  optimal:{:>6.1}ms  pretrain:{:>6.1}ms  partial:{:>6.1}ms  strm+fix:{:>6.1}ms",
         r.optimal.as_secs_f64() * 1000.0,
         r.pretrained.as_secs_f64() * 1000.0,
         r.partial.as_secs_f64() * 1000.0,
-    );
-    println!(
-        "              sizes:   {:>6}KB             {:>6}KB            {:>6}KB",
-        r.optimal_size / 1024,
-        r.pretrained_size / 1024,
-        r.partial_size / 1024,
+        r.stream_fixed.as_secs_f64() * 1000.0,
     );
 
     println!("\n=== Summary ===\n");
@@ -126,9 +117,11 @@ struct BenchResult {
     optimal: Duration,
     pretrained: Duration,
     partial: Duration,
+    stream_fixed: Duration,
     optimal_size: usize,
     pretrained_size: usize,
     partial_size: usize,
+    stream_fixed_size: usize,
 }
 
 fn bench_image(pixels: &[u8], w: u32, h: u32) -> Result<BenchResult> {
@@ -137,6 +130,7 @@ fn bench_image(pixels: &[u8], w: u32, h: u32) -> Result<BenchResult> {
         let _ = encode_optimal(pixels, w, h)?;
         let _ = encode_pretrained(pixels, w, h)?;
         let _ = encode_partial(pixels, w, h, 0.30)?;
+        let _ = encode_stream_fixed(pixels, w, h)?;
     }
 
     // Benchmark optimal (two-pass with optimize_huffman=true)
@@ -169,18 +163,31 @@ fn bench_image(pixels: &[u8], w: u32, h: u32) -> Result<BenchResult> {
         partial_size = out.len();
     }
 
+    // Benchmark stream+fixed (immediate streaming with pretrained tables)
+    let mut stream_fixed_times = Vec::with_capacity(BENCH_ITERS);
+    let mut stream_fixed_size = 0;
+    for _ in 0..BENCH_ITERS {
+        let start = Instant::now();
+        let out = encode_stream_fixed(pixels, w, h)?;
+        stream_fixed_times.push(start.elapsed());
+        stream_fixed_size = out.len();
+    }
+
     // Return median times
     optimal_times.sort();
     pretrained_times.sort();
     partial_times.sort();
+    stream_fixed_times.sort();
 
     Ok(BenchResult {
         optimal: optimal_times[BENCH_ITERS / 2],
         pretrained: pretrained_times[BENCH_ITERS / 2],
         partial: partial_times[BENCH_ITERS / 2],
+        stream_fixed: stream_fixed_times[BENCH_ITERS / 2],
         optimal_size,
         pretrained_size,
         partial_size,
+        stream_fixed_size,
     })
 }
 
@@ -224,7 +231,6 @@ fn encode_pretrained(pixels: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
 fn encode_partial(pixels: &[u8], w: u32, h: u32, coverage: f64) -> Result<Vec<u8>> {
     // Simulate bounded-memory streaming by setting a memory limit
     // that triggers transition at approximately the target coverage
-    let bytes_per_row = w as usize * 3;
     let target_rows = (h as f64 * coverage) as usize;
     // Rough estimate: ~2 bytes per coefficient, 64 coeffs per 8x8 block
     let blocks_per_row = ((w + 7) / 8) as usize;
@@ -235,6 +241,27 @@ fn encode_partial(pixels: &[u8], w: u32, h: u32, coverage: f64) -> Result<Vec<u8
         .quality(Quality::ApproxJpegli(QUALITY as f32))
         .subsampling(Subsampling::S420)
         .memory_limit(memory_limit.max(1))
+        .start()?;
+
+    let stride = w as usize * 3;
+    for y in 0..h {
+        let row_start = y as usize * stride;
+        let row_end = row_start + stride;
+        encoder.push_rows(&pixels[row_start..row_end], 1)?;
+    }
+
+    Ok(encoder.finish()?)
+}
+
+fn encode_stream_fixed(pixels: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
+    // Stream from start with fixed pretrained tables - no buffering at all
+    let tables = trained_tables_q85();
+
+    let mut encoder = StreamingEncoder::new(w, h)
+        .quality(Quality::ApproxJpegli(QUALITY as f32))
+        .subsampling(Subsampling::S420)
+        .custom_huffman_tables(tables)
+        .memory_limit(1)  // Trigger immediate streaming
         .start()?;
 
     let stride = w as usize * 3;
