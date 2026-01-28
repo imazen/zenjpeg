@@ -1407,6 +1407,17 @@ impl StreamingEncoder {
             ));
         }
 
+        // Auto-enable immediate streaming when custom tables are provided
+        // (no reason to buffer blocks if we're not building tables from frequencies)
+        let memory_limit = if builder.custom_huffman_tables.is_some()
+            && builder.memory_limit.is_none()
+            && builder.mode != JpegMode::Progressive
+        {
+            Some(1) // Trigger immediate streaming
+        } else {
+            builder.memory_limit
+        };
+
         Ok(Self {
             width,
             height,
@@ -1421,7 +1432,7 @@ impl StreamingEncoder {
             cb_quant,
             cr_quant,
             // Bounded-memory streaming fields
-            memory_limit: builder.memory_limit,
+            memory_limit,
             streaming_mode: false,
             streaming_output: None,
             streaming_tables: None,
