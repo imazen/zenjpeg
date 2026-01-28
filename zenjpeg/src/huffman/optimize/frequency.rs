@@ -199,6 +199,8 @@ impl FrequencyCounter {
     ///
     /// # Returns
     /// A new histogram blending observed data with the prior for rare symbols.
+    ///
+    /// **Note**: Testing shows this hurts compression. Use `add_prior_proportional` instead.
     #[must_use]
     pub fn blend_with_prior(&self, prior: &FrequencyCounter, min_samples: i64) -> FrequencyCounter {
         let observed_total = self.total();
@@ -231,6 +233,52 @@ impl FrequencyCounter {
         }
 
         // Preserve pseudo-symbol if present
+        result.counts[256] = self.counts[256];
+
+        result
+    }
+
+    /// Adds a proportionally-scaled prior to this histogram.
+    ///
+    /// Unlike `blend_with_prior`, this adds a small fraction of the prior to ALL symbols,
+    /// preserving relative weights from corpus training while keeping observed dominant.
+    ///
+    /// # Arguments
+    /// * `prior` - Corpus-trained frequency histogram
+    /// * `prior_weight` - Weight of prior as fraction of observed total (e.g., 0.01 = 1%)
+    ///
+    /// # Returns
+    /// A new histogram with proportionally-blended counts.
+    #[must_use]
+    pub fn add_prior_proportional(
+        &self,
+        prior: &FrequencyCounter,
+        prior_weight: f64,
+    ) -> FrequencyCounter {
+        let observed_total = self.total();
+        let prior_total = prior.total();
+
+        // If either is empty, return the other
+        if observed_total == 0 {
+            return prior.clone();
+        }
+        if prior_total == 0 {
+            return self.clone();
+        }
+
+        // Scale prior so its total equals prior_weight * observed_total
+        // e.g., if observed=10000 and prior_weight=0.01, prior contributes 100 total
+        let scale = (observed_total as f64 * prior_weight) / prior_total as f64;
+
+        let mut result = FrequencyCounter::new();
+        for i in 0..256 {
+            let observed = self.counts[i];
+            let prior_contribution = (prior.counts[i] as f64 * scale).round() as i64;
+            // Always add at least the prior contribution (even to zero-count symbols)
+            result.counts[i] = observed + prior_contribution.max(0);
+        }
+
+        // Preserve pseudo-symbol
         result.counts[256] = self.counts[256];
 
         result

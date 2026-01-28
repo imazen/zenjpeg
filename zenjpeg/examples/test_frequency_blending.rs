@@ -3,7 +3,8 @@
 //! Compares different strategies when transitioning from buffered to streaming:
 //! - Partial: Use only frequencies from rows seen so far
 //! - Trained: Use pre-trained corpus frequencies (ignore partial data)
-//! - Blended: Combine partial + trained prior for rare symbols
+//! - Blended: Combine partial + trained prior for rare symbols (threshold-based)
+//! - Proportional: Add small fraction of prior to all symbols
 //!
 //! Run with: cargo run --release -p zenjpeg --features test-utils --example test_frequency_blending
 
@@ -19,13 +20,10 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const QUALITY: u8 = 85;
 const COVERAGE_LEVELS: &[f64] = &[0.25, 0.40, 0.50, 0.60, 0.75];
 const MIN_SAMPLES: i64 = 50;
+const PRIOR_WEIGHTS: &[f64] = &[0.001, 0.005, 0.01, 0.02, 0.05];
 
 fn main() -> Result<()> {
     println!("=== Frequency Blending Test ===\n");
-    println!("Compares strategies when transitioning at X% coverage:\n");
-    println!("  Partial: frequencies from seen rows only");
-    println!("  Trained: pre-trained corpus frequencies");
-    println!("  Blended: partial + trained prior for rare symbols\n");
 
     // Load trained frequencies
     let trained = load_trained_frequencies(QUALITY)?;
@@ -50,7 +48,11 @@ fn main() -> Result<()> {
 
     println!("Testing {} images at Q{}\n", images.len(), QUALITY);
 
-    // Track totals for summary
+    // ============================================================
+    // Part 1: Compare Partial vs Trained vs Threshold-Blended
+    // ============================================================
+    println!("=== Part 1: Threshold-Based Blending (min_samples={}) ===\n", MIN_SAMPLES);
+
     let mut partial_totals = vec![0.0f64; COVERAGE_LEVELS.len()];
     let mut trained_totals = vec![0.0f64; COVERAGE_LEVELS.len()];
     let mut blended_totals = vec![0.0f64; COVERAGE_LEVELS.len()];
@@ -58,55 +60,30 @@ fn main() -> Result<()> {
 
     for entry in &images {
         let path = entry.path();
-        let name = path.file_stem().unwrap().to_string_lossy();
-        let short_name: String = name.chars().take(20).collect();
-
         let (w, h, pixels) = load_png(&path)?;
         let optimal = get_frequencies(w, h, &pixels, h)?;
-
-        println!("{} ({}x{}):", short_name, w, h);
-        println!(
-            "  {:>6}   {:>10} {:>10} {:>10}",
-            "Cover", "Partial", "Trained", "Blended"
-        );
 
         for (i, &coverage) in COVERAGE_LEVELS.iter().enumerate() {
             let rows_seen = (h as f64 * coverage) as u32;
             let partial = get_frequencies(w, h, &pixels, rows_seen)?;
 
-            // Strategy 1: Use partial frequencies only
             let partial_overhead = compute_overhead(&partial.ac_luma, &optimal.ac_luma);
-
-            // Strategy 2: Use trained corpus frequencies only
             let trained_overhead = compute_overhead(&trained.ac_luma, &optimal.ac_luma);
-
-            // Strategy 3: Blend partial + trained
             let blended = partial.ac_luma.blend_with_prior(&trained.ac_luma, MIN_SAMPLES);
             let blended_overhead = compute_overhead(&blended, &optimal.ac_luma);
-
-            println!(
-                "  {:>5.0}%   {:>+9.1}% {:>+9.1}% {:>+9.1}%",
-                coverage * 100.0,
-                partial_overhead,
-                trained_overhead,
-                blended_overhead
-            );
 
             partial_totals[i] += partial_overhead;
             trained_totals[i] += trained_overhead;
             blended_totals[i] += blended_overhead;
         }
-        println!();
         count += 1;
     }
 
-    // Summary
-    println!("=== Summary (averages across {} images) ===\n", count);
     println!(
-        "{:>6}   {:>10} {:>10} {:>10}   {:>12}",
-        "Cover", "Partial", "Trained", "Blended", "Best Strategy"
+        "{:>6}   {:>10} {:>10} {:>10}   {:>8}",
+        "Cover", "Partial", "Trained", "Blended", "Best"
     );
-    println!("{}", "-".repeat(65));
+    println!("{}", "-".repeat(55));
 
     for (i, &coverage) in COVERAGE_LEVELS.iter().enumerate() {
         let partial_avg = partial_totals[i] / count as f64;
@@ -115,50 +92,88 @@ fn main() -> Result<()> {
 
         let best = if partial_avg <= trained_avg && partial_avg <= blended_avg {
             "Partial"
-        } else if trained_avg <= partial_avg && trained_avg <= blended_avg {
+        } else if trained_avg <= blended_avg {
             "Trained"
         } else {
             "Blended"
         };
 
         println!(
-            "{:>5.0}%   {:>+9.1}% {:>+9.1}% {:>+9.1}%   {:>12}",
-            coverage * 100.0,
-            partial_avg,
-            trained_avg,
-            blended_avg,
-            best
+            "{:>5.0}%   {:>+9.1}% {:>+9.1}% {:>+9.1}%   {:>8}",
+            coverage * 100.0, partial_avg, trained_avg, blended_avg, best
         );
     }
 
+    // ============================================================
+    // Part 2: Proportional Prior Blending
+    // ============================================================
+    println!("\n=== Part 2: Proportional Prior Blending (at 25% coverage) ===\n");
+    println!("Prior weight = fraction of observed total added from trained prior\n");
+
+    let mut prop_totals: Vec<f64> = vec![0.0; PRIOR_WEIGHTS.len()];
+
+    for entry in &images {
+        let path = entry.path();
+        let (w, h, pixels) = load_png(&path)?;
+        let optimal = get_frequencies(w, h, &pixels, h)?;
+
+        let rows_seen = (h as f64 * 0.25) as u32; // 25% coverage
+        let partial = get_frequencies(w, h, &pixels, rows_seen)?;
+
+        for (i, &weight) in PRIOR_WEIGHTS.iter().enumerate() {
+            let blended = partial.ac_luma.add_prior_proportional(&trained.ac_luma, weight);
+            let overhead = compute_overhead(&blended, &optimal.ac_luma);
+            prop_totals[i] += overhead;
+        }
+    }
+
+    let partial_25 = partial_totals[0] / count as f64;
+    println!("Partial only (baseline): {:+.2}%\n", partial_25);
+
+    println!("{:>12}   {:>10}   {:>10}", "Weight", "Overhead", "vs Partial");
+    println!("{}", "-".repeat(40));
+
+    for (i, &weight) in PRIOR_WEIGHTS.iter().enumerate() {
+        let avg = prop_totals[i] / count as f64;
+        let diff = avg - partial_25;
+        println!(
+            "{:>11.1}%   {:>+9.2}%   {:>+9.2}%",
+            weight * 100.0, avg, diff
+        );
+    }
+
+    // ============================================================
+    // Conclusions
+    // ============================================================
     println!("\n=== Conclusions ===\n");
 
-    // Find coverage where partial < 1% overhead
+    let partial_25 = partial_totals[0] / count as f64;
+    let best_prop_idx = prop_totals
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let best_prop = prop_totals[best_prop_idx] / count as f64;
+    let best_weight = PRIOR_WEIGHTS[best_prop_idx];
+
+    if best_prop < partial_25 - 0.05 {
+        println!(
+            "Proportional blending at {:.1}% weight improves over partial: {:+.2}% vs {:+.2}%",
+            best_weight * 100.0, best_prop, partial_25
+        );
+    } else if (best_prop - partial_25).abs() < 0.1 {
+        println!("Proportional blending shows no significant improvement over partial");
+        println!("Recommendation: Just use partial frequencies (simpler)");
+    } else {
+        println!("Partial frequencies win - no blending needed");
+    }
+
     let good_coverage_idx = COVERAGE_LEVELS
         .iter()
         .enumerate()
         .find(|(i, _)| partial_totals[*i] / (count as f64) < 1.0)
         .map(|(i, _)| i);
-
-    let partial_avg_25 = partial_totals[0] / count as f64;
-    let trained_avg = trained_totals[0] / count as f64;
-    let blended_avg_25 = blended_totals[0] / count as f64;
-
-    println!("At 25% coverage:");
-    println!("  Partial:  {:+.1}%", partial_avg_25);
-    println!("  Trained:  {:+.1}%", trained_avg);
-    println!("  Blended:  {:+.1}%", blended_avg_25);
-    println!();
-
-    if partial_avg_25 < blended_avg_25 && partial_avg_25 < trained_avg {
-        println!("-> Partial frequencies win at all coverage levels");
-        println!("-> Blending does NOT help - trained prior adds noise");
-        println!("-> Recommendation: Just use partial frequencies, no blending needed");
-    } else if blended_avg_25 < partial_avg_25 {
-        println!("-> Blending helps at low coverage");
-    } else {
-        println!("-> Trained tables are best (unusual image content)");
-    }
 
     if let Some(idx) = good_coverage_idx {
         println!(
