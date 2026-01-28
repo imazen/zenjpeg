@@ -1262,6 +1262,12 @@ impl StreamingEncoder {
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);
 
+        // Skip frequency counting if custom Huffman tables are provided
+        // (avoids wasted work when tables won't be built from frequencies)
+        if builder.custom_huffman_tables.is_some() {
+            processor.set_skip_frequency_counting(true);
+        }
+
         // Enable trellis quantization if configured
         #[cfg(feature = "experimental-hybrid-trellis")]
         if let Some(ref trellis) = builder.trellis {

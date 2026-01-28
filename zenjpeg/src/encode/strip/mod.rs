@@ -292,6 +292,8 @@ pub struct StripProcessor {
     total_mcus: usize,
     /// Number of iMCU rows that have been counted for frequencies
     freq_imcu_rows_counted: usize,
+    /// Skip frequency counting (for when custom Huffman tables are provided)
+    skip_frequency_counting: bool,
 }
 
 impl StripProcessor {
@@ -618,6 +620,7 @@ impl StripProcessor {
                 mcu_h * mcu_v
             },
             freq_imcu_rows_counted: 0,
+            skip_frequency_counting: false,
         })
     }
 
@@ -1386,7 +1389,10 @@ impl StripProcessor {
         }
 
         // Count frequencies for the just-quantized iMCU row
-        self.count_frequencies_for_imcu_row();
+        // (skip if using custom Huffman tables)
+        if !self.skip_frequency_counting {
+            self.count_frequencies_for_imcu_row();
+        }
     }
 
     /// Counts symbol frequencies for the most recently quantized iMCU row.
@@ -1562,6 +1568,14 @@ impl StripProcessor {
         if last_nonzero < 63 {
             ac_freq.count(0x00); // EOB
         }
+    }
+
+    /// Disables inline frequency counting.
+    ///
+    /// Call this when using custom Huffman tables to avoid the overhead
+    /// of frequency counting that won't be used.
+    pub fn set_skip_frequency_counting(&mut self, skip: bool) {
+        self.skip_frequency_counting = skip;
     }
 
     /// Returns the inline frequency counters for verification.
