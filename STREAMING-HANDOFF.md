@@ -156,12 +156,60 @@ let jpeg = encoder.finish()?;
 
 3. **Restart interval handling** - Restart markers are supported but must be configured before encoding starts.
 
+## Research Findings
+
+### Corpus-Trained Huffman Tables (2026-01)
+
+Trained Huffman tables on CLIC 2025 validation set (32 images) at 30 quality levels.
+
+**Key finding**: jpegli-style adaptive quantization (erosion + zero biasing) produces
+a VERY different coefficient distribution than standard JPEG. The JPEG Annex K tables
+have 4-11% overhead vs optimal for jpegli-encoded images.
+
+Pre-trained tables achieve ~2-3% overhead consistently (vs 4-11% for Annex K).
+
+Files:
+- `zenjpeg/src/huffman/trained/mod.rs` - Pre-trained tables
+- `zenjpeg/data/trained_tables/` - Raw frequency data and validation results
+
+### Frequency Blending for Streaming Transitions (2026-01)
+
+Tested whether blending partial image frequencies with pre-trained corpus frequencies
+provides better Huffman tables during streaming transitions.
+
+**Strategies tested:**
+- **Partial**: Use only frequencies from rows seen so far
+- **Trained**: Use pre-trained corpus frequencies
+- **Blended**: Combine partial + trained prior for rare symbols
+
+**Results** (10 images @ Q85):
+
+| Coverage | Partial | Trained | Blended | Best |
+|----------|---------|---------|---------|------|
+| 25% | +1.9% | +2.3% | +2.8% | Partial |
+| 40% | +0.7% | +2.3% | +0.9% | Partial |
+| 50% | +0.5% | +2.3% | +0.7% | Partial |
+| 75% | +0.1% | +2.3% | +0.3% | Partial |
+
+**Conclusions:**
+1. Partial frequencies win at all coverage levels
+2. Blending with trained prior adds noise that hurts more than helps
+3. At 40% coverage, partial frequencies reach <1% overhead vs optimal
+4. Trained tables only useful as fallback at 0% coverage (start of image)
+
+**Recommendation**: For bounded-memory streaming, use partial frequencies directly
+without blending. Wait until 40%+ coverage before transition for <1% overhead.
+
+Files:
+- `zenjpeg/examples/test_frequency_blending.rs` - Test comparing strategies
+- `zenjpeg/src/huffman/optimize/frequency.rs` - Added `blend_with_prior()`, `from_counts()`
+
 ## Future Work
 
 1. **FFI parity tests** - Verify output matches C++ jpegli (blocked on submodule)
 2. **Memory profiling** - Verify actual peak memory with heaptrack
 3. **Benchmarking** - Measure performance impact of streaming mode
-4. **Configurable threshold** - Allow percentage-based or absolute thresholds
+4. **Transition heuristics** - Wait until 40%+ coverage for optimal tables
 
 ## Files Modified
 
