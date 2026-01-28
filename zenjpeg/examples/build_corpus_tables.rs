@@ -1,6 +1,12 @@
 //! Build corpus-based Huffman tables from CLIC 2025 validation set,
 //! then validate on multiple test sets.
 //!
+//! ## Table Types Compared
+//!
+//! - **Optimal**: Per-image optimized tables (two-pass, what jpegli does by default)
+//! - **Corpus**: Tables trained on CLIC 2025 validation set (our new tables)
+//! - **Standard**: JPEG Annex K tables (libjpeg default, jpegli with optimize=false)
+//!
 //! Run with: cargo run --release -p zenjpeg --features test-utils --example build_corpus_tables
 //!
 //! Output files are written to /mnt/v/output/zenjpeg/corpus_tables/
@@ -25,10 +31,16 @@ fn main() -> Result<()> {
     let test_images = load_image_list("/home/lilith/work/codec-corpus/clic2025/final-test")?;
     let cid22_images = load_image_list("/home/lilith/work/codec-corpus/CID22/CID22-512/validation")?;
 
-    println!("=== CLIC 2025 Corpus Huffman Table Builder ===\n");
-    println!("Training: {} validation images", validation_images.len());
+    println!("=== Corpus Huffman Table Builder ===\n");
+    println!("Training: {} CLIC 2025 validation images", validation_images.len());
     println!("Test sets: {} CLIC final-test, {} CID22-512", test_images.len(), cid22_images.len());
-    println!("Quality tiers: {:?}\n", QUALITY_TIERS);
+    println!("Quality tiers: {:?}", QUALITY_TIERS);
+    println!();
+    println!("Table types:");
+    println!("  Optimal  = Per-image optimized (two-pass, jpegli default)");
+    println!("  Corpus   = Trained on CLIC validation (our tables)");
+    println!("  Standard = JPEG Annex K (libjpeg/jpegli fixed tables)");
+    println!();
 
     // Step 1: Build corpus tables from validation set
     println!("=== Step 1: Building corpus tables ===\n");
@@ -287,6 +299,14 @@ fn save_results(
     writeln!(f, "# Corpus Huffman Table Validation Results")?;
     writeln!(f)?;
     writeln!(f, "Generated: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"))?;
+    writeln!(f)?;
+    writeln!(f, "## Table Types")?;
+    writeln!(f)?;
+    writeln!(f, "| Type | Description | Source |")?;
+    writeln!(f, "|------|-------------|--------|")?;
+    writeln!(f, "| Optimal | Per-image optimized | Two-pass encoding (jpegli default) |")?;
+    writeln!(f, "| Corpus | Trained on image corpus | CLIC 2025 validation (32 images) |")?;
+    writeln!(f, "| Standard | Fixed tables | JPEG Annex K (libjpeg/jpegli fixed) |")?;
     writeln!(f)?;
     writeln!(f, "## Training")?;
     writeln!(f)?;
