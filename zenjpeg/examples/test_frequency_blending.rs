@@ -18,7 +18,7 @@ use zenjpeg::types::Subsampling;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const QUALITY: u8 = 85;
-const COVERAGE_LEVELS: &[f64] = &[0.25, 0.40, 0.50, 0.60, 0.75];
+const COVERAGE_LEVELS: &[f64] = &[0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50];
 const MIN_SAMPLES: i64 = 50;
 const PRIOR_WEIGHTS: &[f64] = &[0.001, 0.005, 0.01, 0.02, 0.05];
 
@@ -49,13 +49,14 @@ fn main() -> Result<()> {
     println!("Testing {} images at Q{}\n", images.len(), QUALITY);
 
     // ============================================================
-    // Part 1: Compare Partial vs Trained vs Threshold-Blended
+    // Part 1: Compare Partial+Ensure vs Trained
     // ============================================================
-    println!("=== Part 1: Threshold-Based Blending (min_samples={}) ===\n", MIN_SAMPLES);
+    println!("=== Partial+Ensure vs Trained (fixed) Tables ===\n");
+    println!("Partial+Ensure = partial frequencies + ensure_ac_coverage() (add 1 to zeros)\n");
 
     let mut partial_totals = vec![0.0f64; COVERAGE_LEVELS.len()];
     let mut trained_totals = vec![0.0f64; COVERAGE_LEVELS.len()];
-    let mut blended_totals = vec![0.0f64; COVERAGE_LEVELS.len()];
+    let mut partial_invalid = vec![0usize; COVERAGE_LEVELS.len()];
     let mut count = 0;
 
     for entry in &images {
@@ -67,78 +68,45 @@ fn main() -> Result<()> {
             let rows_seen = (h as f64 * coverage) as u32;
             let partial = get_frequencies(w, h, &pixels, rows_seen)?;
 
-            let partial_overhead = compute_overhead(&partial.ac_luma, &optimal.ac_luma);
-            let trained_overhead = compute_overhead(&trained.ac_luma, &optimal.ac_luma);
-            let blended = partial.ac_luma.blend_with_prior(&trained.ac_luma, MIN_SAMPLES);
-            let blended_overhead = compute_overhead(&blended, &optimal.ac_luma);
+            // Raw partial (may have missing symbols)
+            let raw_overhead = compute_overhead(&partial.ac_luma, &optimal.ac_luma);
+            if raw_overhead == f64::MAX {
+                partial_invalid[i] += 1;
+            }
 
-            partial_totals[i] += partial_overhead;
+            // Partial + ensure_ac_coverage (always valid)
+            let mut ensured = partial.ac_luma.clone();
+            ensured.ensure_ac_coverage();
+            let ensured_overhead = compute_overhead(&ensured, &optimal.ac_luma);
+
+            let trained_overhead = compute_overhead(&trained.ac_luma, &optimal.ac_luma);
+
+            partial_totals[i] += ensured_overhead;
             trained_totals[i] += trained_overhead;
-            blended_totals[i] += blended_overhead;
         }
         count += 1;
     }
 
     println!(
-        "{:>6}   {:>10} {:>10} {:>10}   {:>8}",
-        "Cover", "Partial", "Trained", "Blended", "Best"
+        "{:>6}   {:>12} {:>10} {:>10}   {:>8}",
+        "Cover", "Partial+Ens", "Trained", "Invalid", "Best"
     );
-    println!("{}", "-".repeat(55));
+    println!("{}", "-".repeat(60));
 
     for (i, &coverage) in COVERAGE_LEVELS.iter().enumerate() {
         let partial_avg = partial_totals[i] / count as f64;
         let trained_avg = trained_totals[i] / count as f64;
-        let blended_avg = blended_totals[i] / count as f64;
+        let invalid_pct = partial_invalid[i] as f64 / count as f64 * 100.0;
 
-        let best = if partial_avg <= trained_avg && partial_avg <= blended_avg {
+        let best = if partial_avg <= trained_avg {
             "Partial"
-        } else if trained_avg <= blended_avg {
-            "Trained"
         } else {
-            "Blended"
+            "Trained"
         };
 
         println!(
-            "{:>5.0}%   {:>+9.1}% {:>+9.1}% {:>+9.1}%   {:>8}",
-            coverage * 100.0, partial_avg, trained_avg, blended_avg, best
-        );
-    }
-
-    // ============================================================
-    // Part 2: Proportional Prior Blending
-    // ============================================================
-    println!("\n=== Part 2: Proportional Prior Blending (at 25% coverage) ===\n");
-    println!("Prior weight = fraction of observed total added from trained prior\n");
-
-    let mut prop_totals: Vec<f64> = vec![0.0; PRIOR_WEIGHTS.len()];
-
-    for entry in &images {
-        let path = entry.path();
-        let (w, h, pixels) = load_png(&path)?;
-        let optimal = get_frequencies(w, h, &pixels, h)?;
-
-        let rows_seen = (h as f64 * 0.25) as u32; // 25% coverage
-        let partial = get_frequencies(w, h, &pixels, rows_seen)?;
-
-        for (i, &weight) in PRIOR_WEIGHTS.iter().enumerate() {
-            let blended = partial.ac_luma.add_prior_proportional(&trained.ac_luma, weight);
-            let overhead = compute_overhead(&blended, &optimal.ac_luma);
-            prop_totals[i] += overhead;
-        }
-    }
-
-    let partial_25 = partial_totals[0] / count as f64;
-    println!("Partial only (baseline): {:+.2}%\n", partial_25);
-
-    println!("{:>12}   {:>10}   {:>10}", "Weight", "Overhead", "vs Partial");
-    println!("{}", "-".repeat(40));
-
-    for (i, &weight) in PRIOR_WEIGHTS.iter().enumerate() {
-        let avg = prop_totals[i] / count as f64;
-        let diff = avg - partial_25;
-        println!(
-            "{:>11.1}%   {:>+9.2}%   {:>+9.2}%",
-            weight * 100.0, avg, diff
+            "{:>5.0}%   {:>+11.1}% {:>+9.1}% {:>9.0}%   {:>8}",
+            coverage * 100.0, partial_avg, trained_avg, invalid_pct, best
         );
     }
 
@@ -147,26 +115,33 @@ fn main() -> Result<()> {
     // ============================================================
     println!("\n=== Conclusions ===\n");
 
-    let partial_25 = partial_totals[0] / count as f64;
-    let best_prop_idx = prop_totals
+    // Find crossover point where partial becomes better than trained
+    let crossover_idx = COVERAGE_LEVELS
         .iter()
         .enumerate()
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    let best_prop = prop_totals[best_prop_idx] / count as f64;
-    let best_weight = PRIOR_WEIGHTS[best_prop_idx];
+        .find(|(i, _)| partial_totals[*i] / (count as f64) <= trained_totals[*i] / (count as f64))
+        .map(|(i, _)| i);
 
-    if best_prop < partial_25 - 0.05 {
-        println!(
-            "Proportional blending at {:.1}% weight improves over partial: {:+.2}% vs {:+.2}%",
-            best_weight * 100.0, best_prop, partial_25
-        );
-    } else if (best_prop - partial_25).abs() < 0.1 {
-        println!("Proportional blending shows no significant improvement over partial");
-        println!("Recommendation: Just use partial frequencies (simpler)");
+    if let Some(idx) = crossover_idx {
+        let crossover_pct = (COVERAGE_LEVELS[idx] * 100.0) as u32;
+        println!("Crossover at {}%: partial+ensure becomes better than trained", crossover_pct);
+        if idx > 0 {
+            let prev_pct = (COVERAGE_LEVELS[idx - 1] * 100.0) as u32;
+            println!(
+                "Below ~{}%: use trained tables\nAbove ~{}%: use partial+ensure",
+                (prev_pct + crossover_pct) / 2,
+                crossover_pct
+            );
+        }
     } else {
-        println!("Partial frequencies win - no blending needed");
+        let first_pct = (COVERAGE_LEVELS[0] * 100.0) as u32;
+        let first_partial = partial_totals[0] / count as f64;
+        let first_trained = trained_totals[0] / count as f64;
+        if first_partial > first_trained {
+            println!("Trained tables are better even at {}% (crossover is lower)", first_pct);
+        } else {
+            println!("Partial+ensure wins at all tested coverage levels ({}%+)", first_pct);
+        }
     }
 
     let good_coverage_idx = COVERAGE_LEVELS
@@ -232,6 +207,10 @@ fn compute_overhead(table_freq: &FrequencyCounter, actual_freq: &FrequencyCounte
     let mut optimal_cost: u64 = 0;
     for i in 0..256 {
         let count = actual_freq.get_count(i as u8) as u64;
+        if count > 0 && table_lengths[i] == 0 {
+            // Symbol needed but no code assigned - would fail to encode
+            return f64::MAX;
+        }
         table_cost += count * table_lengths[i] as u64;
         optimal_cost += count * optimal_lengths[i] as u64;
     }
