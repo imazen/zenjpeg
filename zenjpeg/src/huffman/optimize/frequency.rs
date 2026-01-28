@@ -170,6 +170,59 @@ impl FrequencyCounter {
         }
     }
 
+    /// Blends this histogram with a prior (corpus) histogram for better streaming tables.
+    ///
+    /// When transitioning from buffered to streaming mode with only partial image data,
+    /// blending observed frequencies with corpus-trained priors can produce better
+    /// Huffman tables than using either alone.
+    ///
+    /// Strategy:
+    /// - For symbols with `>= min_samples` observations, use observed frequency
+    /// - For rare/unseen symbols, blend observed + scaled prior to avoid pathological codes
+    ///
+    /// # Arguments
+    /// * `prior` - Corpus-trained frequency histogram (will be scaled to match observed magnitude)
+    /// * `min_samples` - Minimum observations to trust observed frequency alone (e.g., 10-100)
+    ///
+    /// # Returns
+    /// A new histogram blending observed data with the prior for rare symbols.
+    #[must_use]
+    pub fn blend_with_prior(&self, prior: &FrequencyCounter, min_samples: i64) -> FrequencyCounter {
+        let observed_total = self.total();
+        let prior_total = prior.total();
+
+        // If either is empty, return the non-empty one (or empty if both)
+        if observed_total == 0 {
+            return prior.clone();
+        }
+        if prior_total == 0 {
+            return self.clone();
+        }
+
+        // Scale factor to normalize prior to same magnitude as observed
+        let scale = observed_total as f64 / prior_total as f64;
+
+        let mut result = FrequencyCounter::new();
+        for i in 0..256 {
+            let observed = self.counts[i];
+            let prior_scaled = (prior.counts[i] as f64 * scale) as i64;
+
+            result.counts[i] = if observed >= min_samples {
+                // Trust observed data for common symbols
+                observed
+            } else {
+                // Blend: keep what we have, add prior expectation for stability
+                // This ensures rare symbols get reasonable code lengths
+                observed + prior_scaled.max(1)
+            };
+        }
+
+        // Preserve pseudo-symbol if present
+        result.counts[256] = self.counts[256];
+
+        result
+    }
+
     /// Generates an optimal Huffman table from the collected frequencies.
     ///
     /// This implements Section K.2 of the JPEG specification.

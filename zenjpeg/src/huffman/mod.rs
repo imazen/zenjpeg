@@ -5,9 +5,11 @@
 //! - `classic`: Optimal Huffman table generation (mozjpeg-style algorithms)
 //! - `types`: Additional Huffman types and comparisons
 //! - `optimize`: Two-pass Huffman optimization with frequency counting and clustering
+//! - `trained`: Pre-trained Huffman tables for streaming encoding
 
 pub mod classic;
 pub mod encode;
+pub mod trained;
 pub mod optimize;
 pub mod types;
 
