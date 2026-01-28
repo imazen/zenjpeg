@@ -70,3 +70,10 @@ wasm-dct:
     RUSTFLAGS="-C target-feature=+simd128" \
     cargo run --release -p zenjpeg --example wasm_dct_bench \
         --target wasm32-wasip1 --no-default-features --features std
+
+# WASM magetypes vs wide benchmark
+wasm-magetypes:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
+    RUSTFLAGS="-C target-feature=+simd128" \
+    cargo run --release -p zenjpeg --example wasm_magetypes_bench \
+        --target wasm32-wasip1 --no-default-features --features "std,magetypes-simd"

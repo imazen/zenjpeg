@@ -644,11 +644,23 @@ However, full encoder shows SIMD 1.6x faster. The difference is likely:
 - Isolated DCT benchmark has different memory/cache patterns
 - wasmtime's SIMD overhead may be amortized over larger operations
 
-**Conclusion:** The `wide` crate provides good WASM SIMD128 performance out of the box.
-Explicit intrinsics offer marginal improvement (~7% for transpose) not worth the complexity.
-Focus optimization efforts on the full encoder pipeline, not isolated operations.
+**UPDATE: archmage + magetypes comparison (2026-01-27):**
 
-**Files:** `zenjpeg/examples/wasm_simd_transpose.rs`, `zenjpeg/examples/wasm_dct_bench.rs`
+Both archmage 0.2.1 and magetypes 0.1.0 have full WASM SIMD128 support:
+- `archmage::Simd128Token` - capability token for WASM
+- `magetypes::simd::f32x4` - token-gated SIMD types using v128
+
+| Operation | wide | magetypes | Improvement |
+|-----------|------|-----------|-------------|
+| Arithmetic (add/sub/mul) | 0.59 ns | 0.52 ns | **14% faster** |
+| 4x4 transpose | N/A | 0.75 ns | Native v128 shuffle |
+| log2 | 0.37 ns | 0.37 ns | Equal |
+
+**Recommendation:** For WASM-critical paths, consider magetypes over wide for 10-15%
+arithmetic improvements. For portable code, wide remains the simpler choice.
+
+**Files:** `zenjpeg/examples/wasm_simd_transpose.rs`, `zenjpeg/examples/wasm_dct_bench.rs`,
+`zenjpeg/examples/wasm_magetypes_bench.rs`
 
 ## Decoder Performance Gap (2026-01-22)
 
