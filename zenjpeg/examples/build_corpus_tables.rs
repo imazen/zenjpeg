@@ -282,8 +282,62 @@ fn main() -> Result<()> {
     println!();
     println!("Positive improvement = corpus tables are better than standard tables.");
 
-    // Step 4: Test universal Q85 tables across all quality levels
-    println!("\n=== Step 4: Testing universal Q85 tables ===\n");
+    // Step 4: Measure overhead on TRAINING data (validation set) to check for overfitting
+    println!("\n=== Step 4: Overfitting check (training set overhead) ===\n");
+
+    println!("Comparing overhead on training set vs test set:");
+    println!();
+    println!("Quality | Training (validation) | Test (final-test) | Difference");
+    println!("--------|----------------------|-------------------|------------");
+
+    for (quality, corpus_counts) in &corpus_counts_by_quality {
+        let corpus_tables = corpus_counts.generate_tables()?;
+
+        // Measure on training set (validation images)
+        let mut train_optimal = 0usize;
+        let mut train_corpus = 0usize;
+
+        for image_path in &validation_images {
+            let (width, height, pixels) = load_png(image_path)?;
+            let optimal = encode_with_tables(width, height, &pixels, *quality, None)?;
+            let corpus = encode_with_tables(
+                width, height, &pixels, *quality,
+                Some(TableChoice::Custom(corpus_tables.clone())),
+            )?;
+            train_optimal += optimal;
+            train_corpus += corpus;
+        }
+
+        // Measure on test set (final-test images)
+        let mut test_optimal = 0usize;
+        let mut test_corpus = 0usize;
+
+        for image_path in &test_images {
+            let (width, height, pixels) = load_png(image_path)?;
+            let optimal = encode_with_tables(width, height, &pixels, *quality, None)?;
+            let corpus = encode_with_tables(
+                width, height, &pixels, *quality,
+                Some(TableChoice::Custom(corpus_tables.clone())),
+            )?;
+            test_optimal += optimal;
+            test_corpus += corpus;
+        }
+
+        let train_overhead = 100.0 * (train_corpus as f64 - train_optimal as f64) / train_optimal as f64;
+        let test_overhead = 100.0 * (test_corpus as f64 - test_optimal as f64) / test_optimal as f64;
+
+        println!(
+            "Q{:3}    | {:>20.2}% | {:>17.2}% | {:>10.2}%",
+            quality, train_overhead, test_overhead, test_overhead - train_overhead
+        );
+    }
+
+    println!();
+    println!("Positive difference = test is WORSE than training (potential overfitting)");
+    println!("Small difference (<1%) = good generalization");
+
+    // Step 5: Test universal Q85 tables across all quality levels
+    println!("\n=== Step 5: Testing universal Q85 tables ===\n");
 
     // Find Q85 tables
     let q85_tables = corpus_counts_by_quality
@@ -339,8 +393,8 @@ fn main() -> Result<()> {
         );
     }
 
-    // Step 5: Generate output files
-    println!("\n=== Step 5: Generating output files ===\n");
+    // Step 6: Generate output files
+    println!("\n=== Step 6: Generating output files ===\n");
 
     fs::create_dir_all(OUTPUT_DIR)?;
 
