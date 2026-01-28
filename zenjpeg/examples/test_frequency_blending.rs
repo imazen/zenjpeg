@@ -1,49 +1,32 @@
-//! Test frequency blending for streaming JPEG transition.
+//! Test how partial image frequencies converge to optimal.
 //!
-//! Simulates the scenario where we've encoded part of an image and need to
-//! transition to fixed Huffman tables. Compares:
-//! - Optimal: Full-image frequencies (theoretical best)
-//! - Partial: Only frequencies from seen rows (can be poor for rare symbols)
-//! - Corpus: Pre-trained corpus tables (good general case)
-//! - Blended: Partial + corpus prior (hopefully best of both)
+//! Shows the overhead at different coverage levels when transitioning
+//! from buffered to streaming mode.
 //!
-//! Run with: cargo run --release --example test_frequency_blending
+//! Run with: cargo run --release -p zenjpeg --features test-utils --example test_frequency_blending
 
-use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
 use std::path::PathBuf;
 
-use zenjpeg::encode::streaming::StreamingEncoder;
+use zenjpeg::encode::{Quality, StreamingEncoder};
 use zenjpeg::huffman::optimize::FrequencyCounter;
 use zenjpeg::types::Subsampling;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const QUALITY: u8 = 85;
-const COVERAGE_LEVELS: &[f64] = &[0.25, 0.50, 0.75];
-const MIN_SAMPLES: i64 = 50;
+const COVERAGE_LEVELS: &[f64] = &[0.10, 0.25, 0.40, 0.50, 0.60, 0.75, 0.90];
 
 fn main() -> Result<()> {
-    println!("=== Frequency Blending Test ===\n");
-
-    // Load corpus frequencies for Q85
-    let corpus = load_corpus_frequencies(QUALITY)?;
-    println!(
-        "Loaded corpus frequencies for Q{}: {:.0} total AC luma symbols\n",
-        QUALITY,
-        corpus.ac_luma.total() as f64
-    );
+    println!("=== Partial Frequency Convergence Test ===\n");
+    println!("Shows overhead when using partial-image frequencies vs full-image optimal.\n");
 
     // Find test images
     let test_dir = find_test_images()?;
     let images: Vec<_> = fs::read_dir(&test_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map_or(false, |ext| ext == "png" || ext == "jpg")
-        })
-        .take(5) // Just test a few
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+        .take(8)
         .collect();
 
     if images.is_empty() {
@@ -52,121 +35,105 @@ fn main() -> Result<()> {
     }
 
     println!("Testing {} images at Q{}\n", images.len(), QUALITY);
-    println!(
-        "{:<30} {:>8} {:>10} {:>10} {:>10} {:>10}",
-        "Image", "Coverage", "Optimal", "Partial", "Corpus", "Blended"
-    );
-    println!("{}", "-".repeat(88));
 
-    let mut totals: HashMap<String, (f64, usize)> = HashMap::new();
+    // Print header
+    print!("{:<25}", "Image");
+    for &coverage in COVERAGE_LEVELS {
+        print!(" {:>6.0}%", coverage * 100.0);
+    }
+    println!();
+    println!("{}", "-".repeat(25 + COVERAGE_LEVELS.len() * 8));
+
+    // Track averages
+    let mut coverage_totals: Vec<f64> = vec![0.0; COVERAGE_LEVELS.len()];
+    let mut count = 0;
 
     for entry in &images {
         let path = entry.path();
         let name = path.file_stem().unwrap().to_string_lossy();
+        let short_name: String = name.chars().take(24).collect();
 
         // Load image
-        let img = image::open(&path)?.to_rgb8();
-        let (width, height) = img.dimensions();
+        let (w, h, pixels) = load_png(&path)?;
 
         // Get optimal (full image) frequencies
-        let optimal = get_image_frequencies(&img, width, height, 0, height)?;
-        let optimal_cost = optimal.ac_luma.estimate_encoding_cost();
+        let optimal = get_frequencies(w, h, &pixels, h)?;
 
-        for &coverage in COVERAGE_LEVELS {
-            let rows_seen = (height as f64 * coverage) as u32;
+        print!("{:<25}", short_name);
 
-            // Partial frequencies (simulated transition point)
-            let partial = get_image_frequencies(&img, width, height, 0, rows_seen)?;
-            let partial_cost = partial.ac_luma.estimate_encoding_cost();
+        for (i, &coverage) in COVERAGE_LEVELS.iter().enumerate() {
+            let rows_seen = (h as f64 * coverage) as u32;
 
-            // Corpus-only cost
-            let corpus_for_image = scale_corpus_to_image(&corpus, &optimal);
-            let corpus_cost = corpus_for_image.ac_luma.estimate_encoding_cost();
+            // Partial frequencies
+            let partial = get_frequencies(w, h, &pixels, rows_seen)?;
 
-            // Blended: partial + corpus prior
-            let blended_ac = partial.ac_luma.blend_with_prior(&corpus.ac_luma, MIN_SAMPLES);
-            // Scale blended to match optimal total for fair comparison
-            let blended_scaled = scale_counter_to_total(&blended_ac, optimal.ac_luma.total());
-            let blended_cost = blended_scaled.estimate_encoding_cost();
+            // Overhead if we use partial frequencies to encode full image
+            let overhead = compute_overhead(&partial.ac_luma, &optimal.ac_luma);
+            coverage_totals[i] += overhead;
 
-            // Compute overhead percentages vs optimal
-            let partial_overhead = (partial_cost / optimal_cost - 1.0) * 100.0;
-            let corpus_overhead = (corpus_cost / optimal_cost - 1.0) * 100.0;
-            let blended_overhead = (blended_cost / optimal_cost - 1.0) * 100.0;
-
-            println!(
-                "{:<30} {:>7.0}% {:>9.0} {:>+9.1}% {:>+9.1}% {:>+9.1}%",
-                if coverage == COVERAGE_LEVELS[0] {
-                    name.to_string()
-                } else {
-                    String::new()
-                },
-                coverage * 100.0,
-                optimal_cost,
-                partial_overhead,
-                corpus_overhead,
-                blended_overhead
-            );
-
-            // Accumulate totals
-            let key = format!("{:.0}%", coverage * 100.0);
-            let entry = totals.entry(key).or_insert((0.0, 0));
-            entry.0 += blended_overhead - partial_overhead; // improvement from blending
-            entry.1 += 1;
+            print!(" {:>+6.1}%", overhead);
         }
         println!();
+        count += 1;
     }
 
+    // Print averages
+    println!("{}", "-".repeat(25 + COVERAGE_LEVELS.len() * 8));
+    print!("{:<25}", "AVERAGE");
+    for total in &coverage_totals {
+        print!(" {:>+6.1}%", total / count as f64);
+    }
+    println!("\n");
+
     // Summary
-    println!("\n=== Summary ===\n");
-    println!("Blending improvement over partial-only:");
-    for coverage in COVERAGE_LEVELS {
-        let key = format!("{:.0}%", coverage * 100.0);
-        if let Some((total_improvement, count)) = totals.get(&key) {
-            let avg = total_improvement / *count as f64;
-            println!("  {:>3}% coverage: {:+.2}% average", key, avg);
-        }
+    println!("=== Implications for Streaming ===\n");
+    println!("When transitioning to fixed tables at X% coverage:");
+    for (i, &coverage) in COVERAGE_LEVELS.iter().enumerate() {
+        let avg = coverage_totals[i] / count as f64;
+        let verdict = if avg < 1.0 {
+            "excellent"
+        } else if avg < 2.0 {
+            "good"
+        } else if avg < 4.0 {
+            "acceptable"
+        } else {
+            "poor"
+        };
+        println!(
+            "  {:>3.0}%: {:>+5.1}% overhead ({})",
+            coverage * 100.0,
+            avg,
+            verdict
+        );
     }
 
     Ok(())
 }
 
 struct Frequencies {
+    #[allow(dead_code)]
     dc_luma: FrequencyCounter,
     ac_luma: FrequencyCounter,
+    #[allow(dead_code)]
     dc_chroma: FrequencyCounter,
+    #[allow(dead_code)]
     ac_chroma: FrequencyCounter,
 }
 
-fn get_image_frequencies(
-    img: &image::RgbImage,
-    width: u32,
-    height: u32,
-    start_row: u32,
-    end_row: u32,
-) -> Result<Frequencies> {
-    // Create a streaming encoder to collect frequencies
-    let mut encoder = StreamingEncoder::new(width, height)
-        .quality(QUALITY)
+fn get_frequencies(w: u32, h: u32, pixels: &[u8], rows_to_encode: u32) -> Result<Frequencies> {
+    let mut encoder = StreamingEncoder::new(w, h)
+        .quality(Quality::ApproxJpegli(QUALITY as f32))
         .subsampling(Subsampling::S420)
         .start()?;
 
-    // Push rows up to end_row
-    let pixels: Vec<_> = img.pixels().cloned().collect();
-    let stride = width as usize;
-
-    for y in start_row..end_row.min(height) {
+    // Push rows
+    let stride = w as usize * 3;
+    for y in 0..rows_to_encode.min(h) {
         let row_start = y as usize * stride;
         let row_end = row_start + stride;
-        let row_data: Vec<[u8; 3]> = pixels[row_start..row_end]
-            .iter()
-            .map(|p| [p[0], p[1], p[2]])
-            .collect();
-
-        encoder.push_rows(&row_data, 1)?;
+        encoder.push_rows(&pixels[row_start..row_end], 1)?;
     }
 
-    // Extract frequency counters
     let counters = encoder.frequency_counters();
     Ok(Frequencies {
         dc_luma: counters.0.clone(),
@@ -176,72 +143,69 @@ fn get_image_frequencies(
     })
 }
 
-fn load_corpus_frequencies(quality: u8) -> Result<Frequencies> {
-    let json_path = PathBuf::from("/mnt/v/output/zenjpeg/corpus_tables/frequency_counts.json");
-    let json_str = fs::read_to_string(&json_path)?;
-    let data: serde_json::Value = serde_json::from_str(&json_str)?;
+/// Compute % overhead if we use `table_freq` distribution to encode `actual_freq` data.
+fn compute_overhead(table_freq: &FrequencyCounter, actual_freq: &FrequencyCounter) -> f64 {
+    // Generate code lengths from the table we'd use
+    let table_lengths = match table_freq.generate_lengths() {
+        Ok(l) => l,
+        Err(_) => return f64::MAX,
+    };
 
-    let quality_key = format!("Q{}", quality);
-    let tier = data
-        .get(&quality_key)
-        .ok_or_else(|| format!("No data for {}", quality_key))?;
+    // Generate optimal code lengths
+    let optimal_lengths = match actual_freq.generate_lengths() {
+        Ok(l) => l,
+        Err(_) => return f64::MAX,
+    };
 
-    fn parse_counter(arr: &serde_json::Value) -> FrequencyCounter {
-        let mut counter = FrequencyCounter::new();
-        if let Some(arr) = arr.as_array() {
-            for (i, v) in arr.iter().enumerate() {
-                if i < 256 {
-                    let count = v.as_i64().unwrap_or(0);
-                    for _ in 0..count {
-                        counter.count(i as u8);
-                    }
-                }
-            }
-        }
-        counter
-    }
-
-    Ok(Frequencies {
-        dc_luma: parse_counter(&tier["dc_luma"]),
-        ac_luma: parse_counter(&tier["ac_luma"]),
-        dc_chroma: parse_counter(&tier["dc_chroma"]),
-        ac_chroma: parse_counter(&tier["ac_chroma"]),
-    })
-}
-
-fn scale_corpus_to_image(corpus: &Frequencies, image: &Frequencies) -> Frequencies {
-    Frequencies {
-        dc_luma: scale_counter_to_total(&corpus.dc_luma, image.dc_luma.total()),
-        ac_luma: scale_counter_to_total(&corpus.ac_luma, image.ac_luma.total()),
-        dc_chroma: scale_counter_to_total(&corpus.dc_chroma, image.dc_chroma.total()),
-        ac_chroma: scale_counter_to_total(&corpus.ac_chroma, image.ac_chroma.total()),
-    }
-}
-
-fn scale_counter_to_total(counter: &FrequencyCounter, target_total: i64) -> FrequencyCounter {
-    let current_total = counter.total();
-    if current_total == 0 || target_total == 0 {
-        return counter.clone();
-    }
-
-    let scale = target_total as f64 / current_total as f64;
-    let mut result = FrequencyCounter::new();
-
+    // Cost with our table
+    let mut table_cost: u64 = 0;
+    let mut optimal_cost: u64 = 0;
     for i in 0..256 {
-        let count = counter.get_count(i as u8);
-        let scaled = (count as f64 * scale).round() as i64;
-        for _ in 0..scaled {
-            result.count(i as u8);
-        }
+        let count = actual_freq.get_count(i as u8) as u64;
+        table_cost += count * table_lengths[i] as u64;
+        optimal_cost += count * optimal_lengths[i] as u64;
     }
 
-    result
+    if optimal_cost == 0 {
+        return 0.0;
+    }
+
+    (table_cost as f64 / optimal_cost as f64 - 1.0) * 100.0
+}
+
+fn load_png(path: &PathBuf) -> Result<(u32, u32, Vec<u8>)> {
+    let decoder = png::Decoder::new(File::open(path)?);
+    let mut reader = decoder.read_info()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf)?;
+
+    let (w, h) = (info.width, info.height);
+    let pixels = match info.color_type {
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgba => buf[..info.buffer_size()]
+            .chunks(4)
+            .flat_map(|c| [c[0], c[1], c[2]])
+            .collect(),
+        png::ColorType::Grayscale => buf[..info.buffer_size()]
+            .iter()
+            .flat_map(|&g| [g, g, g])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
+            .chunks(2)
+            .flat_map(|c| [c[0], c[0], c[0]])
+            .collect(),
+        _ => return Err(format!("Unsupported: {:?}", info.color_type).into()),
+    };
+
+    Ok((w, h, pixels))
 }
 
 fn find_test_images() -> Result<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".to_string());
     let candidates = [
-        PathBuf::from(env!("HOME")).join("work/codec-eval/codec-corpus/clic2025/final-test"),
-        PathBuf::from(env!("HOME")).join("work/codec-eval/codec-corpus/CID22/CID22-512/validation"),
+        PathBuf::from(&home).join("work/codec-corpus/clic2025/final-test"),
+        PathBuf::from(&home).join("work/codec-eval/codec-corpus/clic2025/final-test"),
+        PathBuf::from(&home).join("work/codec-corpus/CID22/CID22-512/validation"),
         PathBuf::from("internal/jpegli-cpp/testdata"),
     ];
 
