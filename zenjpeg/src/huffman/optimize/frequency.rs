@@ -98,6 +98,19 @@ impl FrequencyCounter {
         Self { counts: [0; 257] }
     }
 
+    /// Creates a frequency counter from a slice of counts (one per symbol 0-255).
+    ///
+    /// If the slice is shorter than 256, remaining symbols get count 0.
+    /// If longer, extra elements are ignored.
+    #[must_use]
+    pub fn from_counts(counts: &[i64]) -> Self {
+        let mut result = Self::new();
+        for (i, &count) in counts.iter().take(256).enumerate() {
+            result.counts[i] = count;
+        }
+        result
+    }
+
     /// Resets all counts to zero.
     pub fn reset(&mut self) {
         self.counts.fill(0);

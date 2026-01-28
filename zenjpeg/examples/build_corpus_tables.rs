@@ -111,9 +111,13 @@ fn main() -> Result<()> {
     generate_rust_code(&corpus_counts, &rust_file)?;
     println!("Rust code: {}", rust_file.display());
 
-    let json_file = PathBuf::from(OUTPUT_DIR).join("frequency_counts.json");
+    let json_file = PathBuf::from(OUTPUT_DIR).join("huffman_tables.json");
     save_json(&corpus_counts, &json_file)?;
-    println!("JSON data: {}", json_file.display());
+    println!("Tables:    {}", json_file.display());
+
+    let raw_file = PathBuf::from(OUTPUT_DIR).join("raw_frequencies.json");
+    save_raw_frequencies(&corpus_counts, &raw_file)?;
+    println!("Raw freq:  {}", raw_file.display());
 
     // Save validation results
     let results_file = PathBuf::from(OUTPUT_DIR).join("validation_results.md");
@@ -394,6 +398,29 @@ fn save_json(counts: &[(u8, HuffmanFrequencyCounts)], path: &PathBuf) -> Result<
         }
 
         data.insert(format!("q{}", quality), serde_json::Value::Object(qdata));
+    }
+
+    fs::write(path, serde_json::to_string_pretty(&data)?)?;
+    Ok(())
+}
+
+fn save_raw_frequencies(counts: &[(u8, HuffmanFrequencyCounts)], path: &PathBuf) -> Result<()> {
+    use zenjpeg::huffman::optimize::FrequencyCounter;
+
+    fn counter_to_vec(counter: &FrequencyCounter) -> Vec<i64> {
+        (0..256).map(|i| counter.get_count(i as u8)).collect()
+    }
+
+    let mut data = serde_json::Map::new();
+
+    for (quality, c) in counts {
+        let qdata = serde_json::json!({
+            "dc_luma": counter_to_vec(&c.dc_luma),
+            "ac_luma": counter_to_vec(&c.ac_luma),
+            "dc_chroma": counter_to_vec(&c.dc_chroma),
+            "ac_chroma": counter_to_vec(&c.ac_chroma),
+        });
+        data.insert(format!("q{}", quality), qdata);
     }
 
     fs::write(path, serde_json::to_string_pretty(&data)?)?;
