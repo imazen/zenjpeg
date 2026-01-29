@@ -106,9 +106,58 @@ fn main() -> Result<()> {
         r.stream_fixed.as_secs_f64() * 1000.0,
     );
 
+    // Test batch sizes with synthetic 4K
+    println!("\n=== Streaming Batch Size Comparison (4K) ===\n");
+    let (w, h) = (3840, 2160);
+    let pixels = generate_synthetic_image(w, h);
+
+    println!("{:>8} {:>10} {:>10}", "Batch", "Time", "vs Batch=1");
+    println!("{}", "-".repeat(32));
+
+    let batch_sizes = [1, 2, 4, 8, 16];
+    let mut baseline_time = Duration::ZERO;
+
+    let baseline_output = encode_stream_batched(&pixels, w, h, 1)?;
+    let baseline_len = baseline_output.len();
+
+    for &batch_size in &batch_sizes {
+        // Warmup
+        for _ in 0..WARMUP_ITERS {
+            let _ = encode_stream_batched(&pixels, w, h, batch_size)?;
+        }
+
+        // Benchmark
+        let mut times = Vec::with_capacity(BENCH_ITERS);
+        let mut output_len = 0;
+        for _ in 0..BENCH_ITERS {
+            let start = Instant::now();
+            let out = encode_stream_batched(&pixels, w, h, batch_size)?;
+            times.push(start.elapsed());
+            output_len = out.len();
+        }
+        times.sort();
+        let median = times[BENCH_ITERS / 2];
+
+        let size_diff = if output_len == baseline_len {
+            "OK".to_string()
+        } else {
+            format!("DIFF: {} vs {}", output_len, baseline_len)
+        };
+
+        if batch_size == 1 {
+            baseline_time = median;
+            println!("{:>8} {:>9.1}ms {:>10}  {}", batch_size, median.as_secs_f64() * 1000.0, "-", size_diff);
+        } else {
+            let speedup = baseline_time.as_secs_f64() / median.as_secs_f64();
+            let pct = (speedup - 1.0) * 100.0;
+            println!("{:>8} {:>9.1}ms {:>+9.1}%  {}", batch_size, median.as_secs_f64() * 1000.0, pct, size_diff);
+        }
+    }
+
     println!("\n=== Summary ===\n");
     println!("Pretrained vs Optimal: measures overhead of frequency counting + table building");
     println!("Partial vs Optimal: measures benefit of early transition (30% coverage)");
+    println!("Batch sizes: higher values may improve throughput by reducing function call overhead");
 
     Ok(())
 }
@@ -254,7 +303,11 @@ fn encode_partial(pixels: &[u8], w: u32, h: u32, coverage: f64) -> Result<Vec<u8
 }
 
 fn encode_stream_fixed(pixels: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
-    // Stream from start with fixed pretrained tables - no buffering at all
+    encode_stream_batched(pixels, w, h, 1)
+}
+
+fn encode_stream_batched(pixels: &[u8], w: u32, h: u32, batch_size: usize) -> Result<Vec<u8>> {
+    // Stream from start with fixed pretrained tables
     let tables = trained_tables_q85();
 
     let mut encoder = StreamingEncoder::new(w, h)
@@ -262,6 +315,7 @@ fn encode_stream_fixed(pixels: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
         .subsampling(Subsampling::S420)
         .custom_huffman_tables(tables)
         .memory_limit(1)  // Trigger immediate streaming
+        .streaming_batch_size(batch_size)
         .start()?;
 
     let stride = w as usize * 3;
