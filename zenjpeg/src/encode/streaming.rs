@@ -757,27 +757,17 @@ impl StreamingEncoderBuilder {
     /// Sets the number of iMCU rows to batch before encoding in streaming mode.
     ///
     /// Default is 1 (encode immediately after each iMCU row is ready).
-    /// Higher values may improve throughput by reducing function call overhead
-    /// and enabling better SIMD utilization at the cost of slightly more memory.
-    ///
     /// This only affects streaming mode (after transition from buffered mode
     /// or with immediate streaming via `memory_limit(1)`).
     ///
     /// # Performance Notes
     ///
-    /// - `1` (default): Lowest latency, blocks encoded as soon as ready
-    /// - `4-8`: Good balance for large images, ~5-10% throughput improvement
-    /// - `16+`: Diminishing returns, only useful for very large images
+    /// Benchmarks show no meaningful performance difference between batch sizes
+    /// 1-16 on 4K images. The encoder is already well-optimized for per-iMCU-row
+    /// processing, so the default of 1 is recommended.
     ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let jpeg = StreamingEncoder::new(3840, 2160)
-    ///     .quality(85)
-    ///     .memory_limit(1)  // Immediate streaming
-    ///     .streaming_batch_size(4)  // Batch 4 iMCU rows
-    ///     .encode(&pixels)?;
-    /// ```
+    /// This option is provided for experimentation but is unlikely to provide
+    /// benefits in practice.
     #[must_use]
     pub fn streaming_batch_size(mut self, size: usize) -> Self {
         self.streaming_batch_size = size.max(1); // Minimum 1
