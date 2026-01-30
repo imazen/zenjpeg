@@ -34,6 +34,24 @@ bench-aq:
 bench-cpp:
     cargo bench -p zenjpeg --bench cpp_comparison
 
+# Benchmark fused vs batched pipeline (cache experiment)
+bench-batched:
+    cargo run --release -p zenjpeg --features test-utils --example bench_batched_pipeline
+
+# Benchmark batched with custom PPM and iterations
+bench-batched-ppm PPM ITERATIONS="10":
+    cargo run --release -p zenjpeg --features test-utils --example bench_batched_pipeline -- --ppm {{PPM}} -n {{ITERATIONS}}
+
+# Cachegrind comparison of fused vs batched pipeline
+cachegrind-batched PPM BATCH="8":
+    cargo build --release -p zenjpeg --features test-utils --example bench_batched_pipeline
+    valgrind --tool=cachegrind ./target/release/examples/bench_batched_pipeline --ppm {{PPM}} --cachegrind --batch {{BATCH}}
+
+# Profile fused pipeline with cachegrind
+cachegrind-fused PPM:
+    cargo build --release -p zenjpeg --features test-utils --example profile_pipeline
+    valgrind --tool=cachegrind ./target/release/examples/profile_pipeline {{PPM}} 1
+
 # Quick parity check (10 images x 50 quality levels)
 parity:
     cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --nocapture --ignored

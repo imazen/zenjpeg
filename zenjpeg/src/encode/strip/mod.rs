@@ -1599,6 +1599,322 @@ impl StripProcessor {
         )
     }
 
+    /// Processes multiple strips in batched stage order for cache experiment.
+    ///
+    /// Instead of the normal fused pipeline (color→AQ→downsample→DCT→quant per strip),
+    /// this method processes strips in stages:
+    /// - Phase A: Color convert + AQ + downsample for each strip (sequential, saves intermediates)
+    /// - Phase B: DCT for all strips (batched)
+    /// - Phase C: Quantize for all strips (batched)
+    ///
+    /// Uses pre-allocated reuse buffers to avoid per-strip allocation overhead.
+    /// `reuse` must be created via `BatchReuse::new()` with matching parameters.
+    ///
+    /// Returns the total number of Y blocks added.
+    #[cfg(feature = "test-utils")]
+    pub fn process_strips_batched(
+        &mut self,
+        strips: &[(&[u8], usize)],
+        reuse: &mut BatchReuse,
+    ) -> Result<usize> {
+        let batch_size = strips.len();
+        if batch_size == 0 {
+            return Ok(0);
+        }
+        assert!(
+            batch_size <= reuse.max_batch,
+            "batch_size {} exceeds reuse buffer capacity {}",
+            batch_size,
+            reuse.max_batch
+        );
+
+        let strip_y_size = self.padded_width * self.strip_height;
+        let c_strip_height = match self.subsampling {
+            Subsampling::S420 | Subsampling::S440 => self.strip_height / 2,
+            _ => self.strip_height,
+        };
+        let cb_down_size = self.padded_c_width * c_strip_height;
+
+        // Reset per-batch tracking
+        reuse.aq_counts.clear();
+        reuse.strip_heights.clear();
+        reuse.y_dct_offsets.clear();
+        reuse.c_dct_offsets.clear();
+        reuse.all_y_dct.clear();
+        reuse.all_cb_dct.clear();
+        reuse.all_cr_dct.clear();
+
+        // ============================================================
+        // Phase A: Color convert + AQ + Downsample (sequential per strip)
+        // ============================================================
+        for (si, &(rgb_strip, strip_y)) in strips.iter().enumerate() {
+            let actual_strip_height = self.strip_height.min(self.height - strip_y);
+            let mut chroma_already_downsampled = false;
+
+            // Color convert
+            if self.use_xyb {
+                self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
+                chroma_already_downsampled = true;
+            } else {
+                let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
+                    && !self.pixel_format.is_grayscale()
+                    && self.subsampling != Subsampling::S444;
+
+                if uses_gamma_aware_fused {
+                    self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+                    chroma_already_downsampled = true;
+                } else {
+                    #[cfg(feature = "yuv")]
+                    {
+                        if self.subsampling == Subsampling::S420
+                            && !self.pixel_format.is_grayscale()
+                            && self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)?
+                        {
+                            chroma_already_downsampled = true;
+                        }
+                    }
+
+                    if !chroma_already_downsampled {
+                        self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+                    }
+                }
+            }
+
+            if actual_strip_height < self.strip_height {
+                self.pad_strips_vertically(actual_strip_height, self.strip_height);
+            }
+
+            // AQ (must be sequential - has rolling state)
+            let aq_count = if let Some(ref mut aq) = self.aq_state {
+                aq.process_y_strip_into(
+                    &self.y_strip,
+                    strip_y,
+                    actual_strip_height,
+                    &mut self.aq_strengths_buffer,
+                )
+            } else {
+                None
+            };
+
+            let downsample_height = if actual_strip_height < self.strip_height {
+                self.strip_height
+            } else {
+                actual_strip_height
+            };
+            if !self.pixel_format.is_grayscale() && !chroma_already_downsampled {
+                self.downsample_chroma_strip(downsample_height)?;
+            }
+
+            // Save intermediates into reuse buffer (copy into pre-allocated flat storage)
+            let y_off = si * strip_y_size;
+            reuse.y_data[y_off..y_off + strip_y_size]
+                .copy_from_slice(&self.y_strip[..strip_y_size]);
+            let cb_off = si * cb_down_size;
+            reuse.cb_data[cb_off..cb_off + cb_down_size]
+                .copy_from_slice(&self.cb_down[..cb_down_size]);
+            let cr_off = si * cb_down_size;
+            reuse.cr_data[cr_off..cr_off + cb_down_size]
+                .copy_from_slice(&self.cr_down[..cb_down_size]);
+
+            // Save AQ strengths for this strip (copy into reuse buffer)
+            if let Some(count) = aq_count {
+                let aq_off = si * reuse.aq_stride;
+                let src = &self.aq_strengths_buffer[..count];
+                reuse.aq_strengths_saved[aq_off..aq_off + count].copy_from_slice(src);
+            }
+            reuse.aq_counts.push(aq_count);
+            reuse.strip_heights.push(downsample_height);
+        }
+
+        // ============================================================
+        // Phase B: DCT for all strips (batched)
+        // ============================================================
+        let blocks_w = (self.width + 7) / 8;
+        let padded_width = self.padded_width;
+
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+        let simd_token = self.simd_token;
+        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+        let simd_token = ();
+
+        let y_dc_quant = self
+            .quant
+            .as_ref()
+            .map(|q| q.y_quant.values[0])
+            .unwrap_or(16);
+
+        for (si, &(_, strip_y)) in strips.iter().enumerate() {
+            let downsample_height = reuse.strip_heights[si];
+            let strip_blocks_h = (downsample_height + 7) / 8;
+            let start_block_y = strip_y / 8;
+            let max_block_y = (self.height + 7) / 8;
+            let actual_strip_blocks_h =
+                strip_blocks_h.min(max_block_y.saturating_sub(start_block_y));
+
+            // Y DCT
+            let y_off = si * strip_y_size;
+            let y_data = &reuse.y_data[y_off..y_off + strip_y_size];
+            let y_size = downsample_height * padded_width;
+
+            let y_start = reuse.all_y_dct.len();
+            reuse.y_dct_offsets.push(y_start);
+
+            for local_by in 0..actual_strip_blocks_h {
+                for bx in 0..blocks_w {
+                    let mut block = extract_block_from_strip_wide(
+                        &y_data[..y_size],
+                        bx,
+                        local_by,
+                        padded_width,
+                    );
+                    if self.deringing {
+                        super::deringing::preprocess_deringing_block(&mut block, y_dc_quant);
+                    }
+                    reuse.all_y_dct.push(forward_dct_dispatch(simd_token, &block));
+                }
+            }
+
+            // Cb/Cr DCT
+            if !self.pixel_format.is_grayscale() && !self.use_xyb {
+                let (c_width, c_strip_height_actual) = match self.subsampling {
+                    Subsampling::S420 => ((self.width + 1) / 2, (downsample_height + 1) / 2),
+                    Subsampling::S422 => ((self.width + 1) / 2, downsample_height),
+                    Subsampling::S440 => (self.width, (downsample_height + 1) / 2),
+                    Subsampling::S444 => (self.width, downsample_height),
+                };
+                let c_blocks_w = (c_width + 7) / 8;
+                let c_strip_blocks_h = (c_strip_height_actual + 7) / 8;
+                let padded_c_width = self.padded_c_width;
+                let c_size = c_strip_height_actual * padded_c_width;
+
+                let cb_off = si * cb_down_size;
+                let cb_data = &reuse.cb_data[cb_off..cb_off + cb_down_size];
+                let cr_data = &reuse.cr_data[cb_off..cb_off + cb_down_size];
+
+                let c_start = reuse.all_cb_dct.len();
+                reuse.c_dct_offsets.push(c_start);
+
+                for local_by in 0..c_strip_blocks_h {
+                    for bx in 0..c_blocks_w {
+                        let cb_block = extract_block_from_strip_wide(
+                            &cb_data[..c_size],
+                            bx,
+                            local_by,
+                            padded_c_width,
+                        );
+                        reuse.all_cb_dct.push(forward_dct_dispatch(simd_token, &cb_block));
+
+                        let cr_block = extract_block_from_strip_wide(
+                            &cr_data[..c_size],
+                            bx,
+                            local_by,
+                            padded_c_width,
+                        );
+                        reuse.all_cr_dct.push(forward_dct_dispatch(simd_token, &cr_block));
+                    }
+                }
+            } else {
+                reuse.c_dct_offsets.push(reuse.all_cb_dct.len());
+            }
+        }
+
+        // Add sentinel offsets for easy slicing
+        reuse.y_dct_offsets.push(reuse.all_y_dct.len());
+        reuse.c_dct_offsets.push(reuse.all_cb_dct.len());
+
+        // ============================================================
+        // Phase C: Quantize all strips (batched)
+        // ============================================================
+        let quant = self.quant.clone().expect("quant context not set");
+        let mut total_blocks = 0;
+
+        for si in 0..batch_size {
+            if let Some(count) = reuse.aq_counts[si] {
+                if si > 0 {
+                    // AQ strengths from strip si apply to strip si-1's DCT blocks
+                    let y_start = reuse.y_dct_offsets[si - 1];
+                    let y_end = reuse.y_dct_offsets[si];
+                    let aq_off = si * reuse.aq_stride;
+
+                    for (j, dct) in reuse.all_y_dct[y_start..y_end].iter().enumerate() {
+                        let aq_strength = if j < count {
+                            reuse.aq_strengths_saved[aq_off + j]
+                        } else {
+                            0.08
+                        };
+                        let zigzag = quant.y_quant_simd.quantize_with_zero_bias_zigzag(
+                            dct,
+                            &quant.y_zero_bias_simd,
+                            aq_strength,
+                        );
+                        self.y_blocks.push(zigzag);
+                        self.all_aq_strengths.push(aq_strength);
+                    }
+
+                    let c_start = reuse.c_dct_offsets[si - 1];
+                    let c_end = reuse.c_dct_offsets[si];
+                    for dct in reuse.all_cb_dct[c_start..c_end].iter() {
+                        let zigzag = quant.cb_quant_simd.quantize_with_zero_bias_zigzag(
+                            dct,
+                            &quant.cb_zero_bias_simd,
+                            0.08,
+                        );
+                        self.cb_blocks.push(zigzag);
+                    }
+                    for dct in reuse.all_cr_dct[c_start..c_end].iter() {
+                        let zigzag = quant.cr_quant_simd.quantize_with_zero_bias_zigzag(
+                            dct,
+                            &quant.cr_zero_bias_simd,
+                            0.08,
+                        );
+                        self.cr_blocks.push(zigzag);
+                    }
+
+                    total_blocks += y_end - y_start;
+
+                    if !self.skip_frequency_counting {
+                        self.count_frequencies_for_imcu_row();
+                    }
+                } else {
+                    // First strip - AQ strengths for pre-batch pending blocks
+                    let prev_buffer = 1 - self.pending_current;
+                    if !self.pending_y_blocks[prev_buffer].is_empty() {
+                        // Copy AQ strengths from reuse buffer back to working buffer
+                        let aq_off = 0; // si == 0
+                        self.aq_strengths_buffer[..count]
+                            .copy_from_slice(&reuse.aq_strengths_saved[aq_off..aq_off + count]);
+                        let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
+                        self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+                        self.aq_strengths_buffer = temp_buffer;
+                        self.pending_y_blocks[prev_buffer].clear();
+                        self.pending_cb_blocks[prev_buffer].clear();
+                        self.pending_cr_blocks[prev_buffer].clear();
+                    }
+                }
+            }
+        }
+
+        // Store last strip's DCT blocks in pending buffer for next batch/finalize
+        let last = batch_size - 1;
+        let y_start = reuse.y_dct_offsets[last];
+        let y_end = reuse.y_dct_offsets[last + 1];
+        let c_start = reuse.c_dct_offsets[last];
+        let c_end = reuse.c_dct_offsets[last + 1];
+
+        let pending_idx = self.pending_current;
+        self.pending_y_blocks[pending_idx].clear();
+        self.pending_y_blocks[pending_idx].extend_from_slice(&reuse.all_y_dct[y_start..y_end]);
+        self.pending_cb_blocks[pending_idx].clear();
+        self.pending_cb_blocks[pending_idx].extend_from_slice(&reuse.all_cb_dct[c_start..c_end]);
+        self.pending_cr_blocks[pending_idx].clear();
+        self.pending_cr_blocks[pending_idx].extend_from_slice(&reuse.all_cr_dct[c_start..c_end]);
+        self.pending_current = 1 - self.pending_current;
+
+        total_blocks += y_end - y_start;
+
+        Ok(total_blocks)
+    }
+
     /// Finalizes encoding after all strips have been processed.
     ///
     /// With incremental quantization, most blocks are already quantized.
@@ -1658,6 +1974,82 @@ pub struct StripProcessorOutput {
     pub aq_strengths: Vec<f32>,
     /// Allocation statistics from the encoding process
     pub alloc_stats: AllocationStats,
+}
+
+/// Pre-allocated reuse buffers for batched strip processing.
+///
+/// Avoids per-batch allocation overhead by pre-allocating all intermediate
+/// storage once and reusing across batches. Create with `BatchReuse::new()`
+/// and pass to `process_strips_batched()`.
+#[cfg(feature = "test-utils")]
+pub struct BatchReuse {
+    /// Maximum batch size this buffer supports
+    max_batch: usize,
+    /// Flat Y strip storage: max_batch * strip_y_size
+    y_data: Vec<f32>,
+    /// Flat Cb downsampled storage: max_batch * cb_down_size
+    cb_data: Vec<f32>,
+    /// Flat Cr downsampled storage: max_batch * cb_down_size
+    cr_data: Vec<f32>,
+    /// Flat AQ strengths storage: max_batch * aq_stride
+    aq_strengths_saved: Vec<f32>,
+    /// AQ stride (max blocks per strip)
+    aq_stride: usize,
+    /// Per-strip AQ counts (reset each batch)
+    aq_counts: Vec<Option<usize>>,
+    /// Per-strip downsample heights (reset each batch)
+    strip_heights: Vec<usize>,
+    /// Y DCT block offset per strip into all_y_dct
+    y_dct_offsets: Vec<usize>,
+    /// Chroma DCT block offset per strip into all_cb_dct/all_cr_dct
+    c_dct_offsets: Vec<usize>,
+    /// Flat Y DCT blocks for all strips in batch
+    all_y_dct: Vec<Block8x8f>,
+    /// Flat Cb DCT blocks for all strips in batch
+    all_cb_dct: Vec<Block8x8f>,
+    /// Flat Cr DCT blocks for all strips in batch
+    all_cr_dct: Vec<Block8x8f>,
+}
+
+#[cfg(feature = "test-utils")]
+impl BatchReuse {
+    /// Creates reuse buffers for batched processing.
+    ///
+    /// # Arguments
+    /// * `max_batch` - Maximum number of strips per batch
+    /// * `padded_width` - MCU-aligned image width
+    /// * `strip_height` - Strip height (16 for 4:2:0, 8 for 4:4:4)
+    /// * `padded_c_width` - MCU-aligned chroma width
+    /// * `c_strip_height` - Chroma strip height after downsampling
+    /// * `blocks_per_strip` - Max Y blocks per strip
+    /// * `c_blocks_per_strip` - Max chroma blocks per strip
+    pub fn new(
+        max_batch: usize,
+        padded_width: usize,
+        strip_height: usize,
+        padded_c_width: usize,
+        c_strip_height: usize,
+        blocks_per_strip: usize,
+        c_blocks_per_strip: usize,
+    ) -> Self {
+        let strip_y_size = padded_width * strip_height;
+        let cb_down_size = padded_c_width * c_strip_height;
+        Self {
+            max_batch,
+            y_data: vec![0.0; max_batch * strip_y_size],
+            cb_data: vec![0.0; max_batch * cb_down_size],
+            cr_data: vec![0.0; max_batch * cb_down_size],
+            aq_strengths_saved: vec![0.0; max_batch * blocks_per_strip],
+            aq_stride: blocks_per_strip,
+            aq_counts: Vec::with_capacity(max_batch),
+            strip_heights: Vec::with_capacity(max_batch),
+            y_dct_offsets: Vec::with_capacity(max_batch + 1),
+            c_dct_offsets: Vec::with_capacity(max_batch + 1),
+            all_y_dct: Vec::with_capacity(max_batch * blocks_per_strip),
+            all_cb_dct: Vec::with_capacity(max_batch * c_blocks_per_strip),
+            all_cr_dct: Vec::with_capacity(max_batch * c_blocks_per_strip),
+        }
+    }
 }
 
 #[cfg(test)]
