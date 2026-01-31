@@ -42,10 +42,34 @@ use enough::{Stop, Unstoppable};
 pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
 
 
+/// State for streaming-through encoding mode.
+///
+/// When present, blocks are entropy-encoded immediately on each strip flush
+/// rather than buffered for a later two-pass Huffman optimization.
+struct StreamingOutputState {
+    /// BitWriter accumulates encoded scan data across strip flushes.
+    writer: crate::foundation::bitstream::BitWriter,
+    /// Huffman tables used for encoding.
+    tables: crate::huffman::optimize::OptimizedHuffmanTables,
+    /// Entropy encoding state (DC prediction, restart markers).
+    entropy_state: crate::entropy::StreamingEntropyState,
+    /// Total MCUs in the full image (for restart marker logic).
+    total_mcus: usize,
+    /// JPEG header bytes (SOI through SOS), written at construction time.
+    header: Vec<u8>,
+}
+
 /// Streaming input JPEG encoder.
 ///
 /// Accepts rows incrementally and outputs JPEG at the end.
 /// Uses strip-based processing internally for low peak memory usage.
+///
+/// Two encoding modes:
+/// - **Buffered** (default with `optimize_huffman=true`): buffers all blocks,
+///   builds optimal Huffman tables at `finish()`.
+/// - **Streaming-through** (with custom tables or `optimize_huffman=false`, baseline only):
+///   writes JPEG header at construction, encodes blocks immediately on each
+///   strip flush. At `finish()`, just appends EOI.
 pub(crate) struct StreamingEncoder {
     /// Image width in pixels
     width: usize,
@@ -73,6 +97,9 @@ pub(crate) struct StreamingEncoder {
     y_quant: QuantTable,
     cb_quant: QuantTable,
     cr_quant: QuantTable,
+
+    /// Streaming-through state. None = buffered mode (default).
+    streaming: Option<StreamingOutputState>,
 }
 
 impl StreamingEncoder {
@@ -259,6 +286,65 @@ impl StreamingEncoder {
             separate_chroma_tables: builder.separate_chroma_tables,
         };
 
+        // Determine if we can use streaming-through encoding:
+        // - Need known Huffman tables (custom or standard fixed)
+        // - Must be baseline (progressive needs multi-pass)
+        // - Not XYB (different header/table structure)
+        let enable_streaming = (builder.custom_huffman_tables.is_some()
+            || !builder.optimize_huffman)
+            && builder.mode != JpegMode::Progressive
+            && !builder.use_xyb;
+
+        let streaming = if enable_streaming {
+            // Get tables: custom if provided, otherwise standard JPEG tables
+            let tables = if let Some(tables) = builder.custom_huffman_tables {
+                tables
+            } else {
+                crate::huffman::optimize::OptimizedHuffmanTables::from_standard()?
+            };
+
+            // Write JPEG header (SOI through SOS) into buffer
+            let mut header = Vec::new();
+            config.write_header(&mut header)?;
+            config.write_quant_tables(&mut header, &y_quant, &cb_quant, &cr_quant)?;
+            let is_extended =
+                y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+            config.write_frame_header_ex(&mut header, is_extended)?;
+            config.write_huffman_tables_optimized(&mut header, &tables)?;
+            if config.restart_interval > 0 {
+                config.write_restart_interval(&mut header)?;
+            }
+            config.write_scan_header(&mut header)?;
+
+            // Compute total MCUs for restart marker logic
+            let (h_samp, v_samp) = match builder.subsampling {
+                Subsampling::S444 => (1, 1),
+                Subsampling::S422 => (2, 1),
+                Subsampling::S420 => (2, 2),
+                Subsampling::S440 => (1, 2),
+            };
+            let y_blocks_h = (width + 7) / 8;
+            let y_blocks_v = (height + 7) / 8;
+            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+            let total_mcus = mcu_h * mcu_v;
+
+            Some(StreamingOutputState {
+                writer: crate::foundation::bitstream::BitWriter::new(),
+                tables,
+                entropy_state: crate::entropy::StreamingEntropyState::new(),
+                total_mcus,
+                header,
+            })
+        } else {
+            None
+        };
+
+        // Skip frequency counting in streaming mode (tables are already known)
+        if streaming.is_some() {
+            processor.set_skip_frequency_counting(true);
+        }
+
         Ok(Self {
             width,
             height,
@@ -272,6 +358,7 @@ impl StreamingEncoder {
             y_quant,
             cb_quant,
             cr_quant,
+            streaming,
         })
     }
 
@@ -306,6 +393,15 @@ impl StreamingEncoder {
     #[must_use]
     pub(crate) fn allocation_stats(&self) -> &crate::foundation::alloc::AllocationStats {
         self.processor.allocation_stats()
+    }
+
+    /// Returns whether this encoder is in streaming-through mode.
+    ///
+    /// In streaming mode, blocks are encoded immediately on each strip flush.
+    /// In buffered mode (default), all blocks are buffered and encoded at `finish()`.
+    #[must_use]
+    pub(crate) fn is_streaming(&self) -> bool {
+        self.streaming.is_some()
     }
 
     /// Pushes a single row of pixel data.
@@ -655,8 +751,42 @@ impl StreamingEncoder {
         let strip_data = &self.row_buffer[..self.rows_buffered * self.bytes_per_row];
         self.processor.process_strip(strip_data, self.current_y)?;
 
+        // In streaming mode, encode the new blocks immediately and free them
+        if self.streaming.is_some() {
+            self.encode_new_blocks_streaming()?;
+        }
+
         self.current_y += self.rows_buffered;
         self.rows_buffered = 0;
+
+        Ok(())
+    }
+
+    /// Encodes newly-produced blocks in streaming mode.
+    ///
+    /// Takes all blocks from the strip processor and encodes them to the
+    /// BitWriter, freeing the block memory immediately.
+    fn encode_new_blocks_streaming(&mut self) -> Result<()> {
+        let blocks = self.processor.take_blocks();
+        let is_color = !self.config.pixel_format.is_grayscale();
+        let width = self.width;
+        let subsampling = self.config.subsampling;
+        let restart_interval = self.config.restart_interval;
+
+        let state = self.streaming.as_mut().unwrap();
+        crate::entropy::encode_blocks_mcu_order(
+            &blocks.y_blocks,
+            &blocks.cb_blocks,
+            &blocks.cr_blocks,
+            &state.tables,
+            &mut state.writer,
+            is_color,
+            &mut state.entropy_state,
+            subsampling,
+            width,
+            restart_interval,
+            state.total_mcus,
+        )?;
 
         Ok(())
     }
@@ -713,34 +843,64 @@ impl StreamingEncoder {
             )));
         }
 
-        // Flush any remaining rows
+        // Flush any remaining rows (in streaming mode, this also encodes them)
         if self.rows_buffered > 0 {
             self.flush_strip_with_stop(&stop)?;
         }
 
-        // Extract needed data before consuming processor
-        let config = self.config;
-        let y_quant = self.y_quant;
-        let cb_quant = self.cb_quant;
-        let cr_quant = self.cr_quant;
-        let width = self.width;
-        let height = self.height;
+        if let Some(streaming) = self.streaming.take() {
+            // Streaming mode: header + scan data + EOI
+            self.finish_streaming(streaming, output)
+        } else {
+            // Buffered mode: build complete JPEG from all blocks
+            let config = self.config;
+            let y_quant = self.y_quant;
+            let cb_quant = self.cb_quant;
+            let cr_quant = self.cr_quant;
+            let width = self.width;
+            let height = self.height;
 
-        // Finalize strip processing
-        let strip_output = self.processor.finalize()?;
+            let strip_output = self.processor.finalize()?;
 
-        // Build JPEG output directly into provided buffer
-        Self::build_jpeg_from_blocks_into(
-            &config,
-            &y_quant,
-            &cb_quant,
-            &cr_quant,
-            width,
-            height,
-            strip_output,
-            output,
-            stop,
-        )
+            Self::build_jpeg_from_blocks_into(
+                &config,
+                &y_quant,
+                &cb_quant,
+                &cr_quant,
+                width,
+                height,
+                strip_output,
+                output,
+                stop,
+            )
+        }
+    }
+
+    /// Finishes streaming-through encoding.
+    ///
+    /// Combines the pre-written header with the scan data from the BitWriter
+    /// and appends the EOI marker.
+    fn finish_streaming(
+        self,
+        streaming: StreamingOutputState,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        // Flush the BitWriter's remaining bits and scan data
+        let scan_data = streaming.writer.into_bytes();
+
+        // Assemble: header + scan data + EOI
+        let total_size = streaming.header.len() + scan_data.len() + 2;
+        output.clear();
+        output
+            .try_reserve(total_size)
+            .map_err(|_| Error::allocation_failed(total_size, "streaming finish output"))?;
+
+        output.extend_from_slice(&streaming.header);
+        output.extend_from_slice(&scan_data);
+        output.push(0xFF);
+        output.push(crate::foundation::consts::MARKER_EOI);
+
+        Ok(())
     }
 
     /// Builds JPEG output from processed blocks.
