@@ -360,11 +360,7 @@ impl StreamingEncoderBuilder {
     }
 
     /// Encodes a complete image buffer with cancellation support.
-    pub(crate) fn encode_with_stop(
-        self,
-        data: &[u8],
-        stop: impl enough::Stop,
-    ) -> Result<Vec<u8>> {
+    pub(crate) fn encode_with_stop(self, data: &[u8], stop: impl enough::Stop) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;
         let bpp = self.pixel_format.bytes_per_pixel();
