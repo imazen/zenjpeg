@@ -1240,4 +1240,177 @@ mod tests {
         );
         assert_eq!(oneshot_result, streaming_result, "outputs differ");
     }
+
+    // === Streaming-through tests ===
+
+    fn make_test_image(width: usize, height: usize) -> Vec<u8> {
+        let mut data = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                data[i] = (x * 255 / width.max(1)) as u8; // R gradient
+                data[i + 1] = (y * 255 / height.max(1)) as u8; // G gradient
+                data[i + 2] = 128; // B constant
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn test_custom_tables_enables_streaming() {
+        let tables =
+            crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let encoder = StreamingEncoder::new(64, 64)
+            .custom_huffman_tables(tables)
+            .start()
+            .unwrap();
+        assert!(encoder.is_streaming());
+    }
+
+    #[test]
+    fn test_fixed_tables_enables_streaming() {
+        let encoder = StreamingEncoder::new(64, 64)
+            .optimize_huffman(false)
+            .start()
+            .unwrap();
+        assert!(encoder.is_streaming());
+    }
+
+    #[test]
+    fn test_progressive_does_not_stream() {
+        let tables =
+            crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let encoder = StreamingEncoder::new(64, 64)
+            .custom_huffman_tables(tables)
+            .progressive(true)
+            .start()
+            .unwrap();
+        assert!(!encoder.is_streaming());
+    }
+
+    #[test]
+    fn test_default_is_buffered() {
+        let encoder = StreamingEncoder::new(64, 64).start().unwrap();
+        assert!(!encoder.is_streaming());
+    }
+
+    #[test]
+    fn test_custom_tables_produces_valid_jpeg() {
+        let width = 64;
+        let height = 64;
+        let data = make_test_image(width, height);
+        let tables =
+            crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .custom_huffman_tables(tables)
+            .encode(&data)
+            .unwrap();
+
+        // Valid JPEG starts with FFD8 and ends with FFD9
+        assert!(jpeg.len() > 4, "JPEG too small: {} bytes", jpeg.len());
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], 0xD8);
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], 0xD9);
+    }
+
+    #[test]
+    fn test_fixed_tables_produces_valid_jpeg() {
+        let width = 64;
+        let height = 64;
+        let data = make_test_image(width, height);
+
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .optimize_huffman(false)
+            .encode(&data)
+            .unwrap();
+
+        assert!(jpeg.len() > 4, "JPEG too small: {} bytes", jpeg.len());
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], 0xD8);
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], 0xD9);
+    }
+
+    #[test]
+    fn test_streaming_vs_buffered_both_valid() {
+        let width = 128;
+        let height = 128;
+        let data = make_test_image(width, height);
+
+        // Streaming path (fixed tables)
+        let streaming_jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .optimize_huffman(false)
+            .encode(&data)
+            .unwrap();
+
+        // Buffered path (optimized tables)
+        let buffered_jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .optimize_huffman(true)
+            .encode(&data)
+            .unwrap();
+
+        // Both should be valid JPEGs
+        for (name, jpeg) in [("streaming", &streaming_jpeg), ("buffered", &buffered_jpeg)]
+        {
+            assert!(jpeg.len() > 4, "{name} JPEG too small: {} bytes", jpeg.len());
+            assert_eq!(jpeg[0], 0xFF, "{name} missing SOI");
+            assert_eq!(jpeg[1], 0xD8, "{name} missing SOI");
+            assert_eq!(jpeg[jpeg.len() - 2], 0xFF, "{name} missing EOI");
+            assert_eq!(jpeg[jpeg.len() - 1], 0xD9, "{name} missing EOI");
+        }
+
+        // Optimized tables should be smaller (better compression)
+        // but the difference shouldn't be extreme
+        let ratio = streaming_jpeg.len() as f64 / buffered_jpeg.len() as f64;
+        assert!(
+            ratio < 1.5,
+            "streaming is too much larger than buffered: {ratio:.2}x ({} vs {} bytes)",
+            streaming_jpeg.len(),
+            buffered_jpeg.len(),
+        );
+    }
+
+    #[test]
+    fn test_streaming_420_produces_valid_jpeg() {
+        let width = 128;
+        let height = 128;
+        let data = make_test_image(width, height);
+        let tables =
+            crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .custom_huffman_tables(tables)
+            .subsampling(Subsampling::S420)
+            .encode(&data)
+            .unwrap();
+
+        assert!(jpeg.len() > 4);
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], 0xD8);
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], 0xD9);
+    }
+
+    #[test]
+    fn test_streaming_non_mcu_aligned_dimensions() {
+        // Non-8-aligned dimensions to test edge handling
+        let width = 67;
+        let height = 53;
+        let data = make_test_image(width, height);
+        let tables =
+            crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+
+        let jpeg = StreamingEncoder::new(width as u32, height as u32)
+            .custom_huffman_tables(tables)
+            .encode(&data)
+            .unwrap();
+
+        assert!(jpeg.len() > 4);
+        assert_eq!(jpeg[0], 0xFF);
+        assert_eq!(jpeg[1], 0xD8);
+        assert_eq!(jpeg[jpeg.len() - 2], 0xFF);
+        assert_eq!(jpeg[jpeg.len() - 1], 0xD9);
+    }
 }
