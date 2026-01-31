@@ -2029,6 +2029,7 @@ dependencies = [
  "proptest",
  "rayon",
  "rgb",
+ "safe_unaligned_simd",
  "serde",
  "serde_json",
  "sha2",

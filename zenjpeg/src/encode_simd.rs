@@ -16,7 +16,7 @@
 //! 2. **Safe internal functions via archmage** (e.g., `gather_even_odd_x8_avx2`, `rgb_to_ycbcr_8px_fma`):
 //!    - Raw SSSE3/SSE4.1/AVX/AVX2/FMA intrinsics made safe via `#[arcane]` attribute
 //!    - Capability tokens (`Avx2Token`, `Avx2FmaToken`) prove CPU support at the call site
-//!    - Only raw pointer operations (load/store) remain in targeted `unsafe` blocks
+//!    - Load/store operations use safe_unaligned_simd wrappers (no unsafe needed)
 //!
 //! All functions have tests to verify parity with scalar implementations.
 
@@ -28,6 +28,8 @@ use wide::f32x8;
 // AVX2/SSE intrinsics - safe via archmage #[arcane] annotation
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 #[allow(unused_imports)]
 use core::arch::x86_64::{
@@ -235,18 +237,13 @@ fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
-fn gather_even_odd_x8_avx2(_token: archmage::Avx2Token, ptr: *const f32) -> (f32x8, f32x8) {
+fn gather_even_odd_x8_avx2(_token: archmage::Avx2Token, data: &[f32; 16]) -> (f32x8, f32x8) {
     use std::arch::x86_64::*;
 
     // Load 16 consecutive floats as two YMM registers
     // Memory: [e0,o0,e1,o1,e2,o2,e3,o3, e4,o4,e5,o5,e6,o6,e7,o7]
-    // SAFETY: caller guarantees ptr points to at least 16 valid f32s
-    let (lo, hi) = unsafe {
-        (
-            _mm256_loadu_ps(ptr),
-            _mm256_loadu_ps(ptr.add(8)),
-        )
-    };
+    let lo = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&data[..8]).unwrap());
+    let hi = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&data[8..]).unwrap());
 
     // Highway's ConcatEven pattern for f32:
     // _mm256_shuffle_ps with 0x88 selects elements [0,2] from each source per lane
@@ -342,7 +339,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
         #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
         {
             if let Some(token) = archmage::Avx2Token::try_new() {
-                return gather_even_odd_x8_avx2(token, slice.as_ptr());
+                return gather_even_odd_x8_avx2(token, slice.try_into().unwrap());
             } else {
                 return gather_even_odd_x8_scalar(slice);
             }
@@ -417,32 +414,22 @@ fn u8x4_to_f32x4_sse41(_token: archmage::Avx2Token, v: __m128i) -> __m128 {
 ///
 /// This is a low-level function called by the safe `rgb_to_ycbcr_planes_simd_inplace` wrapper.
 /// Production code should use the safe wrapper.
-///
-/// # Safety
-/// Caller must ensure pointers are valid and point to sufficient memory:
-/// - `rgb_ptr`: at least 24 bytes readable
-/// - `y_ptr`, `cb_ptr`, `cr_ptr`: at least 8 f32s writable
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 pub(crate) fn rgb_to_ycbcr_8px_fma(
     _token: archmage::Avx2FmaToken,
-    rgb_ptr: *const u8,
-    y_ptr: *mut f32,
-    cb_ptr: *mut f32,
-    cr_ptr: *mut f32,
+    rgb_data: &[u8],
+    y_out: &mut [f32; 8],
+    cb_out: &mut [f32; 8],
+    cr_out: &mut [f32; 8],
 ) {
     // Intrinsics imported at module level
     let avx2 = _token.avx2();
 
     // Load 24 bytes as two overlapping 16-byte loads
-    // SAFETY: caller guarantees rgb_ptr points to at least 28 readable bytes
-    let (rgb0, rgb1) = unsafe {
-        (
-            _mm_loadu_si128(rgb_ptr as *const __m128i),
-            _mm_loadu_si128(rgb_ptr.add(12) as *const __m128i),
-        )
-    };
+    let rgb0 = safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&rgb_data[..16]).unwrap());
+    let rgb1 = safe_simd::_mm_loadu_si128(<&[u8; 16]>::try_from(&rgb_data[12..28]).unwrap());
 
     // Extract R, G, B for first 4 pixels
     let r0_bytes = extract_r_ssse3(avx2, rgb0);
@@ -504,15 +491,12 @@ pub(crate) fn rgb_to_ycbcr_8px_fma(
     );
 
     // Store results (two 4-element stores per plane)
-    // SAFETY: caller guarantees output pointers have space for 8 f32s each
-    unsafe {
-        _mm_storeu_ps(y_ptr, y0);
-        _mm_storeu_ps(y_ptr.add(4), y1);
-        _mm_storeu_ps(cb_ptr, cb0);
-        _mm_storeu_ps(cb_ptr.add(4), cb1);
-        _mm_storeu_ps(cr_ptr, cr0);
-        _mm_storeu_ps(cr_ptr.add(4), cr1);
-    }
+    safe_simd::_mm_storeu_ps(<&mut [f32; 4]>::try_from(&mut y_out[..4]).unwrap(), y0);
+    safe_simd::_mm_storeu_ps(<&mut [f32; 4]>::try_from(&mut y_out[4..]).unwrap(), y1);
+    safe_simd::_mm_storeu_ps(<&mut [f32; 4]>::try_from(&mut cb_out[..4]).unwrap(), cb0);
+    safe_simd::_mm_storeu_ps(<&mut [f32; 4]>::try_from(&mut cb_out[4..]).unwrap(), cb1);
+    safe_simd::_mm_storeu_ps(<&mut [f32; 4]>::try_from(&mut cr_out[..4]).unwrap(), cr0);
+    safe_simd::_mm_storeu_ps(<&mut [f32; 4]>::try_from(&mut cr_out[4..]).unwrap(), cr1);
 }
 
 /// Scalar reference implementation for RGB to YCbCr (for testing).
@@ -580,16 +564,13 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
                 let pixel_idx = chunk * 8;
                 let rgb_idx = pixel_idx * 3;
 
-                // SAFETY: pointer arithmetic on bounds-checked slices
-                let (rgb_ptr, y_ptr, cb_ptr, cr_ptr) = unsafe {
-                    (
-                        rgb_data.as_ptr().add(rgb_idx),
-                        y_plane.as_mut_ptr().add(pixel_idx),
-                        cb_plane.as_mut_ptr().add(pixel_idx),
-                        cr_plane.as_mut_ptr().add(pixel_idx),
-                    )
-                };
-                rgb_to_ycbcr_8px_fma(token, rgb_ptr, y_ptr, cb_ptr, cr_ptr);
+                rgb_to_ycbcr_8px_fma(
+                    token,
+                    &rgb_data[rgb_idx..],
+                    <&mut [f32; 8]>::try_from(&mut y_plane[pixel_idx..pixel_idx + 8]).unwrap(),
+                    <&mut [f32; 8]>::try_from(&mut cb_plane[pixel_idx..pixel_idx + 8]).unwrap(),
+                    <&mut [f32; 8]>::try_from(&mut cr_plane[pixel_idx..pixel_idx + 8]).unwrap(),
+                );
             }
 
             // Scalar remainder - use FMA for accuracy
@@ -1555,18 +1536,19 @@ mod tests {
         };
 
         // Test with 8 pixels (one AVX2 batch)
-        let rgb_data: Vec<u8> = (0..24).map(|i| ((i * 17 + 5) % 256) as u8).collect();
+        // Need 28 bytes: second overlapping 16-byte load reads [12..28], extra 4 bytes are discarded by shuffles
+        let rgb_data: Vec<u8> = (0..28).map(|i| ((i * 17 + 5) % 256) as u8).collect();
 
-        let mut y_avx2 = vec![0.0f32; 8];
-        let mut cb_avx2 = vec![0.0f32; 8];
-        let mut cr_avx2 = vec![0.0f32; 8];
+        let mut y_avx2 = [0.0f32; 8];
+        let mut cb_avx2 = [0.0f32; 8];
+        let mut cr_avx2 = [0.0f32; 8];
 
         rgb_to_ycbcr_8px_fma(
             token,
-            rgb_data.as_ptr(),
-            y_avx2.as_mut_ptr(),
-            cb_avx2.as_mut_ptr(),
-            cr_avx2.as_mut_ptr(),
+            &rgb_data,
+            &mut y_avx2,
+            &mut cb_avx2,
+            &mut cr_avx2,
         );
 
         let mut y_scalar = vec![0.0f32; 8];
@@ -1623,7 +1605,8 @@ mod tests {
             for g_base in (0u8..=255).step_by(64) {
                 for b_base in (0u8..=255).step_by(64) {
                     // Create 8 pixels with slight variations
-                    let mut rgb_data = vec![0u8; 24];
+                    // Need 28 bytes: second overlapping 16-byte load reads [12..28], extra 4 bytes are discarded by shuffles
+                    let mut rgb_data = vec![0u8; 28];
                     for p in 0..8 {
                         let r = r_base.wrapping_add((p * 2) as u8);
                         let g = g_base.wrapping_add((p * 3) as u8);
@@ -1633,16 +1616,16 @@ mod tests {
                         rgb_data[p * 3 + 2] = b;
                     }
 
-                    let mut y_avx2 = vec![0.0f32; 8];
-                    let mut cb_avx2 = vec![0.0f32; 8];
-                    let mut cr_avx2 = vec![0.0f32; 8];
+                    let mut y_avx2 = [0.0f32; 8];
+                    let mut cb_avx2 = [0.0f32; 8];
+                    let mut cr_avx2 = [0.0f32; 8];
 
                     rgb_to_ycbcr_8px_fma(
                         token,
-                        rgb_data.as_ptr(),
-                        y_avx2.as_mut_ptr(),
-                        cb_avx2.as_mut_ptr(),
-                        cr_avx2.as_mut_ptr(),
+                        &rgb_data,
+                        &mut y_avx2,
+                        &mut cb_avx2,
+                        &mut cr_avx2,
                     );
 
                     let mut y_scalar = vec![0.0f32; 8];

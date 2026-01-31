@@ -40,6 +40,8 @@ yuv = { workspace = true, optional = true }
 archmage = { workspace = true, optional = true }
 # Token-gated SIMD types (wraps archmage tokens)
 magetypes = { workspace = true, optional = true }
+# Safe unaligned SIMD load/store wrappers (eliminates unsafe for memory ops)
+safe_unaligned_simd = { workspace = true, optional = true }
 # WASM console logging for debugging browser-specific issues
 web-sys = { version = "0.3", features = ["console"], optional = true }
 # UltraHDR (HDR gain map) encoding/decoding support
@@ -106,7 +108,7 @@ unsafe_simd = []
 # Provides same intrinsics with compile-time safety via capability tokens
 archmage-simd = ["dep:archmage"]
 # Token-gated SIMD types using magetypes (provides f32x4, i32x4 etc. with archmage tokens)
-magetypes-simd = ["dep:archmage", "dep:magetypes"]
+magetypes-simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
 cms = ["cms-lcms2"]  # Default CMS backend
 # FFI tests against C++ jpegli for parity verification (local development only)
 # Requires: git submodule, cmake, C++ toolchain. Not usable from crates.io.
