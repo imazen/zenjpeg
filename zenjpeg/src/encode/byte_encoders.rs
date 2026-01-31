@@ -127,6 +127,11 @@ impl BytesEncoder {
             builder = builder.trellis(*trellis);
         }
 
+        // Apply custom Huffman tables for streaming-through encoding
+        if let Some(tables) = config.custom_huffman_tables.clone() {
+            builder = builder.custom_huffman_tables(tables);
+        }
+
         builder.start()
     }
 
@@ -921,6 +926,10 @@ impl YCbCrPlanarEncoder {
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             builder = builder.parallel(true);
+        }
+
+        if let Some(tables) = config.custom_huffman_tables.clone() {
+            builder = builder.custom_huffman_tables(tables);
         }
 
         builder.start()
