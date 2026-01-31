@@ -144,6 +144,71 @@ pub fn huff_extend(x: i32, s: i32) -> i32 {
     x + ((((x) - (1 << ((s) - 1))) >> 31) & (((-1) << (s)) + 1))
 }
 
+/// Encodes a single block to an external BitWriter.
+///
+/// This is used by bounded-memory streaming to encode blocks with external
+/// DC prediction state. Returns the new DC value.
+///
+/// # Arguments
+/// * `coeffs` - Quantized DCT coefficients in zigzag order
+/// * `dc_table` - DC Huffman encoding table
+/// * `ac_table` - AC Huffman encoding table
+/// * `prev_dc` - Previous DC coefficient value for this component
+/// * `writer` - BitWriter to write encoded data to
+pub fn encode_block_to_writer(
+    coeffs: &[i16; 64],
+    dc_table: &crate::huffman::HuffmanEncodeTable,
+    ac_table: &crate::huffman::HuffmanEncodeTable,
+    prev_dc: i16,
+    writer: &mut crate::foundation::bitstream::BitWriter,
+) -> crate::error::Result<()> {
+    // Encode DC coefficient
+    let dc = coeffs[0];
+    let dc_diff = dc - prev_dc;
+    let dc_cat = category(dc_diff);
+    let (code, len) = dc_table.encode(dc_cat);
+
+    if dc_cat > 0 {
+        let additional = additional_bits_with_cat(dc_diff, dc_cat);
+        writer.write_code_and_extra(code, len, additional, dc_cat);
+    } else {
+        writer.write_bits(code, len);
+    }
+
+    // Encode AC coefficients
+    let mut run = 0u8;
+    for i in 1..64 {
+        let ac = coeffs[i];
+
+        if ac == 0 {
+            run += 1;
+        } else {
+            // Encode any runs of 16 zeros
+            while run >= 16 {
+                let (code, len) = ac_table.encode(0xF0); // ZRL
+                writer.write_bits(code, len);
+                run -= 16;
+            }
+
+            // Encode the coefficient
+            let ac_cat = category(ac);
+            let symbol = (run << 4) | ac_cat;
+            let (code, len) = ac_table.encode(symbol);
+            let additional = additional_bits_with_cat(ac, ac_cat);
+            writer.write_code_and_extra(code, len, additional, ac_cat);
+            run = 0;
+        }
+    }
+
+    // EOB if there are trailing zeros
+    if run > 0 {
+        let (code, len) = ac_table.encode(0x00); // EOB
+        writer.write_bits(code, len);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
