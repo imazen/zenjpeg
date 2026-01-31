@@ -239,7 +239,7 @@ impl BitWriter {
                 );
             }
         }
-        self.buffer
+        self.buffer.into()
     }
 
     /// Returns a reference to the current buffer.

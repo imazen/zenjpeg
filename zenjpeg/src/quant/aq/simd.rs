@@ -1262,7 +1262,7 @@ fn sum_2x2_blocks_simd(
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 pub(crate) mod archmage_impl {
-    use archmage::{arcane, HasAvx, HasAvx2, HasFma};
+    use archmage::{arcane, X64V3Token};
     use core::arch::x86_64::*;
 
     use super::{
@@ -1274,7 +1274,7 @@ pub(crate) mod archmage_impl {
     /// Uses FMA for all multiply-add operations.
     #[arcane]
     #[inline(always)]
-    fn mage_ratio_of_derivatives_x8<T: HasAvx2 + HasFma>(_token: T, vals: __m256) -> __m256 {
+    fn mage_ratio_of_derivatives_x8(_token: X64V3Token, vals: __m256) -> __m256 {
         let zero = _mm256_setzero_ps();
 
         // v = max(vals, 0)
@@ -1302,7 +1302,7 @@ pub(crate) mod archmage_impl {
     /// Archmage-based masking_sqrt using direct intrinsics.
     #[arcane]
     #[inline(always)]
-    fn mage_masking_sqrt_x8<T: HasAvx + HasFma>(_token: T, v: __m256) -> __m256 {
+    fn mage_masking_sqrt_x8(_token: X64V3Token, v: __m256) -> __m256 {
         let k_mul_sqrt = _mm256_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
         let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
         let quarter = _mm256_set1_ps(0.25);
@@ -1319,8 +1319,8 @@ pub(crate) mod archmage_impl {
     /// All operations use direct intrinsics with FMA.
     #[arcane]
     #[inline(always)]
-    fn mage_pre_erosion_pixel_x8<T: HasAvx2 + HasFma + Copy>(
-        token: T,
+    fn mage_pre_erosion_pixel_x8(
+        token: X64V3Token,
         pixels: __m256,
         left: __m256,
         right: __m256,
@@ -1357,8 +1357,8 @@ pub(crate) mod archmage_impl {
     /// Uses token-gated intrinsics for maximum performance with full safety.
     #[arcane]
     #[inline(always)]
-    fn mage_pre_erosion_row_padded_inner<T: HasAvx2 + HasFma + Copy>(
-        _token: T,
+    fn mage_pre_erosion_row_padded_inner(
+        _token: X64V3Token,
         row: &[f32],
         row_above: &[f32],
         row_below: &[f32],
@@ -1431,8 +1431,8 @@ pub(crate) mod archmage_impl {
     }
 
     /// Archmage-based pre_erosion_row_padded - public wrapper with bounds checking.
-    pub fn mage_pre_erosion_row_padded<T: HasAvx2 + HasFma + Copy>(
-        token: T,
+    pub fn mage_pre_erosion_row_padded(
+        token: X64V3Token,
         row: &[f32],
         row_above: &[f32],
         row_below: &[f32],
@@ -1504,7 +1504,7 @@ pub(crate) mod archmage_impl {
     /// Horizontal sum of __m256 (8 floats) to scalar
     #[arcane]
     #[inline(always)]
-    fn hsum_ps<T: HasAvx>(_token: T, v: __m256) -> f32 {
+    fn hsum_ps(_token: X64V3Token, v: __m256) -> f32 {
         // vhaddps ymm, ymm, ymm -> adds adjacent pairs
         let sum1 = _mm256_hadd_ps(v, v); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
         let sum2 = _mm256_hadd_ps(sum1, sum1); // [a+b+c+d, ..., e+f+g+h, ...]
@@ -1518,8 +1518,8 @@ pub(crate) mod archmage_impl {
     /// Ratio of derivatives (inverted form for gamma modulation)
     #[arcane]
     #[inline(always)]
-    fn mage_ratio_of_derivatives_inv_x8<T: HasAvx2 + HasFma>(
-        _token: T,
+    fn mage_ratio_of_derivatives_inv_x8(
+        _token: X64V3Token,
         vals: __m256,
         zero: __m256,
         k_num_mul: __m256,
@@ -1542,8 +1542,8 @@ pub(crate) mod archmage_impl {
     /// This fuses two loops into one, halving memory traffic.
     #[arcane]
     #[inline(always)]
-    fn mage_hf_gamma_sum_8x8<T: HasAvx2 + HasFma + Copy>(
-        token: T,
+    fn mage_hf_gamma_sum_8x8(
+        token: X64V3Token,
         block_ptr: *const f32,
         stride: usize,
         // Pre-broadcast constants (avoid repeated broadcasts)
@@ -1638,8 +1638,8 @@ pub(crate) mod archmage_impl {
     /// - All constants broadcast once, passed to inner function
     /// - Scalar ComputeMask (not worth SIMD for 1 value per block)
     #[arcane]
-    pub fn mage_per_block_modulations_row<T: HasAvx2 + HasFma + Copy>(
-        token: T,
+    pub fn mage_per_block_modulations_row(
+        token: X64V3Token,
         input: &[f32],
         stride: usize,
         by: usize,
