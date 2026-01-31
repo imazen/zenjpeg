@@ -48,6 +48,10 @@ pub struct EncoderConfig {
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
+    /// Custom Huffman tables for streaming-through encoding.
+    /// When set, the encoder uses these tables directly instead of optimizing
+    /// from image data, enabling true streaming (no block buffering).
+    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::OptimizedHuffmanTables>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -164,6 +168,7 @@ impl EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
             segments: None,
+            custom_huffman_tables: None,
         }
     }
 
@@ -254,6 +259,23 @@ impl EncoderConfig {
     #[must_use]
     pub fn separate_chroma_tables(mut self, enable: bool) -> Self {
         self.separate_chroma_tables = enable;
+        self
+    }
+
+    /// Sets custom Huffman tables for streaming-through encoding.
+    ///
+    /// When custom tables are provided, the encoder uses them directly instead
+    /// of building optimal tables from image data. This enables true streaming
+    /// encoding where blocks are written immediately without buffering.
+    ///
+    /// Use [`crate::huffman::trained`] for pre-trained tables, or build custom
+    /// tables from corpus frequency data.
+    #[must_use]
+    pub fn custom_huffman_tables(
+        mut self,
+        tables: crate::huffman::optimize::OptimizedHuffmanTables,
+    ) -> Self {
+        self.custom_huffman_tables = Some(tables);
         self
     }
 

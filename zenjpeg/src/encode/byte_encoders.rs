@@ -114,6 +114,11 @@ impl BytesEncoder {
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.separate_chroma_tables(config.separate_chroma_tables);
 
+        // Apply custom Huffman tables for streaming-through encoding
+        if let Some(ref tables) = config.custom_huffman_tables {
+            builder = builder.custom_huffman_tables(tables.clone());
+        }
+
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             // ParallelEncoding::Auto means enable parallel encoding
@@ -917,6 +922,11 @@ impl YCbCrPlanarEncoder {
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.separate_chroma_tables(config.separate_chroma_tables);
+
+        // Apply custom Huffman tables for streaming-through encoding
+        if let Some(ref tables) = config.custom_huffman_tables {
+            builder = builder.custom_huffman_tables(tables.clone());
+        }
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
