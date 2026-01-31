@@ -343,6 +343,26 @@ impl BytesEncoder {
         Ok(())
     }
 
+    /// Finish encoding and return both JPEG bytes and Huffman frequency counts.
+    ///
+    /// The frequency counts come from the Huffman optimization pass and can be
+    /// aggregated across multiple images to build corpus-trained Huffman tables.
+    ///
+    /// Returns `None` for counts if streaming-through mode was used (no buffered
+    /// blocks to count from).
+    pub fn finish_with_huffman_frequencies(
+        self,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
+        let rows_pushed = self.inner.rows_pushed() as u32;
+        if rows_pushed != self.height {
+            return Err(Error::incomplete_image(self.height, rows_pushed));
+        }
+        self.inner.finish_with_huffman_frequencies()
+    }
+
     /// Finish encoding to Write destination.
     #[cfg(feature = "std")]
     pub fn finish_to<W: Write>(self, mut output: W) -> Result<W> {

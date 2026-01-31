@@ -16,14 +16,82 @@ use crate::types::Subsampling;
 use multiversed::multiversed;
 use wide::{i16x8, CmpEq};
 
+/// Frequency counts from an optimized Huffman encoding pass.
+///
+/// Contains the raw symbol frequencies for each of the 4 Huffman tables
+/// (DC luma, AC luma, DC chroma, AC chroma). These can be aggregated
+/// across multiple images to build corpus-trained tables.
+#[derive(Clone, Debug)]
+pub struct HuffmanSymbolFrequencies {
+    /// DC luminance symbol frequencies
+    pub dc_luma: FrequencyCounter,
+    /// AC luminance symbol frequencies
+    pub ac_luma: FrequencyCounter,
+    /// DC chrominance symbol frequencies
+    pub dc_chroma: FrequencyCounter,
+    /// AC chrominance symbol frequencies
+    pub ac_chroma: FrequencyCounter,
+}
+
+impl HuffmanSymbolFrequencies {
+    /// Adds another set of frequency counts into this one.
+    pub fn add(&mut self, other: &HuffmanSymbolFrequencies) {
+        self.dc_luma.add(&other.dc_luma);
+        self.ac_luma.add(&other.ac_luma);
+        self.dc_chroma.add(&other.dc_chroma);
+        self.ac_chroma.add(&other.ac_chroma);
+    }
+
+    /// Generates a `HuffmanTableSet` from the aggregated frequencies.
+    pub fn generate_tables(&self) -> Result<HuffmanTableSet> {
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+
+        let dc_luma = self.dc_luma.generate_table_with_method(huffman_method)?;
+        let ac_luma = self.ac_luma.generate_table_with_method(huffman_method)?;
+
+        let (dc_chroma, ac_chroma) = if self.dc_chroma.is_empty_histogram() {
+            use crate::huffman::optimize::OptimizedTable;
+            use crate::huffman::{
+                STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
+                STD_DC_CHROMINANCE_VALUES,
+            };
+            (
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                    bits: STD_DC_CHROMINANCE_BITS,
+                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+                },
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                    bits: STD_AC_CHROMINANCE_BITS,
+                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+                },
+            )
+        } else {
+            (
+                self.dc_chroma.generate_table_with_method(huffman_method)?,
+                self.ac_chroma.generate_table_with_method(huffman_method)?,
+            )
+        };
+
+        Ok(HuffmanTableSet {
+            dc_luma,
+            ac_luma,
+            dc_chroma,
+            ac_chroma,
+        })
+    }
+}
+
 impl ComputedConfig {
-    pub(crate) fn build_optimized_tables(
+    /// Counts symbol frequencies from quantized blocks (for Huffman optimization).
+    pub(crate) fn count_block_frequencies(
         &self,
         y_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
         is_color: bool,
-    ) -> Result<HuffmanTableSet> {
+    ) -> HuffmanSymbolFrequencies {
         let mut dc_luma_freq = FrequencyCounter::new();
         let mut dc_chroma_freq = FrequencyCounter::new();
         let mut ac_luma_freq = FrequencyCounter::new();
@@ -170,46 +238,35 @@ impl ComputedConfig {
             }
         }
 
-        // Use jpegli's Huffman algorithm (matches C++ behavior)
-        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        HuffmanSymbolFrequencies {
+            dc_luma: dc_luma_freq,
+            ac_luma: ac_luma_freq,
+            dc_chroma: dc_chroma_freq,
+            ac_chroma: ac_chroma_freq,
+        }
+    }
 
-        // Build optimized tables with DHT data using selected algorithm
-        let dc_luma = dc_luma_freq.generate_table_with_method(huffman_method)?;
-        let ac_luma = ac_luma_freq.generate_table_with_method(huffman_method)?;
+    pub(crate) fn build_optimized_tables(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+    ) -> Result<HuffmanTableSet> {
+        self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color)
+            .generate_tables()
+    }
 
-        let (dc_chroma, ac_chroma) = if is_color {
-            (
-                dc_chroma_freq.generate_table_with_method(huffman_method)?,
-                ac_chroma_freq.generate_table_with_method(huffman_method)?,
-            )
-        } else {
-            // Use standard tables for grayscale (won't be used but needed for structure)
-            use crate::huffman::optimize::OptimizedTable;
-            use crate::huffman::{
-                STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
-                STD_DC_CHROMINANCE_VALUES,
-            };
-
-            (
-                OptimizedTable {
-                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
-                    bits: STD_DC_CHROMINANCE_BITS,
-                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
-                },
-                OptimizedTable {
-                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
-                    bits: STD_AC_CHROMINANCE_BITS,
-                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
-                },
-            )
-        };
-
-        Ok(HuffmanTableSet {
-            dc_luma,
-            ac_luma,
-            dc_chroma,
-            ac_chroma,
-        })
+    pub(crate) fn build_optimized_tables_with_counts(
+        &self,
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        is_color: bool,
+    ) -> Result<(HuffmanTableSet, Box<HuffmanSymbolFrequencies>)> {
+        let counts = self.count_block_frequencies(y_blocks, cb_blocks, cr_blocks, is_color);
+        let tables = counts.generate_tables()?;
+        Ok((tables, Box::new(counts)))
     }
 
     /// Encodes blocks using Huffman tables.
