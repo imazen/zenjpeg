@@ -2,6 +2,7 @@
 //! Generated: 2026-01-28
 //! Overhead: ~2-2.5% vs optimal, ~3-4% better than standard
 
+#![allow(dead_code)] // Table library — consumers select by quality level
 use crate::huffman::optimize::{OptimizedHuffmanTables, OptimizedTable};
 
 pub fn trained_tables_q0() -> OptimizedHuffmanTables {
