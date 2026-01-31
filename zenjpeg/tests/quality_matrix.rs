@@ -1113,11 +1113,11 @@ fn generate_reference_values() {
 #[ignore = "Requires ffi-tests feature and C++ jpegli build"]
 #[cfg(feature = "ffi-tests")]
 fn benchmark_rust_vs_cpp() {
-    use jpegli_bench_utils::{
+    use std::time::Instant;
+    use zenjpeg_bench_utils::{
         ChromaSubsampling as BenchSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
         QualityMetrics, ScanMode,
     };
-    use std::time::Instant;
 
     let img = ImageData::from_png(&get_frymire_path()).expect("Failed to load frymire.png");
 
@@ -1237,14 +1237,14 @@ fn benchmark_rust_vs_cpp() {
 
             // Compute quality metrics using shared utils
             let rust_decoded =
-                jpegli_bench_utils::decode_jpeg_to_rgb(&rust_jpeg).expect("Rust decode failed");
+                zenjpeg_bench_utils::decode_jpeg_to_rgb(&rust_jpeg).expect("Rust decode failed");
             let rust_ssim2 = QualityMetrics::ssimulacra2(orig_rgb.as_ref(), rust_decoded.as_ref());
 
             // Compute differences (handle encode/decode failure gracefully)
             let (cpp_time_str, cpp_size_str, speedup_str, size_diff_str, ssim_diff_str, status) =
                 if cpp_encode_success {
                     // Try to decode C++ output
-                    if let Ok(cpp_dec) = jpegli_bench_utils::decode_jpeg_to_rgb(&cpp_jpeg) {
+                    if let Ok(cpp_dec) = zenjpeg_bench_utils::decode_jpeg_to_rgb(&cpp_jpeg) {
                         let cpp_ssim2 =
                             QualityMetrics::ssimulacra2(orig_rgb.as_ref(), cpp_dec.as_ref());
                         let speedup = cpp_time / rust_time;

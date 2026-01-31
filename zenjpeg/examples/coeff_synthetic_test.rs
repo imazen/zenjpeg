@@ -6,12 +6,12 @@
 //! encoders to ensure identical quant table configurations (3 tables).
 
 use enough::Unstoppable;
-use jpegli_bench_utils::{
+use zenjpeg::decode::Decoder;
+use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
+use zenjpeg_bench_utils::{
     ChromaSubsampling as BenchChromaSubsampling, ColorMode, EncoderConfig as BenchEncoderConfig,
     EncoderImpl, ImageData, ScanMode,
 };
-use zenjpeg::decode::Decoder;
-use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout, Quality};
 
 fn encode_rust(pixels: &[u8], width: u32, height: u32, distance: f32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(

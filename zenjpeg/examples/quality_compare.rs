@@ -28,15 +28,15 @@
 //!   # Single quality point
 //!   cargo run --release --example quality_compare -- --quality 75 image.png
 
-use jpegli_bench_utils::{
-    decode_jpeg_to_rgb, ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
-    QualityMetrics,
-};
 use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
+use zenjpeg_bench_utils::{
+    decode_jpeg_to_rgb, ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
+    QualityMetrics,
+};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // pareto/same_size are parsed but not yet implemented
