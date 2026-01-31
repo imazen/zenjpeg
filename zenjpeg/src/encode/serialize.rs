@@ -12,7 +12,7 @@ use crate::foundation::consts::{
     MARKER_DHT, MARKER_DQT, MARKER_DRI, MARKER_SOF0, MARKER_SOF1, MARKER_SOF2, MARKER_SOI,
     MARKER_SOS, MAX_ICC_BYTES_PER_MARKER,
 };
-use crate::huffman::optimize::{ContextConfig, OptimizedHuffmanTables, OptimizedTable};
+use crate::huffman::optimize::{ContextConfig, HuffmanTableSet, OptimizedTable};
 use crate::quant::QuantTable;
 use crate::types::{JpegMode, Subsampling};
 
@@ -405,7 +405,7 @@ impl ComputedConfig {
     pub(crate) fn write_huffman_tables_optimized(
         &self,
         output: &mut Vec<u8>,
-        tables: &OptimizedHuffmanTables,
+        tables: &HuffmanTableSet,
     ) -> Result<()> {
         // Write all 4 Huffman tables in a single DHT segment (like C++ jpegli)
         // This saves 12 bytes compared to 4 separate segments

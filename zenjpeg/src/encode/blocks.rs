@@ -10,7 +10,7 @@ use super::config::ComputedConfig;
 use crate::entropy::{self, EntropyEncoder};
 use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
-use crate::huffman::optimize::{FrequencyCounter, OptimizedHuffmanTables};
+use crate::huffman::optimize::{FrequencyCounter, HuffmanTableSet};
 use crate::huffman::HuffmanEncodeTable;
 use crate::types::Subsampling;
 use multiversed::multiversed;
@@ -23,7 +23,7 @@ impl ComputedConfig {
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
         is_color: bool,
-    ) -> Result<OptimizedHuffmanTables> {
+    ) -> Result<HuffmanTableSet> {
         let mut dc_luma_freq = FrequencyCounter::new();
         let mut dc_chroma_freq = FrequencyCounter::new();
         let mut ac_luma_freq = FrequencyCounter::new();
@@ -204,7 +204,7 @@ impl ComputedConfig {
             )
         };
 
-        Ok(OptimizedHuffmanTables {
+        Ok(HuffmanTableSet {
             dc_luma,
             ac_luma,
             dc_chroma,
@@ -222,7 +222,7 @@ impl ComputedConfig {
         cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
         cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
         is_color: bool,
-        tables: Option<&OptimizedHuffmanTables>,
+        tables: Option<&HuffmanTableSet>,
     ) -> Result<Vec<u8>> {
         let width = self.width as usize;
         let height = self.height as usize;

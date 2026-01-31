@@ -9,7 +9,7 @@ use crate::error::Result;
 use tinyvec::ArrayVec;
 
 use super::cluster::cluster_histograms;
-use super::frequency::{FrequencyCounter, OptimizedHuffmanTables, OptimizedTable};
+use super::frequency::{FrequencyCounter, HuffmanTableSet, OptimizedTable};
 use super::tokens::{RefToken, ScanTokenInfo, Token};
 
 /// Buffer for all tokens across all progressive scans.
@@ -364,7 +364,7 @@ impl ProgressiveTokenBuffer {
     ///
     /// In XYB mode, all components use the same Huffman table (no luma/chroma split).
     /// This function merges all DC contexts and all AC contexts into single tables.
-    pub fn generate_xyb_tables(&self, num_dc_contexts: usize) -> Result<OptimizedHuffmanTables> {
+    pub fn generate_xyb_tables(&self, num_dc_contexts: usize) -> Result<HuffmanTableSet> {
         // Merge all DC contexts into one table
         let mut dc_merged = FrequencyCounter::new();
         for ctx in 0..num_dc_contexts {
@@ -397,7 +397,7 @@ impl ProgressiveTokenBuffer {
         };
 
         // XYB uses same table for all components, so luma = chroma
-        Ok(OptimizedHuffmanTables {
+        Ok(HuffmanTableSet {
             dc_luma: dc_table.clone(),
             ac_luma: ac_table.clone(),
             dc_chroma: dc_table,
