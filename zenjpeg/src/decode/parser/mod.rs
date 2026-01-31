@@ -195,7 +195,7 @@ impl<'a> JpegParser<'a> {
             }
 
             // Markers without length
-            if marker >= 0xD0 && marker <= 0xD7 {
+            if (0xD0..=0xD7).contains(&marker) {
                 // RST markers
                 continue;
             }
@@ -220,11 +220,12 @@ impl<'a> JpegParser<'a> {
             match marker {
                 0xE1 => {
                     // APP1 - might be XMP
-                    if detect_segment_type(marker, seg_data) == SegmentType::Xmp {
-                        if seg_data.starts_with(XMP_NS) && xmp_data.is_none() {
-                            if let Ok(s) = core::str::from_utf8(&seg_data[XMP_NS.len()..]) {
-                                xmp_data = Some(s.to_string());
-                            }
+                    if detect_segment_type(marker, seg_data) == SegmentType::Xmp
+                        && seg_data.starts_with(XMP_NS)
+                        && xmp_data.is_none()
+                    {
+                        if let Ok(s) = core::str::from_utf8(&seg_data[XMP_NS.len()..]) {
+                            xmp_data = Some(s.to_string());
                         }
                     }
                 }

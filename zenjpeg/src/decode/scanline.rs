@@ -273,7 +273,7 @@ impl<'a> ScanlineReader<'a> {
         pixels: Vec<u8>,
         is_xyb: bool,
     ) -> Self {
-        let is_grayscale = num_components == 1;
+        let _is_grayscale = num_components == 1;
         let subsampling = Subsampling::S444; // Buffered mode doesn't need subsampling info
 
         Self {
@@ -2226,9 +2226,7 @@ mod tests {
         assert_eq!(rows_read, height as usize, "Should read all rows");
 
         // Compare with full-frame decode
-        #[allow(deprecated)]
         let decoded = decoder.decode(&progressive_jpeg).expect("decode failed");
-        #[allow(deprecated)]
         let (max_diff, diff_count, _) = compare_u8_slices(&scanline_pixels, &decoded.data);
 
         // Should be identical (same decode path for progressive)
