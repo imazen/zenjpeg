@@ -339,11 +339,6 @@ impl StreamingEncoder {
             None
         };
 
-        // Skip frequency counting in streaming mode (tables are already known)
-        if streaming.is_some() {
-            processor.set_skip_frequency_counting(true);
-        }
-
         Ok(Self {
             width,
             height,
