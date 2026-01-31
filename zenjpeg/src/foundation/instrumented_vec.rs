@@ -105,8 +105,7 @@ impl VecStats {
 // ============================================================================
 
 #[cfg(feature = "alloc-instrument")]
-static STATS_ENABLED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(true);
+static STATS_ENABLED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
 
 /// Minimum wasted bytes to report (avoids noise from small allocations).
 #[cfg(feature = "alloc-instrument")]

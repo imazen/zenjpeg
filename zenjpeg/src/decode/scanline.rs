@@ -963,10 +963,8 @@ impl<'a> ScanlineReader<'a> {
                         // Cb = -0.169*R - 0.331*G + 0.500*B
                         // Cr =  0.500*R - 0.419*G - 0.081*B
                         y_plane[out_offset + x] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-                        cb_plane[out_offset + x] =
-                            (-0.169 * r - 0.331 * g + 0.500 * b) / 255.0;
-                        cr_plane[out_offset + x] =
-                            (0.500 * r - 0.419 * g - 0.081 * b) / 255.0;
+                        cb_plane[out_offset + x] = (-0.169 * r - 0.331 * g + 0.500 * b) / 255.0;
+                        cr_plane[out_offset + x] = (0.500 * r - 0.419 * g - 0.081 * b) / 255.0;
                     }
 
                     rows_written += 1;
@@ -2193,9 +2191,7 @@ mod tests {
 
         // Verify it's actually progressive by checking SOF marker
         assert!(
-            progressive_jpeg
-                .windows(2)
-                .any(|w| w == [0xFF, 0xC2]), // SOF2 = progressive
+            progressive_jpeg.windows(2).any(|w| w == [0xFF, 0xC2]), // SOF2 = progressive
             "JPEG should be progressive (SOF2)"
         );
 
@@ -2218,7 +2214,9 @@ mod tests {
                 width as usize * 3,
                 remaining,
             );
-            let count = reader.read_rows_rgb8(output).expect("read_rows_rgb8 failed");
+            let count = reader
+                .read_rows_rgb8(output)
+                .expect("read_rows_rgb8 failed");
             if count == 0 {
                 break;
             }
@@ -2266,9 +2264,7 @@ mod tests {
 
         // Verify it's actually progressive
         assert!(
-            progressive_jpeg
-                .windows(2)
-                .any(|w| w == [0xFF, 0xC2]),
+            progressive_jpeg.windows(2).any(|w| w == [0xFF, 0xC2]),
             "JPEG should be progressive (SOF2)"
         );
 
@@ -2288,7 +2284,9 @@ mod tests {
                 width as usize,
                 remaining,
             );
-            let count = reader.read_rows_gray8(output).expect("read_rows_gray8 failed");
+            let count = reader
+                .read_rows_gray8(output)
+                .expect("read_rows_gray8 failed");
             if count == 0 {
                 break;
             }
@@ -2299,8 +2297,8 @@ mod tests {
 
         // The grayscale values should be reasonable (can't compare exactly since
         // the full-frame decoder uses PixelFormat::Rgb which converts grayscale to RGB)
-        let mean: f64 = scanline_pixels.iter().map(|&x| x as f64).sum::<f64>()
-            / scanline_pixels.len() as f64;
+        let mean: f64 =
+            scanline_pixels.iter().map(|&x| x as f64).sum::<f64>() / scanline_pixels.len() as f64;
         assert!(
             mean > 50.0 && mean < 200.0,
             "Grayscale mean should be reasonable: {}",

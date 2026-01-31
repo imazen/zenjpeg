@@ -221,8 +221,14 @@ fn main() {
         }
         println!("\nCorrectness: PASSED");
 
-        println!("\nSpeedup vs scalar: {:.2}x", scalar_time.as_nanos() as f64 / wasm_time.as_nanos() as f64);
-        println!("Speedup vs wide:   {:.2}x", wide_time.as_nanos() as f64 / wasm_time.as_nanos() as f64);
+        println!(
+            "\nSpeedup vs scalar: {:.2}x",
+            scalar_time.as_nanos() as f64 / wasm_time.as_nanos() as f64
+        );
+        println!(
+            "Speedup vs wide:   {:.2}x",
+            wide_time.as_nanos() as f64 / wasm_time.as_nanos() as f64
+        );
     }
 
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]

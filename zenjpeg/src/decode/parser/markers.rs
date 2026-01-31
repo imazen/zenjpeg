@@ -282,9 +282,7 @@ impl<'a> JpegParser<'a> {
     pub(super) fn parse_dnl(&mut self) -> Result<()> {
         let length = self.read_u16()?;
         if length != 4 {
-            return Err(Error::invalid_jpeg_data(
-                "DNL marker must have length 4",
-            ));
+            return Err(Error::invalid_jpeg_data("DNL marker must have length 4"));
         }
 
         let num_lines = self.read_u16()? as u32;
