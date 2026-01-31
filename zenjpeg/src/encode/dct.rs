@@ -649,7 +649,7 @@ pub(crate) mod simd {
     /// DCT for N=8 on magetypes f32x8 vectors with FMA.
     #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     #[inline(always)]
-    fn dct1d_8_mage(m: &mut [mf32x8; 8], token: archmage::Avx2FmaToken) {
+    fn dct1d_8_mage(m: &mut [mf32x8; 8], token: archmage::X64V3Token) {
         let wc4_0 = mf32x8::splat(token, 0.541196100146197);
         let wc4_1 = mf32x8::splat(token, 1.3065629648763764);
         let wc8_0 = mf32x8::splat(token, 0.5097955791041592);
@@ -707,7 +707,7 @@ pub(crate) mod simd {
     #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     #[inline(always)]
     pub(crate) fn forward_dct_8x8_mage(input: &[f32; 64], output: &mut [f32; 64]) {
-        let token = archmage::Avx2FmaToken::try_new().unwrap();
+        let token = archmage::X64V3Token::try_new().unwrap();
         let scale = mf32x8::splat(token, 1.0 / 8.0);
 
         let mut reg = mf32x8::load_8x8(input);

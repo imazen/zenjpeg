@@ -13,6 +13,7 @@ use zenjpeg::ultrahdr::UltraHdrExtras;
 const GRAY_TEST_IMAGE: &str = "internal/jpegli-cpp/testdata/jxl/flower/flower.png.im_q85_gray.jpg";
 
 /// Path to UltraHDR test image (may not exist on all systems)
+#[allow(dead_code)]
 const ULTRAHDR_TEST_IMAGE: &str = "/mnt/v/gen-dress.jpg";
 
 fn load_test_image(path: &str) -> Option<Vec<u8>> {
