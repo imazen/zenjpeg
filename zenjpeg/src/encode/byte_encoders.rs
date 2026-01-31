@@ -345,8 +345,10 @@ impl BytesEncoder {
 
     /// Finish encoding and return both JPEG bytes and Huffman frequency counts.
     ///
-    /// The frequency counts come from the Huffman optimization pass and can be
-    /// aggregated across multiple images to build corpus-trained Huffman tables.
+    /// The frequency counts can be aggregated across multiple images to build
+    /// corpus-trained Huffman tables. Works with both sequential and progressive
+    /// mode. For sequential with `optimize_huffman`, the counts come from the
+    /// optimization pass at no extra cost.
     ///
     /// Returns `None` for counts if streaming-through mode was used (no buffered
     /// blocks to count from).

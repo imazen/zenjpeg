@@ -66,7 +66,7 @@ struct StreamingOutputState {
 /// Two encoding modes:
 /// - **Buffered** (default with `optimize_huffman=true`): buffers all blocks,
 ///   builds optimal Huffman tables at `finish()`.
-/// - **Streaming-through** (with custom tables or `optimize_huffman=false`, baseline only):
+/// - **Streaming-through** (with custom tables or `optimize_huffman=false`, sequential only):
 ///   writes JPEG header at construction, encodes blocks immediately on each
 ///   strip flush. At `finish()`, just appends EOI.
 pub(crate) struct StreamingEncoder {
@@ -287,7 +287,7 @@ impl StreamingEncoder {
 
         // Determine if we can use streaming-through encoding:
         // - Need known Huffman tables (custom or standard fixed)
-        // - Must be baseline (progressive needs multi-pass)
+        // - Must be sequential (progressive needs multi-pass)
         // - Not XYB (different header/table structure)
         let enable_streaming = (builder.custom_huffman_tables.is_some()
             || !builder.optimize_huffman)
@@ -796,13 +796,15 @@ impl StreamingEncoder {
         self.finish_with_stop(Unstoppable)
     }
 
-    /// Finishes encoding and returns both the JPEG and the frequency counts
-    /// from the Huffman optimization pass (if optimize_huffman was enabled).
+    /// Finishes encoding and returns both the JPEG and the frequency counts.
+    ///
+    /// For sequential mode with `optimize_huffman`, the counts come from the
+    /// optimization pass at no extra cost. For progressive mode, the blocks
+    /// are counted separately (same quantized blocks, same symbol distribution).
     ///
     /// Returns `None` for counts if:
-    /// - `optimize_huffman` was disabled
     /// - Streaming-through mode was used (no buffered blocks to count)
-    /// - Progressive mode was used (uses a different counting path)
+    /// - `optimize_huffman` was disabled for sequential mode
     pub(crate) fn finish_with_huffman_frequencies(
         self,
     ) -> Result<(
@@ -968,12 +970,23 @@ impl StreamingEncoder {
 
             match config.mode {
                 JpegMode::Progressive => {
-                    // Progressive uses a different Huffman path; no frequency extraction
                     if !config.optimize_huffman {
                         return Err(Error::unsupported_feature(
                             "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
                         ));
                     }
+
+                    // Count frequencies from the buffered blocks. The symbol
+                    // distribution is the same regardless of scan structure,
+                    // so single-scan counts are useful for corpus table training.
+                    let is_color = !config.pixel_format.is_grayscale();
+                    let counts = Box::new(config.count_block_frequencies(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        is_color,
+                    ));
+
                     config.encode_progressive_from_blocks_into(
                         &strip_output.y_blocks,
                         &strip_output.cb_blocks,
@@ -983,11 +996,12 @@ impl StreamingEncoder {
                         &cr_quant,
                         output,
                     )?;
-                    Ok(None)
+                    Ok(Some(counts))
                 }
                 _ => {
-                    // Baseline: collect frequencies from the optimize pass
-                    Self::build_jpeg_baseline_into(
+                    // Sequential: collect_frequencies=true gets the counts
+                    // from the optimize pass at no extra cost.
+                    Self::build_jpeg_sequential_into(
                         &config,
                         &y_quant,
                         &cb_quant,
@@ -1088,8 +1102,8 @@ impl StreamingEncoder {
                 )
             }
             _ => {
-                // Baseline encoding
-                Self::build_jpeg_baseline_into(
+                // Sequential encoding
+                Self::build_jpeg_sequential_into(
                     config,
                     y_quant,
                     cb_quant,
@@ -1103,8 +1117,8 @@ impl StreamingEncoder {
         }
     }
 
-    /// Builds baseline JPEG output from processed blocks.
-    fn build_jpeg_baseline(
+    /// Builds sequential JPEG output from processed blocks.
+    fn build_jpeg_sequential(
         config: &ComputedConfig,
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
@@ -1112,7 +1126,7 @@ impl StreamingEncoder {
         strip_output: crate::encode::strip::StripProcessorOutput,
     ) -> Result<Vec<u8>> {
         let mut output = Vec::new();
-        Self::build_jpeg_baseline_into(
+        Self::build_jpeg_sequential_into(
             config,
             y_quant,
             cb_quant,
@@ -1124,12 +1138,12 @@ impl StreamingEncoder {
         Ok(output)
     }
 
-    /// Builds baseline JPEG output from processed blocks into provided buffer.
+    /// Builds sequential JPEG output from processed blocks into provided buffer.
     ///
     /// When `collect_frequencies` is true, the YCbCr optimized Huffman path
     /// returns the symbol frequencies used to build the tables (at no extra
     /// cost—they are produced during the normal optimization pass).
-    fn build_jpeg_baseline_into(
+    fn build_jpeg_sequential_into(
         config: &ComputedConfig,
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
@@ -1146,7 +1160,7 @@ impl StreamingEncoder {
         output.clear();
         output
             .try_reserve(width * height / 4)
-            .map_err(|_| Error::allocation_failed(width * height / 4, "baseline jpeg output"))?;
+            .map_err(|_| Error::allocation_failed(width * height / 4, "sequential jpeg output"))?;
 
         // Branch based on XYB vs YCbCr mode
         let scan_data = if config.use_xyb {
