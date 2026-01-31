@@ -36,6 +36,10 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
     pub(crate) separate_chroma_tables: bool,
+    /// Custom Huffman tables for streaming-through encoding.
+    /// When set, blocks are encoded immediately on each strip flush
+    /// instead of buffering all blocks for optimized table generation.
+    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::OptimizedHuffmanTables>,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
@@ -68,6 +72,7 @@ impl StreamingEncoderBuilder {
             deringing: true,
             allow_16bit_quant_tables: true,
             separate_chroma_tables: true,
+            custom_huffman_tables: None,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -207,6 +212,23 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn encoding_tables(mut self, tables: Box<EncodingTables>) -> Self {
         self.encoding_tables = Some(tables);
+        self
+    }
+
+    /// Sets custom Huffman tables for streaming-through encoding.
+    ///
+    /// When provided, blocks are entropy-encoded immediately on each strip flush
+    /// using these tables, instead of buffering all blocks for a two-pass optimized
+    /// table generation. This enables true single-pass encoding with bounded memory.
+    ///
+    /// Custom tables can come from [`crate::huffman::trained`] (pre-trained on image
+    /// corpora) or from a previous encoding pass via [`crate::huffman::optimize::FrequencyCounter`].
+    #[must_use]
+    pub(crate) fn custom_huffman_tables(
+        mut self,
+        tables: crate::huffman::optimize::OptimizedHuffmanTables,
+    ) -> Self {
+        self.custom_huffman_tables = Some(tables);
         self
     }
 

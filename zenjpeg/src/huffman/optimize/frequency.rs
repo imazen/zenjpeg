@@ -58,6 +58,38 @@ pub struct OptimizedHuffmanTables {
     pub ac_chroma: OptimizedTable,
 }
 
+impl OptimizedHuffmanTables {
+    /// Builds tables from the standard JPEG Huffman tables (Annex K).
+    ///
+    /// These are the default fixed tables used when `optimize_huffman = false`.
+    pub fn from_standard() -> crate::error::Result<Self> {
+        use crate::huffman::encode::{
+            STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_AC_LUMINANCE_BITS,
+            STD_AC_LUMINANCE_VALUES, STD_DC_CHROMINANCE_BITS, STD_DC_CHROMINANCE_VALUES,
+            STD_DC_LUMINANCE_BITS, STD_DC_LUMINANCE_VALUES,
+        };
+
+        Ok(Self {
+            dc_luma: OptimizedTable::from_bits_values(
+                STD_DC_LUMINANCE_BITS,
+                STD_DC_LUMINANCE_VALUES.to_vec(),
+            )?,
+            ac_luma: OptimizedTable::from_bits_values(
+                STD_AC_LUMINANCE_BITS,
+                STD_AC_LUMINANCE_VALUES.to_vec(),
+            )?,
+            dc_chroma: OptimizedTable::from_bits_values(
+                STD_DC_CHROMINANCE_BITS,
+                STD_DC_CHROMINANCE_VALUES.to_vec(),
+            )?,
+            ac_chroma: OptimizedTable::from_bits_values(
+                STD_AC_CHROMINANCE_BITS,
+                STD_AC_CHROMINANCE_VALUES.to_vec(),
+            )?,
+        })
+    }
+}
+
 /// Frequency counter for Huffman optimization.
 ///
 /// Collects symbol frequencies during a first pass over the data,
