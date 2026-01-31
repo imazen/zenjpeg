@@ -1,8 +1,8 @@
 //! Archmage-based SIMD implementations using capability tokens.
 //!
-//! These functions provide the same functionality as the `unsafe_simd` implementations
-//! but with compile-time safety via archmage's token system. The `mage_` prefix
-//! distinguishes them from the raw intrinsic versions.
+//! These functions provide SIMD-optimized implementations using archmage's token
+//! system for compile-time safety. The `mage_` prefix distinguishes them from
+//! the `wide`-based autovectorized versions.
 //!
 //! # Token Model
 //!
@@ -1265,6 +1265,18 @@ mod tests {
     use super::*;
     use archmage::SimdToken;
 
+    /// Load 8 f32s into an __m256 register (archmage provides target feature).
+    #[arcane]
+    fn load_f32x8(_token: Desktop64, data: &[f32; 8]) -> __m256 {
+        safe_simd::_mm256_loadu_ps(data)
+    }
+
+    /// Store an __m256 register into 8 f32s (archmage provides target feature).
+    #[arcane]
+    fn store_f32x8(_token: Desktop64, dst: &mut [f32; 8], val: __m256) {
+        safe_simd::_mm256_storeu_ps(dst, val);
+    }
+
     #[test]
     fn test_mage_forward_dct_8x8_identity() {
         if let Some(token) = Desktop64::summon() {
@@ -1307,39 +1319,32 @@ mod tests {
 
     #[test]
     fn test_mage_transpose_8x8_inplace() {
-
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
             let original: [f32; 64] = core::array::from_fn(|i| i as f32);
 
-            // Load into registers using safe SIMD load operations
             let mut reg = [
-                safe_simd::_mm256_loadu_ps(original[0..8].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[8..16].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[16..24].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[24..32].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[32..40].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[40..48].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[48..56].try_into().unwrap()),
-                safe_simd::_mm256_loadu_ps(original[56..64].try_into().unwrap()),
+                load_f32x8(token, original[0..8].try_into().unwrap()),
+                load_f32x8(token, original[8..16].try_into().unwrap()),
+                load_f32x8(token, original[16..24].try_into().unwrap()),
+                load_f32x8(token, original[24..32].try_into().unwrap()),
+                load_f32x8(token, original[32..40].try_into().unwrap()),
+                load_f32x8(token, original[40..48].try_into().unwrap()),
+                load_f32x8(token, original[48..56].try_into().unwrap()),
+                load_f32x8(token, original[56..64].try_into().unwrap()),
             ];
 
-            // Transpose
             mage_transpose_8x8_inplace(token, &mut reg);
 
-            // Store back using safe SIMD store operations
             let mut result = [0.0f32; 64];
-            safe_simd::_mm256_storeu_ps((&mut result[0..8]).try_into().unwrap(), reg[0]);
-            safe_simd::_mm256_storeu_ps((&mut result[8..16]).try_into().unwrap(), reg[1]);
-            safe_simd::_mm256_storeu_ps((&mut result[16..24]).try_into().unwrap(), reg[2]);
-            safe_simd::_mm256_storeu_ps((&mut result[24..32]).try_into().unwrap(), reg[3]);
-            safe_simd::_mm256_storeu_ps((&mut result[32..40]).try_into().unwrap(), reg[4]);
-            safe_simd::_mm256_storeu_ps((&mut result[40..48]).try_into().unwrap(), reg[5]);
-            safe_simd::_mm256_storeu_ps((&mut result[48..56]).try_into().unwrap(), reg[6]);
-            safe_simd::_mm256_storeu_ps((&mut result[56..64]).try_into().unwrap(), reg[7]);
+            store_f32x8(token, (&mut result[0..8]).try_into().unwrap(), reg[0]);
+            store_f32x8(token, (&mut result[8..16]).try_into().unwrap(), reg[1]);
+            store_f32x8(token, (&mut result[16..24]).try_into().unwrap(), reg[2]);
+            store_f32x8(token, (&mut result[24..32]).try_into().unwrap(), reg[3]);
+            store_f32x8(token, (&mut result[32..40]).try_into().unwrap(), reg[4]);
+            store_f32x8(token, (&mut result[40..48]).try_into().unwrap(), reg[5]);
+            store_f32x8(token, (&mut result[48..56]).try_into().unwrap(), reg[6]);
+            store_f32x8(token, (&mut result[56..64]).try_into().unwrap(), reg[7]);
 
-            // Verify transpose: result[col * 8 + row] == original[row * 8 + col]
             for row in 0..8 {
                 for col in 0..8 {
                     let orig_val = original[row * 8 + col];
@@ -1351,26 +1356,21 @@ mod tests {
                     );
                 }
             }
-            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_gather_even_odd_x8() {
-
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
             // Test data: [0, 1, 2, 3, ..., 15] interleaved as [e0,o0,e1,o1,...]
             let data: [f32; 16] = core::array::from_fn(|i| i as f32);
 
             let (evens, odds) = mage_gather_even_odd_x8(token, &data);
 
-            // Store results to check
             let mut evens_arr = [0.0f32; 8];
             let mut odds_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut evens_arr, evens);
-            safe_simd::_mm256_storeu_ps(&mut odds_arr, odds);
+            store_f32x8(token, &mut evens_arr, evens);
+            store_f32x8(token, &mut odds_arr, odds);
 
             // Expected: evens = [0, 2, 4, 6, 8, 10, 12, 14]
             //           odds  = [1, 3, 5, 7, 9, 11, 13, 15]
@@ -1389,7 +1389,6 @@ mod tests {
                     i, odds_arr[i], expected_odds[i]
                 );
             }
-            } // unsafe
         }
     }
 
@@ -1479,26 +1478,22 @@ mod tests {
 
     #[test]
     fn test_mage_box_filter_2x2() {
-
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
-            // Create test data for 2x2 box filter
             // Each "pixel" should be averaged from 4 neighbors
             let row0_evens_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
             let row0_odds_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
             let row1_evens_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
             let row1_odds_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
 
-            let row0_evens = safe_simd::_mm256_loadu_ps(&row0_evens_arr);
-            let row0_odds = safe_simd::_mm256_loadu_ps(&row0_odds_arr);
-            let row1_evens = safe_simd::_mm256_loadu_ps(&row1_evens_arr);
-            let row1_odds = safe_simd::_mm256_loadu_ps(&row1_odds_arr);
+            let row0_evens = load_f32x8(token, &row0_evens_arr);
+            let row0_odds = load_f32x8(token, &row0_odds_arr);
+            let row1_evens = load_f32x8(token, &row1_evens_arr);
+            let row1_odds = load_f32x8(token, &row1_odds_arr);
 
             let result = mage_box_filter_2x2(token, row0_evens, row0_odds, row1_evens, row1_odds);
 
             let mut result_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
+            store_f32x8(token, &mut result_arr, result);
 
             // Each output should be (4 * input) * 0.25 = input
             for i in 0..8 {
@@ -1511,7 +1506,6 @@ mod tests {
                     expected
                 );
             }
-            } // unsafe
         }
     }
 
@@ -1542,16 +1536,13 @@ mod tests {
     #[test]
     fn test_mage_ratio_of_derivatives_x8() {
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
-            // Test with typical AQ input values
             let inputs = [128.0f32, 64.0, 192.0, 255.0, 0.0, 32.0, 100.0, 200.0];
-            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
+            let input_vec = load_f32x8(token, &inputs);
 
             let result = mage_ratio_of_derivatives_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
+            store_f32x8(token, &mut result_arr, result);
 
             for i in 0..8 {
                 let expected = ratio_of_derivatives_scalar(inputs[i], false);
@@ -1565,22 +1556,19 @@ mod tests {
                     rel_err
                 );
             }
-            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_ratio_of_derivatives_inv_x8() {
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
             let inputs = [128.0f32, 64.0, 192.0, 255.0, 0.0, 32.0, 100.0, 200.0];
-            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
+            let input_vec = load_f32x8(token, &inputs);
 
             let result = mage_ratio_of_derivatives_inv_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
+            store_f32x8(token, &mut result_arr, result);
 
             for i in 0..8 {
                 let expected = ratio_of_derivatives_scalar(inputs[i], true);
@@ -1594,23 +1582,19 @@ mod tests {
                     rel_err
                 );
             }
-            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_masking_sqrt_x8() {
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
-            // Test with typical diff_sq values (0 to 0.2 range)
             let inputs = [0.0f32, 0.01, 0.05, 0.1, 0.15, 0.2, 0.05, 0.08];
-            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
+            let input_vec = load_f32x8(token, &inputs);
 
             let result = mage_masking_sqrt_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
+            store_f32x8(token, &mut result_arr, result);
 
             for i in 0..8 {
                 let expected = masking_sqrt_scalar(inputs[i]);
@@ -1624,22 +1608,19 @@ mod tests {
                     rel_err
                 );
             }
-            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_fast_exp2_x8() {
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
             let inputs = [-5.0f32, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0, 10.0];
-            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
+            let input_vec = load_f32x8(token, &inputs);
 
             let result = mage_fast_exp2_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
+            store_f32x8(token, &mut result_arr, result);
 
             for i in 0..8 {
                 let expected = inputs[i].exp2();
@@ -1654,22 +1635,19 @@ mod tests {
                     rel_err
                 );
             }
-            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_fast_log2_x8() {
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
             let inputs = [0.01f32, 0.1, 0.5, 1.0, 2.0, 4.0, 10.0, 100.0];
-            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
+            let input_vec = load_f32x8(token, &inputs);
 
             let result = mage_fast_log2_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
+            store_f32x8(token, &mut result_arr, result);
 
             for i in 0..8 {
                 let expected = inputs[i].log2();
@@ -1684,17 +1662,14 @@ mod tests {
                     abs_err
                 );
             }
-            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_hsum_ps() {
         if let Some(token) = Desktop64::summon() {
-            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
-            unsafe {
             let inputs = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
+            let input_vec = load_f32x8(token, &inputs);
 
             let result = mage_hsum_ps(token, input_vec);
             let expected: f32 = inputs.iter().sum();
@@ -1705,7 +1680,6 @@ mod tests {
                 result,
                 expected
             );
-            } // unsafe
         }
     }
 

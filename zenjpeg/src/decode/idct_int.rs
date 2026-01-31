@@ -18,9 +18,9 @@
 
 #![allow(dead_code)]
 
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::SimdToken;
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Rounding and level-shift constants.
@@ -320,7 +320,7 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 // =============================================================================
 
 #[cfg(all(
-    feature = "magetypes-simd",
+    feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 mod avx2 {
@@ -714,7 +714,7 @@ mod wide_simd {
 /// * `stride` - Stride between output rows
 #[inline]
 pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
         if let Some(token) = archmage::Avx2Token::try_new() {
             avx2::idct_int_avx2(token, coeffs, output, stride);
@@ -731,7 +731,7 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
 /// `idct_int_auto` (which uses `wide`) should be preferred as it's portable
 /// and has similar performance.
 #[cfg(all(
-    feature = "magetypes-simd",
+    feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[inline]
@@ -762,7 +762,7 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
     } else {
         // Full 8x8 IDCT with SIMD (AVX2 on x86_64, wide otherwise)
         // Note: AVX2 IDCT with DC-only check is faster than tiered 4x4 scalar
-        #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
         {
             if let Some(token) = archmage::Avx2Token::try_new() {
                 avx2::idct_int_avx2(token, coeffs, output, stride);
@@ -865,7 +865,7 @@ mod tests {
     }
 
     #[cfg(all(
-        feature = "magetypes-simd",
+        feature = "archmage-simd",
         any(target_arch = "x86", target_arch = "x86_64")
     ))]
     #[test]

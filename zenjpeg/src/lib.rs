@@ -1,7 +1,4 @@
-#![cfg_attr(
-    not(any(feature = "unsafe_simd", feature = "archmage-simd", feature = "magetypes-simd")),
-    forbid(unsafe_code)
-)]
+#![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! # jpegli
@@ -104,7 +101,7 @@
 //! | `parallel` | No | Multi-threaded encoding via rayon |
 //! | `cms-lcms2` | Yes | Color management via lcms2 |
 //! | `cms-moxcms` | No | Pure Rust color management |
-//! | `magetypes-simd` | Yes | Safe SIMD via archmage tokens (~10-20% faster) |
+//! | `archmage-simd` | Yes | Safe SIMD via archmage tokens (~10-20% faster) |
 //!
 //! ## Capabilities
 //!

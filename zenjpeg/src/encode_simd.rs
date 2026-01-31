@@ -26,11 +26,11 @@ use multiversed::multiversed;
 use wide::f32x8;
 
 // AVX2/SSE intrinsics - safe via archmage #[arcane] annotation
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[allow(unused_imports)]
 use core::arch::x86_64::{
     __m128, __m128i, __m256, _mm_cvtepu8_epi32, _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps,
@@ -234,7 +234,7 @@ fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
 
 /// AVX2-optimized deinterleave using Highway's ConcatEven/ConcatOdd pattern.
 /// This is ~4x faster than element-by-element construction.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 fn gather_even_odd_x8_avx2(_token: archmage::Avx2Token, data: &[f32; 16]) -> (f32x8, f32x8) {
@@ -336,7 +336,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 
         // Use runtime dispatch with inline function calls (no pointer indirection)
         // The branch is very predictable and intrinsics are inlined
-        #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+        #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
         {
             if let Some(token) = archmage::Avx2Token::try_new() {
                 return gather_even_odd_x8_avx2(token, slice.try_into().unwrap());
@@ -345,7 +345,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
             }
         }
 
-        #[cfg(not(all(feature = "magetypes-simd", target_arch = "x86_64")))]
+        #[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
         {
             return gather_even_odd_x8_scalar(slice);
         }
@@ -362,7 +362,7 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 /// Extract 4 R values from 16 bytes of RGB data using SSSE3 shuffle.
 /// Input: [R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5]
 /// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 fn extract_r_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
@@ -373,7 +373,7 @@ fn extract_r_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
 }
 
 /// Extract 4 G values from 16 bytes of RGB data using SSSE3 shuffle.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 fn extract_g_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
@@ -384,7 +384,7 @@ fn extract_g_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
 }
 
 /// Extract 4 B values from 16 bytes of RGB data using SSSE3 shuffle.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 fn extract_b_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
@@ -396,7 +396,7 @@ fn extract_b_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
 
 /// Convert 4 u8 values (in low bytes of __m128i) to __m128 f32.
 /// Uses _mm_cvtepu8_epi32 which requires SSE4.1.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 fn u8x4_to_f32x4_sse41(_token: archmage::Avx2Token, v: __m128i) -> __m128 {
@@ -414,7 +414,7 @@ fn u8x4_to_f32x4_sse41(_token: archmage::Avx2Token, v: __m128i) -> __m128 {
 ///
 /// This is a low-level function called by the safe `rgb_to_ycbcr_planes_simd_inplace` wrapper.
 /// Production code should use the safe wrapper.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 #[inline]
 pub(crate) fn rgb_to_ycbcr_8px_fma(
@@ -500,7 +500,7 @@ pub(crate) fn rgb_to_ycbcr_8px_fma(
 }
 
 /// Scalar reference implementation for RGB to YCbCr (for testing).
-#[cfg(all(test, feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(test, feature = "archmage-simd", target_arch = "x86_64"))]
 fn rgb_to_ycbcr_scalar(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -555,7 +555,7 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
 
     // Use AVX2+FMA intrinsics path when available (much faster due to shuffle-based
     // deinterleave instead of scalar gather, plus FMA operations)
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
         if let Some(token) = archmage::Avx2FmaToken::try_new() {
             let chunks = num_pixels / 8;
@@ -1465,7 +1465,7 @@ mod tests {
     /// Tolerance for FMA vs non-FMA differences (FMA avoids intermediate rounding)
     const EPSILON: f32 = 1e-4;
     /// Slightly higher tolerance for accumulated operations (downsampling averages 4 values)
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     const EPSILON_ACCUMULATED: f32 = 5e-4;
 
     #[test]
@@ -1529,7 +1529,7 @@ mod tests {
 
     /// Test AVX2 intrinsics RGB to YCbCr against scalar reference.
     #[test]
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_matches_scalar() {
         let Some(token) = archmage::Avx2FmaToken::try_new() else {
             return;
@@ -1589,7 +1589,7 @@ mod tests {
 
     /// Brute force test AVX2 RGB to YCbCr with all possible u8 values.
     #[test]
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_brute_force() {
         let Some(token) = archmage::Avx2FmaToken::try_new() else {
             return;

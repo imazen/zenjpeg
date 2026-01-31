@@ -11,7 +11,7 @@
 //! # SIMD Architecture
 //!
 //! - **Safe public APIs**: `forward_dct_8x8`, `transpose_8x8_simd`
-//! - **magetypes path** (`magetypes-simd` feature): Token-gated AVX2+FMA via `magetypes::simd::f32x8`
+//! - **magetypes path** (`archmage-simd` feature): Token-gated AVX2+FMA via `magetypes::simd::f32x8`
 //! - **wide path** (default fallback): Portable SIMD via `wide::f32x8`
 
 use crate::foundation::consts::DCT_BLOCK_SIZE;
@@ -234,9 +234,9 @@ pub(crate) mod simd {
     use super::*;
 
     // Token-gated SIMD types for AVX2+FMA - safe wrappers around intrinsics
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     use magetypes::simd::f32x8 as mf32x8;
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     use archmage::SimdToken;
 
     // SIMD versions of WC constants for parallel DCT
@@ -394,7 +394,7 @@ pub(crate) mod simd {
     #[multiversed]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
         #[cfg(all(
-            feature = "magetypes-simd",
+            feature = "archmage-simd",
             target_arch = "x86_64",
             target_feature = "avx2"
         ))]
@@ -411,7 +411,7 @@ pub(crate) mod simd {
     }
 
     /// Transpose using wide's built-in f32x8::transpose (AVX-accelerated).
-    /// (Safe fallback when magetypes-simd feature is disabled)
+    /// (Safe fallback when archmage-simd feature is disabled)
     #[allow(dead_code)]
     #[inline]
     fn transpose_8x8_wide(input: &[f32; 64], output: &mut [f32; 64]) {
@@ -608,7 +608,7 @@ pub(crate) mod simd {
     // ========================================================================
 
     /// DCT for N=4 on magetypes f32x8 vectors with FMA.
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[inline(always)]
     fn dct1d_4_mage(
         m: &mut [mf32x8; 4],
@@ -647,7 +647,7 @@ pub(crate) mod simd {
     }
 
     /// DCT for N=8 on magetypes f32x8 vectors with FMA.
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[inline(always)]
     fn dct1d_8_mage(m: &mut [mf32x8; 8], token: archmage::X64V3Token) {
         let wc4_0 = mf32x8::splat(token, 0.541196100146197);
@@ -704,7 +704,7 @@ pub(crate) mod simd {
     /// Safe wrapper around intrinsics via token-gated types.
     ///
     /// Algorithm: load → transpose → row DCT → scale → transpose → col DCT → scale → store
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[inline(always)]
     pub(crate) fn forward_dct_8x8_mage(input: &[f32; 64], output: &mut [f32; 64]) {
         let token = archmage::X64V3Token::try_new().unwrap();
@@ -771,7 +771,7 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
     // Use magetypes AVX2+FMA when available (safe, token-gated intrinsics)
     #[cfg(all(
-        feature = "magetypes-simd",
+        feature = "archmage-simd",
         target_arch = "x86_64",
         target_feature = "avx2",
         target_feature = "fma"
@@ -784,7 +784,7 @@ pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
 
     // Safe fallback using wide crate SIMD (portable to all platforms)
     #[cfg(not(all(
-        feature = "magetypes-simd",
+        feature = "archmage-simd",
         target_arch = "x86_64",
         target_feature = "avx2",
         target_feature = "fma"
@@ -1201,7 +1201,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[test]
     fn test_mage_dct_matches_scalar() {
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
@@ -1251,9 +1251,9 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[test]
-    #[ignore] // Run with: cargo test --release --features magetypes-simd bench_mage_dct -- --ignored --nocapture
+    #[ignore] // Run with: cargo test --release --features archmage-simd bench_mage_dct -- --ignored --nocapture
     fn bench_mage_dct_vs_scalar() {
         use std::hint::black_box;
         use std::time::Instant;

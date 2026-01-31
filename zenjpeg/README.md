@@ -655,12 +655,12 @@ let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
 |---------|---------|-------------|
 | `decoder` | No | Enable decoder API (prerelease, API will change) |
 | `ultrahdr` | No | UltraHDR HDR gain map encoding/decoding (requires `decoder`) |
+| `archmage-simd` | Yes | Safe SIMD via archmage tokens (~10-20% faster on x86_64) |
 | `cms-lcms2` | Yes | Color management via lcms2 |
 | `cms-moxcms` | No | Pure Rust color management |
-| `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
 | `test-utils` | Yes | Testing utilities |
 
-By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the safe, portable `wide` crate. Enable `unsafe_simd` for raw intrinsics on x86_64.
+By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the safe, portable `wide` crate. The `archmage-simd` feature (enabled by default) adds token-based SIMD intrinsics via archmage for ~10-20% speedup on x86_64.
 
 ```toml
 [dependencies]
@@ -669,11 +669,8 @@ zenjpeg = "0.11"
 # With UltraHDR support:
 zenjpeg = { version = "0.11", features = ["ultrahdr"] }
 
-# Minimal (no CMS):
+# Minimal (no CMS, no archmage SIMD):
 zenjpeg = { version = "0.11", default-features = false }
-
-# With unsafe SIMD (x86_64 only):
-zenjpeg = { version = "0.11", features = ["unsafe_simd"] }
 ```
 
 ## Encoder Status
