@@ -98,6 +98,19 @@ impl FrequencyCounter {
         Self { counts: [0; 257] }
     }
 
+    /// Creates a frequency counter from a slice of counts (one per symbol 0-255).
+    ///
+    /// If the slice is shorter than 256, remaining symbols get count 0.
+    /// If longer, extra elements are ignored.
+    #[must_use]
+    pub fn from_counts(counts: &[i64]) -> Self {
+        let mut result = Self::new();
+        for (i, &count) in counts.iter().take(256).enumerate() {
+            result.counts[i] = count;
+        }
+        result
+    }
+
     /// Resets all counts to zero.
     pub fn reset(&mut self) {
         self.counts.fill(0);
@@ -125,6 +138,217 @@ impl FrequencyCounter {
     #[must_use]
     pub fn num_symbols(&self) -> usize {
         self.counts[..256].iter().filter(|&&c| c > 0).count()
+    }
+
+    /// Ensures all valid DC symbols (0-11) have at least frequency 1.
+    ///
+    /// Call this before generating a DC Huffman table from partial data
+    /// to ensure all valid category symbols have codes assigned.
+    pub fn ensure_dc_coverage(&mut self) {
+        // DC symbols are categories 0-11 (for DC coefficient differences)
+        for symbol in 0..=11 {
+            if self.counts[symbol] == 0 {
+                self.counts[symbol] = 1;
+            }
+        }
+    }
+
+    /// Ensures all valid AC symbols have at least frequency 1.
+    ///
+    /// Call this before generating an AC Huffman table from partial data
+    /// to ensure all valid run/size symbols have codes assigned.
+    ///
+    /// Valid AC symbols are:
+    /// - 0x00: EOB (End of Block)
+    /// - 0xF0: ZRL (Zero Run Length - 16 zeros)
+    /// - (run << 4) | size: where run=0-15, size=1-10
+    pub fn ensure_ac_coverage(&mut self) {
+        // EOB (End of Block)
+        if self.counts[0x00] == 0 {
+            self.counts[0x00] = 1;
+        }
+        // ZRL (Zero Run Length - 16 zeros)
+        if self.counts[0xF0] == 0 {
+            self.counts[0xF0] = 1;
+        }
+        // All valid (run, size) combinations
+        // run: 0-15, size: 1-10 (size 0 is only valid for EOB/ZRL)
+        for run in 0..=15u8 {
+            for size in 1..=10u8 {
+                let symbol = (run << 4) | size;
+                if self.counts[symbol as usize] == 0 {
+                    self.counts[symbol as usize] = 1;
+                }
+            }
+        }
+    }
+
+    /// Computes Shannon entropy of the frequency distribution (in bits).
+    ///
+    /// Higher entropy means more uniform distribution (better for general use).
+    /// Lower entropy means concentrated distribution (potentially pathological).
+    ///
+    /// Returns 0.0 if histogram is empty.
+    #[must_use]
+    pub fn entropy(&self) -> f64 {
+        let total = self.total() as f64;
+        if total == 0.0 {
+            return 0.0;
+        }
+
+        let mut entropy = 0.0;
+        for &count in &self.counts[..256] {
+            if count > 0 {
+                let p = count as f64 / total;
+                entropy -= p * p.log2();
+            }
+        }
+        entropy
+    }
+
+    /// Computes the percentage of valid AC symbols that have been seen.
+    ///
+    /// Valid AC symbols are: EOB (0x00), ZRL (0xF0), and (run << 4 | size) for
+    /// run 0-15, size 1-10. Total: 162 valid symbols.
+    ///
+    /// Returns 0.0-100.0 percentage.
+    #[must_use]
+    pub fn ac_symbol_coverage(&self) -> f64 {
+        const TOTAL_VALID_AC: usize = 2 + 16 * 10; // EOB + ZRL + run/size combos = 162
+
+        let mut seen = 0usize;
+
+        // EOB
+        if self.counts[0x00] > 0 {
+            seen += 1;
+        }
+        // ZRL
+        if self.counts[0xF0] > 0 {
+            seen += 1;
+        }
+        // Run/size combinations
+        for run in 0..=15u8 {
+            for size in 1..=10u8 {
+                let symbol = (run << 4) | size;
+                if self.counts[symbol as usize] > 0 {
+                    seen += 1;
+                }
+            }
+        }
+
+        100.0 * seen as f64 / TOTAL_VALID_AC as f64
+    }
+
+    /// Computes the percentage of valid DC symbols (0-11) that have been seen.
+    #[must_use]
+    pub fn dc_symbol_coverage(&self) -> f64 {
+        let seen = (0..=11).filter(|&s| self.counts[s] > 0).count();
+        100.0 * seen as f64 / 12.0
+    }
+
+    /// Computes symmetric KL divergence (Jensen-Shannon divergence) between two histograms.
+    ///
+    /// Returns a value >= 0. Higher values indicate more different distributions.
+    /// Returns 0.0 if distributions are identical.
+    #[must_use]
+    pub fn divergence(&self, other: &FrequencyCounter) -> f64 {
+        let total_self = self.total() as f64;
+        let total_other = other.total() as f64;
+
+        if total_self == 0.0 || total_other == 0.0 {
+            return f64::MAX;
+        }
+
+        let mut divergence = 0.0;
+        for i in 0..256 {
+            let p = self.counts[i] as f64 / total_self;
+            let q = other.counts[i] as f64 / total_other;
+
+            if p > 0.0 || q > 0.0 {
+                let m = (p + q) / 2.0;
+                if p > 0.0 && m > 0.0 {
+                    divergence += p * (p / m).ln();
+                }
+                if q > 0.0 && m > 0.0 {
+                    divergence += q * (q / m).ln();
+                }
+            }
+        }
+        divergence / 2.0 // Jensen-Shannon is symmetric average
+    }
+
+    /// Blends this histogram with a prior (corpus) histogram for better streaming tables.
+    ///
+    /// Strategy:
+    /// - For symbols with `>= min_samples` observations, use observed frequency
+    /// - For rare/unseen symbols, blend observed + scaled prior to avoid pathological codes
+    ///
+    /// **Note**: Testing shows this hurts compression. Use `add_prior_proportional` instead.
+    #[must_use]
+    pub fn blend_with_prior(&self, prior: &FrequencyCounter, min_samples: i64) -> FrequencyCounter {
+        let observed_total = self.total();
+        let prior_total = prior.total();
+
+        if observed_total == 0 {
+            return prior.clone();
+        }
+        if prior_total == 0 {
+            return self.clone();
+        }
+
+        let scale = observed_total as f64 / prior_total as f64;
+
+        let mut result = FrequencyCounter::new();
+        for i in 0..256 {
+            let observed = self.counts[i];
+            let prior_scaled = (prior.counts[i] as f64 * scale) as i64;
+
+            result.counts[i] = if observed >= min_samples {
+                observed
+            } else {
+                observed + prior_scaled.max(1)
+            };
+        }
+
+        // Preserve pseudo-symbol if present
+        result.counts[256] = self.counts[256];
+
+        result
+    }
+
+    /// Adds a proportionally-scaled prior to this histogram.
+    ///
+    /// Unlike `blend_with_prior`, this adds a small fraction of the prior to ALL symbols,
+    /// preserving relative weights from corpus training while keeping observed dominant.
+    #[must_use]
+    pub fn add_prior_proportional(
+        &self,
+        prior: &FrequencyCounter,
+        prior_weight: f64,
+    ) -> FrequencyCounter {
+        let observed_total = self.total();
+        let prior_total = prior.total();
+
+        if observed_total == 0 {
+            return prior.clone();
+        }
+        if prior_total == 0 {
+            return self.clone();
+        }
+
+        let scale = (observed_total as f64 * prior_weight) / prior_total as f64;
+
+        let mut result = FrequencyCounter::new();
+        for i in 0..256 {
+            let observed = self.counts[i];
+            let prior_contribution = (prior.counts[i] as f64 * scale).round() as i64;
+            result.counts[i] = observed + prior_contribution.max(0);
+        }
+
+        // Preserve pseudo-symbol
+        result.counts[256] = self.counts[256];
+
+        result
     }
 
     /// Generates an optimal Huffman table from the collected frequencies.
