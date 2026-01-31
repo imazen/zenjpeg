@@ -46,7 +46,13 @@ fn create_test_jpeg_with_subsampling(
 }
 
 fn create_test_jpeg(width: u32, height: u32, quality: f32, progressive: bool) -> Vec<u8> {
-    create_test_jpeg_with_subsampling(width, height, quality, progressive, ChromaSubsampling::Quarter)
+    create_test_jpeg_with_subsampling(
+        width,
+        height,
+        quality,
+        progressive,
+        ChromaSubsampling::Quarter,
+    )
 }
 
 fn bench_decode_comparison(c: &mut Criterion) {

@@ -721,7 +721,8 @@ impl<'a> UltraHdrReader<'a> {
     /// Returns `None` if this is not an UltraHDR image or if the
     /// gain map has already been taken.
     pub fn gainmap_jpeg(&self) -> Option<&'a [u8]> {
-        self.gainmap_range.map(|(start, end)| &self.data[start..end])
+        self.gainmap_range
+            .map(|(start, end)| &self.data[start..end])
     }
 
     /// Get the raw gain map JPEG data as owned bytes.
@@ -732,7 +733,9 @@ impl<'a> UltraHdrReader<'a> {
     /// Returns `None` if this is not an UltraHDR image or if the
     /// gain map has already been taken.
     pub fn take_gainmap_data(&mut self) -> Option<Vec<u8>> {
-        self.gainmap_range.take().map(|(start, end)| self.data[start..end].to_vec())
+        self.gainmap_range
+            .take()
+            .map(|(start, end)| self.data[start..end].to_vec())
     }
 }
 

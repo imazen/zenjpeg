@@ -22,13 +22,15 @@ struct Block8x8f {
 
 impl Default for Block8x8f {
     fn default() -> Self {
-        Self { rows: [f32x8::ZERO; 8] }
+        Self {
+            rows: [f32x8::ZERO; 8],
+        }
     }
 }
 
 // AAN DCT constants
-const C4: f32 = 0.707106781;      // cos(π/4) = √2/2
-const C6: f32 = 0.382683433;      // sin(π/8)
+const C4: f32 = 0.707106781; // cos(π/4) = √2/2
+const C6: f32 = 0.382683433; // sin(π/8)
 const C2_M_C6: f32 = 0.541196100; // cos(π/8) - cos(3π/8)
 const C2_P_C6: f32 = 1.306562965; // cos(π/8) + cos(3π/8)
 
@@ -145,8 +147,14 @@ fn bench_dct_8x8(iterations: usize) -> std::time::Duration {
     let mut block = Block8x8f::default();
     for i in 0..8 {
         block.rows[i] = f32x8::new([
-            (i * 8) as f32, (i * 8 + 1) as f32, (i * 8 + 2) as f32, (i * 8 + 3) as f32,
-            (i * 8 + 4) as f32, (i * 8 + 5) as f32, (i * 8 + 6) as f32, (i * 8 + 7) as f32,
+            (i * 8) as f32,
+            (i * 8 + 1) as f32,
+            (i * 8 + 2) as f32,
+            (i * 8 + 3) as f32,
+            (i * 8 + 4) as f32,
+            (i * 8 + 5) as f32,
+            (i * 8 + 6) as f32,
+            (i * 8 + 7) as f32,
         ]);
     }
 
@@ -198,8 +206,10 @@ fn main() {
 
     // Calculate breakdown
     println!("\n--- Breakdown ---");
-    let transpose_pct = (transpose_time.as_nanos() as f64 * 2.0) / dct_8x8_time.as_nanos() as f64 * 100.0;
-    let dct_1d_pct = (dct_1d_time.as_nanos() as f64 * 16.0) / dct_8x8_time.as_nanos() as f64 * 100.0;
+    let transpose_pct =
+        (transpose_time.as_nanos() as f64 * 2.0) / dct_8x8_time.as_nanos() as f64 * 100.0;
+    let dct_1d_pct =
+        (dct_1d_time.as_nanos() as f64 * 16.0) / dct_8x8_time.as_nanos() as f64 * 100.0;
     println!("Transpose contribution (2x): ~{:.1}%", transpose_pct);
     println!("1D DCT contribution (16x):   ~{:.1}%", dct_1d_pct);
 

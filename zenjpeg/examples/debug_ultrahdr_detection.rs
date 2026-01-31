@@ -85,8 +85,7 @@ fn main() {
             0xE1 => {
                 // APP1
                 if seg_data.starts_with(XMP_NS) {
-                    let xmp =
-                        std::str::from_utf8(&seg_data[XMP_NS.len()..]).unwrap_or("<invalid>");
+                    let xmp = std::str::from_utf8(&seg_data[XMP_NS.len()..]).unwrap_or("<invalid>");
                     println!("Found XMP at pos {} ({} bytes)", pos - 4, seg_data.len());
                     println!(
                         "  contains hdrgm:Version: {}",
@@ -211,7 +210,10 @@ fn main() {
         println!("has_xmp: {}", extras.xmp().is_some());
         println!("is_ultrahdr: {}", extras.is_ultrahdr());
         if let Some(xmp) = extras.xmp() {
-            println!("xmp contains hdrgm:Version: {}", xmp.contains("hdrgm:Version"));
+            println!(
+                "xmp contains hdrgm:Version: {}",
+                xmp.contains("hdrgm:Version")
+            );
         }
         if let Some(mpf) = extras.mpf() {
             println!("mpf: {} images", mpf.images.len());
@@ -224,7 +226,10 @@ fn main() {
         } else {
             println!("mpf: None");
         }
-        println!("secondary_images count: {}", extras.secondary_images().len());
+        println!(
+            "secondary_images count: {}",
+            extras.secondary_images().len()
+        );
     } else {
         println!("No extras!");
     }

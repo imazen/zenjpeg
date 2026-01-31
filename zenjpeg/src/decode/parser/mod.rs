@@ -153,7 +153,10 @@ impl<'a> JpegParser<'a> {
     pub(super) fn extract_gainmap_early(
         &mut self,
         full_data: &[u8],
-    ) -> Result<(Option<(usize, usize)>, Option<ultrahdr_core::GainMapMetadata>)> {
+    ) -> Result<(
+        Option<(usize, usize)>,
+        Option<ultrahdr_core::GainMapMetadata>,
+    )> {
         use super::extras::{detect_segment_type, parse_mpf_directory, MpfDirectory, SegmentType};
         use ultrahdr_core::metadata::xmp::parse_xmp;
 
@@ -687,8 +690,7 @@ fn find_secondary_jpeg_range(data: &[u8]) -> Option<(usize, usize)> {
                         if pos + 4 > data.len() {
                             break;
                         }
-                        let len =
-                            ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+                        let len = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
                         pos += 2 + len;
                     } else {
                         pos += 1;
