@@ -13,7 +13,7 @@
 //! `jpegli_set_distance()` uses 3 tables matching Rust's behavior.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jpegli_bench_utils::{
+use zenjpeg_bench_utils::{
     ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData, ScanMode, SyntheticPattern,
 };
 use std::time::Duration;
