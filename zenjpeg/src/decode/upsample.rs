@@ -8,6 +8,9 @@ use wide::f32x8;
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
 
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
+
 /// Fancy upsampling with triangle filter (3:1 weights).
 ///
 /// Applies separable 3:1 interpolation: (3 * near + far) / 4.
@@ -389,13 +392,12 @@ fn upsample_h2v2_i16_fancy_avx2(
         let chunks = in_width / 16;
         for i in 0..chunks {
             let offset = i * 16;
-            // SAFETY: offset + 16 <= in_width, slices are valid for 256-bit loads
-            let (v_curr, v_neighbor) = unsafe {
-                (
-                    _mm256_loadu_si256(curr_row[offset..].as_ptr() as *const __m256i),
-                    _mm256_loadu_si256(v_neighbor_row[offset..].as_ptr() as *const __m256i),
-                )
-            };
+            let v_curr = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&curr_row[offset..offset + 16]).unwrap(),
+            );
+            let v_neighbor = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&v_neighbor_row[offset..offset + 16]).unwrap(),
+            );
 
             let v_result = _mm256_srai_epi16(
                 _mm256_add_epi16(
@@ -405,10 +407,10 @@ fn upsample_h2v2_i16_fancy_avx2(
                 2,
             );
 
-            // SAFETY: offset + 16 <= in_width, scratch is valid for 256-bit store
-            unsafe {
-                _mm256_storeu_si256(scratch[offset..].as_mut_ptr() as *mut __m256i, v_result);
-            }
+            safe_simd::_mm256_storeu_si256(
+                <&mut [i16; 16]>::try_from(&mut scratch[offset..offset + 16]).unwrap(),
+                v_result,
+            );
         }
 
         // Scalar remainder for vertical pass
@@ -441,14 +443,15 @@ fn upsample_h2v2_i16_fancy_avx2(
                 break;
             }
 
-            // SAFETY: in_offset-1..in_offset+17 within scratch bounds, valid for 256-bit loads
-            let (v_prev, v_curr, v_next) = unsafe {
-                (
-                    _mm256_loadu_si256(scratch[in_offset - 1..].as_ptr() as *const __m256i),
-                    _mm256_loadu_si256(scratch[in_offset..].as_ptr() as *const __m256i),
-                    _mm256_loadu_si256(scratch[in_offset + 1..].as_ptr() as *const __m256i),
-                )
-            };
+            let v_prev = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&scratch[in_offset - 1..in_offset + 15]).unwrap(),
+            );
+            let v_curr = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&scratch[in_offset..in_offset + 16]).unwrap(),
+            );
+            let v_next = safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&scratch[in_offset + 1..in_offset + 17]).unwrap(),
+            );
 
             // 3*curr + 2
             let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
@@ -467,14 +470,14 @@ fn upsample_h2v2_i16_fancy_avx2(
             let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20);
             let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
 
-            // SAFETY: out_offset+32 <= out_width checked above, valid for 256-bit stores
-            unsafe {
-                _mm256_storeu_si256(out_row[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
-                _mm256_storeu_si256(
-                    out_row[out_offset + 16..].as_mut_ptr() as *mut __m256i,
-                    v_out1,
-                );
-            }
+            safe_simd::_mm256_storeu_si256(
+                <&mut [i16; 16]>::try_from(&mut out_row[out_offset..out_offset + 16]).unwrap(),
+                v_out0,
+            );
+            safe_simd::_mm256_storeu_si256(
+                <&mut [i16; 16]>::try_from(&mut out_row[out_offset + 16..out_offset + 32]).unwrap(),
+                v_out1,
+            );
         }
 
         // Scalar remainder for horizontal pass
@@ -783,13 +786,12 @@ fn upsample_vertical_row_avx2(
     let chunks = width / 16;
     for i in 0..chunks {
         let offset = i * 16;
-        // SAFETY: offset + 16 <= width, slices are valid for 256-bit loads
-        let (v_curr, v_neighbor) = unsafe {
-            (
-                _mm256_loadu_si256(curr[offset..].as_ptr() as *const __m256i),
-                _mm256_loadu_si256(neighbor[offset..].as_ptr() as *const __m256i),
-            )
-        };
+        let v_curr = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&curr[offset..offset + 16]).unwrap(),
+        );
+        let v_neighbor = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&neighbor[offset..offset + 16]).unwrap(),
+        );
 
         // (3 * curr + neighbor + 2) >> 2
         let v_result = _mm256_srai_epi16(
@@ -800,10 +802,10 @@ fn upsample_vertical_row_avx2(
             2,
         );
 
-        // SAFETY: offset + 16 <= width, output is valid for 256-bit store
-        unsafe {
-            _mm256_storeu_si256(output[offset..].as_mut_ptr() as *mut __m256i, v_result);
-        }
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[offset..offset + 16]).unwrap(),
+            v_result,
+        );
     }
 
     // Handle remainder
@@ -861,14 +863,15 @@ fn upsample_horizontal_row_avx2(
             break;
         }
 
-        // SAFETY: in_offset-1..in_offset+17 within input bounds, valid for 256-bit loads
-        let (v_prev, v_curr, v_next) = unsafe {
-            (
-                _mm256_loadu_si256(input[in_offset - 1..].as_ptr() as *const __m256i),
-                _mm256_loadu_si256(input[in_offset..].as_ptr() as *const __m256i),
-                _mm256_loadu_si256(input[in_offset + 1..].as_ptr() as *const __m256i),
-            )
-        };
+        let v_prev = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&input[in_offset - 1..in_offset + 15]).unwrap(),
+        );
+        let v_curr = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&input[in_offset..in_offset + 16]).unwrap(),
+        );
+        let v_next = safe_simd::_mm256_loadu_si256(
+            <&[i16; 16]>::try_from(&input[in_offset + 1..in_offset + 17]).unwrap(),
+        );
 
         // Common term: 3*curr + 2
         let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
@@ -888,14 +891,14 @@ fn upsample_horizontal_row_avx2(
         let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20); // First 16 outputs
         let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31); // Second 16 outputs
 
-        // SAFETY: out_offset+32 <= out_width checked above, valid for 256-bit stores
-        unsafe {
-            _mm256_storeu_si256(output[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
-            _mm256_storeu_si256(
-                output[out_offset + 16..].as_mut_ptr() as *mut __m256i,
-                v_out1,
-            );
-        }
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[out_offset..out_offset + 16]).unwrap(),
+            v_out0,
+        );
+        safe_simd::_mm256_storeu_si256(
+            <&mut [i16; 16]>::try_from(&mut output[out_offset + 16..out_offset + 32]).unwrap(),
+            v_out1,
+        );
     }
 
     // Handle remainder with scalar

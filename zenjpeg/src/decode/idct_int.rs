@@ -20,6 +20,8 @@
 
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 use archmage::SimdToken;
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Rounding and level-shift constants.
 /// SCALE_BITS = 512 + 65536 + (128 << 17)
@@ -415,24 +417,22 @@ mod avx2 {
     /// AVX2 integer IDCT.
     ///
     /// Uses archmage capability token for safe SIMD dispatch.
-    /// Raw pointer load/store operations remain in targeted `unsafe` blocks.
+    /// Load/store operations use safe_unaligned_simd wrappers.
     #[arcane]
     #[allow(unused_assignments)] // pos is incremented in macro but last value is unused
     pub fn idct_int_avx2(_token: archmage::Avx2Token, in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load all 8 rows
-        // SAFETY: in_vector is &mut [i32; 64], so all pointer offsets are within bounds
-        let mut row0 = unsafe { _mm256_loadu_si256(in_vector[0..].as_ptr().cast()) };
-        let mut row1 = unsafe { _mm256_loadu_si256(in_vector[8..].as_ptr().cast()) };
-        let mut row2 = unsafe { _mm256_loadu_si256(in_vector[16..].as_ptr().cast()) };
-        let mut row3 = unsafe { _mm256_loadu_si256(in_vector[24..].as_ptr().cast()) };
-        let mut row4 = unsafe { _mm256_loadu_si256(in_vector[32..].as_ptr().cast()) };
-        let mut row5 = unsafe { _mm256_loadu_si256(in_vector[40..].as_ptr().cast()) };
-        let mut row6 = unsafe { _mm256_loadu_si256(in_vector[48..].as_ptr().cast()) };
-        let mut row7 = unsafe { _mm256_loadu_si256(in_vector[56..].as_ptr().cast()) };
+        let mut row0 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
+        let mut row1 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
+        let mut row2 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap());
+        let mut row3 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap());
+        let mut row4 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap());
+        let mut row5 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap());
+        let mut row6 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap());
+        let mut row7 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap());
 
         // Check for DC-only (all AC = 0)
-        // SAFETY: in_vector[1..] pointer is within bounds of the 64-element array
-        let ac_check = unsafe { _mm256_loadu_si256(in_vector[1..].as_ptr().cast()) };
+        let ac_check = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[1..9]).unwrap());
         let mut bitmap = _mm256_or_si256(row1, row2);
         bitmap = _mm256_or_si256(bitmap, row3);
         bitmap = _mm256_or_si256(bitmap, row4);
@@ -448,8 +448,10 @@ mod avx2 {
 
             let mut pos = 0;
             for _ in 0..8 {
-                // SAFETY: out_vector slice bounds checked by indexing before cast
-                unsafe { _mm_storeu_si128(out_vector[pos..pos + 8].as_mut_ptr().cast(), idct_value) };
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    idct_value,
+                );
                 pos += stride;
             }
             return;
@@ -547,21 +549,15 @@ mod avx2 {
                 let clamped = clamp_avx(_token, packed);
                 let reordered = _mm256_permute4x64_epi64(clamped, shuffle(3, 1, 2, 0));
 
-                // SAFETY: out_vector slice bounds checked by indexing before cast
-                unsafe {
-                    _mm_storeu_si128(
-                        out_vector[pos..pos + 8].as_mut_ptr().cast(),
-                        _mm256_extracti128_si256::<0>(reordered),
-                    );
-                }
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<0>(reordered),
+                );
                 pos += stride;
-                // SAFETY: out_vector slice bounds checked by indexing before cast
-                unsafe {
-                    _mm_storeu_si128(
-                        out_vector[pos..pos + 8].as_mut_ptr().cast(),
-                        _mm256_extracti128_si256::<1>(reordered),
-                    );
-                }
+                safe_simd::_mm_storeu_si128(
+                    <&mut [i16; 8]>::try_from(&mut out_vector[pos..pos + 8]).unwrap(),
+                    _mm256_extracti128_si256::<1>(reordered),
+                );
                 pos += stride;
             };
         }

@@ -24,6 +24,9 @@ use wide::{f32x4, f32x8};
 #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
 
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
+
 /// Converts a single RGB pixel to YCbCr.
 ///
 /// Uses BT.601 coefficients (standard JPEG).
@@ -940,14 +943,11 @@ fn ycbcr_to_rgb_i16_x16_avx2(
     use core::arch::x86_64::*;
 
     // Load Y, Cb, Cr (16 i16 values each)
-    // SAFETY: y, cb, cr are references to [i16; 16] (32 bytes each), valid for 256-bit loads
-    let (y_vec, cb_vec, cr_vec) = unsafe {
-        (
-            _mm256_loadu_si256(y.as_ptr().cast()),
-            _mm256_loadu_si256(cb.as_ptr().cast()),
-            _mm256_loadu_si256(cr.as_ptr().cast()),
-        )
-    };
+    let (y_vec, cb_vec, cr_vec) = (
+        safe_simd::_mm256_loadu_si256(y),
+        safe_simd::_mm256_loadu_si256(cb),
+        safe_simd::_mm256_loadu_si256(cr),
+    );
 
     // Subtract 128 from Cb and Cr (bias removal)
     let bias = _mm256_set1_epi16(128);
@@ -1083,12 +1083,14 @@ fn ycbcr_to_rgb_i16_x16_avx2(
     let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
 
     // Store 48 bytes (16 pixels * 3 channels)
-    // SAFETY: caller guarantees rgb has at least offset + 48 bytes available
-    unsafe {
-        let out_ptr = rgb.as_mut_ptr().add(*offset);
-        _mm256_storeu_si256(out_ptr.cast(), rgb0);
-        _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
-    }
+    safe_simd::_mm256_storeu_si256(
+        <&mut [u8; 32]>::try_from(&mut rgb[*offset..*offset + 32]).unwrap(),
+        rgb0,
+    );
+    safe_simd::_mm_storeu_si128(
+        <&mut [u8; 16]>::try_from(&mut rgb[*offset + 32..*offset + 48]).unwrap(),
+        _mm256_castsi256_si128(rgb1),
+    );
 
     *offset += 48;
 }
@@ -1241,24 +1243,15 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         -1, 0, 0, -1, 0,
     );
 
-    let y_ptr = y_plane.as_ptr();
-    let cb_ptr = cb_plane.as_ptr();
-    let cr_ptr = cr_plane.as_ptr();
-    let rgb_ptr = rgb.as_mut_ptr();
-
     for chunk in 0..chunks {
         let in_offset = chunk * 16;
         let out_offset = chunk * 48;
 
-        // Load directly from pointers
-        // SAFETY: chunk * 16 < len, so y_ptr/cb_ptr/cr_ptr + in_offset point to valid 32-byte regions
-        let (y_vec, cb_vec, cr_vec) = unsafe {
-            (
-                _mm256_loadu_si256(y_ptr.add(in_offset).cast()),
-                _mm256_loadu_si256(cb_ptr.add(in_offset).cast()),
-                _mm256_loadu_si256(cr_ptr.add(in_offset).cast()),
-            )
-        };
+        let (y_vec, cb_vec, cr_vec) = (
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&y_plane[in_offset..in_offset + 16]).unwrap()),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cb_plane[in_offset..in_offset + 16]).unwrap()),
+            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cr_plane[in_offset..in_offset + 16]).unwrap()),
+        );
 
         // Subtract 128 from Cb and Cr
         let cb_centered = _mm256_sub_epi16(cb_vec, bias);
@@ -1343,13 +1336,15 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let rgb0 = _mm256_permute2x128_si256(p0, p1, 0x20);
         let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
 
-        // Store 48 bytes
-        // SAFETY: chunk * 48 + 48 <= chunks * 48 <= len * 3 = rgb.len()
-        unsafe {
-            let out_ptr = rgb_ptr.add(out_offset);
-            _mm256_storeu_si256(out_ptr.cast(), rgb0);
-            _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
-        }
+        // Store 48 bytes (16 pixels * 3 channels)
+        safe_simd::_mm256_storeu_si256(
+            <&mut [u8; 32]>::try_from(&mut rgb[out_offset..out_offset + 32]).unwrap(),
+            rgb0,
+        );
+        safe_simd::_mm_storeu_si128(
+            <&mut [u8; 16]>::try_from(&mut rgb[out_offset + 32..out_offset + 48]).unwrap(),
+            _mm256_castsi256_si128(rgb1),
+        );
     }
 
     // Handle remainder with scalar
