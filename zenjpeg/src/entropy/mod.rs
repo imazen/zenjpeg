@@ -209,6 +209,155 @@ pub fn encode_block_to_writer(
     Ok(())
 }
 
+/// State carried between streaming calls to [`encode_blocks_mcu_order`].
+#[derive(Clone, Debug)]
+pub struct StreamingEntropyState {
+    /// Previous DC values for each component (Y, Cb, Cr).
+    pub prev_dc: [i16; 3],
+    /// Global MCU index (for restart marker numbering).
+    pub mcu_idx: usize,
+    /// Restart marker counter (0-7, wraps).
+    pub restart_count: u8,
+}
+
+impl StreamingEntropyState {
+    /// Creates initial state with all zeros.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            prev_dc: [0; 3],
+            mcu_idx: 0,
+            restart_count: 0,
+        }
+    }
+}
+
+impl Default for StreamingEntropyState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Encodes a batch of blocks in MCU-interleaved order to a BitWriter.
+///
+/// Handles all subsampling modes (4:4:4, 4:2:2, 4:2:0, 4:4:0) and restart
+/// markers. This is a pure function suitable for streaming: pass in blocks
+/// from one strip, get back updated state for the next strip.
+///
+/// The blocks must be in raster order within each component (row-major,
+/// left-to-right, top-to-bottom).
+///
+/// # Arguments
+/// * `y_blocks` - Luminance DCT blocks in raster order
+/// * `cb_blocks` - Cb chrominance blocks (empty if grayscale)
+/// * `cr_blocks` - Cr chrominance blocks (empty if grayscale)
+/// * `tables` - Optimized Huffman encoding tables
+/// * `writer` - BitWriter to append encoded data to
+/// * `is_color` - Whether to encode chroma components
+/// * `state` - DC prediction / restart marker state from previous call
+/// * `subsampling` - Chroma subsampling mode
+/// * `width` - Image width in pixels
+/// * `restart_interval` - MCUs between restart markers (0 = disabled)
+/// * `total_mcus` - Total MCUs in the full image (for last-MCU check)
+pub fn encode_blocks_mcu_order(
+    y_blocks: &[[i16; 64]],
+    cb_blocks: &[[i16; 64]],
+    cr_blocks: &[[i16; 64]],
+    tables: &crate::huffman::optimize::OptimizedHuffmanTables,
+    writer: &mut crate::foundation::bitstream::BitWriter,
+    is_color: bool,
+    state: &mut StreamingEntropyState,
+    subsampling: crate::types::Subsampling,
+    width: usize,
+    restart_interval: u16,
+    total_mcus: usize,
+) -> crate::error::Result<()> {
+    use crate::types::Subsampling;
+
+    let dc_luma = &tables.dc_luma.table;
+    let ac_luma = &tables.ac_luma.table;
+    let dc_chroma = &tables.dc_chroma.table;
+    let ac_chroma = &tables.ac_chroma.table;
+
+    let (h_samp, v_samp) = match subsampling {
+        Subsampling::S444 => (1, 1),
+        Subsampling::S422 => (2, 1),
+        Subsampling::S420 => (2, 2),
+        Subsampling::S440 => (1, 2),
+    };
+
+    // Block dimensions for the full image
+    let y_blocks_h = (width + 7) / 8;
+    let c_blocks_h = ((width + h_samp - 1) / h_samp + 7) / 8;
+    let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+
+    // Y blocks in this batch are stored in raster order:
+    //   block[row * y_blocks_h + col]
+    // For subsampled modes, each MCU row spans v_samp Y block-rows
+    // and 1 chroma block-row.
+    let y_rows_in_batch = if y_blocks_h > 0 {
+        y_blocks.len() / y_blocks_h
+    } else {
+        0
+    };
+    let mcu_rows_in_batch = if h_samp == 1 && v_samp == 1 {
+        y_rows_in_batch
+    } else {
+        (y_rows_in_batch + v_samp - 1) / v_samp
+    };
+
+    const ZERO_BLOCK: [i16; 64] = [0i16; 64];
+
+    for mcu_row_offset in 0..mcu_rows_in_batch {
+        for mcu_x in 0..mcu_h {
+            // Encode Y blocks in this MCU
+            for dy in 0..v_samp {
+                for dx in 0..h_samp {
+                    let col = mcu_x * h_samp + dx;
+                    let row = mcu_row_offset * v_samp + dy;
+                    let block = if col < y_blocks_h && row < y_rows_in_batch {
+                        y_blocks.get(row * y_blocks_h + col).unwrap_or(&ZERO_BLOCK)
+                    } else {
+                        &ZERO_BLOCK
+                    };
+
+                    encode_block_to_writer(block, dc_luma, ac_luma, state.prev_dc[0], writer)?;
+                    state.prev_dc[0] = block[0];
+                }
+            }
+
+            // Encode Cb and Cr
+            if is_color {
+                let c_row = mcu_row_offset;
+                let c_col = mcu_x;
+                let c_idx = c_row * c_blocks_h + c_col;
+
+                let cb = cb_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
+                encode_block_to_writer(cb, dc_chroma, ac_chroma, state.prev_dc[1], writer)?;
+                state.prev_dc[1] = cb[0];
+
+                let cr = cr_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
+                encode_block_to_writer(cr, dc_chroma, ac_chroma, state.prev_dc[2], writer)?;
+                state.prev_dc[2] = cr[0];
+            }
+
+            state.mcu_idx += 1;
+
+            // Restart marker (not after last MCU)
+            if restart_interval > 0
+                && state.mcu_idx < total_mcus
+                && state.mcu_idx % restart_interval as usize == 0
+            {
+                writer.flush_restart_marker(state.restart_count)?;
+                state.restart_count = (state.restart_count + 1) & 0x07;
+                state.prev_dc = [0; 3];
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
