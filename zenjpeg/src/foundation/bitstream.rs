@@ -253,6 +253,88 @@ impl BitWriter {
     pub fn position(&self) -> usize {
         self.buffer.len()
     }
+
+    /// Flushes bits and appends to an external buffer without EOI marker.
+    ///
+    /// This is used by bounded-memory streaming to write scan data incrementally.
+    /// NOTE: This pads the final byte with 1s, so only call at the end of the scan!
+    pub fn flush_without_eoi(&mut self, output: &mut Vec<u8>) -> crate::error::Result<()> {
+        self.flush();
+        output.try_reserve(self.buffer.len()).map_err(|_| {
+            crate::error::Error::allocation_failed(self.buffer.len(), "flush_without_eoi")
+        })?;
+        output.extend_from_slice(&self.buffer);
+        self.buffer.clear();
+        Ok(())
+    }
+
+    /// Flushes ONLY complete bytes to an external buffer, preserving partial bytes.
+    ///
+    /// Used for streaming encoding where we continue writing bits in subsequent calls.
+    /// Returns (remaining_bit_buffer, remaining_bits_count) to pass to next BitWriter.
+    ///
+    /// Unlike `flush_without_eoi`, this does NOT pad the final partial byte.
+    pub fn flush_complete_bytes_only(
+        &mut self,
+        output: &mut Vec<u8>,
+    ) -> crate::error::Result<(u64, u8)> {
+        // Flush only complete bytes to internal buffer
+        while self.bits_in_buffer >= 8 {
+            self.bits_in_buffer -= 8;
+            let byte = (self.bit_buffer >> self.bits_in_buffer) as u8;
+            self.buffer.push(byte);
+
+            if byte == 0xFF {
+                self.buffer.push(0x00);
+            }
+        }
+
+        // Move internal buffer to output
+        output.try_reserve(self.buffer.len()).map_err(|_| {
+            crate::error::Error::allocation_failed(self.buffer.len(), "flush_complete_bytes_only")
+        })?;
+        output.extend_from_slice(&self.buffer);
+        self.buffer.clear();
+
+        // Return remaining partial byte state (mask to keep only valid bits)
+        let mask = if self.bits_in_buffer == 0 {
+            0
+        } else {
+            (1u64 << self.bits_in_buffer) - 1
+        };
+        Ok((self.bit_buffer & mask, self.bits_in_buffer))
+    }
+
+    /// Creates a BitWriter with an initial bit buffer state.
+    ///
+    /// Used for streaming encoding to continue from a previous partial byte.
+    #[must_use]
+    pub fn with_initial_bits(bit_buffer: u64, bits_in_buffer: u8) -> Self {
+        Self {
+            buffer: ProfiledVec::with_capacity_profiled(0, "BitWriter::with_initial_bits"),
+            bit_buffer,
+            bits_in_buffer,
+        }
+    }
+
+    /// Writes a restart marker and resets bit state.
+    ///
+    /// This flushes any pending bits, writes the restart marker (RST0-RST7),
+    /// and resets the bit buffer.
+    pub fn flush_restart_marker(&mut self, restart_num: u8) -> crate::error::Result<()> {
+        // Flush pending bits
+        self.flush();
+
+        // Write restart marker (0xFFD0-0xFFD7)
+        self.buffer.push(0xFF);
+        self.buffer.push(0xD0 + (restart_num & 0x07));
+
+        // Reset bit state
+        self.bit_buffer = 0;
+        self.bits_in_buffer = 0;
+
+        Ok(())
+    }
 }
 
 impl Default for BitWriter {
