@@ -3,7 +3,7 @@
 fn main() {
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
-        use archmage::{Avx512fToken, Desktop64, SimdToken};
+        use archmage::{Desktop64, SimdToken, X64V4Token};
         use std::time::Instant;
         use zenjpeg::encode::mage_simd::{mage_forward_dct_8x8, mage_forward_dct_8x8_dual};
 
@@ -41,7 +41,7 @@ fn main() {
         }
 
         // AVX-512 dual-block
-        if let Some(token) = Avx512fToken::try_new() {
+        if let Some(token) = X64V4Token::try_new() {
             let mut outputs: Vec<[f32; 64]> = vec![[0.0; 64]; BLOCKS * 2];
 
             // Warmup

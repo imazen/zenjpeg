@@ -25,8 +25,8 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 
-use archmage::mem::avx;
-use archmage::{arcane, HasAvx, HasAvx2, HasFma};
+use safe_unaligned_simd::x86_64 as safe_simd;
+use archmage::{arcane, X64V3Token, X64V4Token};
 use core::arch::x86_64::*;
 
 // Re-export Desktop64 for callers
@@ -58,7 +58,7 @@ const SQRT2: f32 = 1.41421356237;
 /// Uses the 3-phase unpack/shuffle/permute pattern.
 #[arcane]
 #[inline]
-fn mage_transpose_8x8_inplace_inner(_token: impl HasAvx, r: &mut [__m256; 8]) {
+fn mage_transpose_8x8_inplace_inner(_token: X64V3Token, r: &mut [__m256; 8]) {
     // Phase 1: Interleave pairs (unpack)
     let q0 = _mm256_unpacklo_ps(r[0], r[2]);
     let q1 = _mm256_unpacklo_ps(r[1], r[3]);
@@ -92,7 +92,7 @@ fn mage_transpose_8x8_inplace_inner(_token: impl HasAvx, r: &mut [__m256; 8]) {
 
 /// Public wrapper for in-place transpose. Token proves AVX is available.
 #[inline]
-pub fn mage_transpose_8x8_inplace(token: impl HasAvx, r: &mut [__m256; 8]) {
+pub fn mage_transpose_8x8_inplace(token: X64V3Token, r: &mut [__m256; 8]) {
     mage_transpose_8x8_inplace_inner(token, r);
 }
 
@@ -105,7 +105,7 @@ pub fn mage_transpose_8x8_inplace(token: impl HasAvx, r: &mut [__m256; 8]) {
 /// This is pure AVX (add/sub), no FMA needed.
 #[arcane]
 #[inline]
-fn mage_dct1d_2_inner(_token: impl HasAvx, m0: &mut __m256, m1: &mut __m256) {
+fn mage_dct1d_2_inner(_token: X64V3Token, m0: &mut __m256, m1: &mut __m256) {
     let in0 = *m0;
     let in1 = *m1;
     *m0 = _mm256_add_ps(in0, in1);
@@ -115,7 +115,7 @@ fn mage_dct1d_2_inner(_token: impl HasAvx, m0: &mut __m256, m1: &mut __m256) {
 /// DCT for N=4 using FMA for the weighted operations.
 #[arcane]
 #[inline]
-fn mage_dct1d_4_inner<T: HasAvx2 + HasFma>(token: T, m: &mut [__m256; 4]) {
+fn mage_dct1d_4_inner(token: X64V3Token, m: &mut [__m256; 4]) {
     let wc4_0 = _mm256_set1_ps(WC4_0);
     let wc4_1 = _mm256_set1_ps(WC4_1);
     let sqrt2 = _mm256_set1_ps(SQRT2);
@@ -154,7 +154,7 @@ fn mage_dct1d_4_inner<T: HasAvx2 + HasFma>(token: T, m: &mut [__m256; 4]) {
 /// DCT for N=8 using FMA. Processes 8 independent 8-point DCTs in parallel.
 #[arcane]
 #[inline]
-fn mage_dct1d_8_inner<T: HasAvx2 + HasFma + Copy>(token: T, m: &mut [__m256; 8]) {
+fn mage_dct1d_8_inner(token: X64V3Token, m: &mut [__m256; 8]) {
     let wc8_0 = _mm256_set1_ps(WC8_0);
     let wc8_1 = _mm256_set1_ps(WC8_1);
     let wc8_2 = _mm256_set1_ps(WC8_2);
@@ -238,24 +238,24 @@ fn mage_dct1d_8_inner<T: HasAvx2 + HasFma + Copy>(token: T, m: &mut [__m256; 8])
 /// ```
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8<T: HasAvx2 + HasFma + Copy>(
-    token: T,
+pub fn mage_forward_dct_8x8(
+    token: X64V3Token,
     input: &[f32; 64],
     output: &mut [f32; 64],
 ) {
     let scale = _mm256_set1_ps(1.0 / 8.0);
 
-    // Load 8 rows using safe archmage::mem operations
+    // Load 8 rows using safe SIMD load operations
     // Split input into 8 contiguous chunks of 8 f32s each
     let mut reg = [
-        avx::_mm256_loadu_ps(token, input[0..8].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[8..16].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[16..24].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[24..32].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[32..40].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[40..48].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[48..56].try_into().unwrap()),
-        avx::_mm256_loadu_ps(token, input[56..64].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[0..8].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[8..16].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[16..24].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[24..32].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[32..40].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[40..48].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[48..56].try_into().unwrap()),
+        safe_simd::_mm256_loadu_ps(input[56..64].try_into().unwrap()),
     ];
 
     // Transpose: reg[i] = column i = [row0[i], row1[i], ..., row7[i]]
@@ -270,44 +270,36 @@ pub fn mage_forward_dct_8x8<T: HasAvx2 + HasFma + Copy>(
     // Column DCT: all 8 columns processed in parallel
     mage_dct1d_8_inner(token, &mut reg);
 
-    // Scale and store using safe archmage::mem operations
-    avx::_mm256_storeu_ps(
-        token,
+    // Scale and store using safe SIMD store operations
+    safe_simd::_mm256_storeu_ps(
         (&mut output[0..8]).try_into().unwrap(),
         _mm256_mul_ps(reg[0], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[8..16]).try_into().unwrap(),
         _mm256_mul_ps(reg[1], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[16..24]).try_into().unwrap(),
         _mm256_mul_ps(reg[2], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[24..32]).try_into().unwrap(),
         _mm256_mul_ps(reg[3], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[32..40]).try_into().unwrap(),
         _mm256_mul_ps(reg[4], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[40..48]).try_into().unwrap(),
         _mm256_mul_ps(reg[5], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[48..56]).try_into().unwrap(),
         _mm256_mul_ps(reg[6], scale),
     );
-    avx::_mm256_storeu_ps(
-        token,
+    safe_simd::_mm256_storeu_ps(
         (&mut output[56..64]).try_into().unwrap(),
         _mm256_mul_ps(reg[7], scale),
     );
@@ -319,8 +311,8 @@ pub fn mage_forward_dct_8x8<T: HasAvx2 + HasFma + Copy>(
 /// Zero conversion overhead when data is already in wide format.
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8_wide<T: HasAvx2 + HasFma + Copy>(
-    token: T,
+pub fn mage_forward_dct_8x8_wide(
+    token: X64V3Token,
     input: &crate::foundation::simd_types::Block8x8f,
 ) -> crate::foundation::simd_types::Block8x8f {
     use crate::foundation::simd_types::Block8x8f;
@@ -330,14 +322,14 @@ pub fn mage_forward_dct_8x8_wide<T: HasAvx2 + HasFma + Copy>(
     // Cast Block8x8f to [[f32; 8]; 8] via bytemuck, then load into __m256 registers
     let rows: &[[f32; 8]; 8] = bytemuck::cast_ref(input);
     let mut reg: [__m256; 8] = [
-        avx::_mm256_loadu_ps(token, &rows[0]),
-        avx::_mm256_loadu_ps(token, &rows[1]),
-        avx::_mm256_loadu_ps(token, &rows[2]),
-        avx::_mm256_loadu_ps(token, &rows[3]),
-        avx::_mm256_loadu_ps(token, &rows[4]),
-        avx::_mm256_loadu_ps(token, &rows[5]),
-        avx::_mm256_loadu_ps(token, &rows[6]),
-        avx::_mm256_loadu_ps(token, &rows[7]),
+        safe_simd::_mm256_loadu_ps(&rows[0]),
+        safe_simd::_mm256_loadu_ps(&rows[1]),
+        safe_simd::_mm256_loadu_ps(&rows[2]),
+        safe_simd::_mm256_loadu_ps(&rows[3]),
+        safe_simd::_mm256_loadu_ps(&rows[4]),
+        safe_simd::_mm256_loadu_ps(&rows[5]),
+        safe_simd::_mm256_loadu_ps(&rows[6]),
+        safe_simd::_mm256_loadu_ps(&rows[7]),
     ];
 
     // Transpose: reg[i] = column i = [row0[i], row1[i], ..., row7[i]]
@@ -355,14 +347,14 @@ pub fn mage_forward_dct_8x8_wide<T: HasAvx2 + HasFma + Copy>(
     // Scale and store back via bytemuck
     let mut output = Block8x8f::default();
     let out_rows: &mut [[f32; 8]; 8] = bytemuck::cast_mut(&mut output);
-    avx::_mm256_storeu_ps(token, &mut out_rows[0], _mm256_mul_ps(reg[0], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[1], _mm256_mul_ps(reg[1], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[2], _mm256_mul_ps(reg[2], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[3], _mm256_mul_ps(reg[3], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[4], _mm256_mul_ps(reg[4], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[5], _mm256_mul_ps(reg[5], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[6], _mm256_mul_ps(reg[6], scale));
-    avx::_mm256_storeu_ps(token, &mut out_rows[7], _mm256_mul_ps(reg[7], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[0], _mm256_mul_ps(reg[0], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[1], _mm256_mul_ps(reg[1], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[2], _mm256_mul_ps(reg[2], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[3], _mm256_mul_ps(reg[3], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[4], _mm256_mul_ps(reg[4], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[5], _mm256_mul_ps(reg[5], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[6], _mm256_mul_ps(reg[6], scale));
+    safe_simd::_mm256_storeu_ps(&mut out_rows[7], _mm256_mul_ps(reg[7], scale));
     output
 }
 
@@ -379,7 +371,7 @@ pub fn mage_forward_dct_8x8_wide<T: HasAvx2 + HasFma + Copy>(
 /// then recombines. This is correct because it keeps block A and B data separate.
 #[arcane]
 #[inline]
-fn mage_transpose_8x8_dual_inner(token: impl archmage::HasAvx512f, r: &mut [__m512; 8]) {
+fn mage_transpose_8x8_dual_inner(token: X64V4Token, r: &mut [__m512; 8]) {
     // Extract low (block A) and high (block B) halves
     let mut a: [__m256; 8] = [
         _mm512_castps512_ps256(r[0]),
@@ -476,7 +468,7 @@ fn mage_transpose_8x8_dual_inner(token: impl archmage::HasAvx512f, r: &mut [__m5
 /// AVX-512 DCT base case for N=2: out0 = in0 + in1, out1 = in0 - in1
 #[arcane]
 #[inline]
-fn mage_dct1d_2_avx512_inner(_token: impl archmage::HasAvx512f, m0: &mut __m512, m1: &mut __m512) {
+fn mage_dct1d_2_avx512_inner(_token: X64V4Token, m0: &mut __m512, m1: &mut __m512) {
     let in0 = *m0;
     let in1 = *m1;
     *m0 = _mm512_add_ps(in0, in1);
@@ -486,8 +478,8 @@ fn mage_dct1d_2_avx512_inner(_token: impl archmage::HasAvx512f, m0: &mut __m512,
 /// AVX-512 DCT for N=4 using FMA
 #[arcane]
 #[inline]
-fn mage_dct1d_4_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma>(
-    token: T,
+fn mage_dct1d_4_avx512_inner(
+    token: X64V4Token,
     m: &mut [__m512; 4],
 ) {
     let wc4_0 = _mm512_set1_ps(WC4_0);
@@ -529,8 +521,8 @@ fn mage_dct1d_4_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma>(
 /// (8 from block A, 8 from block B).
 #[arcane]
 #[inline]
-fn mage_dct1d_8_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma + Copy>(
-    token: T,
+fn mage_dct1d_8_avx512_inner(
+    token: X64V4Token,
     m: &mut [__m512; 8],
 ) {
     let wc8_0 = _mm512_set1_ps(WC8_0);
@@ -604,7 +596,7 @@ fn mage_dct1d_8_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma + Copy>(
 /// ```rust,ignore
 /// use archmage::{Avx512fToken, SimdToken};
 ///
-/// if let Some(token) = Avx512fToken::try_new() {
+/// if let Some(token) = X64V4Token::try_new() {
 ///     let block_a = [0.0f32; 64];
 ///     let block_b = [0.0f32; 64];
 ///     let mut out_a = [0.0f32; 64];
@@ -614,10 +606,8 @@ fn mage_dct1d_8_avx512_inner<T: archmage::HasAvx512f + archmage::HasFma + Copy>(
 /// ```
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8_dual<
-    T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy,
->(
-    token: T,
+pub fn mage_forward_dct_8x8_dual(
+    token: X64V4Token,
     input_a: &[f32; 64],
     input_b: &[f32; 64],
     output_a: &mut [f32; 64],
@@ -630,60 +620,52 @@ pub fn mage_forward_dct_8x8_dual<
     let mut reg: [__m512; 8] = [
         // Combine two 256-bit loads into one 512-bit register
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[0..8].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[0..8].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[0..8].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[8..16].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[8..16].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[8..16].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[16..24].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[16..24].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[16..24].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[24..32].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[24..32].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[24..32].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[32..40].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[32..40].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[32..40].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[40..48].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[40..48].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[40..48].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[48..56].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[48..56].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[48..56].try_into().unwrap()),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                token,
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                 input_a[56..64].try_into().unwrap(),
             )),
-            avx::_mm256_loadu_ps(token, input_b[56..64].try_into().unwrap()),
+            safe_simd::_mm256_loadu_ps(input_b[56..64].try_into().unwrap()),
         ),
     ];
 
@@ -706,13 +688,11 @@ pub fn mage_forward_dct_8x8_dual<
         let lo = _mm512_castps512_ps256(scaled);
         let hi = _mm512_extractf32x8_ps::<1>(scaled);
 
-        avx::_mm256_storeu_ps(
-            token,
+        safe_simd::_mm256_storeu_ps(
             (&mut output_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
             lo,
         );
-        avx::_mm256_storeu_ps(
-            token,
+        safe_simd::_mm256_storeu_ps(
             (&mut output_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
             hi,
         );
@@ -725,10 +705,8 @@ pub fn mage_forward_dct_8x8_dual<
 /// See `mage_forward_dct_8x8_dual` docs for explanation.
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8_wide_dual<
-    T: archmage::HasAvx512f + archmage::HasAvx2 + archmage::HasFma + Copy,
->(
-    token: T,
+pub fn mage_forward_dct_8x8_wide_dual(
+    token: X64V4Token,
     input_a: &crate::foundation::simd_types::Block8x8f,
     input_b: &crate::foundation::simd_types::Block8x8f,
 ) -> (
@@ -746,36 +724,36 @@ pub fn mage_forward_dct_8x8_wide_dual<
     // Load interleaved
     let mut reg: [__m512; 8] = [
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[0])),
-            avx::_mm256_loadu_ps(token, &rows_b[0]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[0])),
+            safe_simd::_mm256_loadu_ps(&rows_b[0]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[1])),
-            avx::_mm256_loadu_ps(token, &rows_b[1]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[1])),
+            safe_simd::_mm256_loadu_ps(&rows_b[1]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[2])),
-            avx::_mm256_loadu_ps(token, &rows_b[2]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[2])),
+            safe_simd::_mm256_loadu_ps(&rows_b[2]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[3])),
-            avx::_mm256_loadu_ps(token, &rows_b[3]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[3])),
+            safe_simd::_mm256_loadu_ps(&rows_b[3]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[4])),
-            avx::_mm256_loadu_ps(token, &rows_b[4]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[4])),
+            safe_simd::_mm256_loadu_ps(&rows_b[4]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[5])),
-            avx::_mm256_loadu_ps(token, &rows_b[5]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[5])),
+            safe_simd::_mm256_loadu_ps(&rows_b[5]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[6])),
-            avx::_mm256_loadu_ps(token, &rows_b[6]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[6])),
+            safe_simd::_mm256_loadu_ps(&rows_b[6]),
         ),
         _mm512_insertf32x8::<1>(
-            _mm512_castps256_ps512(avx::_mm256_loadu_ps(token, &rows_a[7])),
-            avx::_mm256_loadu_ps(token, &rows_b[7]),
+            _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(&rows_a[7])),
+            safe_simd::_mm256_loadu_ps(&rows_b[7]),
         ),
     ];
 
@@ -793,9 +771,8 @@ pub fn mage_forward_dct_8x8_wide_dual<
 
     for i in 0..8 {
         let scaled = _mm512_mul_ps(reg[i], scale);
-        avx::_mm256_storeu_ps(token, &mut out_rows_a[i], _mm512_castps512_ps256(scaled));
-        avx::_mm256_storeu_ps(
-            token,
+        safe_simd::_mm256_storeu_ps(&mut out_rows_a[i], _mm512_castps512_ps256(scaled));
+        safe_simd::_mm256_storeu_ps(
             &mut out_rows_b[i],
             _mm512_extractf32x8_ps::<1>(scaled),
         );
@@ -829,8 +806,8 @@ const YCBCR_B_TO_CR: f32 = -0.081312;
 /// Cr = 128 + 0.500*R - 0.419*G - 0.081*B
 #[arcane]
 #[inline]
-pub fn mage_rgb_to_ycbcr_8px<T: HasAvx2 + HasFma>(
-    token: T,
+pub fn mage_rgb_to_ycbcr_8px(
+    _token: X64V3Token,
     r: &[f32; 8],
     g: &[f32; 8],
     b: &[f32; 8],
@@ -839,9 +816,9 @@ pub fn mage_rgb_to_ycbcr_8px<T: HasAvx2 + HasFma>(
     cr_out: &mut [f32; 8],
 ) {
     // Load input vectors
-    let r_vec = avx::_mm256_loadu_ps(token, r);
-    let g_vec = avx::_mm256_loadu_ps(token, g);
-    let b_vec = avx::_mm256_loadu_ps(token, b);
+    let r_vec = safe_simd::_mm256_loadu_ps(r);
+    let g_vec = safe_simd::_mm256_loadu_ps(g);
+    let b_vec = safe_simd::_mm256_loadu_ps(b);
 
     // Coefficients
     let r_to_y = _mm256_set1_ps(YCBCR_R_TO_Y);
@@ -878,9 +855,9 @@ pub fn mage_rgb_to_ycbcr_8px<T: HasAvx2 + HasFma>(
     );
 
     // Store results
-    avx::_mm256_storeu_ps(token, y_out, y);
-    avx::_mm256_storeu_ps(token, cb_out, cb);
-    avx::_mm256_storeu_ps(token, cr_out, cr);
+    safe_simd::_mm256_storeu_ps(y_out, y);
+    safe_simd::_mm256_storeu_ps(cb_out, cb);
+    safe_simd::_mm256_storeu_ps(cr_out, cr);
 }
 
 /// Box filter downsample 2x2: average 4 adjacent pixels.
@@ -890,7 +867,7 @@ pub fn mage_rgb_to_ycbcr_8px<T: HasAvx2 + HasFma>(
 #[arcane]
 #[inline]
 pub fn mage_box_filter_2x2(
-    _token: impl HasAvx,
+    _token: X64V3Token,
     row0_evens: __m256,
     row0_odds: __m256,
     row1_evens: __m256,
@@ -916,10 +893,10 @@ pub fn mage_box_filter_2x2(
 /// This is ~4x faster than element-by-element construction.
 #[arcane]
 #[inline]
-pub fn mage_gather_even_odd_x8(token: impl HasAvx2, data: &[f32; 16]) -> (__m256, __m256) {
+pub fn mage_gather_even_odd_x8(_token: X64V3Token, data: &[f32; 16]) -> (__m256, __m256) {
     // Load 16 consecutive floats as two YMM registers
-    let lo = avx::_mm256_loadu_ps(token, data[0..8].try_into().unwrap());
-    let hi = avx::_mm256_loadu_ps(token, data[8..16].try_into().unwrap());
+    let lo = safe_simd::_mm256_loadu_ps(data[0..8].try_into().unwrap());
+    let hi = safe_simd::_mm256_loadu_ps(data[8..16].try_into().unwrap());
 
     // Highway's ConcatEven pattern for f32:
     // _mm256_shuffle_ps with 0x88 selects elements [0,2] from each source per lane
@@ -969,7 +946,7 @@ const GAMMA_OFFSET_AQ: f32 = MATCH_GAMMA_OFFSET / K_INPUT_SCALING; // ~4.845
 /// Returns 8 results in a __m256.
 #[arcane]
 #[inline]
-pub fn mage_ratio_of_derivatives_x8<T: HasAvx2 + HasFma>(token: T, vals: __m256) -> __m256 {
+pub fn mage_ratio_of_derivatives_x8(token: X64V3Token, vals: __m256) -> __m256 {
     let zero = _mm256_setzero_ps();
     let num_mul = _mm256_set1_ps(K_NUM_MUL_RATIO);
     let num_offset = _mm256_set1_ps(K_NUM_OFFSET_RATIO);
@@ -995,7 +972,7 @@ pub fn mage_ratio_of_derivatives_x8<T: HasAvx2 + HasFma>(token: T, vals: __m256)
 /// Same as above but returns num / den.
 #[arcane]
 #[inline]
-pub fn mage_ratio_of_derivatives_inv_x8<T: HasAvx2 + HasFma>(token: T, vals: __m256) -> __m256 {
+pub fn mage_ratio_of_derivatives_inv_x8(token: X64V3Token, vals: __m256) -> __m256 {
     let zero = _mm256_setzero_ps();
     let num_mul = _mm256_set1_ps(K_NUM_MUL_RATIO);
     let num_offset = _mm256_set1_ps(K_NUM_OFFSET_RATIO);
@@ -1016,7 +993,7 @@ pub fn mage_ratio_of_derivatives_inv_x8<T: HasAvx2 + HasFma>(token: T, vals: __m
 /// Computes: 0.25 * sqrt(v * sqrt(K_MASKING_MUL * 1e8) + K_MASKING_LOG_OFFSET)
 #[arcane]
 #[inline]
-pub fn mage_masking_sqrt_x8<T: HasAvx2 + HasFma>(token: T, v: __m256) -> __m256 {
+pub fn mage_masking_sqrt_x8(token: X64V3Token, v: __m256) -> __m256 {
     let k_mul_sqrt = _mm256_set1_ps((K_MASKING_MUL * 1e8_f32).sqrt());
     let k_offset = _mm256_set1_ps(K_MASKING_LOG_OFFSET);
     let quarter = _mm256_set1_ps(0.25);
@@ -1035,8 +1012,8 @@ pub fn mage_masking_sqrt_x8<T: HasAvx2 + HasFma>(token: T, v: __m256) -> __m256 
 /// Returns 8 masked diff values.
 #[arcane]
 #[inline]
-pub fn mage_pre_erosion_pixel_x8<T: HasAvx2 + HasFma + Copy>(
-    token: T,
+pub fn mage_pre_erosion_pixel_x8(
+    token: X64V3Token,
     pixels: __m256,
     left: __m256,
     right: __m256,
@@ -1073,7 +1050,7 @@ pub fn mage_pre_erosion_pixel_x8<T: HasAvx2 + HasFma + Copy>(
 /// Uses efficient reduction: hadd + extract + add.
 #[arcane]
 #[inline]
-fn mage_hsum_ps(_token: impl HasAvx, v: __m256) -> f32 {
+fn mage_hsum_ps(_token: X64V3Token, v: __m256) -> f32 {
     // Sum pairs horizontally
     let sum1 = _mm256_hadd_ps(v, v); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
     let sum2 = _mm256_hadd_ps(sum1, sum1); // [a+b+c+d, ..., e+f+g+h, ...]
@@ -1100,8 +1077,8 @@ fn mage_hsum_ps(_token: impl HasAvx, v: __m256) -> f32 {
 /// Sum of horizontal and vertical differences
 #[arcane]
 #[inline]
-pub fn mage_hf_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
-    token: T,
+pub fn mage_hf_modulation_sum_8x8(
+    token: X64V3Token,
     block: &[f32],
     stride: usize,
     block_y: usize,
@@ -1125,9 +1102,8 @@ pub fn mage_hf_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
         // Horizontal differences: |p - p_right| for positions 0..6
         if row_start + 9 <= block.len() {
             let p =
-                avx::_mm256_loadu_ps(token, block[row_start..row_start + 8].try_into().unwrap());
-            let p_right = avx::_mm256_loadu_ps(
-                token,
+                safe_simd::_mm256_loadu_ps(block[row_start..row_start + 8].try_into().unwrap());
+            let p_right = safe_simd::_mm256_loadu_ps(
                 block[row_start + 1..row_start + 9].try_into().unwrap(),
             );
             // abs(p - p_right) using andnot with sign mask
@@ -1141,12 +1117,10 @@ pub fn mage_hf_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
         if dy < 7 && y + 1 < img_height {
             let next_row_start = (dy + 1) * stride;
             if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
-                let p = avx::_mm256_loadu_ps(
-                    token,
+                let p = safe_simd::_mm256_loadu_ps(
                     block[row_start..row_start + 8].try_into().unwrap(),
                 );
-                let p_below = avx::_mm256_loadu_ps(
-                    token,
+                let p_below = safe_simd::_mm256_loadu_ps(
                     block[next_row_start..next_row_start + 8]
                         .try_into()
                         .unwrap(),
@@ -1167,8 +1141,8 @@ pub fn mage_hf_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
 /// Uses AVX2+FMA intrinsics.
 #[arcane]
 #[inline]
-pub fn mage_gamma_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
-    token: T,
+pub fn mage_gamma_modulation_sum_8x8(
+    token: X64V3Token,
     block: &[f32],
     stride: usize,
     block_y: usize,
@@ -1186,7 +1160,7 @@ pub fn mage_gamma_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
         let row_start = dy * stride;
         if row_start + 8 <= block.len() {
             let row =
-                avx::_mm256_loadu_ps(token, block[row_start..row_start + 8].try_into().unwrap());
+                safe_simd::_mm256_loadu_ps(block[row_start..row_start + 8].try_into().unwrap());
             let row_biased = _mm256_add_ps(row, bias);
             let ratio = mage_ratio_of_derivatives_inv_x8(token, row_biased);
             sum = _mm256_add_ps(sum, ratio);
@@ -1202,7 +1176,7 @@ pub fn mage_gamma_modulation_sum_8x8<T: HasAvx2 + HasFma + Copy>(
 /// Accurate to ~1e-4 relative error for inputs in [-126, 127].
 #[arcane]
 #[inline]
-pub fn mage_fast_exp2_x8<T: HasAvx2 + HasFma>(token: T, x: __m256) -> __m256 {
+pub fn mage_fast_exp2_x8(token: X64V3Token, x: __m256) -> __m256 {
     // Clamp to prevent overflow/underflow
     let min_val = _mm256_set1_ps(-126.0);
     let max_val = _mm256_set1_ps(127.0);
@@ -1244,7 +1218,7 @@ pub fn mage_fast_exp2_x8<T: HasAvx2 + HasFma>(token: T, x: __m256) -> __m256 {
 /// Accurate to ~0.01 absolute error for positive inputs.
 #[arcane]
 #[inline]
-pub fn mage_fast_log2_x8<T: HasAvx2 + HasFma>(token: T, x: __m256) -> __m256 {
+pub fn mage_fast_log2_x8(token: X64V3Token, x: __m256) -> __m256 {
     // Extract exponent using IEEE 754 bit manipulation
     let bits = _mm256_castps_si256(x);
     let e_bits = _mm256_srli_epi32(bits, 23);
@@ -1333,36 +1307,37 @@ mod tests {
 
     #[test]
     fn test_mage_transpose_8x8_inplace() {
-        use super::avx;
 
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             let original: [f32; 64] = core::array::from_fn(|i| i as f32);
 
-            // Load into registers using safe archmage::mem operations
+            // Load into registers using safe SIMD load operations
             let mut reg = [
-                avx::_mm256_loadu_ps(token, original[0..8].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[8..16].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[16..24].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[24..32].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[32..40].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[40..48].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[48..56].try_into().unwrap()),
-                avx::_mm256_loadu_ps(token, original[56..64].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[0..8].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[8..16].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[16..24].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[24..32].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[32..40].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[40..48].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[48..56].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(original[56..64].try_into().unwrap()),
             ];
 
             // Transpose
             mage_transpose_8x8_inplace(token, &mut reg);
 
-            // Store back using safe archmage::mem operations
+            // Store back using safe SIMD store operations
             let mut result = [0.0f32; 64];
-            avx::_mm256_storeu_ps(token, (&mut result[0..8]).try_into().unwrap(), reg[0]);
-            avx::_mm256_storeu_ps(token, (&mut result[8..16]).try_into().unwrap(), reg[1]);
-            avx::_mm256_storeu_ps(token, (&mut result[16..24]).try_into().unwrap(), reg[2]);
-            avx::_mm256_storeu_ps(token, (&mut result[24..32]).try_into().unwrap(), reg[3]);
-            avx::_mm256_storeu_ps(token, (&mut result[32..40]).try_into().unwrap(), reg[4]);
-            avx::_mm256_storeu_ps(token, (&mut result[40..48]).try_into().unwrap(), reg[5]);
-            avx::_mm256_storeu_ps(token, (&mut result[48..56]).try_into().unwrap(), reg[6]);
-            avx::_mm256_storeu_ps(token, (&mut result[56..64]).try_into().unwrap(), reg[7]);
+            safe_simd::_mm256_storeu_ps((&mut result[0..8]).try_into().unwrap(), reg[0]);
+            safe_simd::_mm256_storeu_ps((&mut result[8..16]).try_into().unwrap(), reg[1]);
+            safe_simd::_mm256_storeu_ps((&mut result[16..24]).try_into().unwrap(), reg[2]);
+            safe_simd::_mm256_storeu_ps((&mut result[24..32]).try_into().unwrap(), reg[3]);
+            safe_simd::_mm256_storeu_ps((&mut result[32..40]).try_into().unwrap(), reg[4]);
+            safe_simd::_mm256_storeu_ps((&mut result[40..48]).try_into().unwrap(), reg[5]);
+            safe_simd::_mm256_storeu_ps((&mut result[48..56]).try_into().unwrap(), reg[6]);
+            safe_simd::_mm256_storeu_ps((&mut result[56..64]).try_into().unwrap(), reg[7]);
 
             // Verify transpose: result[col * 8 + row] == original[row * 8 + col]
             for row in 0..8 {
@@ -1376,14 +1351,16 @@ mod tests {
                     );
                 }
             }
+            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_gather_even_odd_x8() {
-        use super::avx;
 
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             // Test data: [0, 1, 2, 3, ..., 15] interleaved as [e0,o0,e1,o1,...]
             let data: [f32; 16] = core::array::from_fn(|i| i as f32);
 
@@ -1392,8 +1369,8 @@ mod tests {
             // Store results to check
             let mut evens_arr = [0.0f32; 8];
             let mut odds_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut evens_arr, evens);
-            avx::_mm256_storeu_ps(token, &mut odds_arr, odds);
+            safe_simd::_mm256_storeu_ps(&mut evens_arr, evens);
+            safe_simd::_mm256_storeu_ps(&mut odds_arr, odds);
 
             // Expected: evens = [0, 2, 4, 6, 8, 10, 12, 14]
             //           odds  = [1, 3, 5, 7, 9, 11, 13, 15]
@@ -1412,6 +1389,7 @@ mod tests {
                     i, odds_arr[i], expected_odds[i]
                 );
             }
+            } // unsafe
         }
     }
 
@@ -1501,9 +1479,10 @@ mod tests {
 
     #[test]
     fn test_mage_box_filter_2x2() {
-        use super::avx;
 
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             // Create test data for 2x2 box filter
             // Each "pixel" should be averaged from 4 neighbors
             let row0_evens_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
@@ -1511,15 +1490,15 @@ mod tests {
             let row1_evens_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
             let row1_odds_arr = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
 
-            let row0_evens = avx::_mm256_loadu_ps(token, &row0_evens_arr);
-            let row0_odds = avx::_mm256_loadu_ps(token, &row0_odds_arr);
-            let row1_evens = avx::_mm256_loadu_ps(token, &row1_evens_arr);
-            let row1_odds = avx::_mm256_loadu_ps(token, &row1_odds_arr);
+            let row0_evens = safe_simd::_mm256_loadu_ps(&row0_evens_arr);
+            let row0_odds = safe_simd::_mm256_loadu_ps(&row0_odds_arr);
+            let row1_evens = safe_simd::_mm256_loadu_ps(&row1_evens_arr);
+            let row1_odds = safe_simd::_mm256_loadu_ps(&row1_odds_arr);
 
             let result = mage_box_filter_2x2(token, row0_evens, row0_odds, row1_evens, row1_odds);
 
             let mut result_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut result_arr, result);
+            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
 
             // Each output should be (4 * input) * 0.25 = input
             for i in 0..8 {
@@ -1532,6 +1511,7 @@ mod tests {
                     expected
                 );
             }
+            } // unsafe
         }
     }
 
@@ -1562,14 +1542,16 @@ mod tests {
     #[test]
     fn test_mage_ratio_of_derivatives_x8() {
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             // Test with typical AQ input values
             let inputs = [128.0f32, 64.0, 192.0, 255.0, 0.0, 32.0, 100.0, 200.0];
-            let input_vec = avx::_mm256_loadu_ps(token, &inputs);
+            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
 
             let result = mage_ratio_of_derivatives_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut result_arr, result);
+            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
 
             for i in 0..8 {
                 let expected = ratio_of_derivatives_scalar(inputs[i], false);
@@ -1583,19 +1565,22 @@ mod tests {
                     rel_err
                 );
             }
+            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_ratio_of_derivatives_inv_x8() {
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             let inputs = [128.0f32, 64.0, 192.0, 255.0, 0.0, 32.0, 100.0, 200.0];
-            let input_vec = avx::_mm256_loadu_ps(token, &inputs);
+            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
 
             let result = mage_ratio_of_derivatives_inv_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut result_arr, result);
+            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
 
             for i in 0..8 {
                 let expected = ratio_of_derivatives_scalar(inputs[i], true);
@@ -1609,20 +1594,23 @@ mod tests {
                     rel_err
                 );
             }
+            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_masking_sqrt_x8() {
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             // Test with typical diff_sq values (0 to 0.2 range)
             let inputs = [0.0f32, 0.01, 0.05, 0.1, 0.15, 0.2, 0.05, 0.08];
-            let input_vec = avx::_mm256_loadu_ps(token, &inputs);
+            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
 
             let result = mage_masking_sqrt_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut result_arr, result);
+            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
 
             for i in 0..8 {
                 let expected = masking_sqrt_scalar(inputs[i]);
@@ -1636,19 +1624,22 @@ mod tests {
                     rel_err
                 );
             }
+            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_fast_exp2_x8() {
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             let inputs = [-5.0f32, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0, 10.0];
-            let input_vec = avx::_mm256_loadu_ps(token, &inputs);
+            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
 
             let result = mage_fast_exp2_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut result_arr, result);
+            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
 
             for i in 0..8 {
                 let expected = inputs[i].exp2();
@@ -1663,19 +1654,22 @@ mod tests {
                     rel_err
                 );
             }
+            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_fast_log2_x8() {
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             let inputs = [0.01f32, 0.1, 0.5, 1.0, 2.0, 4.0, 10.0, 100.0];
-            let input_vec = avx::_mm256_loadu_ps(token, &inputs);
+            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
 
             let result = mage_fast_log2_x8(token, input_vec);
 
             let mut result_arr = [0.0f32; 8];
-            avx::_mm256_storeu_ps(token, &mut result_arr, result);
+            safe_simd::_mm256_storeu_ps(&mut result_arr, result);
 
             for i in 0..8 {
                 let expected = inputs[i].log2();
@@ -1690,14 +1684,17 @@ mod tests {
                     abs_err
                 );
             }
+            } // unsafe
         }
     }
 
     #[test]
     fn test_mage_hsum_ps() {
         if let Some(token) = Desktop64::summon() {
+            // SAFETY: Desktop64/X64V4Token runtime check guarantees AVX support
+            unsafe {
             let inputs = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-            let input_vec = avx::_mm256_loadu_ps(token, &inputs);
+            let input_vec = safe_simd::_mm256_loadu_ps(&inputs);
 
             let result = mage_hsum_ps(token, input_vec);
             let expected: f32 = inputs.iter().sum();
@@ -1708,6 +1705,7 @@ mod tests {
                 result,
                 expected
             );
+            } // unsafe
         }
     }
 
@@ -1717,9 +1715,9 @@ mod tests {
 
     #[test]
     fn test_mage_forward_dct_8x8_dual_flat_blocks() {
-        use archmage::Avx512fToken;
+        use archmage::X64V4Token;
 
-        if let Some(token) = Avx512fToken::try_new() {
+        if let Some(token) = X64V4Token::try_new() {
             // Two flat blocks with different constant values
             let input_a = [128.0f32; 64];
             let input_b = [64.0f32; 64];
@@ -1763,9 +1761,9 @@ mod tests {
 
     #[test]
     fn test_mage_forward_dct_8x8_dual_matches_single() {
-        use archmage::Avx512fToken;
+        use archmage::X64V4Token;
 
-        if let Some(token) = Avx512fToken::try_new() {
+        if let Some(token) = X64V4Token::try_new() {
             // Create test patterns
             let input_a: [f32; 64] = core::array::from_fn(|i| (i % 256) as f32);
             let input_b: [f32; 64] = core::array::from_fn(|i| ((i * 3 + 17) % 256) as f32);
@@ -1784,8 +1782,8 @@ mod tests {
             // Process individually with AVX2
             let mut output_a_single = [0.0f32; 64];
             let mut output_b_single = [0.0f32; 64];
-            mage_forward_dct_8x8(token, &input_a, &mut output_a_single);
-            mage_forward_dct_8x8(token, &input_b, &mut output_b_single);
+            mage_forward_dct_8x8(token.v3(), &input_a, &mut output_a_single);
+            mage_forward_dct_8x8(token.v3(), &input_b, &mut output_b_single);
 
             // Compare results - should be identical (within floating point tolerance)
             for i in 0..64 {
@@ -1820,18 +1818,17 @@ mod tests {
     /// Safe via archmage token: all AVX-512 intrinsics are gated by capability proof.
     #[arcane]
     fn load_dual_blocks_avx512(
-        token: impl archmage::HasAvx512f + archmage::HasAvx2,
+        _token: X64V4Token,
         block_a: &[f32; 64],
         block_b: &[f32; 64],
     ) -> [__m512; 8] {
         core::array::from_fn(|i| {
             let off = i * 8;
             _mm512_insertf32x8::<1>(
-                _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                    token,
+                _mm512_castps256_ps512(safe_simd::_mm256_loadu_ps(
                     block_a[off..off + 8].try_into().unwrap(),
                 )),
-                avx::_mm256_loadu_ps(token, block_b[off..off + 8].try_into().unwrap()),
+                safe_simd::_mm256_loadu_ps(block_b[off..off + 8].try_into().unwrap()),
             )
         })
     }
@@ -1840,19 +1837,17 @@ mod tests {
     /// Safe via archmage token: all AVX-512 intrinsics are gated by capability proof.
     #[arcane]
     fn store_dual_blocks_avx512(
-        token: impl archmage::HasAvx512f + archmage::HasAvx2,
+        _token: X64V4Token,
         reg: &[__m512; 8],
         result_a: &mut [f32; 64],
         result_b: &mut [f32; 64],
     ) {
         for i in 0..8 {
-            avx::_mm256_storeu_ps(
-                token,
+            safe_simd::_mm256_storeu_ps(
                 (&mut result_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
                 _mm512_castps512_ps256(reg[i]),
             );
-            avx::_mm256_storeu_ps(
-                token,
+            safe_simd::_mm256_storeu_ps(
                 (&mut result_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
                 _mm512_extractf32x8_ps::<1>(reg[i]),
             );
@@ -1861,9 +1856,9 @@ mod tests {
 
     #[test]
     fn test_mage_transpose_8x8_dual() {
-        use archmage::Avx512fToken;
+        use archmage::X64V4Token;
 
-        if let Some(token) = Avx512fToken::try_new() {
+        if let Some(token) = X64V4Token::try_new() {
             // Create test data: two 8x8 blocks
             let original_a: [f32; 64] = core::array::from_fn(|i| i as f32);
             let original_b: [f32; 64] = core::array::from_fn(|i| (i + 100) as f32);

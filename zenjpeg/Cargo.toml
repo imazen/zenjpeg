@@ -106,7 +106,7 @@ parallel = ["std", "dep:rayon"]  # Enable parallel encoding (multi-threaded DCT/
 unsafe_simd = []
 # Token-based safe SIMD using archmage (alternative to unsafe_simd)
 # Provides same intrinsics with compile-time safety via capability tokens
-archmage-simd = ["dep:archmage"]
+archmage-simd = ["dep:archmage", "dep:safe_unaligned_simd"]
 # Token-gated SIMD types using magetypes (provides f32x4, i32x4 etc. with archmage tokens)
 magetypes-simd = ["dep:archmage", "dep:magetypes", "dep:safe_unaligned_simd"]
 cms = ["cms-lcms2"]  # Default CMS backend

@@ -69,7 +69,7 @@ tinyvec = { version = "1.10", features = ["alloc"] }
 linear-srgb = "0.3.1"
 
 # Token-based safe SIMD intrinsics
-archmage = { version = "0.3.0", features = ["macros", "bytemuck"] }
+archmage = { version = "0.3.0", features = ["macros", "bytemuck", "avx512"] }
 safe_unaligned_simd = "0.2.3"
 magetypes = { version = "0.3.0", features = ["bytemuck"] }
 

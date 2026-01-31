@@ -45,7 +45,7 @@ use super::simd::mage_per_block_modulations_row;
 // than scalar due to function call overhead. Would need true SIMD partial sort.
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{Avx2FmaToken, SimdToken};
+use archmage::{X64V3Token, SimdToken};
 
 /// Streaming AQ with rolling buffers - low memory, high performance.
 ///
@@ -143,7 +143,7 @@ pub struct StreamingAQ {
 
     // Archmage token for optimized SIMD (when feature enabled)
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    archmage_token: Option<Avx2FmaToken>,
+    archmage_token: Option<X64V3Token>,
 }
 
 impl StreamingAQ {
@@ -222,7 +222,7 @@ impl StreamingAQ {
             pre_erosion_rows_flushed: 0,
             pending_imcu_row: None,
             #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-            archmage_token: Avx2FmaToken::try_new(),
+            archmage_token: X64V3Token::try_new(),
         })
     }
 
