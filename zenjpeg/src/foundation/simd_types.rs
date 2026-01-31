@@ -441,29 +441,14 @@ fn quantize_block_zigzag(
         let arr = blended.as_array();
         let k = row * 8;
 
-        #[cfg(feature = "unsafe_simd")]
-        // SAFETY: JPEG_ZIGZAG_ORDER contains values 0-63, result is [i16; 64]
-        unsafe {
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k] as usize) = arr[0] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 1] as usize) = arr[1] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 2] as usize) = arr[2] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 3] as usize) = arr[3] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 4] as usize) = arr[4] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 5] as usize) = arr[5] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 6] as usize) = arr[6] as i16;
-            *result.get_unchecked_mut(JPEG_ZIGZAG_ORDER[k + 7] as usize) = arr[7] as i16;
-        }
-        #[cfg(not(feature = "unsafe_simd"))]
-        {
-            result[JPEG_ZIGZAG_ORDER[k] as usize] = arr[0] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 1] as usize] = arr[1] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 2] as usize] = arr[2] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 3] as usize] = arr[3] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 4] as usize] = arr[4] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 5] as usize] = arr[5] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 6] as usize] = arr[6] as i16;
-            result[JPEG_ZIGZAG_ORDER[k + 7] as usize] = arr[7] as i16;
-        }
+        result[JPEG_ZIGZAG_ORDER[k] as usize] = arr[0] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 1] as usize] = arr[1] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 2] as usize] = arr[2] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 3] as usize] = arr[3] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 4] as usize] = arr[4] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 5] as usize] = arr[5] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 6] as usize] = arr[6] as i16;
+        result[JPEG_ZIGZAG_ORDER[k + 7] as usize] = arr[7] as i16;
     }
 
     result
@@ -495,29 +480,14 @@ fn quantize_block(
         let arr = blended.as_array();
         let k = row * 8;
 
-        #[cfg(feature = "unsafe_simd")]
-        // SAFETY: k ranges 0-56, k+7 max is 63, result is [i16; 64]
-        unsafe {
-            *result.get_unchecked_mut(k) = arr[0] as i16;
-            *result.get_unchecked_mut(k + 1) = arr[1] as i16;
-            *result.get_unchecked_mut(k + 2) = arr[2] as i16;
-            *result.get_unchecked_mut(k + 3) = arr[3] as i16;
-            *result.get_unchecked_mut(k + 4) = arr[4] as i16;
-            *result.get_unchecked_mut(k + 5) = arr[5] as i16;
-            *result.get_unchecked_mut(k + 6) = arr[6] as i16;
-            *result.get_unchecked_mut(k + 7) = arr[7] as i16;
-        }
-        #[cfg(not(feature = "unsafe_simd"))]
-        {
-            result[k] = arr[0] as i16;
-            result[k + 1] = arr[1] as i16;
-            result[k + 2] = arr[2] as i16;
-            result[k + 3] = arr[3] as i16;
-            result[k + 4] = arr[4] as i16;
-            result[k + 5] = arr[5] as i16;
-            result[k + 6] = arr[6] as i16;
-            result[k + 7] = arr[7] as i16;
-        }
+        result[k] = arr[0] as i16;
+        result[k + 1] = arr[1] as i16;
+        result[k + 2] = arr[2] as i16;
+        result[k + 3] = arr[3] as i16;
+        result[k + 4] = arr[4] as i16;
+        result[k + 5] = arr[5] as i16;
+        result[k + 6] = arr[6] as i16;
+        result[k + 7] = arr[7] as i16;
     }
 
     result
