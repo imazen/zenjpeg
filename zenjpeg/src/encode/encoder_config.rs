@@ -50,7 +50,7 @@ pub struct EncoderConfig {
     pub(crate) segments: Option<super::extras::EncoderSegments>,
     /// Custom Huffman tables for streaming-through encoding.
     /// When set, enables single-pass encoding without Huffman optimization.
-    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::OptimizedHuffmanTables>,
+    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::HuffmanTableSet>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -542,7 +542,7 @@ impl EncoderConfig {
     #[must_use]
     pub fn custom_huffman_tables(
         mut self,
-        tables: crate::huffman::optimize::OptimizedHuffmanTables,
+        tables: crate::huffman::optimize::HuffmanTableSet,
     ) -> Self {
         self.custom_huffman_tables = Some(tables);
         self

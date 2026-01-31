@@ -49,7 +49,7 @@ struct StreamingOutputState {
     /// BitWriter accumulates encoded scan data across strip flushes.
     writer: crate::foundation::bitstream::BitWriter,
     /// Huffman tables used for encoding.
-    tables: crate::huffman::optimize::OptimizedHuffmanTables,
+    tables: crate::huffman::optimize::HuffmanTableSet,
     /// Entropy encoding state (DC prediction, restart markers).
     entropy_state: crate::entropy::StreamingEntropyState,
     /// Total MCUs in the full image (for restart marker logic).
@@ -299,7 +299,7 @@ impl StreamingEncoder {
             let tables = if let Some(tables) = builder.custom_huffman_tables {
                 tables
             } else {
-                crate::huffman::optimize::OptimizedHuffmanTables::from_standard()?
+                crate::huffman::optimize::HuffmanTableSet::from_standard()?
             };
 
             // Write JPEG header (SOI through SOS) into buffer
@@ -1275,7 +1275,7 @@ mod tests {
 
     #[test]
     fn test_custom_tables_enables_streaming() {
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
         let encoder = StreamingEncoder::new(64, 64)
             .custom_huffman_tables(tables)
             .start()
@@ -1294,7 +1294,7 @@ mod tests {
 
     #[test]
     fn test_progressive_does_not_stream() {
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
         let encoder = StreamingEncoder::new(64, 64)
             .custom_huffman_tables(tables)
             .progressive(true)
@@ -1314,7 +1314,7 @@ mod tests {
         let width = 64;
         let height = 64;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1394,7 +1394,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1415,7 +1415,7 @@ mod tests {
         let width = 67;
         let height = 53;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1434,7 +1434,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1450,7 +1450,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1466,7 +1466,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1496,7 +1496,7 @@ mod tests {
         let width = 100;
         let height = 75;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1513,7 +1513,7 @@ mod tests {
         let width = 512;
         let height = 512;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1536,7 +1536,7 @@ mod tests {
         let width = 64;
         let height = 64;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let mut encoder = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1587,7 +1587,7 @@ mod tests {
         let width = 64;
         let height = 64;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         // Path 1: encode() convenience
         let jpeg_oneshot = StreamingEncoder::new(width as u32, height as u32)
@@ -1620,7 +1620,7 @@ mod tests {
         let width = 64;
         let height = 64;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let mut prev_size = usize::MAX;
         for &q in &[95, 80, 50, 20] {
@@ -1653,7 +1653,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1674,7 +1674,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1695,7 +1695,7 @@ mod tests {
         let width = 128;
         let height = 128;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)
@@ -1717,7 +1717,7 @@ mod tests {
         let width = 100;
         let height = 75;
         let data = make_test_image(width, height);
-        let tables = crate::huffman::optimize::OptimizedHuffmanTables::from_standard().unwrap();
+        let tables = crate::huffman::optimize::HuffmanTableSet::from_standard().unwrap();
 
         let jpeg = StreamingEncoder::new(width as u32, height as u32)
             .custom_huffman_tables(tables)

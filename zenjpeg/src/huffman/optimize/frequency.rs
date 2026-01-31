@@ -47,7 +47,7 @@ impl OptimizedTable {
 ///
 /// Contains DC and AC tables for both luminance and chrominance components.
 #[derive(Clone, Debug)]
-pub struct OptimizedHuffmanTables {
+pub struct HuffmanTableSet {
     /// DC luminance table
     pub dc_luma: OptimizedTable,
     /// AC luminance table
@@ -58,7 +58,7 @@ pub struct OptimizedHuffmanTables {
     pub ac_chroma: OptimizedTable,
 }
 
-impl OptimizedHuffmanTables {
+impl HuffmanTableSet {
     /// Builds tables from the standard JPEG Huffman tables (Annex K).
     ///
     /// These are the default fixed tables used when `optimize_huffman = false`.

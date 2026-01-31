@@ -39,7 +39,7 @@ pub(crate) struct StreamingEncoderBuilder {
     /// Custom Huffman tables for streaming-through encoding.
     /// When set, blocks are encoded immediately on each strip flush
     /// instead of buffering all blocks for optimized table generation.
-    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::OptimizedHuffmanTables>,
+    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::HuffmanTableSet>,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
@@ -226,7 +226,7 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn custom_huffman_tables(
         mut self,
-        tables: crate::huffman::optimize::OptimizedHuffmanTables,
+        tables: crate::huffman::optimize::HuffmanTableSet,
     ) -> Self {
         self.custom_huffman_tables = Some(tables);
         self

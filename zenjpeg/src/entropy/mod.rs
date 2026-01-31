@@ -263,7 +263,7 @@ pub fn encode_blocks_mcu_order(
     y_blocks: &[[i16; 64]],
     cb_blocks: &[[i16; 64]],
     cr_blocks: &[[i16; 64]],
-    tables: &crate::huffman::optimize::OptimizedHuffmanTables,
+    tables: &crate::huffman::optimize::HuffmanTableSet,
     writer: &mut crate::foundation::bitstream::BitWriter,
     is_color: bool,
     state: &mut StreamingEntropyState,
