@@ -48,9 +48,9 @@ pub struct EncoderConfig {
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
-    /// Custom Huffman tables for streaming-through encoding.
+    /// Custom Huffman tables for streaming-through encoding (boxed: ~5.7 KB).
     /// When set, enables single-pass encoding without Huffman optimization.
-    pub(crate) custom_huffman_tables: Option<crate::huffman::optimize::HuffmanTableSet>,
+    pub(crate) custom_huffman_tables: Option<Box<crate::huffman::optimize::HuffmanTableSet>>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -544,7 +544,7 @@ impl EncoderConfig {
         mut self,
         tables: crate::huffman::optimize::HuffmanTableSet,
     ) -> Self {
-        self.custom_huffman_tables = Some(tables);
+        self.custom_huffman_tables = Some(Box::new(tables));
         self
     }
 

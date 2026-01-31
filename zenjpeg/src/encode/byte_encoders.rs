@@ -129,7 +129,7 @@ impl BytesEncoder {
 
         // Apply custom Huffman tables for streaming-through encoding
         if let Some(tables) = config.custom_huffman_tables.clone() {
-            builder = builder.custom_huffman_tables(tables);
+            builder = builder.custom_huffman_tables(*tables);
         }
 
         builder.start()
@@ -929,7 +929,7 @@ impl YCbCrPlanarEncoder {
         }
 
         if let Some(tables) = config.custom_huffman_tables.clone() {
-            builder = builder.custom_huffman_tables(tables);
+            builder = builder.custom_huffman_tables(*tables);
         }
 
         builder.start()

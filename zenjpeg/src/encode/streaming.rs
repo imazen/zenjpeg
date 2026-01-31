@@ -48,8 +48,8 @@ pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
 struct StreamingOutputState {
     /// BitWriter accumulates encoded scan data across strip flushes.
     writer: crate::foundation::bitstream::BitWriter,
-    /// Huffman tables used for encoding.
-    tables: crate::huffman::optimize::HuffmanTableSet,
+    /// Huffman tables used for encoding (boxed: ~5.7 KB, uncommon path).
+    tables: Box<crate::huffman::optimize::HuffmanTableSet>,
     /// Entropy encoding state (DC prediction, restart markers).
     entropy_state: crate::entropy::StreamingEntropyState,
     /// Total MCUs in the full image (for restart marker logic).
@@ -299,7 +299,7 @@ impl StreamingEncoder {
             let tables = if let Some(tables) = builder.custom_huffman_tables {
                 tables
             } else {
-                crate::huffman::optimize::HuffmanTableSet::from_standard()?
+                Box::new(crate::huffman::optimize::HuffmanTableSet::from_standard()?)
             };
 
             // Write JPEG header (SOI through SOS) into buffer
