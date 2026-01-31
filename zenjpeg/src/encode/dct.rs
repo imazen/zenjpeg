@@ -236,6 +236,8 @@ pub(crate) mod simd {
     // Token-gated SIMD types for AVX2+FMA - safe wrappers around intrinsics
     #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     use magetypes::simd::f32x8 as mf32x8;
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    use archmage::SimdToken;
 
     // SIMD versions of WC constants for parallel DCT
     // Note: The parallel DCT approach has poor cache locality and doesn't
@@ -684,8 +686,8 @@ pub(crate) mod simd {
 
         // B<4>: cumulative sum with FMA
         second[0] = second[0].mul_add(sqrt2, second[1]);
-        second[1] = second[1] + second[2];
-        second[2] = second[2] + second[3];
+        second[1] += second[2];
+        second[2] += second[3];
 
         // InverseEvenOdd<8>: interleave
         m[0] = first[0];
@@ -714,14 +716,14 @@ pub(crate) mod simd {
         mf32x8::transpose_8x8(&mut reg);
         dct1d_8_mage(&mut reg, token);
         for r in &mut reg {
-            *r = *r * scale;
+            *r *= scale;
         }
 
         // Transpose → column DCT → scale (total: 1/64)
         mf32x8::transpose_8x8(&mut reg);
         dct1d_8_mage(&mut reg, token);
         for r in &mut reg {
-            *r = *r * scale;
+            *r *= scale;
         }
 
         mf32x8::store_8x8(&reg, output);

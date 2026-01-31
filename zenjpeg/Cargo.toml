@@ -91,8 +91,7 @@ img-parts = { workspace = true }
 ultrahdr-core = { version = "0.1.0" }
 
 [features]
-default = ["std", "yuv", "unsafe_simd"]
-# Note: archmage-simd disabled from default - causes Huffman encoding bugs
+default = ["std", "yuv", "magetypes-simd"]
 # Enable std library support (io::Write, std::error::Error impl).
 # Disable for no_std environments - only requires core + alloc.
 std = []
@@ -233,3 +232,7 @@ required-features = ["ffi-tests"]
 [[example]]
 name = "compare_xyb_constants"
 required-features = ["test-utils", "ffi-tests"]
+
+[[example]]
+name = "debug_ultrahdr_detection"
+required-features = ["ultrahdr"]

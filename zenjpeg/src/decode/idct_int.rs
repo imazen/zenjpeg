@@ -9,7 +9,7 @@
 //!
 //! Three implementations are available:
 //! - **wide**: Portable SIMD using `wide` crate with `multiversion` (recommended)
-//! - **avx2**: Raw AVX2 intrinsics (x86_64 only, kept for reference)
+//! - **avx2**: AVX2 intrinsics via archmage capability tokens (x86_64 only, kept for reference)
 //! - **scalar**: Pure scalar fallback
 //!
 //! Benchmarks (8x8 IDCT block):
@@ -17,6 +17,9 @@
 //! - aarch64 NEON: wide 1.11x faster than scalar
 
 #![allow(dead_code)]
+
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use archmage::SimdToken;
 
 /// Rounding and level-shift constants.
 /// SCALE_BITS = 512 + 65536 + (128 << 17)
@@ -315,11 +318,12 @@ pub fn idct_int_4x4(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: u
 // =============================================================================
 
 #[cfg(all(
-    feature = "unsafe_simd",
+    feature = "magetypes-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 mod avx2 {
     use super::*;
+    use archmage::arcane;
 
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
@@ -334,8 +338,8 @@ mod avx2 {
 
     /// Clamp i16 values to [0, 255] range.
     #[inline]
-    #[target_feature(enable = "avx2")]
-    unsafe fn clamp_avx(reg: __m256i) -> __m256i {
+    #[arcane]
+    fn clamp_avx(_token: archmage::Avx2Token, reg: __m256i) -> __m256i {
         let min_s = _mm256_set1_epi16(0);
         let max_s = _mm256_set1_epi16(255);
         let max_v = _mm256_max_epi16(reg, min_s);
@@ -343,8 +347,9 @@ mod avx2 {
     }
 
     /// In-register 8x8 transpose for i32 values.
-    #[target_feature(enable = "avx2")]
-    unsafe fn transpose_8x8_i32(
+    #[arcane]
+    fn transpose_8x8_i32(
+        _token: archmage::Avx2Token,
         v0: &mut __m256i,
         v1: &mut __m256i,
         v2: &mut __m256i,
@@ -409,23 +414,25 @@ mod avx2 {
 
     /// AVX2 integer IDCT.
     ///
-    /// # Safety
-    /// Requires AVX2 support.
-    #[target_feature(enable = "avx2")]
+    /// Uses archmage capability token for safe SIMD dispatch.
+    /// Raw pointer load/store operations remain in targeted `unsafe` blocks.
+    #[arcane]
     #[allow(unused_assignments)] // pos is incremented in macro but last value is unused
-    pub unsafe fn idct_int_avx2(in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
+    pub fn idct_int_avx2(_token: archmage::Avx2Token, in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
         // Load all 8 rows
-        let mut row0 = _mm256_loadu_si256(in_vector[0..].as_ptr().cast());
-        let mut row1 = _mm256_loadu_si256(in_vector[8..].as_ptr().cast());
-        let mut row2 = _mm256_loadu_si256(in_vector[16..].as_ptr().cast());
-        let mut row3 = _mm256_loadu_si256(in_vector[24..].as_ptr().cast());
-        let mut row4 = _mm256_loadu_si256(in_vector[32..].as_ptr().cast());
-        let mut row5 = _mm256_loadu_si256(in_vector[40..].as_ptr().cast());
-        let mut row6 = _mm256_loadu_si256(in_vector[48..].as_ptr().cast());
-        let mut row7 = _mm256_loadu_si256(in_vector[56..].as_ptr().cast());
+        // SAFETY: in_vector is &mut [i32; 64], so all pointer offsets are within bounds
+        let mut row0 = unsafe { _mm256_loadu_si256(in_vector[0..].as_ptr().cast()) };
+        let mut row1 = unsafe { _mm256_loadu_si256(in_vector[8..].as_ptr().cast()) };
+        let mut row2 = unsafe { _mm256_loadu_si256(in_vector[16..].as_ptr().cast()) };
+        let mut row3 = unsafe { _mm256_loadu_si256(in_vector[24..].as_ptr().cast()) };
+        let mut row4 = unsafe { _mm256_loadu_si256(in_vector[32..].as_ptr().cast()) };
+        let mut row5 = unsafe { _mm256_loadu_si256(in_vector[40..].as_ptr().cast()) };
+        let mut row6 = unsafe { _mm256_loadu_si256(in_vector[48..].as_ptr().cast()) };
+        let mut row7 = unsafe { _mm256_loadu_si256(in_vector[56..].as_ptr().cast()) };
 
         // Check for DC-only (all AC = 0)
-        let ac_check = _mm256_loadu_si256(in_vector[1..].as_ptr().cast());
+        // SAFETY: in_vector[1..] pointer is within bounds of the 64-element array
+        let ac_check = unsafe { _mm256_loadu_si256(in_vector[1..].as_ptr().cast()) };
         let mut bitmap = _mm256_or_si256(row1, row2);
         bitmap = _mm256_or_si256(bitmap, row3);
         bitmap = _mm256_or_si256(bitmap, row4);
@@ -441,7 +448,8 @@ mod avx2 {
 
             let mut pos = 0;
             for _ in 0..8 {
-                _mm_storeu_si128(out_vector[pos..pos + 8].as_mut_ptr().cast(), idct_value);
+                // SAFETY: out_vector slice bounds checked by indexing before cast
+                unsafe { _mm_storeu_si128(out_vector[pos..pos + 8].as_mut_ptr().cast(), idct_value) };
                 pos += stride;
             }
             return;
@@ -517,6 +525,7 @@ mod avx2 {
 
         // Transpose
         transpose_8x8_i32(
+            _token,
             &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6, &mut row7,
         );
 
@@ -525,6 +534,7 @@ mod avx2 {
 
         // Transpose back
         transpose_8x8_i32(
+            _token,
             &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6, &mut row7,
         );
 
@@ -534,18 +544,24 @@ mod avx2 {
         macro_rules! pack_store {
             ($r0:expr, $r1:expr) => {
                 let packed = _mm256_packs_epi32($r0, $r1);
-                let clamped = clamp_avx(packed);
+                let clamped = clamp_avx(_token, packed);
                 let reordered = _mm256_permute4x64_epi64(clamped, shuffle(3, 1, 2, 0));
 
-                _mm_storeu_si128(
-                    out_vector[pos..pos + 8].as_mut_ptr().cast(),
-                    _mm256_extracti128_si256::<0>(reordered),
-                );
+                // SAFETY: out_vector slice bounds checked by indexing before cast
+                unsafe {
+                    _mm_storeu_si128(
+                        out_vector[pos..pos + 8].as_mut_ptr().cast(),
+                        _mm256_extracti128_si256::<0>(reordered),
+                    );
+                }
                 pos += stride;
-                _mm_storeu_si128(
-                    out_vector[pos..pos + 8].as_mut_ptr().cast(),
-                    _mm256_extracti128_si256::<1>(reordered),
-                );
+                // SAFETY: out_vector slice bounds checked by indexing before cast
+                unsafe {
+                    _mm_storeu_si128(
+                        out_vector[pos..pos + 8].as_mut_ptr().cast(),
+                        _mm256_extracti128_si256::<1>(reordered),
+                    );
+                }
                 pos += stride;
             };
         }
@@ -702,13 +718,10 @@ mod wide_simd {
 /// * `stride` - Stride between output rows
 #[inline]
 pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     {
-        if is_x86_feature_detected!("avx2") {
-            // SAFETY: AVX2 detected at runtime
-            unsafe {
-                avx2::idct_int_avx2(coeffs, output, stride);
-            }
+        if let Some(token) = archmage::Avx2Token::try_new() {
+            avx2::idct_int_avx2(token, coeffs, output, stride);
             return;
         }
     }
@@ -716,21 +729,18 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
     wide_simd::idct_int_wide(coeffs, output, stride);
 }
 
-/// Perform integer IDCT using raw AVX2 intrinsics.
+/// Perform integer IDCT using AVX2 intrinsics via archmage capability token.
 ///
 /// This is the legacy implementation kept for comparison. In most cases,
 /// `idct_int_auto` (which uses `wide`) should be preferred as it's portable
 /// and has similar performance.
-///
-/// # Safety
-/// Caller must ensure AVX2 is available.
 #[cfg(all(
-    feature = "unsafe_simd",
+    feature = "magetypes-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[inline]
-pub unsafe fn idct_int_avx2_raw(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
-    avx2::idct_int_avx2(coeffs, output, stride);
+pub fn idct_int_avx2_raw(token: archmage::Avx2Token, coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+    avx2::idct_int_avx2(token, coeffs, output, stride);
 }
 
 /// Tiered IDCT selection based on coefficient count.
@@ -756,13 +766,10 @@ pub fn idct_int_tiered(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize
     } else {
         // Full 8x8 IDCT with SIMD (AVX2 on x86_64, wide otherwise)
         // Note: AVX2 IDCT with DC-only check is faster than tiered 4x4 scalar
-        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+        #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
         {
-            if is_x86_feature_detected!("avx2") {
-                // SAFETY: AVX2 detected at runtime
-                unsafe {
-                    avx2::idct_int_avx2(coeffs, output, stride);
-                }
+            if let Some(token) = archmage::Avx2Token::try_new() {
+                avx2::idct_int_avx2(token, coeffs, output, stride);
                 return;
             }
         }
@@ -862,14 +869,14 @@ mod tests {
     }
 
     #[cfg(all(
-        feature = "unsafe_simd",
+        feature = "magetypes-simd",
         any(target_arch = "x86", target_arch = "x86_64")
     ))]
     #[test]
     fn test_avx2_matches_scalar() {
-        if !is_x86_feature_detected!("avx2") {
+        let Some(token) = archmage::Avx2Token::try_new() else {
             return;
-        }
+        };
 
         // Test with random-ish pattern
         let mut coeffs_scalar = [0i32; 64];
@@ -885,9 +892,7 @@ mod tests {
         let mut output_avx2 = [0i16; 64];
 
         idct_int(&mut coeffs_scalar, &mut output_scalar, 8);
-        unsafe {
-            avx2::idct_int_avx2(&mut coeffs_avx2, &mut output_avx2, 8);
-        }
+        avx2::idct_int_avx2(token, &mut coeffs_avx2, &mut output_avx2, 8);
 
         for i in 0..64 {
             assert_eq!(

@@ -21,6 +21,9 @@ use crate::types::PixelFormat;
 use multiversed::multiversed;
 use wide::{f32x4, f32x8};
 
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use archmage::{arcane, SimdToken};
+
 /// Converts a single RGB pixel to YCbCr.
 ///
 /// Uses BT.601 coefficients (standard JPEG).
@@ -882,16 +885,10 @@ pub fn ycbcr_to_rgb_i16_x16(
     rgb: &mut [u8],
     offset: &mut usize,
 ) {
-    #[cfg(all(
-        feature = "unsafe_simd",
-        any(target_arch = "x86", target_arch = "x86_64")
-    ))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     {
-        if is_x86_feature_detected!("avx2") {
-            // Safety: we just checked for AVX2 support
-            unsafe {
-                ycbcr_to_rgb_i16_x16_avx2(y, cb, cr, rgb, offset);
-            }
+        if let Some(token) = archmage::Avx2Token::try_new() {
+            ycbcr_to_rgb_i16_x16_avx2(token, y, cb, cr, rgb, offset);
             return;
         }
     }
@@ -930,27 +927,27 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 }
 
 /// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
-#[cfg(all(
-    feature = "unsafe_simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
-#[target_feature(enable = "avx2")]
-unsafe fn ycbcr_to_rgb_i16_x16_avx2(
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
+fn ycbcr_to_rgb_i16_x16_avx2(
+    _token: archmage::Avx2Token,
     y: &[i16; 16],
     cb: &[i16; 16],
     cr: &[i16; 16],
     rgb: &mut [u8],
     offset: &mut usize,
 ) {
-    #[cfg(target_arch = "x86")]
-    use core::arch::x86::*;
-    #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
 
     // Load Y, Cb, Cr (16 i16 values each)
-    let y_vec = _mm256_loadu_si256(y.as_ptr().cast());
-    let cb_vec = _mm256_loadu_si256(cb.as_ptr().cast());
-    let cr_vec = _mm256_loadu_si256(cr.as_ptr().cast());
+    // SAFETY: y, cb, cr are references to [i16; 16] (32 bytes each), valid for 256-bit loads
+    let (y_vec, cb_vec, cr_vec) = unsafe {
+        (
+            _mm256_loadu_si256(y.as_ptr().cast()),
+            _mm256_loadu_si256(cb.as_ptr().cast()),
+            _mm256_loadu_si256(cr.as_ptr().cast()),
+        )
+    };
 
     // Subtract 128 from Cb and Cr (bias removal)
     let bias = _mm256_set1_epi16(128);
@@ -1086,9 +1083,12 @@ unsafe fn ycbcr_to_rgb_i16_x16_avx2(
     let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
 
     // Store 48 bytes (16 pixels * 3 channels)
-    let out_ptr = rgb.as_mut_ptr().add(*offset);
-    _mm256_storeu_si256(out_ptr.cast(), rgb0);
-    _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
+    // SAFETY: caller guarantees rgb has at least offset + 48 bytes available
+    unsafe {
+        let out_ptr = rgb.as_mut_ptr().add(*offset);
+        _mm256_storeu_si256(out_ptr.cast(), rgb0);
+        _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
+    }
 
     *offset += 48;
 }
@@ -1166,16 +1166,10 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     let len = y_plane.len();
 
     // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
-    #[cfg(all(
-        feature = "unsafe_simd",
-        any(target_arch = "x86", target_arch = "x86_64")
-    ))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     {
-        if is_x86_feature_detected!("avx2") {
-            // Safety: AVX2 feature detected, pointers are valid for the slice lengths
-            unsafe {
-                ycbcr_planes_i16_to_rgb_u8_avx2(y_plane, cb_plane, cr_plane, rgb);
-            }
+        if let Some(token) = archmage::Avx2Token::try_new() {
+            ycbcr_planes_i16_to_rgb_u8_avx2(token, y_plane, cb_plane, cr_plane, rgb);
             return;
         }
     }
@@ -1201,20 +1195,15 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 
 /// AVX2 batch conversion of YCbCr planes to interleaved RGB.
 /// Processes 16 pixels at a time with direct pointer loads.
-#[cfg(all(
-    feature = "unsafe_simd",
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
-#[target_feature(enable = "avx2")]
-unsafe fn ycbcr_planes_i16_to_rgb_u8_avx2(
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
+fn ycbcr_planes_i16_to_rgb_u8_avx2(
+    _token: archmage::Avx2Token,
     y_plane: &[i16],
     cb_plane: &[i16],
     cr_plane: &[i16],
     rgb: &mut [u8],
 ) {
-    #[cfg(target_arch = "x86")]
-    use core::arch::x86::*;
-    #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
 
     let len = y_plane.len();
@@ -1262,9 +1251,14 @@ unsafe fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let out_offset = chunk * 48;
 
         // Load directly from pointers
-        let y_vec = _mm256_loadu_si256(y_ptr.add(in_offset).cast());
-        let cb_vec = _mm256_loadu_si256(cb_ptr.add(in_offset).cast());
-        let cr_vec = _mm256_loadu_si256(cr_ptr.add(in_offset).cast());
+        // SAFETY: chunk * 16 < len, so y_ptr/cb_ptr/cr_ptr + in_offset point to valid 32-byte regions
+        let (y_vec, cb_vec, cr_vec) = unsafe {
+            (
+                _mm256_loadu_si256(y_ptr.add(in_offset).cast()),
+                _mm256_loadu_si256(cb_ptr.add(in_offset).cast()),
+                _mm256_loadu_si256(cr_ptr.add(in_offset).cast()),
+            )
+        };
 
         // Subtract 128 from Cb and Cr
         let cb_centered = _mm256_sub_epi16(cb_vec, bias);
@@ -1350,9 +1344,12 @@ unsafe fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let rgb1 = _mm256_permute2x128_si256(p2, p0, 0x30);
 
         // Store 48 bytes
-        let out_ptr = rgb_ptr.add(out_offset);
-        _mm256_storeu_si256(out_ptr.cast(), rgb0);
-        _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
+        // SAFETY: chunk * 48 + 48 <= chunks * 48 <= len * 3 = rgb.len()
+        unsafe {
+            let out_ptr = rgb_ptr.add(out_offset);
+            _mm256_storeu_si256(out_ptr.cast(), rgb0);
+            _mm_storeu_si128(out_ptr.add(32).cast(), _mm256_castsi256_si128(rgb1));
+        }
     }
 
     // Handle remainder with scalar

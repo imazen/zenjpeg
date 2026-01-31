@@ -4,24 +4,19 @@
 //! - Chroma downsampling (2x2, 2x1, 1x2)
 //! - RGB to YCbCr color conversion
 //!
-//! # Safe/Unsafe Architecture
+//! # Safe SIMD Architecture
 //!
 //! This module follows a two-layer pattern:
 //!
 //! 1. **Safe public APIs** (e.g., `downsample_2x2_simd`, `rgb_to_ycbcr_planes_simd_inplace`):
 //!    - Use `wide` crate's portable SIMD types (`f32x8`)
 //!    - Safe load/store helpers with bounds checking
-//!    - Runtime CPU feature detection via `multiversion` or `is_x86_feature_detected!`
+//!    - Runtime CPU feature detection via `multiversion` or archmage tokens
 //!
-//! 2. **Unsafe internal functions** (e.g., `gather_even_odd_x8_avx2`, `rgb_to_ycbcr_8px_fma`):
-//!    - Raw SSSE3/SSE4.1/AVX/AVX2/FMA intrinsics for operations without `wide` equivalents
-//!    - Permute, shuffle, and byte-level operations for de-interleaving
-//!    - Marked `pub(crate)` for testing, but production code uses safe wrappers
-//!
-//! The unsafe intrinsics are necessary for operations like:
-//! - `_mm256_permutevar8x32_ps`: Variable element permute (even/odd gather)
-//! - `_mm_shuffle_epi8`: Byte shuffle (RGB channel extraction)
-//! - `_mm256_permute2f128_ps`: 128-bit lane permute (matrix transpose)
+//! 2. **Safe internal functions via archmage** (e.g., `gather_even_odd_x8_avx2`, `rgb_to_ycbcr_8px_fma`):
+//!    - Raw SSSE3/SSE4.1/AVX/AVX2/FMA intrinsics made safe via `#[arcane]` attribute
+//!    - Capability tokens (`Avx2Token`, `Avx2FmaToken`) prove CPU support at the call site
+//!    - Only raw pointer operations (load/store) remain in targeted `unsafe` blocks
 //!
 //! All functions have tests to verify parity with scalar implementations.
 
@@ -30,9 +25,11 @@
 use multiversed::multiversed;
 use wide::f32x8;
 
-// Raw AVX2/SSE intrinsics - only available with `unsafe_simd` feature on x86_64
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[allow(unused_imports)] // Not all intrinsics used in every code path
+// AVX2/SSE intrinsics - safe via archmage #[arcane] annotation
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use archmage::{arcane, SimdToken};
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[allow(unused_imports)]
 use core::arch::x86_64::{
     __m128, __m128i, __m256, _mm_cvtepu8_epi32, _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps,
     _mm_set1_ps, _mm_setr_epi8, _mm_shuffle_epi8, _mm_storeu_ps,
@@ -235,16 +232,21 @@ fn gather_even_odd_scalar(data: &[f32]) -> ([f32; 8], [f32; 8]) {
 
 /// AVX2-optimized deinterleave using Highway's ConcatEven/ConcatOdd pattern.
 /// This is ~4x faster than element-by-element construction.
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
 #[inline]
-unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
+fn gather_even_odd_x8_avx2(_token: archmage::Avx2Token, ptr: *const f32) -> (f32x8, f32x8) {
     use std::arch::x86_64::*;
 
     // Load 16 consecutive floats as two YMM registers
     // Memory: [e0,o0,e1,o1,e2,o2,e3,o3, e4,o4,e5,o5,e6,o6,e7,o7]
-    let lo = _mm256_loadu_ps(ptr); // [e0,o0,e1,o1 | e2,o2,e3,o3]
-    let hi = _mm256_loadu_ps(ptr.add(8)); // [e4,o4,e5,o5 | e6,o6,e7,o7]
+    // SAFETY: caller guarantees ptr points to at least 16 valid f32s
+    let (lo, hi) = unsafe {
+        (
+            _mm256_loadu_ps(ptr),
+            _mm256_loadu_ps(ptr.add(8)),
+        )
+    };
 
     // Highway's ConcatEven pattern for f32:
     // _mm256_shuffle_ps with 0x88 selects elements [0,2] from each source per lane
@@ -261,8 +263,8 @@ unsafe fn gather_even_odd_x8_avx2(ptr: *const f32) -> (f32x8, f32x8) {
     let odds_raw = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(v3131), 0xD8));
 
     (
-        core::mem::transmute::<__m256, f32x8>(evens_raw),
-        core::mem::transmute::<__m256, f32x8>(odds_raw),
+        bytemuck::cast::<__m256, f32x8>(evens_raw),
+        bytemuck::cast::<__m256, f32x8>(odds_raw),
     )
 }
 
@@ -337,17 +339,16 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 
         // Use runtime dispatch with inline function calls (no pointer indirection)
         // The branch is very predictable and intrinsics are inlined
-        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+        #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
         {
-            if is_x86_feature_detected!("avx2") {
-                // SAFETY: AVX2 is detected, and we have a valid pointer from the slice
-                return unsafe { gather_even_odd_x8_avx2(slice.as_ptr()) };
+            if let Some(token) = archmage::Avx2Token::try_new() {
+                return gather_even_odd_x8_avx2(token, slice.as_ptr());
             } else {
                 return gather_even_odd_x8_scalar(slice);
             }
         }
 
-        #[cfg(not(all(feature = "unsafe_simd", target_arch = "x86_64")))]
+        #[cfg(not(all(feature = "magetypes-simd", target_arch = "x86_64")))]
         {
             return gather_even_odd_x8_scalar(slice);
         }
@@ -364,10 +365,10 @@ fn gather_even_odd_x8(plane: &[f32], start_idx: usize, _width: usize) -> (f32x8,
 /// Extract 4 R values from 16 bytes of RGB data using SSSE3 shuffle.
 /// Input: [R0 G0 B0 R1 G1 B1 R2 G2 B2 R3 G3 B3 R4 G4 B4 R5]
 /// Output: [R0 R1 R2 R3 0 0 0 0 0 0 0 0 0 0 0 0] (low 4 bytes valid)
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
 #[inline]
-unsafe fn extract_r_ssse3(rgb: __m128i) -> __m128i {
+fn extract_r_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 0, 3, 6, 9 (R values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(0, 3, 6, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -375,10 +376,10 @@ unsafe fn extract_r_ssse3(rgb: __m128i) -> __m128i {
 }
 
 /// Extract 4 G values from 16 bytes of RGB data using SSSE3 shuffle.
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
 #[inline]
-unsafe fn extract_g_ssse3(rgb: __m128i) -> __m128i {
+fn extract_g_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 1, 4, 7, 10 (G values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(1, 4, 7, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -386,10 +387,10 @@ unsafe fn extract_g_ssse3(rgb: __m128i) -> __m128i {
 }
 
 /// Extract 4 B values from 16 bytes of RGB data using SSSE3 shuffle.
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
 #[inline]
-unsafe fn extract_b_ssse3(rgb: __m128i) -> __m128i {
+fn extract_b_ssse3(_token: archmage::Avx2Token, rgb: __m128i) -> __m128i {
     // Shuffle mask: extract bytes 2, 5, 8, 11 (B values)
     // Uses _mm_shuffle_epi8 which requires SSSE3
     let mask = _mm_setr_epi8(2, 5, 8, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
@@ -398,10 +399,10 @@ unsafe fn extract_b_ssse3(rgb: __m128i) -> __m128i {
 
 /// Convert 4 u8 values (in low bytes of __m128i) to __m128 f32.
 /// Uses _mm_cvtepu8_epi32 which requires SSE4.1.
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
 #[inline]
-unsafe fn u8x4_to_f32x4_sse41(v: __m128i) -> core::arch::x86_64::__m128 {
+fn u8x4_to_f32x4_sse41(_token: archmage::Avx2Token, v: __m128i) -> __m128 {
     use core::arch::x86_64::_mm_cvtepi32_ps;
     // Zero-extend u8 to i32, then convert to f32
     let i32_vec = _mm_cvtepu8_epi32(v);
@@ -418,42 +419,48 @@ unsafe fn u8x4_to_f32x4_sse41(v: __m128i) -> core::arch::x86_64::__m128 {
 /// Production code should use the safe wrapper.
 ///
 /// # Safety
-/// Requires FMA support. Caller must verify with `is_x86_feature_detected!("fma")`.
-/// (SSSE3 and SSE4.1 are implied by FMA on all x86_64 CPUs.)
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2", enable = "fma")]
+/// Caller must ensure pointers are valid and point to sufficient memory:
+/// - `rgb_ptr`: at least 24 bytes readable
+/// - `y_ptr`, `cb_ptr`, `cr_ptr`: at least 8 f32s writable
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
 #[inline]
-pub(crate) unsafe fn rgb_to_ycbcr_8px_fma(
+pub(crate) fn rgb_to_ycbcr_8px_fma(
+    _token: archmage::Avx2FmaToken,
     rgb_ptr: *const u8,
     y_ptr: *mut f32,
     cb_ptr: *mut f32,
     cr_ptr: *mut f32,
 ) {
     // Intrinsics imported at module level
+    let avx2 = _token.avx2();
 
     // Load 24 bytes as two overlapping 16-byte loads
-    // Load 0: bytes [0..15] for pixels 0-3 (plus partial pixel 4-5)
-    // Load 1: bytes [12..27] for pixels 4-7 (overlaps by 4 bytes, but we only read 24)
-    let rgb0 = _mm_loadu_si128(rgb_ptr as *const __m128i);
-    let rgb1 = _mm_loadu_si128(rgb_ptr.add(12) as *const __m128i);
+    // SAFETY: caller guarantees rgb_ptr points to at least 28 readable bytes
+    let (rgb0, rgb1) = unsafe {
+        (
+            _mm_loadu_si128(rgb_ptr as *const __m128i),
+            _mm_loadu_si128(rgb_ptr.add(12) as *const __m128i),
+        )
+    };
 
     // Extract R, G, B for first 4 pixels
-    let r0_bytes = extract_r_ssse3(rgb0);
-    let g0_bytes = extract_g_ssse3(rgb0);
-    let b0_bytes = extract_b_ssse3(rgb0);
+    let r0_bytes = extract_r_ssse3(avx2, rgb0);
+    let g0_bytes = extract_g_ssse3(avx2, rgb0);
+    let b0_bytes = extract_b_ssse3(avx2, rgb0);
 
     // Extract R, G, B for second 4 pixels
-    let r1_bytes = extract_r_ssse3(rgb1);
-    let g1_bytes = extract_g_ssse3(rgb1);
-    let b1_bytes = extract_b_ssse3(rgb1);
+    let r1_bytes = extract_r_ssse3(avx2, rgb1);
+    let g1_bytes = extract_g_ssse3(avx2, rgb1);
+    let b1_bytes = extract_b_ssse3(avx2, rgb1);
 
     // Convert to f32
-    let r0: __m128 = u8x4_to_f32x4_sse41(r0_bytes);
-    let g0: __m128 = u8x4_to_f32x4_sse41(g0_bytes);
-    let b0: __m128 = u8x4_to_f32x4_sse41(b0_bytes);
-    let r1: __m128 = u8x4_to_f32x4_sse41(r1_bytes);
-    let g1: __m128 = u8x4_to_f32x4_sse41(g1_bytes);
-    let b1: __m128 = u8x4_to_f32x4_sse41(b1_bytes);
+    let r0: __m128 = u8x4_to_f32x4_sse41(avx2, r0_bytes);
+    let g0: __m128 = u8x4_to_f32x4_sse41(avx2, g0_bytes);
+    let b0: __m128 = u8x4_to_f32x4_sse41(avx2, b0_bytes);
+    let r1: __m128 = u8x4_to_f32x4_sse41(avx2, r1_bytes);
+    let g1: __m128 = u8x4_to_f32x4_sse41(avx2, g1_bytes);
+    let b1: __m128 = u8x4_to_f32x4_sse41(avx2, b1_bytes);
 
     // Coefficients
     let r_to_y = _mm_set1_ps(YCBCR_R_TO_Y);
@@ -497,16 +504,19 @@ pub(crate) unsafe fn rgb_to_ycbcr_8px_fma(
     );
 
     // Store results (two 4-element stores per plane)
-    _mm_storeu_ps(y_ptr, y0);
-    _mm_storeu_ps(y_ptr.add(4), y1);
-    _mm_storeu_ps(cb_ptr, cb0);
-    _mm_storeu_ps(cb_ptr.add(4), cb1);
-    _mm_storeu_ps(cr_ptr, cr0);
-    _mm_storeu_ps(cr_ptr.add(4), cr1);
+    // SAFETY: caller guarantees output pointers have space for 8 f32s each
+    unsafe {
+        _mm_storeu_ps(y_ptr, y0);
+        _mm_storeu_ps(y_ptr.add(4), y1);
+        _mm_storeu_ps(cb_ptr, cb0);
+        _mm_storeu_ps(cb_ptr.add(4), cb1);
+        _mm_storeu_ps(cr_ptr, cr0);
+        _mm_storeu_ps(cr_ptr.add(4), cr1);
+    }
 }
 
 /// Scalar reference implementation for RGB to YCbCr (for testing).
-#[cfg(all(test, feature = "unsafe_simd", target_arch = "x86_64"))]
+#[cfg(all(test, feature = "magetypes-simd", target_arch = "x86_64"))]
 fn rgb_to_ycbcr_scalar(
     rgb_data: &[u8],
     y_plane: &mut [f32],
@@ -561,23 +571,25 @@ pub fn rgb_to_ycbcr_planes_simd_inplace(
 
     // Use AVX2+FMA intrinsics path when available (much faster due to shuffle-based
     // deinterleave instead of scalar gather, plus FMA operations)
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        if let Some(token) = archmage::Avx2FmaToken::try_new() {
             let chunks = num_pixels / 8;
 
             for chunk in 0..chunks {
                 let pixel_idx = chunk * 8;
                 let rgb_idx = pixel_idx * 3;
 
-                // SAFETY: AVX2+FMA detected, and we've verified buffer lengths above
-                unsafe {
-                    let rgb_ptr = rgb_data.as_ptr().add(rgb_idx);
-                    let y_ptr = y_plane.as_mut_ptr().add(pixel_idx);
-                    let cb_ptr = cb_plane.as_mut_ptr().add(pixel_idx);
-                    let cr_ptr = cr_plane.as_mut_ptr().add(pixel_idx);
-                    rgb_to_ycbcr_8px_fma(rgb_ptr, y_ptr, cb_ptr, cr_ptr);
-                }
+                // SAFETY: pointer arithmetic on bounds-checked slices
+                let (rgb_ptr, y_ptr, cb_ptr, cr_ptr) = unsafe {
+                    (
+                        rgb_data.as_ptr().add(rgb_idx),
+                        y_plane.as_mut_ptr().add(pixel_idx),
+                        cb_plane.as_mut_ptr().add(pixel_idx),
+                        cr_plane.as_mut_ptr().add(pixel_idx),
+                    )
+                };
+                rgb_to_ycbcr_8px_fma(token, rgb_ptr, y_ptr, cb_ptr, cr_ptr);
             }
 
             // Scalar remainder - use FMA for accuracy
@@ -1472,7 +1484,7 @@ mod tests {
     /// Tolerance for FMA vs non-FMA differences (FMA avoids intermediate rounding)
     const EPSILON: f32 = 1e-4;
     /// Slightly higher tolerance for accumulated operations (downsampling averages 4 values)
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     const EPSILON_ACCUMULATED: f32 = 5e-4;
 
     #[test]
@@ -1536,11 +1548,11 @@ mod tests {
 
     /// Test AVX2 intrinsics RGB to YCbCr against scalar reference.
     #[test]
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_matches_scalar() {
-        if !is_x86_feature_detected!("avx2") {
+        let Some(token) = archmage::Avx2FmaToken::try_new() else {
             return;
-        }
+        };
 
         // Test with 8 pixels (one AVX2 batch)
         let rgb_data: Vec<u8> = (0..24).map(|i| ((i * 17 + 5) % 256) as u8).collect();
@@ -1549,14 +1561,13 @@ mod tests {
         let mut cb_avx2 = vec![0.0f32; 8];
         let mut cr_avx2 = vec![0.0f32; 8];
 
-        unsafe {
-            rgb_to_ycbcr_8px_fma(
-                rgb_data.as_ptr(),
-                y_avx2.as_mut_ptr(),
-                cb_avx2.as_mut_ptr(),
-                cr_avx2.as_mut_ptr(),
-            );
-        }
+        rgb_to_ycbcr_8px_fma(
+            token,
+            rgb_data.as_ptr(),
+            y_avx2.as_mut_ptr(),
+            cb_avx2.as_mut_ptr(),
+            cr_avx2.as_mut_ptr(),
+        );
 
         let mut y_scalar = vec![0.0f32; 8];
         let mut cb_scalar = vec![0.0f32; 8];
@@ -1596,11 +1607,11 @@ mod tests {
 
     /// Brute force test AVX2 RGB to YCbCr with all possible u8 values.
     #[test]
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     fn test_rgb_to_ycbcr_avx2_brute_force() {
-        if !is_x86_feature_detected!("avx2") {
+        let Some(token) = archmage::Avx2FmaToken::try_new() else {
             return;
-        }
+        };
 
         // Test systematic patterns covering all u8 values
         let mut max_y_diff = 0.0f32;
@@ -1626,14 +1637,13 @@ mod tests {
                     let mut cb_avx2 = vec![0.0f32; 8];
                     let mut cr_avx2 = vec![0.0f32; 8];
 
-                    unsafe {
-                        rgb_to_ycbcr_8px_fma(
-                            rgb_data.as_ptr(),
-                            y_avx2.as_mut_ptr(),
-                            cb_avx2.as_mut_ptr(),
-                            cr_avx2.as_mut_ptr(),
-                        );
-                    }
+                    rgb_to_ycbcr_8px_fma(
+                        token,
+                        rgb_data.as_ptr(),
+                        y_avx2.as_mut_ptr(),
+                        cb_avx2.as_mut_ptr(),
+                        cr_avx2.as_mut_ptr(),
+                    );
 
                     let mut y_scalar = vec![0.0f32; 8];
                     let mut cb_scalar = vec![0.0f32; 8];

@@ -1,5 +1,5 @@
 #![cfg_attr(
-    not(any(feature = "unsafe_simd", feature = "archmage-simd")),
+    not(any(feature = "unsafe_simd", feature = "archmage-simd", feature = "magetypes-simd")),
     forbid(unsafe_code)
 )]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -104,7 +104,7 @@
 //! | `parallel` | No | Multi-threaded encoding via rayon |
 //! | `cms-lcms2` | Yes | Color management via lcms2 |
 //! | `cms-moxcms` | No | Pure Rust color management |
-//! | `unsafe_simd` | No | Raw AVX2/SSE intrinsics (~10-20% faster) |
+//! | `magetypes-simd` | Yes | Safe SIMD via archmage tokens (~10-20% faster) |
 //!
 //! ## Capabilities
 //!
