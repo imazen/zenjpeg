@@ -5,6 +5,9 @@
 
 use wide::f32x8;
 
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+use archmage::{arcane, SimdToken};
+
 /// Fancy upsampling with triangle filter (3:1 weights).
 ///
 /// Applies separable 3:1 interpolation: (3 * near + far) / 4.
@@ -294,16 +297,13 @@ pub fn upsample_h2v2_i16_fancy(
         return;
     }
 
-    // Try AVX2 SIMD path on x86_64 (requires unsafe_simd feature)
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    // Try AVX2 SIMD path on x86_64 (requires magetypes-simd feature)
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     {
-        if is_x86_feature_detected!("avx2") {
-            // Safety: we checked for AVX2 support
-            unsafe {
-                upsample_h2v2_i16_fancy_avx2(
-                    input, in_width, in_height, output, out_width, out_height,
-                );
-            }
+        if let Some(token) = archmage::Avx2Token::try_new() {
+            upsample_h2v2_i16_fancy_avx2(
+                token, input, in_width, in_height, output, out_width, out_height,
+            );
             return;
         }
     }
@@ -341,9 +341,10 @@ fn upsample_h2v2_i16_fancy_scalar(
 
 /// AVX2 SIMD implementation of bilinear upsampling
 /// Uses separable vertical + horizontal passes for efficiency
-#[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-unsafe fn upsample_h2v2_i16_fancy_avx2(
+#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[arcane]
+fn upsample_h2v2_i16_fancy_avx2(
+    _token: archmage::Avx2Token,
     input: &[i16],
     in_width: usize,
     in_height: usize,
@@ -388,9 +389,13 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
         let chunks = in_width / 16;
         for i in 0..chunks {
             let offset = i * 16;
-            let v_curr = _mm256_loadu_si256(curr_row[offset..].as_ptr() as *const __m256i);
-            let v_neighbor =
-                _mm256_loadu_si256(v_neighbor_row[offset..].as_ptr() as *const __m256i);
+            // SAFETY: offset + 16 <= in_width, slices are valid for 256-bit loads
+            let (v_curr, v_neighbor) = unsafe {
+                (
+                    _mm256_loadu_si256(curr_row[offset..].as_ptr() as *const __m256i),
+                    _mm256_loadu_si256(v_neighbor_row[offset..].as_ptr() as *const __m256i),
+                )
+            };
 
             let v_result = _mm256_srai_epi16(
                 _mm256_add_epi16(
@@ -400,7 +405,10 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
                 2,
             );
 
-            _mm256_storeu_si256(scratch[offset..].as_mut_ptr() as *mut __m256i, v_result);
+            // SAFETY: offset + 16 <= in_width, scratch is valid for 256-bit store
+            unsafe {
+                _mm256_storeu_si256(scratch[offset..].as_mut_ptr() as *mut __m256i, v_result);
+            }
         }
 
         // Scalar remainder for vertical pass
@@ -433,9 +441,14 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
                 break;
             }
 
-            let v_prev = _mm256_loadu_si256(scratch[in_offset - 1..].as_ptr() as *const __m256i);
-            let v_curr = _mm256_loadu_si256(scratch[in_offset..].as_ptr() as *const __m256i);
-            let v_next = _mm256_loadu_si256(scratch[in_offset + 1..].as_ptr() as *const __m256i);
+            // SAFETY: in_offset-1..in_offset+17 within scratch bounds, valid for 256-bit loads
+            let (v_prev, v_curr, v_next) = unsafe {
+                (
+                    _mm256_loadu_si256(scratch[in_offset - 1..].as_ptr() as *const __m256i),
+                    _mm256_loadu_si256(scratch[in_offset..].as_ptr() as *const __m256i),
+                    _mm256_loadu_si256(scratch[in_offset + 1..].as_ptr() as *const __m256i),
+                )
+            };
 
             // 3*curr + 2
             let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
@@ -454,11 +467,14 @@ unsafe fn upsample_h2v2_i16_fancy_avx2(
             let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20);
             let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31);
 
-            _mm256_storeu_si256(out_row[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
-            _mm256_storeu_si256(
-                out_row[out_offset + 16..].as_mut_ptr() as *mut __m256i,
-                v_out1,
-            );
+            // SAFETY: out_offset+32 <= out_width checked above, valid for 256-bit stores
+            unsafe {
+                _mm256_storeu_si256(out_row[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
+                _mm256_storeu_si256(
+                    out_row[out_offset + 16..].as_mut_ptr() as *mut __m256i,
+                    v_out1,
+                );
+            }
         }
 
         // Scalar remainder for horizontal pass
@@ -683,7 +699,7 @@ pub fn upsample_h1v2_i16_fancy(
 /// The active implementation is `upsample_h2v2_i16_fancy_avx2`.
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "unsafe_simd",
+    feature = "magetypes-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 pub fn upsample_h2v2_i16_fancy_simd(
@@ -697,6 +713,12 @@ pub fn upsample_h2v2_i16_fancy_simd(
     if in_width == 0 || in_height == 0 || out_width == 0 || out_height == 0 {
         return;
     }
+
+    let Some(token) = archmage::Avx2Token::try_new() else {
+        // Fall back to scalar if AVX2 not available
+        upsample_h2v2_i16_fancy_scalar(input, in_width, in_height, output, out_width, out_height);
+        return;
+    };
 
     // Stack-allocated scratch for one row of vertical interpolation results
     // This avoids heap allocation in the hot path
@@ -728,25 +750,26 @@ pub fn upsample_h2v2_i16_fancy_simd(
         let out_row = &mut output[out_y * out_width..][..out_width];
 
         // Vertical pass: compute vertically-interpolated row into scratch
-        unsafe {
-            upsample_vertical_row_avx2(curr_row, v_neighbor_row, scratch);
-        }
+        upsample_vertical_row_avx2(token, curr_row, v_neighbor_row, scratch);
 
         // Horizontal pass: horizontally interpolate scratch into output
-        unsafe {
-            upsample_horizontal_row_avx2(scratch, out_row);
-        }
+        upsample_horizontal_row_avx2(token, scratch, out_row);
     }
 }
 
 /// Vertical upsampling of a single row: (3*curr + neighbor + 2) >> 2
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "unsafe_simd",
+    feature = "magetypes-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
-#[target_feature(enable = "avx2")]
-unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mut [i16]) {
+#[arcane]
+fn upsample_vertical_row_avx2(
+    _token: archmage::Avx2Token,
+    curr: &[i16],
+    neighbor: &[i16],
+    output: &mut [i16],
+) {
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
@@ -760,8 +783,13 @@ unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mu
     let chunks = width / 16;
     for i in 0..chunks {
         let offset = i * 16;
-        let v_curr = _mm256_loadu_si256(curr[offset..].as_ptr() as *const __m256i);
-        let v_neighbor = _mm256_loadu_si256(neighbor[offset..].as_ptr() as *const __m256i);
+        // SAFETY: offset + 16 <= width, slices are valid for 256-bit loads
+        let (v_curr, v_neighbor) = unsafe {
+            (
+                _mm256_loadu_si256(curr[offset..].as_ptr() as *const __m256i),
+                _mm256_loadu_si256(neighbor[offset..].as_ptr() as *const __m256i),
+            )
+        };
 
         // (3 * curr + neighbor + 2) >> 2
         let v_result = _mm256_srai_epi16(
@@ -772,7 +800,10 @@ unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mu
             2,
         );
 
-        _mm256_storeu_si256(output[offset..].as_mut_ptr() as *mut __m256i, v_result);
+        // SAFETY: offset + 16 <= width, output is valid for 256-bit store
+        unsafe {
+            _mm256_storeu_si256(output[offset..].as_mut_ptr() as *mut __m256i, v_result);
+        }
     }
 
     // Handle remainder
@@ -788,11 +819,15 @@ unsafe fn upsample_vertical_row_avx2(curr: &[i16], neighbor: &[i16], output: &mu
 /// Uses (3*curr + neighbor + 2) >> 2 for triangle filter
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "unsafe_simd",
+    feature = "magetypes-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
-#[target_feature(enable = "avx2")]
-unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
+#[arcane]
+fn upsample_horizontal_row_avx2(
+    _token: archmage::Avx2Token,
+    input: &[i16],
+    output: &mut [i16],
+) {
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
@@ -826,10 +861,14 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
             break;
         }
 
-        // Load overlapping windows: prev, curr, next
-        let v_prev = _mm256_loadu_si256(input[in_offset - 1..].as_ptr() as *const __m256i);
-        let v_curr = _mm256_loadu_si256(input[in_offset..].as_ptr() as *const __m256i);
-        let v_next = _mm256_loadu_si256(input[in_offset + 1..].as_ptr() as *const __m256i);
+        // SAFETY: in_offset-1..in_offset+17 within input bounds, valid for 256-bit loads
+        let (v_prev, v_curr, v_next) = unsafe {
+            (
+                _mm256_loadu_si256(input[in_offset - 1..].as_ptr() as *const __m256i),
+                _mm256_loadu_si256(input[in_offset..].as_ptr() as *const __m256i),
+                _mm256_loadu_si256(input[in_offset + 1..].as_ptr() as *const __m256i),
+            )
+        };
 
         // Common term: 3*curr + 2
         let v_common = _mm256_add_epi16(_mm256_mullo_epi16(v_curr, v_three), v_two);
@@ -849,11 +888,14 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
         let v_out0 = _mm256_permute2x128_si256(v_lo, v_hi, 0x20); // First 16 outputs
         let v_out1 = _mm256_permute2x128_si256(v_lo, v_hi, 0x31); // Second 16 outputs
 
-        _mm256_storeu_si256(output[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
-        _mm256_storeu_si256(
-            output[out_offset + 16..].as_mut_ptr() as *mut __m256i,
-            v_out1,
-        );
+        // SAFETY: out_offset+32 <= out_width checked above, valid for 256-bit stores
+        unsafe {
+            _mm256_storeu_si256(output[out_offset..].as_mut_ptr() as *mut __m256i, v_out0);
+            _mm256_storeu_si256(
+                output[out_offset + 16..].as_mut_ptr() as *mut __m256i,
+                v_out1,
+            );
+        }
     }
 
     // Handle remainder with scalar
@@ -893,7 +935,7 @@ unsafe fn upsample_horizontal_row_avx2(input: &[i16], output: &mut [i16]) {
 /// Scalar fallback for horizontal upsampling
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "unsafe_simd",
+    feature = "magetypes-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {

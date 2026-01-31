@@ -6,6 +6,7 @@
 
 use imgref::ImgRefMut;
 use zenjpeg::decoder::{Decoder, PixelFormat};
+#[cfg(feature = "ultrahdr")]
 use zenjpeg::ultrahdr::UltraHdrExtras;
 
 /// Path to the grayscale test image
