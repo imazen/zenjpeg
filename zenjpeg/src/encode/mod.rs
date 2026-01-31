@@ -113,6 +113,8 @@ pub mod v2;
 
 // Re-export v2 types at encode:: level for cleaner imports
 // (Now from encoder_types, encoder_config, byte_encoders - v2 re-exports for compatibility)
+#[allow(unused_imports)] // Public API re-export
+pub use blocks::HuffmanSymbolFrequencies;
 #[allow(unused_imports)] // Public API re-exports
 pub use byte_encoders::{BytesEncoder, Pixel, RgbEncoder, YCbCrPlanarEncoder};
 #[allow(unused_imports)] // Public API re-export

@@ -796,6 +796,24 @@ impl StreamingEncoder {
         self.finish_with_stop(Unstoppable)
     }
 
+    /// Finishes encoding and returns both the JPEG and the frequency counts
+    /// from the Huffman optimization pass (if optimize_huffman was enabled).
+    ///
+    /// Returns `None` for counts if:
+    /// - `optimize_huffman` was disabled
+    /// - Streaming-through mode was used (no buffered blocks to count)
+    /// - Progressive mode was used (uses a different counting path)
+    pub(crate) fn finish_with_huffman_frequencies(
+        self,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
+        let mut output = Vec::new();
+        let counts = self.finish_into_with_huffman_frequencies(&mut output, Unstoppable)?;
+        Ok((output, counts))
+    }
+
     /// Finishes encoding with cancellation support.
     pub(crate) fn finish_with_stop(self, stop: impl Stop) -> Result<Vec<u8>> {
         let mut output = Vec::new();
@@ -894,6 +912,95 @@ impl StreamingEncoder {
         }
     }
 
+    /// Like `finish_into_with_stop`, but also returns frequency counts from
+    /// the Huffman optimization pass when in buffered + optimize_huffman mode.
+    pub(crate) fn finish_into_with_huffman_frequencies(
+        mut self,
+        output: &mut Vec<u8>,
+        stop: impl Stop,
+    ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
+        stop.check()?;
+
+        let total_rows = self.current_y + self.rows_buffered;
+        if total_rows < self.height {
+            return Err(Error::io_error(format!(
+                "only {} of {} rows were pushed",
+                total_rows, self.height
+            )));
+        }
+
+        if self.rows_buffered > 0 {
+            self.flush_strip_with_stop(&stop)?;
+        }
+
+        if let Some(mut streaming) = self.streaming.take() {
+            // Streaming mode - no buffered blocks, no counts available
+            let is_color = !self.config.pixel_format.is_grayscale();
+            let width = self.width;
+            let subsampling = self.config.subsampling;
+            let restart_interval = self.config.restart_interval;
+
+            let final_output = self.processor.finalize()?;
+            if !final_output.y_blocks.is_empty() {
+                crate::entropy::encode_blocks_mcu_order(
+                    &final_output.y_blocks,
+                    &final_output.cb_blocks,
+                    &final_output.cr_blocks,
+                    &streaming.tables,
+                    &mut streaming.writer,
+                    is_color,
+                    &mut streaming.entropy_state,
+                    subsampling,
+                    width,
+                    restart_interval,
+                    streaming.total_mcus,
+                )?;
+            }
+            Self::finish_streaming_static(streaming, output)?;
+            Ok(None)
+        } else {
+            // Buffered mode: extract frequency counts from the optimize pass
+            let config = self.config;
+            let y_quant = self.y_quant;
+            let cb_quant = self.cb_quant;
+            let cr_quant = self.cr_quant;
+            let strip_output = self.processor.finalize()?;
+
+            match config.mode {
+                JpegMode::Progressive => {
+                    // Progressive uses a different Huffman path; no frequency extraction
+                    if !config.optimize_huffman {
+                        return Err(Error::unsupported_feature(
+                            "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                        ));
+                    }
+                    config.encode_progressive_from_blocks_into(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        &y_quant,
+                        &cb_quant,
+                        &cr_quant,
+                        output,
+                    )?;
+                    Ok(None)
+                }
+                _ => {
+                    // Baseline: collect frequencies from the optimize pass
+                    Self::build_jpeg_baseline_into(
+                        &config,
+                        &y_quant,
+                        &cb_quant,
+                        &cr_quant,
+                        strip_output,
+                        output,
+                        true,
+                    )
+                }
+            }
+        }
+    }
+
     /// Finishes streaming-through encoding.
     ///
     /// Combines the pre-written header with the scan data from the BitWriter
@@ -989,7 +1096,9 @@ impl StreamingEncoder {
                     cr_quant,
                     strip_output,
                     output,
-                )
+                    false,
+                )?;
+                Ok(())
             }
         }
     }
@@ -1010,11 +1119,16 @@ impl StreamingEncoder {
             cr_quant,
             strip_output,
             &mut output,
+            false,
         )?;
         Ok(output)
     }
 
     /// Builds baseline JPEG output from processed blocks into provided buffer.
+    ///
+    /// When `collect_frequencies` is true, the YCbCr optimized Huffman path
+    /// returns the symbol frequencies used to build the tables (at no extra
+    /// cost—they are produced during the normal optimization pass).
     fn build_jpeg_baseline_into(
         config: &ComputedConfig,
         y_quant: &QuantTable,
@@ -1022,10 +1136,12 @@ impl StreamingEncoder {
         cr_quant: &QuantTable,
         strip_output: crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
-    ) -> Result<()> {
+        collect_frequencies: bool,
+    ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
         let is_color = !config.pixel_format.is_grayscale();
         let width = config.width as usize;
         let height = config.height as usize;
+        let mut frequencies = None;
 
         output.clear();
         output
@@ -1089,12 +1205,24 @@ impl StreamingEncoder {
             config.write_frame_header_ex(output, is_extended)?;
 
             if config.optimize_huffman {
-                let tables = config.build_optimized_tables(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                    is_color,
-                )?;
+                let (tables, freqs) = if collect_frequencies {
+                    let (t, f) = config.build_optimized_tables_with_counts(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        is_color,
+                    )?;
+                    (t, Some(f))
+                } else {
+                    let t = config.build_optimized_tables(
+                        &strip_output.y_blocks,
+                        &strip_output.cb_blocks,
+                        &strip_output.cr_blocks,
+                        is_color,
+                    )?;
+                    (t, None)
+                };
+                frequencies = freqs;
 
                 config.write_huffman_tables_optimized(output, &tables)?;
 
@@ -1134,7 +1262,7 @@ impl StreamingEncoder {
         output.push(0xFF);
         output.push(crate::foundation::consts::MARKER_EOI);
 
-        Ok(())
+        Ok(frequencies)
     }
 }
 
