@@ -35,10 +35,14 @@ fn encode_and_report(pixels: &[u8], width: u32, height: u32, quality: u8) {
     let mut output = Vec::new();
     encoder.finish_into(&mut output).expect("Failed to finish");
 
-    let blocks = ((width + 7) / 8) * ((height + 7) / 8)
-        + 2 * ((width + 15) / 16) * ((height + 15) / 16);
+    let blocks =
+        ((width + 7) / 8) * ((height + 7) / 8) + 2 * ((width + 15) / 16) * ((height + 15) / 16);
 
-    eprintln!("  Output: {} bytes ({:.2} bytes/block)", output.len(), output.len() as f64 / blocks as f64);
+    eprintln!(
+        "  Output: {} bytes ({:.2} bytes/block)",
+        output.len(),
+        output.len() as f64 / blocks as f64
+    );
 }
 
 fn main() {
@@ -49,7 +53,7 @@ fn main() {
 
     // CLIC 2025 validation images - realistic modern photos
     let clic_images = [
-        "097cb426910ba8ce2525dd8bb7fb1777",  // 1507x2048
+        "097cb426910ba8ce2525dd8bb7fb1777", // 1507x2048
         "0c49a5cce349020bbba2f97ae41e90ba",
         "100a02c269c5948392f283b2aa3bb4da",
         "11f2b039b293758398b1a7a8afa64bb2",
