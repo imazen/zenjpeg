@@ -1668,7 +1668,7 @@ impl StreamingEncoder {
                 // First check: minimum percentage requirement
                 // This prevents transition on too little data regardless of heuristics
                 let min_pct_ok = if let Some(min_pct) = self.min_transition_percent {
-                    let min_rows = (self.height as usize * min_pct) / 100;
+                    let min_rows = (self.height * min_pct) / 100;
                     self.current_y >= min_rows
                 } else {
                     true // No minimum set, always OK

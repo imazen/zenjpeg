@@ -2,6 +2,8 @@
 //! Generated: 2026-01-28
 //! Overhead: ~2-2.5% vs optimal, ~3-4% better than standard
 
+#![allow(dead_code)] // Public API functions - used by consumers
+
 use crate::huffman::optimize::{OptimizedHuffmanTables, OptimizedTable};
 
 pub fn trained_tables_q0() -> OptimizedHuffmanTables {
