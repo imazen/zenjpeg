@@ -65,6 +65,8 @@ pub mod parallel;
 #[doc(hidden)]
 pub mod streaming;
 #[doc(hidden)]
+pub mod streaming_builder;
+#[doc(hidden)]
 pub mod strip;
 
 // v2 types moved to encode root (v2/mod.rs re-exports these for compatibility)
