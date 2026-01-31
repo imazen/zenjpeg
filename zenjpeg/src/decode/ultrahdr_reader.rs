@@ -280,7 +280,7 @@ pub struct UltraHdrReader<'a> {
     extras: Option<DecodedExtras>,
 
     /// Internal state for HDR reconstruction
-    hdr_state: Option<HdrDecoderState>,
+    hdr_state: Option<HdrDecoderState<'a>>,
 
     /// Gain map JPEG byte range in original data (start, end)
     /// Uses byte range instead of Vec<u8> for zero-copy access
@@ -289,15 +289,13 @@ pub struct UltraHdrReader<'a> {
 
 /// Internal state for HDR reconstruction.
 #[cfg(feature = "ultrahdr")]
-enum HdrDecoderState {
+enum HdrDecoderState<'a> {
     /// Full gain map in memory, row-based reconstruction
     RowDecoder(Box<RowDecoder>),
     /// Streaming gain map with parallel decode
     StreamDecoder {
         decoder: Box<StreamDecoder>,
-        gainmap_reader: Box<ScanlineReader<'static>>,
-        /// Owned gainmap data to satisfy lifetime
-        _gainmap_data: Vec<u8>,
+        gainmap_reader: Box<ScanlineReader<'a>>,
     },
 }
 
@@ -412,20 +410,9 @@ impl<'a> UltraHdrReader<'a> {
                 .map_err(|e| Error::decode_error(e.to_string()))?;
 
                 // Create a scanline reader for the gainmap
-                // We need to own the gainmap data for the reader's lifetime
-                // This is the ONLY place we copy - streaming mode needs owned data
-                let gainmap_owned: Vec<u8> = gainmap_data.to_vec();
-
-                // SAFETY: We store the owned data alongside the reader, ensuring
-                // the data lives as long as the reader. The reader reference is
-                // created from a pointer to the stored data.
-                let gainmap_ptr = gainmap_owned.as_ptr();
-                let gainmap_len = gainmap_owned.len();
-                let gainmap_slice: &'static [u8] =
-                    unsafe { core::slice::from_raw_parts(gainmap_ptr, gainmap_len) };
-
+                // Borrows directly from original data (zero-copy, no self-referential struct)
                 let gm_reader = crate::decode::Decoder::new()
-                    .scanline_reader(gainmap_slice)
+                    .scanline_reader(gainmap_data)
                     .map_err(|e| {
                         Error::decode_error(format!("Failed to create gainmap reader: {}", e))
                     })?;
@@ -433,7 +420,6 @@ impl<'a> UltraHdrReader<'a> {
                 self.hdr_state = Some(HdrDecoderState::StreamDecoder {
                     decoder: Box::new(stream_decoder),
                     gainmap_reader: Box::new(gm_reader),
-                    _gainmap_data: gainmap_owned,
                 });
             }
         }

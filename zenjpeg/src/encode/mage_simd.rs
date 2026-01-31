@@ -1816,6 +1816,49 @@ mod tests {
         }
     }
 
+    /// Load two 8x8 f32 blocks into interleaved ZMM registers.
+    /// Safe via archmage token: all AVX-512 intrinsics are gated by capability proof.
+    #[arcane]
+    fn load_dual_blocks_avx512(
+        token: impl archmage::HasAvx512f + archmage::HasAvx2,
+        block_a: &[f32; 64],
+        block_b: &[f32; 64],
+    ) -> [__m512; 8] {
+        core::array::from_fn(|i| {
+            let off = i * 8;
+            _mm512_insertf32x8::<1>(
+                _mm512_castps256_ps512(avx::_mm256_loadu_ps(
+                    token,
+                    block_a[off..off + 8].try_into().unwrap(),
+                )),
+                avx::_mm256_loadu_ps(token, block_b[off..off + 8].try_into().unwrap()),
+            )
+        })
+    }
+
+    /// Store interleaved ZMM registers back to two 8x8 f32 blocks.
+    /// Safe via archmage token: all AVX-512 intrinsics are gated by capability proof.
+    #[arcane]
+    fn store_dual_blocks_avx512(
+        token: impl archmage::HasAvx512f + archmage::HasAvx2,
+        reg: &[__m512; 8],
+        result_a: &mut [f32; 64],
+        result_b: &mut [f32; 64],
+    ) {
+        for i in 0..8 {
+            avx::_mm256_storeu_ps(
+                token,
+                (&mut result_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
+                _mm512_castps512_ps256(reg[i]),
+            );
+            avx::_mm256_storeu_ps(
+                token,
+                (&mut result_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
+                _mm512_extractf32x8_ps::<1>(reg[i]),
+            );
+        }
+    }
+
     #[test]
     fn test_mage_transpose_8x8_dual() {
         use archmage::Avx512fToken;
@@ -1825,88 +1868,16 @@ mod tests {
             let original_a: [f32; 64] = core::array::from_fn(|i| i as f32);
             let original_b: [f32; 64] = core::array::from_fn(|i| (i + 100) as f32);
 
-            // Load into ZMM registers (interleaved)
-            let mut reg: [__m512; 8] = unsafe {
-                [
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[0..8].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[0..8].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[8..16].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[8..16].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[16..24].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[16..24].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[24..32].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[24..32].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[32..40].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[32..40].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[40..48].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[40..48].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[48..56].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[48..56].try_into().unwrap()),
-                    ),
-                    _mm512_insertf32x8::<1>(
-                        _mm512_castps256_ps512(avx::_mm256_loadu_ps(
-                            token,
-                            original_a[56..64].try_into().unwrap(),
-                        )),
-                        avx::_mm256_loadu_ps(token, original_b[56..64].try_into().unwrap()),
-                    ),
-                ]
-            };
+            // Load into ZMM registers (interleaved) — safe via #[arcane]
+            let mut reg = load_dual_blocks_avx512(token, &original_a, &original_b);
 
             // Transpose
             mage_transpose_8x8_dual_inner(token, &mut reg);
 
-            // Store back
+            // Store back — safe via #[arcane]
             let mut result_a = [0.0f32; 64];
             let mut result_b = [0.0f32; 64];
-            for i in 0..8 {
-                unsafe {
-                    avx::_mm256_storeu_ps(
-                        token,
-                        (&mut result_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
-                        _mm512_castps512_ps256(reg[i]),
-                    );
-                    avx::_mm256_storeu_ps(
-                        token,
-                        (&mut result_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
-                        _mm512_extractf32x8_ps::<1>(reg[i]),
-                    );
-                }
-            }
+            store_dual_blocks_avx512(token, &reg, &mut result_a, &mut result_b);
 
             // Verify transpose for block A: result[col * 8 + row] == original[row * 8 + col]
             for row in 0..8 {

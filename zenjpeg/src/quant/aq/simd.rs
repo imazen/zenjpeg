@@ -1353,24 +1353,20 @@ pub(crate) mod archmage_impl {
         mage_masking_sqrt_x8(token, diff_sq_clamped)
     }
 
-    /// Archmage-based pre_erosion_row_padded using unsafe pointer loads.
-    /// Uses direct intrinsics for maximum performance.
-    ///
-    /// This version uses raw pointer loads to avoid slice-to-array conversion overhead.
-    ///
-    /// # Safety
-    /// - Requires AVX2 + FMA capable CPU (token proves this)
-    /// - Caller must ensure buffers are properly padded (row.len() >= width + 2)
+    /// Archmage-based pre_erosion_row_padded using safe_unaligned_simd loads.
+    /// Uses token-gated intrinsics for maximum performance with full safety.
     #[arcane]
     #[inline(always)]
     fn mage_pre_erosion_row_padded_inner<T: HasAvx2 + HasFma + Copy>(
         _token: T,
-        row_ptr: *const f32,
-        row_above_ptr: *const f32,
-        row_below_ptr: *const f32,
-        output_ptr: *mut f32,
+        row: &[f32],
+        row_above: &[f32],
+        row_below: &[f32],
+        output: &mut [f32],
         width: usize,
     ) {
+        use safe_unaligned_simd::x86_64 as safe_simd;
+
         let chunks = width / 8;
 
         // Broadcast constants once outside the loop
@@ -1389,12 +1385,12 @@ pub(crate) mod archmage_impl {
             let x = chunk * 8;
             let buf_x = x + 1; // Data offset due to padding
 
-            // Direct pointer loads - no bounds checks
-            let pixels = _mm256_loadu_ps(row_ptr.add(buf_x));
-            let left = _mm256_loadu_ps(row_ptr.add(buf_x - 1));
-            let right = _mm256_loadu_ps(row_ptr.add(buf_x + 1));
-            let top = _mm256_loadu_ps(row_above_ptr.add(buf_x));
-            let bottom = _mm256_loadu_ps(row_below_ptr.add(buf_x));
+            // Safe slice-based loads via safe_unaligned_simd
+            let pixels = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x..buf_x + 8]).unwrap());
+            let left = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x - 1..buf_x + 7]).unwrap());
+            let right = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x + 1..buf_x + 9]).unwrap());
+            let top = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_above[buf_x..buf_x + 8]).unwrap());
+            let bottom = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_below[buf_x..buf_x + 8]).unwrap());
 
             // base = 0.25 * (left + right + top + bottom)
             let sum_lr = _mm256_add_ps(left, right);
@@ -1425,9 +1421,12 @@ pub(crate) mod archmage_impl {
             let result = _mm256_mul_ps(quarter, sqrt_inner);
 
             // Load existing, add result, store back
-            let existing = _mm256_loadu_ps(output_ptr.add(x));
+            let existing = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&output[x..x + 8]).unwrap());
             let updated = _mm256_add_ps(existing, result);
-            _mm256_storeu_ps(output_ptr.add(x), updated);
+            safe_simd::_mm256_storeu_ps(
+                <&mut [f32; 8]>::try_from(&mut output[x..x + 8]).unwrap(),
+                updated,
+            );
         }
     }
 
@@ -1449,13 +1448,12 @@ pub(crate) mod archmage_impl {
             return;
         }
 
-        // SAFETY: We've verified buffer lengths above, and token proves CPU capability
         mage_pre_erosion_row_padded_inner(
             token,
-            row.as_ptr(),
-            row_above.as_ptr(),
-            row_below.as_ptr(),
-            output.as_mut_ptr(),
+            row,
+            row_above,
+            row_below,
+            output,
             width,
         );
 
@@ -1740,7 +1738,6 @@ pub(crate) mod archmage_impl {
             return;
         }
 
-        let ptr = pre_erosion_buffer.as_ptr();
         let pe_w_i = pe_w as isize;
         let max_y = max_filled_row as isize;
 
@@ -1774,17 +1771,16 @@ pub(crate) mod archmage_impl {
 
                 // Corner (0,0): center at (cx0, cy0), rows r0/r1/r2
                 let mut sum = 0.0f32;
-                unsafe {
-                    // Load 9 values for corner (0,0)
-                    let v0 = *ptr.add(r0 + cx0 - 1);
-                    let v1 = *ptr.add(r0 + cx0);
-                    let v2 = *ptr.add(r0 + cx0 + 1);
-                    let v3 = *ptr.add(r1 + cx0 - 1);
-                    let v4 = *ptr.add(r1 + cx0);
-                    let v5 = *ptr.add(r1 + cx0 + 1);
-                    let v6 = *ptr.add(r2 + cx0 - 1);
-                    let v7 = *ptr.add(r2 + cx0);
-                    let v8 = *ptr.add(r2 + cx0 + 1);
+                // Load 9 values for corner (0,0)
+                    let v0 = pre_erosion_buffer[r0 + cx0 - 1];
+                    let v1 = pre_erosion_buffer[r0 + cx0];
+                    let v2 = pre_erosion_buffer[r0 + cx0 + 1];
+                    let v3 = pre_erosion_buffer[r1 + cx0 - 1];
+                    let v4 = pre_erosion_buffer[r1 + cx0];
+                    let v5 = pre_erosion_buffer[r1 + cx0 + 1];
+                    let v6 = pre_erosion_buffer[r2 + cx0 - 1];
+                    let v7 = pre_erosion_buffer[r2 + cx0];
+                    let v8 = pre_erosion_buffer[r2 + cx0 + 1];
 
                     // Find 4 smallest inline using min comparisons
                     let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
@@ -1903,19 +1899,17 @@ pub(crate) mod archmage_impl {
                         mi = 8;
                     }
                     sum += 0.05 * a[mi];
-                }
 
                 // Corner (1,0): center at (cx1, cy0), rows r0/r1/r2
-                unsafe {
-                    let v0 = *ptr.add(r0 + cx1 - 1);
-                    let v1 = *ptr.add(r0 + cx1);
-                    let v2 = *ptr.add(r0 + cx1 + 1);
-                    let v3 = *ptr.add(r1 + cx1 - 1);
-                    let v4 = *ptr.add(r1 + cx1);
-                    let v5 = *ptr.add(r1 + cx1 + 1);
-                    let v6 = *ptr.add(r2 + cx1 - 1);
-                    let v7 = *ptr.add(r2 + cx1);
-                    let v8 = *ptr.add(r2 + cx1 + 1);
+                    let v0 = pre_erosion_buffer[r0 + cx1 - 1];
+                    let v1 = pre_erosion_buffer[r0 + cx1];
+                    let v2 = pre_erosion_buffer[r0 + cx1 + 1];
+                    let v3 = pre_erosion_buffer[r1 + cx1 - 1];
+                    let v4 = pre_erosion_buffer[r1 + cx1];
+                    let v5 = pre_erosion_buffer[r1 + cx1 + 1];
+                    let v6 = pre_erosion_buffer[r2 + cx1 - 1];
+                    let v7 = pre_erosion_buffer[r2 + cx1];
+                    let v8 = pre_erosion_buffer[r2 + cx1 + 1];
 
                     let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
                     let mut mi = 0;
@@ -2025,19 +2019,17 @@ pub(crate) mod archmage_impl {
                         mi = 8;
                     }
                     sum += 0.05 * a[mi];
-                }
 
                 // Corner (0,1): center at (cx0, cy1), rows r1/r2/r3
-                unsafe {
-                    let v0 = *ptr.add(r1 + cx0 - 1);
-                    let v1 = *ptr.add(r1 + cx0);
-                    let v2 = *ptr.add(r1 + cx0 + 1);
-                    let v3 = *ptr.add(r2 + cx0 - 1);
-                    let v4 = *ptr.add(r2 + cx0);
-                    let v5 = *ptr.add(r2 + cx0 + 1);
-                    let v6 = *ptr.add(r3 + cx0 - 1);
-                    let v7 = *ptr.add(r3 + cx0);
-                    let v8 = *ptr.add(r3 + cx0 + 1);
+                    let v0 = pre_erosion_buffer[r1 + cx0 - 1];
+                    let v1 = pre_erosion_buffer[r1 + cx0];
+                    let v2 = pre_erosion_buffer[r1 + cx0 + 1];
+                    let v3 = pre_erosion_buffer[r2 + cx0 - 1];
+                    let v4 = pre_erosion_buffer[r2 + cx0];
+                    let v5 = pre_erosion_buffer[r2 + cx0 + 1];
+                    let v6 = pre_erosion_buffer[r3 + cx0 - 1];
+                    let v7 = pre_erosion_buffer[r3 + cx0];
+                    let v8 = pre_erosion_buffer[r3 + cx0 + 1];
 
                     let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
                     let mut mi = 0;
@@ -2147,19 +2139,17 @@ pub(crate) mod archmage_impl {
                         mi = 8;
                     }
                     sum += 0.05 * a[mi];
-                }
 
                 // Corner (1,1): center at (cx1, cy1), rows r1/r2/r3
-                unsafe {
-                    let v0 = *ptr.add(r1 + cx1 - 1);
-                    let v1 = *ptr.add(r1 + cx1);
-                    let v2 = *ptr.add(r1 + cx1 + 1);
-                    let v3 = *ptr.add(r2 + cx1 - 1);
-                    let v4 = *ptr.add(r2 + cx1);
-                    let v5 = *ptr.add(r2 + cx1 + 1);
-                    let v6 = *ptr.add(r3 + cx1 - 1);
-                    let v7 = *ptr.add(r3 + cx1);
-                    let v8 = *ptr.add(r3 + cx1 + 1);
+                    let v0 = pre_erosion_buffer[r1 + cx1 - 1];
+                    let v1 = pre_erosion_buffer[r1 + cx1];
+                    let v2 = pre_erosion_buffer[r1 + cx1 + 1];
+                    let v3 = pre_erosion_buffer[r2 + cx1 - 1];
+                    let v4 = pre_erosion_buffer[r2 + cx1];
+                    let v5 = pre_erosion_buffer[r2 + cx1 + 1];
+                    let v6 = pre_erosion_buffer[r3 + cx1 - 1];
+                    let v7 = pre_erosion_buffer[r3 + cx1];
+                    let v8 = pre_erosion_buffer[r3 + cx1 + 1];
 
                     let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
                     let mut mi = 0;
@@ -2269,7 +2259,6 @@ pub(crate) mod archmage_impl {
                         mi = 8;
                     }
                     sum += 0.05 * a[mi];
-                }
 
                 sum
             } else {
@@ -2290,16 +2279,15 @@ pub(crate) mod archmage_impl {
                         let ry1 = (cy.clamp(0, max_y) as usize % buffer_rows) * pe_w;
                         let ry2 = ((cy + 1).clamp(0, max_y) as usize % buffer_rows) * pe_w;
 
-                        unsafe {
-                            let v0 = *ptr.add(ry0 + c0);
-                            let v1 = *ptr.add(ry0 + c1);
-                            let v2 = *ptr.add(ry0 + c2);
-                            let v3 = *ptr.add(ry1 + c0);
-                            let v4 = *ptr.add(ry1 + c1);
-                            let v5 = *ptr.add(ry1 + c2);
-                            let v6 = *ptr.add(ry2 + c0);
-                            let v7 = *ptr.add(ry2 + c1);
-                            let v8 = *ptr.add(ry2 + c2);
+                        let v0 = pre_erosion_buffer[ry0 + c0];
+                            let v1 = pre_erosion_buffer[ry0 + c1];
+                            let v2 = pre_erosion_buffer[ry0 + c2];
+                            let v3 = pre_erosion_buffer[ry1 + c0];
+                            let v4 = pre_erosion_buffer[ry1 + c1];
+                            let v5 = pre_erosion_buffer[ry1 + c2];
+                            let v6 = pre_erosion_buffer[ry2 + c0];
+                            let v7 = pre_erosion_buffer[ry2 + c1];
+                            let v8 = pre_erosion_buffer[ry2 + c2];
 
                             let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
                             let mut mi = 0;
@@ -2409,7 +2397,6 @@ pub(crate) mod archmage_impl {
                                 mi = 8;
                             }
                             sum += 0.05 * a[mi];
-                        }
                     }
                 }
 
