@@ -8,13 +8,11 @@
 //!
 //! SIMD optimization via the `wide` crate is always enabled.
 //!
-//! # Safe/Unsafe Architecture
+//! # SIMD Architecture
 //!
 //! - **Safe public APIs**: `forward_dct_8x8`, `transpose_8x8_simd`
-//! - **Unsafe internal functions**: `forward_dct_8x8_fma`, `transpose_8x8_avx`
-//!
-//! The unsafe AVX/FMA functions use raw intrinsics for 8x8 matrix transpose
-//! (`_mm256_unpacklo/hi_ps`, `_mm256_permute2f128_ps`) which have no `wide` equivalent.
+//! - **magetypes path** (`magetypes-simd` feature): Token-gated AVX2+FMA via `magetypes::simd::f32x8`
+//! - **wide path** (default fallback): Portable SIMD via `wide::f32x8`
 
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::foundation::simd_types::Block8x8f;
@@ -235,13 +233,9 @@ fn dct1d_8(mem: &mut [f32]) {
 pub(crate) mod simd {
     use super::*;
 
-    // Raw AVX2 intrinsics - only available with `unsafe_simd` feature
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    use core::arch::x86_64::{
-        __m256, _mm256_add_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_mul_ps,
-        _mm256_permute2f128_ps, _mm256_set1_ps, _mm256_storeu_ps, _mm256_sub_ps,
-        _mm256_unpackhi_ps, _mm256_unpacklo_ps,
-    };
+    // Token-gated SIMD types for AVX2+FMA - safe wrappers around intrinsics
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    use magetypes::simd::f32x8 as mf32x8;
 
     // SIMD versions of WC constants for parallel DCT
     // Note: The parallel DCT approach has poor cache locality and doesn't
@@ -372,58 +366,12 @@ pub(crate) mod simd {
 
         // Step 2: Transpose to column-major using AVX2 if available
         // After transpose: mem[col] = [row0[col], row1[col], ..., row7[col]]
-        let mut mem: [f32x8; 8];
-
-        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-        {
-            if is_x86_feature_detected!("avx2") {
-                // Use AVX2 transpose on the raw arrays
-                let mut input_flat = [0.0f32; 64];
-                let mut output_flat = [0.0f32; 64];
-                for (i, r) in rows.iter().enumerate() {
-                    let arr = r.to_array();
-                    input_flat[i * 8..i * 8 + 8].copy_from_slice(&arr);
-                }
-                unsafe {
-                    transpose_8x8_avx(&input_flat, &mut output_flat);
-                }
-                mem = [f32x8::ZERO; 8];
-                for col in 0..8 {
-                    let k = col * 8;
-                    let col_slice: [f32; 8] = output_flat[k..k + 8].try_into().unwrap();
-                    mem[col] = f32x8::from(col_slice);
-                }
-            } else {
-                // Scalar transpose fallback
-                mem = transpose_f32x8_array(&rows);
-            }
-        }
-
-        #[cfg(not(all(feature = "unsafe_simd", target_arch = "x86_64")))]
-        {
-            mem = transpose_f32x8_array(&rows);
-        }
+        let mut mem = transpose_f32x8_array(&rows);
 
         // Step 3: Execute 8 DCT-1D operations in parallel
         dct1d_8_simd(&mut mem);
 
-        // Step 4: Transpose back to row-major
-        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-        {
-            if is_x86_feature_detected!("avx2") {
-                let mut input_flat = [0.0f32; 64];
-                for (i, m) in mem.iter().enumerate() {
-                    let arr = m.to_array();
-                    input_flat[i * 8..i * 8 + 8].copy_from_slice(&arr);
-                }
-                unsafe {
-                    transpose_8x8_avx(&input_flat, output);
-                }
-                return;
-            }
-        }
-
-        // Scalar store fallback
+        // Step 4: Transpose back to row-major and store
         let result = transpose_f32x8_array(&mem);
         for (i, r) in result.iter().enumerate() {
             let arr = r.to_array();
@@ -439,151 +387,29 @@ pub(crate) mod simd {
         f32x8::transpose(*input)
     }
 
-    /// AVX2-optimized 8x8 transpose using Highway's algorithm.
-    ///
-    /// Uses InterleaveLower/Upper (vunpcklps/vunpckhps) and ConcatLowerLower/UpperUpper
-    /// (vperm2f128) to perform the transpose entirely in registers.
-    /// Used by dct_8rows_parallel; transpose_8x8_simd has its own inline implementation.
-    ///
-    /// This is a low-level function. Production code should use the safe `transpose_8x8_simd` wrapper.
-    ///
-    /// # Safety
-    /// Requires AVX2 support.
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    #[target_feature(enable = "avx2")]
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) unsafe fn transpose_8x8_avx(input: &[f32; 64], output: &mut [f32; 64]) {
-        // Load 8 rows into YMM registers
-        let i0 = _mm256_loadu_ps(input.as_ptr());
-        let i1 = _mm256_loadu_ps(input.as_ptr().add(8));
-        let i2 = _mm256_loadu_ps(input.as_ptr().add(16));
-        let i3 = _mm256_loadu_ps(input.as_ptr().add(24));
-        let i4 = _mm256_loadu_ps(input.as_ptr().add(32));
-        let i5 = _mm256_loadu_ps(input.as_ptr().add(40));
-        let i6 = _mm256_loadu_ps(input.as_ptr().add(48));
-        let i7 = _mm256_loadu_ps(input.as_ptr().add(56));
-
-        // Phase 1: InterleaveLower/Upper pairs
-        // For f32: unpacklo interleaves elements [0,1] from each lane
-        //          unpackhi interleaves elements [2,3] from each lane
-        let q0 = _mm256_unpacklo_ps(i0, i2); // [i0[0],i2[0],i0[1],i2[1] | i0[4],i2[4],i0[5],i2[5]]
-        let q1 = _mm256_unpacklo_ps(i1, i3);
-        let q2 = _mm256_unpackhi_ps(i0, i2);
-        let q3 = _mm256_unpackhi_ps(i1, i3);
-        let q4 = _mm256_unpacklo_ps(i4, i6);
-        let q5 = _mm256_unpacklo_ps(i5, i7);
-        let q6 = _mm256_unpackhi_ps(i4, i6);
-        let q7 = _mm256_unpackhi_ps(i5, i7);
-
-        // Phase 2: Another round of InterleaveLower/Upper
-        let r0 = _mm256_unpacklo_ps(q0, q1);
-        let r1 = _mm256_unpackhi_ps(q0, q1);
-        let r2 = _mm256_unpacklo_ps(q2, q3);
-        let r3 = _mm256_unpackhi_ps(q2, q3);
-        let r4 = _mm256_unpacklo_ps(q4, q5);
-        let r5 = _mm256_unpackhi_ps(q4, q5);
-        let r6 = _mm256_unpacklo_ps(q6, q7);
-        let r7 = _mm256_unpackhi_ps(q6, q7);
-
-        // Phase 3: ConcatLowerLower/UpperUpper to swap 128-bit lanes
-        // vperm2f128 with imm8=0x20: concat low lanes (b_lo, a_lo)
-        // vperm2f128 with imm8=0x31: concat high lanes (b_hi, a_hi)
-        let o0 = _mm256_permute2f128_ps(r0, r4, 0x20);
-        let o1 = _mm256_permute2f128_ps(r1, r5, 0x20);
-        let o2 = _mm256_permute2f128_ps(r2, r6, 0x20);
-        let o3 = _mm256_permute2f128_ps(r3, r7, 0x20);
-        let o4 = _mm256_permute2f128_ps(r0, r4, 0x31);
-        let o5 = _mm256_permute2f128_ps(r1, r5, 0x31);
-        let o6 = _mm256_permute2f128_ps(r2, r6, 0x31);
-        let o7 = _mm256_permute2f128_ps(r3, r7, 0x31);
-
-        // Store transposed rows
-        _mm256_storeu_ps(output.as_mut_ptr(), o0);
-        _mm256_storeu_ps(output.as_mut_ptr().add(8), o1);
-        _mm256_storeu_ps(output.as_mut_ptr().add(16), o2);
-        _mm256_storeu_ps(output.as_mut_ptr().add(24), o3);
-        _mm256_storeu_ps(output.as_mut_ptr().add(32), o4);
-        _mm256_storeu_ps(output.as_mut_ptr().add(40), o5);
-        _mm256_storeu_ps(output.as_mut_ptr().add(48), o6);
-        _mm256_storeu_ps(output.as_mut_ptr().add(56), o7);
-    }
-
     /// SIMD-optimized 8x8 transpose with compile-time dispatch via multiversion.
-    /// Uses AVX2 intrinsics when available, falls back to scalar.
-    ///
-    /// The AVX2 version uses vunpcklps/vunpckhps and vperm2f128 for efficient
-    /// register-to-register transpose (Highway algorithm).
+    /// Uses magetypes AVX2 intrinsics when available, falls back to wide.
     #[multiversed]
     pub fn transpose_8x8_simd(input: &[f32; 64], output: &mut [f32; 64]) {
-        // When compiling for AVX2 target with unsafe_simd feature,
-        // use raw intrinsics for maximum performance.
-        #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+        #[cfg(all(
+            feature = "magetypes-simd",
+            target_arch = "x86_64",
+            target_feature = "avx2"
+        ))]
         {
-            if is_x86_feature_detected!("avx2") {
-                // SAFETY: AVX2 is available (checked above). The multiversion macro
-                // ensures this branch compiles with target_feature(enable = "avx2").
-                unsafe {
-                    // Load 8 rows into YMM registers
-                    let i0 = _mm256_loadu_ps(input.as_ptr());
-                    let i1 = _mm256_loadu_ps(input.as_ptr().add(8));
-                    let i2 = _mm256_loadu_ps(input.as_ptr().add(16));
-                    let i3 = _mm256_loadu_ps(input.as_ptr().add(24));
-                    let i4 = _mm256_loadu_ps(input.as_ptr().add(32));
-                    let i5 = _mm256_loadu_ps(input.as_ptr().add(40));
-                    let i6 = _mm256_loadu_ps(input.as_ptr().add(48));
-                    let i7 = _mm256_loadu_ps(input.as_ptr().add(56));
-
-                    // Phase 1: InterleaveLower/Upper pairs
-                    let q0 = _mm256_unpacklo_ps(i0, i2);
-                    let q1 = _mm256_unpacklo_ps(i1, i3);
-                    let q2 = _mm256_unpackhi_ps(i0, i2);
-                    let q3 = _mm256_unpackhi_ps(i1, i3);
-                    let q4 = _mm256_unpacklo_ps(i4, i6);
-                    let q5 = _mm256_unpacklo_ps(i5, i7);
-                    let q6 = _mm256_unpackhi_ps(i4, i6);
-                    let q7 = _mm256_unpackhi_ps(i5, i7);
-
-                    // Phase 2: Another round of InterleaveLower/Upper
-                    let r0 = _mm256_unpacklo_ps(q0, q1);
-                    let r1 = _mm256_unpackhi_ps(q0, q1);
-                    let r2 = _mm256_unpacklo_ps(q2, q3);
-                    let r3 = _mm256_unpackhi_ps(q2, q3);
-                    let r4 = _mm256_unpacklo_ps(q4, q5);
-                    let r5 = _mm256_unpackhi_ps(q4, q5);
-                    let r6 = _mm256_unpacklo_ps(q6, q7);
-                    let r7 = _mm256_unpackhi_ps(q6, q7);
-
-                    // Phase 3: ConcatLowerLower/UpperUpper to swap 128-bit lanes
-                    let o0 = _mm256_permute2f128_ps(r0, r4, 0x20);
-                    let o1 = _mm256_permute2f128_ps(r1, r5, 0x20);
-                    let o2 = _mm256_permute2f128_ps(r2, r6, 0x20);
-                    let o3 = _mm256_permute2f128_ps(r3, r7, 0x20);
-                    let o4 = _mm256_permute2f128_ps(r0, r4, 0x31);
-                    let o5 = _mm256_permute2f128_ps(r1, r5, 0x31);
-                    let o6 = _mm256_permute2f128_ps(r2, r6, 0x31);
-                    let o7 = _mm256_permute2f128_ps(r3, r7, 0x31);
-
-                    // Store transposed rows
-                    _mm256_storeu_ps(output.as_mut_ptr(), o0);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(8), o1);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(16), o2);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(24), o3);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(32), o4);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(40), o5);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(48), o6);
-                    _mm256_storeu_ps(output.as_mut_ptr().add(56), o7);
-                }
-                return;
-            }
+            let mut rows = mf32x8::load_8x8(input);
+            mf32x8::transpose_8x8(&mut rows);
+            mf32x8::store_8x8(&rows, output);
+            return;
         }
 
         // Use wide's built-in transpose (AVX-accelerated when available)
+        #[allow(unreachable_code)]
         transpose_8x8_wide(input, output);
     }
 
     /// Transpose using wide's built-in f32x8::transpose (AVX-accelerated).
-    /// (Safe fallback when unsafe_simd feature is disabled)
+    /// (Safe fallback when magetypes-simd feature is disabled)
     #[allow(dead_code)]
     #[inline]
     fn transpose_8x8_wide(input: &[f32; 64], output: &mut [f32; 64]) {
@@ -775,90 +601,41 @@ pub(crate) mod simd {
     }
 
     // ========================================================================
-    // Raw AVX2+FMA DCT Implementation
-    // No wide crate, pure intrinsics for maximum performance
+    // magetypes AVX2+FMA DCT Implementation
+    // Safe wrappers around intrinsics via token-gated types
     // ========================================================================
 
-    /// In-place 8x8 transpose on 8 __m256 registers.
-    /// After transpose, r[i] contains column i from all 8 original rows.
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    #[target_feature(enable = "avx2")]
-    #[inline]
-    unsafe fn transpose_8x8_avx_inplace(r: &mut [__m256; 8]) {
-        // Phase 1: InterleaveLower/Upper pairs
-        let q0 = _mm256_unpacklo_ps(r[0], r[2]);
-        let q1 = _mm256_unpacklo_ps(r[1], r[3]);
-        let q2 = _mm256_unpackhi_ps(r[0], r[2]);
-        let q3 = _mm256_unpackhi_ps(r[1], r[3]);
-        let q4 = _mm256_unpacklo_ps(r[4], r[6]);
-        let q5 = _mm256_unpacklo_ps(r[5], r[7]);
-        let q6 = _mm256_unpackhi_ps(r[4], r[6]);
-        let q7 = _mm256_unpackhi_ps(r[5], r[7]);
-
-        // Phase 2: Another round
-        let s0 = _mm256_unpacklo_ps(q0, q1);
-        let s1 = _mm256_unpackhi_ps(q0, q1);
-        let s2 = _mm256_unpacklo_ps(q2, q3);
-        let s3 = _mm256_unpackhi_ps(q2, q3);
-        let s4 = _mm256_unpacklo_ps(q4, q5);
-        let s5 = _mm256_unpackhi_ps(q4, q5);
-        let s6 = _mm256_unpacklo_ps(q6, q7);
-        let s7 = _mm256_unpackhi_ps(q6, q7);
-
-        // Phase 3: ConcatLowerLower/UpperUpper
-        r[0] = _mm256_permute2f128_ps(s0, s4, 0x20);
-        r[1] = _mm256_permute2f128_ps(s1, s5, 0x20);
-        r[2] = _mm256_permute2f128_ps(s2, s6, 0x20);
-        r[3] = _mm256_permute2f128_ps(s3, s7, 0x20);
-        r[4] = _mm256_permute2f128_ps(s0, s4, 0x31);
-        r[5] = _mm256_permute2f128_ps(s1, s5, 0x31);
-        r[6] = _mm256_permute2f128_ps(s2, s6, 0x31);
-        r[7] = _mm256_permute2f128_ps(s3, s7, 0x31);
-    }
-
-    /// DCT base case for N=2 on raw AVX2 vectors.
-    /// Computes: out0 = in0 + in1, out1 = in0 - in1
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    #[target_feature(enable = "avx2")]
-    #[inline]
-    unsafe fn dct1d_2_fma(m0: &mut __m256, m1: &mut __m256) {
-        let in0 = *m0;
-        let in1 = *m1;
-        *m0 = _mm256_add_ps(in0, in1);
-        *m1 = _mm256_sub_ps(in0, in1);
-    }
-
-    /// DCT for N=4 on raw AVX2 vectors with FMA.
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    #[target_feature(enable = "avx2", enable = "fma")]
-    #[inline]
-    unsafe fn dct1d_4_fma(m: &mut [__m256; 4]) {
-        let wc4_0 = _mm256_set1_ps(0.541196100146197);
-        let wc4_1 = _mm256_set1_ps(1.3065629648763764);
-        let sqrt2 = _mm256_set1_ps(1.41421356237);
-
-        // AddReverse<2>: tmp[0:2] = m[0:2] + reverse(m[2:4])
-        let t0 = _mm256_add_ps(m[0], m[3]);
-        let t1 = _mm256_add_ps(m[1], m[2]);
+    /// DCT for N=4 on magetypes f32x8 vectors with FMA.
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[inline(always)]
+    fn dct1d_4_mage(
+        m: &mut [mf32x8; 4],
+        wc4_0: mf32x8,
+        wc4_1: mf32x8,
+        sqrt2: mf32x8,
+    ) {
+        // AddReverse<2>
+        let t0 = m[0] + m[3];
+        let t1 = m[1] + m[2];
 
         // SubReverse<2>
-        let t2 = _mm256_sub_ps(m[0], m[3]);
-        let t3 = _mm256_sub_ps(m[1], m[2]);
+        let t2 = m[0] - m[3];
+        let t3 = m[1] - m[2];
 
         // DCT1D<2> on first half
-        let r0 = _mm256_add_ps(t0, t1);
-        let r1 = _mm256_sub_ps(t0, t1);
+        let r0 = t0 + t1;
+        let r1 = t0 - t1;
 
         // Multiply by WC4
-        let t2_scaled = _mm256_mul_ps(t2, wc4_0);
-        let t3_scaled = _mm256_mul_ps(t3, wc4_1);
+        let t2_scaled = t2 * wc4_0;
+        let t3_scaled = t3 * wc4_1;
 
         // DCT1D<2> on second half
-        let r2 = _mm256_add_ps(t2_scaled, t3_scaled);
-        let r3 = _mm256_sub_ps(t2_scaled, t3_scaled);
+        let r2 = t2_scaled + t3_scaled;
+        let r3 = t2_scaled - t3_scaled;
 
-        // B<2>: r2 = r2 * sqrt2 + r3 (use FMA)
-        let r2_final = _mm256_fmadd_ps(r2, sqrt2, r3);
+        // B<2>: r2 = r2 * sqrt2 + r3 (FMA)
+        let r2_final = r2.mul_add(sqrt2, r3);
 
         // InverseEvenOdd<4>: interleave
         m[0] = r0;
@@ -867,52 +644,48 @@ pub(crate) mod simd {
         m[3] = r3;
     }
 
-    /// DCT for N=8 on raw AVX2 vectors with FMA.
-    /// Processes 8 independent 8-point DCTs in parallel.
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    #[target_feature(enable = "avx2", enable = "fma")]
-    #[inline]
-    unsafe fn dct1d_8_fma(m: &mut [__m256; 8]) {
-        let wc8_0 = _mm256_set1_ps(0.5097955791041592);
-        let wc8_1 = _mm256_set1_ps(0.6013448869350453);
-        let wc8_2 = _mm256_set1_ps(0.8999762231364156);
-        let wc8_3 = _mm256_set1_ps(2.5629154477415055);
-        let sqrt2 = _mm256_set1_ps(1.41421356237);
+    /// DCT for N=8 on magetypes f32x8 vectors with FMA.
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[inline(always)]
+    fn dct1d_8_mage(m: &mut [mf32x8; 8], token: archmage::Avx2FmaToken) {
+        let wc4_0 = mf32x8::splat(token, 0.541196100146197);
+        let wc4_1 = mf32x8::splat(token, 1.3065629648763764);
+        let wc8_0 = mf32x8::splat(token, 0.5097955791041592);
+        let wc8_1 = mf32x8::splat(token, 0.6013448869350453);
+        let wc8_2 = mf32x8::splat(token, 0.8999762231364156);
+        let wc8_3 = mf32x8::splat(token, 2.5629154477415055);
+        let sqrt2 = mf32x8::splat(token, 1.41421356237);
 
-        // AddReverse<4>: tmp[0:4] = m[0:4] + reverse(m[4:8])
-        let t0 = _mm256_add_ps(m[0], m[7]);
-        let t1 = _mm256_add_ps(m[1], m[6]);
-        let t2 = _mm256_add_ps(m[2], m[5]);
-        let t3 = _mm256_add_ps(m[3], m[4]);
+        // AddReverse<4>
+        let t0 = m[0] + m[7];
+        let t1 = m[1] + m[6];
+        let t2 = m[2] + m[5];
+        let t3 = m[3] + m[4];
 
         // SubReverse<4>
-        let t4 = _mm256_sub_ps(m[0], m[7]);
-        let t5 = _mm256_sub_ps(m[1], m[6]);
-        let t6 = _mm256_sub_ps(m[2], m[5]);
-        let t7 = _mm256_sub_ps(m[3], m[4]);
+        let t4 = m[0] - m[7];
+        let t5 = m[1] - m[6];
+        let t6 = m[2] - m[5];
+        let t7 = m[3] - m[4];
 
         // DCT1D<4> on first half
         let mut first = [t0, t1, t2, t3];
-        dct1d_4_fma(&mut first);
+        dct1d_4_mage(&mut first, wc4_0, wc4_1, sqrt2);
 
         // Multiply by WC8
-        let t4_scaled = _mm256_mul_ps(t4, wc8_0);
-        let t5_scaled = _mm256_mul_ps(t5, wc8_1);
-        let t6_scaled = _mm256_mul_ps(t6, wc8_2);
-        let t7_scaled = _mm256_mul_ps(t7, wc8_3);
+        let t4_scaled = t4 * wc8_0;
+        let t5_scaled = t5 * wc8_1;
+        let t6_scaled = t6 * wc8_2;
+        let t7_scaled = t7 * wc8_3;
 
         // DCT1D<4> on second half
         let mut second = [t4_scaled, t5_scaled, t6_scaled, t7_scaled];
-        dct1d_4_fma(&mut second);
+        dct1d_4_mage(&mut second, wc4_0, wc4_1, sqrt2);
 
         // B<4>: cumulative sum with FMA
-        // second[0] = second[0] * sqrt2 + second[1]
-        second[0] = _mm256_fmadd_ps(second[0], sqrt2, second[1]);
-        // second[1] += second[2]
-        second[1] = _mm256_add_ps(second[1], second[2]);
-        // second[2] += second[3]
-        second[2] = _mm256_add_ps(second[2], second[3]);
-        // second[3] stays the same
+        second[0] = second[0].mul_add(sqrt2, second[1]);
+        second[1] = second[1] + second[2];
+        second[2] = second[2] + second[3];
 
         // InverseEvenOdd<8>: interleave
         m[0] = first[0];
@@ -925,80 +698,33 @@ pub(crate) mod simd {
         m[7] = second[3];
     }
 
-    /// Full 8x8 forward DCT using raw AVX2+FMA intrinsics.
-    /// This is the fastest implementation, avoiding all wide crate overhead.
+    /// Full 8x8 forward DCT using magetypes AVX2+FMA.
+    /// Safe wrapper around intrinsics via token-gated types.
     ///
-    /// Algorithm:
-    /// 1. Load rows into registers: reg[i] = row i
-    /// 2. Transpose: reg[i] = column i (position i of all rows)
-    /// 3. Row DCT: dct1d_8_fma processes (reg[0]..reg[7]) as 8 positions
-    ///    Each lane processes a separate row. Result: reg[i] = coef i of all rows
-    /// 4. Transpose: reg[i] = row i of coefficient matrix
-    /// 5. Column DCT: dct1d_8_fma processes columns (reg[k][j] = coef[k,j])
-    ///    Result: reg[i] = final row i
-    /// 6. Scale and store
-    ///
-    /// This is a low-level function. Production code should use the safe `forward_dct_8x8` wrapper.
-    ///
-    /// # Safety
-    /// Caller must ensure AVX2+FMA are available.
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
-    #[target_feature(enable = "avx2", enable = "fma")]
-    #[inline] // Critical: inline into multiversioned caller
-    pub(crate) unsafe fn forward_dct_8x8_fma(input: &[f32; 64], output: &mut [f32; 64]) {
-        let scale = _mm256_set1_ps(1.0 / 8.0);
+    /// Algorithm: load → transpose → row DCT → scale → transpose → col DCT → scale → store
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[inline(always)]
+    pub(crate) fn forward_dct_8x8_mage(input: &[f32; 64], output: &mut [f32; 64]) {
+        let token = archmage::Avx2FmaToken::try_new().unwrap();
+        let scale = mf32x8::splat(token, 1.0 / 8.0);
 
-        // Load 8 rows: reg[i] = row i of input
-        let mut reg = [
-            _mm256_loadu_ps(input.as_ptr()),
-            _mm256_loadu_ps(input.as_ptr().add(8)),
-            _mm256_loadu_ps(input.as_ptr().add(16)),
-            _mm256_loadu_ps(input.as_ptr().add(24)),
-            _mm256_loadu_ps(input.as_ptr().add(32)),
-            _mm256_loadu_ps(input.as_ptr().add(40)),
-            _mm256_loadu_ps(input.as_ptr().add(48)),
-            _mm256_loadu_ps(input.as_ptr().add(56)),
-        ];
+        let mut reg = mf32x8::load_8x8(input);
 
-        // Transpose: reg[i] = column i = [row0[i], row1[i], ..., row7[i]]
-        // dct1d_8_fma treats reg[0..7] as positions 0-7 of the sequence
-        // Each lane (element) within a register is a separate row being processed
-        transpose_8x8_avx_inplace(&mut reg);
-
-        // Row DCT: all 8 rows processed in parallel
-        // Lane k gets: DCT of (reg[0][k], reg[1][k], ..., reg[7][k]) = DCT of row k
-        // Result: reg[i][k] = coefficient i of row k's DCT
-        dct1d_8_fma(&mut reg);
-
-        // Apply 1/8 scaling after row DCT (first pass)
+        // Transpose → row DCT → scale
+        mf32x8::transpose_8x8(&mut reg);
+        dct1d_8_mage(&mut reg, token);
         for r in &mut reg {
-            *r = _mm256_mul_ps(*r, scale);
+            *r = *r * scale;
         }
 
-        // Transpose: reg[i][j] = coef[i, j] (row-major coefficient matrix)
-        // This sets up for column DCT: lane j processes column j
-        transpose_8x8_avx_inplace(&mut reg);
-
-        // Column DCT: all 8 columns processed in parallel
-        // Lane j gets: DCT of (reg[0][j], reg[1][j], ..., reg[7][j]) = DCT of column j
-        // Result: reg[i][j] = final 2D DCT coefficient at (i, j)
-        dct1d_8_fma(&mut reg);
-
-        // Apply 1/8 scaling after column DCT (second pass)
-        // Total scaling: 1/8 * 1/8 = 1/64, matching C++ jpegli
+        // Transpose → column DCT → scale (total: 1/64)
+        mf32x8::transpose_8x8(&mut reg);
+        dct1d_8_mage(&mut reg, token);
         for r in &mut reg {
-            *r = _mm256_mul_ps(*r, scale);
+            *r = *r * scale;
         }
 
-        // reg[i] is now row i of the final output - store directly
-        _mm256_storeu_ps(output.as_mut_ptr(), reg[0]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(8), reg[1]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(16), reg[2]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(24), reg[3]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(32), reg[4]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(40), reg[5]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(48), reg[6]);
-        _mm256_storeu_ps(output.as_mut_ptr().add(56), reg[7]);
+        mf32x8::store_8x8(&reg, output);
     }
 }
 
@@ -1041,25 +767,22 @@ fn dct_rows(input: &[f32; 64], output: &mut [f32; 64]) {
 #[multiversed]
 #[must_use]
 pub fn forward_dct_8x8(input: &[f32; DCT_BLOCK_SIZE]) -> [f32; DCT_BLOCK_SIZE] {
-    // Use raw AVX2 intrinsics when unsafe_simd feature is enabled
+    // Use magetypes AVX2+FMA when available (safe, token-gated intrinsics)
     #[cfg(all(
-        feature = "unsafe_simd",
+        feature = "magetypes-simd",
         target_arch = "x86_64",
         target_feature = "avx2",
         target_feature = "fma"
     ))]
     {
         let mut output = [0.0f32; 64];
-        // SAFETY: This code path only compiles when target_feature includes avx2+fma
-        unsafe {
-            simd::forward_dct_8x8_fma(input, &mut output);
-        }
+        simd::forward_dct_8x8_mage(input, &mut output);
         return output;
     }
 
     // Safe fallback using wide crate SIMD (portable to all platforms)
     #[cfg(not(all(
-        feature = "unsafe_simd",
+        feature = "magetypes-simd",
         target_arch = "x86_64",
         target_feature = "avx2",
         target_feature = "fma"
@@ -1476,11 +1199,11 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     #[test]
-    fn test_fma_dct_matches_scalar() {
+    fn test_mage_dct_matches_scalar() {
         if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
-            return; // Skip on CPUs without AVX2+FMA
+            return;
         }
 
         let patterns: Vec<[f32; 64]> = vec![
@@ -1504,34 +1227,32 @@ mod tests {
         for (pattern_idx, input) in patterns.iter().enumerate() {
             let scalar_output = forward_dct_8x8_scalar(input);
 
-            let mut avx2_output = [0.0f32; 64];
-            unsafe {
-                simd::forward_dct_8x8_fma(input, &mut avx2_output);
-            }
+            let mut mage_output = [0.0f32; 64];
+            simd::forward_dct_8x8_mage(input, &mut mage_output);
 
             let mut max_error = 0.0f32;
             for i in 0..64 {
-                let error = (scalar_output[i] - avx2_output[i]).abs();
+                let error = (scalar_output[i] - mage_output[i]).abs();
                 max_error = max_error.max(error);
             }
 
             assert!(
                 max_error < 1e-4,
-                "Pattern {}: AVX2 vs scalar max error {} exceeds threshold.\n\
+                "Pattern {}: magetypes vs scalar max error {} exceeds threshold.\n\
                  Scalar[0..8]: {:?}\n\
-                 AVX2[0..8]: {:?}",
+                 Mage[0..8]: {:?}",
                 pattern_idx,
                 max_error,
                 &scalar_output[0..8],
-                &avx2_output[0..8]
+                &mage_output[0..8]
             );
         }
     }
 
-    #[cfg(all(feature = "unsafe_simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
     #[test]
-    #[ignore] // Run with: cargo test --release --features unsafe_simd bench_fma_dct -- --ignored --nocapture
-    fn bench_fma_dct_vs_scalar() {
+    #[ignore] // Run with: cargo test --release --features magetypes-simd bench_mage_dct -- --ignored --nocapture
+    fn bench_mage_dct_vs_scalar() {
         use std::hint::black_box;
         use std::time::Instant;
 
@@ -1563,30 +1284,26 @@ mod tests {
         let scalar_time = start.elapsed();
         let scalar_ns = scalar_time.as_nanos() as f64 / iterations as f64;
 
-        // Warmup AVX2
+        // Warmup magetypes
         for _ in 0..10000 {
-            unsafe {
-                simd::forward_dct_8x8_fma(black_box(&input), &mut output);
-            }
+            simd::forward_dct_8x8_mage(black_box(&input), &mut output);
         }
 
         let start = Instant::now();
         for _ in 0..iterations {
-            unsafe {
-                simd::forward_dct_8x8_fma(black_box(&input), black_box(&mut output));
-            }
+            simd::forward_dct_8x8_mage(black_box(&input), black_box(&mut output));
         }
-        let avx2_time = start.elapsed();
-        let avx2_ns = avx2_time.as_nanos() as f64 / iterations as f64;
+        let mage_time = start.elapsed();
+        let mage_ns = mage_time.as_nanos() as f64 / iterations as f64;
 
         println!("DCT Performance ({} iterations):", iterations);
-        println!("  Scalar: {:.2} ns/DCT", scalar_ns);
-        println!("  AVX2:   {:.2} ns/DCT", avx2_ns);
+        println!("  Scalar:    {:.2} ns/DCT", scalar_ns);
+        println!("  Magetypes: {:.2} ns/DCT", mage_ns);
         println!(
             "  Speedup: {:.2}x ({})",
-            scalar_ns / avx2_ns,
-            if avx2_ns < scalar_ns {
-                "AVX2 faster"
+            scalar_ns / mage_ns,
+            if mage_ns < scalar_ns {
+                "magetypes faster"
             } else {
                 "Scalar faster"
             }
