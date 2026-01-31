@@ -152,7 +152,6 @@ fn main() {
     {
         println!("This benchmark requires WASM SIMD128.");
         println!("Build with: RUSTFLAGS=\"-C target-feature=+simd128\"");
-        return;
     }
 
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]

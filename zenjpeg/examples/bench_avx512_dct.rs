@@ -1,11 +1,10 @@
 //! Quick benchmark: AVX-512 dual-block vs AVX2 single-block DCT
 
-use std::time::Instant;
-
 fn main() {
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
         use archmage::{Avx512fToken, Desktop64, SimdToken};
+        use std::time::Instant;
         use zenjpeg::encode::mage_simd::{mage_forward_dct_8x8, mage_forward_dct_8x8_dual};
 
         const BLOCKS: usize = 100_000;

@@ -30,8 +30,11 @@ impl Default for Block8x8f {
 
 // AAN DCT constants
 const C4: f32 = 0.707106781; // cos(π/4) = √2/2
+#[allow(dead_code)]
 const C6: f32 = 0.382683433; // sin(π/8)
+#[allow(dead_code)]
 const C2_M_C6: f32 = 0.541196100; // cos(π/8) - cos(3π/8)
+#[allow(dead_code)]
 const C2_P_C6: f32 = 1.306562965; // cos(π/8) + cos(3π/8)
 
 /// AAN 1D DCT on 8 f32 values (SIMD version using f32x8)
@@ -114,7 +117,7 @@ fn forward_dct_8x8_wide(block: &Block8x8f) -> Block8x8f {
     // Scale by 1/8 (per pass, so 1/64 total)
     let scale = f32x8::splat(1.0 / 8.0);
     for row in result.rows.iter_mut() {
-        *row = *row * scale;
+        *row *= scale;
     }
 
     result
