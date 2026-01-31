@@ -11,15 +11,15 @@
 
 use enough::Unstoppable;
 use fast_ssim2::{compute_frame_ssimulacra2, srgb_u8_to_linear, LinearRgbImage};
-use jpegli_bench_utils::{
-    ChromaSubsampling as BenchSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
-    ScanMode, SyntheticPattern,
-};
 use zenjpeg::encoder::{
     ChromaSubsampling as JpegliSubsampling, EncoderConfig as JpegliEncoderConfig, PixelLayout,
     Quality,
 };
 use zenjpeg::types::Subsampling;
+use zenjpeg_bench_utils::{
+    ChromaSubsampling as BenchSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
+    ScanMode, SyntheticPattern,
+};
 
 /// Convert quality (0-100) to butteraugli distance.
 /// Same formula as C++ jpegli_quality_to_distance.
