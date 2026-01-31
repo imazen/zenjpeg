@@ -25,7 +25,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 - Hybrid approach combining jpegli's AQ with mozjpeg's trellis
 
 **Where we went our own way:**
-- Pure Rust, `#![forbid(unsafe_code)]` by default (unsafe SIMD is opt-in)
+- Pure Rust, `#![forbid(unsafe_code)]` unconditionally (SIMD via safe archmage tokens)
 - Streaming encoder API for memory efficiency (process images row-by-row)
 - Portable SIMD via `wide` crate instead of platform intrinsics
 - Parallel encoding support
@@ -664,7 +664,7 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 
 ```toml
 [dependencies]
-zenjpeg = "0.11"
+zenjpeg = "0.3"
 
 # With UltraHDR support:
 zenjpeg = { version = "0.11", features = ["ultrahdr"] }
