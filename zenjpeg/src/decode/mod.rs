@@ -481,15 +481,9 @@ impl Decoder {
 
     /// Decodes a JPEG image.
     ///
-    /// **Deprecated**: This method allocates the entire decoded image in memory.
-    /// For large images or memory-constrained environments, use
+    /// For large images or memory-constrained environments, consider using
     /// [`scanline_reader()`](Self::scanline_reader) to decode row-by-row
     /// into caller-provided buffers.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use scanline_reader() for streaming decode into caller's buffer"
-    )]
-    #[allow(deprecated)]
     pub fn decode(&self, data: &[u8]) -> Result<DecodedImage> {
         let mut parser =
             JpegParser::new(data, self.config.max_pixels, Some(&self.config.preserve))?;
@@ -559,13 +553,7 @@ impl Decoder {
     /// Note: ICC profile application is not supported for f32 output.
     /// If you need ICC profile transformation, decode to u8 first.
     ///
-    /// **Deprecated**: This method allocates the entire decoded image in memory.
-    /// For large images, use streaming APIs for memory-efficient decoding.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use streaming APIs for memory-efficient decoding"
-    )]
-    #[allow(deprecated)]
+    /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_f32(&self, data: &[u8]) -> Result<DecodedImageF32> {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - f32 decode needs coefficients for precision
@@ -612,13 +600,7 @@ impl Decoder {
     /// println!("{}% of blocks differ", comparison.diff_block_pct());
     /// ```
     ///
-    /// **Deprecated**: This method allocates all coefficients in memory.
     /// For analysis of large images, consider streaming APIs.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use streaming APIs for memory-efficient decoding"
-    )]
-    #[allow(deprecated)]
     pub fn decode_coefficients(&self, data: &[u8]) -> Result<DecodedCoefficients> {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - we need coefficients stored
@@ -670,13 +652,7 @@ impl Decoder {
     /// - The image uses XYB color space (not YCbCr)
     /// - Parsing or decoding fails
     ///
-    /// **Deprecated**: This method allocates all YCbCr planes in memory.
-    /// For large images, use streaming APIs for memory-efficient decoding.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use streaming APIs for memory-efficient decoding"
-    )]
-    #[allow(deprecated)]
+    /// For large images, consider using streaming APIs for memory-efficient decoding.
     pub fn decode_to_ycbcr_f32(&self, data: &[u8]) -> Result<DecodedYCbCr> {
         let mut parser = JpegParser::new(data, self.config.max_pixels, None)?;
         // Disable streaming - f32 YCbCr decode needs coefficients
