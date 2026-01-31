@@ -21,10 +21,10 @@ use crate::types::PixelFormat;
 use multiversed::multiversed;
 use wide::{f32x4, f32x8};
 
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
 
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Converts a single RGB pixel to YCbCr.
@@ -888,7 +888,7 @@ pub fn ycbcr_to_rgb_i16_x16(
     rgb: &mut [u8],
     offset: &mut usize,
 ) {
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
         if let Some(token) = archmage::Avx2Token::try_new() {
             ycbcr_to_rgb_i16_x16_avx2(token, y, cb, cr, rgb, offset);
@@ -930,7 +930,7 @@ fn ycbcr_to_rgb_i16_x16_scalar(
 }
 
 /// AVX2 implementation of integer YCbCr to RGB for 16 pixels.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn ycbcr_to_rgb_i16_x16_avx2(
     _token: archmage::Avx2Token,
@@ -1168,7 +1168,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
     let len = y_plane.len();
 
     // Use AVX2 SIMD path when available (16 pixels at a time, direct interleaved output)
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
         if let Some(token) = archmage::Avx2Token::try_new() {
             ycbcr_planes_i16_to_rgb_u8_avx2(token, y_plane, cb_plane, cr_plane, rgb);
@@ -1197,7 +1197,7 @@ pub fn ycbcr_planes_i16_to_rgb_u8(
 
 /// AVX2 batch conversion of YCbCr planes to interleaved RGB.
 /// Processes 16 pixels at a time with direct pointer loads.
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn ycbcr_planes_i16_to_rgb_u8_avx2(
     _token: archmage::Avx2Token,

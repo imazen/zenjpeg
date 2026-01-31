@@ -5,10 +5,10 @@
 
 use wide::f32x8;
 
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
 
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use safe_unaligned_simd::x86_64 as safe_simd;
 
 /// Fancy upsampling with triangle filter (3:1 weights).
@@ -300,8 +300,8 @@ pub fn upsample_h2v2_i16_fancy(
         return;
     }
 
-    // Try AVX2 SIMD path on x86_64 (requires magetypes-simd feature)
-    #[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+    // Try AVX2 SIMD path on x86_64 (requires archmage-simd feature)
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     {
         if let Some(token) = archmage::Avx2Token::try_new() {
             upsample_h2v2_i16_fancy_avx2(
@@ -344,7 +344,7 @@ fn upsample_h2v2_i16_fancy_scalar(
 
 /// AVX2 SIMD implementation of bilinear upsampling
 /// Uses separable vertical + horizontal passes for efficiency
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
 fn upsample_h2v2_i16_fancy_avx2(
     _token: archmage::Avx2Token,
@@ -702,7 +702,7 @@ pub fn upsample_h1v2_i16_fancy(
 /// The active implementation is `upsample_h2v2_i16_fancy_avx2`.
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "magetypes-simd",
+    feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 pub fn upsample_h2v2_i16_fancy_simd(
@@ -763,7 +763,7 @@ pub fn upsample_h2v2_i16_fancy_simd(
 /// Vertical upsampling of a single row: (3*curr + neighbor + 2) >> 2
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "magetypes-simd",
+    feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[arcane]
@@ -821,7 +821,7 @@ fn upsample_vertical_row_avx2(
 /// Uses (3*curr + neighbor + 2) >> 2 for triangle filter
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "magetypes-simd",
+    feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[arcane]
@@ -938,7 +938,7 @@ fn upsample_horizontal_row_avx2(
 /// Scalar fallback for horizontal upsampling
 #[allow(dead_code)]
 #[cfg(all(
-    feature = "magetypes-simd",
+    feature = "archmage-simd",
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 fn upsample_horizontal_row_scalar(input: &[i16], output: &mut [i16]) {
