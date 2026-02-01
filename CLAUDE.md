@@ -1146,12 +1146,23 @@ The `force_baseline` parameter:
 - Precision is auto-selected per-table: 8-bit if max ≤ 255, 16-bit if max > 255
 - We DO automatically use 8-bit when no coefficient exceeds 255
 
-**Example at Q70 with default settings:**
-```
-Table 0 (Y):    Max 30   → 8-bit DQT (both Rust and C++)
-Table 1 (Cb):   Max 546  → 16-bit DQT (Rust) or clamped to 255 (C++ cjpegli CLI)
-Table 2 (Cr):   Max 560  → 16-bit DQT (Rust) or clamped to 255 (C++ cjpegli CLI)
-```
+**Quality threshold for 16-bit tables:**
+
+The jpegli quant formulas produce chroma values that exceed 255 below Q87.
+This is **quality-dependent, not image-dependent** - tested on Kodak corpus (24 images):
+
+| Quality | Max Chroma | Tables |
+|---------|------------|--------|
+| Q90-100 | ≤200 | 8-bit (both Rust and C++) |
+| Q87-89 | 218-254 | 8-bit (both Rust and C++) |
+| Q86 | 272 | 16-bit (Rust) or clamped (C++) |
+| Q70 | 560 | 16-bit (Rust) or clamped (C++) |
+| Q50 | 919 | 16-bit (Rust) or clamped (C++) |
+
+**Practical impact:**
+- Default Q90: No difference between Rust and C++
+- Web-quality Q70-Q85: Rust uses 16-bit, C++ clamps to 255
+- Low-quality Q50: Rust preserves precision, C++ loses ~70% of chroma range
 
 To match C++ cjpegli CLI file sizes exactly, use `.allow_16bit_quant_tables(false)`.
 
