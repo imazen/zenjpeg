@@ -963,11 +963,12 @@ just xyb-diff ~/path/to/img.png  # Custom image
   - Was severely corrupted before B-channel fix (mean error ~51)
   - Now shows same block-pattern differences as R channel
 
-**XYB numeric results (kodak/1.png 768×512 q90):**
+**XYB numeric results (kodak/1.png 768×512 q90, after AQ channel fix):**
 ```
-Rust: 156720 bytes, C++: 141450 bytes (+10.8%)
-Mean |diff|: R=0.310, G=1.300, B=0.200
+Rust: 153752 bytes, C++: 141450 bytes (+8.7%)
+Mean |diff|: R=0.237, G=1.017, B=0.104
 ```
+Note: Before fix was +10.8% size, R=0.310, G=1.300, B=0.200.
 
 **YCbCr mode visual patterns:**
 - **All diff panels**: Uniform noise pattern, no obvious block structure
@@ -993,11 +994,24 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Known Bugs
 
-1. **XYB block-boundary patterns** - ΔR and ΔB show U/M patterns at 8×8 block boundaries vs C++.
-   Mean error is acceptable (~0.2-0.3) but block structure suggests systematic difference.
+1. **XYB file size +6-9% vs C++** - After fixing AQ channel selection, XYB JPEGs are still
+   6-9% larger than C++ jpegli. The remaining difference is likely due to:
+   - Pre-erosion lookahead timing (C++ has 4-row overlap at iMCU boundaries)
+   - Fuzzy erosion boundary handling at first/last iMCU rows
+   - DCT coefficient rounding differences
+
+   Investigation notes: Row-by-row analysis shows first 8 rows (iMCU 0) have lower
+   differences than subsequent rows, suggesting first-iMCU handling differs.
+   C++ `adaptive_quantization.cc:638-641` uses `ylen += 4` for first iMCU.
+   Files: `quant/aq/streaming.rs`, `quant/aq/simd.rs`
 
 ### Fixed Bugs (historical reference)
 
+- **XYB AQ using wrong channel (2026-01-31)** - AQ was computed on X channel instead of Y.
+  C++ uses `y_channel = jpeg_color_space == JCS_RGB ? 1 : 0`, meaning channel 1 (Y) for XYB.
+  Fixed by using `cb_strip` instead of `y_strip` when `use_xyb=true`.
+  Impact: Size diff 10.8% → 8.7% (~2pp improvement), all color diffs reduced.
+  Files: `encode/strip/mod.rs:779-795`
 - **XYB B-channel encoding corruption (2026-01-31)** - B channel had ~51 mean error vs ~0.1 for R/G.
   Root cause: `StripProcessor` created with `use_xyb=false`, then `set_xyb_mode(true)` called,
   but this didn't recalculate B-channel dimensions. Also `c_blocks_h/v` used for B instead of
