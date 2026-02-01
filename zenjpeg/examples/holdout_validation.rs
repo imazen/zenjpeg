@@ -104,14 +104,34 @@ fn main() -> Result<()> {
         }
         let images = load_image_list(&dir)?;
         if !images.is_empty() {
-            println!("  {} {} images ({})", set.name, images.len(), if set.in_training { "TRAINING" } else { "HOLDOUT" });
+            println!(
+                "  {} {} images ({})",
+                set.name,
+                images.len(),
+                if set.in_training {
+                    "TRAINING"
+                } else {
+                    "HOLDOUT"
+                }
+            );
             sets.push((set, images));
         }
     }
 
-    let holdout_count: usize = sets.iter().filter(|(s, _)| !s.in_training).map(|(_, i)| i.len()).sum();
-    let training_count: usize = sets.iter().filter(|(s, _)| s.in_training).map(|(_, i)| i.len()).sum();
-    println!("\n  Holdout: {} images, Training: {} images", holdout_count, training_count);
+    let holdout_count: usize = sets
+        .iter()
+        .filter(|(s, _)| !s.in_training)
+        .map(|(_, i)| i.len())
+        .sum();
+    let training_count: usize = sets
+        .iter()
+        .filter(|(s, _)| s.in_training)
+        .map(|(_, i)| i.len())
+        .sum();
+    println!(
+        "\n  Holdout: {} images, Training: {} images",
+        holdout_count, training_count
+    );
     println!("  Quality tiers: {:?}\n", VALIDATION_QUALITIES);
 
     for mode in [Mode::Ycbcr444, Mode::Ycbcr420] {
@@ -120,9 +140,19 @@ fn main() -> Result<()> {
         println!("================================================================\n");
 
         // Load aggregated frequencies for both algorithms
-        let agg_dir = PathBuf::from(FREQ_DIR).join("aggregated").join(mode.dir_name());
-        let agg_tables_jpegli = load_tables_for_mode(&agg_dir, VALIDATION_QUALITIES, HuffmanMethod::JpegliCreateTree)?;
-        let agg_tables_mozjpeg = load_tables_for_mode(&agg_dir, VALIDATION_QUALITIES, HuffmanMethod::MozjpegClassic)?;
+        let agg_dir = PathBuf::from(FREQ_DIR)
+            .join("aggregated")
+            .join(mode.dir_name());
+        let agg_tables_jpegli = load_tables_for_mode(
+            &agg_dir,
+            VALIDATION_QUALITIES,
+            HuffmanMethod::JpegliCreateTree,
+        )?;
+        let agg_tables_mozjpeg = load_tables_for_mode(
+            &agg_dir,
+            VALIDATION_QUALITIES,
+            HuffmanMethod::MozjpegClassic,
+        )?;
 
         // Header
         println!(
@@ -157,8 +187,14 @@ fn main() -> Result<()> {
 
                 println!(
                     "Q{:<3}  | {:25} | {:>4} | {:>5} | {:>9.3}% | {:>9.3}% | {:>9.3}% | {:>+9.3}%",
-                    quality, set.name, tag, images.len(),
-                    jpegli_pct, mozjpeg_pct, annex_pct, delta,
+                    quality,
+                    set.name,
+                    tag,
+                    images.len(),
+                    jpegli_pct,
+                    mozjpeg_pct,
+                    annex_pct,
+                    delta,
                 );
 
                 if set.in_training {
@@ -178,21 +214,29 @@ fn main() -> Result<()> {
             if holdout_opt > 0 {
                 println!(
                     "Q{:<3}  | {:25} | {:>4} | {:>5} | {:>9.3}% | {:>9.3}% | {:>9.3}% | {:>+9.3}%",
-                    quality, "** HOLDOUT TOTAL **", "HOLD", holdout_count,
+                    quality,
+                    "** HOLDOUT TOTAL **",
+                    "HOLD",
+                    holdout_count,
                     pct_overhead(holdout_jpegli, holdout_opt),
                     pct_overhead(holdout_mozjpeg, holdout_opt),
                     pct_overhead(holdout_annex, holdout_opt),
-                    pct_overhead(holdout_jpegli, holdout_opt) - pct_overhead(holdout_mozjpeg, holdout_opt),
+                    pct_overhead(holdout_jpegli, holdout_opt)
+                        - pct_overhead(holdout_mozjpeg, holdout_opt),
                 );
             }
             if training_opt > 0 {
                 println!(
                     "Q{:<3}  | {:25} | {:>4} | {:>5} | {:>9.3}% | {:>9.3}% | {:>9.3}% | {:>+9.3}%",
-                    quality, "** TRAINING TOTAL **", "TRAIN", training_count,
+                    quality,
+                    "** TRAINING TOTAL **",
+                    "TRAIN",
+                    training_count,
                     pct_overhead(training_jpegli, training_opt),
                     pct_overhead(training_mozjpeg, training_opt),
                     pct_overhead(training_annex, training_opt),
-                    pct_overhead(training_jpegli, training_opt) - pct_overhead(training_mozjpeg, training_opt),
+                    pct_overhead(training_jpegli, training_opt)
+                        - pct_overhead(training_mozjpeg, training_opt),
                 );
             }
             println!("{}", "-".repeat(105));
@@ -267,7 +311,9 @@ fn encode_with_tables(
     quality: u8,
     tables: &HuffmanTableSet,
 ) -> Result<usize> {
-    let config = mode.base_config(quality).custom_huffman_tables(tables.clone());
+    let config = mode
+        .base_config(quality)
+        .custom_huffman_tables(tables.clone());
     let mut enc = config.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(pixels, Unstoppable)?;
     Ok(enc.finish()?.len())

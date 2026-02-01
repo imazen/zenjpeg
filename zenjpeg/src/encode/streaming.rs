@@ -296,13 +296,11 @@ impl StreamingEncoder {
             // Get tables: custom if provided, otherwise standard JPEG tables
             let tables = match builder.huffman {
                 HuffmanStrategy::Custom(tables) => tables,
-                HuffmanStrategy::Fixed => {
-                    Box::new(crate::huffman::builtin_tables::select_tables(
-                        &builder.quality,
-                        builder.use_xyb,
-                        builder.subsampling,
-                    ))
-                }
+                HuffmanStrategy::Fixed => Box::new(crate::huffman::builtin_tables::select_tables(
+                    &builder.quality,
+                    builder.use_xyb,
+                    builder.subsampling,
+                )),
                 HuffmanStrategy::Optimize => unreachable!(),
             };
 
