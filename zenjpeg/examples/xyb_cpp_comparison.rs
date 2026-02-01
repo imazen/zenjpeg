@@ -7,6 +7,7 @@
 
 use enough::Unstoppable;
 use std::process::Command;
+use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
@@ -150,15 +151,15 @@ fn compute_butteraugli_rust(original_path: &str, compressed_path: &str) -> f64 {
     let height = info.height as usize;
     let orig_pixels = &orig_buf[..info.buffer_size()];
 
-    // Load compressed (JPEG)
+    // Load compressed (JPEG) with ICC support for XYB
     let jpeg_data = std::fs::read(compressed_path).expect("read jpeg");
-    let mut decoder = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(
-        &jpeg_data[..],
-    ));
-    let comp_pixels = decoder.decode().expect("decode jpeg");
+    let decoded = Decoder::new()
+        .apply_icc(true)
+        .decode(&jpeg_data)
+        .expect("decode jpeg");
 
     let params = ButteraugliParams::default();
-    match compute_butteraugli(orig_pixels, &comp_pixels, width, height, &params) {
+    match compute_butteraugli(orig_pixels, &decoded.data, width, height, &params) {
         Ok(result) => result.score,
         Err(_) => 999.0,
     }
