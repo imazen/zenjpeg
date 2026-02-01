@@ -34,8 +34,8 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 use zenjpeg_bench_utils::{
-    decode_jpeg_to_rgb, ChromaSubsampling, ColorMode, EncoderConfig, EncoderImpl, ImageData,
-    QualityMetrics,
+    decode_jpeg_to_rgb, decode_jpeg_with_icc, ChromaSubsampling, ColorMode, EncoderConfig,
+    EncoderImpl, ImageData, QualityMetrics,
 };
 
 #[derive(Debug, Clone)]
@@ -254,7 +254,12 @@ fn run_comparison(config: &Config) -> Vec<Result> {
             let bpp = jpeg_data.len() as f64 * 8.0 / pixels as f64;
 
             // Decode and compute metrics
-            let decoded = decode_jpeg_to_rgb(&jpeg_data).expect("Failed to decode JPEG");
+            // XYB JPEGs require ICC-aware decoding to get correct colors
+            let decoded = if enc.color == ColorMode::Xyb {
+                decode_jpeg_with_icc(&jpeg_data).expect("Failed to decode XYB JPEG")
+            } else {
+                decode_jpeg_to_rgb(&jpeg_data).expect("Failed to decode JPEG")
+            };
 
             let mut dssim = None;
             let mut ssim2 = None;
