@@ -60,7 +60,7 @@ pub struct ComputedConfig {
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub parallel: bool,
-    /// Huffman table strategy (Optimize, StandardFixed, or Custom).
+    /// Huffman table strategy (Optimize, Fixed, or Custom).
     pub(crate) huffman: HuffmanStrategy,
     /// Chroma downsampling method for subsampled modes (4:2:0, 4:2:2, 4:4:0).
     ///

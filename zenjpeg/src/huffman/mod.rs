@@ -8,7 +8,7 @@
 //! - `trained`: Pre-trained Huffman tables for streaming encoding
 
 pub mod classic;
-pub(crate) mod corpus_tables;
+pub(crate) mod builtin_tables;
 pub mod encode;
 pub mod optimize;
 pub mod trained;
