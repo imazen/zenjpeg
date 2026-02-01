@@ -77,6 +77,7 @@ fn main() {
         match std::panic::catch_unwind(|| encode_xyb(&rgb, width as u32, height as u32, quality)) {
             Ok(jpeg) => {
                 let decoded = zenjpeg::decoder::Decoder::new()
+                    .apply_icc(true)
                     .decode(&jpeg)
                     .expect("decode failed");
                 let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
@@ -125,6 +126,7 @@ fn main() {
         match std::panic::catch_unwind(|| encode_xyb(&rgb, width as u32, height as u32, quality)) {
             Ok(jpeg) => {
                 let decoded = zenjpeg::decoder::Decoder::new()
+                    .apply_icc(true)
                     .decode(&jpeg)
                     .expect("decode failed");
                 let ssim2 = compute_ssim2(&rgb, &decoded.data, width, height);
