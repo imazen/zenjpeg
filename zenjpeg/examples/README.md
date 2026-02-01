@@ -85,8 +85,8 @@ cargo run --release --example low_q_report --features test-utils
 
 ## XYB Debugging Tools
 
-XYB color space produces 5-11% larger files than C++ jpegli at equivalent quality.
-These tools help debug the size difference (quality is identical).
+XYB color space with progressive mode matches or beats C++ jpegli file sizes.
+These tools help compare and debug XYB encoding.
 
 ### xyb_parity_test
 
@@ -192,7 +192,7 @@ External tools used by some examples:
    - Baseline XYB works fine
    - Issue is with non-standard component IDs (R=82, G=71, B=66) in progressive scans
 
-2. **XYB size gap**: 5-11% larger files than C++ jpegli XYB mode (quality is identical, root cause TBD)
+2. **XYB baseline size gap**: 2-3% larger files than C++ in baseline mode; progressive mode matches or beats C++
 
 ## Adding New Examples
 
