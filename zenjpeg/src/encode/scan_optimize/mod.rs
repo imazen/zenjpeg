@@ -20,23 +20,24 @@ use crate::foundation::consts::DCT_BLOCK_SIZE;
 /// Maximum number of candidates to trial-encode.
 ///
 /// Each candidate requires a full progressive encode pass (tokenize + Huffman
-/// optimize + replay). We generate many more candidates than this and use the
-/// frequency estimator to pre-filter down to this count.
-const MAX_TRIAL_ENCODES: usize = 3;
+/// optimize + replay). We use the frequency estimator to pre-filter down to
+/// this count: the default baseline + the better of the two search winners.
+const MAX_TRIAL_ENCODES: usize = 2;
 
 /// Generate candidate progressive scan scripts for trial encoding.
 ///
-/// Generates a broad set of structurally diverse scan scripts, uses the
-/// frequency estimator to rank them within each category, then returns the
-/// top candidates for trial encoding.
+/// Uses a shared histogram cache to avoid redundant block-scanning passes
+/// across both search phases. Each unique `(component, ss, se, ah, al)`
+/// combination is scanned exactly once.
 ///
 /// Strategy:
-/// 1. Generate ~20 mixed-SA variants (different split points × al levels).
-///    The estimator is accurate for RELATIVE ranking within similar structures.
-/// 2. Pick the best mixed-SA variant by estimate.
-/// 3. Run the mozjpeg-style 64-candidate search for the best uniform-al script.
-/// 4. Always include the default jpegli script as a safety baseline.
-/// 5. Deduplicate and return up to MAX_TRIAL_ENCODES scripts.
+/// 1. Pre-generate all mixed-SA variants and the Phase 2 trial scan set.
+/// 2. Warm the histogram cache with all unique scan keys from both phases.
+/// 3. Use cached estimates for Phase 1 (pick best mixed-SA) and Phase 2
+///    (pick best uniform-al via mozjpeg search).
+/// 4. Compare the two winners by cached estimate and keep only the better one.
+/// 5. Always include the default jpegli script as a safety baseline.
+/// 6. Return up to `MAX_TRIAL_ENCODES` scripts for trial encoding.
 ///
 /// # Returns
 /// Up to `MAX_TRIAL_ENCODES` unique candidate scripts, always including the default.
@@ -48,54 +49,78 @@ pub(crate) fn generate_candidate_scripts(
 ) -> Result<Vec<Vec<ProgressiveScan>>> {
     let config = ScanSearchConfig::default();
 
-    // === Phase 1: Generate mixed-SA variants and pick the best by estimate ===
-    // These all have the same structure (DC + low-band al=0 + high-band al=K + refinements),
-    // so the estimator's relative ranking is reliable.
+    // === Pre-generate all candidate scripts for cache warming ===
     let split_points: &[u8] = &config.frequency_splits;
     let al_levels: &[u8] = &[1, 2, 3];
 
-    let mut best_mixed_sa: Option<(Vec<ProgressiveScan>, usize)> = None;
-
+    let mut mixed_sa_scripts: Vec<Vec<ProgressiveScan>> =
+        Vec::with_capacity(split_points.len() * al_levels.len());
     for &split in split_points {
         for &al in al_levels {
             let al_c = al.min(config.al_max_chroma);
-            let script = mixed_sa_split_progressive_scans(num_components, split, al, al_c);
-            let est = estimate::estimate_script_cost(&script, y_blocks, cb_blocks, cr_blocks);
+            mixed_sa_scripts.push(mixed_sa_split_progressive_scans(
+                num_components,
+                split,
+                al,
+                al_c,
+            ));
+        }
+    }
 
-            if best_mixed_sa.as_ref().is_none_or(|(_, best)| est < *best) {
-                best_mixed_sa = Some((script, est));
-            }
+    let default_script = default_jpegli_progressive_scans(num_components);
+
+    // === Warm cache: scan blocks once per unique (component, ss, se, ah, al) ===
+    let trial_scans = generate::generate_search_scans(num_components, &config);
+    let mut cache = estimate::ScanHistogramCache::warm(
+        &trial_scans,
+        &mixed_sa_scripts,
+        y_blocks,
+        cb_blocks,
+        cr_blocks,
+        num_components,
+    );
+
+    // === Phase 1: Pick best mixed-SA variant by cached estimate ===
+    let mut best_mixed_sa: Option<(Vec<ProgressiveScan>, usize)> = None;
+    for script in mixed_sa_scripts {
+        let est = cache.estimate_script_cost_cached(&script);
+        if best_mixed_sa.as_ref().is_none_or(|(_, best)| est < *best) {
+            best_mixed_sa = Some((script, est));
         }
     }
 
     // === Phase 2: mozjpeg-style 64-candidate search (uniform al) ===
-    let trial_scans = generate::generate_search_scans(num_components, &config);
-    let scan_sizes =
-        estimate::estimate_all_scan_sizes(&trial_scans, y_blocks, cb_blocks, cr_blocks);
+    let scan_sizes = cache.estimate_all_scan_sizes_cached(&trial_scans);
     let selector = select::ScanSelector::new(num_components, config.clone());
     let search_result = selector.select_best(&scan_sizes);
     let optimizer_script = search_result.build_final_scans(num_components, &config);
 
-    // === Phase 3: Assemble final candidates ===
-    let default_script = default_jpegli_progressive_scans(num_components);
-
+    // === Phase 3: Pick the better of the two search winners ===
+    // The estimator is accurate for relative ranking. Compare both winners
+    // and only trial-encode the better one alongside the default baseline.
     let mut candidates: Vec<Vec<ProgressiveScan>> = Vec::with_capacity(MAX_TRIAL_ENCODES);
-
-    // Always include the default
     candidates.push(default_script);
 
-    // Add optimizer's pick (if different from default)
-    if !scripts_equivalent(&optimizer_script, &candidates[0]) {
-        candidates.push(optimizer_script);
-    }
+    // Determine the single best alternative to trial-encode
+    let optimizer_est = cache.estimate_script_cost_cached(&optimizer_script);
+    let best_alternative = match best_mixed_sa {
+        Some((mixed_script, mixed_est)) => {
+            if scripts_equivalent(&mixed_script, &optimizer_script) {
+                // Same script — just use the optimizer's pick
+                Some(optimizer_script)
+            } else if mixed_est < optimizer_est {
+                // Mixed-SA wins the estimate comparison
+                Some(mixed_script)
+            } else {
+                Some(optimizer_script)
+            }
+        }
+        None => Some(optimizer_script),
+    };
 
-    // Add best mixed-SA variant (if different from all existing candidates)
-    if let Some((mixed_script, _est)) = best_mixed_sa {
-        let dominated = candidates
-            .iter()
-            .any(|c| scripts_equivalent(&mixed_script, c));
-        if !dominated && candidates.len() < MAX_TRIAL_ENCODES {
-            candidates.push(mixed_script);
+    if let Some(alt) = best_alternative {
+        if !scripts_equivalent(&alt, &candidates[0]) {
+            candidates.push(alt);
         }
     }
 

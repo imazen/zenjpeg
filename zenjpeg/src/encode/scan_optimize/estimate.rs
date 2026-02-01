@@ -3,17 +3,240 @@
 //! Uses Huffman frequency counting to estimate relative scan sizes.
 //! This is sufficient for ranking candidates since we only need relative
 //! ordering, not exact byte counts.
+//!
+//! # Caching
+//!
+//! [`ScanHistogramCache`] precomputes per-scan frequency histograms once,
+//! keyed by `(component, ss, se, ah, al)`. Since block data is constant
+//! across all candidate scripts, identical scan parameters always produce
+//! identical histograms. This avoids redundant block-scanning passes when
+//! the same scan appears in multiple candidate scripts or in both the
+//! Phase 1 mixed-SA search and Phase 2 mozjpeg-style search.
+
+use alloc::collections::BTreeMap;
 
 use super::generate::TrialScan;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::huffman::optimize::cluster::cluster_histograms;
 use crate::huffman::optimize::FrequencyCounter;
 
-/// Estimate encoded sizes for all candidate scans.
+/// Key for cached scan histograms: `(component, ss, se, ah, al)`.
+///
+/// A scan's histogram depends only on these 5 parameters plus the block data
+/// (which is constant across all candidates). Using a tuple keeps the key
+/// small and comparison cheap.
+type ScanKey = (u8, u8, u8, u8, u8);
+
+/// Cached histogram and extra bits for a single scan key.
+///
+/// The `FrequencyCounter` contains the Huffman symbol frequencies.
+/// `extra_bits` contains all non-Huffman bits (value bits, refbits, EOB extra bits).
+type CachedHistogram = (FrequencyCounter, usize);
+
+/// Pre-computed scan histogram cache.
+///
+/// Computes each unique `(component, ss, se, ah, al)` histogram exactly once,
+/// then serves lookups for both `estimate_all_scan_sizes` (Phase 2) and
+/// `estimate_script_cost` (Phase 1 mixed-SA + final ranking).
+pub(crate) struct ScanHistogramCache<'a> {
+    cache: BTreeMap<ScanKey, CachedHistogram>,
+    /// Block data references for on-demand computation of missing keys.
+    y_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
+}
+
+impl<'a> ScanHistogramCache<'a> {
+    /// Build a cache pre-populated with histograms for all unique scan keys
+    /// that appear in the given trial scans and candidate scripts.
+    ///
+    /// Scans all blocks exactly once per unique key. Additional keys requested
+    /// later via `get()` are computed on-demand and cached.
+    pub fn warm(
+        trial_scans: &[TrialScan],
+        scripts: &[Vec<super::super::config::ProgressiveScan>],
+        y_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &'a [[i16; DCT_BLOCK_SIZE]],
+        num_components: u8,
+    ) -> Self {
+        let mut keys = alloc::collections::BTreeSet::<ScanKey>::new();
+
+        // Collect keys from Phase 2 trial scans
+        for scan in trial_scans {
+            if scan.is_dc() {
+                if scan.comps_in_scan > 1 {
+                    // Multi-component DC: need individual component histograms
+                    for c in 0..num_components {
+                        keys.insert((c, 0, 0, 0, 0));
+                    }
+                } else {
+                    keys.insert((scan.component, 0, 0, 0, 0));
+                }
+            } else {
+                keys.insert((scan.component, scan.ss, scan.se, scan.ah, scan.al));
+            }
+        }
+
+        // Collect keys from candidate scripts
+        for script in scripts {
+            for scan in script {
+                if scan.ss == 0 && scan.se == 0 {
+                    for &comp in &scan.components {
+                        keys.insert((comp, 0, 0, 0, 0));
+                    }
+                } else {
+                    keys.insert((scan.components[0], scan.ss, scan.se, scan.ah, scan.al));
+                }
+            }
+        }
+
+        // Compute histogram for each unique key
+        let mut cache = BTreeMap::new();
+        for key in keys {
+            let (comp, ss, se, ah, al) = key;
+            let blocks = match comp {
+                0 => y_blocks,
+                1 => cb_blocks,
+                2 => cr_blocks,
+                _ => continue,
+            };
+
+            let entry = if ss == 0 && se == 0 {
+                estimate_dc_scan_detailed(blocks)
+            } else if ah == 0 {
+                estimate_ac_first_scan_detailed(blocks, ss, se, al)
+            } else {
+                estimate_ac_refinement_scan_detailed(blocks, ss, se, ah, al)
+            };
+
+            cache.insert(key, entry);
+        }
+
+        Self {
+            cache,
+            y_blocks,
+            cb_blocks,
+            cr_blocks,
+        }
+    }
+
+    /// Look up a cached histogram, computing on-demand if the key was not pre-warmed.
+    ///
+    /// Keys from trial scans and pre-generated scripts are computed in bulk during
+    /// `warm()`. Keys from dynamically-generated scripts (e.g., `build_final_scans`)
+    /// are computed and cached on first access.
+    fn get(&mut self, key: &ScanKey) -> &CachedHistogram {
+        if !self.cache.contains_key(key) {
+            let (comp, ss, se, ah, al) = *key;
+            let blocks = match comp {
+                0 => self.y_blocks,
+                1 => self.cb_blocks,
+                _ => self.cr_blocks,
+            };
+            let entry = if ss == 0 && se == 0 {
+                estimate_dc_scan_detailed(blocks)
+            } else if ah == 0 {
+                estimate_ac_first_scan_detailed(blocks, ss, se, al)
+            } else {
+                estimate_ac_refinement_scan_detailed(blocks, ss, se, ah, al)
+            };
+            self.cache.insert(*key, entry);
+        }
+        self.cache.get(key).unwrap()
+    }
+
+    /// Estimate encoded sizes for all candidate scans using cached histograms.
+    ///
+    /// Replaces `estimate_all_scan_sizes`: instead of scanning blocks per scan,
+    /// looks up pre-computed histograms and computes the combined cost.
+    pub fn estimate_all_scan_sizes_cached(&mut self, scans: &[TrialScan]) -> Vec<usize> {
+        let mut sizes = Vec::with_capacity(scans.len());
+
+        for scan in scans {
+            let estimated = if scan.is_dc() {
+                if scan.comps_in_scan > 1 {
+                    // Multi-component DC: sum individual component costs
+                    let mut total = 0usize;
+                    // Components 0, 1, 2 for 3-component; just 0 for grayscale
+                    for c in 0..scan.comps_in_scan {
+                        let (counter, extra) = self.get(&(c, 0, 0, 0, 0));
+                        total += counter.estimate_encoding_cost() as usize + extra;
+                    }
+                    total
+                } else {
+                    let (counter, extra) = self.get(&(scan.component, 0, 0, 0, 0));
+                    counter.estimate_encoding_cost() as usize + extra
+                }
+            } else {
+                let key = (scan.component, scan.ss, scan.se, scan.ah, scan.al);
+                let (counter, extra) = self.get(&key);
+                counter.estimate_encoding_cost() as usize + extra
+            };
+
+            sizes.push(estimated);
+        }
+
+        sizes
+    }
+
+    /// Estimate total cost of a complete progressive scan script using cached histograms.
+    ///
+    /// Replaces `estimate_script_cost`: uses cached histograms for clustering-aware
+    /// cost computation without re-scanning blocks.
+    pub fn estimate_script_cost_cached(
+        &mut self,
+        script: &[super::super::config::ProgressiveScan],
+    ) -> usize {
+        let mut dc_histograms: Vec<FrequencyCounter> = Vec::new();
+        let mut ac_histograms: Vec<FrequencyCounter> = Vec::new();
+        let mut extra_bits_total: usize = 0;
+
+        for scan in script {
+            if scan.ss == 0 && scan.se == 0 {
+                // DC scan — one histogram per component in the scan
+                for &comp in &scan.components {
+                    let (counter, extra) = self.get(&(comp, 0, 0, 0, 0));
+                    dc_histograms.push(counter.clone());
+                    extra_bits_total += extra;
+                }
+            } else {
+                let key = (scan.components[0], scan.ss, scan.se, scan.ah, scan.al);
+                let (counter, extra) = self.get(&key);
+                ac_histograms.push(counter.clone());
+                extra_bits_total += extra;
+            }
+        }
+
+        // Cluster DC and AC histograms separately (matching encoder behavior).
+        let mut huffman_total: usize = 0;
+
+        if !dc_histograms.is_empty() {
+            let dc_result = cluster_histograms(&dc_histograms, 4, false);
+            for h in &dc_result.cluster_histograms {
+                huffman_total += h.estimate_encoding_cost() as usize;
+            }
+        }
+
+        if !ac_histograms.is_empty() {
+            let ac_result = cluster_histograms(&ac_histograms, 32, false);
+            for h in &ac_result.cluster_histograms {
+                huffman_total += h.estimate_encoding_cost() as usize;
+            }
+        }
+
+        huffman_total + extra_bits_total + script.len() * SOS_HEADER_BITS
+    }
+}
+
+/// Estimate encoded sizes for all candidate scans (non-cached path).
 ///
 /// Returns a vector of estimated sizes (in bits) for each candidate scan.
 /// Uses Huffman frequency analysis for AC scans and simple category counting
 /// for DC scans.
+///
+/// Prefer [`ScanHistogramCache::estimate_all_scan_sizes_cached`] when multiple
+/// estimation passes share the same block data.
 pub(crate) fn estimate_all_scan_sizes(
     scans: &[TrialScan],
     y_blocks: &[[i16; DCT_BLOCK_SIZE]],
