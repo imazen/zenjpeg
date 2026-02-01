@@ -1147,15 +1147,15 @@ impl StreamingEncoder {
             .map_err(|_| Error::allocation_failed(width * height / 4, "sequential jpeg output"))?;
 
         let (scan_data, frequencies) = if config.use_xyb {
-            let data = Self::encode_sequential_xyb(
+            Self::encode_sequential_xyb(
                 config,
                 y_quant,
                 cb_quant,
                 cr_quant,
                 &strip_output,
                 output,
-            )?;
-            (data, None)
+                collect_frequencies,
+            )?
         } else {
             Self::encode_sequential_ycbcr(
                 config,
@@ -1189,7 +1189,11 @@ impl StreamingEncoder {
         cr_quant: &QuantTable,
         strip_output: &crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
-    ) -> Result<Vec<u8>> {
+        collect_frequencies: bool,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
         config.write_header_xyb(output)?;
         config.write_app14_adobe(output, 0)?;
         config.write_icc_profile(output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
@@ -1200,11 +1204,21 @@ impl StreamingEncoder {
         config.write_frame_header_xyb_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
-            let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-            )?;
+            let (dc_table, ac_table, frequencies) = if collect_frequencies {
+                let (dc, ac, f) = config.build_optimized_tables_xyb_raster_with_counts(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                )?;
+                (dc, ac, Some(f))
+            } else {
+                let (dc, ac) = config.build_optimized_tables_xyb_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                )?;
+                (dc, ac, None)
+            };
 
             config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
 
@@ -1213,13 +1227,14 @@ impl StreamingEncoder {
             }
             config.write_scan_header_xyb(output)?;
 
-            config.encode_with_tables_xyb_raster(
+            let scan_data = config.encode_with_tables_xyb_raster(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
                 &dc_table,
                 &ac_table,
-            )
+            )?;
+            Ok((scan_data, frequencies))
         } else {
             config.write_huffman_tables(output)?;
 
@@ -1228,11 +1243,12 @@ impl StreamingEncoder {
             }
             config.write_scan_header_xyb(output)?;
 
-            config.encode_with_tables_xyb_standard_raster(
+            let scan_data = config.encode_with_tables_xyb_standard_raster(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
-            )
+            )?;
+            Ok((scan_data, None))
         }
     }
 
