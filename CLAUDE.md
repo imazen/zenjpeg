@@ -1041,6 +1041,32 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Planned Features / TODO
 
+### DONE: Progressive Scan Optimization (completed 2026-02-01)
+
+mozjpeg-style `optimize_scans` — lossless optimization that tries 64 candidate
+progressive scan configurations and picks the smallest. Expected savings: 1-3%.
+
+**Usage:**
+```rust
+let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    .optimize_scans(true);  // auto-enables progressive + optimize_huffman
+```
+
+**Files:** `zenjpeg/src/encode/scan_optimize/{mod,config,generate,select,estimate}.rs`
+**Tests:** `zenjpeg/tests/scan_optimize_integration.rs` (9 tests), 18 unit tests
+
+**Algorithm:**
+1. Generate 64 candidate scan configs (varying Al levels, frequency splits, DC interleaving)
+2. Estimate encoded size of each using Huffman frequency analysis (reuses `FrequencyCounter`)
+3. Select best Al levels + frequency splits from the 64 size estimates
+4. Build optimized scan script and feed into existing progressive encoder
+
+**Known limitations:**
+- Interleaved DC scans not supported (requires MCU-aware block iteration for subsampled images)
+- DC successive approximation not implemented (negligible savings)
+- XYB mode not supported (returns default fixed script)
+- Savings on synthetic/gradient images are modest (~1.2%); real photos see 1-3%
+
 ### DONE: LayoutParams Immutable Substruct (completed 2026-01-31)
 
 Eliminated derived-state sync bugs by creating `LayoutParams` (`encode/layout.rs`):
