@@ -145,7 +145,7 @@ impl EncoderConfig {
     fn default_internal() -> Self {
         Self {
             quality: Quality::default(),
-            tables: None, // Use perceptual defaults
+            tables: None,      // Use perceptual defaults
             progressive: true, // Progressive gives 3-7% smaller files
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
@@ -198,10 +198,14 @@ impl EncoderConfig {
         self
     }
 
-    /// Enable or disable Huffman table optimization.
+    /// Enable or disable per-image Huffman table optimization.
     ///
-    /// When enabled (default), computes optimal Huffman tables from image data.
-    /// When disabled, uses standard JPEG Huffman tables (faster but larger files).
+    /// When enabled (default), a two-pass encode computes optimal Huffman tables
+    /// from the image data. This produces the smallest files.
+    ///
+    /// When disabled, uses general-purpose trained tables (~2.5% larger than optimal).
+    /// To use the original JPEG Annex K tables instead, use
+    /// [`custom_huffman_tables(HuffmanTableSet::annex_k()?)`](Self::custom_huffman_tables).
     ///
     /// Note: Progressive mode requires optimized Huffman tables.
     #[must_use]
@@ -209,7 +213,7 @@ impl EncoderConfig {
         self.huffman = if enable {
             HuffmanStrategy::Optimize
         } else {
-            HuffmanStrategy::StandardFixed
+            HuffmanStrategy::Fixed
         };
         self
     }
@@ -532,14 +536,13 @@ impl EncoderConfig {
         self
     }
 
-    /// Sets custom Huffman tables for streaming-through encoding.
+    /// Sets custom Huffman tables for single-pass encoding.
     ///
-    /// When provided, enables single-pass encoding: blocks are entropy-encoded
-    /// immediately using these tables instead of buffering all blocks for a
-    /// two-pass Huffman optimization.
+    /// Blocks are entropy-encoded immediately using these tables instead of
+    /// buffering for a two-pass Huffman optimization.
     ///
-    /// Tables can come from [`crate::huffman::trained`] (pre-trained on image
-    /// corpora) or from a previous encoding pass.
+    /// Use [`HuffmanTableSet::annex_k()`] for the original JPEG standard tables,
+    /// or provide tables from a previous encoding pass or external source.
     #[must_use]
     pub fn custom_huffman_tables(
         mut self,
@@ -968,7 +971,7 @@ mod tests {
     fn test_validation_progressive_huffman() {
         let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         config.progressive = true;
-        config.huffman = HuffmanStrategy::StandardFixed;
+        config.huffman = HuffmanStrategy::Fixed;
 
         assert!(config.validate().is_err());
     }

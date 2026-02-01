@@ -7,6 +7,7 @@
 //! - `optimize`: Two-pass Huffman optimization with frequency counting and clustering
 //! - `trained`: Pre-trained Huffman tables for streaming encoding
 
+pub(crate) mod builtin_tables;
 pub mod classic;
 pub mod encode;
 pub mod optimize;

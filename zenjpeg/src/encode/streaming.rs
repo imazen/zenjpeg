@@ -67,7 +67,7 @@ struct StreamingOutputState {
 /// Two encoding modes:
 /// - **Buffered** (default with `HuffmanStrategy::Optimize`): buffers all blocks,
 ///   builds optimal Huffman tables at `finish()`.
-/// - **Streaming-through** (with `HuffmanStrategy::Custom` or `StandardFixed`, sequential only):
+/// - **Streaming-through** (with `HuffmanStrategy::Custom` or `Fixed`, sequential only):
 ///   writes JPEG header at construction, encodes blocks immediately on each
 ///   strip flush. At `finish()`, just appends EOI.
 pub(crate) struct StreamingEncoder {
@@ -285,7 +285,7 @@ impl StreamingEncoder {
         };
 
         // Determine if we can use streaming-through encoding:
-        // - Need known Huffman tables (Custom or StandardFixed)
+        // - Need known Huffman tables (Custom or Fixed)
         // - Must be sequential (progressive needs multi-pass)
         // - Not XYB (different header/table structure)
         let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
@@ -296,9 +296,11 @@ impl StreamingEncoder {
             // Get tables: custom if provided, otherwise standard JPEG tables
             let tables = match builder.huffman {
                 HuffmanStrategy::Custom(tables) => tables,
-                HuffmanStrategy::StandardFixed => {
-                    Box::new(crate::huffman::optimize::HuffmanTableSet::from_standard()?)
-                }
+                HuffmanStrategy::Fixed => Box::new(crate::huffman::builtin_tables::select_tables(
+                    &builder.quality,
+                    builder.use_xyb,
+                    builder.subsampling,
+                )),
                 HuffmanStrategy::Optimize => unreachable!(),
             };
 
@@ -964,7 +966,7 @@ impl StreamingEncoder {
 
                     // Count frequencies from the buffered blocks. The symbol
                     // distribution is the same regardless of scan structure,
-                    // so single-scan counts are useful for corpus table training.
+                    // so single-scan counts are useful for general-purpose table training.
                     let is_color = !config.pixel_format.is_grayscale();
                     let counts = Box::new(config.count_block_frequencies(
                         &strip_output.y_blocks,
@@ -1147,15 +1149,15 @@ impl StreamingEncoder {
             .map_err(|_| Error::allocation_failed(width * height / 4, "sequential jpeg output"))?;
 
         let (scan_data, frequencies) = if config.use_xyb {
-            let data = Self::encode_sequential_xyb(
+            Self::encode_sequential_xyb(
                 config,
                 y_quant,
                 cb_quant,
                 cr_quant,
                 &strip_output,
                 output,
-            )?;
-            (data, None)
+                collect_frequencies,
+            )?
         } else {
             Self::encode_sequential_ycbcr(
                 config,
@@ -1189,7 +1191,11 @@ impl StreamingEncoder {
         cr_quant: &QuantTable,
         strip_output: &crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
-    ) -> Result<Vec<u8>> {
+        collect_frequencies: bool,
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
         config.write_header_xyb(output)?;
         config.write_app14_adobe(output, 0)?;
         config.write_icc_profile(output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
@@ -1200,11 +1206,21 @@ impl StreamingEncoder {
         config.write_frame_header_xyb_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
-            let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
-                &strip_output.y_blocks,
-                &strip_output.cb_blocks,
-                &strip_output.cr_blocks,
-            )?;
+            let (dc_table, ac_table, frequencies) = if collect_frequencies {
+                let (dc, ac, f) = config.build_optimized_tables_xyb_raster_with_counts(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                )?;
+                (dc, ac, Some(f))
+            } else {
+                let (dc, ac) = config.build_optimized_tables_xyb_raster(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                )?;
+                (dc, ac, None)
+            };
 
             config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
 
@@ -1213,26 +1229,53 @@ impl StreamingEncoder {
             }
             config.write_scan_header_xyb(output)?;
 
-            config.encode_with_tables_xyb_raster(
+            let scan_data = config.encode_with_tables_xyb_raster(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
                 &dc_table,
                 &ac_table,
-            )
-        } else {
-            config.write_huffman_tables(output)?;
+            )?;
+            Ok((scan_data, frequencies))
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            // Custom tables: XYB uses dc_luma/ac_luma as the shared pair.
+            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
             config.write_scan_header_xyb(output)?;
 
-            config.encode_with_tables_xyb_standard_raster(
+            let scan_data = config.encode_with_tables_xyb_raster(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
-            )
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            Ok((scan_data, None))
+        } else {
+            // Fixed: use general-purpose trained tables for XYB
+            let tables = crate::huffman::builtin_tables::select_tables(
+                &config.quality,
+                true,
+                config.subsampling,
+            );
+            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            let scan_data = config.encode_with_tables_xyb_raster(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            Ok((scan_data, None))
         }
     }
 
@@ -1296,8 +1339,8 @@ impl StreamingEncoder {
                 Some(&tables),
             )?;
             Ok((scan_data, frequencies))
-        } else {
-            config.write_huffman_tables(output)?;
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            config.write_huffman_tables_optimized(output, tables)?;
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
@@ -1309,7 +1352,29 @@ impl StreamingEncoder {
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
                 is_color,
-                None,
+                Some(tables),
+            )?;
+            Ok((scan_data, None))
+        } else {
+            // Fixed: use general-purpose trained tables
+            let tables = crate::huffman::builtin_tables::select_tables(
+                &config.quality,
+                false,
+                config.subsampling,
+            );
+            config.write_huffman_tables_optimized(output, &tables)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                Some(&tables),
             )?;
             Ok((scan_data, None))
         }

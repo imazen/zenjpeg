@@ -142,7 +142,15 @@ pub use crate::encode::encoder_types::ParallelEncoding;
 #[cfg(feature = "mozjpeg-tables")]
 pub use crate::encode::mozjpeg_tables::{MozjpegTables, QuantTablePreset};
 
-// === Types used in encoder configuration ===
+// === Huffman table types ===
+/// Pre-built Huffman table set for single-pass encoding.
+///
+/// By default, the encoder uses general-purpose trained tables that are
+/// ~5-12% more efficient than the JPEG Annex K tables.
+///
+/// Use [`HuffmanTableSet::annex_k()`] for the original JPEG standard tables,
+/// or pass custom tables to [`EncoderConfig::custom_huffman_tables()`].
+pub use crate::huffman::optimize::HuffmanTableSet;
 pub use crate::types::HuffmanMethod;
 
 // === Cancellation support ===
