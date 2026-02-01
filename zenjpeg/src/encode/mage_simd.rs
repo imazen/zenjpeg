@@ -264,13 +264,19 @@ pub fn mage_forward_dct_8x8(
     // Row DCT: all 8 rows processed in parallel
     mage_dct1d_8_inner(token, &mut reg);
 
+    // Scale by 1/8 after row DCT (first pass)
+    for r in &mut reg {
+        *r = _mm256_mul_ps(*r, scale);
+    }
+
     // Transpose: reg[i][j] = coef[i, j] (row-major coefficient matrix)
     mage_transpose_8x8_inplace_inner(token, &mut reg);
 
     // Column DCT: all 8 columns processed in parallel
     mage_dct1d_8_inner(token, &mut reg);
 
-    // Scale and store using safe SIMD store operations
+    // Scale by 1/8 after col DCT (second pass) - total scaling: 1/64
+    // Store using safe SIMD store operations
     safe_simd::_mm256_storeu_ps(
         (&mut output[0..8]).try_into().unwrap(),
         _mm256_mul_ps(reg[0], scale),
@@ -338,13 +344,19 @@ pub fn mage_forward_dct_8x8_wide(
     // Row DCT: all 8 rows processed in parallel
     mage_dct1d_8_inner(token, &mut reg);
 
+    // Scale by 1/8 after row DCT (first pass)
+    for r in &mut reg {
+        *r = _mm256_mul_ps(*r, scale);
+    }
+
     // Transpose: reg[i][j] = coef[i, j] (row-major coefficient matrix)
     mage_transpose_8x8_inplace_inner(token, &mut reg);
 
     // Column DCT: all 8 columns processed in parallel
     mage_dct1d_8_inner(token, &mut reg);
 
-    // Scale and store back via bytemuck
+    // Scale by 1/8 after col DCT (second pass) - total scaling: 1/64
+    // Store back via bytemuck
     let mut output = Block8x8f::default();
     let out_rows: &mut [[f32; 8]; 8] = bytemuck::cast_mut(&mut output);
     safe_simd::_mm256_storeu_ps(&mut out_rows[0], _mm256_mul_ps(reg[0], scale));
@@ -675,13 +687,19 @@ pub fn mage_forward_dct_8x8_dual(
     // Row DCT: all 16 rows (8 per block) processed in parallel
     mage_dct1d_8_avx512_inner(token, &mut reg);
 
+    // Scale by 1/8 after row DCT (first pass)
+    for r in &mut reg {
+        *r = _mm512_mul_ps(*r, scale);
+    }
+
     // Transpose both blocks again
     mage_transpose_8x8_dual_inner(token, &mut reg);
 
     // Column DCT: all 16 columns processed in parallel
     mage_dct1d_8_avx512_inner(token, &mut reg);
 
-    // Scale and store back to separate output arrays
+    // Scale by 1/8 after col DCT (second pass) - total scaling: 1/64
+    // Store back to separate output arrays
     for i in 0..8 {
         let scaled = _mm512_mul_ps(reg[i], scale);
         // Extract low 256 bits (block A) and high 256 bits (block B)
@@ -757,12 +775,19 @@ pub fn mage_forward_dct_8x8_wide_dual(
         ),
     ];
 
-    // Transpose, DCT, transpose, DCT
-    mage_transpose_8x8_dual_inner(token, &mut reg);
-    mage_dct1d_8_avx512_inner(token, &mut reg);
+    // Transpose, row DCT, scale, transpose, col DCT
     mage_transpose_8x8_dual_inner(token, &mut reg);
     mage_dct1d_8_avx512_inner(token, &mut reg);
 
+    // Scale by 1/8 after row DCT (first pass)
+    for r in &mut reg {
+        *r = _mm512_mul_ps(*r, scale);
+    }
+
+    mage_transpose_8x8_dual_inner(token, &mut reg);
+    mage_dct1d_8_avx512_inner(token, &mut reg);
+
+    // Scale by 1/8 after col DCT (second pass) - total scaling: 1/64
     // Store back
     let mut output_a = Block8x8f::default();
     let mut output_b = Block8x8f::default();
@@ -1302,8 +1327,12 @@ mod tests {
             mage_forward_dct_8x8(token, &input, &mut output);
 
             // For a flat block, only DC should be non-zero
-            // DC = sum / 8 = 128 * 64 / 8 = 1024
-            assert!(output[0].abs() > 100.0, "DC should be large for flat block");
+            // DC = value (with 1/64 total scaling from 2D DCT)
+            assert!(
+                output[0].abs() > 100.0 && output[0].abs() < 150.0,
+                "DC should be ~128 for flat block, got {}",
+                output[0]
+            );
 
             // AC coefficients should be near zero
             for i in 1..64 {
@@ -1701,15 +1730,16 @@ mod tests {
             mage_forward_dct_8x8_dual(token, &input_a, &input_b, &mut output_a, &mut output_b);
 
             // For flat blocks, only DC should be non-zero
-            // DC_a = 128 * 8 = 1024, DC_b = 64 * 8 = 512
+            // DC = sum / 64 = value * 64 / 64 = value
+            // DC_a = 128, DC_b = 64
             assert!(
-                output_a[0].abs() > 900.0,
-                "DC_a should be ~1024 for flat block, got {}",
+                output_a[0].abs() > 100.0 && output_a[0].abs() < 150.0,
+                "DC_a should be ~128 for flat block, got {}",
                 output_a[0]
             );
             assert!(
-                output_b[0].abs() > 400.0,
-                "DC_b should be ~512 for flat block, got {}",
+                output_b[0].abs() > 50.0 && output_b[0].abs() < 80.0,
+                "DC_b should be ~64 for flat block, got {}",
                 output_b[0]
             );
 
