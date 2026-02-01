@@ -37,13 +37,34 @@ struct Corpus {
 }
 
 const CORPORA: &[Corpus] = &[
-    Corpus { name: "clic2025-training", rel_path: "clic2025/training" },
-    Corpus { name: "CID22-training", rel_path: "CID22/CID22-512/training" },
-    Corpus { name: "gb82", rel_path: "gb82" },
-    Corpus { name: "gb82-sc", rel_path: "gb82-sc" },
-    Corpus { name: "kadid10k", rel_path: "kadid10k" },
-    Corpus { name: "kodak-legacy", rel_path: "kodak-legacy" },
-    Corpus { name: "qoi-screenshot-web", rel_path: "qoi-benchmark/screenshot_web" },
+    Corpus {
+        name: "clic2025-training",
+        rel_path: "clic2025/training",
+    },
+    Corpus {
+        name: "CID22-training",
+        rel_path: "CID22/CID22-512/training",
+    },
+    Corpus {
+        name: "gb82",
+        rel_path: "gb82",
+    },
+    Corpus {
+        name: "gb82-sc",
+        rel_path: "gb82-sc",
+    },
+    Corpus {
+        name: "kadid10k",
+        rel_path: "kadid10k",
+    },
+    Corpus {
+        name: "kodak-legacy",
+        rel_path: "kodak-legacy",
+    },
+    Corpus {
+        name: "qoi-screenshot-web",
+        rel_path: "qoi-benchmark/screenshot_web",
+    },
 ];
 
 #[derive(Clone, Copy)]
@@ -127,7 +148,10 @@ fn main() -> Result<()> {
     println!("=== Corpus Huffman Table Validation ===\n");
     println!("Corpora: {} ({} images)", corpus_images.len(), total_images);
     println!("Quality tiers: {:?}", VALIDATION_QUALITIES);
-    println!("Modes: {:?}\n", Mode::ALL.iter().map(|m| m.label()).collect::<Vec<_>>());
+    println!(
+        "Modes: {:?}\n",
+        Mode::ALL.iter().map(|m| m.label()).collect::<Vec<_>>()
+    );
 
     for mode in Mode::ALL {
         println!("==============================");
@@ -136,14 +160,18 @@ fn main() -> Result<()> {
 
         // Load aggregated frequency tables for this mode
         let agg_tables = load_tables_for_mode(
-            &PathBuf::from(FREQ_DIR).join("aggregated").join(mode.dir_name()),
+            &PathBuf::from(FREQ_DIR)
+                .join("aggregated")
+                .join(mode.dir_name()),
             VALIDATION_QUALITIES,
         )?;
 
         // Load per-corpus frequency tables
         let mut corpus_tables: BTreeMap<String, BTreeMap<u8, HuffmanTableSet>> = BTreeMap::new();
         for (corpus, _) in &corpus_images {
-            let dir = PathBuf::from(FREQ_DIR).join(corpus.name).join(mode.dir_name());
+            let dir = PathBuf::from(FREQ_DIR)
+                .join(corpus.name)
+                .join(mode.dir_name());
             if dir.exists() {
                 corpus_tables.insert(
                     corpus.name.to_string(),
@@ -168,9 +196,7 @@ fn main() -> Result<()> {
             let mut total_std = 0usize;
 
             for (corpus, images) in &corpus_images {
-                let own_tbl = corpus_tables
-                    .get(corpus.name)
-                    .and_then(|m| m.get(&quality));
+                let own_tbl = corpus_tables.get(corpus.name).and_then(|m| m.get(&quality));
 
                 let stats = validate_images(images, *mode, quality, agg_tbl, own_tbl)?;
 
@@ -301,7 +327,9 @@ fn encode_with_tables(
     quality: u8,
     tables: &HuffmanTableSet,
 ) -> Result<usize> {
-    let config = mode.base_config(quality).custom_huffman_tables(tables.clone());
+    let config = mode
+        .base_config(quality)
+        .custom_huffman_tables(tables.clone());
     let mut enc = config.encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(pixels, Unstoppable)?;
     Ok(enc.finish()?.len())
@@ -316,17 +344,16 @@ fn encode_standard(w: u32, h: u32, pixels: &[u8], mode: Mode, quality: u8) -> Re
 
 // --- Frequency / table loading ---
 
-fn load_tables_for_mode(
-    dir: &Path,
-    qualities: &[u8],
-) -> Result<BTreeMap<u8, HuffmanTableSet>> {
+fn load_tables_for_mode(dir: &Path, qualities: &[u8]) -> Result<BTreeMap<u8, HuffmanTableSet>> {
     let json_path = dir.join("raw_frequencies.json");
     let data: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json_path)?)?;
 
     let mut tables = BTreeMap::new();
     for &q in qualities {
         let key = format!("q{q}");
-        let qdata = data.get(&key).ok_or_else(|| format!("missing {key} in {}", json_path.display()))?;
+        let qdata = data
+            .get(&key)
+            .ok_or_else(|| format!("missing {key} in {}", json_path.display()))?;
 
         let freqs = json_to_frequencies(qdata)?;
         tables.insert(q, freqs.generate_tables()?);
