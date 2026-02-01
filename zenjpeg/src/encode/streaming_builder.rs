@@ -7,6 +7,7 @@
 
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::Quality;
+use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
 use crate::encode::tuning::EncodingTables;
 use crate::error::Result;
@@ -387,70 +388,38 @@ impl StreamingEncoderBuilder {
     /// Estimates the peak memory usage for this configuration.
     ///
     /// Returns the estimated peak memory in bytes based on image dimensions,
-    /// subsampling mode, and pixel format.
+    /// subsampling mode, and pixel format. Uses `LayoutParams` for all geometry
+    /// to correctly handle XYB mode (strip_height=16, v_samp=2).
     #[must_use]
     pub(crate) fn estimate_memory_usage(&self) -> usize {
-        let width = self.width as usize;
-        let height = self.height as usize;
+        let lp = LayoutParams::new(
+            self.width as usize,
+            self.height as usize,
+            self.subsampling,
+            self.use_xyb,
+        );
 
-        // Strip height based on subsampling
-        let strip_height = match self.subsampling {
-            Subsampling::S420 | Subsampling::S440 => 16,
-            _ => 8,
-        };
-
-        // MCU size for padding
-        let mcu_size = self.subsampling.mcu_size();
-        let padded_width = (width + mcu_size - 1) / mcu_size * mcu_size;
-
-        // Chroma dimensions
-        let (c_width, c_strip_height) = match self.subsampling {
-            Subsampling::S420 => ((width + 1) / 2, strip_height / 2),
-            Subsampling::S422 => ((width + 1) / 2, strip_height),
-            Subsampling::S440 => (width, strip_height / 2),
-            Subsampling::S444 => (width, strip_height),
-        };
-        let padded_c_width = (c_width + 7) / 8 * 8;
-
-        // Block counts
-        let y_blocks_w = (width + 7) / 8;
-        let y_blocks_h = (height + 7) / 8;
-        let y_block_count = y_blocks_w * y_blocks_h;
-
-        let c_block_count = match self.subsampling {
-            Subsampling::S420 => ((width + 15) / 16) * ((height + 15) / 16),
-            Subsampling::S422 => ((width + 15) / 16) * y_blocks_h,
-            Subsampling::S440 => y_blocks_w * ((height + 15) / 16),
-            Subsampling::S444 => y_block_count,
-        };
+        let y_block_count = lp.total_y_blocks;
+        let c_block_count = lp.total_c_blocks;
 
         // 1. Row buffer for input (one strip's worth)
         let bpp = self.pixel_format.bytes_per_pixel();
-        let row_buffer = width * strip_height * bpp;
+        let row_buffer = lp.width * lp.strip_height * bpp;
 
         // 2. Strip f32 buffers (Y, Cb, Cr at full resolution before downsampling)
-        let strip_y = padded_width * strip_height * 4; // f32 = 4 bytes
-        let strip_cb = padded_width * strip_height * 4;
-        let strip_cr = padded_width * strip_height * 4;
+        let strip_y = lp.padded_width * lp.strip_height * 4; // f32 = 4 bytes
+        let strip_cb = lp.padded_width * lp.strip_height * 4;
+        let strip_cr = lp.padded_width * lp.strip_height * 4;
 
         // 3. Downsampled chroma temp buffers
-        let strip_cb_down = padded_c_width * c_strip_height * 4;
-        let strip_cr_down = padded_c_width * c_strip_height * 4;
+        let strip_cb_down = lp.padded_c_width * lp.c_strip_height * 4;
+        let strip_cr_down = lp.padded_c_width * lp.c_strip_height * 4;
 
         // 4. Pending f32 DCT blocks (double-buffered, 2 iMCU rows)
-        let padded_y_blocks_h = padded_width / 8;
-        let v_samp = match self.subsampling {
-            Subsampling::S420 | Subsampling::S440 => 2,
-            _ => 1,
-        };
-        let pending_y_capacity = padded_y_blocks_h * v_samp;
-        let padded_c_blocks_h = padded_c_width / 8;
-        let pending_c_capacity = padded_c_blocks_h;
-
         // 256 bytes per f32 block, 2 buffers (double-buffered)
-        let pending_y_f32 = 2 * pending_y_capacity * 256;
-        let pending_cb_f32 = 2 * pending_c_capacity * 256;
-        let pending_cr_f32 = 2 * pending_c_capacity * 256;
+        let pending_y_f32 = 2 * lp.pending_y_capacity * 256;
+        let pending_cb_f32 = 2 * lp.pending_c_capacity * 256;
+        let pending_cr_f32 = 2 * lp.pending_c_capacity * 256;
 
         // 5. Final i16 blocks (128 bytes per block)
         let y_blocks_i16 = y_block_count * 128;
@@ -464,7 +433,7 @@ impl StreamingEncoderBuilder {
         let entropy_output = total_blocks * 3;
 
         // 8. Output buffer estimate (grows during encoding)
-        let output_estimate = width * height / 8;
+        let output_estimate = lp.width * lp.height / 8;
 
         // Total estimate
         row_buffer
@@ -486,62 +455,43 @@ impl StreamingEncoderBuilder {
     /// Returns an absolute ceiling on memory usage.
     ///
     /// Unlike [`estimate_memory_usage`], this returns a **guaranteed upper bound**
-    /// that actual peak memory will never exceed.
+    /// that actual peak memory will never exceed. Uses `LayoutParams` for all geometry
+    /// to correctly handle XYB mode.
     #[must_use]
     pub(crate) fn estimate_memory_ceiling(&self) -> usize {
-        let width = self.width as usize;
-        let height = self.height as usize;
+        let lp = LayoutParams::new(
+            self.width as usize,
+            self.height as usize,
+            self.subsampling,
+            self.use_xyb,
+        );
 
-        let strip_height = match self.subsampling {
-            Subsampling::S420 | Subsampling::S440 => 16,
-            _ => 8,
-        };
+        // Use padded dimensions for ceiling (worst case)
+        let padded_height = (lp.height + lp.mcu_size - 1) / lp.mcu_size * lp.mcu_size;
+        let y_blocks_w_padded = lp.padded_width / 8;
+        let y_blocks_h_padded = padded_height / 8;
+        let y_block_count = y_blocks_w_padded * y_blocks_h_padded;
 
-        let mcu_size = self.subsampling.mcu_size();
-        let padded_width = (width + mcu_size - 1) / mcu_size * mcu_size;
-        let padded_height = (height + mcu_size - 1) / mcu_size * mcu_size;
-
-        let (c_width, c_strip_height) = match self.subsampling {
-            Subsampling::S420 => ((padded_width + 1) / 2, strip_height / 2),
-            Subsampling::S422 => ((padded_width + 1) / 2, strip_height),
-            Subsampling::S440 => (padded_width, strip_height / 2),
-            Subsampling::S444 => (padded_width, strip_height),
-        };
-        let padded_c_width = (c_width + 7) / 8 * 8;
-
-        let y_blocks_w = padded_width / 8;
-        let y_blocks_h = padded_height / 8;
-        let y_block_count = y_blocks_w * y_blocks_h;
-
-        let c_block_count = match self.subsampling {
-            Subsampling::S420 => (padded_width / 16) * (padded_height / 16),
-            Subsampling::S422 => (padded_width / 16) * y_blocks_h,
-            Subsampling::S440 => y_blocks_w * (padded_height / 16),
+        let c_block_count = match lp.subsampling {
+            Subsampling::S420 => (lp.padded_width / 16) * (padded_height / 16),
+            Subsampling::S422 => (lp.padded_width / 16) * y_blocks_h_padded,
+            Subsampling::S440 => y_blocks_w_padded * (padded_height / 16),
             Subsampling::S444 => y_block_count,
         };
 
         let max_bpp = 4;
-        let row_buffer = padded_width * strip_height * max_bpp;
+        let row_buffer = lp.padded_width * lp.strip_height * max_bpp;
 
-        let strip_y = padded_width * strip_height * 4;
-        let strip_cb = padded_width * strip_height * 4;
-        let strip_cr = padded_width * strip_height * 4;
+        let strip_y = lp.padded_width * lp.strip_height * 4;
+        let strip_cb = lp.padded_width * lp.strip_height * 4;
+        let strip_cr = lp.padded_width * lp.strip_height * 4;
 
-        let strip_cb_down = padded_c_width * c_strip_height * 4;
-        let strip_cr_down = padded_c_width * c_strip_height * 4;
+        let strip_cb_down = lp.padded_c_width * lp.c_strip_height * 4;
+        let strip_cr_down = lp.padded_c_width * lp.c_strip_height * 4;
 
-        let padded_y_blocks_per_row = padded_width / 8;
-        let v_samp = match self.subsampling {
-            Subsampling::S420 | Subsampling::S440 => 2,
-            _ => 1,
-        };
-        let pending_y_capacity = padded_y_blocks_per_row * v_samp;
-        let padded_c_blocks_per_row = padded_c_width / 8;
-        let pending_c_capacity = padded_c_blocks_per_row;
-
-        let pending_y_f32 = 2 * pending_y_capacity * 256;
-        let pending_cb_f32 = 2 * pending_c_capacity * 256;
-        let pending_cr_f32 = 2 * pending_c_capacity * 256;
+        let pending_y_f32 = 2 * lp.pending_y_capacity * 256;
+        let pending_cb_f32 = 2 * lp.pending_c_capacity * 256;
+        let pending_cr_f32 = 2 * lp.pending_c_capacity * 256;
 
         let y_blocks_i16 = y_block_count * 128;
         let c_blocks_i16 = c_block_count * 2 * 128;
@@ -551,7 +501,7 @@ impl StreamingEncoderBuilder {
         let total_blocks = y_block_count + c_block_count * 2;
         let entropy_output = total_blocks * 10;
 
-        let output_ceiling = padded_width * padded_height;
+        let output_ceiling = lp.padded_width * padded_height;
 
         let huffman_tables = 4 * 256 * 8;
         let scan_overhead = 64 * 8;
