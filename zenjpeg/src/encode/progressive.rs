@@ -38,7 +38,7 @@ impl ComputedConfig {
         num_dc_tables: usize,
         context_map: &[usize],
         ac_slot_ids: &[usize],
-        tables_emitted: usize,
+        _tables_emitted: usize,
     ) -> Result<Vec<u8>> {
         // Estimate output size from token count (~2 bytes per token average)
         let scan_info = token_buffer.scan_info.get(scan_idx);
@@ -53,18 +53,27 @@ impl ComputedConfig {
             encoder.set_dc_table(i, &table.table);
         }
 
-        // Set up AC Huffman tables using slot IDs
-        // Only load tables that have been emitted via DHT markers
-        let num_ac_emitted = tables_emitted.saturating_sub(num_dc_tables);
-        for (i, table) in tables
-            .iter()
-            .skip(num_dc_tables)
-            .take(num_ac_emitted)
-            .enumerate()
-        {
-            // Use the slot ID from ac_slot_ids (cycles 0-3)
-            let slot = ac_slot_ids.get(i).copied().unwrap_or(i % 4);
-            encoder.set_ac_table(slot, &table.table);
+        // Set up AC Huffman table for this specific scan.
+        //
+        // We load only the table needed by the current scan, not all AC tables.
+        // JPEG allows only 4 AC table slots (0-3), but the optimizer may produce
+        // more than 4 AC clusters. With slot cycling, loading all tables at once
+        // would cause later tables to overwrite earlier ones in the same slot,
+        // leaving the wrong table active for earlier scans.
+        if scan.ss > 0 {
+            let ac_context = context_config.ac_context(scan_idx, 0);
+            let cluster_idx = if ac_context < context_map.len() {
+                context_map[ac_context].saturating_sub(num_dc_tables)
+            } else {
+                0
+            };
+            let slot = ac_slot_ids
+                .get(cluster_idx)
+                .copied()
+                .unwrap_or(cluster_idx % 4);
+            if let Some(table) = tables.get(num_dc_tables + cluster_idx) {
+                encoder.set_ac_table(slot, &table.table);
+            }
         }
 
         if self.restart_interval > 0 {
@@ -275,28 +284,103 @@ impl ComputedConfig {
         cr_quant: &QuantTable,
         output: &mut Vec<u8>,
     ) -> Result<()> {
+        let is_color = !self.pixel_format.is_grayscale();
+        let num_components = if is_color { 3 } else { 1 };
+
+        if self.optimize_scans && !self.use_xyb {
+            // Generate multiple candidate scan scripts and trial-encode each.
+            // The frequency estimator can't accurately compare scripts with
+            // different numbers of scans (Huffman clustering effects), so we
+            // use actual encoding for the final selection.
+            let candidates = super::scan_optimize::generate_candidate_scripts(
+                y_blocks,
+                cb_blocks,
+                cr_blocks,
+                num_components as u8,
+            )?;
+
+            let debug = std::env::var("ZENJPEG_DEBUG_SCAN_OPT").is_ok();
+            let mut best_output = Vec::new();
+            let mut best_idx = 0usize;
+            for (i, candidate) in candidates.iter().enumerate() {
+                let mut trial_output = Vec::new();
+                self.encode_progressive_with_scans(
+                    candidate,
+                    y_blocks,
+                    cb_blocks,
+                    cr_blocks,
+                    y_quant,
+                    cb_quant,
+                    cr_quant,
+                    &mut trial_output,
+                    is_color,
+                )?;
+
+                if debug {
+                    let est = super::scan_optimize::estimate_script_cost(
+                        candidate, y_blocks, cb_blocks, cr_blocks,
+                    );
+                    let actual_bits = trial_output.len() * 8;
+                    let ratio = est as f64 / actual_bits as f64;
+                    eprintln!(
+                        "[scan_opt] candidate {}: {} scans, est={} bits, actual={} bits ({} bytes), ratio={:.3}",
+                        i,
+                        candidate.len(),
+                        est,
+                        actual_bits,
+                        trial_output.len(),
+                        ratio,
+                    );
+                }
+
+                if i == 0 || trial_output.len() < best_output.len() {
+                    best_output = trial_output;
+                    best_idx = i;
+                }
+            }
+
+            if debug {
+                eprintln!(
+                    "[scan_opt] winner: candidate {} ({} bytes)",
+                    best_idx,
+                    best_output.len()
+                );
+            }
+
+            *output = best_output;
+            return Ok(());
+        }
+
+        let scans = self.get_progressive_scan_script(is_color);
+        self.encode_progressive_with_scans(
+            &scans, y_blocks, cb_blocks, cr_blocks, y_quant, cb_quant, cr_quant, output, is_color,
+        )
+    }
+
+    /// Core progressive encode pipeline: tokenize, optimize Huffman, write JPEG.
+    ///
+    /// Takes an explicit scan script and produces a complete progressive JPEG.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_progressive_with_scans(
+        &self,
+        scans: &[ProgressiveScan],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        output: &mut Vec<u8>,
+        is_color: bool,
+    ) -> Result<()> {
         let width = self.width as usize;
         let height = self.height as usize;
+        let num_components = if is_color { 3 } else { 1 };
 
         output.clear();
         output.try_reserve(width * height / 4).map_err(|_| {
             Error::allocation_failed(width * height / 4, "progressive from blocks output")
         })?;
-
-        let is_color = !self.pixel_format.is_grayscale();
-        let num_components = if is_color { 3 } else { 1 };
-
-        // Define progressive scan script
-        let scans = if self.optimize_scans && !self.use_xyb {
-            super::scan_optimize::optimize_scan_script(
-                y_blocks,
-                cb_blocks,
-                cr_blocks,
-                num_components as u8,
-            )?
-        } else {
-            self.get_progressive_scan_script(is_color)
-        };
 
         // ========== CREATE CONTEXT CONFIG ==========
         let context_config = ContextConfig::for_progressive(
@@ -379,41 +463,41 @@ impl ComputedConfig {
             self.write_frame_header(output)?; // Uses SOF2 for progressive
         }
 
-        // Write initial Huffman tables.
-        // When optimize_scans is enabled, emit ALL tables upfront because the
-        // optimized scan ordering may reference tables in a different order than
-        // the default script's on-demand emission expects.
-        let max_initial_ac = if self.optimize_scans {
-            tables.len() // Emit all tables
-        } else {
-            4 // Default: emit up to 4 AC tables initially
-        };
-        let mut next_dht_index = self.write_huffman_tables_progressive_initial(
+        // Write initial DHT tables: DC tables only. AC tables are emitted
+        // on-demand per scan to handle slot cycling correctly.
+        let _next_dht_index = self.write_huffman_tables_progressive_initial(
             output,
             &tables,
             num_dc_tables,
-            max_initial_ac,
+            0, // AC tables emitted per-scan
         )?;
 
         if self.restart_interval > 0 {
             self.write_restart_interval(output)?;
         }
 
+        // Track which AC cluster is currently loaded in each JPEG slot (0-3).
+        let mut slot_cluster: [Option<usize>; 4] = [None; 4];
+
         // ========== PASS 2: REPLAY TOKENS ==========
         for (scan_idx, scan) in scans.iter().enumerate() {
-            // Emit AC table on-demand if needed
+            // Emit AC table on-demand before each AC scan
             if scan.ss > 0 {
                 let ac_context = context_config.ac_context(scan_idx, 0);
-                if let Some(&table_idx) = context_map.get(ac_context) {
-                    if table_idx == next_dht_index && table_idx < tables.len() {
-                        let cluster_idx = table_idx.saturating_sub(num_dc_tables);
-                        let ac_slot = ac_slot_ids
-                            .get(cluster_idx)
-                            .copied()
-                            .unwrap_or(cluster_idx % 4);
-                        self.write_single_ac_table(output, &tables[table_idx], ac_slot)?;
-                        next_dht_index += 1;
+                let cluster_idx = context_map
+                    .get(ac_context)
+                    .map(|&t| t.saturating_sub(num_dc_tables))
+                    .unwrap_or(0);
+                let ac_slot = ac_slot_ids
+                    .get(cluster_idx)
+                    .copied()
+                    .unwrap_or(cluster_idx % 4);
+                // Only emit if this slot doesn't already have the right table
+                if slot_cluster[ac_slot] != Some(cluster_idx) {
+                    if let Some(table) = tables.get(num_dc_tables + cluster_idx) {
+                        self.write_single_ac_table(output, table, ac_slot)?;
                     }
+                    slot_cluster[ac_slot] = Some(cluster_idx);
                 }
             }
 
@@ -440,7 +524,7 @@ impl ComputedConfig {
                 num_dc_tables,
                 &context_map,
                 &ac_slot_ids,
-                next_dht_index,
+                0,
             )?;
             output.extend_from_slice(&scan_data);
         }
