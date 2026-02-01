@@ -324,8 +324,15 @@ fn regenerate_values() {
 
             for (huffman_name, _) in huffman_opts {
                 for quality in &qualities {
-                    let jpeg =
-                        encode_config(&pixels, width, height, mode, subsamp, huffman_name, *quality);
+                    let jpeg = encode_config(
+                        &pixels,
+                        width,
+                        height,
+                        mode,
+                        subsamp,
+                        huffman_name,
+                        *quality,
+                    );
 
                     let hash = hash_jpeg(&jpeg);
                     let size = jpeg.len();
