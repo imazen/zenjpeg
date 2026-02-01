@@ -602,7 +602,7 @@ Tested against C++ jpegli on frymire.png (1118x1105):
 | File size (Q85 prog) | 568.2 KB | 565.1 KB | **+0.5%** |
 | SSIM2 (Q85) | 69.0 | 69.0 | **identical** |
 
-Quality is identical; file sizes within 2%.
+Quality is identical (mean <0.5% difference); file sizes within 2%.
 
 ### Comparing with C++ jpegli: 2 vs 3 Quantization Tables
 
@@ -719,7 +719,7 @@ Profiling against C++ jpegli reveals these bottlenecks (2K image, progressive 4:
 - [`yuvutils-rs`](https://lib.rs/crates/yuvutils-rs) - AVX2/SSE/NEON, optional AVX-512
 - [`dcv-color-primitives`](https://lib.rs/crates/dcv-color-primitives) - AWS, AVX2/NEON
 
-Current gap: Rust is **~8% slower** than C++ jpegli (1.08x, fair FFI comparison).
+Current gap: Rust is **~20% slower** than C++ jpegli (1.2x median, range 1.05x-1.43x per criterion benchmarks).
 
 ## Development
 

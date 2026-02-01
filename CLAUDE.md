@@ -392,18 +392,26 @@ Run with: `cargo bench -p zenjpeg --bench cpp_comparison`
 
 ### Summary (2026-02-01)
 
-Rust is **~8% slower** than C++ jpegli (1.08x, FFI comparison via `comprehensive_cpp_comparison`).
+Rust is **~20% slower** than C++ jpegli (1.2x median, range 1.05x-1.43x per criterion benchmarks).
 
-**Comprehensive test results (10 images × 50 quality levels, progressive 4:2:0):**
+**Criterion benchmark results (512x512 Q90):**
 
-| Metric | Min | Max | Mean | StdDev |
-|--------|-----|-----|------|--------|
-| Size Δ% | +0.2% | +1.6% | **+0.63%** | 0.35 |
-| Time Δ% | -7.7% | +29.3% | **+7.71%** | 8.19 |
-| DSSIM Δ% | -0.9% | +1.5% | +0.41% | 0.77 |
-| Butteraugli Δ% | -2.1% | +2.2% | +0.19% | 0.88 |
+| Config | Rust | C++ | Ratio |
+|--------|------|-----|-------|
+| base-420 | 1.37ms | 0.96ms | 1.43x |
+| base-444 | 1.85ms | 1.59ms | 1.17x |
+| prog-420 | 2.39ms | 1.92ms | 1.25x |
+| prog-444 | 3.51ms | 3.34ms | 1.05x |
 
-Quality parity: 50/50 quality levels within 5% for both DSSIM and Butteraugli.
+**Quality parity (comprehensive test, 10 images × 50 quality levels):**
+
+| Metric | Min | Max | Mean |
+|--------|-----|-----|------|
+| Size Δ% | +0.2% | +1.6% | **+0.63%** |
+| DSSIM Δ% | -0.9% | +1.5% | **+0.41%** |
+| Butteraugli Δ% | -2.1% | +2.2% | **+0.19%** |
+
+Quality is effectively identical (mean <0.5%); 50/50 quality levels within 5%.
 
 Note: Previous measurements showed 1.4-1.6x slower; improvements came from SIMD sorting
 network optimization and allocation reduction.
