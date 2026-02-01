@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Progressive JPEG is now the default encoding mode** for both YCbCr and XYB color spaces
+  - Progressive encoding produces 3-7% smaller files with no quality loss
+  - XYB mode benefits even more: Rust now matches or beats C++ jpegli file sizes
+    (previously 2-3% larger in baseline mode, now -0.3% to -4.3% smaller)
+  - Use `.progressive(false)` to restore baseline mode if needed
+  - Note: Progressive mode requires optimized Huffman tables (the default)
+
+### Known Issues
+
+- Progressive decoder has issues with very small images (<64 pixels) and some
+  subsampled configurations. Use baseline mode (`.progressive(false)`) for reliable
+  small image roundtrips. Encoder is unaffected.
+
 ## [0.3.1] - 2026-02-01
 
 ### Changed

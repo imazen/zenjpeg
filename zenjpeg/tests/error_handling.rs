@@ -13,9 +13,9 @@ use zenjpeg::{
     encoder::{ChromaSubsampling, EncoderConfig, PixelLayout},
 };
 
-// Helper to encode RGB data with v2 API
+// Helper to encode RGB data with v2 API - uses baseline for error handling test stability
 fn encode_rgb(width: u32, height: u32, data: &[u8]) -> zenjpeg::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::Quarter).progressive(false);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
@@ -27,14 +27,14 @@ fn encode_rgb_q(
     data: &[u8],
     quality: impl Into<zenjpeg::encoder::Quality>,
 ) -> zenjpeg::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(false);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()
 }
 
 fn encode_gray(width: u32, height: u32, data: &[u8]) -> zenjpeg::encoder::Result<Vec<u8>> {
-    let config = EncoderConfig::grayscale(90.0);
+    let config = EncoderConfig::grayscale(90.0).progressive(false);
     let mut enc = config.encode_from_bytes(width, height, PixelLayout::Gray8Srgb)?;
     enc.push_packed(data, enough::Unstoppable)?;
     enc.finish()

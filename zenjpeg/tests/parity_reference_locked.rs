@@ -213,8 +213,10 @@ fn encode_rust(
     subsampling: ChromaSubsampling,
     optimize_huffman: bool,
 ) -> Vec<u8> {
-    let config =
-        EncoderConfig::ycbcr(quality as f32, subsampling).optimize_huffman(optimize_huffman);
+    // Use baseline mode for parity tests - reference values were generated with baseline
+    let config = EncoderConfig::ycbcr(quality as f32, subsampling)
+        .progressive(false)
+        .optimize_huffman(optimize_huffman);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

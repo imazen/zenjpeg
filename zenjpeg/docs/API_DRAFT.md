@@ -174,7 +174,7 @@ impl Default for EncoderConfig {
         Self {
             quality: Quality::default(),
             quant_tables: QuantTableConfig::default(),
-            progressive: false,
+            progressive: true,  // 3-7% smaller files
             optimize_huffman: true,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),

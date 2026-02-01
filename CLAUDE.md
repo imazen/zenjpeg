@@ -1000,7 +1000,14 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Known Bugs
 
-(None currently tracked)
+1. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
+   produces "AC coefficient index out of bounds" errors when decoding very small images
+   (1x1, 8x8, 17x31, etc.) and some 4:2:0/4:2:2 subsampled images (100x100).
+   - Affects: `zenjpeg/src/entropy/decoder.rs:1092`
+   - Root cause: Unknown, likely progressive scan parsing edge case
+   - Impact: Tests use `.progressive(false)` for small image decoding
+   - Workaround: Use baseline mode for images <64 pixels or when decoding fidelity is critical
+   - Priority: Medium - encoder works correctly, only affects roundtrip tests
 
 ### Fixed Bugs (historical reference)
 

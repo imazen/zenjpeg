@@ -146,7 +146,7 @@ impl EncoderConfig {
         Self {
             quality: Quality::default(),
             tables: None, // Use perceptual defaults
-            progressive: false,
+            progressive: true, // Progressive gives 3-7% smaller files
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
@@ -897,7 +897,7 @@ mod tests {
     fn test_ycbcr_config() {
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
-        assert!(!config.progressive);
+        assert!(config.progressive); // Progressive is now the default
         assert!(matches!(config.huffman, HuffmanStrategy::Optimize));
         assert!(matches!(
             config.color_mode,

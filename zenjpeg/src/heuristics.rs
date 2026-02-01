@@ -480,8 +480,8 @@ mod tests {
 
     #[test]
     fn progressive_is_slower() {
-        let baseline = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter);
-        let progressive = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(true);
+        let baseline = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).progressive(false);
+        let progressive = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter); // Progressive is default
 
         let base_est = estimate_encode(1024, 1024, &baseline);
         let prog_est = estimate_encode(1024, 1024, &progressive);

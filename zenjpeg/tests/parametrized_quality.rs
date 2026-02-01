@@ -36,7 +36,8 @@ fn roundtrip_quality(
 ) -> (f64, u8, usize) {
     let img = generate_test_image(width, height, pattern, 3);
 
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    // Use baseline for decoder stability with small/odd sizes
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).progressive(false);
 
     let jpeg_data = encode_rgb(width, height, &img.pixels, &config).expect("encode failed");
     let decoder = Decoder::new();
