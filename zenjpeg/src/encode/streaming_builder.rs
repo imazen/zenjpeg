@@ -38,6 +38,8 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
     pub(crate) separate_chroma_tables: bool,
+    /// Optimize progressive scan script for minimum file size
+    pub(crate) optimize_scans: bool,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
@@ -70,6 +72,7 @@ impl StreamingEncoderBuilder {
             deringing: true,
             allow_16bit_quant_tables: false,
             separate_chroma_tables: true,
+            optimize_scans: false,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -286,6 +289,13 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub(crate) fn separate_chroma_tables(mut self, enable: bool) -> Self {
         self.separate_chroma_tables = enable;
+        self
+    }
+
+    /// Enables progressive scan optimization.
+    #[must_use]
+    pub(crate) fn optimize_scans(mut self, enable: bool) -> Self {
+        self.optimize_scans = enable;
         self
     }
 

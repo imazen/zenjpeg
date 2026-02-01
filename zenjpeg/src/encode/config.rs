@@ -118,6 +118,12 @@ pub struct ComputedConfig {
     /// this for compatibility with very old or limited JPEG decoders.
     pub allow_16bit_quant_tables: bool,
 
+    /// Optimize progressive scan script for minimum file size.
+    ///
+    /// When `true`, tries 64 candidate scan configurations and picks the smallest.
+    /// Skipped for XYB mode.
+    pub optimize_scans: bool,
+
     /// Use separate quantization tables for Cb and Cr (3 tables total).
     ///
     /// When `true` (default), uses 3 quantization tables:
@@ -173,6 +179,7 @@ impl Default for ComputedConfig {
             // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
             // Set to false only for compatibility with very old decoders
             allow_16bit_quant_tables: false,
+            optimize_scans: false,
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
             #[cfg(feature = "experimental-hybrid-trellis")]
