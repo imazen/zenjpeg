@@ -1038,6 +1038,7 @@ Eliminated derived-state sync bugs by creating `LayoutParams` (`encode/layout.rs
 - [x] `StreamingAQ::new(&LayoutParams, y_quant_01)` — no independent geometry computation
 - [x] `estimate_memory_usage/ceiling` use `LayoutParams` (fixes XYB estimates)
 - [x] Removed `set_xyb_mode()` (dead code) and `set_strip_stride()` (absorbed into layout)
+- [x] Deduplicated chroma/B-channel dimensions: 8 locations now read from `LayoutParams` instead of recomputing. Added `b_strip_height` field, `c_strip_height_for()` and `b_strip_height_for()` helpers for partial final strips.
 - [ ] `serialize.rs::write_frame_header_xyb_ex()` still hardcodes 0x22/0x11 (low priority, always correct for XYB)
 
 ### Resource Estimation API (docs/API_DESIGN.md)
