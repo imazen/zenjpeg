@@ -409,9 +409,15 @@ impl StripProcessor {
         // Pending buffer capacity: one iMCU row of blocks
         // Use padded block counts for pending buffers
         let padded_y_blocks_h = padded_width / 8;
-        let v_samp = match subsampling {
-            Subsampling::S420 | Subsampling::S440 => 2,
-            _ => 1,
+        // In XYB mode, R:2×2 G:2×2 B:1×1, so max_v_samp_factor=2 regardless of
+        // the chroma subsampling enum (which describes YCbCr, not XYB layout).
+        let v_samp = if use_xyb {
+            2
+        } else {
+            match subsampling {
+                Subsampling::S420 | Subsampling::S440 => 2,
+                _ => 1,
+            }
         };
         let pending_y_capacity = padded_y_blocks_h * v_samp;
         let padded_c_blocks_h = padded_c_width / 8;
@@ -693,7 +699,13 @@ impl StripProcessor {
     ) -> Result<()> {
         // Initialize streaming AQ with y_quant_01 for damping calculation
         let y_quant_01 = y_quant.values[1]; // Position [0,1] in zigzag
-        let v_samp = self.subsampling.v_samp_factor_luma() as usize;
+        // In XYB mode, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2.
+        // The AQ must use this to match C++ jpegli's iMCU grouping.
+        let v_samp = if self.use_xyb {
+            2
+        } else {
+            self.subsampling.v_samp_factor_luma() as usize
+        };
         let mut aq = StreamingAQ::new(self.width, self.height, y_quant_01, v_samp)?;
         // Y strip is laid out with padded_width stride for edge handling parity
         aq.set_strip_stride(self.padded_width);

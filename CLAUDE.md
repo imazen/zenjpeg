@@ -994,19 +994,24 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Known Bugs
 
-1. **XYB file size +6-9% vs C++** - After fixing AQ channel selection, XYB JPEGs are still
-   6-9% larger than C++ jpegli. The remaining difference is likely due to:
-   - Pre-erosion lookahead timing (C++ has 4-row overlap at iMCU boundaries)
-   - Fuzzy erosion boundary handling at first/last iMCU rows
-   - DCT coefficient rounding differences
+1. **XYB file size +5-11% vs C++** - After fixing AQ v_samp (was 1, now 2 for XYB),
+   size gap improved from 8-18% to 5-11%. Remaining difference likely due to:
+   - DCT coefficient rounding differences (±1 from SIMD float precision)
+   - Possible remaining AQ boundary handling differences
+   - Zero-bias parameter tuning for XYB mode
 
-   Investigation notes: Row-by-row analysis shows first 8 rows (iMCU 0) have lower
-   differences than subsequent rows, suggesting first-iMCU handling differs.
-   C++ `adaptive_quantization.cc:638-641` uses `ylen += 4` for first iMCU.
-   Files: `quant/aq/streaming.rs`, `quant/aq/simd.rs`
+   Current results (kodak images):
+   - Q70: +6-11%, Q80: +5-9%, Q90: +5-7%
+   Files: `encode/strip/mod.rs`, `quant/aq/streaming.rs`
 
 ### Fixed Bugs (historical reference)
 
+- **XYB AQ v_samp mismatch (2026-01-31)** - AQ was initialized with v_samp=1 (from S444
+  subsampling), but XYB JPEG uses R:2×2 G:2×2 B:1×1 (max_v_samp_factor=2). This caused
+  the AQ to treat each 8-row strip as a full iMCU instead of 16-row iMCUs, producing
+  overly conservative quantization. Also affected pending DCT block buffer sizing.
+  Fixed in `encode/strip/mod.rs`: both `v_samp` calculations now check `use_xyb`.
+  Impact: Size diff 8-18% → 5-11% (3-7pp improvement).
 - **XYB AQ using wrong channel (2026-01-31)** - AQ was computed on X channel instead of Y.
   C++ uses `y_channel = jpeg_color_space == JCS_RGB ? 1 : 0`, meaning channel 1 (Y) for XYB.
   Fixed by using `cb_strip` instead of `y_strip` when `use_xyb=true`.
