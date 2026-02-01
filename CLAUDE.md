@@ -1000,17 +1000,15 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Known Bugs
 
-1. **XYB file size +5-11% vs C++** - After fixing AQ v_samp (was 1, now 2 for XYB),
-   size gap improved from 8-18% to 5-11%. Remaining difference likely due to:
-   - DCT coefficient rounding differences (±1 from SIMD float precision)
-   - Possible remaining AQ boundary handling differences
-   - Zero-bias parameter tuning for XYB mode
-
-   Current results (kodak images):
-   - Q70: +6-11%, Q80: +5-9%, Q90: +5-7%
-   Files: `encode/strip/mod.rs`, `quant/aq/streaming.rs`
+(None currently tracked)
 
 ### Fixed Bugs (historical reference)
+
+- **XYB file size gap (2026-02-01)** - XYB baseline was 2-3% larger than C++, but this
+  was due to Rust getting 2x more progressive savings (5.7-7.3% vs C++'s 3.1-3.6%).
+  With progressive mode, Rust XYB matches or beats C++ (-0.3% to -4.3% smaller).
+  Resolution: Progressive mode is now recommended for XYB.
+  Files: `encode/strip/mod.rs`, `quant/aq/streaming.rs`
 
 - **XYB AQ v_samp mismatch (2026-01-31)** - AQ was initialized with v_samp=1 (from S444
   subsampling), but XYB JPEG uses R:2×2 G:2×2 B:1×1 (max_v_samp_factor=2). This caused

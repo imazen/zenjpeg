@@ -15,7 +15,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 
 **Ideas adopted from jpegli:**
 - Adaptive quantization (content-aware bit allocation)
-- XYB color space with ICC profiles (note: XYB produces 5-11% larger files than C++ jpegli)
+- XYB color space with ICC profiles (progressive mode recommended for best compression)
 - Perceptually-tuned quantization tables
 - Zero-bias strategies for coefficient rounding
 
@@ -47,7 +47,7 @@ This project started as a port of [jpegli](https://github.com/libjxl/libjxl/tree
 
 ## Known Limitations
 
-- **XYB color space** - Produces 5-11% larger files than C++ jpegli at equivalent quality. Quality is identical.
+- **XYB color space** - With progressive mode, matches or beats C++ jpegli file sizes. Baseline mode is 2-3% larger.
 - **Decoder speed** - Prioritizes precision (12-bit pipeline) over speed; ~8x slower than zune-jpeg.
 
 ## Quick Start
