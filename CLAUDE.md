@@ -1168,7 +1168,18 @@ Note: The C++ API supports 16-bit via `force_baseline=FALSE`, but cjpegli CLI
 doesn't expose this. Our `allow_16bit_quant_tables=true` default matches the
 C++ API capability, not the CLI behavior.
 
-To match C++ cjpegli CLI file sizes exactly, use `.allow_16bit_quant_tables(false)`.
+**Why clamping doesn't hurt quality:**
+
+The quant positions that exceed 255 are high-frequency chroma coefficients
+(bottom-right corner of DCT matrix). At Q50-Q86, these coefficients quantize
+to zero regardless of whether dividing by 255 or 500+. Tested on Kodak corpus:
+**scan data is byte-for-byte identical** between 16-bit and clamped versions.
+The only file size difference is DQT marker overhead (~128 bytes).
+
+C++ chose baseline compatibility with zero quality impact. Consider defaulting
+`allow_16bit_quant_tables=false` to match, since 16-bit provides no benefit.
+
+To match C++ cjpegli CLI, use `.allow_16bit_quant_tables(false)`.
 
 ## Running Tests
 
