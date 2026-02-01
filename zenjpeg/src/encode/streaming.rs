@@ -297,7 +297,11 @@ impl StreamingEncoder {
             let tables = match builder.huffman {
                 HuffmanStrategy::Custom(tables) => tables,
                 HuffmanStrategy::StandardFixed => {
-                    Box::new(crate::huffman::optimize::HuffmanTableSet::from_standard()?)
+                    Box::new(crate::huffman::corpus_tables::select_tables(
+                        &builder.quality,
+                        builder.use_xyb,
+                        builder.subsampling,
+                    ))
                 }
                 HuffmanStrategy::Optimize => unreachable!(),
             };
@@ -1253,18 +1257,25 @@ impl StreamingEncoder {
             )?;
             Ok((scan_data, None))
         } else {
-            // StandardFixed tables
-            config.write_huffman_tables(output)?;
+            // StandardFixed: use corpus-trained tables for XYB
+            let tables = crate::huffman::corpus_tables::select_tables(
+                &config.quality,
+                true,
+                config.subsampling,
+            );
+            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
             }
             config.write_scan_header_xyb(output)?;
 
-            let scan_data = config.encode_with_tables_xyb_standard_raster(
+            let scan_data = config.encode_with_tables_xyb_raster(
                 &strip_output.y_blocks,
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
             )?;
             Ok((scan_data, None))
         }
@@ -1330,8 +1341,8 @@ impl StreamingEncoder {
                 Some(&tables),
             )?;
             Ok((scan_data, frequencies))
-        } else {
-            config.write_huffman_tables(output)?;
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            config.write_huffman_tables_optimized(output, tables)?;
 
             if config.restart_interval > 0 {
                 config.write_restart_interval(output)?;
@@ -1343,7 +1354,29 @@ impl StreamingEncoder {
                 &strip_output.cb_blocks,
                 &strip_output.cr_blocks,
                 is_color,
-                None,
+                Some(tables),
+            )?;
+            Ok((scan_data, None))
+        } else {
+            // StandardFixed: use corpus-trained tables
+            let tables = crate::huffman::corpus_tables::select_tables(
+                &config.quality,
+                false,
+                config.subsampling,
+            );
+            config.write_huffman_tables_optimized(output, &tables)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                Some(&tables),
             )?;
             Ok((scan_data, None))
         }

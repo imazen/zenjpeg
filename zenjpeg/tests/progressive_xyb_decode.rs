@@ -133,8 +133,8 @@ fn jpegli_decodes_baseline_xyb() {
     let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
     // Explicitly request baseline mode for this test
-    let config = zenjpeg::encoder::EncoderConfig::xyb(90.0, XybSubsampling::BQuarter)
-        .progressive(false);
+    let config =
+        zenjpeg::encoder::EncoderConfig::xyb(90.0, XybSubsampling::BQuarter).progressive(false);
     let mut enc = config
         .encode_from_bytes(width, height, zenjpeg::encoder::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");

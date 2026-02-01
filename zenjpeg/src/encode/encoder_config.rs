@@ -145,7 +145,7 @@ impl EncoderConfig {
     fn default_internal() -> Self {
         Self {
             quality: Quality::default(),
-            tables: None, // Use perceptual defaults
+            tables: None,      // Use perceptual defaults
             progressive: true, // Progressive gives 3-7% smaller files
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),

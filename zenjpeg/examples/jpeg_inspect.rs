@@ -200,7 +200,12 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
                             let h_samp = (sampling >> 4) & 0x0F;
                             let v_samp = sampling & 0x0F;
                             let quant_table = data[comp_offset + 2];
-                            component_info.push(ComponentInfo { id, h_samp, v_samp, quant_table });
+                            component_info.push(ComponentInfo {
+                                id,
+                                h_samp,
+                                v_samp,
+                                quant_table,
+                            });
                         }
                     }
                 }
@@ -470,15 +475,22 @@ fn subsampling_notation(components: &[ComponentInfo]) -> String {
         // 4:2:0 = chroma half both dimensions
         // 4:4:0 = chroma half vertical only
 
-        if c0.h_samp == c1.h_samp && c0.v_samp == c1.v_samp
-            && c1.h_samp == c2.h_samp && c1.v_samp == c2.v_samp {
+        if c0.h_samp == c1.h_samp
+            && c0.v_samp == c1.v_samp
+            && c1.h_samp == c2.h_samp
+            && c1.v_samp == c2.v_samp
+        {
             return "4:4:4".to_string();
         }
 
         // Check for XYB-style (R:2x2, G:2x2, B:1x1)
-        if c0.h_samp == 2 && c0.v_samp == 2
-            && c1.h_samp == 2 && c1.v_samp == 2
-            && c2.h_samp == 1 && c2.v_samp == 1 {
+        if c0.h_samp == 2
+            && c0.v_samp == 2
+            && c1.h_samp == 2
+            && c1.v_samp == 2
+            && c2.h_samp == 1
+            && c2.v_samp == 1
+        {
             return "2:2:1 (XYB)".to_string();
         }
 
@@ -498,7 +510,8 @@ fn subsampling_notation(components: &[ComponentInfo]) -> String {
     }
 
     // Fallback: show raw sampling factors
-    let factors: Vec<String> = components.iter()
+    let factors: Vec<String> = components
+        .iter()
         .map(|c| format!("{}x{}", c.h_samp, c.v_samp))
         .collect();
     factors.join("/")
@@ -508,7 +521,10 @@ fn print_summary(analysis: &JpegAnalysis, path: &str) {
     println!("=== JPEG Summary: {} ===", path);
     println!("  Dimensions: {}x{}", analysis.width, analysis.height);
     println!("  Components: {}", analysis.components);
-    println!("  Subsampling: {}", subsampling_notation(&analysis.component_info));
+    println!(
+        "  Subsampling: {}",
+        subsampling_notation(&analysis.component_info)
+    );
     println!("  Progressive: {}", analysis.is_progressive);
     println!("  Markers: {}", analysis.markers.len());
     println!("  Quant tables: {}", analysis.quant_tables.len());
