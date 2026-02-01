@@ -7,7 +7,7 @@
 
 A pure Rust JPEG encoder and decoder with perceptual optimizations.
 
-> **Note:** This crate was previously published as `zenjpeg`. If migrating, update your imports from `use jpegli::` to `use zenjpeg::`.
+> **Note:** This crate was previously published as `jpegli-rs`. If migrating, update your imports from `use jpegli::` to `use zenjpeg::`.
 
 ## Heritage and Divergence
 
@@ -667,10 +667,10 @@ By default, the crate uses `#![forbid(unsafe_code)]`. SIMD is provided via the s
 zenjpeg = "0.3"
 
 # With UltraHDR support:
-zenjpeg = { version = "0.11", features = ["ultrahdr"] }
+zenjpeg = { version = "0.3", features = ["ultrahdr"] }
 
 # Minimal (no CMS, no archmage SIMD):
-zenjpeg = { version = "0.11", default-features = false }
+zenjpeg = { version = "0.3", default-features = false }
 ```
 
 ## Encoder Status
