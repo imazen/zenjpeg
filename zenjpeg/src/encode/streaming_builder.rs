@@ -159,13 +159,13 @@ impl StreamingEncoderBuilder {
     /// Enables or disables optimized Huffman tables.
     ///
     /// Convenience wrapper: `true` → `HuffmanStrategy::Optimize`,
-    /// `false` → `HuffmanStrategy::StandardFixed`.
+    /// `false` → `HuffmanStrategy::Fixed`.
     #[must_use]
     pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
         self.huffman = if enable {
             HuffmanStrategy::Optimize
         } else {
-            HuffmanStrategy::StandardFixed
+            HuffmanStrategy::Fixed
         };
         self
     }

@@ -67,7 +67,7 @@ struct StreamingOutputState {
 /// Two encoding modes:
 /// - **Buffered** (default with `HuffmanStrategy::Optimize`): buffers all blocks,
 ///   builds optimal Huffman tables at `finish()`.
-/// - **Streaming-through** (with `HuffmanStrategy::Custom` or `StandardFixed`, sequential only):
+/// - **Streaming-through** (with `HuffmanStrategy::Custom` or `Fixed`, sequential only):
 ///   writes JPEG header at construction, encodes blocks immediately on each
 ///   strip flush. At `finish()`, just appends EOI.
 pub(crate) struct StreamingEncoder {
@@ -285,7 +285,7 @@ impl StreamingEncoder {
         };
 
         // Determine if we can use streaming-through encoding:
-        // - Need known Huffman tables (Custom or StandardFixed)
+        // - Need known Huffman tables (Custom or Fixed)
         // - Must be sequential (progressive needs multi-pass)
         // - Not XYB (different header/table structure)
         let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
@@ -296,8 +296,8 @@ impl StreamingEncoder {
             // Get tables: custom if provided, otherwise standard JPEG tables
             let tables = match builder.huffman {
                 HuffmanStrategy::Custom(tables) => tables,
-                HuffmanStrategy::StandardFixed => {
-                    Box::new(crate::huffman::corpus_tables::select_tables(
+                HuffmanStrategy::Fixed => {
+                    Box::new(crate::huffman::builtin_tables::select_tables(
                         &builder.quality,
                         builder.use_xyb,
                         builder.subsampling,
@@ -968,7 +968,7 @@ impl StreamingEncoder {
 
                     // Count frequencies from the buffered blocks. The symbol
                     // distribution is the same regardless of scan structure,
-                    // so single-scan counts are useful for corpus table training.
+                    // so single-scan counts are useful for general-purpose table training.
                     let is_color = !config.pixel_format.is_grayscale();
                     let counts = Box::new(config.count_block_frequencies(
                         &strip_output.y_blocks,
@@ -1240,7 +1240,7 @@ impl StreamingEncoder {
             )?;
             Ok((scan_data, frequencies))
         } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
-            // Custom corpus tables: XYB uses dc_luma/ac_luma as the shared pair.
+            // Custom tables: XYB uses dc_luma/ac_luma as the shared pair.
             config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
 
             if config.restart_interval > 0 {
@@ -1257,8 +1257,8 @@ impl StreamingEncoder {
             )?;
             Ok((scan_data, None))
         } else {
-            // StandardFixed: use corpus-trained tables for XYB
-            let tables = crate::huffman::corpus_tables::select_tables(
+            // Fixed: use general-purpose trained tables for XYB
+            let tables = crate::huffman::builtin_tables::select_tables(
                 &config.quality,
                 true,
                 config.subsampling,
@@ -1358,8 +1358,8 @@ impl StreamingEncoder {
             )?;
             Ok((scan_data, None))
         } else {
-            // StandardFixed: use corpus-trained tables
-            let tables = crate::huffman::corpus_tables::select_tables(
+            // Fixed: use general-purpose trained tables
+            let tables = crate::huffman::builtin_tables::select_tables(
                 &config.quality,
                 false,
                 config.subsampling,

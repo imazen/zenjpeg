@@ -20,7 +20,7 @@ use wide::{i16x8, CmpEq};
 ///
 /// Contains the raw symbol frequencies for each of the 4 Huffman tables
 /// (DC luma, AC luma, DC chroma, AC chroma). These can be aggregated
-/// across multiple images to build corpus-trained tables.
+/// across multiple images to build optimized tables.
 #[derive(Clone, Debug)]
 pub struct HuffmanSymbolFrequencies {
     /// DC luminance symbol frequencies
@@ -696,7 +696,7 @@ impl ComputedConfig {
     }
 
     /// Like [`Self::build_optimized_tables_xyb_raster`], but also returns the
-    /// raw frequency counters for corpus-level aggregation.
+    /// raw frequency counters for multi-image aggregation.
     ///
     /// The returned `HuffmanSymbolFrequencies` stores XYB's shared DC/AC
     /// frequencies in the `dc_luma`/`ac_luma` slots. The `dc_chroma` and

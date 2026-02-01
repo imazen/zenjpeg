@@ -41,7 +41,7 @@ impl OptimizedTable {
     /// Convenience for constructing from static/const data.
     pub fn from_bits_values_static(bits: [u8; 16], values: &[u8]) -> Self {
         let table = HuffmanEncodeTable::from_bits_values(&bits, values)
-            .expect("static corpus table data is valid");
+            .expect("static table data is valid");
         Self {
             table,
             bits,
@@ -72,9 +72,12 @@ pub struct HuffmanTableSet {
 }
 
 impl HuffmanTableSet {
-    /// Builds tables from the standard JPEG Huffman tables (Annex K).
+    /// Builds tables from the JPEG standard Huffman tables (Annex K of ITU-T T.81).
     ///
-    /// These are the default fixed tables used when `optimize_huffman = false`.
+    /// These are the tables defined in the JPEG specification. They are significantly
+    /// less efficient than the general-purpose trained tables used by default.
+    ///
+    /// Alias: [`Self::annex_k()`].
     pub fn from_standard() -> crate::error::Result<Self> {
         use crate::huffman::encode::{
             STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_AC_LUMINANCE_BITS,
@@ -100,6 +103,11 @@ impl HuffmanTableSet {
                 STD_AC_CHROMINANCE_VALUES.to_vec(),
             )?,
         })
+    }
+
+    /// Alias for [`Self::from_standard()`] — the JPEG Annex K tables.
+    pub fn annex_k() -> crate::error::Result<Self> {
+        Self::from_standard()
     }
 }
 
