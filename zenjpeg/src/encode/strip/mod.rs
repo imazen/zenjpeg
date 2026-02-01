@@ -699,8 +699,8 @@ impl StripProcessor {
     ) -> Result<()> {
         // Initialize streaming AQ with y_quant_01 for damping calculation
         let y_quant_01 = y_quant.values[1]; // Position [0,1] in zigzag
-        // In XYB mode, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2.
-        // The AQ must use this to match C++ jpegli's iMCU grouping.
+                                            // In XYB mode, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2.
+                                            // The AQ must use this to match C++ jpegli's iMCU grouping.
         let v_samp = if self.use_xyb {
             2
         } else {

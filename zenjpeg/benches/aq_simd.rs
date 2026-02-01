@@ -45,8 +45,7 @@ fn mage_pre_erosion_row(
         let x = chunk * 8;
 
         // Load center pixels
-        let pixels =
-            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x..x + 8]).unwrap());
+        let pixels = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x..x + 8]).unwrap());
 
         // Load neighbors (simplified - skip boundary handling for benchmark)
         let left = if x == 0 {
@@ -61,8 +60,7 @@ fn mage_pre_erosion_row(
             safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x + 1..x + 9]).unwrap())
         };
 
-        let top =
-            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_above[x..x + 8]).unwrap());
+        let top = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_above[x..x + 8]).unwrap());
         let bottom =
             safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_below[x..x + 8]).unwrap());
 
