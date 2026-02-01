@@ -558,18 +558,13 @@ pub enum ParallelEncoding {
 ///   Fastest but produces larger files (~5-10% bigger).
 /// - `Custom`: Single-pass encoding with caller-provided tables.
 ///   Useful for streaming-through encoding with pre-trained or previously-computed tables.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) enum HuffmanStrategy {
     /// Two-pass: collect frequencies, build optimal tables.
+    #[default]
     Optimize,
     /// Single-pass: use JPEG standard tables.
     StandardFixed,
     /// Single-pass: use caller-provided tables.
     Custom(Box<crate::huffman::optimize::HuffmanTableSet>),
-}
-
-impl Default for HuffmanStrategy {
-    fn default() -> Self {
-        HuffmanStrategy::Optimize
-    }
 }
