@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(lp.c_blocks_h, 240);
         assert_eq!(lp.c_blocks_v, 135);
         assert_eq!(lp.total_c_blocks, 240 * 135);
-        assert_eq!(lp.pending_y_capacity, 240 * 1); // padded_blocks_w * v_samp
+        assert_eq!(lp.pending_y_capacity, 240); // padded_blocks_w * v_samp(1)
         assert_eq!(lp.pending_c_capacity, 240);
         assert_eq!(lp.y_buffer_stride, 1921);
     }

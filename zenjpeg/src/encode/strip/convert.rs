@@ -144,7 +144,10 @@ impl StripProcessor {
         let (chroma_width, target_height) = match self.layout.subsampling {
             Subsampling::S444 => (self.layout.width, self.layout.strip_height),
             Subsampling::S422 => ((self.layout.width + 1) / 2, self.layout.strip_height),
-            Subsampling::S420 => ((self.layout.width + 1) / 2, (self.layout.strip_height + 1) / 2),
+            Subsampling::S420 => (
+                (self.layout.width + 1) / 2,
+                (self.layout.strip_height + 1) / 2,
+            ),
             Subsampling::S440 => (self.layout.width, (self.layout.strip_height + 1) / 2),
         };
 

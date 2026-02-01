@@ -161,7 +161,7 @@ impl StreamingAQ {
     ///
     /// # Errors
     /// Returns `AllocError` if buffer allocation fails.
-    pub fn new(layout: &LayoutParams, y_quant_01: u16) -> Result<Self> {
+    pub(crate) fn new(layout: &LayoutParams, y_quant_01: u16) -> Result<Self> {
         let width = layout.width;
         let height = layout.height;
         if width == 0 || height == 0 {
