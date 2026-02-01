@@ -167,6 +167,92 @@ fn forward_dct_dispatch(_token: (), block: &Block8x8f) -> Block8x8f {
 
 // StreamingAQ uses rolling buffers for low memory (~2.5 MB for 4K vs 33 MB).
 
+/// Double-buffered pending DCT blocks for iMCU overlap.
+///
+/// Holds raw f32 DCT coefficients until AQ strengths are available.
+/// Two buffers: current (being filled) and previous (awaiting quantization).
+/// Using `bool` for the index since there are exactly 2 states.
+#[derive(Debug)]
+struct PendingBuffers {
+    y: [Vec<Block8x8f>; 2],
+    cb: [Vec<Block8x8f>; 2],
+    cr: [Vec<Block8x8f>; 2],
+    current: bool,
+}
+
+impl PendingBuffers {
+    /// Index of the buffer currently being filled.
+    #[inline]
+    fn current_idx(&self) -> usize {
+        self.current as usize
+    }
+
+    /// Index of the previous buffer (awaiting quantization).
+    #[inline]
+    fn prev_idx(&self) -> usize {
+        (!self.current) as usize
+    }
+
+    /// Swap current and previous buffers.
+    #[inline]
+    fn swap(&mut self) {
+        self.current = !self.current;
+    }
+
+    /// Clear the previous buffer for reuse.
+    fn clear_prev(&mut self) {
+        let idx = self.prev_idx();
+        self.y[idx].clear();
+        self.cb[idx].clear();
+        self.cr[idx].clear();
+    }
+
+    /// Current Y buffer (being filled).
+    #[inline]
+    fn current_y(&self) -> &Vec<Block8x8f> {
+        &self.y[self.current_idx()]
+    }
+
+    /// Current Y buffer (mutable, being filled).
+    #[inline]
+    fn current_y_mut(&mut self) -> &mut Vec<Block8x8f> {
+        let idx = self.current_idx();
+        &mut self.y[idx]
+    }
+
+    /// Current Cb buffer (mutable, being filled).
+    #[inline]
+    fn current_cb_mut(&mut self) -> &mut Vec<Block8x8f> {
+        let idx = self.current_idx();
+        &mut self.cb[idx]
+    }
+
+    /// Current Cr buffer (mutable, being filled).
+    #[inline]
+    fn current_cr_mut(&mut self) -> &mut Vec<Block8x8f> {
+        let idx = self.current_idx();
+        &mut self.cr[idx]
+    }
+
+    /// Previous Y buffer (awaiting quantization).
+    #[inline]
+    fn prev_y(&self) -> &Vec<Block8x8f> {
+        &self.y[self.prev_idx()]
+    }
+
+    /// Previous Cb buffer (awaiting quantization).
+    #[inline]
+    fn prev_cb(&self) -> &Vec<Block8x8f> {
+        &self.cb[self.prev_idx()]
+    }
+
+    /// Previous Cr buffer (awaiting quantization).
+    #[inline]
+    fn prev_cr(&self) -> &Vec<Block8x8f> {
+        &self.cr[self.prev_idx()]
+    }
+}
+
 /// Strip-based encoder for low-memory JPEG encoding.
 ///
 /// Processes the image in horizontal strips to avoid materializing
@@ -201,14 +287,7 @@ pub struct StripProcessor {
     cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
 
     // === Pending iMCU DCT blocks (wide-native, double-buffered) ===
-    // These hold raw DCT coefficients until AQ strengths are available
-    // Double-buffered: [current] and [previous pending quantization]
-    // Using Block8x8f for zero-overhead SIMD operations
-    pending_y_blocks: [Vec<Block8x8f>; 2],
-    pending_cb_blocks: [Vec<Block8x8f>; 2],
-    pending_cr_blocks: [Vec<Block8x8f>; 2],
-    /// Index of current pending buffer (0 or 1)
-    pending_current: usize,
+    pending: PendingBuffers,
 
     // === Quantization context (set via set_quant_tables) ===
     quant: Option<QuantContext>,
@@ -404,51 +483,53 @@ impl StripProcessor {
             },
 
             // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
-            pending_y_blocks: [
-                try_with_capacity_tracked(
-                    pending_y_capacity,
-                    "pending_y_blocks[0]",
-                    &mut alloc_stats,
-                )?,
-                try_with_capacity_tracked(
-                    pending_y_capacity,
-                    "pending_y_blocks[1]",
-                    &mut alloc_stats,
-                )?,
-            ],
-            pending_cb_blocks: if is_color {
-                [
+            pending: PendingBuffers {
+                y: [
                     try_with_capacity_tracked(
-                        pending_c_capacity,
-                        "pending_cb_blocks[0]",
+                        pending_y_capacity,
+                        "pending_y[0]",
                         &mut alloc_stats,
                     )?,
                     try_with_capacity_tracked(
-                        pending_c_capacity,
-                        "pending_cb_blocks[1]",
+                        pending_y_capacity,
+                        "pending_y[1]",
                         &mut alloc_stats,
                     )?,
-                ]
-            } else {
-                [Vec::new(), Vec::new()]
+                ],
+                cb: if is_color {
+                    [
+                        try_with_capacity_tracked(
+                            pending_c_capacity,
+                            "pending_cb[0]",
+                            &mut alloc_stats,
+                        )?,
+                        try_with_capacity_tracked(
+                            pending_c_capacity,
+                            "pending_cb[1]",
+                            &mut alloc_stats,
+                        )?,
+                    ]
+                } else {
+                    [Vec::new(), Vec::new()]
+                },
+                cr: if is_color {
+                    [
+                        try_with_capacity_tracked(
+                            pending_c_capacity,
+                            "pending_cr[0]",
+                            &mut alloc_stats,
+                        )?,
+                        try_with_capacity_tracked(
+                            pending_c_capacity,
+                            "pending_cr[1]",
+                            &mut alloc_stats,
+                        )?,
+                    ]
+                } else {
+                    [Vec::new(), Vec::new()]
+                },
+                current: false,
             },
-            pending_cr_blocks: if is_color {
-                [
-                    try_with_capacity_tracked(
-                        pending_c_capacity,
-                        "pending_cr_blocks[0]",
-                        &mut alloc_stats,
-                    )?,
-                    try_with_capacity_tracked(
-                        pending_c_capacity,
-                        "pending_cr_blocks[1]",
-                        &mut alloc_stats,
-                    )?,
-                ]
-            } else {
-                [Vec::new(), Vec::new()]
-            },
-            pending_current: 0,
 
             // Quantization context (set via set_quant_tables)
             quant: None,
@@ -702,15 +783,11 @@ impl StripProcessor {
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
         // This is the key optimization: quantize to i16 immediately instead of storing f32
         if let Some(count) = aq_count {
-            let prev_buffer = 1 - self.pending_current;
             // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
             let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
-            self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+            self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
-            // Clear the previous buffer for reuse
-            self.pending_y_blocks[prev_buffer].clear();
-            self.pending_cb_blocks[prev_buffer].clear();
-            self.pending_cr_blocks[prev_buffer].clear();
+            self.pending.clear_prev();
         }
 
         // Step 5: Compute DCT for blocks in this strip into the current pending buffer
@@ -718,7 +795,7 @@ impl StripProcessor {
         let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
 
         // Step 6: Swap pending buffers when iMCU completes
-        // (The swap happens via pending_current tracking in dct_strip_blocks_to_pending)
+        // (The swap happens via pending.swap() in dct_strip_blocks_to_pending)
 
         Ok(blocks_added)
     }
@@ -797,14 +874,10 @@ impl StripProcessor {
 
         // Step 4: If we got AQ strengths, quantize the previous pending iMCU
         if let Some(count) = aq_count {
-            let prev_buffer = 1 - self.pending_current;
-            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
             let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
-            self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+            self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
-            self.pending_y_blocks[prev_buffer].clear();
-            self.pending_cb_blocks[prev_buffer].clear();
-            self.pending_cr_blocks[prev_buffer].clear();
+            self.pending.clear_prev();
         }
 
         // Step 5: Compute DCT for blocks in this strip into the current pending buffer
@@ -882,14 +955,10 @@ impl StripProcessor {
 
         // Step 4: Quantize previous pending iMCU if strengths are ready
         if let Some(count) = aq_count {
-            let prev_buffer = 1 - self.pending_current;
-            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
             let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
-            self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+            self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
-            self.pending_y_blocks[prev_buffer].clear();
-            self.pending_cb_blocks[prev_buffer].clear();
-            self.pending_cr_blocks[prev_buffer].clear();
+            self.pending.clear_prev();
         }
 
         // Step 5: Compute DCT
@@ -915,7 +984,7 @@ impl StripProcessor {
         let strip_blocks_h = (strip_height + 7) / 8;
         let start_block_y = strip_y / 8;
         let height = self.layout.height;
-        let pending_idx = self.pending_current;
+        let pending_idx = self.pending.current_idx();
 
         // Y strip is now in padded layout (padded_width pixels per row)
         let padded_width = self.layout.padded_width;
@@ -942,17 +1011,17 @@ impl StripProcessor {
                 blocks_w,
                 actual_strip_blocks_h,
                 padded_width,
-                &mut self.pending_y_blocks[pending_idx],
+                &mut self.pending.y[pending_idx],
             );
         }
 
         #[cfg(not(feature = "parallel"))]
         {
             // Pre-allocate and write directly to avoid push overhead
-            let start_idx = self.pending_y_blocks[pending_idx].len();
-            self.pending_y_blocks[pending_idx]
+            let start_idx = self.pending.y[pending_idx].len();
+            self.pending.y[pending_idx]
                 .resize(start_idx + blocks_added, Block8x8f::default());
-            let output = &mut self.pending_y_blocks[pending_idx][start_idx..];
+            let output = &mut self.pending.y[pending_idx][start_idx..];
 
             // Get DC quant value for deringing (if enabled)
             let y_dc_quant = self
@@ -995,8 +1064,8 @@ impl StripProcessor {
 
                 // Calculate actual Cb block count (same as Y - uses actual_strip_blocks_h)
                 let cb_blocks_total = actual_strip_blocks_h * blocks_w;
-                let cb_start = self.pending_cb_blocks[pending_idx].len();
-                self.pending_cb_blocks[pending_idx]
+                let cb_start = self.pending.cb[pending_idx].len();
+                self.pending.cb[pending_idx]
                     .resize(cb_start + cb_blocks_total, Block8x8f::default());
 
                 let mut cb_idx = 0;
@@ -1012,7 +1081,7 @@ impl StripProcessor {
                             local_by,
                             padded_width,
                         );
-                        self.pending_cb_blocks[pending_idx][cb_start + cb_idx] =
+                        self.pending.cb[pending_idx][cb_start + cb_idx] =
                             forward_dct_dispatch(simd_token, &cb_block);
                         cb_idx += 1;
                     }
@@ -1026,8 +1095,8 @@ impl StripProcessor {
                 let padded_b_width = self.layout.padded_b_width;
                 let b_size = b_strip_height * padded_b_width;
 
-                let cr_start = self.pending_cr_blocks[pending_idx].len();
-                self.pending_cr_blocks[pending_idx]
+                let cr_start = self.pending.cr[pending_idx].len();
+                self.pending.cr[pending_idx]
                     .resize(cr_start + b_blocks_total, Block8x8f::default());
 
                 let mut cr_idx = 0;
@@ -1039,7 +1108,7 @@ impl StripProcessor {
                             local_by,
                             padded_b_width,
                         );
-                        self.pending_cr_blocks[pending_idx][cr_start + cr_idx] =
+                        self.pending.cr[pending_idx][cr_start + cr_idx] =
                             forward_dct_dispatch(simd_token, &cr_block);
                         cr_idx += 1;
                     }
@@ -1054,11 +1123,11 @@ impl StripProcessor {
                 let c_size = c_strip_height * padded_c_width;
 
                 // Pre-allocate chroma buffers
-                let cb_start = self.pending_cb_blocks[pending_idx].len();
-                let cr_start = self.pending_cr_blocks[pending_idx].len();
-                self.pending_cb_blocks[pending_idx]
+                let cb_start = self.pending.cb[pending_idx].len();
+                let cr_start = self.pending.cr[pending_idx].len();
+                self.pending.cb[pending_idx]
                     .resize(cb_start + c_blocks_total, Block8x8f::default());
-                self.pending_cr_blocks[pending_idx]
+                self.pending.cr[pending_idx]
                     .resize(cr_start + c_blocks_total, Block8x8f::default());
 
                 let mut idx = 0;
@@ -1071,7 +1140,7 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        self.pending_cb_blocks[pending_idx][cb_start + idx] =
+                        self.pending.cb[pending_idx][cb_start + idx] =
                             forward_dct_dispatch(simd_token, &cb_block);
 
                         // Cr block - DCT only (wide-native path)
@@ -1081,7 +1150,7 @@ impl StripProcessor {
                             local_by,
                             padded_c_width,
                         );
-                        self.pending_cr_blocks[pending_idx][cr_start + idx] =
+                        self.pending.cr[pending_idx][cr_start + idx] =
                             forward_dct_dispatch(simd_token, &cr_block);
                         idx += 1;
                     }
@@ -1090,12 +1159,12 @@ impl StripProcessor {
         }
 
         // Swap pending buffer for next iMCU
-        self.pending_current = 1 - self.pending_current;
+        self.pending.swap();
 
         Ok(blocks_added)
     }
 
-    /// Quantizes pending f32 DCT blocks to i16 using AQ strengths.
+    /// Quantizes the previous pending iMCU's f32 DCT blocks to i16 using AQ strengths.
     ///
     /// This is the key memory optimization: quantize incrementally as soon as
     /// AQ strengths become available, rather than storing all f32 blocks.
@@ -1103,7 +1172,8 @@ impl StripProcessor {
     /// When trellis quantization is enabled (via `set_trellis()`), uses
     /// rate-distortion optimization for better compression. Otherwise uses
     /// fast SIMD quantization.
-    fn quantize_pending_imcu(&mut self, buffer_idx: usize, aq_strengths: &[f32]) {
+    fn quantize_prev_pending_imcu(&mut self, aq_strengths: &[f32]) {
+        let buffer_idx = self.pending.prev_idx();
         // Get quantization context (must be set before processing)
         let quant = self.quant.clone().expect("quant context not set");
 
@@ -1114,7 +1184,7 @@ impl StripProcessor {
         let use_trellis = false;
 
         // Quantize Y blocks (vectors pre-allocated at construction)
-        for (i, dct) in self.pending_y_blocks[buffer_idx].iter().enumerate() {
+        for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
             // Use get() with fallback to avoid branch on common path
             let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
 
@@ -1164,7 +1234,7 @@ impl StripProcessor {
             let global_chroma_by = self.cb_blocks.len() / c_blocks_h.max(1);
 
             // Quantize Cb blocks (vectors pre-allocated at construction)
-            for (i, dct) in self.pending_cb_blocks[buffer_idx].iter().enumerate() {
+            for (i, dct) in self.pending.cb[buffer_idx].iter().enumerate() {
                 let bx = i % c_blocks_h.max(1);
                 let local_by = i / c_blocks_h.max(1);
                 // Compute global Y position for this chroma block
@@ -1221,7 +1291,7 @@ impl StripProcessor {
                 c_blocks_v
             };
             let global_chroma_by_cr = self.cr_blocks.len() / cr_blocks_h.max(1);
-            for (i, dct) in self.pending_cr_blocks[buffer_idx].iter().enumerate() {
+            for (i, dct) in self.pending.cr[buffer_idx].iter().enumerate() {
                 let bx = i % cr_blocks_h.max(1);
                 let local_by = i / cr_blocks_h.max(1);
                 // Compute global Y position for this chroma block
@@ -1281,26 +1351,25 @@ impl StripProcessor {
         };
         if let Some(count) = flush_count {
             // Quantize the last pending iMCU
-            let prev_buffer = 1 - self.pending_current;
-            if !self.pending_y_blocks[prev_buffer].is_empty() {
-                // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
+            if !self.pending.prev_y().is_empty() {
                 let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
-                self.quantize_pending_imcu(prev_buffer, &temp_buffer[..count]);
+                self.quantize_prev_pending_imcu(&temp_buffer[..count]);
                 self.aq_strengths_buffer = temp_buffer;
             }
         }
 
         // Also quantize any blocks remaining in the current pending buffer
         // (for edge cases where we have blocks but no AQ was returned)
-        let current_buffer = self.pending_current;
-        if !self.pending_y_blocks[current_buffer].is_empty() {
+        if !self.pending.current_y().is_empty() {
             // Use default AQ strength for remaining blocks
             let default_aq = try_alloc_filled(
-                self.pending_y_blocks[current_buffer].len(),
+                self.pending.current_y().len(),
                 0.08f32,
                 "default_aq_strengths",
             )?;
-            self.quantize_pending_imcu(current_buffer, &default_aq);
+            // Swap so current becomes prev, then quantize
+            self.pending.swap();
+            self.quantize_prev_pending_imcu(&default_aq);
         }
 
         Ok(StripProcessorOutput {
