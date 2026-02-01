@@ -39,6 +39,7 @@ pub mod chroma;
 pub mod dct;
 pub(crate) mod layout;
 mod progressive;
+pub(crate) mod scan_optimize;
 #[doc(hidden)]
 pub mod scan_script;
 mod serialize;
