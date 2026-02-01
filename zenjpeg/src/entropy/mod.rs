@@ -287,16 +287,16 @@ pub fn encode_blocks_mcu_order(
     };
 
     // Block dimensions for the full image
-    let y_blocks_h = (width + 7) / 8;
-    let c_blocks_h = ((width + h_samp - 1) / h_samp + 7) / 8;
-    let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
+    let y_blocks_w = (width + 7) / 8;
+    let c_blocks_w = ((width + h_samp - 1) / h_samp + 7) / 8;
+    let mcu_h = (y_blocks_w + h_samp - 1) / h_samp;
 
     // Y blocks in this batch are stored in raster order:
-    //   block[row * y_blocks_h + col]
+    //   block[row * y_blocks_w + col]
     // For subsampled modes, each MCU row spans v_samp Y block-rows
     // and 1 chroma block-row.
-    let y_rows_in_batch = if y_blocks_h > 0 {
-        y_blocks.len() / y_blocks_h
+    let y_rows_in_batch = if y_blocks_w > 0 {
+        y_blocks.len() / y_blocks_w
     } else {
         0
     };
@@ -315,8 +315,8 @@ pub fn encode_blocks_mcu_order(
                 for dx in 0..h_samp {
                     let col = mcu_x * h_samp + dx;
                     let row = mcu_row_offset * v_samp + dy;
-                    let block = if col < y_blocks_h && row < y_rows_in_batch {
-                        y_blocks.get(row * y_blocks_h + col).unwrap_or(&ZERO_BLOCK)
+                    let block = if col < y_blocks_w && row < y_rows_in_batch {
+                        y_blocks.get(row * y_blocks_w + col).unwrap_or(&ZERO_BLOCK)
                     } else {
                         &ZERO_BLOCK
                     };
@@ -330,7 +330,7 @@ pub fn encode_blocks_mcu_order(
             if is_color {
                 let c_row = mcu_row_offset;
                 let c_col = mcu_x;
-                let c_idx = c_row * c_blocks_h + c_col;
+                let c_idx = c_row * c_blocks_w + c_col;
 
                 let cb = cb_blocks.get(c_idx).unwrap_or(&ZERO_BLOCK);
                 encode_block_to_writer(cb, dc_chroma, ac_chroma, state.prev_dc[1], writer)?;

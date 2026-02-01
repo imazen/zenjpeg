@@ -234,10 +234,10 @@ fn encode_segment_subsampled(
     mcu_start: usize,
     mcu_count: usize,
     mcu_h: usize,
+    y_blocks_w: usize,
     y_blocks_h: usize,
-    y_blocks_v: usize,
+    c_blocks_w: usize,
     c_blocks_h: usize,
-    c_blocks_v: usize,
     h_samp: usize,
     v_samp: usize,
     is_color: bool,
@@ -257,8 +257,8 @@ fn encode_segment_subsampled(
             for dx in 0..h_samp {
                 let y_bx = mcu_x * h_samp + dx;
                 let y_by = mcu_y * v_samp + dy;
-                if y_bx < y_blocks_h && y_by < y_blocks_v {
-                    let y_idx = y_by * y_blocks_h + y_bx;
+                if y_bx < y_blocks_w && y_by < y_blocks_h {
+                    let y_idx = y_by * y_blocks_w + y_bx;
                     encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
                 } else {
                     encoder.encode_block(&ZERO_BLOCK, 0, 0, 0);
@@ -268,8 +268,8 @@ fn encode_segment_subsampled(
 
         // Encode Cb and Cr blocks
         if is_color {
-            if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
-                let c_idx = mcu_y * c_blocks_h + mcu_x;
+            if mcu_x < c_blocks_w && mcu_y < c_blocks_h {
+                let c_idx = mcu_y * c_blocks_w + mcu_x;
                 encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
                 encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
             } else {
@@ -364,15 +364,15 @@ pub fn parallel_entropy_encode_subsampled(
     restart_interval: u16,
     config: &ParallelEntropyConfig,
 ) -> Vec<u8> {
-    let y_blocks_h = (width + 7) / 8;
-    let y_blocks_v = (height + 7) / 8;
+    let y_blocks_w = (width + 7) / 8;
+    let y_blocks_h = (height + 7) / 8;
     let c_width = (width + h_samp - 1) / h_samp;
     let c_height = (height + v_samp - 1) / v_samp;
-    let c_blocks_h = (c_width + 7) / 8;
-    let c_blocks_v = (c_height + 7) / 8;
+    let c_blocks_w = (c_width + 7) / 8;
+    let c_blocks_h = (c_height + 7) / 8;
 
-    let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
-    let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+    let mcu_h = (y_blocks_w + h_samp - 1) / h_samp;
+    let mcu_v = (y_blocks_h + v_samp - 1) / v_samp;
     let total_mcus = mcu_h * mcu_v;
 
     let interval = restart_interval as usize;
@@ -380,8 +380,8 @@ pub fn parallel_entropy_encode_subsampled(
 
     if num_segments <= 1 {
         let result = encode_segment_subsampled(
-            y_blocks, cb_blocks, cr_blocks, 0, total_mcus, mcu_h, y_blocks_h, y_blocks_v,
-            c_blocks_h, c_blocks_v, h_samp, v_samp, is_color, config, 0,
+            y_blocks, cb_blocks, cr_blocks, 0, total_mcus, mcu_h, y_blocks_w, y_blocks_h,
+            c_blocks_w, c_blocks_h, h_samp, v_samp, is_color, config, 0,
         );
         return result.data;
     }
@@ -401,10 +401,10 @@ pub fn parallel_entropy_encode_subsampled(
                 mcu_start,
                 mcu_count,
                 mcu_h,
+                y_blocks_w,
                 y_blocks_h,
-                y_blocks_v,
+                c_blocks_w,
                 c_blocks_h,
-                c_blocks_v,
                 h_samp,
                 v_samp,
                 is_color,
