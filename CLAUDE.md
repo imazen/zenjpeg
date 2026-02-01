@@ -1041,6 +1041,39 @@ Eliminated derived-state sync bugs by creating `LayoutParams` (`encode/layout.rs
 - [x] Deduplicated chroma/B-channel dimensions: 8 locations now read from `LayoutParams` instead of recomputing. Added `b_strip_height` field, `c_strip_height_for()` and `b_strip_height_for()` helpers for partial final strips.
 - [ ] `serialize.rs::write_frame_header_xyb_ex()` still hardcodes 0x22/0x11 (low priority, always correct for XYB)
 
+### DONE: Encoder Invariants & Readability Refactor (completed 2026-02-01)
+
+- [x] Added `total_mcus` (and `h_samp`, `mcu_cols`, `mcu_rows`) to `LayoutParams`
+- [x] Introduced `PendingBuffers` struct (replaces 6 `Vec` fields + `pending_current: usize`)
+- [x] Made `QuantContext` and `StreamingAQ` non-optional in `StripProcessor`
+- [x] Deduplicated chroma quantization via `quantize_chroma_blocks()` free function
+- [x] Added `HuffmanStrategy` enum (replaces `optimize_huffman: bool` + `custom_huffman_tables: Option`)
+- [x] Extracted `color_convert_strip()` dispatch helper from `process_strip`
+
+### Encoder Hardening TODO
+
+1. **[DONE] Rename `_h`/`_v` block fields to `_w`/`_h` in LayoutParams** — `y_blocks_h` means horizontal
+   (width) but `blocks_h` means height. Rename to `y_blocks_w`/`y_blocks_h` etc. so `_w` always
+   means width and `_h` always means height. Files: `encode/layout.rs`, all consumers.
+
+2. **[DONE] Add `aq_input_strip()` accessor** — `if use_xyb { &cb_strip } else { &y_strip }` appears 3 times
+   (`strip/mod.rs:784, 873, 958`). Extract to single method documenting that `cb_strip` is the
+   Y channel in XYB mode. Files: `encode/strip/mod.rs`.
+
+3. **[DONE] Replace `try_into().unwrap()` with debug_assert** — `strip/mod.rs:154` panics if
+   `padded_width` invariant breaks. Add bounds assertion. Files: `encode/strip/mod.rs`.
+
+4. **Deduplicate 3 process_strip variants** — `process_strip`, `process_strip_ycbcr_f32`, and
+   `process_strip_ycbcr_f32_subsampled` share Steps 2-5 (AQ, downsample, quantize, DCT).
+   Extract shared tail into `process_converted_strip()`. Files: `encode/strip/mod.rs`.
+
+5. **Deduplicate XYB vs YCbCr finish paths** — `streaming.rs:1152-1257` has ~100 lines of
+   near-identical branches differing only in header/encode function calls. Extract shared
+   skeleton. Files: `encode/streaming.rs`.
+
+6. **Use `BLOCK_SIZE` constant consistently** — Magic `8` appears dozens of times across the
+   pipeline. Use the existing constant everywhere. Files: across `encode/`.
+
 ### Resource Estimation API (docs/API_DESIGN.md)
 
 For proxy server efficiency: accurate memory and compute cost estimation before encoding.
