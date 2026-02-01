@@ -715,6 +715,19 @@ impl StripProcessor {
         self.layout.subsampling
     }
 
+    /// Returns the strip buffer used as AQ input (luminance channel).
+    ///
+    /// In YCbCr mode this is `y_strip`. In XYB mode, the Y perceptual channel
+    /// is stored in `cb_strip` (component index 1), not `y_strip` (which holds X).
+    /// C++ jpegli uses `y_channel = (jpeg_color_space == JCS_RGB) ? 1 : 0`.
+    fn aq_input_strip(&self) -> &[f32] {
+        if self.layout.use_xyb {
+            &self.cb_strip
+        } else {
+            &self.y_strip
+        }
+    }
+
     /// Processes one strip of RGB input data.
     ///
     /// Dispatch color conversion for a strip of RGB input.
@@ -779,13 +792,9 @@ impl StripProcessor {
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         // Use process_y_strip_into to write to reusable buffer (zero allocation)
-        // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
-        // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
-        let aq_input = if self.layout.use_xyb {
-            &self.cb_strip
-        } else {
-            &self.y_strip
-        };
+        // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
+        // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
+        let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
         let aq_count = self.aq_state.process_y_strip_into(
             aq_input,
             strip_y,
@@ -867,14 +876,9 @@ impl StripProcessor {
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         // Use process_y_strip_into to write to reusable buffer (zero allocation)
-        // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
-        // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
-        // (This path rejects XYB mode above, so this is always y_strip here)
-        let aq_input = if self.layout.use_xyb {
-            &self.cb_strip
-        } else {
-            &self.y_strip
-        };
+        // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
+        // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
+        let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
         let aq_count = self.aq_state.process_y_strip_into(
             aq_input,
             strip_y,
@@ -951,15 +955,9 @@ impl StripProcessor {
         }
 
         // Step 2: Process AQ
-        // Use process_y_strip_into to write to reusable buffer (zero allocation)
-        // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
-        // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
-        // (This path is for pre-subsampled YCbCr, not XYB)
-        let aq_input = if self.layout.use_xyb {
-            &self.cb_strip
-        } else {
-            &self.y_strip
-        };
+        // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
+        // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
+        let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
         let aq_count = self.aq_state.process_y_strip_into(
             aq_input,
             strip_y,
