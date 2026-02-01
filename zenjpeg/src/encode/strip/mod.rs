@@ -91,14 +91,7 @@ impl QuantContext {
             precision: 0,
         };
         let zb = ZeroBiasParams::for_ycbcr(1.0, 0);
-        Self::new(
-            qt.clone(),
-            qt.clone(),
-            qt,
-            zb.clone(),
-            zb.clone(),
-            zb,
-        )
+        Self::new(qt.clone(), qt.clone(), qt, zb.clone(), zb.clone(), zb)
     }
 
     /// Creates a new quantization context from the component tables.
@@ -920,7 +913,11 @@ impl StripProcessor {
         // Process AQ and check if previous iMCU strengths are ready.
         // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
         // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
-        let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
+        let aq_input = if self.layout.use_xyb {
+            &self.cb_strip
+        } else {
+            &self.y_strip
+        };
         let aq_count = self.aq_state.process_y_strip_into(
             aq_input,
             strip_y,
@@ -1002,8 +999,7 @@ impl StripProcessor {
         {
             // Pre-allocate and write directly to avoid push overhead
             let start_idx = self.pending.y[pending_idx].len();
-            self.pending.y[pending_idx]
-                .resize(start_idx + blocks_added, Block8x8f::default());
+            self.pending.y[pending_idx].resize(start_idx + blocks_added, Block8x8f::default());
             let output = &mut self.pending.y[pending_idx][start_idx..];
 
             // Get DC quant value for deringing (if enabled)

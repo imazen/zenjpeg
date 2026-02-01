@@ -68,7 +68,7 @@ impl StreamingEncoderBuilder {
             encoding_tables: None,
             use_xyb: false,
             deringing: true,
-            allow_16bit_quant_tables: true,
+            allow_16bit_quant_tables: false,
             separate_chroma_tables: true,
             #[cfg(feature = "parallel")]
             parallel: false,
