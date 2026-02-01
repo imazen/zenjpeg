@@ -1030,6 +1030,57 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Planned Features / TODO
 
+### Tech Debt: Eliminate Derived-State Bugs with Immutable Substructs
+
+The XYB v_samp bug (and the earlier AQ channel bug) share a root cause: mutable state
+that must be kept in sync across multiple locations. `v_samp` was computed independently
+in the constructor and in `init_aq`, derived from `subsampling` + `use_xyb` — but only
+one site was updated when XYB support was added.
+
+**Pattern to adopt:** Compute derived values once, store in an immutable substruct, pass
+by reference. Anything that depends on `(subsampling, use_xyb, width, height)` should be
+computed in one place and frozen.
+
+**Proposed refactor:**
+
+```rust
+/// Immutable layout parameters computed once from (subsampling, use_xyb, width, height).
+/// Passed by reference everywhere — never recomputed, never diverges.
+struct LayoutParams {
+    width: usize,
+    height: usize,
+    padded_width: usize,       // MCU-aligned
+    blocks_w: usize,
+    blocks_h: usize,
+    v_samp: usize,             // max_v_samp_factor (2 for XYB or 4:2:0/4:4:0, else 1)
+    strip_height: usize,       // 8 * v_samp
+    y_buffer_stride: usize,    // padded_width + 1
+    padded_c_width: usize,
+    c_strip_height: usize,
+    // ... all other geometry derived from the above
+}
+```
+
+**Locations currently computing v_samp independently (must converge):**
+- `StripProcessor::with_xyb()` constructor (line ~414) — buffer sizing
+- `StripProcessor::init_aq()` (line ~704) — AQ initialization
+- `StreamingEncoder::new()` (line ~316) — JPEG header h_samp/v_samp
+- `serialize.rs::write_frame_header_xyb_ex()` — hardcoded 0x22/0x11
+
+**Locations computing padded_width independently:**
+- `StripProcessor::with_xyb()` — `(width + mcu_size - 1) / mcu_size * mcu_size`
+- `StreamingAQ::new()` — `blocks_w * 8`
+- `StreamingEncoder` — via builder
+
+**Priority:** Medium. Each new XYB bug has been a sync failure. A `LayoutParams` struct
+created once in the `StreamingEncoder` builder and threaded through would prevent the
+entire class of bug.
+
+- [ ] Create `LayoutParams` struct with all geometry derived from (subsampling, use_xyb, width, height)
+- [ ] Replace independent v_samp/padded_width/blocks_w computations with `&LayoutParams`
+- [ ] Make `StripProcessor` and `StreamingAQ` take `&LayoutParams` instead of raw dimensions
+- [ ] Audit `serialize.rs` XYB header writing to use same `LayoutParams`
+
 ### Resource Estimation API (docs/API_DESIGN.md)
 
 For proxy server efficiency: accurate memory and compute cost estimation before encoding.
