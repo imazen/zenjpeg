@@ -332,10 +332,7 @@ mod tests {
         assert!(sizes[0] > 0, "DC scan should have non-zero cost");
 
         // AC scans for populated Y blocks should have significant cost
-        assert!(
-            sizes[1] > 0,
-            "Y AC 1-8 should have non-zero cost with data"
-        );
+        assert!(sizes[1] > 0, "Y AC 1-8 should have non-zero cost with data");
     }
 
     #[test]
