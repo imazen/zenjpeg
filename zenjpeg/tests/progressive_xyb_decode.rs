@@ -132,7 +132,9 @@ fn jpegli_decodes_baseline_xyb() {
     let height = 8u32;
     let pixels: Vec<u8> = (0..width * height * 3).map(|i| (i % 256) as u8).collect();
 
-    let config = zenjpeg::encoder::EncoderConfig::xyb(90.0, XybSubsampling::BQuarter);
+    // Explicitly request baseline mode for this test
+    let config = zenjpeg::encoder::EncoderConfig::xyb(90.0, XybSubsampling::BQuarter)
+        .progressive(false);
     let mut enc = config
         .encode_from_bytes(width, height, zenjpeg::encoder::PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
@@ -142,7 +144,7 @@ fn jpegli_decodes_baseline_xyb() {
     // Verify it's baseline (not progressive)
     assert!(
         !is_progressive(&jpeg_data),
-        "jpegli XYB should be baseline by default"
+        "XYB with .progressive(false) should produce baseline JPEG"
     );
 
     // Decode with zenjpeg

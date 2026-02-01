@@ -1310,7 +1310,7 @@ mod tests {
         enc.finish().unwrap()
     }
 
-    /// Helper to encode RGB pixels with subsampling
+    /// Helper to encode RGB pixels with subsampling (baseline mode for test stability)
     fn encode_rgb_subsampled(
         width: u32,
         height: u32,
@@ -1320,7 +1320,7 @@ mod tests {
     ) -> Vec<u8> {
         use crate::encode::v2::{EncoderConfig, PixelLayout};
         use enough::Unstoppable;
-        let config = EncoderConfig::ycbcr(quality, subsampling);
+        let config = EncoderConfig::ycbcr(quality, subsampling).progressive(false);
         let mut enc = config
             .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
             .unwrap();

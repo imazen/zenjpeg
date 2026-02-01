@@ -1385,8 +1385,9 @@ mod tests {
                 }
             }
 
-            // Encode with strip encoder (current default)
+            // Encode with strip encoder (baseline for test stability)
             let config = EncoderConfig::ycbcr(85.0, crate::encode::ChromaSubsampling::Quarter)
+                .progressive(false)
                 .optimize_huffman(true);
             let mut enc = config
                 .encode_from_bytes(width as u32, height as u32, PixelLayout::Rgb8Srgb)

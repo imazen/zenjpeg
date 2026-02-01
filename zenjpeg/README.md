@@ -148,7 +148,7 @@ Choose one constructor based on desired color mode:
 
 | Method | Description | Default |
 |--------|-------------|---------|
-| `.progressive(bool)` | Progressive JPEG (~3% smaller) | `false` |
+| `.progressive(bool)` | Progressive JPEG (3-7% smaller) | `true` |
 | `.optimize_huffman(bool)` | Optimal Huffman tables | `true` |
 | `.deringing(bool)` | Overshoot deringing for documents/graphics | `true` |
 | `.sharp_yuv(bool)` | SharpYUV downsampling | `false` |

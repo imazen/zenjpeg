@@ -230,7 +230,8 @@ fn count_markers(jpeg: &[u8], marker: u8) -> usize {
 #[test]
 fn test_marker_structure() {
     let img = generate_gradient_d(128, 128, 3);
-    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    // Test baseline marker structure explicitly
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
     let jpeg = encode_rgb(128, 128, &img.pixels, &config).expect("encode failed");
 
     // Check required markers
@@ -463,14 +464,14 @@ fn count_dht_tables(jpeg: &[u8]) -> (usize, usize) {
 #[test]
 fn test_huffman_tables_present() {
     let img = generate_gradient_d(64, 64, 3);
-    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter);
+    let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter).progressive(false);
     let jpeg = encode_rgb(64, 64, &img.pixels, &config).expect("encode failed");
 
     let (dc_count, ac_count) = count_dht_tables(&jpeg);
 
     println!("Huffman tables: {} DC, {} AC", dc_count, ac_count);
 
-    // RGB baseline should have 2 DC tables and 2 AC tables
+    // Baseline (non-progressive) should have 2 DC tables and 2 AC tables
     assert!(dc_count >= 2, "Should have at least 2 DC tables");
     assert!(ac_count >= 2, "Should have at least 2 AC tables");
 }
