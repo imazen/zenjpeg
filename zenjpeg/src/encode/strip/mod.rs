@@ -717,6 +717,47 @@ impl StripProcessor {
 
     /// Processes one strip of RGB input data.
     ///
+    /// Dispatch color conversion for a strip of RGB input.
+    ///
+    /// Returns `true` if chroma was already downsampled by a fused path
+    /// (XYB, gamma-aware, or fused 420).
+    fn color_convert_strip(
+        &mut self,
+        rgb_strip: &[u8],
+        strip_y: usize,
+        actual_strip_height: usize,
+    ) -> Result<bool> {
+        if self.layout.use_xyb {
+            self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
+            return Ok(true); // XYB handles B downsampling internally
+        }
+
+        // YCbCr mode: choose optimal path based on subsampling
+        let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
+            && !self.pixel_format.is_grayscale()
+            && self.layout.subsampling != Subsampling::S444;
+
+        if uses_gamma_aware_fused {
+            self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
+            return Ok(true);
+        }
+
+        // Try fused 420 path when applicable (significantly faster)
+        #[cfg(feature = "yuv")]
+        {
+            if self.layout.subsampling == Subsampling::S420
+                && !self.pixel_format.is_grayscale()
+                && self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)?
+            {
+                return Ok(true);
+            }
+        }
+
+        // Standard path: convert to YCbCr 444, then downsample separately
+        self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
+        Ok(false)
+    }
+
     /// # Arguments
     /// * `rgb_strip` - RGB pixel data for this strip
     /// * `strip_y` - Starting row index of this strip
@@ -726,43 +767,9 @@ impl StripProcessor {
     pub fn process_strip(&mut self, rgb_strip: &[u8], strip_y: usize) -> Result<usize> {
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
-        // Track whether chroma was already downsampled by a fused path
-        let mut chroma_already_downsampled = false;
-
         // Step 1: Color convert RGB -> YCbCr or XYB into strip buffers
-        if self.layout.use_xyb {
-            // XYB mode: convert RGB -> scaled XYB
-            // X and Y go to y_strip and cb_strip at full res
-            // B goes to cr_strip at full res, then is always 2x2 downsampled
-            self.convert_strip_to_xyb(rgb_strip, actual_strip_height)?;
-            chroma_already_downsampled = true; // XYB handles B downsampling internally
-        } else {
-            // YCbCr mode: choose optimal path based on subsampling
-            let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
-                && !self.pixel_format.is_grayscale()
-                && self.layout.subsampling != Subsampling::S444;
-
-            if uses_gamma_aware_fused {
-                self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
-                chroma_already_downsampled = true;
-            } else {
-                // Try fused 420 path when applicable (significantly faster)
-                #[cfg(feature = "yuv")]
-                {
-                    if self.layout.subsampling == Subsampling::S420
-                        && !self.pixel_format.is_grayscale()
-                        && self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)?
-                    {
-                        chroma_already_downsampled = true;
-                    }
-                }
-
-                if !chroma_already_downsampled {
-                    // Standard path: convert to YCbCr 444, then downsample separately
-                    self.convert_strip_to_ycbcr(rgb_strip, actual_strip_height)?;
-                }
-            }
-        }
+        let chroma_already_downsampled =
+            self.color_convert_strip(rgb_strip, strip_y, actual_strip_height)?;
 
         // Step 1b: Pad strips vertically if this is a partial bottom strip
         // This is needed for vertical downsampling modes (4:2:0, 4:4:0) at image bottom
