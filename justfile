@@ -38,6 +38,23 @@ bench-cpp:
 parity:
     cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --nocapture --ignored
 
+# XYB per-channel debug (compare Rust vs C++ per-row RGB differences)
+xyb-debug:
+    cargo run --release --example xyb_debug
+
+# XYB visual diff (side-by-side + difference image)
+xyb-diff:
+    cargo run --release --example xyb_debug
+    convert /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png \
+        -compose difference -composite -evaluate multiply 10 /tmp/xyb_diff.png
+    montage /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png /tmp/xyb_diff.png \
+        -geometry +4+4 -tile 3x1 -set label '%f' /tmp/xyb_compare.png
+    display /tmp/xyb_compare.png &
+
+# XYB parity test (size and DSSIM comparison across quality levels)
+xyb-parity:
+    cargo run --release --example xyb_parity_test
+
 # WASM SIMD128 benchmark
 wasm-bench-simd:
     CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \
