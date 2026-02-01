@@ -1161,8 +1161,12 @@ This is **quality-dependent, not image-dependent** - tested on Kodak corpus (24 
 
 **Practical impact:**
 - Default Q90: No difference between Rust and C++
-- Web-quality Q70-Q85: Rust uses 16-bit, C++ clamps to 255
-- Low-quality Q50: Rust preserves precision, C++ loses ~70% of chroma range
+- Web-quality Q70-Q85: Rust uses 16-bit, C++ CLI clamps to 255
+- Low-quality Q50: Rust preserves precision, C++ CLI loses ~70% of chroma range
+
+Note: The C++ API supports 16-bit via `force_baseline=FALSE`, but cjpegli CLI
+doesn't expose this. Our `allow_16bit_quant_tables=true` default matches the
+C++ API capability, not the CLI behavior.
 
 To match C++ cjpegli CLI file sizes exactly, use `.allow_16bit_quant_tables(false)`.
 
