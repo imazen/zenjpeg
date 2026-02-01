@@ -1,7 +1,10 @@
 //! Compare XYB output quality and size against C jpegli.
+//!
+//! Uses ICC-aware decoding for accurate quality metrics.
 
 use enough::Unstoppable;
 use std::process::Command;
+use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{EncoderConfig, PixelLayout, XybSubsampling};
 
 fn main() {
@@ -104,9 +107,12 @@ fn main() {
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder =
-        zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(data));
-    decoder.decode().expect("decode")
+    // Use ICC-aware decoder for proper XYB→sRGB conversion
+    Decoder::new()
+        .apply_icc(true)
+        .decode(data)
+        .expect("decode")
+        .data
 }
 
 fn compute_dssim(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
