@@ -1,10 +1,8 @@
 //! Frequency-based cost estimation for candidate scans.
 //!
-//! Instead of full trial encoding (which mozjpeg-rs does), we use Huffman
-//! frequency counting to estimate relative scan sizes. This is sufficient
-//! for ranking candidates since we only need relative ordering, not exact
-//! byte counts. Constant-per-scan overheads (SOS headers, byte stuffing,
-//! bit padding) affect all candidates equally.
+//! Uses Huffman frequency counting to estimate relative scan sizes.
+//! This is sufficient for ranking candidates since we only need relative
+//! ordering, not exact byte counts.
 
 use super::generate::TrialScan;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
@@ -98,7 +96,9 @@ fn estimate_dc_scan(counter: &mut FrequencyCounter, blocks: &[[i16; DCT_BLOCK_SI
 /// Estimate AC first scan cost (ah=0).
 ///
 /// Counts run/value Huffman symbols for coefficients shifted by `al`,
-/// within the spectral range [ss, se].
+/// within the spectral range [ss, se]. Properly accumulates EOB runs
+/// across blocks (progressive JPEG merges consecutive empty blocks into
+/// a single EOB run symbol + extra bits, rather than individual EOBs).
 fn estimate_ac_first_scan(
     counter: &mut FrequencyCounter,
     blocks: &[[i16; DCT_BLOCK_SIZE]],
@@ -114,12 +114,14 @@ fn estimate_ac_first_scan(
 
     let ss = ss as usize;
     let se = se as usize;
+    let mut eob_run = 0u32;
+    let mut eob_extra_bits = 0usize;
 
     for block in blocks {
         let mut run = 0u8;
+        let mut block_has_nonzero = false;
 
         for k in ss..=se {
-            // Apply successive approximation shift
             let coeff = block[k] >> al;
             let abs_coeff = coeff.unsigned_abs();
 
@@ -127,6 +129,13 @@ fn estimate_ac_first_scan(
                 run += 1;
                 continue;
             }
+
+            // First non-zero in this block: flush pending EOB run
+            if !block_has_nonzero && eob_run > 0 {
+                eob_extra_bits += count_eob_run(counter, eob_run);
+                eob_run = 0;
+            }
+            block_has_nonzero = true;
 
             // Emit ZRL (16 zero run) symbols for long runs
             while run >= 16 {
@@ -142,12 +151,22 @@ fn estimate_ac_first_scan(
         }
 
         if run > 0 {
-            counter.count(0x00); // EOB
+            // Trailing zeros in this block → accumulate into EOB run
+            eob_run += 1;
+            if eob_run >= 32767 {
+                eob_extra_bits += count_eob_run(counter, eob_run);
+                eob_run = 0;
+            }
         }
     }
 
-    // Extra bits: each non-zero AC coefficient carries `size` extra bits + 1 sign bit
-    let extra_bits: f64 = blocks
+    // Flush final EOB run
+    if eob_run > 0 {
+        eob_extra_bits += count_eob_run(counter, eob_run);
+    }
+
+    // Extra bits: each non-zero AC coefficient carries `size` extra bits (includes sign)
+    let value_extra_bits: f64 = blocks
         .iter()
         .map(|block| {
             let mut bits = 0.0f64;
@@ -162,7 +181,7 @@ fn estimate_ac_first_scan(
         })
         .sum();
 
-    (counter.estimate_encoding_cost() + extra_bits) as usize
+    (counter.estimate_encoding_cost() + value_extra_bits) as usize + eob_extra_bits
 }
 
 /// Estimate AC refinement scan cost (ah > 0).
@@ -172,8 +191,8 @@ fn estimate_ac_first_scan(
 /// 2. Newly non-zero in this pass: Huffman-coded run/value symbol + 1 sign bit
 /// 3. Still zero: part of the run length
 ///
-/// The key insight is that refbits (1 bit per previously-nonzero coefficient
-/// in the spectral range) are NOT Huffman-coded, so we track them separately.
+/// Refbits (1 bit per previously-nonzero coefficient) are NOT Huffman-coded,
+/// so we track them separately. EOB runs are accumulated across blocks.
 fn estimate_ac_refinement_scan(
     blocks: &[[i16; DCT_BLOCK_SIZE]],
     ss: u8,
@@ -189,9 +208,12 @@ fn estimate_ac_refinement_scan(
     let se = se as usize;
     let mut counter = FrequencyCounter::new();
     let mut total_refbits = 0usize;
+    let mut eob_run = 0u32;
+    let mut eob_extra_bits = 0usize;
 
     for block in blocks {
         let mut run = 0u8;
+        let mut block_has_newly_sig = false;
 
         for k in ss..=se {
             let coeff = block[k];
@@ -206,7 +228,13 @@ fn estimate_ac_refinement_scan(
                 // Already established: 1 refbit (not Huffman-coded)
                 total_refbits += 1;
             } else if cur_bit != 0 {
-                // Newly significant: Huffman symbol + sign bit
+                // Newly significant: flush pending EOB run
+                if !block_has_newly_sig && eob_run > 0 {
+                    eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                    eob_run = 0;
+                }
+                block_has_newly_sig = true;
+
                 while run >= 16 {
                     counter.count(0xF0); // ZRL
                     run -= 16;
@@ -222,13 +250,129 @@ fn estimate_ac_refinement_scan(
             }
         }
 
-        if run > 0 {
-            counter.count(0x00); // EOB
+        if !block_has_newly_sig {
+            // No newly-significant coefficients: EOB
+            eob_run += 1;
+            if eob_run >= 32767 {
+                eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                eob_run = 0;
+            }
+        } else if run > 0 {
+            // Had some newly-significant but trailing unestablished zeros
+            eob_run += 1;
+            if eob_run >= 32767 {
+                eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                eob_run = 0;
+            }
         }
     }
 
+    // Flush final EOB run
+    if eob_run > 0 {
+        eob_extra_bits += count_eob_run(&mut counter, eob_run);
+    }
+
     let huffman_cost = counter.estimate_encoding_cost();
-    (huffman_cost as usize) + total_refbits
+    (huffman_cost as usize) + total_refbits + eob_extra_bits
+}
+
+/// Per-scan overhead in bits for SOS marker + DHT envelope + byte padding.
+///
+/// This matches the SCAN_OVERHEAD constant in select.rs and is used by
+/// `estimate_script_cost()` for full scan script cost estimation.
+const SCAN_OVERHEAD_BITS: usize = 150;
+
+/// Estimate the total encoded cost of a complete progressive scan script.
+///
+/// Evaluates each scan in the script using the same frequency-based estimation
+/// used for individual trial scans, plus per-scan overhead.
+///
+/// The estimate is accurate for ranking scripts with the same number of scans
+/// (relative ordering is reliable). For scripts with different scan counts,
+/// there is a systematic bias due to Huffman clustering effects:
+/// - 6-9 scans: ratio ~0.99 (nearly exact)
+/// - 12 scans: ratio ~1.05 (5% overestimate)
+/// - 15 scans: ratio ~1.22 (22% overestimate)
+///
+/// Cross-structure comparisons (e.g., 9-scan vs 15-scan) must use trial
+/// encoding for reliable results.
+///
+/// Returns the estimated total cost in bits (uncorrected).
+pub(crate) fn estimate_script_cost(
+    script: &[super::super::config::ProgressiveScan],
+    y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
+) -> usize {
+    let mut counter = FrequencyCounter::new();
+    let mut total = 0usize;
+
+    for scan in script {
+        let cost = if scan.ss == 0 && scan.se == 0 {
+            // DC scan
+            let mut dc_cost = 0;
+            for &comp in &scan.components {
+                let blocks = match comp {
+                    0 => y_blocks,
+                    1 => cb_blocks,
+                    2 => cr_blocks,
+                    _ => continue,
+                };
+                dc_cost += estimate_dc_scan(&mut counter, blocks);
+            }
+            dc_cost
+        } else if scan.ah == 0 {
+            // AC first scan (single component)
+            let blocks = match scan.components[0] {
+                0 => y_blocks,
+                1 => cb_blocks,
+                2 => cr_blocks,
+                _ => continue,
+            };
+            estimate_ac_first_scan(&mut counter, blocks, scan.ss, scan.se, scan.al)
+        } else {
+            // AC refinement scan (single component)
+            let blocks = match scan.components[0] {
+                0 => y_blocks,
+                1 => cb_blocks,
+                2 => cr_blocks,
+                _ => continue,
+            };
+            estimate_ac_refinement_scan(blocks, scan.ss, scan.se, scan.ah, scan.al)
+        };
+
+        total += cost + SCAN_OVERHEAD_BITS;
+    }
+
+    // Note: The raw estimate overestimates scripts with >9 scans due to
+    // Huffman clustering effects not being modeled. Calibrated bias:
+    //   6-9 scans: ratio ~0.99 (accurate)
+    //   12 scans: ratio ~1.05 (5% over)
+    //   15 scans: ratio ~1.22 (22% over)
+    // A quadratic correction (ratio = 1.0 - 0.001*(s-9) + 0.00633*(s-9)^2)
+    // was tested but the per-image variance (±10% at 15 scans) is too wide
+    // for reliable cross-structure comparison. The estimate is accurate for
+    // ranking scripts with the SAME scan count, which is how the caller uses it.
+
+    total
+}
+
+/// Count an EOB run into the frequency counter.
+///
+/// Progressive JPEG encodes consecutive end-of-block markers as:
+/// - n=1: symbol 0x00, 0 extra bits
+/// - n=2-3: symbol 0x10, 1 extra bit
+/// - n=4-7: symbol 0x20, 2 extra bits
+/// - n=2^k .. 2^(k+1)-1: symbol (k<<4), k extra bits
+///
+/// Returns the number of extra bits for this run.
+fn count_eob_run(counter: &mut FrequencyCounter, n: u32) -> usize {
+    debug_assert!(n > 0);
+    // category = floor(log2(n))
+    let category = 31 - n.leading_zeros();
+    let symbol = (category as u8) << 4;
+    counter.count(symbol);
+    category as usize
 }
 
 /// Compute the DC category (number of bits) for a DC difference value.
@@ -277,6 +421,49 @@ mod tests {
         assert_eq!(ac_category(3), 2);
         assert_eq!(ac_category(255), 8);
         assert_eq!(ac_category(1023), 10);
+    }
+
+    #[test]
+    fn test_eob_run_encoding() {
+        let mut counter = FrequencyCounter::new();
+
+        // n=1: symbol 0x00, 0 extra bits
+        assert_eq!(count_eob_run(&mut counter, 1), 0);
+
+        // n=2: symbol 0x10, 1 extra bit
+        counter.reset();
+        assert_eq!(count_eob_run(&mut counter, 2), 1);
+
+        // n=4: symbol 0x20, 2 extra bits
+        counter.reset();
+        assert_eq!(count_eob_run(&mut counter, 4), 2);
+
+        // n=100: symbol 0x60 (category 6), 6 extra bits
+        counter.reset();
+        assert_eq!(count_eob_run(&mut counter, 100), 6);
+
+        // n=32767: symbol 0xe0 (category 14), 14 extra bits
+        counter.reset();
+        assert_eq!(count_eob_run(&mut counter, 32767), 14);
+    }
+
+    #[test]
+    fn test_eob_runs_cheaper_than_individual() {
+        // 1000 all-zero blocks: EOB run should be much cheaper than 1000 individual EOBs
+        let zero_blocks = vec![[0i16; 64]; 1000];
+
+        // Estimate with EOB runs (current implementation)
+        let mut counter = FrequencyCounter::new();
+        let cost_with_runs = estimate_ac_first_scan(&mut counter, &zero_blocks, 1, 63, 0);
+
+        // The cost should be very small: just one EOB run symbol + extra bits
+        // For 1000 blocks: category = floor(log2(1000)) = 9, so symbol 0x90, 9 extra bits
+        // Huffman table overhead ~200 bits + 1 symbol code + 9 extra bits
+        assert!(
+            cost_with_runs < 300,
+            "1000 zero-block EOB run should be very cheap, got {}",
+            cost_with_runs
+        );
     }
 
     #[test]

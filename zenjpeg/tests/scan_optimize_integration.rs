@@ -15,14 +15,43 @@ fn encode_image(config: &EncoderConfig, width: u32, height: u32, pixels: &[u8]) 
     enc.finish().expect("finish encoding")
 }
 
-/// Generate a test image with varied content (gradient + color bars).
+/// Generate a test image with photographic-like content.
+///
+/// Uses a combination of noise, edges, and color patches to produce DCT
+/// coefficients with realistic magnitude distributions across all frequency
+/// bands. Smooth gradients are deliberately avoided — they produce degenerate
+/// coefficients (0 or ±1) where successive approximation is useless.
 fn generate_test_image(width: u32, height: u32) -> Vec<u8> {
     let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+    // Simple LCG PRNG (deterministic, no deps)
+    let mut rng = 0x12345678u64;
+    let mut next_rng = || -> u8 {
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (rng >> 33) as u8
+    };
+
     for y in 0..height {
         for x in 0..width {
-            let r = ((x * 255) / width.max(1)) as u8;
-            let g = ((y * 255) / height.max(1)) as u8;
-            let b = (((x + y) * 127) / (width + height).max(1)) as u8;
+            // Divide into 32×32 patches with different base colors
+            let patch_x = (x / 32) % 8;
+            let patch_y = (y / 32) % 8;
+            let patch_id = patch_x + patch_y * 8;
+
+            // Base color varies per patch (creates edges between patches)
+            let base_r = ((patch_id * 37 + 50) % 256) as u8;
+            let base_g = ((patch_id * 73 + 100) % 256) as u8;
+            let base_b = ((patch_id * 113 + 150) % 256) as u8;
+
+            // Add noise for high-frequency content (creates non-trivial DCT coefficients)
+            let noise = next_rng() as i16 - 128; // -128..127
+            let noise_strength = 40i16; // Moderate noise
+
+            let r = (base_r as i16 + noise * noise_strength / 128).clamp(0, 255) as u8;
+            let g = (base_g as i16 + noise * noise_strength / 128).clamp(0, 255) as u8;
+            let b = (base_b as i16 + noise * noise_strength / 128).clamp(0, 255) as u8;
+
             pixels.push(r);
             pixels.push(g);
             pixels.push(b);
@@ -72,8 +101,8 @@ fn test_optimize_scans_produces_valid_jpeg() {
 
 #[test]
 fn test_optimize_scans_444() {
-    let width = 128u32;
-    let height = 128u32;
+    let width = 256u32;
+    let height = 256u32;
     let pixels = generate_test_image(width, height);
 
     let config_normal = EncoderConfig::ycbcr(85.0, ChromaSubsampling::None).progressive(true);

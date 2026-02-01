@@ -6,6 +6,19 @@
 
 use super::config::{ScanSearchConfig, ScanSearchResult};
 
+/// Estimated per-scan overhead in bits that the frequency estimator doesn't capture.
+///
+/// `FrequencyCounter::estimate_encoding_cost()` already includes DHT table data overhead
+/// (code lengths + symbol values), but not:
+/// - SOS marker: 2 + 2 + 1 + 2*ncomp + 3 = ~10 bytes = 80 bits (single component)
+/// - DHT marker envelope: 0xFFC4 + 2-byte length = 4 bytes = 32 bits
+/// - Byte alignment padding: ~4 bits average
+///
+/// We use 150 bits (~19 bytes) to account for these fixed per-scan costs.
+/// This is conservative but not so aggressive as to prevent genuinely beneficial
+/// SA levels from being selected.
+const SCAN_OVERHEAD: usize = 150;
+
 /// Scan selector that processes estimated scan sizes and picks the best configuration.
 ///
 /// Index arithmetic matches C mozjpeg's `jcmaster.c` exactly.
@@ -96,6 +109,9 @@ impl ScanSelector {
                     let refine_idx = 3 + 3 * i;
                     c += scan_sizes.get(refine_idx).copied().unwrap_or(0);
                 }
+                // Each SA level adds a refinement scan with overhead
+                // (SOS header ~14 bytes + DHT table ~200 bytes + padding)
+                c += al * SCAN_OVERHEAD;
                 c
             };
 
@@ -116,8 +132,10 @@ impl ScanSelector {
         let freq_start = full_1_63_idx + 1;
         for (i, _split) in self.config.frequency_splits.iter().enumerate() {
             let idx = freq_start + 2 * i;
+            // Add per-scan overhead for the extra scan created by splitting
             let cost = scan_sizes.get(idx).copied().unwrap_or(0)
-                + scan_sizes.get(idx + 1).copied().unwrap_or(0);
+                + scan_sizes.get(idx + 1).copied().unwrap_or(0)
+                + SCAN_OVERHEAD;
 
             if cost < best_freq_cost {
                 best_freq_cost = cost;
@@ -177,6 +195,8 @@ impl ScanSelector {
                     c += scan_sizes.get(refine_base).copied().unwrap_or(0);
                     c += scan_sizes.get(refine_base + 1).copied().unwrap_or(0);
                 }
+                // Each chroma SA level adds 2 refinement scans (Cb + Cr)
+                c += al * 2 * SCAN_OVERHEAD;
                 c
             };
 
@@ -197,10 +217,12 @@ impl ScanSelector {
         let freq_base = self.chroma_freq_split_scan_start;
         for (i, _split) in self.config.frequency_splits.iter().enumerate() {
             let idx = freq_base + 4 * i;
+            // Splitting adds 2 extra scans (from 2 full-range to 4 split-range)
             let cost = scan_sizes.get(idx).copied().unwrap_or(0)
                 + scan_sizes.get(idx + 1).copied().unwrap_or(0)
                 + scan_sizes.get(idx + 2).copied().unwrap_or(0)
-                + scan_sizes.get(idx + 3).copied().unwrap_or(0);
+                + scan_sizes.get(idx + 3).copied().unwrap_or(0)
+                + 2 * SCAN_OVERHEAD;
 
             if cost < best_freq_cost {
                 best_freq_cost = cost;
@@ -240,23 +262,26 @@ mod tests {
         let config = ScanSearchConfig::default();
         let selector = ScanSelector::new(3, config);
 
-        let mut scan_sizes = vec![1000usize; 64];
+        // Use realistic bit-scale sizes (frequency estimator outputs bits)
+        let mut scan_sizes = vec![100_000usize; 64];
 
         // Make Al=0 baseline expensive
-        scan_sizes[1] = 500;
-        scan_sizes[2] = 500;
+        scan_sizes[1] = 50_000;
+        scan_sizes[2] = 50_000;
 
         // Make Al=1 cheaper: band cost + refinement
-        scan_sizes[4] = 300;
-        scan_sizes[5] = 300;
-        scan_sizes[3] = 100; // Refinement
+        scan_sizes[4] = 30_000;
+        scan_sizes[5] = 30_000;
+        scan_sizes[3] = 10_000; // Refinement
 
-        // Al=2 even cheaper
-        scan_sizes[7] = 150;
-        scan_sizes[8] = 150;
-        scan_sizes[6] = 50;
+        // Al=2 even cheaper (must beat Al=0 even with 2*SCAN_OVERHEAD penalty)
+        // Al=2 cost = 15000 + 15000 + 5000 + 10000 + 2*2400 = 49800
+        // Al=0 cost = 50000 + 50000 = 100000
+        scan_sizes[7] = 15_000;
+        scan_sizes[8] = 15_000;
+        scan_sizes[6] = 5_000;
 
-        // Al=3 worse (defaults to 1000 each)
+        // Al=3 worse (defaults to 100_000 each)
 
         let result = selector.select_best(&scan_sizes);
         assert_eq!(result.best_al_luma, 2, "Should pick Al=2 (cheapest)");
@@ -298,14 +323,16 @@ mod tests {
         let config = ScanSearchConfig::default();
         let selector = ScanSelector::new(3, config);
 
-        let mut scan_sizes = vec![1000usize; 64];
+        // Use realistic bit-scale sizes
+        let mut scan_sizes = vec![100_000usize; 64];
 
         // Full 1-63 (scan 12) is expensive
-        scan_sizes[12] = 200;
+        scan_sizes[12] = 50_000;
 
         // Split at freq=5 (index 2, scans 17-18) is much cheaper
-        scan_sizes[17] = 20;
-        scan_sizes[18] = 20;
+        // Split cost = 5000 + 5000 + 2400 = 12400 < 50000
+        scan_sizes[17] = 5_000;
+        scan_sizes[18] = 5_000;
 
         let result = selector.select_best(&scan_sizes);
         assert!(
