@@ -52,6 +52,7 @@ pub(crate) struct LayoutParams {
     // === XYB B-channel geometry ===
     pub b_width: usize,
     pub padded_b_width: usize,
+    pub b_strip_height: usize,
     pub b_blocks_h: usize,
     pub b_blocks_v: usize,
 
@@ -104,6 +105,9 @@ impl LayoutParams {
         } else {
             padded_c_width // Not XYB, use same as chroma
         };
+
+        // B-channel strip height (always 2x2 downsampled, used by XYB)
+        let b_strip_height = (strip_height + 1) / 2;
 
         // Block counts (luma)
         let blocks_w = (width + 7) / 8;
@@ -182,12 +186,32 @@ impl LayoutParams {
             padded_c_blocks_w,
             b_width,
             padded_b_width,
+            b_strip_height,
             b_blocks_h,
             b_blocks_v,
             pending_y_capacity,
             pending_c_capacity,
             y_buffer_stride,
         }
+    }
+
+    /// Chroma strip height for a given actual strip height.
+    ///
+    /// For full-height strips, this equals `self.c_strip_height`.
+    /// For partial final strips, pass the actual remaining pixel rows.
+    pub fn c_strip_height_for(&self, actual_strip_height: usize) -> usize {
+        match self.subsampling {
+            Subsampling::S420 | Subsampling::S440 => (actual_strip_height + 1) / 2,
+            Subsampling::S422 | Subsampling::S444 => actual_strip_height,
+        }
+    }
+
+    /// B-channel strip height for a given actual strip height.
+    ///
+    /// B channel is always 2x2 downsampled in XYB mode.
+    /// For full-height strips, this equals `self.b_strip_height`.
+    pub fn b_strip_height_for(&self, actual_strip_height: usize) -> usize {
+        (actual_strip_height + 1) / 2
     }
 }
 
@@ -207,8 +231,8 @@ mod tests {
         assert_eq!(lp.c_width, 1920);
         assert_eq!(lp.c_strip_height, 8);
         assert_eq!(lp.padded_c_width, 1920);
-        // 4:4:4 chroma = same as luma
-        assert_eq!(lp.c_blocks_h, 240);
+        assert_eq!(lp.b_strip_height, 4); // (8+1)/2
+        assert_eq!(lp.c_blocks_h, 240); // 4:4:4 chroma = same as luma
         assert_eq!(lp.c_blocks_v, 135);
         assert_eq!(lp.total_c_blocks, 240 * 135);
         assert_eq!(lp.pending_y_capacity, 240); // padded_blocks_w * v_samp(1)
@@ -228,6 +252,7 @@ mod tests {
         assert_eq!(lp.c_width, 960);
         assert_eq!(lp.c_strip_height, 8);
         assert_eq!(lp.padded_c_width, 960);
+        assert_eq!(lp.b_strip_height, 8); // (16 + 1) / 2
         assert_eq!(lp.c_blocks_h, 120); // (1920 + 15) / 16
         assert_eq!(lp.c_blocks_v, 68); // (1080 + 15) / 16
         assert_eq!(lp.pending_y_capacity, 240 * 2); // padded_blocks_w * v_samp
@@ -269,6 +294,7 @@ mod tests {
         assert_eq!(lp.v_samp, 2);
         // B channel is always 2x2 downsampled in XYB
         assert_eq!(lp.b_width, 960);
+        assert_eq!(lp.b_strip_height, 8); // (16 + 1) / 2
         assert_eq!(lp.b_blocks_h, 120);
         assert_eq!(lp.b_blocks_v, 68);
         // Pending Y capacity reflects v_samp=2
@@ -309,6 +335,26 @@ mod tests {
         assert_eq!(lp.blocks_h, 1);
         assert_eq!(lp.c_blocks_h, 1);
         assert_eq!(lp.c_blocks_v, 1);
+    }
+
+    #[test]
+    fn test_strip_height_helpers() {
+        let lp_420 = LayoutParams::new(1920, 1080, Subsampling::S420, false);
+        // Full strip: helper matches precomputed field
+        assert_eq!(lp_420.c_strip_height_for(16), lp_420.c_strip_height);
+        assert_eq!(lp_420.b_strip_height_for(16), lp_420.b_strip_height);
+        // Partial final strip (e.g., 9 remaining rows)
+        assert_eq!(lp_420.c_strip_height_for(9), 5); // (9+1)/2
+        assert_eq!(lp_420.b_strip_height_for(9), 5);
+
+        let lp_422 = LayoutParams::new(1920, 1080, Subsampling::S422, false);
+        assert_eq!(lp_422.c_strip_height_for(8), lp_422.c_strip_height);
+        // 422: no vertical downsampling, chroma height == luma height
+        assert_eq!(lp_422.c_strip_height_for(5), 5);
+
+        let lp_444 = LayoutParams::new(1920, 1080, Subsampling::S444, false);
+        assert_eq!(lp_444.c_strip_height_for(8), lp_444.c_strip_height);
+        assert_eq!(lp_444.c_strip_height_for(3), 3);
     }
 
     #[test]
