@@ -25,7 +25,11 @@ impl Default for ScanSearchConfig {
             al_max_luma: 3,
             al_max_chroma: 2,
             frequency_splits: [2, 8, 5, 12, 18],
-            dc_scan_opt_mode: 0,
+            // Use separate DC scans (mode 1) because zenjpeg's progressive
+            // tokenizer stores blocks per-component in raster order, not
+            // MCU-interleaved. Interleaved DC (mode 0) would require MCU-aware
+            // iteration to handle subsampled images correctly.
+            dc_scan_opt_mode: 1,
         }
     }
 }
@@ -51,6 +55,9 @@ impl ScanSearchResult {
     /// Build the final optimized scan script from the search results.
     ///
     /// Produces a `Vec<ProgressiveScan>` compatible with zenjpeg's progressive encoder.
+    ///
+    /// DC scans always use full precision (no DC successive approximation).
+    /// DC SA is theoretically valid but adds complexity for negligible savings.
     pub fn build_final_scans(
         &self,
         num_components: u8,
@@ -58,10 +65,7 @@ impl ScanSearchResult {
     ) -> Vec<ProgressiveScan> {
         let mut scans = Vec::new();
 
-        // DC successive approximation: use point transform when either luma or chroma Al > 0
-        let use_dc_sa = self.best_al_luma > 0 || self.best_al_chroma > 0;
-
-        // DC scan
+        // DC scan — always full precision
         if config.dc_scan_opt_mode == 0 {
             // Interleaved DC for all components
             let components: Vec<u8> = (0..num_components).collect();
@@ -70,7 +74,7 @@ impl ScanSearchResult {
                 ss: 0,
                 se: 0,
                 ah: 0,
-                al: if use_dc_sa { 1 } else { 0 },
+                al: 0,
             });
         } else {
             // Separate DC for luma
@@ -79,14 +83,13 @@ impl ScanSearchResult {
                 ss: 0,
                 se: 0,
                 ah: 0,
-                al: if use_dc_sa { 1 } else { 0 },
+                al: 0,
             });
         }
 
         // Luma AC scans
         let al = self.best_al_luma;
         if self.best_freq_split_luma == 0 {
-            // Full 1-63 range (no frequency split)
             scans.push(ProgressiveScan {
                 components: vec![0],
                 ss: 1,
@@ -132,7 +135,7 @@ impl ScanSearchResult {
                         ss: 0,
                         se: 0,
                         ah: 0,
-                        al: if use_dc_sa { 1 } else { 0 },
+                        al: 0,
                     });
                 } else {
                     for c in 1..=2u8 {
@@ -141,7 +144,7 @@ impl ScanSearchResult {
                             ss: 0,
                             se: 0,
                             ah: 0,
-                            al: if use_dc_sa { 1 } else { 0 },
+                            al: 0,
                         });
                     }
                 }
@@ -188,28 +191,6 @@ impl ScanSearchResult {
                         al: refine_al,
                     });
                 }
-            }
-        }
-
-        // DC refinement scan (if using successive approximation)
-        if use_dc_sa {
-            if config.dc_scan_opt_mode == 0 {
-                let components: Vec<u8> = (0..num_components).collect();
-                scans.push(ProgressiveScan {
-                    components,
-                    ss: 0,
-                    se: 0,
-                    ah: 1,
-                    al: 0,
-                });
-            } else {
-                scans.push(ProgressiveScan {
-                    components: vec![0],
-                    ss: 0,
-                    se: 0,
-                    ah: 1,
-                    al: 0,
-                });
             }
         }
 

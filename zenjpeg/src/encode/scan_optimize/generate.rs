@@ -228,9 +228,9 @@ mod tests {
         let config = ScanSearchConfig::default();
         let scans = generate_search_scans(3, &config);
 
-        // Scan 0: DC all components
+        // Scan 0: DC luma only (dc_scan_opt_mode=1 uses separate DC scans)
         assert!(scans[0].is_dc());
-        assert_eq!(scans[0].comps_in_scan, 3);
+        assert_eq!(scans[0].comps_in_scan, 1);
 
         // Scans 1-2: Y base AC at Al=0
         assert_eq!((scans[1].ss, scans[1].se), (1, 8));
@@ -289,7 +289,8 @@ mod tests {
         // Luma scans are 0..23 (excluding scan 0 DC which is multi-component)
         for (i, scan) in scans[1..23].iter().enumerate() {
             assert_eq!(
-                scan.component, 0,
+                scan.component,
+                0,
                 "Luma scan {} (index {}) should be component 0",
                 i + 1,
                 i + 1

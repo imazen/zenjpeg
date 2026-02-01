@@ -379,12 +379,20 @@ impl ComputedConfig {
             self.write_frame_header(output)?; // Uses SOF2 for progressive
         }
 
-        // Write initial Huffman tables
+        // Write initial Huffman tables.
+        // When optimize_scans is enabled, emit ALL tables upfront because the
+        // optimized scan ordering may reference tables in a different order than
+        // the default script's on-demand emission expects.
+        let max_initial_ac = if self.optimize_scans {
+            tables.len() // Emit all tables
+        } else {
+            4 // Default: emit up to 4 AC tables initially
+        };
         let mut next_dht_index = self.write_huffman_tables_progressive_initial(
             output,
             &tables,
             num_dc_tables,
-            4, // max_initial_ac
+            max_initial_ac,
         )?;
 
         if self.restart_interval > 0 {
