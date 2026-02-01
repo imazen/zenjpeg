@@ -390,25 +390,23 @@ check) takes only 1.6M. Removed the tiering - always use AVX2 8x8 for non-DC blo
 
 Run with: `cargo bench -p zenjpeg --bench cpp_comparison`
 
-**WARNING**: The `comprehensive_cpp_comparison` test uses subprocess timing (unfair).
-Use the FFI benchmark above for accurate library-to-library comparison.
+### Summary (2026-02-01)
 
-### Summary
+Rust is **~8% slower** than C++ jpegli (1.08x, FFI comparison via `comprehensive_cpp_comparison`).
 
-Rust is consistently **1.4x slower** than C++ jpegli (FFI benchmark, 512x512).
-Improved from 1.6x after SIMD sorting network optimization.
+**Comprehensive test results (10 images × 50 quality levels, progressive 4:2:0):**
 
-**Fair comparison (both at `-C target-cpu=native`):**
+| Metric | Min | Max | Mean | StdDev |
+|--------|-----|-----|------|--------|
+| Size Δ% | +0.2% | +1.6% | **+0.63%** | 0.35 |
+| Time Δ% | -7.7% | +29.3% | **+7.71%** | 8.19 |
+| DSSIM Δ% | -0.9% | +1.5% | +0.41% | 0.77 |
+| Butteraugli Δ% | -2.1% | +2.2% | +0.19% | 0.88 |
 
-| Quality | Rust | C++ FFI | Ratio |
-|---------|------|---------|-------|
-| q50 | 2.22ms | 1.49ms | 1.49x |
-| q75 | 2.24ms | 1.53ms | 1.46x |
-| q90 | 2.45ms | 1.75ms | 1.40x |
-| q95 | 2.74ms | 2.01ms | 1.36x |
+Quality parity: 50/50 quality levels within 5% for both DSSIM and Butteraugli.
 
-Note: Gap was 1.6x before SIMD sorting network. Highway uses runtime SIMD dispatch
-regardless of compile flags, while `wide` crate uses compile-time `cfg(target_feature)`.
+Note: Previous measurements showed 1.4-1.6x slower; improvements came from SIMD sorting
+network optimization and allocation reduction.
 
 ### Allocation Optimization (2026-01-21)
 
