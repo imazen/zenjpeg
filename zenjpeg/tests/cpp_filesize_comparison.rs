@@ -1,7 +1,14 @@
 //! Test that compares Rust output file sizes with C++ cjpegli.
 //!
 //! This test ensures the Rust port produces comparable file sizes to C++.
-//! Differences > 5% are investigated as potential bugs.
+//!
+//! Known structural differences (not bugs):
+//! - Rust generates 4 Huffman tables (DC/AC × luma/chroma), C++ generates 2-3
+//! - Rust uses SOF1 with 16-bit quant tables when needed; C++ clips to 8-bit
+//! - These add ~30-150 bytes of fixed overhead
+//!
+//! For synthetic gradients (low entropy), this overhead can be 5-15% for 256x256.
+//! For real photos, differences are typically <1%.
 
 use std::fs;
 use std::process::Command;
@@ -59,15 +66,23 @@ fn encode_cpp(ppm_path: &str, quality: u32) -> Option<Vec<u8>> {
     fs::read(&output_path).ok()
 }
 
-/// Encode with Rust jpegli
+/// Encode with Rust jpegli (matching C++ settings: 4:4:4, AQ, sequential, optimized Huffman)
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
-    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    // Must match C++ --chroma_subsampling=444
+    // Disable deringing to match C++ default (deringing is not enabled by -q)
+    // Disable 16-bit quant tables (C++ cjpegli uses 8-bit by default)
+    let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::None)
+        .deringing(false)
+        .allow_16bit_quant_tables(false);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("create encoder");
     enc.push_packed(rgb, enough::Unstoppable)
         .expect("push data");
-    enc.finish().expect("finish")
+    let jpeg = enc.finish().expect("finish");
+    // Debug: save to file for inspection
+    let _ = fs::write(format!("/tmp/rust_{}x{}_q{}.jpg", width, height, quality as u32), &jpeg);
+    jpeg
 }
 
 #[test]
@@ -111,11 +126,13 @@ fn test_filesize_comparison_synthetic() {
                 rust_size as i64 - cpp_size as i64
             );
 
-            // For tiny images (<1KB), fixed overhead dominates - check absolute bytes instead
-            // Synthetic gradients may show higher differences than real photos due to AQ behavior
-            // Real photos (test_filesize_comparison_photo) show <0.1% difference
-            let threshold_pct = if cpp_size < 1024 { 20.0 } else { 10.0 };
-            let threshold_bytes = 100; // Allow up to 100 bytes difference for tiny images
+            // For tiny images (<1KB), fixed overhead dominates.
+            // Extra Huffman tables add ~30-50 bytes of header overhead vs C++.
+            // For 8x8 images (1 MCU), this can be 10-15% difference in total size.
+            // Synthetic gradients have low entropy, amplifying fixed overhead impact.
+            // Real photos (test_filesize_comparison_photo) show <1% difference.
+            let threshold_pct = if cpp_size < 1024 { 15.0 } else { 6.0 };
+            let threshold_bytes = 50; // Extra Huffman tables overhead
 
             let pass = if cpp_size < 1024 {
                 diff_bytes <= threshold_bytes || diff_pct.abs() < threshold_pct

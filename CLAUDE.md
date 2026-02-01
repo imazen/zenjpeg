@@ -1100,6 +1100,52 @@ For proxy server efficiency: accurate memory and compute cost estimation before 
 - Total allocated bytes
 - Max single allocation size
 
+### CLI Parameter Support
+
+- [x] Quality via `-q` / `--quality` (0-100, maps to quality internally)
+- [x] Distance via `-d` / `--distance` (Butteraugli distance, lower = better)
+
+**C++ cjpegli behavior differences based on quality vs distance:**
+
+| Setting | C++ `-q` (quality) | C++ `-d` (distance) |
+|---------|-------------------|---------------------|
+| Quant tables | 2 tables (Y, shared Cb/Cr) | 3 tables (Y, Cb, Cr) |
+| Quant values | Always clamped to 255 | Always clamped to 255 |
+| Table selection | `jpeg_set_quality()` | `jpegli_set_distance()` |
+
+**zenjpeg behavior:**
+- Default: 3 separate quant tables (matches C++ distance mode)
+- Use `separate_chroma_tables(false)` for 2-table mode matching C++ quality mode
+- Quant values: Can exceed 255 when `allow_16bit_quant_tables = true` (default)
+
+### 16-bit Quantization Tables (IMPORTANT)
+
+**Design difference from C++ cjpegli:**
+
+C++ cjpegli ALWAYS clamps quantization values to 255, using 8-bit DQT (SOF0 baseline).
+
+zenjpeg by default allows values > 255, using 16-bit DQT (SOF1 extended sequential)
+when any quant value exceeds 255. This happens at moderate quality levels (Q70-Q80)
+for chroma tables due to jpegli's quant table formulas.
+
+**Current behavior:**
+- `allow_16bit_quant_tables = true` (default): Values up to 32767, auto-uses SOF1 when needed
+- `allow_16bit_quant_tables = false`: Clamp to 255, always SOF0 (matches C++ behavior)
+- Precision is determined per-table: 8-bit if max ≤ 255, 16-bit if max > 255
+- We DO automatically use 8-bit when no coefficient needs 16-bit
+
+**Example at Q70:**
+```
+Table 0 (Y):    Max 30   → 8-bit DQT
+Table 1 (Cb):   Max 546  → 16-bit DQT (Rust default) or clamped to 255 (C++ behavior)
+Table 2 (Cr):   Max 560  → 16-bit DQT (Rust default) or clamped to 255 (C++ behavior)
+```
+
+To match C++ file sizes exactly, use `.allow_16bit_quant_tables(false)`.
+
+**TODO:** Consider adding automatic downgrade to 8-bit if no table ACTUALLY needs
+values > 255 (currently the quant formulas themselves produce >255 values).
+
 ## Running Tests
 
 ### Default Tests (no external dependencies)
