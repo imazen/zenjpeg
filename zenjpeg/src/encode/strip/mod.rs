@@ -271,6 +271,67 @@ impl PendingBuffers {
     }
 }
 
+/// Quantizes a chroma component's pending DCT blocks to i16.
+///
+/// Shared logic for both Cb and Cr (and XYB B-channel) quantization.
+/// Maps chroma block positions to the corresponding Y-block AQ strength.
+#[allow(clippy::too_many_arguments)]
+fn quantize_chroma_blocks(
+    pending: &[Block8x8f],
+    output: &mut Vec<[i16; DCT_BLOCK_SIZE]>,
+    all_aq_strengths: &[f32],
+    quant_simd: &QuantTableSimd,
+    zero_bias_simd: &ZeroBiasSimd,
+    #[cfg(feature = "experimental-hybrid-trellis")] quant_values: &[u16; DCT_BLOCK_SIZE],
+    #[cfg(feature = "experimental-hybrid-trellis")] hybrid_ctx: Option<&HybridQuantContext>,
+    _use_trellis: bool,
+    chroma_blocks_h: usize,
+    chroma_blocks_v: usize,
+    y_blocks_h: usize,
+    y_blocks_v: usize,
+) {
+    let blocks_h = chroma_blocks_h.max(1);
+    let global_chroma_by = output.len() / blocks_h;
+
+    for (i, dct) in pending.iter().enumerate() {
+        let bx = i % blocks_h;
+        let local_by = i / blocks_h;
+        let y_bx = (bx * y_blocks_h) / blocks_h;
+        let chroma_by = global_chroma_by + local_by;
+        let y_by = (chroma_by * y_blocks_v) / chroma_blocks_v.max(1);
+        let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+        let aq_strength = if global_aq_idx < all_aq_strengths.len() {
+            all_aq_strengths[global_aq_idx]
+        } else {
+            0.08 // C++ mean fallback
+        };
+
+        let zigzag = if _use_trellis {
+            #[cfg(feature = "experimental-hybrid-trellis")]
+            {
+                let dct_arr = dct.to_array();
+                let natural = hybrid_ctx.unwrap().quantize_block(
+                    &dct_arr,
+                    quant_values,
+                    aq_strength,
+                    1.0,
+                    false, // is_chroma
+                );
+                let mut result = [0i16; DCT_BLOCK_SIZE];
+                for j in 0..DCT_BLOCK_SIZE {
+                    result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
+                }
+                result
+            }
+            #[cfg(not(feature = "experimental-hybrid-trellis"))]
+            unreachable!()
+        } else {
+            quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength)
+        };
+        output.push(zigzag);
+    }
+}
+
 /// Strip-based encoder for low-memory JPEG encoding.
 ///
 /// Processes the image in horizontal strips to avoid materializing
@@ -1165,64 +1226,32 @@ impl StripProcessor {
             self.all_aq_strengths.push(aq_strength);
         }
 
-        // Quantize Cb/Cr blocks (always present when quant is set)
+        // Quantize Cb/Cr blocks
         {
             let y_blocks_h = self.layout.y_blocks_h;
             let y_blocks_v = self.layout.y_blocks_v;
             let c_blocks_h = self.layout.c_blocks_h;
             let c_blocks_v = self.layout.c_blocks_v;
 
-            // Compute global chroma by from how many chroma blocks we've already processed
-            // For 4:2:0, each iMCU has 1 chroma block row
-            let global_chroma_by = self.cb_blocks.len() / c_blocks_h.max(1);
+            // Cb: always uses c_blocks dimensions
+            quantize_chroma_blocks(
+                &self.pending.cb[buffer_idx],
+                &mut self.cb_blocks,
+                &self.all_aq_strengths,
+                &quant.cb_quant_simd,
+                &quant.cb_zero_bias_simd,
+                #[cfg(feature = "experimental-hybrid-trellis")]
+                &quant.cb_quant.values,
+                #[cfg(feature = "experimental-hybrid-trellis")]
+                self.hybrid_ctx.as_ref(),
+                use_trellis,
+                c_blocks_h,
+                c_blocks_v,
+                y_blocks_h,
+                y_blocks_v,
+            );
 
-            // Quantize Cb blocks (vectors pre-allocated at construction)
-            for (i, dct) in self.pending.cb[buffer_idx].iter().enumerate() {
-                let bx = i % c_blocks_h.max(1);
-                let local_by = i / c_blocks_h.max(1);
-                // Compute global Y position for this chroma block
-                let y_bx = (bx * y_blocks_h) / c_blocks_h.max(1);
-                let chroma_by = global_chroma_by + local_by;
-                let y_by = (chroma_by * y_blocks_v) / c_blocks_v.max(1);
-                // Use global AQ index
-                let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
-                let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {
-                    self.all_aq_strengths[global_aq_idx]
-                } else {
-                    0.08 // C++ mean fallback
-                };
-
-                let zigzag = if use_trellis {
-                    #[cfg(feature = "experimental-hybrid-trellis")]
-                    {
-                        let dct_arr = dct.to_array();
-                        let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
-                            &dct_arr,
-                            &quant.cb_quant.values,
-                            aq_strength,
-                            1.0,
-                            false, // is_chroma
-                        );
-                        let mut result = [0i16; DCT_BLOCK_SIZE];
-                        for j in 0..DCT_BLOCK_SIZE {
-                            result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
-                        }
-                        result
-                    }
-                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    unreachable!()
-                } else {
-                    quant.cb_quant_simd.quantize_with_zero_bias_zigzag(
-                        dct,
-                        &quant.cb_zero_bias_simd,
-                        aq_strength,
-                    )
-                };
-                self.cb_blocks.push(zigzag);
-            }
-
-            // Quantize Cr blocks
-            // For XYB mode, use b_blocks_h/b_blocks_v (B channel is 2x2 downsampled)
+            // Cr: for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
             let cr_blocks_h = if self.layout.use_xyb {
                 self.layout.b_blocks_h
             } else {
@@ -1233,50 +1262,22 @@ impl StripProcessor {
             } else {
                 c_blocks_v
             };
-            let global_chroma_by_cr = self.cr_blocks.len() / cr_blocks_h.max(1);
-            for (i, dct) in self.pending.cr[buffer_idx].iter().enumerate() {
-                let bx = i % cr_blocks_h.max(1);
-                let local_by = i / cr_blocks_h.max(1);
-                // Compute global Y position for this chroma block
-                let y_bx = (bx * y_blocks_h) / cr_blocks_h.max(1);
-                let chroma_by = global_chroma_by_cr + local_by;
-                let y_by = (chroma_by * y_blocks_v) / cr_blocks_v.max(1);
-                // Use global AQ index
-                let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
-                let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {
-                    self.all_aq_strengths[global_aq_idx]
-                } else {
-                    0.08 // C++ mean fallback
-                };
-
-                let zigzag = if use_trellis {
-                    #[cfg(feature = "experimental-hybrid-trellis")]
-                    {
-                        let dct_arr = dct.to_array();
-                        let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
-                            &dct_arr,
-                            &quant.cr_quant.values,
-                            aq_strength,
-                            1.0,
-                            false, // is_chroma
-                        );
-                        let mut result = [0i16; DCT_BLOCK_SIZE];
-                        for j in 0..DCT_BLOCK_SIZE {
-                            result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
-                        }
-                        result
-                    }
-                    #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                    unreachable!()
-                } else {
-                    quant.cr_quant_simd.quantize_with_zero_bias_zigzag(
-                        dct,
-                        &quant.cr_zero_bias_simd,
-                        aq_strength,
-                    )
-                };
-                self.cr_blocks.push(zigzag);
-            }
+            quantize_chroma_blocks(
+                &self.pending.cr[buffer_idx],
+                &mut self.cr_blocks,
+                &self.all_aq_strengths,
+                &quant.cr_quant_simd,
+                &quant.cr_zero_bias_simd,
+                #[cfg(feature = "experimental-hybrid-trellis")]
+                &quant.cr_quant.values,
+                #[cfg(feature = "experimental-hybrid-trellis")]
+                self.hybrid_ctx.as_ref(),
+                use_trellis,
+                cr_blocks_h,
+                cr_blocks_v,
+                y_blocks_h,
+                y_blocks_v,
+            );
         }
     }
 
