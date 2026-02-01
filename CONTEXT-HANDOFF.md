@@ -1,142 +1,155 @@
-# Context Handoff: Replace unsafe_simd with magetypes
+# Context Handoff: Catastrophic Encoder Regression + Trellis Analysis
 
-## Branch
-`feat/trained-tables-streaming-v2` @ `8a0313a` (pushed to remote)
+## TL;DR
 
-## Goal
-Replace all `#[cfg(feature = "unsafe_simd")]` code with safe `magetypes` equivalents, then remove the `unsafe_simd` feature entirely. Do NOT replace `wide` crate usage broadly — only the code currently behind `unsafe_simd`.
+**The zenjpeg encoder is completely broken.** Output JPEGs decode to wrong pixels (solid yellow at Q75, random colored streaks at Q95). This is a regression caused by the SIMD refactor chain (commits `332bde1` through `9fcfe81`). The trellis quantization feature cannot be meaningfully evaluated until this is fixed.
 
-## Why magetypes, not wide
-`wide` uses compile-time `cfg(target_feature)` — it doesn't see the `#[target_feature]` attribute that `#[multiversed]` sets per function. So `wide::f32x8` inside a multiversed AVX2 function still uses SSE-level operations. This is documented in `zenjpeg/src/quant/aq/autovec.rs:9-12`.
+## What We Found
 
-`magetypes` wraps `__m256` directly and uses real AVX2 intrinsics. The `unsafe` is encapsulated inside the type — callers use safe arithmetic (`rows[0] + rows[1]`). Construction is token-gated via `archmage::Avx2FmaToken`.
+### 1. Encoder Output Is Completely Wrong
 
-## magetypes primitives available (v0.1.0)
-- `magetypes::simd::f32x8` — wraps `__m256`, full arithmetic ops, `load`, `splat`, `from_array`, `store`, `to_array`
-- `f32x8::transpose_8x8(&mut [Self; 8])` — in-place 8x8 transpose (Highway algorithm)
-- `f32x8::transpose_8x8_copy([Self; 8]) -> [Self; 8]` — copy transpose
-- `f32x8::load_8x8(&[f32; 64]) -> [Self; 8]` — load full block
-- `f32x8::store_8x8(&[Self; 8], &mut [f32; 64])` — store full block
-- `magetypes::simd::i16x16` — wraps `__m256i`, for decoder IDCT
-- `magetypes::simd::i32x8` — wraps `__m256i`
-- Feature: `magetypes-simd = ["dep:archmage", "dep:magetypes"]` already defined in Cargo.toml
-- Workspace dep: `magetypes = { version = "0.1.0", features = ["bytemuck"] }`
-- Source at: `~/work/downloaded-crates/magetypes-0.1.0/`
+Pixel-level proof (Kodak 1.png, Q75, decoded by ImageMagick/zune-jpeg/djpegli — all agree):
 
-## Existing archmage note
-Cargo.toml has `# Note: archmage-simd disabled from default - causes Huffman encoding bugs`. This may be stale — the archmage-simd feature uses a separate DCT in `encode/mage_simd.rs` which may produce slightly different coefficients. The new magetypes approach should produce identical results to the current unsafe_simd code since it uses the same intrinsics.
+| Encoder | First pixel (orig=99,99,99) | Avg error | File size |
+|---------|---------------------------|-----------|-----------|
+| C++ jpegli | (103, 98, 102) | **4.3** | 86 KB |
+| mozjpeg-rs | (101, 102, 107) | **5.1** | 74 KB |
+| **zenjpeg** | **(0, 1, 2)** | **67.8** | 271 KB |
 
-## Files to modify (6 files, ~35 cfg sites)
+- zen_q75.jpg: **solid yellow** when displayed (confirmed by user)
+- zen_q95.jpg: **random blocks of colored streaks** + ImageMagick reports "bad Huffman code" and "29504 extraneous bytes before marker"
+- DSSIM is constant at ~0.2155 across ALL quality levels Q2-Q100 (quality parameter has no effect on perceptual quality)
+- File sizes DO scale with quality (70KB-467KB) but pixel data is always wrong
 
-### 1. `zenjpeg/src/encode/dct.rs` (13 cfg sites)
-**Functions to replace:**
-- `transpose_8x8_avx(input, output)` (line 456) — raw `__m256` load/unpack/permute/store
-- `transpose_8x8_avx_inplace(r: &mut [__m256; 8])` (line 787) — in-place transpose
-- `dct1d_2_fma`, `dct1d_4_fma`, `dct1d_8_fma` (lines 824-926) — raw FMA butterflies
-- `forward_dct_8x8_fma(input, output)` (line 948) — full 2D DCT orchestrator
+### 2. The Comprehensive Parity Test Passes Despite 0/50 Levels Meeting Targets
 
-**Dispatch sites:**
-- `forward_dct_8x8` (line 1041) — `#[multiversed]`, branches on `cfg(target_feature = "avx2", target_feature = "fma")` to call `forward_dct_8x8_fma`
-- `transpose_8x8_simd` (line 517) — `#[multiversed]`, calls `transpose_8x8_avx` when detected
-- `dct_8rows_parallel` (line 364) — `#[multiversed]`, calls `transpose_8x8_avx`
+`cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --ignored` shows:
+- Size: **+220%** (target: ~0%)
+- DSSIM: **+8,717%** (target: ~0%)
+- Butteraugli: **+1,478%** (target: ~0%)
+- Quality levels within 5%: **0/50** (target: 50/50)
 
-**Strategy:** Replace raw intrinsics with `magetypes::simd::f32x8` ops. The DCT butterflies are just add/sub/mul/fma which magetypes supports. Transpose uses `f32x8::transpose_8x8`. Gate behind `#[cfg(feature = "magetypes-simd")]` instead of `unsafe_simd`.
+The test has NO assertions enforcing quality — it just prints results and returns ok.
 
-### 2. `zenjpeg/src/encode_simd.rs` (13 cfg sites)
-**Functions to replace:**
-- `gather_even_odd_x8_avx2` (line 239) — gather even/odd pixels for chroma subsampling
-- `rgb_to_ycbcr_8px_avx2` (line 368) — RGB→YCbCr for 8 pixels
-- `rgb_to_ycbcr_8px_fma` (line 379) — same with FMA
-- `rgb_to_ycbcr_8px_gather_avx2` (line 390) — gather variant
-- `rgb_to_ycbcr_8px_gather_fma` (line 402) — gather+FMA
-- `rgb_to_ycbcr_8px_gather_fma_fused` (line 424) — fully fused
+### 3. Suspect Commits (SIMD Refactor Chain)
 
-**Dispatch sites:**
-- `downsample_2x2_simd_inplace` (line 340) — calls `gather_even_odd_x8_avx2`
-- `rgb_to_ycbcr_planes_simd_inplace` (line 564) — calls `rgb_to_ycbcr_8px_fma`
+These commits rewrote the SIMD layer and are the most likely cause:
 
-### 3. `zenjpeg/src/decode/upsample.rs` (2 cfg sites)
-**Functions to replace:**
-- `upsample_h2v2_i16_fancy_avx2` (line 345) — fancy 2x2 upsampling with i16 math
-- Dispatch in `upsample_h2v2_i16_fancy` (line 298)
+```
+332bde1 refactor: replace unsafe_simd with magetypes in simd_types.rs and dct.rs
+de546f8 refactor: migrate unsafe_simd to safe archmage #[arcane] tokens
+0b1673c refactor: replace unsafe load/store with safe_unaligned_simd wrappers
+79f3bcf refactor: update archmage 0.2.1→0.3.0, magetypes 0.1.0→0.3.0
+f176071 refactor: eliminate all remaining unsafe blocks in zenjpeg/src
+9dcb74b fix: update archmage-simd code for archmage 0.3.0 API changes
+9fcfe81 refactor: consolidate SIMD features into single archmage-simd flag
+```
 
-**Note:** Uses `__m256i` for i16x16 operations. magetypes has `i16x16`.
+The commit BEFORE this chain: `6d50d62` (the previous context handoff for this migration).
+The last known-good state: `8a0313a` (rename baseline→sequential).
 
-### 4. `zenjpeg/src/decode/idct_int.rs` (3 cfg sites)
-**Functions to replace:**
-- `idct_int_4x4_avx2_dc_only` (line 337) — DC-only 4x4 IDCT
-- `idct_int_4x4_avx2` (line 346) — full 4x4 IDCT
-- `idct_int_8x8_avx2` (line 414) — full 8x8 IDCT
+### 4. Root Cause Hypothesis
 
-**Dispatch sites in `idct_int_8x8`** (line 888) and `idct_int_4x4` (lines 705, 763)
+**Solid yellow** = systematic color conversion or DCT error. All pixels shifted to one color suggests:
+- DCT coefficients being produced in wrong order (natural vs zigzag mismatch)
+- Quantization multiplier/divisor inverted after SIMD migration
+- Color space matrix (RGB→YCbCr) producing wrong coefficients
+- A sign flip or scaling factor changed in the magetypes/archmage migration
 
-**Note:** Heavy i32x8 and i16x16 usage. Check magetypes has `_mm256_packs_epi32`, `_mm256_madd_epi16` equivalents.
+**Random streaks at Q95** = Huffman/entropy stream corruption. At Q95, more non-zero coefficients survive quantization, amplifying any coefficient ordering or encoding bug.
 
-### 5. `zenjpeg/src/color/ycbcr.rs` (2 cfg sites)
-**Functions to replace:**
-- `rgb_to_ycbcr_f32_8px_avx2` (line 937) — f32 RGB→YCbCr
-- `ycbcr_to_rgb_i16_8px_avx2` (line 1208) — i16 YCbCr→RGB
+**Quality parameter has no effect on DSSIM** = the bug dominates the signal. Quant tables change correctly (file sizes scale), but base pixel data is wrong enough that perceptual quality doesn't improve.
 
-### 6. `zenjpeg/src/foundation/simd_types.rs` (4 cfg sites)
-**Code to replace:**
-- `get_unchecked_mut` in `quantize_to_zigzag` (line 444) — just remove, use safe indexing
-- `get_unchecked_mut` in `quantize_block` (line 498) — just remove, use safe indexing
+## How To Fix
 
-## Baseline benchmarks (with unsafe_simd, 2026-01-30)
+### Step 1: Bisect the Regression
+
+```bash
+# Test at the pre-SIMD-refactor commit
+git checkout 8a0313a
+cargo run --release -p zenjpeg --example encode_simple -- \
+    ~/work/codec-eval/codec-corpus/kodak/1.png /mnt/v/output/zenjpeg/trellis-validation/pre_simd.jpg 75
+display /mnt/v/output/zenjpeg/trellis-validation/pre_simd.jpg
+# If correct → bug is in 332bde1..9fcfe81
+# Then bisect within that range
+git checkout main
+```
+
+### Step 2: Look at DCT/Quantization SIMD Code
+
+Key files changed in the refactor:
+- `zenjpeg/src/encode/dct.rs` — forward DCT (SIMD migration to magetypes)
+- `zenjpeg/src/encode/encode_simd.rs` — block extraction and quantization
+- `zenjpeg/src/foundation/simd_types.rs` — SIMD type wrappers
+- `zenjpeg/src/color/ycbcr.rs` — RGB↔YCbCr conversion
+
+Check:
+- Are DCT coefficients being written in the right order (natural vs zigzag)?
+- Is the quantization multiplier/divisor inverted?
+- Did the archmage 0.2.1→0.3.0 migration change any API semantics?
+- Did `magetypes` transpose produce different layout than the old `unsafe_simd` transpose?
+
+### Step 3: Add Regression Guard
+
+The comprehensive parity test needs ASSERTIONS:
+```rust
+assert!(avg_size_diff < 5.0, "Size parity regression: {:.2}%", avg_size_diff);
+assert!(avg_dssim_diff < 0.05, "DSSIM parity regression: {:.2}%", avg_dssim_diff * 100.0);
+```
+
+### Step 4: Try Disabling archmage-simd
+
+Quick sanity check — does building WITHOUT the archmage-simd feature produce correct output?
+```bash
+cargo run --release -p zenjpeg --no-default-features --features "std,yuv" \
+    --example encode_simple -- ~/work/codec-eval/codec-corpus/kodak/1.png /tmp/no_simd.jpg 75
+display /tmp/no_simd.jpg
+```
+If this produces correct output, the bug is specifically in the archmage-simd code path.
+
+## Trellis Analysis (For After Fix)
+
+### What Works
+- mozjpeg-rs 0.5.1 trellis code is structurally correct (own validation tests pass)
+- Integration mechanics: DCT ×64 scaling bridges jpegli's 1/64-scale to mozjpeg's 8× divisor
+- Trellis consistently produces smaller files (6-14% at Q50, 1-3% at Q95)
+- Feature gating via `experimental-hybrid-trellis` works correctly
+- All 6 integration tests pass
+
+### What's Missing (For Proper mozjpeg Parity)
+1. **Standard Huffman tables** used for rate estimation instead of image-specific tables
+2. **No cross-block EOB optimization** — `optimize_eob_runs()` exported by mozjpeg-rs but not called
+3. **No multi-pass trellis** — `num_loops` config exists but tables never updated between passes
+4. **bench-utils feature propagation** — `zenjpeg-bench-utils` dev-dependency doesn't forward `experimental-hybrid-trellis`, so `quality_compare --encoder hybrid` fails at runtime
+
+### Quality Can't Be Evaluated Until Encoder Is Fixed
+Both trellis and non-trellis paths produce the same broken output. Trellis DOES reduce file size, confirming RD optimization works at the coefficient level, but quality measurement is meaningless with the base encoder broken.
+
+## Visual Output
+
+Output images at `/mnt/v/output/zenjpeg/trellis-validation/`:
+- `original.png` — source Kodak 1
+- `cpp_jpegli_q75.jpg` — C++ jpegli reference (correct, 86KB)
+- `mozjpeg_rs_q75.jpg` — mozjpeg-rs reference (correct, 74KB)
+- `zen_q75.jpg` — zenjpeg Q75 (**solid yellow**, 255KB)
+- `zen_trellis_q75.jpg` — zenjpeg+trellis Q75 (also broken, 239KB)
+- `zen_q50.jpg` — zenjpeg Q50 (broken, 195KB)
+- `zen_q95.jpg` — zenjpeg Q95 (**corrupt Huffman, random streaks**, 410KB)
+- `comparison_all.png` — labeled montage of all
+- `zen_quality_sweep.png` — Q50/Q75/Q95 side-by-side
+
+## Baseline Benchmarks (Pre-SIMD-Refactor, from previous handoff)
 
 ### Encode (512x512 reference)
 - encode/rgb/512x512:    1.32 ms
 - encode/rgb/1024x1024:  5.49 ms
-- encode/rgb/2048x2048:  23.15 ms
 - quality/q/75:          1.24 ms
 - quality/q/90:          1.29 ms
 
 ### DCT (16384 blocks)
 - dct/recursive:         545 µs (30.0 Melem/s)
-- dct/aan:               563 µs (29.1 Melem/s)
 - dct_single/recursive:  54.3 ns
-- dct_single/aan:        50.5 ns
 
 ### Decode
 - decode/rgb/512x512:    482 µs
 - decode/rgb/1024x1024:  1.88 ms
-- decode/rgb/2048x2048:  9.62 ms
-
-## Implementation order
-1. `simd_types.rs` — trivial, just delete get_unchecked paths
-2. `encode/dct.rs` — magetypes has all primitives ready
-3. `encode_simd.rs` — RGB→YCbCr + gather
-4. `color/ycbcr.rs` — similar to encode_simd
-5. `decode/upsample.rs` — i16 upsampling
-6. `decode/idct_int.rs` — integer IDCT (most complex, check magetypes i16/i32 ops)
-7. Remove `unsafe_simd` feature from Cargo.toml defaults and lib.rs
-8. Update README
-9. Run benchmarks, compare to baseline
-
-## Key decisions
-- Gate new code behind `magetypes-simd` feature (already defined, pulls in archmage + magetypes)
-- Make `magetypes-simd` a default feature (replacing `unsafe_simd` in defaults)
-- The `#[multiversed]` dispatch stays — magetypes functions are called from within multiversed functions when token is available
-- `wide` stays for everything NOT currently behind `unsafe_simd`
-- After migration, `forbid(unsafe_code)` can be unconditional (only archmage-simd needs the exception)
-
-## Token pattern
-```rust
-// In #[multiversed] function:
-#[cfg(all(feature = "magetypes-simd", target_arch = "x86_64"))]
-{
-    if let Some(token) = archmage::Avx2FmaToken::try_new() {
-        let rows = magetypes::simd::f32x8::load_8x8(input);
-        // ... do work with magetypes f32x8 ...
-        magetypes::simd::f32x8::store_8x8(&result, output);
-        return;
-    }
-}
-// fallback to wide/scalar
-```
-
-## Check before starting
-- `cargo search magetypes` — verify 0.1.0 is latest
-- `cargo search archmage` — verify 0.2.1 is latest
-- Check if magetypes has `fmadd` (fused multiply-add) — needed for DCT
-- Check if magetypes i16x16 has pack/unpack/madd — needed for decoder IDCT
