@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_final_scans_with_sa_has_dc_refinement() {
+    fn test_build_final_scans_with_sa_has_ac_refinement() {
         let config = ScanSearchConfig::default();
         let result = ScanSearchResult {
             best_al_luma: 2,
@@ -357,23 +357,40 @@ mod tests {
 
         let scans = result.build_final_scans(3, &config);
 
-        // First DC scan should have Al=1 (SA enabled)
-        assert_eq!(scans[0].al, 1, "DC scan should have Al=1 for SA");
+        // DC scan should always be full precision (no DC SA)
+        assert_eq!(scans[0].al, 0, "DC scan should have Al=0 (no DC SA)");
         assert_eq!(scans[0].ah, 0);
 
-        // Should have DC refinement as last scan
-        let last = scans.last().unwrap();
-        assert_eq!(last.ss, 0, "Last scan should be DC");
-        assert_eq!(last.se, 0);
-        assert_eq!(last.ah, 1, "DC refinement Ah=1");
-        assert_eq!(last.al, 0, "DC refinement Al=0");
+        // No DC refinement scan
+        let dc_refines: Vec<_> = scans
+            .iter()
+            .filter(|s| s.ss == 0 && s.se == 0 && s.ah > 0)
+            .collect();
+        assert!(dc_refines.is_empty(), "Should have no DC refinement scans");
 
         // Should have luma AC refinement scans
         let luma_refines: Vec<_> = scans
             .iter()
             .filter(|s| s.components == vec![0] && s.ah > 0 && s.ss > 0)
             .collect();
-        assert_eq!(luma_refines.len(), 2, "Al=2 needs 2 luma refinement scans");
+        assert_eq!(
+            luma_refines.len(),
+            2,
+            "Al=2 needs 2 luma AC refinement scans"
+        );
+
+        // Should have chroma AC refinement scans
+        let chroma_refines: Vec<_> = scans
+            .iter()
+            .filter(|s| {
+                (s.components == vec![1] || s.components == vec![2]) && s.ah > 0 && s.ss > 0
+            })
+            .collect();
+        assert_eq!(
+            chroma_refines.len(),
+            2,
+            "Al_c=1 needs 1 refinement per chroma = 2 total"
+        );
     }
 
     #[test]

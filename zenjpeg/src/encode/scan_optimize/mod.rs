@@ -51,5 +51,22 @@ pub(crate) fn optimize_scan_script(
     let result = selector.select_best(&scan_sizes);
 
     // Build final scan script
-    Ok(result.build_final_scans(num_components, &config))
+    let scans = result.build_final_scans(num_components, &config);
+
+    if std::env::var("ZENJPEG_DEBUG_SCAN_OPT").is_ok() {
+        eprintln!(
+            "[scan_optimize] Selected: al_luma={}, al_chroma={}, freq_luma={}, freq_chroma={}, interleave_dc={}",
+            result.best_al_luma, result.best_al_chroma,
+            result.best_freq_split_luma, result.best_freq_split_chroma,
+            result.interleave_chroma_dc
+        );
+        for (i, scan) in scans.iter().enumerate() {
+            eprintln!(
+                "[scan_optimize]   Scan {}: comps={:?} ss={} se={} ah={} al={}",
+                i, scan.components, scan.ss, scan.se, scan.ah, scan.al
+            );
+        }
+    }
+
+    Ok(scans)
 }
