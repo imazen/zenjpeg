@@ -141,6 +141,11 @@ impl FrequencyCounter {
         self.counts[symbol as usize] += 1;
     }
 
+    /// Sets the count for a symbol directly.
+    pub fn set_count(&mut self, symbol: u8, value: i64) {
+        self.counts[symbol as usize] = value;
+    }
+
     /// Returns the count for a symbol.
     #[must_use]
     pub fn get_count(&self, symbol: u8) -> i64 {
