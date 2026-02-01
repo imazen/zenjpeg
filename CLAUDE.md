@@ -1063,22 +1063,14 @@ Eliminated derived-state sync bugs by creating `LayoutParams` (`encode/layout.rs
 3. **[DONE] Replace `try_into().unwrap()` with debug_assert** — `strip/mod.rs:154` panics if
    `padded_width` invariant breaks. Add bounds assertion. Files: `encode/strip/mod.rs`.
 
-4. **Deduplicate 3 process_strip variants** — `process_strip`, `process_strip_ycbcr_f32`, and
-   `process_strip_ycbcr_f32_subsampled` share identical AQ → downsample → quantize → DCT
-   tails (~25 lines each). Extract `process_strip_common(&mut self, strip_y, actual_strip_height,
-   need_chroma_downsample) -> Result<usize>`. Each public method becomes preamble → padding →
-   `process_strip_common(strip_y, height, need_downsample)`. The `need_chroma_downsample` bool
-   encodes: V1=`!grayscale && !fused`, V2=`!grayscale`, V3=`false`.
+4. **[DONE] Deduplicate 3 process_strip variants** — Extracted `process_strip_common(strip_y,
+   actual_strip_height, need_chroma_downsample)` from the shared AQ → downsample → quantize →
+   DCT tail. Each public method is now preamble → padding → `process_strip_common()`.
    Files: `encode/strip/mod.rs`.
 
-5. **Split `build_jpeg_sequential_into()` into XYB and YCbCr sub-functions** —
-   `streaming.rs:1132-1266` is 135 lines with top-level `if use_xyb` where every function call
-   differs between modes (different header/table/encode APIs, different return types). Split into:
-   - `encode_sequential_xyb(config, quants, strip_output, output) -> Result<Vec<u8>>` (~45 lines)
-   - `encode_sequential_ycbcr(config, quants, strip_output, output, collect_frequencies) -> Result<(Vec<u8>, Option<Freqs>)>` (~55 lines)
-   - Thin orchestrator (~18 lines): reserve output, dispatch, append scan data + EOI.
-   Win is separation of concerns, not line count: prevents wrong-mode function calls,
-   makes XYB's lack of frequency collection explicit.
+5. **[DONE] Split `build_jpeg_sequential_into()` into XYB and YCbCr sub-functions** — Split into
+   `encode_sequential_xyb()` and `encode_sequential_ycbcr()` with a thin orchestrator.
+   Prevents wrong-mode function calls; XYB's lack of frequency collection is explicit in types.
    Files: `encode/streaming.rs`.
 
 ### Resource Estimation API (docs/API_DESIGN.md)
