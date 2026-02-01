@@ -942,12 +942,67 @@ All 53,676 blocks:   0% difference
 - Both use optimized Huffman (verified: `optimize_coding = 1` in FFI)
 - Butteraugli quality within 1% (essentially identical perceptual quality)
 
+### Visual Diff Interpretation (2026-01-31)
+
+**Repro commands:**
+```bash
+just xyb-diff                    # XYB mode: C++ | Rust | ΔR×10 | ΔG×10 | ΔB×10
+just ycbcr-diff                  # YCbCr mode: same 5-panel layout
+just xyb-diff ~/path/to/img.png  # Custom image
+```
+
+**XYB mode visual patterns (kodak/1.png q90):**
+- **C++ & Rust panels**: Visually identical, slight green tint (normal for this image)
+- **ΔR (3rd panel)**: Block patterns with U/M shapes at 8×8 boundaries, sometimes strong
+  - Indicates DCT coefficient quantization differences
+  - Pattern follows block grid = coefficient rounding at block level
+- **ΔG (4th panel)**: Uniform even noise across image
+  - Luminance (Y) channel has consistent small differences
+  - No block structure = no systematic quantization bias
+- **ΔB (5th panel)**: Similar to ΔR but less intense
+  - Was severely corrupted before B-channel fix (mean error ~51)
+  - Now shows same block-pattern differences as R channel
+
+**XYB numeric results (kodak/1.png 768×512 q90):**
+```
+Rust: 156720 bytes, C++: 141450 bytes (+10.8%)
+Mean |diff|: R=0.310, G=1.300, B=0.200
+```
+
+**YCbCr mode visual patterns:**
+- **All diff panels**: Uniform noise pattern, no obvious block structure
+- More even distribution of differences across all channels
+
+**YCbCr numeric results (kodak/1.png 768×512 q90):**
+```
+Rust: 130270 bytes, C++: 143695 bytes (-9.3%)
+Mean |diff|: R=2.056, G=1.877, B=2.102
+Max  |diff|: R=25, G=17, B=18
+```
+
+**Interpretation:**
+- XYB: Block patterns in R/B suggest coefficient quantization differences at block boundaries
+- YCbCr: Uniform noise suggests consistent but different rounding strategy
+- YCbCr produces smaller files but higher per-pixel differences
+- XYB produces larger files but lower per-pixel differences (except G channel)
+
+**TODO: Investigate block-boundary coefficient patterns in XYB mode**
+- The U/M patterns in ΔR suggest systematic differences in how edge blocks are quantized
+- May be related to AQ strength interpolation or zero-bias calculation
+- Files: `zenjpeg/src/quant/aq/simd.rs`, `zenjpeg/src/encode/strip/mod.rs:quantize_pending_imcu`
+
 ## Known Bugs
 
-1. **XYB quality gap** - ~5 SSIMULACRA2 points behind C++ in XYB mode. Root cause TBD.
+1. **XYB block-boundary patterns** - ΔR and ΔB show U/M patterns at 8×8 block boundaries vs C++.
+   Mean error is acceptable (~0.2-0.3) but block structure suggests systematic difference.
 
 ### Fixed Bugs (historical reference)
 
+- **XYB B-channel encoding corruption (2026-01-31)** - B channel had ~51 mean error vs ~0.1 for R/G.
+  Root cause: `StripProcessor` created with `use_xyb=false`, then `set_xyb_mode(true)` called,
+  but this didn't recalculate B-channel dimensions. Also `c_blocks_h/v` used for B instead of
+  `b_blocks_h/v`. Fixed by using `with_xyb()` constructor and adding `padded_b_width`,
+  `b_blocks_h`, `b_blocks_v` fields. Files: `streaming.rs`, `strip/mod.rs`, `strip/convert.rs`.
 - **Debug env var in hot loop** - `entropy/encoder.rs`: Removed `std::env::var()` call from hot path (was 12% overhead)
 - **Eager error evaluation** - `entropy/encoder.rs`: Changed `ok_or()` to `ok_or_else()` (13% speedup)
 - **Progressive XYB decode** - `decode/mod.rs`: Handle `EndOfScanData` gracefully for non-standard component IDs
