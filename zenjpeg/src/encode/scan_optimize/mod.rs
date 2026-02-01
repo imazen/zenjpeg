@@ -12,7 +12,6 @@ mod generate;
 mod select;
 
 pub(crate) use config::ScanSearchConfig;
-pub(crate) use estimate::estimate_script_cost;
 
 use super::config::ProgressiveScan;
 use crate::error::Result;
@@ -48,7 +47,6 @@ pub(crate) fn generate_candidate_scripts(
     num_components: u8,
 ) -> Result<Vec<Vec<ProgressiveScan>>> {
     let config = ScanSearchConfig::default();
-    let debug = std::env::var("ZENJPEG_DEBUG_SCAN_OPT").is_ok();
 
     // === Phase 1: Generate mixed-SA variants and pick the best by estimate ===
     // These all have the same structure (DC + low-band al=0 + high-band al=K + refinements),
@@ -63,17 +61,6 @@ pub(crate) fn generate_candidate_scripts(
             let al_c = al.min(config.al_max_chroma);
             let script = mixed_sa_split_progressive_scans(num_components, split, al, al_c);
             let est = estimate::estimate_script_cost(&script, y_blocks, cb_blocks, cr_blocks);
-
-            if debug {
-                eprintln!(
-                    "[scan_optimize] mixed-SA split={} al={}/{}: {} scans, est={} bits",
-                    split,
-                    al,
-                    al_c,
-                    script.len(),
-                    est
-                );
-            }
 
             if best_mixed_sa.as_ref().is_none_or(|(_, best)| est < *best) {
                 best_mixed_sa = Some((script, est));
@@ -109,18 +96,6 @@ pub(crate) fn generate_candidate_scripts(
             .any(|c| scripts_equivalent(&mixed_script, c));
         if !dominated && candidates.len() < MAX_TRIAL_ENCODES {
             candidates.push(mixed_script);
-        }
-    }
-
-    if debug {
-        for (i, c) in candidates.iter().enumerate() {
-            let est = estimate::estimate_script_cost(c, y_blocks, cb_blocks, cr_blocks);
-            eprintln!(
-                "[scan_optimize] Trial candidate {}: {} scans, est={} bits",
-                i,
-                c.len(),
-                est
-            );
         }
     }
 

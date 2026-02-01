@@ -6,6 +6,7 @@
 
 use super::generate::TrialScan;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
+use crate::huffman::optimize::cluster::cluster_histograms;
 use crate::huffman::optimize::FrequencyCounter;
 
 /// Estimate encoded sizes for all candidate scans.
@@ -122,8 +123,10 @@ fn estimate_ac_first_scan(
         let mut block_has_nonzero = false;
 
         for k in ss..=se {
-            let coeff = block[k] >> al;
-            let abs_coeff = coeff.unsigned_abs();
+            // Must use unsigned_abs() BEFORE shift to match actual encoder behavior.
+            // Signed shift fills with 1-bits, so (-1i16 >> 2) = -1 (non-zero!),
+            // but unsigned_abs(-1) >> 2 = 1 >> 2 = 0 (correctly zero).
+            let abs_coeff = block[k].unsigned_abs() >> al;
 
             if abs_coeff == 0 {
                 run += 1;
@@ -171,8 +174,7 @@ fn estimate_ac_first_scan(
         .map(|block| {
             let mut bits = 0.0f64;
             for k in ss..=se {
-                let coeff = block[k] >> al;
-                let abs_coeff = coeff.unsigned_abs();
+                let abs_coeff = block[k].unsigned_abs() >> al;
                 if abs_coeff > 0 {
                     bits += ac_category(abs_coeff) as f64; // value bits include sign
                 }
@@ -250,15 +252,8 @@ fn estimate_ac_refinement_scan(
             }
         }
 
-        if !block_has_newly_sig {
-            // No newly-significant coefficients: EOB
-            eob_run += 1;
-            if eob_run >= 32767 {
-                eob_extra_bits += count_eob_run(&mut counter, eob_run);
-                eob_run = 0;
-            }
-        } else if run > 0 {
-            // Had some newly-significant but trailing unestablished zeros
+        // EOB if no newly-significant coefficients, or trailing zeros after last one
+        if !block_has_newly_sig || run > 0 {
             eob_run += 1;
             if eob_run >= 32767 {
                 eob_extra_bits += count_eob_run(&mut counter, eob_run);
@@ -276,41 +271,46 @@ fn estimate_ac_refinement_scan(
     (huffman_cost as usize) + total_refbits + eob_extra_bits
 }
 
-/// Per-scan overhead in bits for SOS marker + DHT envelope + byte padding.
+/// Per-scan overhead in bits for SOS marker header + byte alignment padding.
 ///
-/// This matches the SCAN_OVERHEAD constant in select.rs and is used by
-/// `estimate_script_cost()` for full scan script cost estimation.
+/// SOS header = 2 (marker) + 2 (length) + 1 (Ns) + 2*Ns (component selectors)
+///            + 3 (Ss, Se, Ah|Al) = 10 bytes for 1-component = 80 bits.
+/// Plus ~4 bits average for byte alignment at end of scan data.
+const SOS_HEADER_BITS: usize = 84;
+
+/// Per-scan overhead used by `estimate_all_scan_sizes()` for individual scan
+/// evaluation (where clustering is not applicable).
+///
+/// This matches the SCAN_OVERHEAD constant in select.rs.
 const SCAN_OVERHEAD_BITS: usize = 150;
 
 /// Estimate the total encoded cost of a complete progressive scan script.
 ///
-/// Evaluates each scan in the script using the same frequency-based estimation
-/// used for individual trial scans, plus per-scan overhead.
+/// Uses Huffman histogram clustering to model how the actual encoder shares
+/// tables across scans with similar symbol distributions. This eliminates
+/// the systematic bias that occurs with per-scan independent estimation:
 ///
-/// The estimate is accurate for ranking scripts with the same number of scans
-/// (relative ordering is reliable). For scripts with different scan counts,
-/// there is a systematic bias due to Huffman clustering effects:
-/// - 6-9 scans: ratio ~0.99 (nearly exact)
-/// - 12 scans: ratio ~1.05 (5% overestimate)
-/// - 15 scans: ratio ~1.22 (22% overestimate)
+/// - Collects per-scan Huffman histograms
+/// - Clusters DC and AC histograms separately (matching encoder behavior)
+/// - Computes cost using clustered tables (ONE header per cluster, shared
+///   code lengths for all scans in the cluster)
+/// - Adds non-Huffman bits (value bits, refbits, EOB extra bits) per scan
+/// - Adds SOS header overhead per scan
 ///
-/// Cross-structure comparisons (e.g., 9-scan vs 15-scan) must use trial
-/// encoding for reliable results.
-///
-/// Returns the estimated total cost in bits (uncorrected).
+/// Returns the estimated total cost in bits.
 pub(crate) fn estimate_script_cost(
     script: &[super::super::config::ProgressiveScan],
     y_blocks: &[[i16; DCT_BLOCK_SIZE]],
     cb_blocks: &[[i16; DCT_BLOCK_SIZE]],
     cr_blocks: &[[i16; DCT_BLOCK_SIZE]],
 ) -> usize {
-    let mut counter = FrequencyCounter::new();
-    let mut total = 0usize;
+    let mut dc_histograms: Vec<FrequencyCounter> = Vec::new();
+    let mut ac_histograms: Vec<FrequencyCounter> = Vec::new();
+    let mut extra_bits_total: usize = 0;
 
     for scan in script {
-        let cost = if scan.ss == 0 && scan.se == 0 {
-            // DC scan
-            let mut dc_cost = 0;
+        if scan.ss == 0 && scan.se == 0 {
+            // DC scan — one histogram per component in the scan
             for &comp in &scan.components {
                 let blocks = match comp {
                     0 => y_blocks,
@@ -318,9 +318,10 @@ pub(crate) fn estimate_script_cost(
                     2 => cr_blocks,
                     _ => continue,
                 };
-                dc_cost += estimate_dc_scan(&mut counter, blocks);
+                let (counter, extra) = estimate_dc_scan_detailed(blocks);
+                dc_histograms.push(counter);
+                extra_bits_total += extra;
             }
-            dc_cost
         } else if scan.ah == 0 {
             // AC first scan (single component)
             let blocks = match scan.components[0] {
@@ -329,7 +330,10 @@ pub(crate) fn estimate_script_cost(
                 2 => cr_blocks,
                 _ => continue,
             };
-            estimate_ac_first_scan(&mut counter, blocks, scan.ss, scan.se, scan.al)
+            let (counter, extra) =
+                estimate_ac_first_scan_detailed(blocks, scan.ss, scan.se, scan.al);
+            ac_histograms.push(counter);
+            extra_bits_total += extra;
         } else {
             // AC refinement scan (single component)
             let blocks = match scan.components[0] {
@@ -338,23 +342,209 @@ pub(crate) fn estimate_script_cost(
                 2 => cr_blocks,
                 _ => continue,
             };
-            estimate_ac_refinement_scan(blocks, scan.ss, scan.se, scan.ah, scan.al)
-        };
-
-        total += cost + SCAN_OVERHEAD_BITS;
+            let (counter, extra) =
+                estimate_ac_refinement_scan_detailed(blocks, scan.ss, scan.se, scan.ah, scan.al);
+            ac_histograms.push(counter);
+            extra_bits_total += extra;
+        }
     }
 
-    // Note: The raw estimate overestimates scripts with >9 scans due to
-    // Huffman clustering effects not being modeled. Calibrated bias:
-    //   6-9 scans: ratio ~0.99 (accurate)
-    //   12 scans: ratio ~1.05 (5% over)
-    //   15 scans: ratio ~1.22 (22% over)
-    // A quadratic correction (ratio = 1.0 - 0.001*(s-9) + 0.00633*(s-9)^2)
-    // was tested but the per-image variance (±10% at 15 scans) is too wide
-    // for reliable cross-structure comparison. The estimate is accurate for
-    // ranking scripts with the SAME scan count, which is how the caller uses it.
+    // Cluster DC and AC histograms separately (matching encoder behavior).
+    // The clustering algorithm merges histograms with similar symbol distributions
+    // into shared tables, reducing DHT overhead.
+    let mut huffman_total: usize = 0;
 
-    total
+    if !dc_histograms.is_empty() {
+        let dc_result = cluster_histograms(&dc_histograms, 4, false);
+        for h in &dc_result.cluster_histograms {
+            huffman_total += h.estimate_encoding_cost() as usize;
+        }
+    }
+
+    if !ac_histograms.is_empty() {
+        let ac_result = cluster_histograms(&ac_histograms, 32, false);
+        for h in &ac_result.cluster_histograms {
+            huffman_total += h.estimate_encoding_cost() as usize;
+        }
+    }
+
+    huffman_total + extra_bits_total + script.len() * SOS_HEADER_BITS
+}
+
+// === Detailed estimators for clustering-aware cost computation ===
+//
+// These return the Huffman histogram and non-Huffman extra bits separately,
+// allowing the caller to cluster histograms before computing final costs.
+
+/// Estimate DC scan, returning histogram and extra bits separately.
+fn estimate_dc_scan_detailed(blocks: &[[i16; DCT_BLOCK_SIZE]]) -> (FrequencyCounter, usize) {
+    let mut counter = FrequencyCounter::new();
+
+    if blocks.is_empty() {
+        return (counter, 0);
+    }
+
+    let mut prev_dc = 0i16;
+    let mut extra_bits: usize = 0;
+
+    for block in blocks {
+        let dc = block[0];
+        let diff = dc.wrapping_sub(prev_dc);
+        prev_dc = dc;
+
+        let category = dc_category(diff);
+        counter.count(category);
+        extra_bits += category as usize;
+    }
+
+    (counter, extra_bits)
+}
+
+/// Estimate AC first scan (ah=0), returning histogram and extra bits separately.
+fn estimate_ac_first_scan_detailed(
+    blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ss: u8,
+    se: u8,
+    al: u8,
+) -> (FrequencyCounter, usize) {
+    let mut counter = FrequencyCounter::new();
+
+    if blocks.is_empty() {
+        return (counter, 0);
+    }
+
+    let ss = ss as usize;
+    let se = se as usize;
+    let mut eob_run = 0u32;
+    let mut eob_extra_bits = 0usize;
+
+    for block in blocks {
+        let mut run = 0u8;
+        let mut block_has_nonzero = false;
+
+        for k in ss..=se {
+            // Must use unsigned_abs() BEFORE shift to match actual encoder behavior.
+            let abs_coeff = block[k].unsigned_abs() >> al;
+
+            if abs_coeff == 0 {
+                run += 1;
+                continue;
+            }
+
+            if !block_has_nonzero && eob_run > 0 {
+                eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                eob_run = 0;
+            }
+            block_has_nonzero = true;
+
+            while run >= 16 {
+                counter.count(0xF0);
+                run -= 16;
+            }
+
+            let size = ac_category(abs_coeff);
+            let symbol = (run << 4) | size;
+            counter.count(symbol);
+            run = 0;
+        }
+
+        if run > 0 {
+            eob_run += 1;
+            if eob_run >= 32767 {
+                eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                eob_run = 0;
+            }
+        }
+    }
+
+    if eob_run > 0 {
+        eob_extra_bits += count_eob_run(&mut counter, eob_run);
+    }
+
+    // Value extra bits: each non-zero AC coefficient carries `size` bits (includes sign)
+    let value_extra_bits: usize = blocks
+        .iter()
+        .map(|block| {
+            let mut bits = 0usize;
+            for k in ss..=se {
+                let abs_coeff = block[k].unsigned_abs() >> al;
+                if abs_coeff > 0 {
+                    bits += ac_category(abs_coeff) as usize;
+                }
+            }
+            bits
+        })
+        .sum();
+
+    (counter, value_extra_bits + eob_extra_bits)
+}
+
+/// Estimate AC refinement scan (ah > 0), returning histogram and extra bits separately.
+fn estimate_ac_refinement_scan_detailed(
+    blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ss: u8,
+    se: u8,
+    ah: u8,
+    al: u8,
+) -> (FrequencyCounter, usize) {
+    let mut counter = FrequencyCounter::new();
+
+    if blocks.is_empty() {
+        return (counter, 0);
+    }
+
+    let ss = ss as usize;
+    let se = se as usize;
+    let mut total_refbits = 0usize;
+    let mut eob_run = 0u32;
+    let mut eob_extra_bits = 0usize;
+
+    for block in blocks {
+        let mut run = 0u8;
+        let mut block_has_newly_sig = false;
+
+        for k in ss..=se {
+            let coeff = block[k];
+            let abs_coeff = coeff.unsigned_abs();
+            let prev_nonzero = (abs_coeff >> ah) > 0;
+            let cur_bit = (abs_coeff >> al) & 1;
+
+            if prev_nonzero {
+                total_refbits += 1;
+            } else if cur_bit != 0 {
+                if !block_has_newly_sig && eob_run > 0 {
+                    eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                    eob_run = 0;
+                }
+                block_has_newly_sig = true;
+
+                while run >= 16 {
+                    counter.count(0xF0);
+                    run -= 16;
+                }
+                let symbol = (run << 4) | 1;
+                counter.count(symbol);
+                total_refbits += 1; // sign bit
+                run = 0;
+            } else {
+                run += 1;
+            }
+        }
+
+        if !block_has_newly_sig || run > 0 {
+            eob_run += 1;
+            if eob_run >= 32767 {
+                eob_extra_bits += count_eob_run(&mut counter, eob_run);
+                eob_run = 0;
+            }
+        }
+    }
+
+    if eob_run > 0 {
+        eob_extra_bits += count_eob_run(&mut counter, eob_run);
+    }
+
+    (counter, total_refbits + eob_extra_bits)
 }
 
 /// Count an EOB run into the frequency counter.

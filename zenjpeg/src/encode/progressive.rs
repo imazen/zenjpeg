@@ -299,9 +299,7 @@ impl ComputedConfig {
                 num_components as u8,
             )?;
 
-            let debug = std::env::var("ZENJPEG_DEBUG_SCAN_OPT").is_ok();
             let mut best_output = Vec::new();
-            let mut best_idx = 0usize;
             for (i, candidate) in candidates.iter().enumerate() {
                 let mut trial_output = Vec::new();
                 self.encode_progressive_with_scans(
@@ -316,35 +314,9 @@ impl ComputedConfig {
                     is_color,
                 )?;
 
-                if debug {
-                    let est = super::scan_optimize::estimate_script_cost(
-                        candidate, y_blocks, cb_blocks, cr_blocks,
-                    );
-                    let actual_bits = trial_output.len() * 8;
-                    let ratio = est as f64 / actual_bits as f64;
-                    eprintln!(
-                        "[scan_opt] candidate {}: {} scans, est={} bits, actual={} bits ({} bytes), ratio={:.3}",
-                        i,
-                        candidate.len(),
-                        est,
-                        actual_bits,
-                        trial_output.len(),
-                        ratio,
-                    );
-                }
-
                 if i == 0 || trial_output.len() < best_output.len() {
                     best_output = trial_output;
-                    best_idx = i;
                 }
-            }
-
-            if debug {
-                eprintln!(
-                    "[scan_opt] winner: candidate {} ({} bytes)",
-                    best_idx,
-                    best_output.len()
-                );
             }
 
             *output = best_output;

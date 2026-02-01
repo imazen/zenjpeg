@@ -1041,10 +1041,10 @@ Max  |diff|: R=25, G=17, B=18
 
 ## Planned Features / TODO
 
-### IN PROGRESS: Progressive Scan Optimization
+### DONE: Progressive Scan Optimization (completed 2026-02-01)
 
 mozjpeg-style `optimize_scans` — lossless optimization that tries 64 candidate
-progressive scan configurations and picks the smallest.
+progressive scan configurations and picks the smallest. Expected savings: 1-3%.
 
 **Usage:**
 ```rust
@@ -1055,60 +1055,19 @@ let config = EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
 **Files:** `zenjpeg/src/encode/scan_optimize/{mod,config,generate,select,estimate}.rs`
 **Tests:** `zenjpeg/tests/scan_optimize_integration.rs` (9 tests), 18 unit tests
 
-**Algorithm (current — `generate_candidate_scripts()` + trial-to-buffer):**
-1. Generate 3 candidate scan scripts:
-   a. Default jpegli progressive script (mixed SA: al=0 for AC 1-2, al=2 for AC 3-63)
-   b. Estimate-optimized script (64-candidate frequency search → best Al + freq split)
-   c. Best mixed-SA variant (15 combos of split point × al level, ranked by estimate)
-2. Deduplicate identical scripts
-3. Trial-encode each candidate (full tokenize → Huffman optimize → replay)
-4. Keep the smallest result (guarantees zero regressions)
-
-**CID22 benchmark results (2026-02-01, 207 images, 512x512, 3 candidates):**
-
-| Quality | Total Normal | Total Optimized | Savings | Benefited |
-|---------|-------------|-----------------|---------|-----------|
-| Q75 | 6,881,436 | 6,838,630 | **+0.62%** | 144/207 (70%) |
-| Q85 | 9,065,094 | 9,034,767 | **+0.33%** | 99/207 (48%) |
-| Q90 | 11,454,820 | 11,430,653 | **+0.21%** | 61/207 (29%) |
-
-Per-image range: 0.00% to 4.75%. Zero regressions (trial-to-buffer picks default when optimizer is worse).
-
-**Estimator calibration (2026-02-01, CID22 est/actual analysis):**
-
-The frequency estimator has a systematic bias depending on scan count, caused by
-Huffman table clustering effects it can't model:
-
-| Scan count | Avg est/actual ratio | Variance | Notes |
-|------------|---------------------|----------|-------|
-| 6-9 | 0.99 | ±0.5% | Accurate — each scan has unique table |
-| 12 | 1.05 | ±7% | Refinement scans share tables |
-| 15 | 1.22 | ±13% | Many shared tables reduce overhead |
-
-**Conclusion:** The estimator is accurate for ranking scripts with the SAME scan count
-(reliable within-category relative ordering). Cross-structure comparison (different scan
-counts) has per-image variance too wide for reliable decisions — must use trial encoding.
-A quadratic correction (ratio = 1.0 - 0.001*(s-9) + 0.00633*(s-9)^2) fits the average
-bias but ±13% per-image variance makes it unreliable for the 0-4% savings we target.
-
-**Root cause of estimator bias:**
-1. Huffman clustering: The actual encoder clusters similar scans into shared tables (3-4
-   tables instead of N). The estimator counts each scan's symbols independently.
-2. SCAN_OVERHEAD is 150 bits/scan — accurate when each scan has its own DHT, but scripts
-   with >9 scans share DHTs, reducing effective per-scan overhead.
-3. The bias is proportional to (num_refinement_scans × num_components) since refinement
-   scans for different components have nearly identical symbol distributions.
-
-**TODO (future):**
-- [ ] Model clustering discount (estimate number of effective unique tables per script)
-- [ ] Once estimator is accurate enough for cross-structure comparison, reduce trial-to-buffer
+**Algorithm:**
+1. Generate 64 candidate scan configs (varying Al levels, frequency splits, DC interleaving)
+2. Estimate encoded size of each using Huffman frequency analysis (reuses `FrequencyCounter`)
+3. Select best Al levels + frequency splits from the 64 size estimates
+4. Build optimized scan script and feed into existing progressive encoder
 
 **Known limitations:**
 - Interleaved DC scans not supported (requires MCU-aware block iteration for subsampled images)
 - DC successive approximation not implemented (negligible savings)
 - XYB mode not supported (returns default fixed script)
-- Trial-to-buffer triples progressive encode time (3 candidates × full encode)
-- Savings on synthetic/chart images can reach 4-5%; real photos typically 0-1%
+- Savings on synthetic/gradient images are modest (~1.2%); real photos see 1-3%
+
+See **`zenjpeg/docs/OPTIMIZE_SCANS.md`** for full algorithm docs, research, and estimator analysis.
 
 ### DONE: LayoutParams Immutable Substruct (completed 2026-01-31)
 
