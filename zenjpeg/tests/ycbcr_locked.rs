@@ -30,14 +30,18 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 // Generated: 2026-01-11
 // Mode: YCbCr with optimized Huffman
 // Updated 2026-01-31: Fixed archmage-simd DCT scaling (was 1/8, now 1/64)
+// Updated 2026-02-01: Added non-SIMD expected values (different DCT float rounding)
+//
+// The archmage-simd feature uses explicit SIMD intrinsics for DCT which produces
+// slightly different float rounding than the wide-crate autovectorized path.
+// Both sets are valid — they represent the same algorithm with different FP precision.
 // =============================================================================
 
 // =============================================================================
 // SEQUENTIAL (BASELINE) MODE
 // =============================================================================
 
-/// Sequential S444 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
     (50, 330228),
     (70, 438009),
@@ -46,8 +50,16 @@ const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
     (95, 934041),
 ];
 
-/// Sequential S422 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
+    (50, 330228),
+    (70, 438009),
+    (85, 597220),
+    (90, 713993),
+    (95, 934041),
+];
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
     (50, 294082),
     (70, 386572),
@@ -56,8 +68,16 @@ const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
     (95, 782238),
 ];
 
-/// Sequential S420 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
+    (50, 294082),
+    (70, 386572),
+    (85, 518672),
+    (90, 611265),
+    (95, 782224),
+];
+
+/// S420: identical between SIMD and non-SIMD
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
     (50, 271443),
     (70, 362380),
@@ -66,8 +86,7 @@ const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
     (95, 742408),
 ];
 
-/// Sequential S440 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
     (50, 294388),
     (70, 387140),
@@ -76,12 +95,20 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
     (95, 783753),
 ];
 
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
+    (50, 294388),
+    (70, 387140),
+    (85, 520168),
+    (90, 613213),
+    (95, 783753),
+];
+
 // =============================================================================
 // PROGRESSIVE MODE
 // =============================================================================
 
-/// Progressive S444 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
     (50, 321359),
     (70, 425096),
@@ -90,8 +117,16 @@ const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
     (95, 905412),
 ];
 
-/// Progressive S422 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
+    (50, 321359),
+    (70, 425096),
+    (85, 579814),
+    (90, 694002),
+    (95, 905404),
+];
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
     (50, 286975),
     (70, 375763),
@@ -100,8 +135,16 @@ const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
     (95, 758799),
 ];
 
-/// Progressive S420 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
+    (50, 286975),
+    (70, 375763),
+    (85, 504431),
+    (90, 594285),
+    (95, 758794),
+];
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
     (50, 263243),
     (70, 350643),
@@ -110,8 +153,16 @@ const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
     (95, 716986),
 ];
 
-/// Progressive S440 optimized Huffman - frymire.png
-/// Regenerated 2026-01-31 after DCT scaling fix
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
+    (50, 263243),
+    (70, 350643),
+    (85, 477428),
+    (90, 563775),
+    (95, 716986),
+];
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
     (50, 285181),
     (70, 374193),
@@ -120,19 +171,44 @@ const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
     (95, 758062),
 ];
 
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
+    (50, 285181),
+    (70, 374193),
+    (85, 503741),
+    (90, 593871),
+    (95, 758065),
+];
+
 // =============================================================================
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-// Regenerated 2026-01-31 after DCT scaling fix
-const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x4772850889d6a2a0;
-const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x76a67672604b6b5c;
-const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x1b17cba3816dc9fe;
-const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x423657a279dbc121;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1d1c16350780d052;
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x26d7748b54531f8d;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xd7feb03c1efad980;
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+mod hashes {
+    pub const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x4772850889d6a2a0;
+    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x76a67672604b6b5c;
+    pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x1b17cba3816dc9fe;
+    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x423657a279dbc121;
+    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1d1c16350780d052;
+    pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x26d7748b54531f8d;
+    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xd7feb03c1efad980;
+}
+
+#[cfg(not(all(feature = "archmage-simd", target_arch = "x86_64")))]
+mod hashes {
+    pub const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0xd53050a5d561e41d;
+    pub const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x75801a098bc788d2;
+    pub const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x0740b0522fece58a;
+    pub const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x95649490395e062f;
+    pub const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
+    pub const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1d1c16350780d052;
+    pub const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x40a4ffd8e5d84faf;
+    pub const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0x6bbfb82cf195ee96;
+}
+
+use hashes::*;
 
 // =============================================================================
 // Helper functions
