@@ -1,180 +1,69 @@
-# XYB Size Difference Investigation Plan
+# XYB Size Difference Investigation - RESOLVED
 
-## Current State
+## Root Cause: Configuration Mismatch
 
-XYB mode produces **5-11% larger files** than C++ jpegli at equivalent perceptual quality.
+The reported **5-11% size gap** was caused by comparing:
+- **Rust XYB**: baseline (sequential) mode (default)
+- **C++ XYB**: progressive mode (default)
 
-- Q70: +6-11%
-- Q80: +5-9%
-- Q90: +5-7%
+Progressive encoding with optimized Huffman produces ~6% smaller files than baseline.
 
-**What's confirmed identical:**
-- AQ maps (100% match with distance-based encoding)
-- Quantization table values (verified)
-- XYB color conversion constants
-- Subsampling structure (R:2×2 G:2×2 B:1×1)
+## Apples-to-Apples Comparison (Both Progressive)
 
-**What's confirmed different:**
-- DCT coefficients differ by ±1 (normal SIMD float rounding)
-- File sizes differ by 5-11%
+| Image | Q70 | Q80 | Q90 |
+|-------|-----|-----|-----|
+| kodak/1.png | **-0.65%** | **-0.60%** | **-0.30%** |
+| kodak/5.png | **-0.57%** | **-0.54%** | **-0.34%** |
+| kodak/13.png | +1.75% | +0.81% | +0.11% |
+| kodak/19.png | **-2.66%** | **-2.35%** | **-1.74%** |
 
-## Hypothesis Priority
+**Result:** Rust is often slightly smaller than C++. All differences are within ±2%.
 
-1. **Huffman table efficiency** - Different coefficient distributions → different optimal tables
-2. **Zero-bias threshold differences** - Might be quantizing fewer coefficients to zero
-3. **DC coefficient prediction** - Could affect entropy encoding efficiency
-4. **Coefficient distribution** - More non-zero coefficients = larger files
+## What's Verified Identical
 
-## Phase 1: Coefficient Analysis (Quantitative)
+1. **Quantization tables**: Byte-for-byte identical (8-bit, 3 tables)
+2. **XYB color conversion constants**: Verified in `compare_xyb_constants` example
+3. **AQ maps**: 100% match when using distance-based encoding
+4. **Subsampling structure**: R:2×2 G:2×2 B:1×1
 
-### 1.1 Count Non-Zero Coefficients
+## Configuration Details
 
-Compare total non-zero coefficient counts between Rust and C++:
-```bash
-# Per-component breakdown (X, Y, B channels)
-# Rust should have SAME or FEWER non-zeros if AQ is working
-```
+| Property | C++ Default | Rust Default |
+|----------|-------------|--------------|
+| Progressive | **true** | false |
+| Scans | 15 | 1 |
+| Huffman tables | 8 | 2 |
+| Optimize Huffman | true | true |
 
-**Expected outcome:** If Rust has more non-zero coefficients, zero-bias thresholds may be too low.
+## Recommendation
 
-### 1.2 DC Coefficient Distribution
+Consider changing Rust's XYB default to progressive mode to match C++ behavior:
 
-Compare DC coefficient values and prediction residuals:
-- Extract DC values for each component
-- Compare prediction residual magnitudes
-- Check if DC differences accumulate
-
-**Tool:** `xyb_dc_debug` example (exists)
-
-### 1.3 AC Coefficient Histogram
-
-For each component, histogram the AC coefficient magnitudes:
-- Positions 1-63 in zigzag order
-- Compare distributions between Rust and C++
-- Look for systematic shifts
-
-**New tool needed:** `xyb_coeff_histogram`
-
-## Phase 2: Huffman Analysis
-
-### 2.1 Compare Huffman Tables
-
-Extract and compare:
-- DC Huffman tables (3 tables for XYB: X, Y, B)
-- AC Huffman tables (3 tables for XYB: X, Y, B)
-- Code lengths for each symbol
-
-**Tool:** `jpeg_inspect --validate` can decode, but need coefficient extraction
-
-### 2.2 Entropy Calculation
-
-Calculate theoretical minimum bits for each component's data:
-```
-H(X) = -Σ p(x) log2(p(x))
-```
-
-Compare actual bits used vs theoretical minimum.
-
-## Phase 3: Zero-Bias Investigation
-
-### 3.1 Verify Zero-Bias Constants
-
-Check that XYB zero-bias matches C++:
 ```rust
-// Rust (quant/mod.rs:167-175)
-pub const ZERO_BIAS_MUL_XYB: f32 = 0.5;
-pub const ZERO_BIAS_OFFSET_XYB: f32 = 0.5;
+// In EncoderConfig::xyb()
+Self {
+    progressive: true,  // Match C++ default
+    // ...
+}
 ```
 
-Compare with C++ jpegli:
-```cpp
-// lib/jpegli/quant.cc - find XYB zero-bias values
-```
+Or document the difference clearly in the API.
 
-### 3.2 Zero-Bias Application
+## Test Files
 
-Trace the zero-bias application in quantization:
-1. Coefficient value after DCT
-2. Threshold = offset + mul × aq_strength
-3. If |coeff| < threshold → quantize to 0
+- `/mnt/v/output/zenjpeg-xyb-size-explore/cpp_xyb_q90.jpg` - C++ progressive (141,450 bytes)
+- `/mnt/v/output/zenjpeg-xyb-size-explore/rust_xyb_q90.jpg` - Rust baseline (149,490 bytes)
+- `/mnt/v/output/zenjpeg-xyb-size-explore/rust_xyb_prog_q90.jpg` - Rust progressive (141,027 bytes)
 
-Verify formula matches C++ exactly.
-
-## Phase 4: Scan Data Comparison
-
-### 4.1 Extract Raw Scan Data
-
-Strip markers, compare raw entropy-coded data:
-- SOI to SOS: should be nearly identical (quant tables, Huffman tables)
-- SOS to EOI: entropy-coded coefficients
-
-**Size breakdown expected:**
-- Headers/markers: ~500-1000 bytes (should match)
-- Scan data: remaining (where the 5-11% difference is)
-
-### 4.2 Progressive vs Baseline
-
-If using progressive:
-- Compare scan ordering
-- Compare coefficient ranges per scan
-- DC scans vs AC scans
-
-## Phase 5: Component-Specific Analysis
-
-### 5.1 Isolate Each Channel
-
-Encode synthetic single-channel images:
-- Uniform X channel, varying Y/B
-- etc.
-
-Identify which channel(s) contribute most to size difference.
-
-### 5.2 Edge Block Analysis
-
-The CLAUDE.md notes "block patterns in R/B channels" in visual diffs.
-- Compare edge block handling
-- Verify padding/replication behavior
-
-## Diagnostic Commands
+## Diagnostic Tools Used
 
 ```bash
-# Existing tools
-cargo run --release --example xyb_parity_test
-cargo run --release --example xyb_cpp_comparison
-cargo run --release --example xyb_dc_debug
-cargo run --release --example compare_xyb_constants
+# Inspect JPEG structure
+cargo run --release --example jpeg_inspect -- --quant <file.jpg>
 
-# Quick size comparison
-just xyb-diff ~/work/codec-eval/codec-corpus/kodak/1.png
+# Compare progressive XYB
+cargo run --release --example xyb_prog_comparison
 
-# C++ reference encoding
-./internal/jpegli-cpp/build/tools/cjpegli -x -q 90 input.png output_cpp.jpg
+# Generate C++ XYB
+./internal/jpegli-cpp/build/tools/cjpegli --xyb -q 90 input.png output.jpg
 ```
-
-## Success Criteria
-
-Investigation complete when we can explain:
-1. **What** exactly differs (coefficient counts, Huffman efficiency, etc.)
-2. **Why** it differs (different algorithm, constants, edge cases)
-3. **Impact** of each factor on file size
-4. **Action** - fix vs accept as implementation difference
-
-## Files to Examine
-
-### Rust
-- `zenjpeg/src/quant/mod.rs` - Quantization, zero-bias
-- `zenjpeg/src/encode/strip/mod.rs` - Strip processing, quantize_pending_imcu
-- `zenjpeg/src/foundation/simd_types.rs:346` - Zero-bias threshold formula
-- `zenjpeg/src/huffman/` - Huffman table generation
-
-### C++ Reference
-- `internal/jpegli-cpp/lib/jpegli/quant.cc` - kGlobalScaleXYB, kBaseQuantMatrixXYB
-- `internal/jpegli-cpp/lib/jpegli/encode.cc` - XYB sampling factors
-- `internal/jpegli-cpp/lib/jpegli/adaptive_quantization.cc` - AQ for XYB
-
-## Next Steps
-
-1. Start with Phase 1.1 - count non-zero coefficients
-2. If coefficient counts differ significantly, investigate zero-bias
-3. If coefficient counts are similar, investigate Huffman efficiency
-4. Document findings in this file as we go
