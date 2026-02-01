@@ -2,7 +2,8 @@
 
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, PixelLayout, Quality, XybSubsampling,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
+    XybSubsampling,
 };
 #[cfg(feature = "experimental-hybrid-trellis")]
 use super::mozjpeg_compat::TrellisConfig;
@@ -18,7 +19,7 @@ pub struct EncoderConfig {
     /// `None` means use perceptual defaults based on color mode and quality.
     pub(crate) tables: Option<Box<EncodingTables>>,
     pub(crate) progressive: bool,
-    pub(crate) optimize_huffman: bool,
+    pub(crate) huffman: HuffmanStrategy,
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
     pub(crate) restart_interval: u16,
@@ -48,9 +49,6 @@ pub struct EncoderConfig {
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
-    /// Custom Huffman tables for streaming-through encoding (boxed: ~5.7 KB).
-    /// When set, enables single-pass encoding without Huffman optimization.
-    pub(crate) custom_huffman_tables: Option<Box<crate::huffman::optimize::HuffmanTableSet>>,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -149,7 +147,7 @@ impl EncoderConfig {
             quality: Quality::default(),
             tables: None, // Use perceptual defaults
             progressive: false,
-            optimize_huffman: true,
+            huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
             restart_interval: 0,
@@ -167,7 +165,6 @@ impl EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
             segments: None,
-            custom_huffman_tables: None,
         }
     }
 
@@ -196,7 +193,7 @@ impl EncoderConfig {
     pub fn progressive(mut self, enable: bool) -> Self {
         self.progressive = enable;
         if enable {
-            self.optimize_huffman = true;
+            self.huffman = HuffmanStrategy::Optimize;
         }
         self
     }
@@ -209,7 +206,11 @@ impl EncoderConfig {
     /// Note: Progressive mode requires optimized Huffman tables.
     #[must_use]
     pub fn optimize_huffman(mut self, enable: bool) -> Self {
-        self.optimize_huffman = enable;
+        self.huffman = if enable {
+            HuffmanStrategy::Optimize
+        } else {
+            HuffmanStrategy::StandardFixed
+        };
         self
     }
 
@@ -544,7 +545,7 @@ impl EncoderConfig {
         mut self,
         tables: crate::huffman::optimize::HuffmanTableSet,
     ) -> Self {
-        self.custom_huffman_tables = Some(Box::new(tables));
+        self.huffman = HuffmanStrategy::Custom(Box::new(tables));
         self
     }
 
@@ -592,7 +593,7 @@ impl EncoderConfig {
     /// Invalid combinations:
     /// - Progressive mode with disabled Huffman optimization
     pub fn validate(&self) -> Result<()> {
-        if self.progressive && !self.optimize_huffman {
+        if self.progressive && !matches!(self.huffman, HuffmanStrategy::Optimize) {
             return Err(crate::error::Error::invalid_config(
                 "progressive mode requires optimized Huffman tables".into(),
             ));
@@ -704,7 +705,7 @@ impl EncoderConfig {
 
         StreamingEncoder::new(width, height)
             .subsampling(subsampling)
-            .optimize_huffman(self.optimize_huffman)
+            .huffman(self.huffman.clone())
             .estimate_memory_usage()
     }
 
@@ -769,7 +770,7 @@ impl EncoderConfig {
     /// Check if Huffman optimization is enabled.
     #[must_use]
     pub fn is_optimize_huffman(&self) -> bool {
-        self.optimize_huffman
+        matches!(self.huffman, HuffmanStrategy::Optimize)
     }
 
     /// Check if 16-bit quantization tables are allowed.
@@ -897,7 +898,7 @@ mod tests {
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
         assert!(!config.progressive);
-        assert!(config.optimize_huffman);
+        assert!(matches!(config.huffman, HuffmanStrategy::Optimize));
         assert!(matches!(
             config.color_mode,
             ColorMode::YCbCr {
@@ -941,7 +942,7 @@ mod tests {
 
         assert!(matches!(config.quality, Quality::ApproxJpegli(85.0)));
         assert!(config.progressive);
-        assert!(config.optimize_huffman); // auto-enabled by progressive
+        assert!(matches!(config.huffman, HuffmanStrategy::Optimize)); // auto-enabled by progressive
         assert!(matches!(
             config.color_mode,
             ColorMode::YCbCr {
@@ -960,14 +961,14 @@ mod tests {
             .optimize_huffman(false)
             .progressive(true);
 
-        assert!(config.optimize_huffman);
+        assert!(matches!(config.huffman, HuffmanStrategy::Optimize));
     }
 
     #[test]
     fn test_validation_progressive_huffman() {
         let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         config.progressive = true;
-        config.optimize_huffman = false;
+        config.huffman = HuffmanStrategy::StandardFixed;
 
         assert!(config.validate().is_err());
     }

@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 use super::encoder_types::DownsamplingMethod;
+use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
 use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 
@@ -59,8 +60,8 @@ pub struct ComputedConfig {
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub parallel: bool,
-    /// Use optimized Huffman tables
-    pub optimize_huffman: bool,
+    /// Huffman table strategy (Optimize, StandardFixed, or Custom).
+    pub(crate) huffman: HuffmanStrategy,
     /// Chroma downsampling method for subsampled modes (4:2:0, 4:2:2, 4:4:0).
     ///
     /// Controls how chroma planes are downsampled:
@@ -158,7 +159,7 @@ impl Default for ComputedConfig {
             #[cfg(feature = "parallel")]
             parallel: false,
             // Huffman optimization enabled by default (pseudo-symbol 256 approach ensures Kraft sum < 2^16)
-            optimize_huffman: true,
+            huffman: HuffmanStrategy::Optimize,
             // Box filter matches C++ jpegli default
             chroma_downsampling: DownsamplingMethod::Box,
             #[cfg(feature = "experimental-hybrid-trellis")]
