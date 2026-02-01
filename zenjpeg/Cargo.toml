@@ -13,13 +13,22 @@ authors = ["Lilith River <lilith@imazen.io>"]
 rust-version = "1.92"
 exclude = [
     "tests/",
+    "test_cache/",
     "benches/",
     "examples/",
     "docs/",
-    "encode_benchmark_results.csv",
+    "fuzz/",
+    "scripts/",
+    "reports/",
+    "*.log",
+    "*.csv",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
     "refactor.md",
     "xyb.md",
     "QUALITY_INVESTIGATION.md",
+    ".gitignore",
 ]
 
 [lib]
