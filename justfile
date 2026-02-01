@@ -116,6 +116,10 @@ wasm-dct:
     cargo run --release -p zenjpeg --example wasm_dct_bench \
         --target wasm32-wasip1 --no-default-features --features std
 
+# Gather Huffman frequencies from codec-corpus (all modes × all qualities)
+gather-huffman-freq:
+    cargo run --release -p zenjpeg --example gather_corpus_frequencies
+
 # WASM magetypes vs wide benchmark
 wasm-magetypes:
     CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --wasm simd" \

@@ -20,7 +20,7 @@ use wide::{i16x8, CmpEq};
 ///
 /// Contains the raw symbol frequencies for each of the 4 Huffman tables
 /// (DC luma, AC luma, DC chroma, AC chroma). These can be aggregated
-/// across multiple images to build corpus-trained tables.
+/// across multiple images to build optimized tables.
 #[derive(Clone, Debug)]
 pub struct HuffmanSymbolFrequencies {
     /// DC luminance symbol frequencies
@@ -71,6 +71,47 @@ impl HuffmanSymbolFrequencies {
             (
                 self.dc_chroma.generate_table_with_method(huffman_method)?,
                 self.ac_chroma.generate_table_with_method(huffman_method)?,
+            )
+        };
+
+        Ok(HuffmanTableSet {
+            dc_luma,
+            ac_luma,
+            dc_chroma,
+            ac_chroma,
+        })
+    }
+
+    /// Generates a `HuffmanTableSet` using the specified algorithm.
+    pub fn generate_tables_with_method(
+        &self,
+        method: crate::types::HuffmanMethod,
+    ) -> Result<HuffmanTableSet> {
+        let dc_luma = self.dc_luma.generate_table_with_method(method)?;
+        let ac_luma = self.ac_luma.generate_table_with_method(method)?;
+
+        let (dc_chroma, ac_chroma) = if self.dc_chroma.is_empty_histogram() {
+            use crate::huffman::optimize::OptimizedTable;
+            use crate::huffman::{
+                STD_AC_CHROMINANCE_BITS, STD_AC_CHROMINANCE_VALUES, STD_DC_CHROMINANCE_BITS,
+                STD_DC_CHROMINANCE_VALUES,
+            };
+            (
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_dc_chrominance().clone(),
+                    bits: STD_DC_CHROMINANCE_BITS,
+                    values: STD_DC_CHROMINANCE_VALUES.to_vec(),
+                },
+                OptimizedTable {
+                    table: HuffmanEncodeTable::std_ac_chrominance().clone(),
+                    bits: STD_AC_CHROMINANCE_BITS,
+                    values: STD_AC_CHROMINANCE_VALUES.to_vec(),
+                },
+            )
+        } else {
+            (
+                self.dc_chroma.generate_table_with_method(method)?,
+                self.ac_chroma.generate_table_with_method(method)?,
             )
         };
 
@@ -652,6 +693,107 @@ impl ComputedConfig {
         let ac_table = ac_freq.generate_table_with_method(huffman_method)?;
 
         Ok((dc_table, ac_table))
+    }
+
+    /// Like [`Self::build_optimized_tables_xyb_raster`], but also returns the
+    /// raw frequency counters for multi-image aggregation.
+    ///
+    /// The returned `HuffmanSymbolFrequencies` stores XYB's shared DC/AC
+    /// frequencies in the `dc_luma`/`ac_luma` slots. The `dc_chroma` and
+    /// `ac_chroma` slots are empty (XYB uses a single table pair for all
+    /// three components).
+    pub(crate) fn build_optimized_tables_xyb_raster_with_counts(
+        &self,
+        x_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        y_blocks: &[[i16; DCT_BLOCK_SIZE]],
+        b_blocks: &[[i16; DCT_BLOCK_SIZE]],
+    ) -> Result<(
+        crate::huffman::optimize::OptimizedTable,
+        crate::huffman::optimize::OptimizedTable,
+        Box<HuffmanSymbolFrequencies>,
+    )> {
+        let mut dc_freq = FrequencyCounter::new();
+        let mut ac_freq = FrequencyCounter::new();
+
+        let width = self.width as usize;
+        let height = self.height as usize;
+
+        let xy_blocks_w = (width + 7) / 8;
+        let xy_blocks_h = (height + 7) / 8;
+        let b_blocks_w = (width + 15) / 16;
+        let b_blocks_h = (height + 15) / 16;
+        let mcu_h = (xy_blocks_w + 1) / 2;
+        let mcu_v = (xy_blocks_h + 1) / 2;
+
+        const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
+
+        let mut prev_dc_x: i16 = 0;
+        let mut prev_dc_y: i16 = 0;
+        let mut prev_dc_b: i16 = 0;
+
+        for mcu_y in 0..mcu_v {
+            for mcu_x in 0..mcu_h {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            &x_blocks[by * xy_blocks_w + bx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        Self::collect_block_frequencies(
+                            block,
+                            prev_dc_x,
+                            &mut dc_freq,
+                            &mut ac_freq,
+                        );
+                        prev_dc_x = block[0];
+                    }
+                }
+
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let bx = mcu_x * 2 + dx;
+                        let by = mcu_y * 2 + dy;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            &y_blocks[by * xy_blocks_w + bx]
+                        } else {
+                            &ZERO_BLOCK
+                        };
+                        Self::collect_block_frequencies(
+                            block,
+                            prev_dc_y,
+                            &mut dc_freq,
+                            &mut ac_freq,
+                        );
+                        prev_dc_y = block[0];
+                    }
+                }
+
+                let b_block = if mcu_x < b_blocks_w && mcu_y < b_blocks_h {
+                    &b_blocks[mcu_y * b_blocks_w + mcu_x]
+                } else {
+                    &ZERO_BLOCK
+                };
+                Self::collect_block_frequencies(b_block, prev_dc_b, &mut dc_freq, &mut ac_freq);
+                prev_dc_b = b_block[0];
+            }
+        }
+
+        let huffman_method = crate::types::HuffmanMethod::JpegliCreateTree;
+        let dc_table = dc_freq.generate_table_with_method(huffman_method)?;
+        let ac_table = ac_freq.generate_table_with_method(huffman_method)?;
+
+        // Store shared XYB frequencies in the luma slots; chroma slots stay empty.
+        let frequencies = Box::new(HuffmanSymbolFrequencies {
+            dc_luma: dc_freq,
+            ac_luma: ac_freq,
+            dc_chroma: FrequencyCounter::new(),
+            ac_chroma: FrequencyCounter::new(),
+        });
+
+        Ok((dc_table, ac_table, frequencies))
     }
 
     /// Encodes XYB raster-ordered blocks using optimized Huffman tables.
