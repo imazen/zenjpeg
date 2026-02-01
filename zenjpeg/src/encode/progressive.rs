@@ -287,7 +287,16 @@ impl ComputedConfig {
         let num_components = if is_color { 3 } else { 1 };
 
         // Define progressive scan script
-        let scans = self.get_progressive_scan_script(is_color);
+        let scans = if self.optimize_scans && !self.use_xyb {
+            super::scan_optimize::optimize_scan_script(
+                y_blocks,
+                cb_blocks,
+                cr_blocks,
+                num_components as u8,
+            )?
+        } else {
+            self.get_progressive_scan_script(is_color)
+        };
 
         // ========== CREATE CONTEXT CONFIG ==========
         let context_config = ContextConfig::for_progressive(

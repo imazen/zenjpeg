@@ -49,6 +49,10 @@ pub struct EncoderConfig {
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
+    /// Optimize progressive scan script for minimum file size.
+    /// When enabled, tries 64 candidate scan configurations and picks the smallest.
+    /// Automatically enables progressive mode. Skipped for XYB.
+    pub(crate) optimize_scans: bool,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -165,6 +169,7 @@ impl EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,
             segments: None,
+            optimize_scans: false,
         }
     }
 
@@ -198,7 +203,27 @@ impl EncoderConfig {
         self
     }
 
-    /// Enable or disable per-image Huffman table optimization.
+    /// Enable progressive scan optimization (mozjpeg-style `optimize_scans`).
+    ///
+    /// Tries 64 candidate progressive scan configurations and picks the smallest.
+    /// This is a **lossless** optimization: decoded pixels are identical, but the
+    /// progressive scan structure is chosen to minimize file size.
+    ///
+    /// Automatically enables progressive mode and optimized Huffman tables.
+    /// Skipped for XYB mode (XYB uses a fixed scan structure).
+    ///
+    /// Expected savings: 1-3% smaller progressive JPEGs.
+    #[must_use]
+    pub fn optimize_scans(mut self, enable: bool) -> Self {
+        self.optimize_scans = enable;
+        if enable {
+            self.progressive = true;
+            self.huffman = HuffmanStrategy::Optimize;
+        }
+        self
+    }
+
+    /// Enable or disable Huffman table optimization.
     ///
     /// When enabled (default), a two-pass encode computes optimal Huffman tables
     /// from the image data. This produces the smallest files.
