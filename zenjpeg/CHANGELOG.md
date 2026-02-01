@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-01
+
+### Changed
+
+- **`allow_16bit_quant_tables` now defaults to `false`** to match C++ cjpegli CLI behavior
+  - At very low quality (Q<25), quantization values can exceed 255
+  - With `false` (new default): values are clamped to 255, producing baseline JPEG (SOF0)
+  - With `true`: values up to 32767 are allowed, producing extended JPEG (SOF1) when needed
+  - C++ cjpegli CLI hardcodes `force_baseline=TRUE`, so this matches that behavior
+  - Use `.allow_16bit_quant_tables(true)` to restore previous behavior
+
+### Added
+
+- **Locked values test infrastructure** (`tests/locked_values.rs`)
+  - SHA-256 protected CSV files track expected encoder output hashes
+  - Separate files per SIMD variant (`values_archmage.csv`, `values_wide.csv`)
+  - Compile-time `#[cfg]` selection ensures each build validates its own variant
+  - Requires `REGENERATE_LOCKED_VALUES=1` env var to update (always fails to force hash update)
+
 ## [0.2.0] - 2026-01-23
 
 Renamed from `zenjpeg` with Quick Start documentation.
