@@ -160,7 +160,7 @@ impl EncoderConfig {
             #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
             deringing: true,
-            allow_16bit_quant_tables: true,
+            allow_16bit_quant_tables: false,
             separate_chroma_tables: true, // 3 tables (matches jpegli_set_distance)
             #[cfg(feature = "experimental-hybrid-trellis")]
             trellis: None,

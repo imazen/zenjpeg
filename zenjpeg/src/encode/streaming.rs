@@ -1196,8 +1196,7 @@ impl StreamingEncoder {
         config.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
 
         // Use SOF1 if any quant table needs 16-bit precision
-        let is_extended =
-            y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        let is_extended = y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
         config.write_frame_header_xyb_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {
@@ -1250,15 +1249,17 @@ impl StreamingEncoder {
         strip_output: &crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
         collect_frequencies: bool,
-    ) -> Result<(Vec<u8>, Option<Box<super::blocks::HuffmanSymbolFrequencies>>)> {
+    ) -> Result<(
+        Vec<u8>,
+        Option<Box<super::blocks::HuffmanSymbolFrequencies>>,
+    )> {
         let is_color = !config.pixel_format.is_grayscale();
 
         config.write_header(output)?;
         config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
 
         // Use SOF1 if any quant table needs 16-bit precision
-        let is_extended =
-            y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        let is_extended = y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
         config.write_frame_header_ex(output, is_extended)?;
 
         if matches!(config.huffman, HuffmanStrategy::Optimize) {

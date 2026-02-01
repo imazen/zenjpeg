@@ -2,17 +2,23 @@
 //!
 //! At very low quality settings, quantization values can exceed 255,
 //! requiring 16-bit precision in DQT markers. This test verifies that
-//! our encoder produces 16-bit tables when needed, matching C++ jpegli.
+//! our encoder produces 16-bit tables when enabled.
 //!
 //! ## Behavior
 //!
-//! Controlled by `EncoderConfig::allow_16bit_quant_tables` (default: true):
+//! Controlled by `EncoderConfig::allow_16bit_quant_tables` (default: false):
 //!
 //! - `allow_16bit_quant_tables=true`: Values up to 32767, 16-bit DQT when >255 (SOF1 extended)
-//! - `allow_16bit_quant_tables=false`: Clamp to 255, 8-bit DQT (SOF0 baseline)
+//! - `allow_16bit_quant_tables=false` (default): Clamp to 255, 8-bit DQT (SOF0 baseline)
 //!
 //! The 32767 limit (not 65535) is because quant values are used in signed
 //! arithmetic during DCT coefficient division.
+//!
+//! ## C++ Behavior (2026-02-01)
+//!
+//! C++ cjpegli CLI hardcodes `force_baseline=TRUE`, so it always uses 8-bit tables.
+//! The C++ library API does support 16-bit tables via `jpegli_set_distance(..., FALSE)`,
+//! but this isn't exposed to CLI users. We match the CLI's default behavior.
 //!
 //! Note: DQT extraction also exists in examples/jpeg_inspect.rs. Consider
 //! moving to a shared location if more tests need this functionality.
@@ -192,9 +198,20 @@ fn test_16bit_quant_threshold_calculation() {
     );
 }
 
-/// Helper to encode with v2 API
+/// Helper to encode with v2 API (default 8-bit tables)
 fn encode_test_image(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
     let config = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter);
+    let mut enc = config
+        .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
+        .expect("encoder setup");
+    enc.push_packed(pixels, enough::Unstoppable).expect("push");
+    enc.finish().expect("encode")
+}
+
+/// Helper to encode with 16-bit tables enabled
+fn encode_test_image_16bit(pixels: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
+    let config =
+        EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter).allow_16bit_quant_tables(true);
     let mut enc = config
         .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
         .expect("encoder setup");
@@ -227,30 +244,59 @@ fn test_dqt_extraction_basic() {
     }
 }
 
-/// FAILING TEST: Verify Rust produces 16-bit quant tables at very low quality.
+/// Test that the default behavior clamps quant values to 255 (8-bit tables).
 ///
-/// This test is expected to FAIL until we implement 16-bit table support.
-/// C++ jpegli automatically uses 16-bit tables when any value exceeds 255.
+/// This matches C++ cjpegli's behavior which hardcodes force_baseline=TRUE.
 #[test]
-fn test_rust_produces_16bit_tables_when_needed() {
-    // Use a quality level that definitely needs 16-bit tables
-    // At low quality, jpegli produces quant values >255 which require 16-bit tables
+fn test_default_uses_8bit_tables() {
+    let img = generate_gradient_d(64, 64, 3);
+
+    for quality in [1, 5, 10, 15, 20] {
+        let jpeg = encode_test_image(&img.pixels, 64, 64, quality as f32);
+        let tables = extract_dqt_tables(&jpeg);
+
+        for table in &tables {
+            assert_eq!(
+                table.precision, 0,
+                "Quality {}: default should use 8-bit tables (precision=0)",
+                quality
+            );
+            let max_value = *table.values.iter().max().unwrap();
+            assert!(
+                max_value <= QUANT_MAX_BASELINE,
+                "Quality {}: values should be clamped to 255, got {}",
+                quality,
+                max_value
+            );
+        }
+
+        println!(
+            "Quality {}: {} tables, all 8-bit, max_value={}",
+            quality,
+            tables.len(),
+            tables
+                .iter()
+                .flat_map(|t| t.values.iter())
+                .max()
+                .unwrap_or(&0)
+        );
+    }
+}
+
+/// Test that 16-bit tables are used when explicitly enabled.
+///
+/// With allow_16bit_quant_tables=true, quant values can exceed 255 and
+/// the encoder uses SOF1 (extended sequential) with 16-bit DQT markers.
+#[test]
+fn test_16bit_tables_when_enabled() {
     let img = generate_gradient_d(64, 64, 3);
 
     let mut found_16bit = false;
     let mut found_values_over_255 = false;
 
     for quality in [1, 5, 10, 15, 20] {
-        let jpeg = encode_test_image(&img.pixels, 64, 64, quality as f32);
-
+        let jpeg = encode_test_image_16bit(&img.pixels, 64, 64, quality as f32);
         let tables = extract_dqt_tables(&jpeg);
-
-        // Count values that would have been clamped in old buggy code
-        let values_at_255: usize = tables
-            .iter()
-            .flat_map(|t| t.values.iter())
-            .filter(|&&v| v == 255)
-            .count();
 
         let max_value: u16 = tables
             .iter()
@@ -259,21 +305,18 @@ fn test_rust_produces_16bit_tables_when_needed() {
             .max()
             .unwrap_or(0);
 
+        let has_16bit = tables.iter().any(|t| t.precision == 1);
+
         println!(
-            "Quality {}: {} tables, max_value={}, values_at_255={}, precisions={:?}",
+            "Quality {} (16-bit enabled): {} tables, max_value={}, precisions={:?}",
             quality,
             tables.len(),
             max_value,
-            values_at_255,
             tables.iter().map(|t| t.precision).collect::<Vec<_>>()
         );
 
-        // Check if any table uses 16-bit precision
-        let has_16bit = tables.iter().any(|t| t.precision == 1);
-
         if max_value > QUANT_MAX_BASELINE {
             found_values_over_255 = true;
-            // When we have values >255, we MUST use 16-bit precision
             assert!(
                 has_16bit,
                 "Quality {}: max_value={} > 255 but no 16-bit tables!",
@@ -283,13 +326,6 @@ fn test_rust_produces_16bit_tables_when_needed() {
 
         if has_16bit {
             found_16bit = true;
-            // If using 16-bit, verify no artificial clamping to 255 occurred
-            // (Some values at 255 is fine if that's the natural value, but
-            // having many is suspicious)
-            println!(
-                "  -> Quality {} uses 16-bit tables, max_value={}",
-                quality, max_value
-            );
         }
     }
 

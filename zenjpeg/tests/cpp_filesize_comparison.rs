@@ -81,7 +81,10 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
         .expect("push data");
     let jpeg = enc.finish().expect("finish");
     // Debug: save to file for inspection
-    let _ = fs::write(format!("/tmp/rust_{}x{}_q{}.jpg", width, height, quality as u32), &jpeg);
+    let _ = fs::write(
+        format!("/tmp/rust_{}x{}_q{}.jpg", width, height, quality as u32),
+        &jpeg,
+    );
     jpeg
 }
 

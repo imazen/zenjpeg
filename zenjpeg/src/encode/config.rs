@@ -172,7 +172,7 @@ impl Default for ComputedConfig {
             original_height: None,
             // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
             // Set to false only for compatibility with very old decoders
-            allow_16bit_quant_tables: true,
+            allow_16bit_quant_tables: false,
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
             #[cfg(feature = "experimental-hybrid-trellis")]
