@@ -27,8 +27,8 @@ const OUTPUT_DIR: &str = "/mnt/v/output/zenjpeg/huffman-freq";
 
 // Q0-Q85 step 5, Q89-Q100 step 1
 const QUALITY_TIERS: &[u8] = &[
-    0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 89, 90, 91, 92, 93,
-    94, 95, 96, 97, 98, 99, 100,
+    0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 89, 90, 91, 92, 93, 94,
+    95, 96, 97, 98, 99, 100,
 ];
 
 /// A training corpus from codec-corpus.
@@ -158,7 +158,11 @@ fn main() -> Result<()> {
     for corpus in CORPORA {
         let dir = PathBuf::from(CODEC_CORPUS).join(corpus.rel_path);
         if !dir.is_dir() {
-            eprintln!("WARNING: Corpus '{}' not found at {}", corpus.name, dir.display());
+            eprintln!(
+                "WARNING: Corpus '{}' not found at {}",
+                corpus.name,
+                dir.display()
+            );
             continue;
         }
         let images = load_image_list(&dir)?;
@@ -196,11 +200,7 @@ fn main() -> Result<()> {
         println!("--- {} ({} images) ---\n", corpus.name, images.len());
 
         for (mode_idx, &mode) in Mode::ALL.iter().enumerate() {
-            let mode_result = process_corpus_mode(
-                images,
-                mode,
-                &mut encodes_done,
-            )?;
+            let mode_result = process_corpus_mode(images, mode, &mut encodes_done)?;
 
             // Save per-corpus frequencies
             let corpus_dir = PathBuf::from(OUTPUT_DIR)
@@ -225,7 +225,9 @@ fn main() -> Result<()> {
     println!("--- Saving aggregated frequencies ---\n");
     for (mode_idx, &mode) in Mode::ALL.iter().enumerate() {
         if let Some(ref agg) = aggregated[mode_idx] {
-            let agg_dir = PathBuf::from(OUTPUT_DIR).join("aggregated").join(mode.dir_name());
+            let agg_dir = PathBuf::from(OUTPUT_DIR)
+                .join("aggregated")
+                .join(mode.dir_name());
             fs::create_dir_all(&agg_dir)?;
             save_frequencies_json(
                 &agg_dir.join("raw_frequencies.json"),
@@ -333,10 +335,7 @@ fn encode_with_frequencies(
 }
 
 /// Aggregate frequency data from one corpus-mode into the running total.
-fn aggregate_into(
-    target: &mut Option<Vec<QualityFrequencies>>,
-    source: &[QualityFrequencies],
-) {
+fn aggregate_into(target: &mut Option<Vec<QualityFrequencies>>, source: &[QualityFrequencies]) {
     match target {
         None => {
             // Clone the source as our starting point

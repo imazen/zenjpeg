@@ -36,6 +36,19 @@ impl OptimizedTable {
         })
     }
 
+    /// Creates an optimized table from bits array and values slice.
+    ///
+    /// Convenience for constructing from static/const data.
+    pub fn from_bits_values_static(bits: [u8; 16], values: &[u8]) -> Self {
+        let table = HuffmanEncodeTable::from_bits_values(&bits, values)
+            .expect("static corpus table data is valid");
+        Self {
+            table,
+            bits,
+            values: values.to_vec(),
+        }
+    }
+
     /// Returns the code and length for a symbol.
     #[inline]
     pub fn encode(&self, symbol: u8) -> (u32, u8) {
