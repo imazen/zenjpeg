@@ -61,8 +61,18 @@ impl<'a> JpegParser<'a> {
             for i in 0..self.num_components as usize {
                 let h_samp = self.components[i].h_samp_factor as usize;
                 let v_samp = self.components[i].v_samp_factor as usize;
-                let comp_blocks_h = checked_size_2d(mcu_cols, h_samp)?;
-                let comp_blocks_v = checked_size_2d(mcu_rows, v_samp)?;
+                // Calculate block counts from image dimensions, NOT MCU grid.
+                // For small images, MCU-based calculation over-counts blocks.
+                // Formula: blocks = ceil(pixels * samp_factor / max_samp_factor / 8)
+                let width = self.width as usize;
+                let height = self.height as usize;
+                let max_h = max_h_samp as usize;
+                let max_v = max_v_samp as usize;
+                // Scaled dimensions for this component
+                let scaled_w = (width * h_samp + max_h - 1) / max_h;
+                let scaled_h = (height * v_samp + max_v - 1) / max_v;
+                let comp_blocks_h = (scaled_w + 7) / 8;
+                let comp_blocks_v = (scaled_h + 7) / 8;
                 let num_blocks = checked_size_2d(comp_blocks_h, comp_blocks_v)?;
                 self.coeffs.push(try_alloc_dct_blocks(
                     num_blocks,
@@ -142,8 +152,15 @@ impl<'a> JpegParser<'a> {
                 let (comp_idx, dc_table, _ac_table) = scan_components[0];
                 let h_samp = self.components[comp_idx].h_samp_factor as usize;
                 let v_samp = self.components[comp_idx].v_samp_factor as usize;
-                let comp_blocks_h = mcu_cols * h_samp;
-                let comp_blocks_v = mcu_rows * v_samp;
+                // Calculate block counts from image dimensions (not MCU grid)
+                let width = self.width as usize;
+                let height = self.height as usize;
+                let max_h = max_h_samp as usize;
+                let max_v = max_v_samp as usize;
+                let scaled_w = (width * h_samp + max_h - 1) / max_h;
+                let scaled_h = (height * v_samp + max_v - 1) / max_v;
+                let comp_blocks_h = (scaled_w + 7) / 8;
+                let comp_blocks_v = (scaled_h + 7) / 8;
                 let total_blocks = comp_blocks_h * comp_blocks_v;
 
                 for block_idx in 0..total_blocks {
@@ -197,12 +214,24 @@ impl<'a> JpegParser<'a> {
                         for (comp_idx, dc_table, _ac_table) in scan_components {
                             let h_samp = self.components[*comp_idx].h_samp_factor as usize;
                             let v_samp = self.components[*comp_idx].v_samp_factor as usize;
-                            let comp_blocks_h = mcu_cols * h_samp;
+                            // Calculate block counts from image dimensions
+                            let width = self.width as usize;
+                            let height = self.height as usize;
+                            let max_h = max_h_samp as usize;
+                            let max_v = max_v_samp as usize;
+                            let scaled_w = (width * h_samp + max_h - 1) / max_h;
+                            let scaled_h = (height * v_samp + max_v - 1) / max_v;
+                            let comp_blocks_h = (scaled_w + 7) / 8;
+                            let comp_blocks_v = (scaled_h + 7) / 8;
 
                             for v in 0..v_samp {
                                 for h in 0..h_samp {
                                     let block_x = mcu_x * h_samp + h;
                                     let block_y = mcu_y * v_samp + v;
+                                    // Skip blocks beyond the actual component dimensions
+                                    if block_x >= comp_blocks_h || block_y >= comp_blocks_v {
+                                        continue;
+                                    }
                                     let block_idx = block_y * comp_blocks_h + block_x;
 
                                     if is_first_scan {
@@ -254,9 +283,16 @@ impl<'a> JpegParser<'a> {
             let v_samp = self.components[comp_idx].v_samp_factor as usize;
 
             // For non-interleaved AC scans, blocks are encoded in raster order
-            // NOT in interleaved MCU order. Each MCU contains exactly 1 block.
-            let comp_blocks_h = mcu_cols * h_samp;
-            let comp_blocks_v = mcu_rows * v_samp;
+            // NOT in interleaved MCU order.
+            // Calculate block counts from image dimensions (not MCU grid).
+            let width = self.width as usize;
+            let height = self.height as usize;
+            let max_h = max_h_samp as usize;
+            let max_v = max_v_samp as usize;
+            let scaled_w = (width * h_samp + max_h - 1) / max_h;
+            let scaled_h = (height * v_samp + max_v - 1) / max_v;
+            let comp_blocks_h = (scaled_w + 7) / 8;
+            let comp_blocks_v = (scaled_h + 7) / 8;
             let total_blocks = comp_blocks_h * comp_blocks_v;
 
             // Reset MCU count and restart number for AC scan (each scan has its own restart sequence)
