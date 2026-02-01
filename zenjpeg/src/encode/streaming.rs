@@ -1235,7 +1235,25 @@ impl StreamingEncoder {
                 &ac_table,
             )?;
             Ok((scan_data, frequencies))
+        } else if let HuffmanStrategy::Custom(ref tables) = config.huffman {
+            // Custom corpus tables: XYB uses dc_luma/ac_luma as the shared pair.
+            config.write_huffman_tables_xyb_optimized(output, &tables.dc_luma, &tables.ac_luma);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            let scan_data = config.encode_with_tables_xyb_raster(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &tables.dc_luma,
+                &tables.ac_luma,
+            )?;
+            Ok((scan_data, None))
         } else {
+            // StandardFixed tables
             config.write_huffman_tables(output)?;
 
             if config.restart_interval > 0 {
