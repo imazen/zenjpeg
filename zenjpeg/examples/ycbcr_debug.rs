@@ -8,7 +8,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    
+
     let (rgb, width, height, png_path) = if args.len() > 1 {
         let path = &args[1];
         let (rgb, w, h) = load_png(path);
@@ -31,7 +31,7 @@ fn main() {
         .expect("encoder setup");
     enc.push_packed(&rgb, Unstoppable).expect("push");
     let rust_jpeg = enc.finish().expect("encode");
-    
+
     let rust_path = "/tmp/ycbcr_debug_rust.jpg";
     std::fs::write(rust_path, &rust_jpeg).expect("write");
     println!("Rust: {} bytes", rust_jpeg.len());
@@ -42,14 +42,20 @@ fn main() {
         .args([&png_path, cpp_path, "-q", &quality.to_string()])
         .output()
         .expect("cjpegli");
-    
+
     if !cpp_result.status.success() {
-        eprintln!("cjpegli failed: {}", String::from_utf8_lossy(&cpp_result.stderr));
+        eprintln!(
+            "cjpegli failed: {}",
+            String::from_utf8_lossy(&cpp_result.stderr)
+        );
         return;
     }
     let cpp_jpeg = std::fs::read(cpp_path).expect("read cpp");
     println!("C++:  {} bytes", cpp_jpeg.len());
-    println!("Size diff: {:+.1}%", (rust_jpeg.len() as f64 / cpp_jpeg.len() as f64 - 1.0) * 100.0);
+    println!(
+        "Size diff: {:+.1}%",
+        (rust_jpeg.len() as f64 / cpp_jpeg.len() as f64 - 1.0) * 100.0
+    );
     println!();
 
     // Decode both with djpegli
@@ -69,7 +75,7 @@ fn main() {
     let mut max_r = 0i32;
     let mut max_g = 0i32;
     let mut max_b = 0i32;
-    
+
     for i in 0..(width * height) {
         let idx = i * 3;
         let dr = (rust_decoded[idx] as i32 - cpp_decoded[idx] as i32).abs();
@@ -82,9 +88,13 @@ fn main() {
         max_g = max_g.max(dg);
         max_b = max_b.max(db);
     }
-    
-    println!("Mean |diff|: R={:.3}, G={:.3}, B={:.3}", 
-        total_r / pixels, total_g / pixels, total_b / pixels);
+
+    println!(
+        "Mean |diff|: R={:.3}, G={:.3}, B={:.3}",
+        total_r / pixels,
+        total_g / pixels,
+        total_b / pixels
+    );
     println!("Max  |diff|: R={}, G={}, B={}", max_r, max_g, max_b);
 }
 
@@ -94,7 +104,11 @@ fn load_png(path: &str) -> (Vec<u8>, usize, usize) {
     let mut reader = decoder.read_info().expect("read info");
     let mut buf = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).expect("decode");
-    (buf[..info.buffer_size()].to_vec(), info.width as usize, info.height as usize)
+    (
+        buf[..info.buffer_size()].to_vec(),
+        info.width as usize,
+        info.height as usize,
+    )
 }
 
 fn decode_with_djpegli(jpeg_path: &str, png_path: &str) {
@@ -103,6 +117,9 @@ fn decode_with_djpegli(jpeg_path: &str, png_path: &str) {
         .output()
         .expect("djpegli");
     if !result.status.success() {
-        eprintln!("djpegli failed: {}", String::from_utf8_lossy(&result.stderr));
+        eprintln!(
+            "djpegli failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
 }

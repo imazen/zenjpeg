@@ -55,7 +55,7 @@ fn main() {
         }
 
         // RST markers (no length)
-        if marker >= 0xD0 && marker <= 0xD7 {
+        if (0xD0..=0xD7).contains(&marker) {
             continue;
         }
 

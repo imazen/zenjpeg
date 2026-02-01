@@ -825,11 +825,7 @@ fn upsample_vertical_row_avx2(
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[arcane]
-fn upsample_horizontal_row_avx2(
-    _token: archmage::Avx2Token,
-    input: &[i16],
-    output: &mut [i16],
-) {
+fn upsample_horizontal_row_avx2(_token: archmage::Avx2Token, input: &[i16], output: &mut [i16]) {
     #[cfg(target_arch = "x86")]
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]

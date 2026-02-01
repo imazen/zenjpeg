@@ -13,7 +13,10 @@ use zenjpeg::quant::aq::simd::{
 use zenjpeg::quant::aq::simd::mage_pre_erosion_row_padded;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{arcane, mem::avx, Avx2FmaToken, HasAvx2, HasFma, SimdToken};
+use archmage::{arcane, SimdToken, X64V3Token};
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use zenjpeg::encode::mage_simd::mage_pre_erosion_pixel_x8;
@@ -24,8 +27,8 @@ use std::arch::x86_64::*;
 /// Archmage version of pre_erosion_row - mirrors production loop structure
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[arcane]
-fn mage_pre_erosion_row<T: HasAvx2 + HasFma + Copy>(
-    token: T,
+fn mage_pre_erosion_row(
+    token: X64V3Token,
     row: &[f32],
     row_above: &[f32],
     row_below: &[f32],
@@ -42,31 +45,38 @@ fn mage_pre_erosion_row<T: HasAvx2 + HasFma + Copy>(
         let x = chunk * 8;
 
         // Load center pixels
-        let pixels = avx::_mm256_loadu_ps(token, (&row[x..x + 8]).try_into().unwrap());
+        let pixels =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x..x + 8]).unwrap());
 
         // Load neighbors (simplified - skip boundary handling for benchmark)
         let left = if x == 0 {
-            avx::_mm256_loadu_ps(token, (&row[0..8]).try_into().unwrap())
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[0..8]).unwrap())
         } else {
-            avx::_mm256_loadu_ps(token, (&row[x - 1..x + 7]).try_into().unwrap())
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x - 1..x + 7]).unwrap())
         };
 
         let right = if x + 9 > width {
-            avx::_mm256_loadu_ps(token, (&row[x..x + 8]).try_into().unwrap())
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x..x + 8]).unwrap())
         } else {
-            avx::_mm256_loadu_ps(token, (&row[x + 1..x + 9]).try_into().unwrap())
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[x + 1..x + 9]).unwrap())
         };
 
-        let top = avx::_mm256_loadu_ps(token, (&row_above[x..x + 8]).try_into().unwrap());
-        let bottom = avx::_mm256_loadu_ps(token, (&row_below[x..x + 8]).try_into().unwrap());
+        let top =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_above[x..x + 8]).unwrap());
+        let bottom =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_below[x..x + 8]).unwrap());
 
         // Compute using archmage primitive
         let result = mage_pre_erosion_pixel_x8(token, pixels, left, right, top, bottom);
 
         // Load existing, add result, store back
-        let existing = avx::_mm256_loadu_ps(token, (&output[x..x + 8]).try_into().unwrap());
+        let existing =
+            safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&output[x..x + 8]).unwrap());
         let sum = _mm256_add_ps(existing, result);
-        avx::_mm256_storeu_ps(token, (&mut output[x..x + 8]).try_into().unwrap(), sum);
+        safe_simd::_mm256_storeu_ps(
+            <&mut [f32; 8]>::try_from(&mut output[x..x + 8]).unwrap(),
+            sum,
+        );
     }
 }
 
@@ -94,7 +104,7 @@ fn bench_pre_erosion_row(c: &mut Criterion) {
         });
 
         #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-        if let Some(token) = Avx2FmaToken::try_new() {
+        if let Some(token) = X64V3Token::try_new() {
             let mut output_mage = vec![0.0f32; width];
             group.bench_function("archmage loop", |b| {
                 b.iter(|| {
@@ -158,7 +168,7 @@ fn bench_pre_erosion_row_padded(c: &mut Criterion) {
         });
 
         #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-        if let Some(token) = Avx2FmaToken::try_new() {
+        if let Some(token) = X64V3Token::try_new() {
             let mut output_mage = vec![0.0f32; width];
             group.bench_function("archmage padded", |b| {
                 b.iter(|| {

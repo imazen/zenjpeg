@@ -1309,8 +1309,16 @@ impl StripProcessor {
 
             // Quantize Cr blocks
             // For XYB mode, use b_blocks_h/b_blocks_v (B channel is 2x2 downsampled)
-            let cr_blocks_h = if self.use_xyb { self.b_blocks_h } else { c_blocks_h };
-            let cr_blocks_v = if self.use_xyb { self.b_blocks_v } else { c_blocks_v };
+            let cr_blocks_h = if self.use_xyb {
+                self.b_blocks_h
+            } else {
+                c_blocks_h
+            };
+            let cr_blocks_v = if self.use_xyb {
+                self.b_blocks_v
+            } else {
+                c_blocks_v
+            };
             let global_chroma_by_cr = self.cr_blocks.len() / cr_blocks_h.max(1);
             for (i, dct) in self.pending_cr_blocks[buffer_idx].iter().enumerate() {
                 let bx = i % cr_blocks_h.max(1);

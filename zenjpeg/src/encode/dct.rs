@@ -235,9 +235,9 @@ pub(crate) mod simd {
 
     // Token-gated SIMD types for AVX2+FMA - safe wrappers around intrinsics
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    use magetypes::simd::f32x8 as mf32x8;
-    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     use archmage::SimdToken;
+    #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+    use magetypes::simd::f32x8 as mf32x8;
 
     // SIMD versions of WC constants for parallel DCT
     // Note: The parallel DCT approach has poor cache locality and doesn't
@@ -610,12 +610,7 @@ pub(crate) mod simd {
     /// DCT for N=4 on magetypes f32x8 vectors with FMA.
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
     #[inline(always)]
-    fn dct1d_4_mage(
-        m: &mut [mf32x8; 4],
-        wc4_0: mf32x8,
-        wc4_1: mf32x8,
-        sqrt2: mf32x8,
-    ) {
+    fn dct1d_4_mage(m: &mut [mf32x8; 4], wc4_0: mf32x8, wc4_1: mf32x8, sqrt2: mf32x8) {
         // AddReverse<2>
         let t0 = m[0] + m[3];
         let t1 = m[1] + m[2];

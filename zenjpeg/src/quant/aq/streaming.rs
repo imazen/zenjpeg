@@ -45,7 +45,7 @@ use super::simd::mage_per_block_modulations_row;
 // than scalar due to function call overhead. Would need true SIMD partial sort.
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{X64V3Token, SimdToken};
+use archmage::{SimdToken, X64V3Token};
 
 /// Streaming AQ with rolling buffers - low memory, high performance.
 ///

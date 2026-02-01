@@ -25,9 +25,9 @@
 
 #![cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 
-use safe_unaligned_simd::x86_64 as safe_simd;
 use archmage::{arcane, X64V3Token, X64V4Token};
 use core::arch::x86_64::*;
+use safe_unaligned_simd::x86_64 as safe_simd;
 
 // Re-export Desktop64 for callers
 pub use archmage::Desktop64;
@@ -238,11 +238,7 @@ fn mage_dct1d_8_inner(token: X64V3Token, m: &mut [__m256; 8]) {
 /// ```
 #[arcane]
 #[inline]
-pub fn mage_forward_dct_8x8(
-    token: X64V3Token,
-    input: &[f32; 64],
-    output: &mut [f32; 64],
-) {
+pub fn mage_forward_dct_8x8(token: X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
     let scale = _mm256_set1_ps(1.0 / 8.0);
 
     // Load 8 rows using safe SIMD load operations
@@ -490,10 +486,7 @@ fn mage_dct1d_2_avx512_inner(_token: X64V4Token, m0: &mut __m512, m1: &mut __m51
 /// AVX-512 DCT for N=4 using FMA
 #[arcane]
 #[inline]
-fn mage_dct1d_4_avx512_inner(
-    token: X64V4Token,
-    m: &mut [__m512; 4],
-) {
+fn mage_dct1d_4_avx512_inner(token: X64V4Token, m: &mut [__m512; 4]) {
     let wc4_0 = _mm512_set1_ps(WC4_0);
     let wc4_1 = _mm512_set1_ps(WC4_1);
     let sqrt2 = _mm512_set1_ps(SQRT2);
@@ -533,10 +526,7 @@ fn mage_dct1d_4_avx512_inner(
 /// (8 from block A, 8 from block B).
 #[arcane]
 #[inline]
-fn mage_dct1d_8_avx512_inner(
-    token: X64V4Token,
-    m: &mut [__m512; 8],
-) {
+fn mage_dct1d_8_avx512_inner(token: X64V4Token, m: &mut [__m512; 8]) {
     let wc8_0 = _mm512_set1_ps(WC8_0);
     let wc8_1 = _mm512_set1_ps(WC8_1);
     let wc8_2 = _mm512_set1_ps(WC8_2);
@@ -706,14 +696,8 @@ pub fn mage_forward_dct_8x8_dual(
         let lo = _mm512_castps512_ps256(scaled);
         let hi = _mm512_extractf32x8_ps::<1>(scaled);
 
-        safe_simd::_mm256_storeu_ps(
-            (&mut output_a[i * 8..(i + 1) * 8]).try_into().unwrap(),
-            lo,
-        );
-        safe_simd::_mm256_storeu_ps(
-            (&mut output_b[i * 8..(i + 1) * 8]).try_into().unwrap(),
-            hi,
-        );
+        safe_simd::_mm256_storeu_ps((&mut output_a[i * 8..(i + 1) * 8]).try_into().unwrap(), lo);
+        safe_simd::_mm256_storeu_ps((&mut output_b[i * 8..(i + 1) * 8]).try_into().unwrap(), hi);
     }
 }
 
@@ -797,10 +781,7 @@ pub fn mage_forward_dct_8x8_wide_dual(
     for i in 0..8 {
         let scaled = _mm512_mul_ps(reg[i], scale);
         safe_simd::_mm256_storeu_ps(&mut out_rows_a[i], _mm512_castps512_ps256(scaled));
-        safe_simd::_mm256_storeu_ps(
-            &mut out_rows_b[i],
-            _mm512_extractf32x8_ps::<1>(scaled),
-        );
+        safe_simd::_mm256_storeu_ps(&mut out_rows_b[i], _mm512_extractf32x8_ps::<1>(scaled));
     }
 
     (output_a, output_b)
@@ -1126,11 +1107,9 @@ pub fn mage_hf_modulation_sum_8x8(
 
         // Horizontal differences: |p - p_right| for positions 0..6
         if row_start + 9 <= block.len() {
-            let p =
-                safe_simd::_mm256_loadu_ps(block[row_start..row_start + 8].try_into().unwrap());
-            let p_right = safe_simd::_mm256_loadu_ps(
-                block[row_start + 1..row_start + 9].try_into().unwrap(),
-            );
+            let p = safe_simd::_mm256_loadu_ps(block[row_start..row_start + 8].try_into().unwrap());
+            let p_right =
+                safe_simd::_mm256_loadu_ps(block[row_start + 1..row_start + 9].try_into().unwrap());
             // abs(p - p_right) using andnot with sign mask
             let diff = _mm256_sub_ps(p, p_right);
             let abs_diff = _mm256_andnot_ps(sign_mask, diff);
@@ -1142,9 +1121,8 @@ pub fn mage_hf_modulation_sum_8x8(
         if dy < 7 && y + 1 < img_height {
             let next_row_start = (dy + 1) * stride;
             if row_start + 8 <= block.len() && next_row_start + 8 <= block.len() {
-                let p = safe_simd::_mm256_loadu_ps(
-                    block[row_start..row_start + 8].try_into().unwrap(),
-                );
+                let p =
+                    safe_simd::_mm256_loadu_ps(block[row_start..row_start + 8].try_into().unwrap());
                 let p_below = safe_simd::_mm256_loadu_ps(
                     block[next_row_start..next_row_start + 8]
                         .try_into()
