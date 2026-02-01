@@ -5,7 +5,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use archmage::{mem::avx, Avx2FmaToken, Avx2Token, AvxToken, SimdToken};
+use archmage::{SimdToken, X64V3Token};
+
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
 
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use zenjpeg::encode::mage_simd::{
@@ -33,7 +36,7 @@ fn bench_dct(c: &mut Criterion) {
 
     // Benchmark archmage-simd version
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    if let Some(token) = Avx2FmaToken::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         group.bench_function("archmage-simd", |b| {
             b.iter(|| {
                 let mut output = [0.0f32; 64];
@@ -53,7 +56,7 @@ fn bench_gather_even_odd(c: &mut Criterion) {
     let data: [f32; 16] = std::array::from_fn(|i| i as f32);
 
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    if let Some(token) = Avx2Token::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         group.bench_function("archmage-simd", |b| {
             b.iter(|| {
                 let (evens, odds) = mage_gather_even_odd_x8(token, black_box(&data));
@@ -88,7 +91,7 @@ fn bench_rgb_to_ycbcr(c: &mut Criterion) {
     let b_in = [128.0f32; 8];
 
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    if let Some(token) = Avx2FmaToken::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         group.bench_function("archmage-simd", |bencher| {
             bencher.iter(|| {
                 let mut y = [0.0f32; 8];
@@ -134,21 +137,24 @@ fn bench_transpose(c: &mut Criterion) {
     group.throughput(Throughput::Elements(64));
 
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    if let Some(token) = AvxToken::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         let data: [f32; 64] = std::array::from_fn(|i| i as f32);
 
         group.bench_function("archmage-simd", |b| {
             b.iter(|| {
-                let mut reg: [__m256; 8] = [
-                    avx::_mm256_loadu_ps(token, data[0..8].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[8..16].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[16..24].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[24..32].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[32..40].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[40..48].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[48..56].try_into().unwrap()),
-                    avx::_mm256_loadu_ps(token, data[56..64].try_into().unwrap()),
-                ];
+                // SAFETY: X64V3Token guarantees AVX2 is available
+                let mut reg: [__m256; 8] = unsafe {
+                    [
+                        safe_simd::_mm256_loadu_ps(data[0..8].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[8..16].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[16..24].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[24..32].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[32..40].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[40..48].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[48..56].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(data[56..64].try_into().unwrap()),
+                    ]
+                };
                 mage_transpose_8x8_inplace(token, black_box(&mut reg));
                 black_box(reg)
             })
@@ -177,16 +183,21 @@ fn bench_box_filter(c: &mut Criterion) {
     group.throughput(Throughput::Elements(8));
 
     #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-    if let Some(token) = AvxToken::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         let row0: [f32; 16] = std::array::from_fn(|i| i as f32);
         let row1: [f32; 16] = std::array::from_fn(|i| (i + 16) as f32);
 
         group.bench_function("archmage-simd", |b| {
             b.iter(|| {
-                let row0_evens = avx::_mm256_loadu_ps(token, row0[0..8].try_into().unwrap());
-                let row0_odds = avx::_mm256_loadu_ps(token, row0[8..16].try_into().unwrap());
-                let row1_evens = avx::_mm256_loadu_ps(token, row1[0..8].try_into().unwrap());
-                let row1_odds = avx::_mm256_loadu_ps(token, row1[8..16].try_into().unwrap());
+                // SAFETY: X64V3Token guarantees AVX2 is available
+                let (row0_evens, row0_odds, row1_evens, row1_odds) = unsafe {
+                    (
+                        safe_simd::_mm256_loadu_ps(row0[0..8].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(row0[8..16].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(row1[0..8].try_into().unwrap()),
+                        safe_simd::_mm256_loadu_ps(row1[8..16].try_into().unwrap()),
+                    )
+                };
 
                 let result = mage_box_filter_2x2(
                     token,

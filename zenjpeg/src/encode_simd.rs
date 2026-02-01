@@ -29,13 +29,13 @@ use wide::f32x8;
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 use archmage::{arcane, SimdToken};
 #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
-use safe_unaligned_simd::x86_64 as safe_simd;
-#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
 #[allow(unused_imports)]
 use core::arch::x86_64::{
     __m128, __m128i, __m256, _mm_cvtepu8_epi32, _mm_fmadd_ps, _mm_loadu_si128, _mm_mul_ps,
     _mm_set1_ps, _mm_setr_epi8, _mm_shuffle_epi8, _mm_storeu_ps,
 };
+#[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
+use safe_unaligned_simd::x86_64 as safe_simd;
 
 use crate::foundation::consts::{
     YCBCR_B_TO_CB, YCBCR_B_TO_CR, YCBCR_B_TO_Y, YCBCR_G_TO_CB, YCBCR_G_TO_CR, YCBCR_G_TO_Y,
@@ -1543,13 +1543,7 @@ mod tests {
         let mut cb_avx2 = [0.0f32; 8];
         let mut cr_avx2 = [0.0f32; 8];
 
-        rgb_to_ycbcr_8px_fma(
-            token,
-            &rgb_data,
-            &mut y_avx2,
-            &mut cb_avx2,
-            &mut cr_avx2,
-        );
+        rgb_to_ycbcr_8px_fma(token, &rgb_data, &mut y_avx2, &mut cb_avx2, &mut cr_avx2);
 
         let mut y_scalar = vec![0.0f32; 8];
         let mut cb_scalar = vec![0.0f32; 8];
@@ -1620,13 +1614,7 @@ mod tests {
                     let mut cb_avx2 = [0.0f32; 8];
                     let mut cr_avx2 = [0.0f32; 8];
 
-                    rgb_to_ycbcr_8px_fma(
-                        token,
-                        &rgb_data,
-                        &mut y_avx2,
-                        &mut cb_avx2,
-                        &mut cr_avx2,
-                    );
+                    rgb_to_ycbcr_8px_fma(token, &rgb_data, &mut y_avx2, &mut cb_avx2, &mut cr_avx2);
 
                     let mut y_scalar = vec![0.0f32; 8];
                     let mut cb_scalar = vec![0.0f32; 8];

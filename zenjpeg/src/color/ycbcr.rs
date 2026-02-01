@@ -1248,9 +1248,15 @@ fn ycbcr_planes_i16_to_rgb_u8_avx2(
         let out_offset = chunk * 48;
 
         let (y_vec, cb_vec, cr_vec) = (
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&y_plane[in_offset..in_offset + 16]).unwrap()),
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cb_plane[in_offset..in_offset + 16]).unwrap()),
-            safe_simd::_mm256_loadu_si256(<&[i16; 16]>::try_from(&cr_plane[in_offset..in_offset + 16]).unwrap()),
+            safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&y_plane[in_offset..in_offset + 16]).unwrap(),
+            ),
+            safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&cb_plane[in_offset..in_offset + 16]).unwrap(),
+            ),
+            safe_simd::_mm256_loadu_si256(
+                <&[i16; 16]>::try_from(&cr_plane[in_offset..in_offset + 16]).unwrap(),
+            ),
         );
 
         // Subtract 128 from Cb and Cr

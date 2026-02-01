@@ -7,9 +7,9 @@
 use zenjpeg::decoder::Decoder;
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig};
 use zenjpeg::ultrahdr::{
-    encode_ultrahdr, tonemapper_from_ultrahdr, GainMapConfig, GainMapMemory, HdrOutputFormat,
-    ToneMapConfig, UhdrColorGamut, UhdrColorTransfer, UhdrPixelFormat, UhdrRawImage,
-    UltraHdrExtras, UltraHdrMode, UltraHdrReaderConfig, Unstoppable,
+    encode_ultrahdr, tonemapper_from_ultrahdr, GainMapConfig, ToneMapConfig, UhdrColorGamut,
+    UhdrColorTransfer, UhdrPixelFormat, UhdrRawImage, UltraHdrExtras, UltraHdrMode,
+    UltraHdrReaderConfig, Unstoppable,
 };
 
 /// Create a simple HDR test image (linear RGB float).

@@ -1386,11 +1386,20 @@ pub(crate) mod archmage_impl {
             let buf_x = x + 1; // Data offset due to padding
 
             // Safe slice-based loads via safe_unaligned_simd
-            let pixels = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x..buf_x + 8]).unwrap());
-            let left = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x - 1..buf_x + 7]).unwrap());
-            let right = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x + 1..buf_x + 9]).unwrap());
-            let top = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_above[buf_x..buf_x + 8]).unwrap());
-            let bottom = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row_below[buf_x..buf_x + 8]).unwrap());
+            let pixels =
+                safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&row[buf_x..buf_x + 8]).unwrap());
+            let left = safe_simd::_mm256_loadu_ps(
+                <&[f32; 8]>::try_from(&row[buf_x - 1..buf_x + 7]).unwrap(),
+            );
+            let right = safe_simd::_mm256_loadu_ps(
+                <&[f32; 8]>::try_from(&row[buf_x + 1..buf_x + 9]).unwrap(),
+            );
+            let top = safe_simd::_mm256_loadu_ps(
+                <&[f32; 8]>::try_from(&row_above[buf_x..buf_x + 8]).unwrap(),
+            );
+            let bottom = safe_simd::_mm256_loadu_ps(
+                <&[f32; 8]>::try_from(&row_below[buf_x..buf_x + 8]).unwrap(),
+            );
 
             // base = 0.25 * (left + right + top + bottom)
             let sum_lr = _mm256_add_ps(left, right);
@@ -1421,7 +1430,8 @@ pub(crate) mod archmage_impl {
             let result = _mm256_mul_ps(quarter, sqrt_inner);
 
             // Load existing, add result, store back
-            let existing = safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&output[x..x + 8]).unwrap());
+            let existing =
+                safe_simd::_mm256_loadu_ps(<&[f32; 8]>::try_from(&output[x..x + 8]).unwrap());
             let updated = _mm256_add_ps(existing, result);
             safe_simd::_mm256_storeu_ps(
                 <&mut [f32; 8]>::try_from(&mut output[x..x + 8]).unwrap(),
@@ -1448,14 +1458,7 @@ pub(crate) mod archmage_impl {
             return;
         }
 
-        mage_pre_erosion_row_padded_inner(
-            token,
-            row,
-            row_above,
-            row_below,
-            output,
-            width,
-        );
+        mage_pre_erosion_row_padded_inner(token, row, row_above, row_below, output, width);
 
         // Scalar remainder
         let chunks = width / 8;
@@ -1772,493 +1775,493 @@ pub(crate) mod archmage_impl {
                 // Corner (0,0): center at (cx0, cy0), rows r0/r1/r2
                 let mut sum = 0.0f32;
                 // Load 9 values for corner (0,0)
-                    let v0 = pre_erosion_buffer[r0 + cx0 - 1];
-                    let v1 = pre_erosion_buffer[r0 + cx0];
-                    let v2 = pre_erosion_buffer[r0 + cx0 + 1];
-                    let v3 = pre_erosion_buffer[r1 + cx0 - 1];
-                    let v4 = pre_erosion_buffer[r1 + cx0];
-                    let v5 = pre_erosion_buffer[r1 + cx0 + 1];
-                    let v6 = pre_erosion_buffer[r2 + cx0 - 1];
-                    let v7 = pre_erosion_buffer[r2 + cx0];
-                    let v8 = pre_erosion_buffer[r2 + cx0 + 1];
+                let v0 = pre_erosion_buffer[r0 + cx0 - 1];
+                let v1 = pre_erosion_buffer[r0 + cx0];
+                let v2 = pre_erosion_buffer[r0 + cx0 + 1];
+                let v3 = pre_erosion_buffer[r1 + cx0 - 1];
+                let v4 = pre_erosion_buffer[r1 + cx0];
+                let v5 = pre_erosion_buffer[r1 + cx0 + 1];
+                let v6 = pre_erosion_buffer[r2 + cx0 - 1];
+                let v7 = pre_erosion_buffer[r2 + cx0];
+                let v8 = pre_erosion_buffer[r2 + cx0 + 1];
 
-                    // Find 4 smallest inline using min comparisons
-                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                // Find 4 smallest inline using min comparisons
+                let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
 
-                    // Pass 1: find min
-                    let mut mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.125 * a[mi];
-                    a[mi] = f32::MAX;
+                // Pass 1: find min
+                let mut mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.125 * a[mi];
+                a[mi] = f32::MAX;
 
-                    // Pass 2
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.075 * a[mi];
-                    a[mi] = f32::MAX;
+                // Pass 2
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.075 * a[mi];
+                a[mi] = f32::MAX;
 
-                    // Pass 3
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.06 * a[mi];
-                    a[mi] = f32::MAX;
+                // Pass 3
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.06 * a[mi];
+                a[mi] = f32::MAX;
 
-                    // Pass 4
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.05 * a[mi];
+                // Pass 4
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.05 * a[mi];
 
                 // Corner (1,0): center at (cx1, cy0), rows r0/r1/r2
-                    let v0 = pre_erosion_buffer[r0 + cx1 - 1];
-                    let v1 = pre_erosion_buffer[r0 + cx1];
-                    let v2 = pre_erosion_buffer[r0 + cx1 + 1];
-                    let v3 = pre_erosion_buffer[r1 + cx1 - 1];
-                    let v4 = pre_erosion_buffer[r1 + cx1];
-                    let v5 = pre_erosion_buffer[r1 + cx1 + 1];
-                    let v6 = pre_erosion_buffer[r2 + cx1 - 1];
-                    let v7 = pre_erosion_buffer[r2 + cx1];
-                    let v8 = pre_erosion_buffer[r2 + cx1 + 1];
+                let v0 = pre_erosion_buffer[r0 + cx1 - 1];
+                let v1 = pre_erosion_buffer[r0 + cx1];
+                let v2 = pre_erosion_buffer[r0 + cx1 + 1];
+                let v3 = pre_erosion_buffer[r1 + cx1 - 1];
+                let v4 = pre_erosion_buffer[r1 + cx1];
+                let v5 = pre_erosion_buffer[r1 + cx1 + 1];
+                let v6 = pre_erosion_buffer[r2 + cx1 - 1];
+                let v7 = pre_erosion_buffer[r2 + cx1];
+                let v8 = pre_erosion_buffer[r2 + cx1 + 1];
 
-                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
-                    let mut mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.125 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.075 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.06 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.05 * a[mi];
+                let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                let mut mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.125 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.075 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.06 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.05 * a[mi];
 
                 // Corner (0,1): center at (cx0, cy1), rows r1/r2/r3
-                    let v0 = pre_erosion_buffer[r1 + cx0 - 1];
-                    let v1 = pre_erosion_buffer[r1 + cx0];
-                    let v2 = pre_erosion_buffer[r1 + cx0 + 1];
-                    let v3 = pre_erosion_buffer[r2 + cx0 - 1];
-                    let v4 = pre_erosion_buffer[r2 + cx0];
-                    let v5 = pre_erosion_buffer[r2 + cx0 + 1];
-                    let v6 = pre_erosion_buffer[r3 + cx0 - 1];
-                    let v7 = pre_erosion_buffer[r3 + cx0];
-                    let v8 = pre_erosion_buffer[r3 + cx0 + 1];
+                let v0 = pre_erosion_buffer[r1 + cx0 - 1];
+                let v1 = pre_erosion_buffer[r1 + cx0];
+                let v2 = pre_erosion_buffer[r1 + cx0 + 1];
+                let v3 = pre_erosion_buffer[r2 + cx0 - 1];
+                let v4 = pre_erosion_buffer[r2 + cx0];
+                let v5 = pre_erosion_buffer[r2 + cx0 + 1];
+                let v6 = pre_erosion_buffer[r3 + cx0 - 1];
+                let v7 = pre_erosion_buffer[r3 + cx0];
+                let v8 = pre_erosion_buffer[r3 + cx0 + 1];
 
-                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
-                    let mut mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.125 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.075 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.06 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.05 * a[mi];
+                let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                let mut mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.125 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.075 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.06 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.05 * a[mi];
 
                 // Corner (1,1): center at (cx1, cy1), rows r1/r2/r3
-                    let v0 = pre_erosion_buffer[r1 + cx1 - 1];
-                    let v1 = pre_erosion_buffer[r1 + cx1];
-                    let v2 = pre_erosion_buffer[r1 + cx1 + 1];
-                    let v3 = pre_erosion_buffer[r2 + cx1 - 1];
-                    let v4 = pre_erosion_buffer[r2 + cx1];
-                    let v5 = pre_erosion_buffer[r2 + cx1 + 1];
-                    let v6 = pre_erosion_buffer[r3 + cx1 - 1];
-                    let v7 = pre_erosion_buffer[r3 + cx1];
-                    let v8 = pre_erosion_buffer[r3 + cx1 + 1];
+                let v0 = pre_erosion_buffer[r1 + cx1 - 1];
+                let v1 = pre_erosion_buffer[r1 + cx1];
+                let v2 = pre_erosion_buffer[r1 + cx1 + 1];
+                let v3 = pre_erosion_buffer[r2 + cx1 - 1];
+                let v4 = pre_erosion_buffer[r2 + cx1];
+                let v5 = pre_erosion_buffer[r2 + cx1 + 1];
+                let v6 = pre_erosion_buffer[r3 + cx1 - 1];
+                let v7 = pre_erosion_buffer[r3 + cx1];
+                let v8 = pre_erosion_buffer[r3 + cx1 + 1];
 
-                    let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
-                    let mut mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.125 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.075 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.06 * a[mi];
-                    a[mi] = f32::MAX;
-                    mi = 0;
-                    if a[1] < a[mi] {
-                        mi = 1;
-                    }
-                    if a[2] < a[mi] {
-                        mi = 2;
-                    }
-                    if a[3] < a[mi] {
-                        mi = 3;
-                    }
-                    if a[4] < a[mi] {
-                        mi = 4;
-                    }
-                    if a[5] < a[mi] {
-                        mi = 5;
-                    }
-                    if a[6] < a[mi] {
-                        mi = 6;
-                    }
-                    if a[7] < a[mi] {
-                        mi = 7;
-                    }
-                    if a[8] < a[mi] {
-                        mi = 8;
-                    }
-                    sum += 0.05 * a[mi];
+                let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                let mut mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.125 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.075 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.06 * a[mi];
+                a[mi] = f32::MAX;
+                mi = 0;
+                if a[1] < a[mi] {
+                    mi = 1;
+                }
+                if a[2] < a[mi] {
+                    mi = 2;
+                }
+                if a[3] < a[mi] {
+                    mi = 3;
+                }
+                if a[4] < a[mi] {
+                    mi = 4;
+                }
+                if a[5] < a[mi] {
+                    mi = 5;
+                }
+                if a[6] < a[mi] {
+                    mi = 6;
+                }
+                if a[7] < a[mi] {
+                    mi = 7;
+                }
+                if a[8] < a[mi] {
+                    mi = 8;
+                }
+                sum += 0.05 * a[mi];
 
                 sum
             } else {
@@ -2280,123 +2283,123 @@ pub(crate) mod archmage_impl {
                         let ry2 = ((cy + 1).clamp(0, max_y) as usize % buffer_rows) * pe_w;
 
                         let v0 = pre_erosion_buffer[ry0 + c0];
-                            let v1 = pre_erosion_buffer[ry0 + c1];
-                            let v2 = pre_erosion_buffer[ry0 + c2];
-                            let v3 = pre_erosion_buffer[ry1 + c0];
-                            let v4 = pre_erosion_buffer[ry1 + c1];
-                            let v5 = pre_erosion_buffer[ry1 + c2];
-                            let v6 = pre_erosion_buffer[ry2 + c0];
-                            let v7 = pre_erosion_buffer[ry2 + c1];
-                            let v8 = pre_erosion_buffer[ry2 + c2];
+                        let v1 = pre_erosion_buffer[ry0 + c1];
+                        let v2 = pre_erosion_buffer[ry0 + c2];
+                        let v3 = pre_erosion_buffer[ry1 + c0];
+                        let v4 = pre_erosion_buffer[ry1 + c1];
+                        let v5 = pre_erosion_buffer[ry1 + c2];
+                        let v6 = pre_erosion_buffer[ry2 + c0];
+                        let v7 = pre_erosion_buffer[ry2 + c1];
+                        let v8 = pre_erosion_buffer[ry2 + c2];
 
-                            let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
-                            let mut mi = 0;
-                            if a[1] < a[mi] {
-                                mi = 1;
-                            }
-                            if a[2] < a[mi] {
-                                mi = 2;
-                            }
-                            if a[3] < a[mi] {
-                                mi = 3;
-                            }
-                            if a[4] < a[mi] {
-                                mi = 4;
-                            }
-                            if a[5] < a[mi] {
-                                mi = 5;
-                            }
-                            if a[6] < a[mi] {
-                                mi = 6;
-                            }
-                            if a[7] < a[mi] {
-                                mi = 7;
-                            }
-                            if a[8] < a[mi] {
-                                mi = 8;
-                            }
-                            sum += 0.125 * a[mi];
-                            a[mi] = f32::MAX;
-                            mi = 0;
-                            if a[1] < a[mi] {
-                                mi = 1;
-                            }
-                            if a[2] < a[mi] {
-                                mi = 2;
-                            }
-                            if a[3] < a[mi] {
-                                mi = 3;
-                            }
-                            if a[4] < a[mi] {
-                                mi = 4;
-                            }
-                            if a[5] < a[mi] {
-                                mi = 5;
-                            }
-                            if a[6] < a[mi] {
-                                mi = 6;
-                            }
-                            if a[7] < a[mi] {
-                                mi = 7;
-                            }
-                            if a[8] < a[mi] {
-                                mi = 8;
-                            }
-                            sum += 0.075 * a[mi];
-                            a[mi] = f32::MAX;
-                            mi = 0;
-                            if a[1] < a[mi] {
-                                mi = 1;
-                            }
-                            if a[2] < a[mi] {
-                                mi = 2;
-                            }
-                            if a[3] < a[mi] {
-                                mi = 3;
-                            }
-                            if a[4] < a[mi] {
-                                mi = 4;
-                            }
-                            if a[5] < a[mi] {
-                                mi = 5;
-                            }
-                            if a[6] < a[mi] {
-                                mi = 6;
-                            }
-                            if a[7] < a[mi] {
-                                mi = 7;
-                            }
-                            if a[8] < a[mi] {
-                                mi = 8;
-                            }
-                            sum += 0.06 * a[mi];
-                            a[mi] = f32::MAX;
-                            mi = 0;
-                            if a[1] < a[mi] {
-                                mi = 1;
-                            }
-                            if a[2] < a[mi] {
-                                mi = 2;
-                            }
-                            if a[3] < a[mi] {
-                                mi = 3;
-                            }
-                            if a[4] < a[mi] {
-                                mi = 4;
-                            }
-                            if a[5] < a[mi] {
-                                mi = 5;
-                            }
-                            if a[6] < a[mi] {
-                                mi = 6;
-                            }
-                            if a[7] < a[mi] {
-                                mi = 7;
-                            }
-                            if a[8] < a[mi] {
-                                mi = 8;
-                            }
-                            sum += 0.05 * a[mi];
+                        let mut a = [v0, v1, v2, v3, v4, v5, v6, v7, v8];
+                        let mut mi = 0;
+                        if a[1] < a[mi] {
+                            mi = 1;
+                        }
+                        if a[2] < a[mi] {
+                            mi = 2;
+                        }
+                        if a[3] < a[mi] {
+                            mi = 3;
+                        }
+                        if a[4] < a[mi] {
+                            mi = 4;
+                        }
+                        if a[5] < a[mi] {
+                            mi = 5;
+                        }
+                        if a[6] < a[mi] {
+                            mi = 6;
+                        }
+                        if a[7] < a[mi] {
+                            mi = 7;
+                        }
+                        if a[8] < a[mi] {
+                            mi = 8;
+                        }
+                        sum += 0.125 * a[mi];
+                        a[mi] = f32::MAX;
+                        mi = 0;
+                        if a[1] < a[mi] {
+                            mi = 1;
+                        }
+                        if a[2] < a[mi] {
+                            mi = 2;
+                        }
+                        if a[3] < a[mi] {
+                            mi = 3;
+                        }
+                        if a[4] < a[mi] {
+                            mi = 4;
+                        }
+                        if a[5] < a[mi] {
+                            mi = 5;
+                        }
+                        if a[6] < a[mi] {
+                            mi = 6;
+                        }
+                        if a[7] < a[mi] {
+                            mi = 7;
+                        }
+                        if a[8] < a[mi] {
+                            mi = 8;
+                        }
+                        sum += 0.075 * a[mi];
+                        a[mi] = f32::MAX;
+                        mi = 0;
+                        if a[1] < a[mi] {
+                            mi = 1;
+                        }
+                        if a[2] < a[mi] {
+                            mi = 2;
+                        }
+                        if a[3] < a[mi] {
+                            mi = 3;
+                        }
+                        if a[4] < a[mi] {
+                            mi = 4;
+                        }
+                        if a[5] < a[mi] {
+                            mi = 5;
+                        }
+                        if a[6] < a[mi] {
+                            mi = 6;
+                        }
+                        if a[7] < a[mi] {
+                            mi = 7;
+                        }
+                        if a[8] < a[mi] {
+                            mi = 8;
+                        }
+                        sum += 0.06 * a[mi];
+                        a[mi] = f32::MAX;
+                        mi = 0;
+                        if a[1] < a[mi] {
+                            mi = 1;
+                        }
+                        if a[2] < a[mi] {
+                            mi = 2;
+                        }
+                        if a[3] < a[mi] {
+                            mi = 3;
+                        }
+                        if a[4] < a[mi] {
+                            mi = 4;
+                        }
+                        if a[5] < a[mi] {
+                            mi = 5;
+                        }
+                        if a[6] < a[mi] {
+                            mi = 6;
+                        }
+                        if a[7] < a[mi] {
+                            mi = 7;
+                        }
+                        if a[8] < a[mi] {
+                            mi = 8;
+                        }
+                        sum += 0.05 * a[mi];
                     }
                 }
 

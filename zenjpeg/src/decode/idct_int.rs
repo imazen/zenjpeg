@@ -420,19 +420,33 @@ mod avx2 {
     /// Load/store operations use safe_unaligned_simd wrappers.
     #[arcane]
     #[allow(unused_assignments)] // pos is incremented in macro but last value is unused
-    pub fn idct_int_avx2(_token: archmage::Avx2Token, in_vector: &mut [i32; 64], out_vector: &mut [i16], stride: usize) {
+    pub fn idct_int_avx2(
+        _token: archmage::Avx2Token,
+        in_vector: &mut [i32; 64],
+        out_vector: &mut [i16],
+        stride: usize,
+    ) {
         // Load all 8 rows
-        let mut row0 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
-        let mut row1 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
-        let mut row2 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap());
-        let mut row3 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap());
-        let mut row4 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap());
-        let mut row5 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap());
-        let mut row6 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap());
-        let mut row7 = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap());
+        let mut row0 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[0..8]).unwrap());
+        let mut row1 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[8..16]).unwrap());
+        let mut row2 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[16..24]).unwrap());
+        let mut row3 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[24..32]).unwrap());
+        let mut row4 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[32..40]).unwrap());
+        let mut row5 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[40..48]).unwrap());
+        let mut row6 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[48..56]).unwrap());
+        let mut row7 =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[56..64]).unwrap());
 
         // Check for DC-only (all AC = 0)
-        let ac_check = safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[1..9]).unwrap());
+        let ac_check =
+            safe_simd::_mm256_loadu_si256(<&[i32; 8]>::try_from(&in_vector[1..9]).unwrap());
         let mut bitmap = _mm256_or_si256(row1, row2);
         bitmap = _mm256_or_si256(bitmap, row3);
         bitmap = _mm256_or_si256(bitmap, row4);
@@ -527,8 +541,8 @@ mod avx2 {
 
         // Transpose
         transpose_8x8_i32(
-            _token,
-            &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6, &mut row7,
+            _token, &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6,
+            &mut row7,
         );
 
         // Second pass (rows)
@@ -536,8 +550,8 @@ mod avx2 {
 
         // Transpose back
         transpose_8x8_i32(
-            _token,
-            &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6, &mut row7,
+            _token, &mut row0, &mut row1, &mut row2, &mut row3, &mut row4, &mut row5, &mut row6,
+            &mut row7,
         );
 
         // Pack and store
@@ -735,7 +749,12 @@ pub fn idct_int_auto(coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) 
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 #[inline]
-pub fn idct_int_avx2_raw(token: archmage::Avx2Token, coeffs: &mut [i32; 64], output: &mut [i16], stride: usize) {
+pub fn idct_int_avx2_raw(
+    token: archmage::Avx2Token,
+    coeffs: &mut [i32; 64],
+    output: &mut [i16],
+    stride: usize,
+) {
     avx2::idct_int_avx2(token, coeffs, output, stride);
 }
 
