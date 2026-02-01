@@ -1120,31 +1120,40 @@ For proxy server efficiency: accurate memory and compute cost estimation before 
 
 ### 16-bit Quantization Tables (IMPORTANT)
 
-**Design difference from C++ cjpegli:**
+**C++ jpegli API supports 16-bit but CLI forces baseline:**
 
-C++ cjpegli ALWAYS clamps quantization values to 255, using 8-bit DQT (SOF0 baseline).
+```cpp
+// API signature - force_baseline controls 8-bit vs 16-bit
+void jpegli_set_distance(j_compress_ptr cinfo, float distance, boolean force_baseline);
+void jpegli_set_quality(j_compress_ptr cinfo, int quality, boolean force_baseline);
 
-zenjpeg by default allows values > 255, using 16-bit DQT (SOF1 extended sequential)
-when any quant value exceeds 255. This happens at moderate quality levels (Q70-Q80)
-for chroma tables due to jpegli's quant table formulas.
-
-**Current behavior:**
-- `allow_16bit_quant_tables = true` (default): Values up to 32767, auto-uses SOF1 when needed
-- `allow_16bit_quant_tables = false`: Clamp to 255, always SOF0 (matches C++ behavior)
-- Precision is determined per-table: 8-bit if max ≤ 255, 16-bit if max > 255
-- We DO automatically use 8-bit when no coefficient needs 16-bit
-
-**Example at Q70:**
-```
-Table 0 (Y):    Max 30   → 8-bit DQT
-Table 1 (Cb):   Max 546  → 16-bit DQT (Rust default) or clamped to 255 (C++ behavior)
-Table 2 (Cr):   Max 560  → 16-bit DQT (Rust default) or clamped to 255 (C++ behavior)
+// Quant value clamping in quant.cc:585
+int quant_max = m->force_baseline ? 255 : 32767U;
 ```
 
-To match C++ file sizes exactly, use `.allow_16bit_quant_tables(false)`.
+The `force_baseline` parameter:
+- `TRUE` (baseline): Clamp quant values to 255, use 8-bit DQT (SOF0)
+- `FALSE` (extended): Allow values up to 32767, use 16-bit DQT when needed (SOF1)
 
-**TODO:** Consider adding automatic downgrade to 8-bit if no table ACTUALLY needs
-values > 255 (currently the quant formulas themselves produce >255 values).
+**C++ cjpegli CLI always uses baseline:**
+- `jxl::extras::EncodeJpeg()` hardcodes `TRUE` (lib/extras/enc/jpegli.cc:470-472)
+- No CLI flag exists to change this
+- Default in `jpegli_create_compress()` is `force_baseline = true`
+
+**zenjpeg behavior:**
+- `allow_16bit_quant_tables = true` (default): Matches `force_baseline = FALSE`
+- `allow_16bit_quant_tables = false`: Matches `force_baseline = TRUE` (cjpegli CLI)
+- Precision is auto-selected per-table: 8-bit if max ≤ 255, 16-bit if max > 255
+- We DO automatically use 8-bit when no coefficient exceeds 255
+
+**Example at Q70 with default settings:**
+```
+Table 0 (Y):    Max 30   → 8-bit DQT (both Rust and C++)
+Table 1 (Cb):   Max 546  → 16-bit DQT (Rust) or clamped to 255 (C++ cjpegli CLI)
+Table 2 (Cr):   Max 560  → 16-bit DQT (Rust) or clamped to 255 (C++ cjpegli CLI)
+```
+
+To match C++ cjpegli CLI file sizes exactly, use `.allow_16bit_quant_tables(false)`.
 
 ## Running Tests
 
