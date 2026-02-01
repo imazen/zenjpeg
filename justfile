@@ -38,18 +38,46 @@ bench-cpp:
 parity:
     cargo test --release -p zenjpeg --test comprehensive_cpp_comparison -- --nocapture --ignored
 
-# XYB per-channel debug (compare Rust vs C++ per-row RGB differences)
-xyb-debug:
-    cargo run --release --example xyb_debug
+# Default image for visual comparisons
+COMPARE_IMAGE := env_var_or_default("COMPARE_IMAGE", "~/work/codec-eval/codec-corpus/kodak/1.png")
 
-# XYB visual diff (side-by-side + difference image)
-xyb-diff:
-    cargo run --release --example xyb_debug
+# XYB per-channel debug (compare Rust vs C++ per-row RGB differences)
+xyb-debug IMAGE=COMPARE_IMAGE:
+    cargo run --release --example xyb_debug -- {{IMAGE}}
+
+# XYB visual diff (C++ | Rust | R diff | G diff | B diff)
+xyb-diff IMAGE=COMPARE_IMAGE:
+    cargo run --release --example xyb_debug -- {{IMAGE}}
+    @# Extract per-channel differences (amplified 10x, shown as grayscale)
     convert /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png \
-        -compose difference -composite -evaluate multiply 10 /tmp/xyb_diff.png
-    montage /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png /tmp/xyb_diff.png \
-        -geometry +4+4 -tile 3x1 -set label '%f' /tmp/xyb_compare.png
+        -compose difference -composite -channel R -separate -evaluate multiply 10 /tmp/xyb_diff_r.png
+    convert /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png \
+        -compose difference -composite -channel G -separate -evaluate multiply 10 /tmp/xyb_diff_g.png
+    convert /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png \
+        -compose difference -composite -channel B -separate -evaluate multiply 10 /tmp/xyb_diff_b.png
+    montage /tmp/xyb_debug_cpp_decoded.png /tmp/xyb_debug_rust_decoded.png \
+        /tmp/xyb_diff_r.png /tmp/xyb_diff_g.png /tmp/xyb_diff_b.png \
+        -geometry +2+2 -tile 5x1 -font Helvetica -pointsize 12 \
+        -label "C++" -label "Rust" -label "ΔR ×10" -label "ΔG ×10" -label "ΔB ×10" \
+        /tmp/xyb_compare.png
     display /tmp/xyb_compare.png &
+
+# YCbCr visual diff (C++ | Rust | R diff | G diff | B diff)
+ycbcr-diff IMAGE=COMPARE_IMAGE:
+    cargo run --release --example ycbcr_debug -- {{IMAGE}}
+    @# Extract per-channel differences (amplified 10x, shown as grayscale)
+    convert /tmp/ycbcr_debug_cpp_decoded.png /tmp/ycbcr_debug_rust_decoded.png \
+        -compose difference -composite -channel R -separate -evaluate multiply 10 /tmp/ycbcr_diff_r.png
+    convert /tmp/ycbcr_debug_cpp_decoded.png /tmp/ycbcr_debug_rust_decoded.png \
+        -compose difference -composite -channel G -separate -evaluate multiply 10 /tmp/ycbcr_diff_g.png
+    convert /tmp/ycbcr_debug_cpp_decoded.png /tmp/ycbcr_debug_rust_decoded.png \
+        -compose difference -composite -channel B -separate -evaluate multiply 10 /tmp/ycbcr_diff_b.png
+    montage /tmp/ycbcr_debug_cpp_decoded.png /tmp/ycbcr_debug_rust_decoded.png \
+        /tmp/ycbcr_diff_r.png /tmp/ycbcr_diff_g.png /tmp/ycbcr_diff_b.png \
+        -geometry +2+2 -tile 5x1 -font Helvetica -pointsize 12 \
+        -label "C++" -label "Rust" -label "ΔR ×10" -label "ΔG ×10" -label "ΔB ×10" \
+        /tmp/ycbcr_compare.png
+    display /tmp/ycbcr_compare.png &
 
 # XYB parity test (size and DSSIM comparison across quality levels)
 xyb-parity:
