@@ -135,20 +135,17 @@ impl StreamingEncoder {
             ));
         }
 
-        // Create strip processor
-        let mut processor = StripProcessor::with_options(
+        // Create strip processor with XYB mode set from the start
+        // (XYB affects buffer allocations and dimensions, must be set at construction)
+        let mut processor = StripProcessor::with_xyb(
             width,
             height,
             builder.subsampling,
             builder.pixel_format,
             builder.chroma_downsampling,
             builder.restart_interval,
+            builder.use_xyb,
         )?;
-
-        // Enable XYB mode if requested
-        if builder.use_xyb {
-            processor.set_xyb_mode(true);
-        }
 
         // Set deringing (on by default in both builder and processor)
         processor.set_deringing(builder.deringing);

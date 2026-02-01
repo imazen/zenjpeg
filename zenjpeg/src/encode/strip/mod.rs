@@ -180,6 +180,8 @@ pub struct StripProcessor {
     pub(super) padded_width: usize,
     /// Padded chroma width
     pub(super) padded_c_width: usize,
+    /// Padded B channel width for XYB mode (2x2 downsampled)
+    padded_b_width: usize,
     /// Strip height in pixels (16 for 4:2:0, 8 for 4:4:4)
     strip_height: usize,
     /// Chroma subsampling mode
@@ -229,6 +231,9 @@ pub struct StripProcessor {
     y_blocks_v: usize,
     c_blocks_h: usize,
     c_blocks_v: usize,
+    /// B channel block dimensions for XYB mode (2x2 downsampled)
+    b_blocks_h: usize,
+    b_blocks_v: usize,
 
     // === Accumulated AQ strengths for batch finalize (debugging) ===
     all_aq_strengths: Vec<f32>,
@@ -364,6 +369,14 @@ impl StripProcessor {
         // Chroma planes are padded to multiples of 8 (block size)
         let padded_c_width = (c_width + 7) / 8 * 8;
 
+        // B channel width for XYB mode (always 2x2 downsampled)
+        let b_width = (width + 1) / 2;
+        let padded_b_width = if use_xyb {
+            (b_width + 7) / 8 * 8
+        } else {
+            padded_c_width // Not XYB, use same as chroma
+        };
+
         // Pre-allocate block storage based on image size
         let y_blocks_h = (width + 7) / 8;
         let y_blocks_v = (height + 7) / 8;
@@ -383,6 +396,14 @@ impl StripProcessor {
                 (y_blocks_h, v, y_blocks_h * v)
             }
             Subsampling::S444 => (y_blocks_h, y_blocks_v, total_y_blocks),
+        };
+
+        // B channel dimensions for XYB mode (always 2x2 downsampled)
+        let (b_blocks_h, b_blocks_v) = if use_xyb {
+            ((width + 15) / 16, (height + 15) / 16)
+        } else {
+            // Not XYB, use same as chroma
+            (c_blocks_h, c_blocks_v)
         };
 
         // Pending buffer capacity: one iMCU row of blocks
@@ -406,6 +427,7 @@ impl StripProcessor {
             height,
             padded_width,
             padded_c_width,
+            padded_b_width,
             strip_height,
             subsampling,
             pixel_format,
@@ -446,11 +468,14 @@ impl StripProcessor {
                 Vec::new()
             },
             cr_down: if is_color {
-                try_alloc_zeroed_f32_tracked(
-                    padded_c_width * c_strip_height,
-                    "cr_down",
-                    &mut alloc_stats,
-                )?
+                // For XYB mode, cr_down holds B channel which is 2x2 downsampled
+                let cr_down_size = if use_xyb {
+                    let b_strip_height = (strip_height + 1) / 2;
+                    padded_b_width * b_strip_height
+                } else {
+                    padded_c_width * c_strip_height
+                };
+                try_alloc_zeroed_f32_tracked(cr_down_size, "cr_down", &mut alloc_stats)?
             } else {
                 Vec::new()
             },
@@ -523,6 +548,8 @@ impl StripProcessor {
             y_blocks_v,
             c_blocks_h,
             c_blocks_v,
+            b_blocks_h,
+            b_blocks_v,
 
             // Accumulated AQ strengths (for output)
             all_aq_strengths: try_with_capacity_tracked(
@@ -1085,15 +1112,10 @@ impl StripProcessor {
                 let b_blocks_w = (b_width + 7) / 8;
                 let b_strip_blocks_h = (b_strip_height + 7) / 8;
                 let b_blocks_total = b_blocks_w * b_strip_blocks_h;
-                let padded_c_width = self.padded_c_width;
+                let padded_b_width = self.padded_b_width;
 
-                // cr_down is sized for c_strip_height rows based on the subsampling mode,
-                // but for XYB we compute b_strip_height separately. Use the full cr_down size.
-                let c_strip_height_for_buf = match self.subsampling {
-                    Subsampling::S420 | Subsampling::S440 => strip_height / 2,
-                    _ => strip_height,
-                };
-                let c_size = c_strip_height_for_buf * padded_c_width;
+                // cr_down for XYB B channel uses padded_b_width stride
+                let b_size = b_strip_height * padded_b_width;
 
                 let cr_start = self.pending_cr_blocks[pending_idx].len();
                 self.pending_cr_blocks[pending_idx]
@@ -1103,10 +1125,10 @@ impl StripProcessor {
                 for local_by in 0..b_strip_blocks_h {
                     for bx in 0..b_blocks_w {
                         let cr_block = extract_block_from_strip_wide(
-                            &self.cr_down[..c_size],
+                            &self.cr_down[..b_size],
                             bx,
                             local_by,
-                            padded_c_width,
+                            padded_b_width,
                         );
                         self.pending_cr_blocks[pending_idx][cr_start + cr_idx] =
                             forward_dct_dispatch(simd_token, &cr_block);
@@ -1286,14 +1308,17 @@ impl StripProcessor {
             }
 
             // Quantize Cr blocks
-            let global_chroma_by_cr = self.cr_blocks.len() / c_blocks_h.max(1);
+            // For XYB mode, use b_blocks_h/b_blocks_v (B channel is 2x2 downsampled)
+            let cr_blocks_h = if self.use_xyb { self.b_blocks_h } else { c_blocks_h };
+            let cr_blocks_v = if self.use_xyb { self.b_blocks_v } else { c_blocks_v };
+            let global_chroma_by_cr = self.cr_blocks.len() / cr_blocks_h.max(1);
             for (i, dct) in self.pending_cr_blocks[buffer_idx].iter().enumerate() {
-                let bx = i % c_blocks_h.max(1);
-                let local_by = i / c_blocks_h.max(1);
+                let bx = i % cr_blocks_h.max(1);
+                let local_by = i / cr_blocks_h.max(1);
                 // Compute global Y position for this chroma block
-                let y_bx = (bx * y_blocks_h) / c_blocks_h.max(1);
+                let y_bx = (bx * y_blocks_h) / cr_blocks_h.max(1);
                 let chroma_by = global_chroma_by_cr + local_by;
-                let y_by = (chroma_by * y_blocks_v) / c_blocks_v.max(1);
+                let y_by = (chroma_by * y_blocks_v) / cr_blocks_v.max(1);
                 // Use global AQ index
                 let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
                 let aq_strength = if global_aq_idx < self.all_aq_strengths.len() {

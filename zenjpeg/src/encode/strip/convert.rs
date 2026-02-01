@@ -760,8 +760,8 @@ impl StripProcessor {
             &mut self.cr_down[..b_width * b_height],
         );
 
-        // Rearrange and pad cr_down (B channel)
-        self.pad_chroma_down_strip(b_height, b_width);
+        // Rearrange and pad cr_down (B channel) using XYB-specific function
+        self.pad_b_down_strip(b_height, b_width);
 
         // For Y component (cb_strip): rearrange to padded layout directly
         // We'll use cb_strip as the source for DCT in XYB mode
@@ -1019,6 +1019,33 @@ impl StripProcessor {
             for x in c_width..padded_c_width {
                 self.cb_down[dst_start + x] = cb_edge;
                 self.cr_down[dst_start + x] = cr_edge;
+            }
+        }
+    }
+
+    /// Rearranges B channel (cr_down) from packed to padded layout for XYB mode.
+    ///
+    /// Unlike `pad_chroma_down_strip`, this only handles cr_down and uses
+    /// `padded_b_width` which is correct for the 2x2 downsampled B channel.
+    pub(super) fn pad_b_down_strip(&mut self, b_strip_height: usize, b_width: usize) {
+        let padded_b_width = self.padded_b_width;
+
+        if padded_b_width == b_width {
+            return;
+        }
+
+        // Rearrange and pad cr_down (B channel) only
+        for row in (0..b_strip_height).rev() {
+            let src_start = row * b_width;
+            let dst_start = row * padded_b_width;
+
+            for x in (0..b_width).rev() {
+                self.cr_down[dst_start + x] = self.cr_down[src_start + x];
+            }
+
+            let edge = self.cr_down[dst_start + b_width - 1];
+            for x in b_width..padded_b_width {
+                self.cr_down[dst_start + x] = edge;
             }
         }
     }
