@@ -795,57 +795,19 @@ impl StripProcessor {
     pub fn process_strip(&mut self, rgb_strip: &[u8], strip_y: usize) -> Result<usize> {
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
-        // Step 1: Color convert RGB -> YCbCr or XYB into strip buffers
+        // Color convert RGB -> YCbCr or XYB into strip buffers
         let chroma_already_downsampled =
             self.color_convert_strip(rgb_strip, strip_y, actual_strip_height)?;
 
-        // Step 1b: Pad strips vertically if this is a partial bottom strip
-        // This is needed for vertical downsampling modes (4:2:0, 4:4:0) at image bottom
+        // Pad strips vertically if this is a partial bottom strip
+        // (needed for vertical downsampling modes at image bottom)
         if actual_strip_height < self.layout.strip_height {
             self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
         }
 
-        // Step 2: Process AQ and check if previous iMCU strengths are ready
-        // Use process_y_strip_into to write to reusable buffer (zero allocation)
-        // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
-        // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
-        let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
-        let aq_count = self.aq_state.process_y_strip_into(
-            aq_input,
-            strip_y,
-            actual_strip_height,
-            &mut self.aq_strengths_buffer,
-        );
-
-        // Step 3: Downsample chroma if needed
-        // Skip if already done by fused path (XYB, gamma-aware, or fused 420)
-        let downsample_height = if actual_strip_height < self.layout.strip_height {
-            self.layout.strip_height
-        } else {
-            actual_strip_height
-        };
-        if !self.pixel_format.is_grayscale() && !chroma_already_downsampled {
-            self.downsample_chroma_strip(downsample_height)?;
-        }
-
-        // Step 4: If we got AQ strengths, quantize the previous pending iMCU
-        // This is the key optimization: quantize to i16 immediately instead of storing f32
-        if let Some(count) = aq_count {
-            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
-            let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
-            self.quantize_prev_pending_imcu(&temp_buffer[..count]);
-            self.aq_strengths_buffer = temp_buffer;
-            self.pending.clear_prev();
-        }
-
-        // Step 5: Compute DCT for blocks in this strip into the current pending buffer
-        // Use downsample_height (full strip if padded) to include padding in DCT
-        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
-
-        // Step 6: Swap pending buffers when iMCU completes
-        // (The swap happens via pending.swap() in dct_strip_blocks_to_pending)
-
-        Ok(blocks_added)
+        let need_chroma_downsample =
+            !self.pixel_format.is_grayscale() && !chroma_already_downsampled;
+        self.process_strip_common(strip_y, actual_strip_height, need_chroma_downsample)
     }
 
     /// Processes one strip of YCbCr f32 input data.
@@ -880,49 +842,17 @@ impl StripProcessor {
 
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
-        // Step 1: Copy YCbCr data to strip buffers with level shift
+        // Copy YCbCr data to strip buffers with level shift
         // Convert from centered [-128, 127] to JPEG range [0, 255]
         self.copy_ycbcr_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
 
-        // Step 1b: Pad strips vertically if this is a partial bottom strip
+        // Pad strips vertically if this is a partial bottom strip
         if actual_strip_height < self.layout.strip_height {
             self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
         }
 
-        // Step 2: Process AQ and check if previous iMCU strengths are ready
-        // Use process_y_strip_into to write to reusable buffer (zero allocation)
-        // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
-        // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
-        let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
-        let aq_count = self.aq_state.process_y_strip_into(
-            aq_input,
-            strip_y,
-            actual_strip_height,
-            &mut self.aq_strengths_buffer,
-        );
-
-        // Step 3: Downsample chroma if needed
-        let downsample_height = if actual_strip_height < self.layout.strip_height {
-            self.layout.strip_height
-        } else {
-            actual_strip_height
-        };
-        if !self.pixel_format.is_grayscale() {
-            self.downsample_chroma_strip(downsample_height)?;
-        }
-
-        // Step 4: If we got AQ strengths, quantize the previous pending iMCU
-        if let Some(count) = aq_count {
-            let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
-            self.quantize_prev_pending_imcu(&temp_buffer[..count]);
-            self.aq_strengths_buffer = temp_buffer;
-            self.pending.clear_prev();
-        }
-
-        // Step 5: Compute DCT for blocks in this strip into the current pending buffer
-        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
-
-        Ok(blocks_added)
+        let need_chroma_downsample = !self.pixel_format.is_grayscale();
+        self.process_strip_common(strip_y, actual_strip_height, need_chroma_downsample)
     }
 
     /// Processes one strip of pre-downsampled YCbCr f32 input data.
@@ -959,17 +889,35 @@ impl StripProcessor {
 
         let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
-        // Step 1: Copy Y with level shift, copy chroma directly to downsampled buffers
+        // Copy Y with level shift, copy chroma directly to downsampled buffers
         self.copy_ycbcr_subsampled_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
 
-        // Step 1b: Pad strips vertically if this is a partial bottom strip
+        // Pad strips vertically if this is a partial bottom strip
         if actual_strip_height < self.layout.strip_height {
             self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
             // Also pad chroma downsampled buffers
             self.pad_chroma_down_vertically(actual_strip_height)?;
         }
 
-        // Step 2: Process AQ
+        // Chroma already downsampled by caller
+        self.process_strip_common(strip_y, actual_strip_height, false)
+    }
+
+    /// Shared tail for all process_strip variants: AQ, downsample, quantize, DCT.
+    ///
+    /// Called after the preamble (color conversion or YCbCr copy) and vertical
+    /// padding have been completed. The `need_chroma_downsample` flag encodes
+    /// whether the chroma planes still need downsampling:
+    /// - `process_strip`: `!grayscale && !fused_path`
+    /// - `process_strip_ycbcr_f32`: `!grayscale` (always needs downsample)
+    /// - `process_strip_ycbcr_f32_subsampled`: `false` (caller did it)
+    fn process_strip_common(
+        &mut self,
+        strip_y: usize,
+        actual_strip_height: usize,
+        need_chroma_downsample: bool,
+    ) -> Result<usize> {
+        // Process AQ and check if previous iMCU strengths are ready.
         // AQ uses the luminance channel: y_strip for YCbCr, cb_strip for XYB
         // (see aq_input_strip() for rationale; inlined here to avoid borrow conflict)
         let aq_input = if self.layout.use_xyb { &self.cb_strip } else { &self.y_strip };
@@ -980,25 +928,31 @@ impl StripProcessor {
             &mut self.aq_strengths_buffer,
         );
 
-        // Step 3: Skip chroma downsampling - already done by caller
+        // Use full strip height for downsample/DCT when bottom strip was padded
+        let downsample_height = if actual_strip_height < self.layout.strip_height {
+            self.layout.strip_height
+        } else {
+            actual_strip_height
+        };
 
-        // Step 4: Quantize previous pending iMCU if strengths are ready
+        // Downsample chroma if needed (skipped when fused path or caller handled it)
+        if need_chroma_downsample {
+            self.downsample_chroma_strip(downsample_height)?;
+        }
+
+        // If we got AQ strengths, quantize the previous pending iMCU.
+        // This is the key optimization: quantize to i16 immediately instead of storing f32.
         if let Some(count) = aq_count {
+            // Use mem::take to avoid borrow conflict (moves buffer, no allocation)
             let temp_buffer = std::mem::take(&mut self.aq_strengths_buffer);
             self.quantize_prev_pending_imcu(&temp_buffer[..count]);
             self.aq_strengths_buffer = temp_buffer;
             self.pending.clear_prev();
         }
 
-        // Step 5: Compute DCT
-        let downsample_height = if actual_strip_height < self.layout.strip_height {
-            self.layout.strip_height
-        } else {
-            actual_strip_height
-        };
-        let blocks_added = self.dct_strip_blocks_to_pending(strip_y, downsample_height)?;
-
-        Ok(blocks_added)
+        // Compute DCT for blocks in this strip into the current pending buffer.
+        // Swap of pending buffers happens inside dct_strip_blocks_to_pending on iMCU boundary.
+        self.dct_strip_blocks_to_pending(strip_y, downsample_height)
     }
 
     /// Computes DCT for blocks in the current strip and stores in pending buffer.
