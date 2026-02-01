@@ -29,7 +29,7 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 // LOCKED REFERENCE VALUES - frymire.png (1118x1105)
 // Generated: 2026-01-11
 // Mode: YCbCr with optimized Huffman
-// Updated: FMA optimization changes rounding behavior slightly
+// Updated 2026-01-31: Fixed archmage-simd DCT scaling (was 1/8, now 1/64)
 // =============================================================================
 
 // =============================================================================
@@ -37,43 +37,43 @@ use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 // =============================================================================
 
 /// Sequential S444 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S444_SEQ: &[(u8, usize)] = &[
-    (50, 332975),
-    (70, 441037),
-    (85, 601406),
-    (90, 718786),
-    (95, 937736),
+    (50, 330228),
+    (70, 438009),
+    (85, 597217),
+    (90, 713973),
+    (95, 934041),
 ];
 
 /// Sequential S422 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S422_SEQ: &[(u8, usize)] = &[
-    (50, 296488),
-    (70, 388977),
-    (85, 521298),
-    (90, 614537),
-    (95, 784499),
+    (50, 294082),
+    (70, 386572),
+    (85, 518672),
+    (90, 611287),
+    (95, 782238),
 ];
 
 /// Sequential S420 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S420_SEQ: &[(u8, usize)] = &[
-    (50, 273741),
-    (70, 364785),
-    (85, 496231),
-    (90, 585118),
-    (95, 744250),
+    (50, 271443),
+    (70, 362380),
+    (85, 493820),
+    (90, 583172),
+    (95, 742408),
 ];
 
 /// Sequential S440 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
-    (50, 296735),
-    (70, 389459),
-    (85, 522611),
-    (90, 616259),
-    (95, 785819),
+    (50, 294388),
+    (70, 387140),
+    (85, 520168),
+    (90, 613143),
+    (95, 783753),
 ];
 
 // =============================================================================
@@ -81,58 +81,58 @@ const FRYMIRE_S440_SEQ: &[(u8, usize)] = &[
 // =============================================================================
 
 /// Progressive S444 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S444_PROG: &[(u8, usize)] = &[
-    (50, 323880),
-    (70, 427671),
-    (85, 583178),
-    (90, 697232),
-    (95, 908357),
+    (50, 321359),
+    (70, 425096),
+    (85, 579807),
+    (90, 694074),
+    (95, 905412),
 ];
 
 /// Progressive S422 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S422_PROG: &[(u8, usize)] = &[
-    (50, 289100),
-    (70, 377741),
-    (85, 506599),
-    (90, 596246),
-    (95, 760636),
+    (50, 286975),
+    (70, 375763),
+    (85, 504431),
+    (90, 594320),
+    (95, 758799),
 ];
 
 /// Progressive S420 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S420_PROG: &[(u8, usize)] = &[
-    (50, 265222),
-    (70, 352738),
-    (85, 479356),
-    (90, 565403),
-    (95, 718238),
+    (50, 263243),
+    (70, 350643),
+    (85, 477428),
+    (90, 563800),
+    (95, 716986),
 ];
 
 /// Progressive S440 optimized Huffman - frymire.png
-/// Regenerated 2026-01-19 after deringing enabled by default
+/// Regenerated 2026-01-31 after DCT scaling fix
 const FRYMIRE_S440_PROG: &[(u8, usize)] = &[
-    (50, 287271),
-    (70, 376123),
-    (85, 505834),
-    (90, 595695),
-    (95, 759702),
+    (50, 285181),
+    (70, 374193),
+    (85, 503741),
+    (90, 593906),
+    (95, 758062),
 ];
 
 // =============================================================================
 // BITSTREAM HASHES (Q85)
 // =============================================================================
 
-// Regenerated 2026-01-19 after deringing enabled by default
-const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x5f342721d17db06b;
-const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x3db8fd9caeb77552;
-const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0xda1fd5a45cb4f7fb;
-const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x0cb739d2f7c2028b;
-const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0xebff541660c8fe45;
-const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x0088be2423f7ce0c;
-const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0xa40799c9ee7009be;
-const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xb9613ef84780bef8;
+// Regenerated 2026-01-31 after DCT scaling fix
+const FRYMIRE_S444_SEQ_Q85_HASH: u64 = 0x4772850889d6a2a0;
+const FRYMIRE_S444_PROG_Q85_HASH: u64 = 0x76a67672604b6b5c;
+const FRYMIRE_S422_SEQ_Q85_HASH: u64 = 0x1b17cba3816dc9fe;
+const FRYMIRE_S422_PROG_Q85_HASH: u64 = 0x423657a279dbc121;
+const FRYMIRE_S420_SEQ_Q85_HASH: u64 = 0x9b29fc6eaee9882f;
+const FRYMIRE_S420_PROG_Q85_HASH: u64 = 0x1d1c16350780d052;
+const FRYMIRE_S440_SEQ_Q85_HASH: u64 = 0x26d7748b54531f8d;
+const FRYMIRE_S440_PROG_Q85_HASH: u64 = 0xd7feb03c1efad980;
 
 // =============================================================================
 // Helper functions
