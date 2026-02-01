@@ -40,6 +40,7 @@
 mod convert;
 
 use crate::encode::encoder_types::DownsamplingMethod;
+use crate::encode::layout::LayoutParams;
 use crate::error::Result;
 use crate::foundation::alloc::{
     try_alloc_filled, try_alloc_zeroed_f32_tracked, try_with_capacity_tracked, AllocationStats,
@@ -172,26 +173,12 @@ fn forward_dct_dispatch(_token: (), block: &Block8x8f) -> Block8x8f {
 /// full f32 planes in memory.
 #[derive(Debug)]
 pub struct StripProcessor {
-    /// Image width in pixels (original)
-    pub(super) width: usize,
-    /// Image height in pixels (original)
-    pub(super) height: usize,
-    /// Padded width (MCU-aligned for block extraction)
-    pub(super) padded_width: usize,
-    /// Padded chroma width
-    pub(super) padded_c_width: usize,
-    /// Padded B channel width for XYB mode (2x2 downsampled)
-    padded_b_width: usize,
-    /// Strip height in pixels (16 for 4:2:0, 8 for 4:4:4)
-    strip_height: usize,
-    /// Chroma subsampling mode
-    pub(super) subsampling: Subsampling,
+    /// Immutable image layout — single source of truth for all geometry.
+    pub(super) layout: LayoutParams,
     /// Pixel format of input data
     pub(super) pixel_format: PixelFormat,
     /// Chroma downsampling method (Box, GammaAware, GammaAwareIterative)
     pub(super) chroma_downsampling: DownsamplingMethod,
-    /// Use XYB color space instead of YCbCr
-    pub(super) use_xyb: bool,
 
     // === Reusable strip buffers (f32) ===
     /// Y channel strip buffer
@@ -226,14 +213,7 @@ pub struct StripProcessor {
     // === Quantization context (set via set_quant_tables) ===
     quant: Option<QuantContext>,
 
-    // === Block dimension info (for chroma AQ mapping) ===
-    y_blocks_h: usize,
-    y_blocks_v: usize,
-    c_blocks_h: usize,
-    c_blocks_v: usize,
-    /// B channel block dimensions for XYB mode (2x2 downsampled)
-    b_blocks_h: usize,
-    b_blocks_v: usize,
+    // Block dimensions accessible via self.layout.*
 
     // === Accumulated AQ strengths for batch finalize (debugging) ===
     all_aq_strengths: Vec<f32>,
@@ -332,8 +312,7 @@ impl StripProcessor {
 
     /// Creates a new strip processor with XYB mode support.
     ///
-    /// For XYB mode, strip_height is always 16 because the B component is 2x2 downsampled
-    /// and needs 16 rows of input to produce an 8x8 DCT block.
+    /// All geometry is computed once by `LayoutParams` — no duplicate calculations.
     pub fn with_xyb(
         width: usize,
         height: usize,
@@ -343,85 +322,17 @@ impl StripProcessor {
         _restart_interval: u16,
         use_xyb: bool,
     ) -> Result<Self> {
-        // Strip height is 16 for:
-        // - 4:2:0 and 4:4:0 (2 MCU rows of chroma)
-        // - XYB mode (B component is always 2x2 downsampled)
-        let strip_height = match (subsampling, use_xyb) {
-            (Subsampling::S420 | Subsampling::S440, _) => 16,
-            (_, true) => 16, // XYB always needs 16-row strips for B component
-            _ => 8,
-        };
+        let layout = LayoutParams::new(width, height, subsampling, use_xyb);
 
-        // MCU size for padding calculation
-        let mcu_size = subsampling.mcu_size();
-
-        // Calculate padded width (MCU-aligned) for parity with full-plane encoder
-        let padded_width = (width + mcu_size - 1) / mcu_size * mcu_size;
-
-        // Chroma dimensions for strip allocation
-        let (c_width, c_strip_height) = match subsampling {
-            Subsampling::S420 => ((width + 1) / 2, strip_height / 2),
-            Subsampling::S422 => ((width + 1) / 2, strip_height),
-            Subsampling::S440 => (width, strip_height / 2),
-            Subsampling::S444 => (width, strip_height),
-        };
-
-        // Chroma planes are padded to multiples of 8 (block size)
-        let padded_c_width = (c_width + 7) / 8 * 8;
-
-        // B channel width for XYB mode (always 2x2 downsampled)
-        let b_width = (width + 1) / 2;
-        let padded_b_width = if use_xyb {
-            (b_width + 7) / 8 * 8
-        } else {
-            padded_c_width // Not XYB, use same as chroma
-        };
-
-        // Pre-allocate block storage based on image size
-        let y_blocks_h = (width + 7) / 8;
-        let y_blocks_v = (height + 7) / 8;
-        let total_y_blocks = y_blocks_h * y_blocks_v;
-        let (c_blocks_h, c_blocks_v, total_c_blocks) = match subsampling {
-            Subsampling::S420 => {
-                let h = (width + 15) / 16;
-                let v = (height + 15) / 16;
-                (h, v, h * v)
-            }
-            Subsampling::S422 => {
-                let h = (width + 15) / 16;
-                (h, y_blocks_v, h * y_blocks_v)
-            }
-            Subsampling::S440 => {
-                let v = (height + 15) / 16;
-                (y_blocks_h, v, y_blocks_h * v)
-            }
-            Subsampling::S444 => (y_blocks_h, y_blocks_v, total_y_blocks),
-        };
-
-        // B channel dimensions for XYB mode (always 2x2 downsampled)
-        let (b_blocks_h, b_blocks_v) = if use_xyb {
-            ((width + 15) / 16, (height + 15) / 16)
-        } else {
-            // Not XYB, use same as chroma
-            (c_blocks_h, c_blocks_v)
-        };
-
-        // Pending buffer capacity: one iMCU row of blocks
-        // Use padded block counts for pending buffers
-        let padded_y_blocks_h = padded_width / 8;
-        // In XYB mode, R:2×2 G:2×2 B:1×1, so max_v_samp_factor=2 regardless of
-        // the chroma subsampling enum (which describes YCbCr, not XYB layout).
-        let v_samp = if use_xyb {
-            2
-        } else {
-            match subsampling {
-                Subsampling::S420 | Subsampling::S440 => 2,
-                _ => 1,
-            }
-        };
-        let pending_y_capacity = padded_y_blocks_h * v_samp;
-        let padded_c_blocks_h = padded_c_width / 8;
-        let pending_c_capacity = padded_c_blocks_h;
+        let strip_height = layout.strip_height;
+        let padded_width = layout.padded_width;
+        let padded_c_width = layout.padded_c_width;
+        let padded_b_width = layout.padded_b_width;
+        let c_strip_height = layout.c_strip_height;
+        let total_y_blocks = layout.total_y_blocks;
+        let total_c_blocks = layout.total_c_blocks;
+        let pending_y_capacity = layout.pending_y_capacity;
+        let pending_c_capacity = layout.pending_c_capacity;
 
         let is_color = !pixel_format.is_grayscale();
 
@@ -429,16 +340,9 @@ impl StripProcessor {
         let mut alloc_stats = AllocationStats::new();
 
         Ok(Self {
-            width,
-            height,
-            padded_width,
-            padded_c_width,
-            padded_b_width,
-            strip_height,
-            subsampling,
+            layout,
             pixel_format,
             chroma_downsampling,
-            use_xyb,
 
             // Strip buffers (sized for PADDED width for edge handling parity)
             y_strip: try_alloc_zeroed_f32_tracked(
@@ -549,13 +453,7 @@ impl StripProcessor {
             // Quantization context (set via set_quant_tables)
             quant: None,
 
-            // Block dimensions for chroma AQ mapping
-            y_blocks_h,
-            y_blocks_v,
-            c_blocks_h,
-            c_blocks_v,
-            b_blocks_h,
-            b_blocks_v,
+            // Block dimensions accessible via self.layout.*
 
             // Accumulated AQ strengths (for output)
             all_aq_strengths: try_with_capacity_tracked(
@@ -607,7 +505,7 @@ impl StripProcessor {
 
             // Reusable AQ strengths buffer (one iMCU row worth of blocks)
             // Size: blocks_per_row * v_samp_factor (max 2 for 4:2:0)
-            aq_strengths_buffer: vec![0.0f32; padded_y_blocks_h * v_samp],
+            aq_strengths_buffer: vec![0.0f32; pending_y_capacity],
         })
     }
 
@@ -643,15 +541,6 @@ impl StripProcessor {
         self.simd_token
     }
 
-    /// Enables or disables XYB color space mode.
-    ///
-    /// When enabled, strips are converted to scaled XYB instead of YCbCr.
-    /// In XYB mode, the B channel is always 2x2 downsampled regardless of
-    /// the subsampling setting.
-    pub fn set_xyb_mode(&mut self, enable: bool) {
-        self.use_xyb = enable;
-    }
-
     /// Enables or disables overshoot deringing (on by default).
     ///
     /// When enabled, hard edges (like text on white) are smoothed by allowing
@@ -682,7 +571,7 @@ impl StripProcessor {
     /// Returns whether XYB mode is enabled.
     #[must_use]
     pub fn is_xyb(&self) -> bool {
-        self.use_xyb
+        self.layout.use_xyb
     }
 
     /// Sets quantization tables and zero-bias parameters.
@@ -697,19 +586,10 @@ impl StripProcessor {
         cb_zero_bias: ZeroBiasParams,
         cr_zero_bias: ZeroBiasParams,
     ) -> Result<()> {
-        // Initialize streaming AQ with y_quant_01 for damping calculation
+        // Initialize streaming AQ from layout — all geometry from single source of truth.
+        // No v_samp recomputation, no set_strip_stride — layout has it all.
         let y_quant_01 = y_quant.values[1]; // Position [0,1] in zigzag
-                                            // In XYB mode, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2.
-                                            // The AQ must use this to match C++ jpegli's iMCU grouping.
-        let v_samp = if self.use_xyb {
-            2
-        } else {
-            self.subsampling.v_samp_factor_luma() as usize
-        };
-        let mut aq = StreamingAQ::new(self.width, self.height, y_quant_01, v_samp)?;
-        // Y strip is laid out with padded_width stride for edge handling parity
-        aq.set_strip_stride(self.padded_width);
-        self.aq_state = Some(aq);
+        self.aq_state = Some(StreamingAQ::new(&self.layout, y_quant_01)?);
 
         // Create quantization context with all tables
         self.quant = Some(QuantContext::new(
@@ -725,12 +605,12 @@ impl StripProcessor {
 
     /// Returns the strip height for iteration.
     pub fn strip_height(&self) -> usize {
-        self.strip_height
+        self.layout.strip_height
     }
 
     /// Returns the subsampling mode.
     pub fn subsampling(&self) -> Subsampling {
-        self.subsampling
+        self.layout.subsampling
     }
 
     /// Processes one strip of RGB input data.
@@ -742,13 +622,13 @@ impl StripProcessor {
     /// # Returns
     /// Number of blocks added during this strip
     pub fn process_strip(&mut self, rgb_strip: &[u8], strip_y: usize) -> Result<usize> {
-        let actual_strip_height = self.strip_height.min(self.height - strip_y);
+        let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Track whether chroma was already downsampled by a fused path
         let mut chroma_already_downsampled = false;
 
         // Step 1: Color convert RGB -> YCbCr or XYB into strip buffers
-        if self.use_xyb {
+        if self.layout.use_xyb {
             // XYB mode: convert RGB -> scaled XYB
             // X and Y go to y_strip and cb_strip at full res
             // B goes to cr_strip at full res, then is always 2x2 downsampled
@@ -758,7 +638,7 @@ impl StripProcessor {
             // YCbCr mode: choose optimal path based on subsampling
             let uses_gamma_aware_fused = self.chroma_downsampling.uses_gamma_aware()
                 && !self.pixel_format.is_grayscale()
-                && self.subsampling != Subsampling::S444;
+                && self.layout.subsampling != Subsampling::S444;
 
             if uses_gamma_aware_fused {
                 self.convert_strip_gamma_aware(rgb_strip, strip_y, actual_strip_height)?;
@@ -767,7 +647,7 @@ impl StripProcessor {
                 // Try fused 420 path when applicable (significantly faster)
                 #[cfg(feature = "yuv")]
                 {
-                    if self.subsampling == Subsampling::S420
+                    if self.layout.subsampling == Subsampling::S420
                         && !self.pixel_format.is_grayscale()
                         && self.convert_strip_to_ycbcr_420(rgb_strip, actual_strip_height)?
                     {
@@ -784,15 +664,15 @@ impl StripProcessor {
 
         // Step 1b: Pad strips vertically if this is a partial bottom strip
         // This is needed for vertical downsampling modes (4:2:0, 4:4:0) at image bottom
-        if actual_strip_height < self.strip_height {
-            self.pad_strips_vertically(actual_strip_height, self.strip_height);
+        if actual_strip_height < self.layout.strip_height {
+            self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
         }
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         // Use process_y_strip_into to write to reusable buffer (zero allocation)
         // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
         // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
-        let aq_input = if self.use_xyb {
+        let aq_input = if self.layout.use_xyb {
             &self.cb_strip
         } else {
             &self.y_strip
@@ -810,8 +690,8 @@ impl StripProcessor {
 
         // Step 3: Downsample chroma if needed
         // Skip if already done by fused path (XYB, gamma-aware, or fused 420)
-        let downsample_height = if actual_strip_height < self.strip_height {
-            self.strip_height
+        let downsample_height = if actual_strip_height < self.layout.strip_height {
+            self.layout.strip_height
         } else {
             actual_strip_height
         };
@@ -867,21 +747,21 @@ impl StripProcessor {
         strip_y: usize,
     ) -> Result<usize> {
         // XYB mode requires RGB input for conversion
-        if self.use_xyb {
+        if self.layout.use_xyb {
             return Err(crate::error::Error::unsupported_feature(
                 "YCbCr input not supported for XYB mode",
             ));
         }
 
-        let actual_strip_height = self.strip_height.min(self.height - strip_y);
+        let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Step 1: Copy YCbCr data to strip buffers with level shift
         // Convert from centered [-128, 127] to JPEG range [0, 255]
         self.copy_ycbcr_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
 
         // Step 1b: Pad strips vertically if this is a partial bottom strip
-        if actual_strip_height < self.strip_height {
-            self.pad_strips_vertically(actual_strip_height, self.strip_height);
+        if actual_strip_height < self.layout.strip_height {
+            self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
         }
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
@@ -889,7 +769,7 @@ impl StripProcessor {
         // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
         // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
         // (This path rejects XYB mode above, so this is always y_strip here)
-        let aq_input = if self.use_xyb {
+        let aq_input = if self.layout.use_xyb {
             &self.cb_strip
         } else {
             &self.y_strip
@@ -906,8 +786,8 @@ impl StripProcessor {
         };
 
         // Step 3: Downsample chroma if needed
-        let downsample_height = if actual_strip_height < self.strip_height {
-            self.strip_height
+        let downsample_height = if actual_strip_height < self.layout.strip_height {
+            self.layout.strip_height
         } else {
             actual_strip_height
         };
@@ -959,20 +839,20 @@ impl StripProcessor {
         strip_y: usize,
     ) -> Result<usize> {
         // XYB mode requires RGB input for conversion
-        if self.use_xyb {
+        if self.layout.use_xyb {
             return Err(crate::error::Error::unsupported_feature(
                 "YCbCr input not supported for XYB mode",
             ));
         }
 
-        let actual_strip_height = self.strip_height.min(self.height - strip_y);
+        let actual_strip_height = self.layout.strip_height.min(self.layout.height - strip_y);
 
         // Step 1: Copy Y with level shift, copy chroma directly to downsampled buffers
         self.copy_ycbcr_subsampled_to_strips(y_row, cb_row, cr_row, actual_strip_height)?;
 
         // Step 1b: Pad strips vertically if this is a partial bottom strip
-        if actual_strip_height < self.strip_height {
-            self.pad_strips_vertically(actual_strip_height, self.strip_height);
+        if actual_strip_height < self.layout.strip_height {
+            self.pad_strips_vertically(actual_strip_height, self.layout.strip_height);
             // Also pad chroma downsampled buffers
             self.pad_chroma_down_vertically(actual_strip_height)?;
         }
@@ -982,7 +862,7 @@ impl StripProcessor {
         // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
         // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
         // (This path is for pre-subsampled YCbCr, not XYB)
-        let aq_input = if self.use_xyb {
+        let aq_input = if self.layout.use_xyb {
             &self.cb_strip
         } else {
             &self.y_strip
@@ -1013,8 +893,8 @@ impl StripProcessor {
         }
 
         // Step 5: Compute DCT
-        let downsample_height = if actual_strip_height < self.strip_height {
-            self.strip_height
+        let downsample_height = if actual_strip_height < self.layout.strip_height {
+            self.layout.strip_height
         } else {
             actual_strip_height
         };
@@ -1031,14 +911,14 @@ impl StripProcessor {
         strip_height: usize,
     ) -> Result<usize> {
         // Use original dimensions for block counts (parity with full-plane encoder)
-        let blocks_w = (self.width + 7) / 8;
+        let blocks_w = self.layout.blocks_w;
         let strip_blocks_h = (strip_height + 7) / 8;
         let start_block_y = strip_y / 8;
-        let height = self.height;
+        let height = self.layout.height;
         let pending_idx = self.pending_current;
 
         // Y strip is now in padded layout (padded_width pixels per row)
-        let padded_width = self.padded_width;
+        let padded_width = self.layout.padded_width;
 
         // Extract SIMD token once for all blocks in this strip
         #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
@@ -1105,9 +985,9 @@ impl StripProcessor {
 
         // Compute DCT for Cb/Cr blocks (if color)
         if !self.pixel_format.is_grayscale() {
-            let width = self.width;
+            let width = self.layout.width;
 
-            if self.use_xyb {
+            if self.layout.use_xyb {
                 // XYB mode: Y component is full resolution, B is 2x2 downsampled
                 // - Y (cb_strip): full res, same block dimensions as X (y_strip)
                 // - B (cr_down): 2x2 downsampled
@@ -1147,7 +1027,7 @@ impl StripProcessor {
                 let b_blocks_w = (b_width + 7) / 8;
                 let b_strip_blocks_h = (b_strip_height + 7) / 8;
                 let b_blocks_total = b_blocks_w * b_strip_blocks_h;
-                let padded_b_width = self.padded_b_width;
+                let padded_b_width = self.layout.padded_b_width;
 
                 // cr_down for XYB B channel uses padded_b_width stride
                 let b_size = b_strip_height * padded_b_width;
@@ -1172,7 +1052,7 @@ impl StripProcessor {
                 }
             } else {
                 // YCbCr mode: standard chroma dimensions based on subsampling
-                let (c_width, c_strip_height) = match self.subsampling {
+                let (c_width, c_strip_height) = match self.layout.subsampling {
                     Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
                     Subsampling::S422 => ((width + 1) / 2, strip_height),
                     Subsampling::S440 => (width, (strip_height + 1) / 2),
@@ -1184,7 +1064,7 @@ impl StripProcessor {
                 let c_blocks_total = c_blocks_w * c_strip_blocks_h;
 
                 // cb_down/cr_down are in padded layout (padded_c_width pixels per row)
-                let padded_c_width = self.padded_c_width;
+                let padded_c_width = self.layout.padded_c_width;
                 let c_size = c_strip_height * padded_c_width;
 
                 // Pre-allocate chroma buffers
@@ -1288,10 +1168,10 @@ impl StripProcessor {
 
         // Quantize Cb/Cr blocks (always present when quant is set)
         {
-            let y_blocks_h = self.y_blocks_h;
-            let y_blocks_v = self.y_blocks_v;
-            let c_blocks_h = self.c_blocks_h;
-            let c_blocks_v = self.c_blocks_v;
+            let y_blocks_h = self.layout.y_blocks_h;
+            let y_blocks_v = self.layout.y_blocks_v;
+            let c_blocks_h = self.layout.c_blocks_h;
+            let c_blocks_v = self.layout.c_blocks_v;
 
             // Compute global chroma by from how many chroma blocks we've already processed
             // For 4:2:0, each iMCU has 1 chroma block row
@@ -1344,13 +1224,13 @@ impl StripProcessor {
 
             // Quantize Cr blocks
             // For XYB mode, use b_blocks_h/b_blocks_v (B channel is 2x2 downsampled)
-            let cr_blocks_h = if self.use_xyb {
-                self.b_blocks_h
+            let cr_blocks_h = if self.layout.use_xyb {
+                self.layout.b_blocks_h
             } else {
                 c_blocks_h
             };
-            let cr_blocks_v = if self.use_xyb {
-                self.b_blocks_v
+            let cr_blocks_v = if self.layout.use_xyb {
+                self.layout.b_blocks_v
             } else {
                 c_blocks_v
             };
