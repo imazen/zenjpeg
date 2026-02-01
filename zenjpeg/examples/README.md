@@ -85,8 +85,8 @@ cargo run --release --example low_q_report --features test-utils
 
 ## XYB Debugging Tools
 
-XYB color space is the primary focus for quality improvement. These tools help debug
-the ~5 SSIMULACRA2 quality gap between Rust and C++ XYB encoding.
+XYB color space produces 5-11% larger files than C++ jpegli at equivalent quality.
+These tools help debug the size difference (quality is identical).
 
 ### xyb_parity_test
 
@@ -192,7 +192,7 @@ External tools used by some examples:
    - Baseline XYB works fine
    - Issue is with non-standard component IDs (R=82, G=71, B=66) in progressive scans
 
-2. **XYB quality gap**: ~5 SSIMULACRA2 gap vs C++ jpegli XYB mode (root cause TBD)
+2. **XYB size gap**: 5-11% larger files than C++ jpegli XYB mode (quality is identical, root cause TBD)
 
 ## Adding New Examples
 

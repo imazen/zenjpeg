@@ -303,9 +303,9 @@ let tiled = tile_edge_columns(&source, 6, 518);
 
 Use `--edge-width N` to test specific column widths (1-7).
 
-### XYB Debugging (Quality Gap Investigation)
+### XYB Debugging (Size Gap Investigation)
 
-The XYB color space has a ~5 SSIMULACRA2 quality gap vs C++ jpegli:
+XYB produces 5-11% larger files than C++ jpegli at equivalent quality (quality is identical):
 
 ```bash
 # Compare file sizes and DSSIM
