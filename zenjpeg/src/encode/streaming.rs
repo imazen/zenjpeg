@@ -135,27 +135,6 @@ impl StreamingEncoder {
             ));
         }
 
-        // Create strip processor with XYB mode set from the start
-        // (XYB affects buffer allocations and dimensions, must be set at construction)
-        let mut processor = StripProcessor::with_xyb(
-            width,
-            height,
-            builder.subsampling,
-            builder.pixel_format,
-            builder.chroma_downsampling,
-            builder.restart_interval,
-            builder.use_xyb,
-        )?;
-
-        // Set deringing (on by default in both builder and processor)
-        processor.set_deringing(builder.deringing);
-
-        // Enable trellis quantization if configured
-        #[cfg(feature = "experimental-hybrid-trellis")]
-        if let Some(ref trellis) = builder.trellis {
-            processor.set_trellis(*trellis);
-        }
-
         // Generate quantization tables and zero-bias params
         let is_420 = builder.subsampling == Subsampling::S420;
         let distance = builder.quality.to_distance();
@@ -239,14 +218,36 @@ impl StreamingEncoder {
                 (quant, zero_bias)
             };
 
-        processor.set_quant_tables(
+        // Build quantization context (all tables + SIMD variants)
+        let quant_ctx = crate::encode::strip::QuantContext::new(
             y_quant.clone(),
             cb_quant.clone(),
             cr_quant.clone(),
             y_zero_bias,
             cb_zero_bias,
             cr_zero_bias,
+        );
+
+        // Create strip processor with quant tables provided at construction
+        let mut processor = StripProcessor::with_xyb(
+            width,
+            height,
+            builder.subsampling,
+            builder.pixel_format,
+            builder.chroma_downsampling,
+            builder.restart_interval,
+            builder.use_xyb,
+            quant_ctx,
         )?;
+
+        // Set deringing (on by default in both builder and processor)
+        processor.set_deringing(builder.deringing);
+
+        // Enable trellis quantization if configured
+        #[cfg(feature = "experimental-hybrid-trellis")]
+        if let Some(ref trellis) = builder.trellis {
+            processor.set_trellis(*trellis);
+        }
 
         let strip_height = processor.strip_height();
         let bytes_per_row = width * builder.pixel_format.bytes_per_pixel();
