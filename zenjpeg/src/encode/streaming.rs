@@ -312,24 +312,11 @@ impl StreamingEncoder {
             }
             config.write_scan_header(&mut header)?;
 
-            // Compute total MCUs for restart marker logic
-            let (h_samp, v_samp) = match builder.subsampling {
-                Subsampling::S444 => (1, 1),
-                Subsampling::S422 => (2, 1),
-                Subsampling::S420 => (2, 2),
-                Subsampling::S440 => (1, 2),
-            };
-            let y_blocks_h = (width + 7) / 8;
-            let y_blocks_v = (height + 7) / 8;
-            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
-            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
-            let total_mcus = mcu_h * mcu_v;
-
             Some(StreamingOutputState {
                 writer: crate::foundation::bitstream::BitWriter::new(),
                 tables,
                 entropy_state: crate::entropy::StreamingEntropyState::new(),
-                total_mcus,
+                total_mcus: processor.layout.total_mcus,
                 header,
             })
         } else {

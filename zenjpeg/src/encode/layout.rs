@@ -60,6 +60,16 @@ pub(crate) struct LayoutParams {
     pub pending_y_capacity: usize,
     pub pending_c_capacity: usize,
 
+    // === MCU grid (for restart markers / streaming) ===
+    /// Horizontal sampling factor (1 for 444/440, 2 for 422/420)
+    pub h_samp: usize,
+    /// MCU columns: ceil(y_blocks_h / h_samp)
+    pub mcu_cols: usize,
+    /// MCU rows: ceil(y_blocks_v / v_samp)
+    pub mcu_rows: usize,
+    /// Total MCUs in the image
+    pub total_mcus: usize,
+
     // === iMCU dimensions (for AQ) ===
     /// padded_width + 1 for edge replication during HF modulation
     pub y_buffer_stride: usize,
@@ -159,6 +169,17 @@ impl LayoutParams {
         let pending_y_capacity = padded_blocks_w * v_samp;
         let pending_c_capacity = padded_c_blocks_w;
 
+        // Horizontal sampling factor
+        let h_samp = match subsampling {
+            Subsampling::S444 | Subsampling::S440 => 1,
+            Subsampling::S422 | Subsampling::S420 => 2,
+        };
+
+        // MCU grid dimensions (for restart markers / streaming-through encoding)
+        let mcu_cols = (y_blocks_h + h_samp - 1) / h_samp;
+        let mcu_rows = (y_blocks_v + v_samp - 1) / v_samp;
+        let total_mcus = mcu_cols * mcu_rows;
+
         // Y buffer stride for AQ (padded_width + 1 for edge replication)
         let y_buffer_stride = padded_width + 1;
 
@@ -191,6 +212,10 @@ impl LayoutParams {
             b_blocks_v,
             pending_y_capacity,
             pending_c_capacity,
+            h_samp,
+            mcu_cols,
+            mcu_rows,
+            total_mcus,
             y_buffer_stride,
         }
     }
@@ -226,6 +251,7 @@ mod tests {
         assert_eq!(lp.mcu_size, 8);
         assert_eq!(lp.padded_width, 1920); // 1920 is already 8-aligned
         assert_eq!(lp.v_samp, 1);
+        assert_eq!(lp.h_samp, 1);
         assert_eq!(lp.blocks_w, 240);
         assert_eq!(lp.blocks_h, 135);
         assert_eq!(lp.c_width, 1920);
@@ -238,6 +264,10 @@ mod tests {
         assert_eq!(lp.pending_y_capacity, 240); // padded_blocks_w * v_samp(1)
         assert_eq!(lp.pending_c_capacity, 240);
         assert_eq!(lp.y_buffer_stride, 1921);
+        // MCU grid: 4:4:4, each MCU = 1 block
+        assert_eq!(lp.mcu_cols, 240);
+        assert_eq!(lp.mcu_rows, 135);
+        assert_eq!(lp.total_mcus, 240 * 135);
     }
 
     #[test]
@@ -247,6 +277,7 @@ mod tests {
         assert_eq!(lp.mcu_size, 16);
         assert_eq!(lp.padded_width, 1920); // 1920 is 16-aligned
         assert_eq!(lp.v_samp, 2);
+        assert_eq!(lp.h_samp, 2);
         assert_eq!(lp.blocks_w, 240);
         assert_eq!(lp.blocks_h, 135);
         assert_eq!(lp.c_width, 960);
@@ -257,6 +288,10 @@ mod tests {
         assert_eq!(lp.c_blocks_v, 68); // (1080 + 15) / 16
         assert_eq!(lp.pending_y_capacity, 240 * 2); // padded_blocks_w * v_samp
         assert_eq!(lp.pending_c_capacity, 120);
+        // MCU grid: 4:2:0, each MCU = 2x2 blocks
+        assert_eq!(lp.mcu_cols, 120);
+        assert_eq!(lp.mcu_rows, 68);
+        assert_eq!(lp.total_mcus, 120 * 68);
     }
 
     #[test]
