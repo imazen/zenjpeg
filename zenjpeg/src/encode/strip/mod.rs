@@ -83,6 +83,24 @@ pub struct QuantContext {
 }
 
 impl QuantContext {
+    /// Creates a default quantization context for tests (standard JPEG tables at q75).
+    #[cfg(test)]
+    fn default_for_tests() -> Self {
+        let qt = QuantTable {
+            values: [16; 64],
+            precision: 0,
+        };
+        let zb = ZeroBiasParams::for_ycbcr(1.0, 0);
+        Self::new(
+            qt.clone(),
+            qt.clone(),
+            qt,
+            zb.clone(),
+            zb.clone(),
+            zb,
+        )
+    }
+
     /// Creates a new quantization context from the component tables.
     pub fn new(
         y_quant: QuantTable,
@@ -289,8 +307,8 @@ pub struct StripProcessor {
     // === Pending iMCU DCT blocks (wide-native, double-buffered) ===
     pending: PendingBuffers,
 
-    // === Quantization context (set via set_quant_tables) ===
-    quant: Option<QuantContext>,
+    // === Quantization context ===
+    quant: QuantContext,
 
     // Block dimensions accessible via self.layout.*
 
@@ -298,8 +316,7 @@ pub struct StripProcessor {
     all_aq_strengths: Vec<f32>,
 
     // === Streaming AQ state (low memory, rolling buffers) ===
-    // Initialized when quant tables are set (needs y_quant_01)
-    aq_state: Option<StreamingAQ>,
+    aq_state: StreamingAQ,
 
     // === Allocation tracking ===
     /// Tracks all allocations made by this processor
@@ -338,60 +355,31 @@ pub struct StripProcessor {
 }
 
 impl StripProcessor {
-    /// Creates a new strip processor with default settings.
-    ///
-    /// # Arguments
-    /// * `width` - Image width in pixels
-    /// * `height` - Image height in pixels
-    /// * `subsampling` - Chroma subsampling mode
-    /// * `pixel_format` - Input pixel format
+    /// Creates a new strip processor with default settings (for tests only).
+    #[cfg(test)]
     pub fn new(
         width: usize,
         height: usize,
         subsampling: Subsampling,
         pixel_format: PixelFormat,
     ) -> Result<Self> {
-        Self::with_options(
+        let quant = QuantContext::default_for_tests();
+        Self::with_xyb(
             width,
             height,
             subsampling,
             pixel_format,
             DownsamplingMethod::Box,
             0,
-        )
-    }
-
-    /// Creates a new strip processor with custom chroma downsampling and restart interval.
-    ///
-    /// # Arguments
-    /// * `width` - Image width in pixels
-    /// * `height` - Image height in pixels
-    /// * `subsampling` - Chroma subsampling mode
-    /// * `pixel_format` - Input pixel format
-    /// * `chroma_downsampling` - Chroma downsampling method
-    /// * `_restart_interval` - Restart interval in MCUs (0 = disabled) - reserved for future use
-    pub fn with_options(
-        width: usize,
-        height: usize,
-        subsampling: Subsampling,
-        pixel_format: PixelFormat,
-        chroma_downsampling: DownsamplingMethod,
-        _restart_interval: u16,
-    ) -> Result<Self> {
-        Self::with_xyb(
-            width,
-            height,
-            subsampling,
-            pixel_format,
-            chroma_downsampling,
-            _restart_interval,
-            false, // not XYB mode
+            false,
+            quant,
         )
     }
 
     /// Creates a new strip processor with XYB mode support.
     ///
     /// All geometry is computed once by `LayoutParams` — no duplicate calculations.
+    /// `quant` provides all quantization tables and zero-bias parameters.
     pub fn with_xyb(
         width: usize,
         height: usize,
@@ -400,6 +388,7 @@ impl StripProcessor {
         chroma_downsampling: DownsamplingMethod,
         _restart_interval: u16,
         use_xyb: bool,
+        quant: QuantContext,
     ) -> Result<Self> {
         let layout = LayoutParams::new(width, height, subsampling, use_xyb);
 
@@ -418,6 +407,10 @@ impl StripProcessor {
 
         // Track all allocations
         let mut alloc_stats = AllocationStats::new();
+
+        // Initialize streaming AQ from layout and quant tables
+        let y_quant_01 = quant.y_quant.values[1]; // Position [0,1] in zigzag
+        let aq_state = StreamingAQ::new(&layout, y_quant_01)?;
 
         Ok(Self {
             layout,
@@ -531,10 +524,7 @@ impl StripProcessor {
                 current: false,
             },
 
-            // Quantization context (set via set_quant_tables)
-            quant: None,
-
-            // Block dimensions accessible via self.layout.*
+            quant,
 
             // Accumulated AQ strengths (for output)
             all_aq_strengths: try_with_capacity_tracked(
@@ -543,8 +533,7 @@ impl StripProcessor {
                 &mut alloc_stats,
             )?,
 
-            // Streaming AQ (initialized when quant tables are set)
-            aq_state: None,
+            aq_state,
 
             // Allocation tracking
             alloc_stats,
@@ -655,35 +644,6 @@ impl StripProcessor {
         self.layout.use_xyb
     }
 
-    /// Sets quantization tables and zero-bias parameters.
-    ///
-    /// Must be called before processing strips.
-    pub fn set_quant_tables(
-        &mut self,
-        y_quant: QuantTable,
-        cb_quant: QuantTable,
-        cr_quant: QuantTable,
-        y_zero_bias: ZeroBiasParams,
-        cb_zero_bias: ZeroBiasParams,
-        cr_zero_bias: ZeroBiasParams,
-    ) -> Result<()> {
-        // Initialize streaming AQ from layout — all geometry from single source of truth.
-        // No v_samp recomputation, no set_strip_stride — layout has it all.
-        let y_quant_01 = y_quant.values[1]; // Position [0,1] in zigzag
-        self.aq_state = Some(StreamingAQ::new(&self.layout, y_quant_01)?);
-
-        // Create quantization context with all tables
-        self.quant = Some(QuantContext::new(
-            y_quant,
-            cb_quant,
-            cr_quant,
-            y_zero_bias,
-            cb_zero_bias,
-            cr_zero_bias,
-        ));
-        Ok(())
-    }
-
     /// Returns the strip height for iteration.
     pub fn strip_height(&self) -> usize {
         self.layout.strip_height
@@ -758,16 +718,12 @@ impl StripProcessor {
         } else {
             &self.y_strip
         };
-        let aq_count = if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip_into(
-                aq_input,
-                strip_y,
-                actual_strip_height,
-                &mut self.aq_strengths_buffer,
-            )
-        } else {
-            None
-        };
+        let aq_count = self.aq_state.process_y_strip_into(
+            aq_input,
+            strip_y,
+            actual_strip_height,
+            &mut self.aq_strengths_buffer,
+        );
 
         // Step 3: Downsample chroma if needed
         // Skip if already done by fused path (XYB, gamma-aware, or fused 420)
@@ -851,16 +807,12 @@ impl StripProcessor {
         } else {
             &self.y_strip
         };
-        let aq_count = if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip_into(
-                aq_input,
-                strip_y,
-                actual_strip_height,
-                &mut self.aq_strengths_buffer,
-            )
-        } else {
-            None
-        };
+        let aq_count = self.aq_state.process_y_strip_into(
+            aq_input,
+            strip_y,
+            actual_strip_height,
+            &mut self.aq_strengths_buffer,
+        );
 
         // Step 3: Downsample chroma if needed
         let downsample_height = if actual_strip_height < self.layout.strip_height {
@@ -940,16 +892,12 @@ impl StripProcessor {
         } else {
             &self.y_strip
         };
-        let aq_count = if let Some(ref mut aq) = self.aq_state {
-            aq.process_y_strip_into(
-                aq_input,
-                strip_y,
-                actual_strip_height,
-                &mut self.aq_strengths_buffer,
-            )
-        } else {
-            None
-        };
+        let aq_count = self.aq_state.process_y_strip_into(
+            aq_input,
+            strip_y,
+            actual_strip_height,
+            &mut self.aq_strengths_buffer,
+        );
 
         // Step 3: Skip chroma downsampling - already done by caller
 
@@ -1024,11 +972,7 @@ impl StripProcessor {
             let output = &mut self.pending.y[pending_idx][start_idx..];
 
             // Get DC quant value for deringing (if enabled)
-            let y_dc_quant = self
-                .quant
-                .as_ref()
-                .map(|q| q.y_quant.values[0])
-                .unwrap_or(16);
+            let y_dc_quant = self.quant.y_quant.values[0];
 
             let mut idx = 0;
             for local_by in 0..actual_strip_blocks_h {
@@ -1174,8 +1118,7 @@ impl StripProcessor {
     /// fast SIMD quantization.
     fn quantize_prev_pending_imcu(&mut self, aq_strengths: &[f32]) {
         let buffer_idx = self.pending.prev_idx();
-        // Get quantization context (must be set before processing)
-        let quant = self.quant.clone().expect("quant context not set");
+        let quant = &self.quant;
 
         // Check if we have trellis context for R-D optimization
         #[cfg(feature = "experimental-hybrid-trellis")]
@@ -1344,11 +1287,7 @@ impl StripProcessor {
     pub fn finalize(mut self) -> Result<StripProcessorOutput> {
         // Flush AQ to get the last iMCU's strengths
         // Use flush_into to write to reusable buffer (zero allocation)
-        let flush_count = if let Some(ref mut aq) = self.aq_state {
-            aq.flush_into(&mut self.aq_strengths_buffer)
-        } else {
-            None
-        };
+        let flush_count = self.aq_state.flush_into(&mut self.aq_strengths_buffer);
         if let Some(count) = flush_count {
             // Quantize the last pending iMCU
             if !self.pending.prev_y().is_empty() {
