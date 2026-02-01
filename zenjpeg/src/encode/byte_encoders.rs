@@ -88,7 +88,7 @@ impl BytesEncoder {
             .quality(config.quality)
             .pixel_format(pixel_format)
             .subsampling(subsampling)
-            .optimize_huffman(config.optimize_huffman)
+            .huffman(config.huffman.clone())
             .chroma_downsampling(config.downsampling_method)
             .restart_interval(config.restart_interval);
 
@@ -125,11 +125,6 @@ impl BytesEncoder {
         #[cfg(feature = "experimental-hybrid-trellis")]
         if let Some(ref trellis) = config.trellis {
             builder = builder.trellis(*trellis);
-        }
-
-        // Apply custom Huffman tables for streaming-through encoding
-        if let Some(tables) = config.custom_huffman_tables.clone() {
-            builder = builder.custom_huffman_tables(*tables);
         }
 
         builder.start()
@@ -926,7 +921,7 @@ impl YCbCrPlanarEncoder {
             .quality(config.quality)
             .pixel_format(PixelFormat::Rgb) // Buffer sizing only
             .subsampling(subsampling)
-            .optimize_huffman(config.optimize_huffman)
+            .huffman(config.huffman.clone())
             .chroma_downsampling(config.downsampling_method)
             .restart_interval(config.restart_interval);
 
@@ -948,10 +943,6 @@ impl YCbCrPlanarEncoder {
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
             builder = builder.parallel(true);
-        }
-
-        if let Some(tables) = config.custom_huffman_tables.clone() {
-            builder = builder.custom_huffman_tables(*tables);
         }
 
         builder.start()

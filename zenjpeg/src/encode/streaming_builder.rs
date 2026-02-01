@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 use super::encoder_types::DownsamplingMethod;
+use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
 use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
@@ -24,7 +25,7 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) subsampling: Subsampling,
     pub(crate) pixel_format: PixelFormat,
     pub(crate) mode: JpegMode,
-    pub(crate) optimize_huffman: bool,
+    pub(crate) huffman: HuffmanStrategy,
     pub(crate) chroma_downsampling: DownsamplingMethod,
     pub(crate) restart_interval: u16,
     /// Custom encoding tables (quantization + zero-bias).
@@ -37,10 +38,6 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
     pub(crate) separate_chroma_tables: bool,
-    /// Custom Huffman tables for streaming-through encoding.
-    /// When set, blocks are encoded immediately on each strip flush
-    /// instead of buffering all blocks for optimized table generation.
-    pub(crate) custom_huffman_tables: Option<Box<crate::huffman::optimize::HuffmanTableSet>>,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
@@ -65,7 +62,7 @@ impl StreamingEncoderBuilder {
             subsampling: Subsampling::S444,
             pixel_format: PixelFormat::Rgb,
             mode: JpegMode::Baseline,
-            optimize_huffman: true,
+            huffman: HuffmanStrategy::Optimize,
             chroma_downsampling: DownsamplingMethod::Box,
             restart_interval: 0,
             encoding_tables: None,
@@ -73,7 +70,6 @@ impl StreamingEncoderBuilder {
             deringing: true,
             allow_16bit_quant_tables: true,
             separate_chroma_tables: true,
-            custom_huffman_tables: None,
             #[cfg(feature = "parallel")]
             parallel: false,
             #[cfg(feature = "experimental-hybrid-trellis")]
@@ -124,7 +120,7 @@ impl StreamingEncoderBuilder {
     pub(crate) fn progressive(mut self, enable: bool) -> Self {
         if enable {
             self.mode = JpegMode::Progressive;
-            self.optimize_huffman = true;
+            self.huffman = HuffmanStrategy::Optimize;
         } else if self.mode == JpegMode::Progressive {
             // Only change from Progressive to Baseline; preserve other modes like Extended
             self.mode = JpegMode::Baseline;
@@ -153,10 +149,24 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Enables optimized Huffman tables.
+    /// Sets the Huffman table strategy.
+    #[must_use]
+    pub(crate) fn huffman(mut self, strategy: HuffmanStrategy) -> Self {
+        self.huffman = strategy;
+        self
+    }
+
+    /// Enables or disables optimized Huffman tables.
+    ///
+    /// Convenience wrapper: `true` → `HuffmanStrategy::Optimize`,
+    /// `false` → `HuffmanStrategy::StandardFixed`.
     #[must_use]
     pub(crate) fn optimize_huffman(mut self, enable: bool) -> Self {
-        self.optimize_huffman = enable;
+        self.huffman = if enable {
+            HuffmanStrategy::Optimize
+        } else {
+            HuffmanStrategy::StandardFixed
+        };
         self
     }
 
@@ -229,7 +239,7 @@ impl StreamingEncoderBuilder {
         mut self,
         tables: crate::huffman::optimize::HuffmanTableSet,
     ) -> Self {
-        self.custom_huffman_tables = Some(Box::new(tables));
+        self.huffman = HuffmanStrategy::Custom(Box::new(tables));
         self
     }
 

@@ -33,6 +33,7 @@
 #![allow(dead_code)]
 
 use crate::encode::config::ComputedConfig;
+use crate::encode::encoder_types::HuffmanStrategy;
 use crate::encode::strip::StripProcessor;
 use crate::error::{Error, Result};
 use crate::quant::{self, QuantTable, ZeroBiasParams};
@@ -64,9 +65,9 @@ struct StreamingOutputState {
 /// Uses strip-based processing internally for low peak memory usage.
 ///
 /// Two encoding modes:
-/// - **Buffered** (default with `optimize_huffman=true`): buffers all blocks,
+/// - **Buffered** (default with `HuffmanStrategy::Optimize`): buffers all blocks,
 ///   builds optimal Huffman tables at `finish()`.
-/// - **Streaming-through** (with custom tables or `optimize_huffman=false`, sequential only):
+/// - **Streaming-through** (with `HuffmanStrategy::Custom` or `StandardFixed`, sequential only):
 ///   writes JPEG header at construction, encodes blocks immediately on each
 ///   strip flush. At `finish()`, just appends EOI.
 pub(crate) struct StreamingEncoder {
@@ -263,7 +264,7 @@ impl StreamingEncoder {
             quality: builder.quality,
             subsampling: builder.subsampling,
             mode: builder.mode,
-            optimize_huffman: builder.optimize_huffman,
+            huffman: builder.huffman.clone(),
             chroma_downsampling: builder.chroma_downsampling,
             restart_interval: builder.restart_interval,
             use_xyb: builder.use_xyb,
@@ -284,20 +285,21 @@ impl StreamingEncoder {
         };
 
         // Determine if we can use streaming-through encoding:
-        // - Need known Huffman tables (custom or standard fixed)
+        // - Need known Huffman tables (Custom or StandardFixed)
         // - Must be sequential (progressive needs multi-pass)
         // - Not XYB (different header/table structure)
-        let enable_streaming = (builder.custom_huffman_tables.is_some()
-            || !builder.optimize_huffman)
+        let enable_streaming = !matches!(builder.huffman, HuffmanStrategy::Optimize)
             && builder.mode != JpegMode::Progressive
             && !builder.use_xyb;
 
         let streaming = if enable_streaming {
             // Get tables: custom if provided, otherwise standard JPEG tables
-            let tables = if let Some(tables) = builder.custom_huffman_tables {
-                tables
-            } else {
-                Box::new(crate::huffman::optimize::HuffmanTableSet::from_standard()?)
+            let tables = match builder.huffman {
+                HuffmanStrategy::Custom(tables) => tables,
+                HuffmanStrategy::StandardFixed => {
+                    Box::new(crate::huffman::optimize::HuffmanTableSet::from_standard()?)
+                }
+                HuffmanStrategy::Optimize => unreachable!(),
             };
 
             // Write JPEG header (SOI through SOS) into buffer
@@ -783,13 +785,12 @@ impl StreamingEncoder {
 
     /// Finishes encoding and returns both the JPEG and the frequency counts.
     ///
-    /// For sequential mode with `optimize_huffman`, the counts come from the
-    /// optimization pass at no extra cost. For progressive mode, the blocks
+    /// For sequential mode with `HuffmanStrategy::Optimize`, the counts come from
+    /// the optimization pass at no extra cost. For progressive mode, the blocks
     /// are counted separately (same quantized blocks, same symbol distribution).
     ///
     /// Returns `None` for counts if:
     /// - Streaming-through mode was used (no buffered blocks to count)
-    /// - `optimize_huffman` was disabled for sequential mode
     pub(crate) fn finish_with_huffman_frequencies(
         self,
     ) -> Result<(
@@ -900,7 +901,7 @@ impl StreamingEncoder {
     }
 
     /// Like `finish_into_with_stop`, but also returns frequency counts from
-    /// the Huffman optimization pass when in buffered + optimize_huffman mode.
+    /// the Huffman optimization pass when in buffered + `HuffmanStrategy::Optimize` mode.
     pub(crate) fn finish_into_with_huffman_frequencies(
         mut self,
         output: &mut Vec<u8>,
@@ -955,9 +956,9 @@ impl StreamingEncoder {
 
             match config.mode {
                 JpegMode::Progressive => {
-                    if !config.optimize_huffman {
+                    if !matches!(config.huffman, HuffmanStrategy::Optimize) {
                         return Err(Error::unsupported_feature(
-                            "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                            "Progressive mode requires optimized Huffman tables",
                         ));
                     }
 
@@ -1070,9 +1071,9 @@ impl StreamingEncoder {
         match config.mode {
             JpegMode::Progressive => {
                 // Progressive mode requires optimized Huffman tables
-                if !config.optimize_huffman {
+                if !matches!(config.huffman, HuffmanStrategy::Optimize) {
                     return Err(Error::unsupported_feature(
-                        "Progressive mode with fixed Huffman codes (use optimize_huffman=true)",
+                        "Progressive mode requires optimized Huffman tables",
                     ));
                 }
                 // Use progressive encoding path
@@ -1159,7 +1160,7 @@ impl StreamingEncoder {
                 y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
             config.write_frame_header_xyb_ex(output, is_extended)?;
 
-            if config.optimize_huffman {
+            if matches!(config.huffman, HuffmanStrategy::Optimize) {
                 let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
                     &strip_output.y_blocks,
                     &strip_output.cb_blocks,
@@ -1203,7 +1204,7 @@ impl StreamingEncoder {
                 y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
             config.write_frame_header_ex(output, is_extended)?;
 
-            if config.optimize_huffman {
+            if matches!(config.huffman, HuffmanStrategy::Optimize) {
                 let (tables, freqs) = if collect_frequencies {
                     let (t, f) = config.build_optimized_tables_with_counts(
                         &strip_output.y_blocks,

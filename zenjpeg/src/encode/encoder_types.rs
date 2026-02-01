@@ -548,3 +548,28 @@ pub enum ParallelEncoding {
     #[default]
     Auto,
 }
+
+/// Huffman table strategy for entropy encoding.
+///
+/// Controls how Huffman tables are selected for the JPEG output:
+/// - `Optimize`: Two-pass encoding collects symbol frequencies, then builds optimal tables.
+///   Produces the smallest files. Required for progressive mode.
+/// - `StandardFixed`: Single-pass encoding with JPEG standard Huffman tables.
+///   Fastest but produces larger files (~5-10% bigger).
+/// - `Custom`: Single-pass encoding with caller-provided tables.
+///   Useful for streaming-through encoding with pre-trained or previously-computed tables.
+#[derive(Clone, Debug)]
+pub(crate) enum HuffmanStrategy {
+    /// Two-pass: collect frequencies, build optimal tables.
+    Optimize,
+    /// Single-pass: use JPEG standard tables.
+    StandardFixed,
+    /// Single-pass: use caller-provided tables.
+    Custom(Box<crate::huffman::optimize::HuffmanTableSet>),
+}
+
+impl Default for HuffmanStrategy {
+    fn default() -> Self {
+        HuffmanStrategy::Optimize
+    }
+}
