@@ -51,7 +51,17 @@ struct JpegAnalysis {
     width: u16,
     height: u16,
     components: u8,
+    component_info: Vec<ComponentInfo>,
     is_progressive: bool,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used for Debug output and future enhancements
+struct ComponentInfo {
+    id: u8,
+    h_samp: u8,
+    v_samp: u8,
+    quant_table: u8,
 }
 
 #[derive(Debug)]
@@ -121,6 +131,7 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
     let mut width = 0u16;
     let mut height = 0u16;
     let mut components = 0u8;
+    let mut component_info = Vec::new();
     let mut is_progressive = false;
 
     let mut pos = 0;
@@ -178,6 +189,20 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
                     height = u16::from_be_bytes([data[pos + 5], data[pos + 6]]);
                     width = u16::from_be_bytes([data[pos + 7], data[pos + 8]]);
                     components = data[pos + 9];
+
+                    // Parse component info (3 bytes per component after header)
+                    component_info.clear();
+                    for c in 0..components as usize {
+                        let comp_offset = pos + 10 + c * 3;
+                        if comp_offset + 2 < data.len() {
+                            let id = data[comp_offset];
+                            let sampling = data[comp_offset + 1];
+                            let h_samp = (sampling >> 4) & 0x0F;
+                            let v_samp = sampling & 0x0F;
+                            let quant_table = data[comp_offset + 2];
+                            component_info.push(ComponentInfo { id, h_samp, v_samp, quant_table });
+                        }
+                    }
                 }
             }
             0xDA => {
@@ -206,6 +231,7 @@ fn analyze_jpeg(data: &[u8]) -> Result<JpegAnalysis, String> {
         width,
         height,
         components,
+        component_info,
         is_progressive,
     })
 }
@@ -419,10 +445,70 @@ fn print_scans(analysis: &JpegAnalysis) {
     }
 }
 
+/// Determine subsampling notation from component sampling factors.
+fn subsampling_notation(components: &[ComponentInfo]) -> String {
+    if components.is_empty() {
+        return "unknown".to_string();
+    }
+
+    // Find max sampling factors
+    let max_h = components.iter().map(|c| c.h_samp).max().unwrap_or(1);
+    let max_v = components.iter().map(|c| c.v_samp).max().unwrap_or(1);
+
+    if components.len() == 1 {
+        return "grayscale".to_string();
+    }
+
+    if components.len() >= 3 {
+        let c0 = &components[0];
+        let c1 = &components[1];
+        let c2 = &components[2];
+
+        // Normalize to standard notation
+        // 4:4:4 = all same sampling
+        // 4:2:2 = chroma half horizontal
+        // 4:2:0 = chroma half both dimensions
+        // 4:4:0 = chroma half vertical only
+
+        if c0.h_samp == c1.h_samp && c0.v_samp == c1.v_samp
+            && c1.h_samp == c2.h_samp && c1.v_samp == c2.v_samp {
+            return "4:4:4".to_string();
+        }
+
+        // Check for XYB-style (R:2x2, G:2x2, B:1x1)
+        if c0.h_samp == 2 && c0.v_samp == 2
+            && c1.h_samp == 2 && c1.v_samp == 2
+            && c2.h_samp == 1 && c2.v_samp == 1 {
+            return "2:2:1 (XYB)".to_string();
+        }
+
+        // Standard YCbCr subsampling
+        if c0.h_samp == max_h && c0.v_samp == max_v {
+            // Y is full resolution
+            if c1.h_samp == 1 && c1.v_samp == 1 && c2.h_samp == 1 && c2.v_samp == 1 {
+                if max_h == 2 && max_v == 2 {
+                    return "4:2:0".to_string();
+                } else if max_h == 2 && max_v == 1 {
+                    return "4:2:2".to_string();
+                } else if max_h == 1 && max_v == 2 {
+                    return "4:4:0".to_string();
+                }
+            }
+        }
+    }
+
+    // Fallback: show raw sampling factors
+    let factors: Vec<String> = components.iter()
+        .map(|c| format!("{}x{}", c.h_samp, c.v_samp))
+        .collect();
+    factors.join("/")
+}
+
 fn print_summary(analysis: &JpegAnalysis, path: &str) {
     println!("=== JPEG Summary: {} ===", path);
     println!("  Dimensions: {}x{}", analysis.width, analysis.height);
     println!("  Components: {}", analysis.components);
+    println!("  Subsampling: {}", subsampling_notation(&analysis.component_info));
     println!("  Progressive: {}", analysis.is_progressive);
     println!("  Markers: {}", analysis.markers.len());
     println!("  Quant tables: {}", analysis.quant_tables.len());
