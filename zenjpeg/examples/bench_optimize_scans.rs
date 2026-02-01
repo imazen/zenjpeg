@@ -105,7 +105,7 @@ fn main() {
 
     eprintln!("Found {} PNG images in {}", entries.len(), corpus_dir);
 
-    let qualities = [75.0, 85.0, 90.0];
+    let qualities = [5.0, 10.0, 25.0, 50.0, 75.0, 85.0, 90.0];
 
     for quality in &qualities {
         eprintln!("\n=== Quality {} ===", quality);
