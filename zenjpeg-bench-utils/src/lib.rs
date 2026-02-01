@@ -1194,6 +1194,25 @@ pub struct ImageData {
 }
 
 impl ImageData {
+    /// Create from any supported image format (PNG, JPEG).
+    ///
+    /// Auto-detects format based on file extension.
+    pub fn from_path(path: &std::path::Path) -> Option<Self> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase());
+
+        match ext.as_deref() {
+            Some("png") => Self::from_png(path),
+            Some("jpg" | "jpeg") => Self::from_jpeg(path),
+            _ => {
+                // Try PNG first, then JPEG
+                Self::from_png(path).or_else(|| Self::from_jpeg(path))
+            }
+        }
+    }
+
     /// Create from loaded PNG data.
     pub fn from_png(path: &std::path::Path) -> Option<Self> {
         let (pixels, width, height) = load_png(path)
@@ -1208,6 +1227,35 @@ impl ImageData {
         Some(Self {
             name,
             pixels,
+            width,
+            height,
+        })
+    }
+
+    /// Create from loaded JPEG data.
+    pub fn from_jpeg(path: &std::path::Path) -> Option<Self> {
+        use zune_jpeg::zune_core::bytestream::ZCursor;
+
+        let data = std::fs::read(path).ok()?;
+        let cursor = ZCursor::new(&data);
+        let mut decoder = zune_jpeg::JpegDecoder::new(cursor);
+        decoder.decode_headers().ok()?;
+
+        let info = decoder.info()?;
+        let width = info.width as usize;
+        let height = info.height as usize;
+
+        // Decode to RGB (zune-jpeg outputs RGB by default)
+        let rgb_data = decoder.decode().ok()?;
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        Some(Self {
+            name,
+            pixels: rgb_data,
             width,
             height,
         })

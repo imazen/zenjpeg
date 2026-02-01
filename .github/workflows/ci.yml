@@ -87,6 +87,25 @@ jobs:
       - name: Test cms-moxcms
         run: cargo test -p zenjpeg --no-default-features --features std,cms-moxcms
 
+  # Regression test for archmage-simd DCT implementation
+  # Hash-locked tests catch DCT scaling bugs like the one fixed in 2026-01-31
+  simd-regression:
+    name: SIMD regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test with archmage-simd (hash-locked)
+        run: |
+          cargo test -p zenjpeg --release --features archmage-simd --test frymire_hash_locked
+          cargo test -p zenjpeg --release --features archmage-simd --test ycbcr_locked
+      - name: Test without archmage-simd (basic encoding)
+        run: |
+          cargo test -p zenjpeg --release --no-default-features --features std,yuv --test encode_api
+
   msrv:
     name: MSRV (1.92)
     runs-on: ubuntu-latest

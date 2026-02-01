@@ -212,7 +212,7 @@ fn parse_encoder(name: &str) -> EncoderConfig {
 }
 
 fn run_comparison(config: &Config) -> Vec<Result> {
-    let img = ImageData::from_png(Path::new(&config.image_path)).expect("Failed to load PNG");
+    let img = ImageData::from_path(Path::new(&config.image_path)).expect("Failed to load image");
 
     let orig_rgb = img.as_rgb_image();
     let pixels = img.pixel_count();
