@@ -26,8 +26,8 @@ impl StripProcessor {
         cr_row: &[f32],
         strip_height: usize,
     ) -> Result<()> {
-        let width = self.width;
-        let padded_width = self.padded_width;
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
 
         // Validate input sizes
         let expected_y_size = strip_height * width;
@@ -85,11 +85,11 @@ impl StripProcessor {
         cr_row: &[f32],
         strip_height: usize,
     ) -> Result<()> {
-        let width = self.width;
-        let padded_width = self.padded_width;
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
 
         // Calculate expected chroma dimensions based on subsampling
-        let (chroma_width, chroma_height) = match self.subsampling {
+        let (chroma_width, chroma_height) = match self.layout.subsampling {
             Subsampling::S444 => (width, strip_height),
             Subsampling::S422 => ((width + 1) / 2, strip_height),
             Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
@@ -141,14 +141,14 @@ impl StripProcessor {
 
     /// Pads chroma downsampled buffers vertically for partial bottom strips.
     pub(super) fn pad_chroma_down_vertically(&mut self, actual_height: usize) -> Result<()> {
-        let (chroma_width, target_height) = match self.subsampling {
-            Subsampling::S444 => (self.width, self.strip_height),
-            Subsampling::S422 => ((self.width + 1) / 2, self.strip_height),
-            Subsampling::S420 => ((self.width + 1) / 2, (self.strip_height + 1) / 2),
-            Subsampling::S440 => (self.width, (self.strip_height + 1) / 2),
+        let (chroma_width, target_height) = match self.layout.subsampling {
+            Subsampling::S444 => (self.layout.width, self.layout.strip_height),
+            Subsampling::S422 => ((self.layout.width + 1) / 2, self.layout.strip_height),
+            Subsampling::S420 => ((self.layout.width + 1) / 2, (self.layout.strip_height + 1) / 2),
+            Subsampling::S440 => (self.layout.width, (self.layout.strip_height + 1) / 2),
         };
 
-        let actual_chroma_height = match self.subsampling {
+        let actual_chroma_height = match self.layout.subsampling {
             Subsampling::S444 | Subsampling::S422 => actual_height,
             Subsampling::S420 | Subsampling::S440 => (actual_height + 1) / 2,
         };
@@ -181,8 +181,8 @@ impl StripProcessor {
         rgb_strip: &[u8],
         strip_height: usize,
     ) -> Result<()> {
-        let width = self.width;
-        let padded_width = self.padded_width;
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
         let num_pixels = strip_height * width;
         let y_size = strip_height * padded_width;
 
@@ -549,8 +549,8 @@ impl StripProcessor {
         rgb_strip: &[u8],
         strip_height: usize,
     ) -> Result<bool> {
-        let width = self.width;
-        let padded_width = self.padded_width;
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
         let num_pixels = strip_height * width;
         let y_size = strip_height * padded_width;
         let c_width = (width + 1) / 2;
@@ -620,8 +620,8 @@ impl StripProcessor {
     ) -> Result<()> {
         use crate::color::xyb::srgb_to_scaled_xyb;
 
-        let width = self.width;
-        let padded_width = self.padded_width;
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
         let bpp = self.pixel_format.bytes_per_pixel();
 
         // XYB supports RGB formats (8-bit sRGB or linear float/16-bit)
@@ -792,12 +792,12 @@ impl StripProcessor {
         strip_y: usize,
         strip_height: usize,
     ) -> Result<()> {
-        let width = self.width;
+        let width = self.layout.width;
         let bpp = self.pixel_format.bytes_per_pixel();
         let use_iterative = self.chroma_downsampling == DownsamplingMethod::GammaAwareIterative;
 
         // Determine chroma strip dimensions
-        let (c_width, c_strip_height) = match self.subsampling {
+        let (c_width, c_strip_height) = match self.layout.subsampling {
             Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
             Subsampling::S422 => ((width + 1) / 2, strip_height),
             Subsampling::S440 => (width, (strip_height + 1) / 2),
@@ -810,7 +810,7 @@ impl StripProcessor {
         let num_pixels = strip_height * width;
         let c_size = c_width * c_strip_height;
 
-        match self.subsampling {
+        match self.layout.subsampling {
             Subsampling::S420 => {
                 crate::encode::chroma::gamma_aware_strip_420(
                     rgb_strip,
@@ -820,7 +820,7 @@ impl StripProcessor {
                     width,
                     strip_height,
                     strip_y,
-                    self.height,
+                    self.layout.height,
                     bpp,
                     use_iterative,
                 );
@@ -872,12 +872,12 @@ impl StripProcessor {
         rgb_strip: &[u8],
         strip_height: usize,
     ) -> Result<()> {
-        let width = self.width;
+        let width = self.layout.width;
         let bpp = self.pixel_format.bytes_per_pixel();
         let num_pixels = strip_height * width;
 
         // Determine chroma strip dimensions
-        let (c_width, c_strip_height) = match self.subsampling {
+        let (c_width, c_strip_height) = match self.layout.subsampling {
             Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
             Subsampling::S422 => ((width + 1) / 2, strip_height),
             Subsampling::S440 => (width, (strip_height + 1) / 2),
@@ -889,7 +889,7 @@ impl StripProcessor {
 
         let c_size = c_width * c_strip_height;
 
-        match self.subsampling {
+        match self.layout.subsampling {
             Subsampling::S420 => {
                 crate::encode::chroma::box_fused_strip_420(
                     rgb_strip,
@@ -938,8 +938,8 @@ impl StripProcessor {
     /// Rearranges only the Y strip from packed to padded layout.
     /// Used by gamma-aware conversion where Cb/Cr go directly to cb_down/cr_down.
     pub(super) fn rearrange_y_strip_only(&mut self, strip_height: usize) {
-        let width = self.width;
-        let padded_width = self.padded_width;
+        let width = self.layout.width;
+        let padded_width = self.layout.padded_width;
 
         if padded_width == width {
             return;
@@ -969,7 +969,7 @@ impl StripProcessor {
             return;
         }
 
-        let padded_width = self.padded_width;
+        let padded_width = self.layout.padded_width;
         let is_color = !self.pixel_format.is_grayscale();
 
         // Get last valid row index
@@ -986,7 +986,7 @@ impl StripProcessor {
         if is_color {
             // For cb_strip/cr_strip (if they're in padded layout)
             // Note: these are still in packed layout at this point
-            let width = self.width;
+            let width = self.layout.width;
             let last_src = last_row * width;
             for row in actual_height..target_height {
                 let dst = row * width;
@@ -998,7 +998,7 @@ impl StripProcessor {
 
     /// Pads chroma down strips (cb_down, cr_down) horizontally.
     pub(super) fn pad_chroma_down_strip(&mut self, c_strip_height: usize, c_width: usize) {
-        let padded_c_width = self.padded_c_width;
+        let padded_c_width = self.layout.padded_c_width;
 
         if padded_c_width == c_width {
             return;
@@ -1028,7 +1028,7 @@ impl StripProcessor {
     /// Unlike `pad_chroma_down_strip`, this only handles cr_down and uses
     /// `padded_b_width` which is correct for the 2x2 downsampled B channel.
     pub(super) fn pad_b_down_strip(&mut self, b_strip_height: usize, b_width: usize) {
-        let padded_b_width = self.padded_b_width;
+        let padded_b_width = self.layout.padded_b_width;
 
         if padded_b_width == b_width {
             return;
@@ -1056,10 +1056,10 @@ impl StripProcessor {
     /// Input cb_strip/cr_strip are in packed layout (width pixels per row).
     /// Output cb_down/cr_down are rearranged to padded layout.
     pub(super) fn downsample_chroma_strip(&mut self, strip_height: usize) -> Result<()> {
-        let width = self.width;
+        let width = self.layout.width;
         let num_pixels = strip_height * width;
 
-        let (c_width, c_strip_height) = match self.subsampling {
+        let (c_width, c_strip_height) = match self.layout.subsampling {
             Subsampling::S420 => {
                 // 2x2 box filter using SIMD
                 let c_width = (width + 1) / 2;

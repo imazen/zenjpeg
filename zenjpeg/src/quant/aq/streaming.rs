@@ -24,6 +24,7 @@
 //!
 //! This adds ~4 rows of latency but produces results matching the full-plane algorithm.
 
+use crate::encode::layout::LayoutParams;
 use crate::error::Result;
 use crate::foundation::aligned_alloc::{try_alloc_zeroed, AlignedVec};
 
@@ -53,7 +54,8 @@ use archmage::{SimdToken, X64V3Token};
 ///
 /// ## Batch Mode (compatible with existing code)
 /// ```ignore
-/// let mut aq = StreamingAQ::new(width, height, y_quant_01, v_samp)?;
+/// let layout = LayoutParams::new(width, height, subsampling, use_xyb);
+/// let mut aq = StreamingAQ::new(&layout, y_quant_01)?;
 /// for strip in strips {
 ///     aq.process_y_strip(&strip, strip_y, strip_height);
 /// }
@@ -62,7 +64,8 @@ use archmage::{SimdToken, X64V3Token};
 ///
 /// ## Incremental Mode (lowest memory)
 /// ```ignore
-/// let mut aq = StreamingAQ::new(width, height, y_quant_01, v_samp)?;
+/// let layout = LayoutParams::new(width, height, subsampling, use_xyb);
+/// let mut aq = StreamingAQ::new(&layout, y_quant_01)?;
 /// for strip in strips {
 ///     if let Some(strengths) = aq.process_y_strip(&strip, strip_y, strip_height) {
 ///         // Quantize this iMCU's blocks immediately
@@ -147,28 +150,30 @@ pub struct StreamingAQ {
 }
 
 impl StreamingAQ {
-    /// Creates a new streaming AQ state.
+    /// Creates a new streaming AQ state from layout parameters.
+    ///
+    /// All geometry (dimensions, block counts, strides) comes from the shared
+    /// `LayoutParams` — no independent recomputation.
     ///
     /// # Arguments
-    /// * `width` - Image width in pixels
-    /// * `height` - Image height in pixels
+    /// * `layout` - Immutable image layout (source of truth for all geometry)
     /// * `y_quant_01` - Y quant table value at position [0,1] (first AC coefficient)
-    /// * `v_samp_factor` - Vertical sampling factor (1 for 4:4:4/4:2:2, 2 for 4:2:0/4:4:0)
     ///
     /// # Errors
     /// Returns `AllocError` if buffer allocation fails.
-    pub fn new(width: usize, height: usize, y_quant_01: u16, v_samp_factor: usize) -> Result<Self> {
+    pub fn new(layout: &LayoutParams, y_quant_01: u16) -> Result<Self> {
+        let width = layout.width;
+        let height = layout.height;
         if width == 0 || height == 0 {
             return Ok(Self::empty(y_quant_01 as f32));
         }
 
-        let blocks_w = (width + 7) / 8;
-        let blocks_h = (height + 7) / 8;
-        let padded_width = blocks_w * 8; // MCU-aligned width for SIMD-friendly access
-                                         // Y buffer stride needs +1 for edge replication pixel at position padded_width.
-                                         // This allows hf_modulation_sum_8x8 to safely read 9 consecutive elements
-                                         // (positions 0-8) for the rightmost block without wrapping to the next row.
-        let y_buffer_stride = padded_width + 1;
+        let blocks_w = layout.blocks_w;
+        let blocks_h = layout.blocks_h;
+        let padded_width = layout.padded_width;
+        let y_buffer_stride = layout.y_buffer_stride;
+        let v_samp_factor = layout.v_samp;
+
         let pre_erosion_w = (width + 3) / 4;
         let pre_erosion_h = (height + 3) / 4;
 
@@ -190,7 +195,7 @@ impl StreamingAQ {
             height,
             padded_width,
             y_buffer_stride,
-            strip_stride: padded_width, // Default: stride equals padded_width
+            strip_stride: padded_width, // Always padded_width from layout
             blocks_w,
             blocks_h,
             pre_erosion_w,
@@ -224,14 +229,6 @@ impl StreamingAQ {
             #[cfg(all(feature = "archmage-simd", target_arch = "x86_64"))]
             archmage_token: X64V3Token::try_new(),
         })
-    }
-
-    /// Sets the input strip stride (row width in the input data).
-    ///
-    /// Use this when the input Y strip is laid out with a different stride
-    /// than the image width (e.g., for MCU-aligned padding).
-    pub fn set_strip_stride(&mut self, stride: usize) {
-        self.strip_stride = stride;
     }
 
     fn empty(y_quant_01: f32) -> Self {
@@ -274,7 +271,7 @@ impl StreamingAQ {
     ///
     /// # Arguments
     /// * `y_strip` - Y plane values for this strip (strip_stride × strip_height), 0-255 range.
-    ///              Use `set_strip_stride` if stride differs from width (e.g., for padded data).
+    ///              Strip stride is `padded_width` from `LayoutParams`.
     /// * `strip_y` - Starting row index of this strip
     /// * `strip_height` - Number of rows in this strip
     ///
@@ -906,10 +903,17 @@ impl StreamingAQ {
 mod tests {
     use super::*;
     use crate::quant::aq::compute_aq_strength_map;
+    use crate::types::Subsampling;
+
+    /// Helper to create a LayoutParams for tests (v_samp=2 like 4:2:0).
+    fn test_layout(width: usize, height: usize) -> LayoutParams {
+        LayoutParams::new(width, height, Subsampling::S420, false)
+    }
 
     #[test]
     fn test_streaming_aq_creation() {
-        let aq = StreamingAQ::new(256, 256, 3, 2).unwrap();
+        let layout = test_layout(256, 256);
+        let aq = StreamingAQ::new(&layout, 3).unwrap();
         assert_eq!(aq.blocks_w, 32);
         assert_eq!(aq.blocks_h, 32);
         assert_eq!(aq.y_imcu_height, 16);
@@ -927,7 +931,8 @@ mod tests {
         let full_result = compute_aq_strength_map(&y_plane, width, height, y_quant_01).unwrap();
 
         // Streaming computation
-        let mut streaming = StreamingAQ::new(width, height, y_quant_01, 2).unwrap();
+        let layout = test_layout(width, height);
+        let mut streaming = StreamingAQ::new(&layout, y_quant_01).unwrap();
         let strip_height = 16;
         for strip_y in (0..height).step_by(strip_height) {
             let actual_height = strip_height.min(height - strip_y);
@@ -965,7 +970,8 @@ mod tests {
 
         let full_result = compute_aq_strength_map(&y_plane, width, height, y_quant_01).unwrap();
 
-        let mut streaming = StreamingAQ::new(width, height, y_quant_01, 2).unwrap();
+        let layout = test_layout(width, height);
+        let mut streaming = StreamingAQ::new(&layout, y_quant_01).unwrap();
         let strip_height = 16;
         for strip_y in (0..height).step_by(strip_height) {
             let actual_height = strip_height.min(height - strip_y);
@@ -995,7 +1001,8 @@ mod tests {
             .map(|i| ((i % width + i / width) as f32 / 2.0).min(255.0))
             .collect();
 
-        let mut streaming = StreamingAQ::new(width, height, y_quant_01, 2).unwrap();
+        let layout = test_layout(width, height);
+        let mut streaming = StreamingAQ::new(&layout, y_quant_01).unwrap();
         let mut collected = Vec::new();
 
         let strip_height = 16;
