@@ -778,9 +778,16 @@ impl StripProcessor {
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         // Use process_y_strip_into to write to reusable buffer (zero allocation)
+        // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
+        // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
+        let aq_input = if self.use_xyb {
+            &self.cb_strip
+        } else {
+            &self.y_strip
+        };
         let aq_count = if let Some(ref mut aq) = self.aq_state {
             aq.process_y_strip_into(
-                &self.y_strip,
+                aq_input,
                 strip_y,
                 actual_strip_height,
                 &mut self.aq_strengths_buffer,
@@ -867,9 +874,17 @@ impl StripProcessor {
 
         // Step 2: Process AQ and check if previous iMCU strengths are ready
         // Use process_y_strip_into to write to reusable buffer (zero allocation)
+        // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
+        // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
+        // (This path rejects XYB mode above, so this is always y_strip here)
+        let aq_input = if self.use_xyb {
+            &self.cb_strip
+        } else {
+            &self.y_strip
+        };
         let aq_count = if let Some(ref mut aq) = self.aq_state {
             aq.process_y_strip_into(
-                &self.y_strip,
+                aq_input,
                 strip_y,
                 actual_strip_height,
                 &mut self.aq_strengths_buffer,
@@ -952,9 +967,17 @@ impl StripProcessor {
 
         // Step 2: Process AQ
         // Use process_y_strip_into to write to reusable buffer (zero allocation)
+        // NOTE: For XYB mode, use cb_strip (Y channel) not y_strip (X channel)
+        // C++ jpegli uses channel 1 for AQ in RGB/XYB mode, channel 0 for YCbCr
+        // (This path is for pre-subsampled YCbCr, not XYB)
+        let aq_input = if self.use_xyb {
+            &self.cb_strip
+        } else {
+            &self.y_strip
+        };
         let aq_count = if let Some(ref mut aq) = self.aq_state {
             aq.process_y_strip_into(
-                &self.y_strip,
+                aq_input,
                 strip_y,
                 actual_strip_height,
                 &mut self.aq_strengths_buffer,
