@@ -136,6 +136,10 @@ use wide::f32x8;
 /// This is the fast path for the hot encoding loop.
 ///
 /// IMPORTANT: Applies level shift (-128) as required for JPEG DCT.
+///
+/// # Safety invariant
+/// `strip` must have at least `(local_by * 8 + 7) * strip_width + bx * 8 + 8` elements.
+/// This is guaranteed by MCU-aligned padding in `LayoutParams::padded_width`.
 #[inline]
 pub(crate) fn extract_block_from_strip_wide(
     strip: &[f32],
@@ -147,12 +151,23 @@ pub(crate) fn extract_block_from_strip_wide(
     let x_start = bx * 8;
     let y_start = local_by * 8;
 
+    let last_row_end = (y_start + 7) * strip_width + x_start + 8;
+    debug_assert!(
+        last_row_end <= strip.len(),
+        "extract_block_from_strip_wide: block ({bx}, {local_by}) out of bounds \
+         (need {last_row_end}, have {}; strip_width={strip_width})",
+        strip.len(),
+    );
+
     let mut rows = [f32x8::ZERO; 8];
     for dy in 0..8 {
         let row_start = (y_start + dy) * strip_width + x_start;
-        // Zero-cost load from contiguous padded strip
-        let row_slice: [f32; 8] = strip[row_start..row_start + 8].try_into().unwrap();
-        rows[dy] = f32x8::from(row_slice) - level_shift;
+        let src = &strip[row_start..row_start + 8];
+        // SAFETY: src.len() == 8 is guaranteed by the slice range.
+        // Using copy instead of try_into to avoid Result overhead.
+        let mut arr = [0.0f32; 8];
+        arr.copy_from_slice(src);
+        rows[dy] = f32x8::from(arr) - level_shift;
     }
 
     Block8x8f { rows }
