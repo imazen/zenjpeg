@@ -377,12 +377,16 @@ fn load_image_list(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn load_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
-    let decoder = png::Decoder::new(fs::File::open(path)?);
+    let mut decoder = png::Decoder::new(fs::File::open(path)?);
+    // Expand indexed/palette to RGB(A), low-bit-depth gray to 8-bit
+    decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info()?;
+
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf)?;
 
     let (w, h) = (info.width, info.height);
+    // After EXPAND, indexed becomes RGB or RGBA
     let pixels = match info.color_type {
         png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
         png::ColorType::Rgba => buf[..info.buffer_size()]
@@ -397,7 +401,7 @@ fn load_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
             .chunks(2)
             .flat_map(|c| [c[0], c[0], c[0]])
             .collect(),
-        _ => return Err(format!("Unsupported color type: {:?}", info.color_type).into()),
+        other => return Err(format!("Unsupported color type: {other:?}").into()),
     };
 
     Ok((w, h, pixels))
