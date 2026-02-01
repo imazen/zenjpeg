@@ -1138,122 +1138,34 @@ impl StreamingEncoder {
         output: &mut Vec<u8>,
         collect_frequencies: bool,
     ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
-        let is_color = !config.pixel_format.is_grayscale();
         let width = config.width as usize;
         let height = config.height as usize;
-        let mut frequencies = None;
 
         output.clear();
         output
             .try_reserve(width * height / 4)
             .map_err(|_| Error::allocation_failed(width * height / 4, "sequential jpeg output"))?;
 
-        // Branch based on XYB vs YCbCr mode
-        let scan_data = if config.use_xyb {
-            // XYB mode: uses different headers, tables, and encoding
-            config.write_header_xyb(output)?;
-            config.write_app14_adobe(output, 0)?;
-            config.write_icc_profile(output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
-            config.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
-            // Use SOF1 if any quant table needs 16-bit precision
-            let is_extended =
-                y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
-            config.write_frame_header_xyb_ex(output, is_extended)?;
-
-            if matches!(config.huffman, HuffmanStrategy::Optimize) {
-                let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                )?;
-
-                config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
-
-                if config.restart_interval > 0 {
-                    config.write_restart_interval(output)?;
-                }
-                config.write_scan_header_xyb(output)?;
-
-                config.encode_with_tables_xyb_raster(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                    &dc_table,
-                    &ac_table,
-                )?
-            } else {
-                config.write_huffman_tables(output)?;
-
-                if config.restart_interval > 0 {
-                    config.write_restart_interval(output)?;
-                }
-                config.write_scan_header_xyb(output)?;
-
-                config.encode_with_tables_xyb_standard_raster(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                )?
-            }
+        let (scan_data, frequencies) = if config.use_xyb {
+            let data = Self::encode_sequential_xyb(
+                config,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                &strip_output,
+                output,
+            )?;
+            (data, None)
         } else {
-            // YCbCr mode: standard JPEG encoding
-            config.write_header(output)?;
-            config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
-            // Use SOF1 if any quant table needs 16-bit precision
-            let is_extended =
-                y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
-            config.write_frame_header_ex(output, is_extended)?;
-
-            if matches!(config.huffman, HuffmanStrategy::Optimize) {
-                let (tables, freqs) = if collect_frequencies {
-                    let (t, f) = config.build_optimized_tables_with_counts(
-                        &strip_output.y_blocks,
-                        &strip_output.cb_blocks,
-                        &strip_output.cr_blocks,
-                        is_color,
-                    )?;
-                    (t, Some(f))
-                } else {
-                    let t = config.build_optimized_tables(
-                        &strip_output.y_blocks,
-                        &strip_output.cb_blocks,
-                        &strip_output.cr_blocks,
-                        is_color,
-                    )?;
-                    (t, None)
-                };
-                frequencies = freqs;
-
-                config.write_huffman_tables_optimized(output, &tables)?;
-
-                if config.restart_interval > 0 {
-                    config.write_restart_interval(output)?;
-                }
-                config.write_scan_header(output)?;
-
-                config.encode_with_tables(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                    is_color,
-                    Some(&tables),
-                )?
-            } else {
-                config.write_huffman_tables(output)?;
-
-                if config.restart_interval > 0 {
-                    config.write_restart_interval(output)?;
-                }
-                config.write_scan_header(output)?;
-
-                config.encode_with_tables(
-                    &strip_output.y_blocks,
-                    &strip_output.cb_blocks,
-                    &strip_output.cr_blocks,
-                    is_color,
-                    None,
-                )?
-            }
+            Self::encode_sequential_ycbcr(
+                config,
+                y_quant,
+                cb_quant,
+                cr_quant,
+                &strip_output,
+                output,
+                collect_frequencies,
+            )?
         };
 
         output.extend_from_slice(&scan_data);
@@ -1263,6 +1175,143 @@ impl StreamingEncoder {
         output.push(crate::foundation::consts::MARKER_EOI);
 
         Ok(frequencies)
+    }
+
+    /// Encodes sequential JPEG in XYB color mode.
+    ///
+    /// Writes XYB-specific headers (Adobe APP14, XYB ICC profile, XYB frame/scan
+    /// headers) and encodes using XYB-specific table building and entropy coding.
+    /// XYB mode never collects frequency tables.
+    fn encode_sequential_xyb(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+    ) -> Result<Vec<u8>> {
+        config.write_header_xyb(output)?;
+        config.write_app14_adobe(output, 0)?;
+        config.write_icc_profile(output, &crate::foundation::consts::XYB_ICC_PROFILE)?;
+        config.write_quant_tables_xyb(output, y_quant, cb_quant, cr_quant)?;
+
+        // Use SOF1 if any quant table needs 16-bit precision
+        let is_extended =
+            y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        config.write_frame_header_xyb_ex(output, is_extended)?;
+
+        if matches!(config.huffman, HuffmanStrategy::Optimize) {
+            let (dc_table, ac_table) = config.build_optimized_tables_xyb_raster(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+            )?;
+
+            config.write_huffman_tables_xyb_optimized(output, &dc_table, &ac_table);
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            config.encode_with_tables_xyb_raster(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                &dc_table,
+                &ac_table,
+            )
+        } else {
+            config.write_huffman_tables(output)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header_xyb(output)?;
+
+            config.encode_with_tables_xyb_standard_raster(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+            )
+        }
+    }
+
+    /// Encodes sequential JPEG in YCbCr color mode.
+    ///
+    /// Writes standard JPEG headers and encodes using standard table building
+    /// and entropy coding. When `collect_frequencies` is true, returns the
+    /// symbol frequencies from the Huffman optimization pass at no extra cost.
+    fn encode_sequential_ycbcr(
+        config: &ComputedConfig,
+        y_quant: &QuantTable,
+        cb_quant: &QuantTable,
+        cr_quant: &QuantTable,
+        strip_output: &crate::encode::strip::StripProcessorOutput,
+        output: &mut Vec<u8>,
+        collect_frequencies: bool,
+    ) -> Result<(Vec<u8>, Option<Box<super::blocks::HuffmanSymbolFrequencies>>)> {
+        let is_color = !config.pixel_format.is_grayscale();
+
+        config.write_header(output)?;
+        config.write_quant_tables(output, y_quant, cb_quant, cr_quant)?;
+
+        // Use SOF1 if any quant table needs 16-bit precision
+        let is_extended =
+            y_quant.precision > 0 || cb_quant.precision > 0 || cr_quant.precision > 0;
+        config.write_frame_header_ex(output, is_extended)?;
+
+        if matches!(config.huffman, HuffmanStrategy::Optimize) {
+            let (tables, frequencies) = if collect_frequencies {
+                let (t, f) = config.build_optimized_tables_with_counts(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
+                (t, Some(f))
+            } else {
+                let t = config.build_optimized_tables(
+                    &strip_output.y_blocks,
+                    &strip_output.cb_blocks,
+                    &strip_output.cr_blocks,
+                    is_color,
+                )?;
+                (t, None)
+            };
+
+            config.write_huffman_tables_optimized(output, &tables)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                Some(&tables),
+            )?;
+            Ok((scan_data, frequencies))
+        } else {
+            config.write_huffman_tables(output)?;
+
+            if config.restart_interval > 0 {
+                config.write_restart_interval(output)?;
+            }
+            config.write_scan_header(output)?;
+
+            let scan_data = config.encode_with_tables(
+                &strip_output.y_blocks,
+                &strip_output.cb_blocks,
+                &strip_output.cr_blocks,
+                is_color,
+                None,
+            )?;
+            Ok((scan_data, None))
+        }
     }
 }
 
