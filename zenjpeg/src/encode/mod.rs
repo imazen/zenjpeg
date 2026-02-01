@@ -37,6 +37,7 @@ mod blocks;
 pub mod chroma;
 #[doc(hidden)]
 pub mod dct;
+pub(crate) mod layout;
 mod progressive;
 #[doc(hidden)]
 pub mod scan_script;
