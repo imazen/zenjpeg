@@ -2045,6 +2045,7 @@ dependencies = [
  "getrandom",
  "img-parts",
  "imgref",
+ "jpeg-decoder",
  "jpegli-internals-sys",
  "kamadak-exif",
  "lcms2",
