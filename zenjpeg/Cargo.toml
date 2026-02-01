@@ -11,6 +11,16 @@ keywords = ["jpeg", "image", "encoder", "decoder", "compression"]
 categories = ["multimedia::images", "encoding"]
 authors = ["Lilith River <lilith@imazen.io>"]
 rust-version = "1.92"
+exclude = [
+    "tests/",
+    "benches/",
+    "examples/",
+    "docs/",
+    "encode_benchmark_results.csv",
+    "refactor.md",
+    "xyb.md",
+    "QUALITY_INVESTIGATION.md",
+]
 
 [lib]
 name = "zenjpeg"
