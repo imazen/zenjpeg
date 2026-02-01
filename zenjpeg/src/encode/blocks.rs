@@ -156,15 +156,15 @@ impl ComputedConfig {
             }
         } else {
             // Subsampled mode - iterate in MCU order with padding
-            let y_blocks_h = (width + 7) / 8;
-            let y_blocks_v = (height + 7) / 8;
+            let y_blocks_w = (width + 7) / 8;
+            let y_blocks_h = (height + 7) / 8;
             // Use ceiling division for chroma dimensions: (n + d - 1) / d
             let c_width = (width + h_samp - 1) / h_samp;
             let c_height = (height + v_samp - 1) / v_samp;
-            let c_blocks_h = (c_width + 7) / 8;
-            let c_blocks_v = (c_height + 7) / 8;
-            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
-            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+            let c_blocks_w = (c_width + 7) / 8;
+            let c_blocks_h = (c_height + 7) / 8;
+            let mcu_h = (y_blocks_w + h_samp - 1) / h_samp;
+            let mcu_v = (y_blocks_h + v_samp - 1) / v_samp;
 
             let mut prev_y_dc: i16 = 0;
             let mut prev_cb_dc: i16 = 0;
@@ -182,8 +182,8 @@ impl ComputedConfig {
                         for dx in 0..h_samp {
                             let y_bx = mcu_x * h_samp + dx;
                             let y_by = mcu_y * v_samp + dy;
-                            let block = if y_bx < y_blocks_h && y_by < y_blocks_v {
-                                let y_idx = y_by * y_blocks_h + y_bx;
+                            let block = if y_bx < y_blocks_w && y_by < y_blocks_h {
+                                let y_idx = y_by * y_blocks_w + y_bx;
                                 &y_blocks[y_idx]
                             } else {
                                 &ZERO_BLOCK
@@ -200,8 +200,8 @@ impl ComputedConfig {
 
                     // Chroma blocks
                     if is_color {
-                        let (cb_block, cr_block) = if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
-                            let c_idx = mcu_y * c_blocks_h + mcu_x;
+                        let (cb_block, cr_block) = if mcu_x < c_blocks_w && mcu_y < c_blocks_h {
+                            let c_idx = mcu_y * c_blocks_w + mcu_x;
                             (&cb_blocks[c_idx], &cr_blocks[c_idx])
                         } else {
                             (&ZERO_BLOCK, &ZERO_BLOCK)
@@ -385,16 +385,16 @@ impl ComputedConfig {
             }
         } else {
             // Subsampled mode - MCU interleaving
-            let y_blocks_h = (width + 7) / 8;
-            let y_blocks_v = (height + 7) / 8;
+            let y_blocks_w = (width + 7) / 8;
+            let y_blocks_h = (height + 7) / 8;
             // Use ceiling division for chroma dimensions: (n + d - 1) / d
             let c_width = (width + h_samp - 1) / h_samp;
             let c_height = (height + v_samp - 1) / v_samp;
-            let c_blocks_h = (c_width + 7) / 8;
-            let c_blocks_v = (c_height + 7) / 8;
+            let c_blocks_w = (c_width + 7) / 8;
+            let c_blocks_h = (c_height + 7) / 8;
 
-            let mcu_h = (y_blocks_h + h_samp - 1) / h_samp;
-            let mcu_v = (y_blocks_v + v_samp - 1) / v_samp;
+            let mcu_h = (y_blocks_w + h_samp - 1) / h_samp;
+            let mcu_v = (y_blocks_h + v_samp - 1) / v_samp;
             let total_mcus = mcu_h * mcu_v;
 
             // Zero block for padding out-of-bounds MCU positions
@@ -408,8 +408,8 @@ impl ComputedConfig {
                         for dx in 0..h_samp {
                             let y_bx = mcu_x * h_samp + dx;
                             let y_by = mcu_y * v_samp + dy;
-                            if y_bx < y_blocks_h && y_by < y_blocks_v {
-                                let y_idx = y_by * y_blocks_h + y_bx;
+                            if y_bx < y_blocks_w && y_by < y_blocks_h {
+                                let y_idx = y_by * y_blocks_w + y_bx;
                                 encoder.encode_block(&y_blocks[y_idx], 0, 0, 0);
                             } else {
                                 // Out of bounds - encode zero block (padding)
@@ -420,8 +420,8 @@ impl ComputedConfig {
 
                     // Encode Cb and Cr blocks (always, even if out of bounds)
                     if is_color {
-                        if mcu_x < c_blocks_h && mcu_y < c_blocks_v {
-                            let c_idx = mcu_y * c_blocks_h + mcu_x;
+                        if mcu_x < c_blocks_w && mcu_y < c_blocks_h {
+                            let c_idx = mcu_y * c_blocks_w + mcu_x;
                             encoder.encode_block(&cb_blocks[c_idx], 1, 1, 1);
                             encoder.encode_block(&cr_blocks[c_idx], 2, 1, 1);
                         } else {
@@ -569,16 +569,16 @@ impl ComputedConfig {
         let height = self.height as usize;
 
         // X and Y are full resolution
-        let xy_blocks_h = (width + 7) / 8;
-        let xy_blocks_v = (height + 7) / 8;
+        let xy_blocks_w = (width + 7) / 8;
+        let xy_blocks_h = (height + 7) / 8;
 
         // B is 2x2 downsampled
-        let b_blocks_h = (width + 15) / 16;
-        let b_blocks_v = (height + 15) / 16;
+        let b_blocks_w = (width + 15) / 16;
+        let b_blocks_h = (height + 15) / 16;
 
         // MCU is 16x16 pixels (2x2 blocks for X/Y, 1x1 for B)
-        let mcu_h = (xy_blocks_h + 1) / 2;
-        let mcu_v = (xy_blocks_v + 1) / 2;
+        let mcu_h = (xy_blocks_w + 1) / 2;
+        let mcu_v = (xy_blocks_h + 1) / 2;
 
         // Zero block for padding
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
@@ -595,8 +595,8 @@ impl ComputedConfig {
                     for dx in 0..2 {
                         let bx = mcu_x * 2 + dx;
                         let by = mcu_y * 2 + dy;
-                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
-                            let idx = by * xy_blocks_h + bx;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            let idx = by * xy_blocks_w + bx;
                             &x_blocks[idx]
                         } else {
                             &ZERO_BLOCK
@@ -616,8 +616,8 @@ impl ComputedConfig {
                     for dx in 0..2 {
                         let bx = mcu_x * 2 + dx;
                         let by = mcu_y * 2 + dy;
-                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
-                            let idx = by * xy_blocks_h + bx;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            let idx = by * xy_blocks_w + bx;
                             &y_blocks[idx]
                         } else {
                             &ZERO_BLOCK
@@ -633,8 +633,8 @@ impl ComputedConfig {
                 }
 
                 // B block (1 per MCU)
-                let b_block = if mcu_x < b_blocks_h && mcu_y < b_blocks_v {
-                    let idx = mcu_y * b_blocks_h + mcu_x;
+                let b_block = if mcu_x < b_blocks_w && mcu_y < b_blocks_h {
+                    let idx = mcu_y * b_blocks_w + mcu_x;
                     &b_blocks[idx]
                 } else {
                     &ZERO_BLOCK
@@ -667,16 +667,16 @@ impl ComputedConfig {
         let height = self.height as usize;
 
         // X and Y are full resolution
-        let xy_blocks_h = (width + 7) / 8;
-        let xy_blocks_v = (height + 7) / 8;
+        let xy_blocks_w = (width + 7) / 8;
+        let xy_blocks_h = (height + 7) / 8;
 
         // B is 2x2 downsampled
-        let b_blocks_h = (width + 15) / 16;
-        let b_blocks_v = (height + 15) / 16;
+        let b_blocks_w = (width + 15) / 16;
+        let b_blocks_h = (height + 15) / 16;
 
         // MCU is 16x16 pixels
-        let mcu_h = (xy_blocks_h + 1) / 2;
-        let mcu_v = (xy_blocks_v + 1) / 2;
+        let mcu_h = (xy_blocks_w + 1) / 2;
+        let mcu_v = (xy_blocks_h + 1) / 2;
 
         // Zero block for padding
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
@@ -700,8 +700,8 @@ impl ComputedConfig {
                     for dx in 0..2 {
                         let bx = mcu_x * 2 + dx;
                         let by = mcu_y * 2 + dy;
-                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
-                            let idx = by * xy_blocks_h + bx;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            let idx = by * xy_blocks_w + bx;
                             &x_blocks[idx]
                         } else {
                             &ZERO_BLOCK
@@ -715,8 +715,8 @@ impl ComputedConfig {
                     for dx in 0..2 {
                         let bx = mcu_x * 2 + dx;
                         let by = mcu_y * 2 + dy;
-                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
-                            let idx = by * xy_blocks_h + bx;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            let idx = by * xy_blocks_w + bx;
                             &y_blocks[idx]
                         } else {
                             &ZERO_BLOCK
@@ -726,8 +726,8 @@ impl ComputedConfig {
                 }
 
                 // B block (1 per MCU)
-                let b_block = if mcu_x < b_blocks_h && mcu_y < b_blocks_v {
-                    let idx = mcu_y * b_blocks_h + mcu_x;
+                let b_block = if mcu_x < b_blocks_w && mcu_y < b_blocks_h {
+                    let idx = mcu_y * b_blocks_w + mcu_x;
                     &b_blocks[idx]
                 } else {
                     &ZERO_BLOCK
@@ -752,16 +752,16 @@ impl ComputedConfig {
         let height = self.height as usize;
 
         // X and Y are full resolution
-        let xy_blocks_h = (width + 7) / 8;
-        let xy_blocks_v = (height + 7) / 8;
+        let xy_blocks_w = (width + 7) / 8;
+        let xy_blocks_h = (height + 7) / 8;
 
         // B is 2x2 downsampled
-        let b_blocks_h = (width + 15) / 16;
-        let b_blocks_v = (height + 15) / 16;
+        let b_blocks_w = (width + 15) / 16;
+        let b_blocks_h = (height + 15) / 16;
 
         // MCU is 16x16 pixels
-        let mcu_h = (xy_blocks_h + 1) / 2;
-        let mcu_v = (xy_blocks_v + 1) / 2;
+        let mcu_h = (xy_blocks_w + 1) / 2;
+        let mcu_v = (xy_blocks_h + 1) / 2;
 
         // Zero block for padding
         const ZERO_BLOCK: [i16; DCT_BLOCK_SIZE] = [0i16; DCT_BLOCK_SIZE];
@@ -785,8 +785,8 @@ impl ComputedConfig {
                     for dx in 0..2 {
                         let bx = mcu_x * 2 + dx;
                         let by = mcu_y * 2 + dy;
-                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
-                            let idx = by * xy_blocks_h + bx;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            let idx = by * xy_blocks_w + bx;
                             &x_blocks[idx]
                         } else {
                             &ZERO_BLOCK
@@ -800,8 +800,8 @@ impl ComputedConfig {
                     for dx in 0..2 {
                         let bx = mcu_x * 2 + dx;
                         let by = mcu_y * 2 + dy;
-                        let block = if bx < xy_blocks_h && by < xy_blocks_v {
-                            let idx = by * xy_blocks_h + bx;
+                        let block = if bx < xy_blocks_w && by < xy_blocks_h {
+                            let idx = by * xy_blocks_w + bx;
                             &y_blocks[idx]
                         } else {
                             &ZERO_BLOCK
@@ -811,8 +811,8 @@ impl ComputedConfig {
                 }
 
                 // B block (1 per MCU)
-                let b_block = if mcu_x < b_blocks_h && mcu_y < b_blocks_v {
-                    let idx = mcu_y * b_blocks_h + mcu_x;
+                let b_block = if mcu_x < b_blocks_w && mcu_y < b_blocks_h {
+                    let idx = mcu_y * b_blocks_w + mcu_x;
                     &b_blocks[idx]
                 } else {
                     &ZERO_BLOCK

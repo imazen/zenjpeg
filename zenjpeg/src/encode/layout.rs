@@ -39,13 +39,13 @@ pub(crate) struct LayoutParams {
     pub padded_c_width: usize,
 
     // === Block counts (luma) ===
+    pub y_blocks_w: usize,
     pub y_blocks_h: usize,
-    pub y_blocks_v: usize,
     pub total_y_blocks: usize,
 
     // === Block counts (chroma) ===
+    pub c_blocks_w: usize,
     pub c_blocks_h: usize,
-    pub c_blocks_v: usize,
     pub total_c_blocks: usize,
     pub padded_c_blocks_w: usize,
 
@@ -53,8 +53,8 @@ pub(crate) struct LayoutParams {
     pub b_width: usize,
     pub padded_b_width: usize,
     pub b_strip_height: usize,
+    pub b_blocks_w: usize,
     pub b_blocks_h: usize,
-    pub b_blocks_v: usize,
 
     // === Pending buffer capacities ===
     pub pending_y_capacity: usize,
@@ -63,9 +63,9 @@ pub(crate) struct LayoutParams {
     // === MCU grid (for restart markers / streaming) ===
     /// Horizontal sampling factor (1 for 444/440, 2 for 422/420)
     pub h_samp: usize,
-    /// MCU columns: ceil(y_blocks_h / h_samp)
+    /// MCU columns: ceil(y_blocks_w / h_samp)
     pub mcu_cols: usize,
-    /// MCU rows: ceil(y_blocks_v / v_samp)
+    /// MCU rows: ceil(y_blocks_h / v_samp)
     pub mcu_rows: usize,
     /// Total MCUs in the image
     pub total_mcus: usize,
@@ -123,12 +123,12 @@ impl LayoutParams {
         let blocks_w = (width + 7) / 8;
         let blocks_h = (height + 7) / 8;
         let padded_blocks_w = padded_width / 8;
-        let y_blocks_h = blocks_w;
-        let y_blocks_v = blocks_h;
-        let total_y_blocks = y_blocks_h * y_blocks_v;
+        let y_blocks_w = blocks_w;
+        let y_blocks_h = blocks_h;
+        let total_y_blocks = y_blocks_w * y_blocks_h;
 
         // Block counts (chroma)
-        let (c_blocks_h, c_blocks_v, total_c_blocks) = match subsampling {
+        let (c_blocks_w, c_blocks_h, total_c_blocks) = match subsampling {
             Subsampling::S420 => {
                 let h = (width + 15) / 16;
                 let v = (height + 15) / 16;
@@ -136,22 +136,22 @@ impl LayoutParams {
             }
             Subsampling::S422 => {
                 let h = (width + 15) / 16;
-                (h, y_blocks_v, h * y_blocks_v)
+                (h, y_blocks_h, h * y_blocks_h)
             }
             Subsampling::S440 => {
                 let v = (height + 15) / 16;
-                (y_blocks_h, v, y_blocks_h * v)
+                (y_blocks_w, v, y_blocks_w * v)
             }
-            Subsampling::S444 => (y_blocks_h, y_blocks_v, total_y_blocks),
+            Subsampling::S444 => (y_blocks_w, y_blocks_h, total_y_blocks),
         };
 
         let padded_c_blocks_w = padded_c_width / 8;
 
         // B channel block dimensions for XYB mode (always 2x2 downsampled)
-        let (b_blocks_h, b_blocks_v) = if use_xyb {
+        let (b_blocks_w, b_blocks_h) = if use_xyb {
             ((width + 15) / 16, (height + 15) / 16)
         } else {
-            (c_blocks_h, c_blocks_v)
+            (c_blocks_w, c_blocks_h)
         };
 
         // In XYB mode, JPEG header uses R:2×2, G:2×2, B:1×1, so max_v_samp_factor=2
@@ -176,8 +176,8 @@ impl LayoutParams {
         };
 
         // MCU grid dimensions (for restart markers / streaming-through encoding)
-        let mcu_cols = (y_blocks_h + h_samp - 1) / h_samp;
-        let mcu_rows = (y_blocks_v + v_samp - 1) / v_samp;
+        let mcu_cols = (y_blocks_w + h_samp - 1) / h_samp;
+        let mcu_rows = (y_blocks_h + v_samp - 1) / v_samp;
         let total_mcus = mcu_cols * mcu_rows;
 
         // Y buffer stride for AQ (padded_width + 1 for edge replication)
@@ -198,18 +198,18 @@ impl LayoutParams {
             c_width,
             c_strip_height,
             padded_c_width,
+            y_blocks_w,
             y_blocks_h,
-            y_blocks_v,
             total_y_blocks,
+            c_blocks_w,
             c_blocks_h,
-            c_blocks_v,
             total_c_blocks,
             padded_c_blocks_w,
             b_width,
             padded_b_width,
             b_strip_height,
+            b_blocks_w,
             b_blocks_h,
-            b_blocks_v,
             pending_y_capacity,
             pending_c_capacity,
             h_samp,
@@ -258,8 +258,8 @@ mod tests {
         assert_eq!(lp.c_strip_height, 8);
         assert_eq!(lp.padded_c_width, 1920);
         assert_eq!(lp.b_strip_height, 4); // (8+1)/2
-        assert_eq!(lp.c_blocks_h, 240); // 4:4:4 chroma = same as luma
-        assert_eq!(lp.c_blocks_v, 135);
+        assert_eq!(lp.c_blocks_w, 240); // 4:4:4 chroma = same as luma
+        assert_eq!(lp.c_blocks_h, 135);
         assert_eq!(lp.total_c_blocks, 240 * 135);
         assert_eq!(lp.pending_y_capacity, 240); // padded_blocks_w * v_samp(1)
         assert_eq!(lp.pending_c_capacity, 240);
@@ -284,8 +284,8 @@ mod tests {
         assert_eq!(lp.c_strip_height, 8);
         assert_eq!(lp.padded_c_width, 960);
         assert_eq!(lp.b_strip_height, 8); // (16 + 1) / 2
-        assert_eq!(lp.c_blocks_h, 120); // (1920 + 15) / 16
-        assert_eq!(lp.c_blocks_v, 68); // (1080 + 15) / 16
+        assert_eq!(lp.c_blocks_w, 120); // (1920 + 15) / 16
+        assert_eq!(lp.c_blocks_h, 68); // (1080 + 15) / 16
         assert_eq!(lp.pending_y_capacity, 240 * 2); // padded_blocks_w * v_samp
         assert_eq!(lp.pending_c_capacity, 120);
         // MCU grid: 4:2:0, each MCU = 2x2 blocks
@@ -303,8 +303,8 @@ mod tests {
         assert_eq!(lp.v_samp, 1);
         assert_eq!(lp.c_width, 960);
         assert_eq!(lp.c_strip_height, 8);
-        assert_eq!(lp.c_blocks_h, 120);
-        assert_eq!(lp.c_blocks_v, 135); // same as y_blocks_v for 422
+        assert_eq!(lp.c_blocks_w, 120);
+        assert_eq!(lp.c_blocks_h, 135); // same as y_blocks_h for 422
     }
 
     #[test]
@@ -316,8 +316,8 @@ mod tests {
         assert_eq!(lp.v_samp, 2);
         assert_eq!(lp.c_width, 1920);
         assert_eq!(lp.c_strip_height, 8);
-        assert_eq!(lp.c_blocks_h, 240); // same as y_blocks_h for 440
-        assert_eq!(lp.c_blocks_v, 68); // (1080 + 15) / 16
+        assert_eq!(lp.c_blocks_w, 240); // same as y_blocks_w for 440
+        assert_eq!(lp.c_blocks_h, 68); // (1080 + 15) / 16
     }
 
     #[test]
@@ -330,8 +330,8 @@ mod tests {
         // B channel is always 2x2 downsampled in XYB
         assert_eq!(lp.b_width, 960);
         assert_eq!(lp.b_strip_height, 8); // (16 + 1) / 2
-        assert_eq!(lp.b_blocks_h, 120);
-        assert_eq!(lp.b_blocks_v, 68);
+        assert_eq!(lp.b_blocks_w, 120);
+        assert_eq!(lp.b_blocks_h, 68);
         // Pending Y capacity reflects v_samp=2
         assert_eq!(lp.pending_y_capacity, 240 * 2);
     }
@@ -343,8 +343,8 @@ mod tests {
         assert_eq!(lp.v_samp, 2);
         // B channel dimensions are independent of subsampling in XYB mode
         assert_eq!(lp.b_width, 960);
-        assert_eq!(lp.b_blocks_h, 120);
-        assert_eq!(lp.b_blocks_v, 68);
+        assert_eq!(lp.b_blocks_w, 120);
+        assert_eq!(lp.b_blocks_h, 68);
     }
 
     #[test]
@@ -357,8 +357,8 @@ mod tests {
         assert_eq!(lp.blocks_h, 139); // (1105 + 7) / 8
         assert_eq!(lp.c_width, 559); // (1118 + 1) / 2
         assert_eq!(lp.padded_c_width, 560); // (559 + 7) / 8 * 8
-        assert_eq!(lp.c_blocks_h, 70); // (1118 + 15) / 16
-        assert_eq!(lp.c_blocks_v, 70); // (1105 + 15) / 16
+        assert_eq!(lp.c_blocks_w, 70); // (1118 + 15) / 16
+        assert_eq!(lp.c_blocks_h, 70); // (1105 + 15) / 16
         assert_eq!(lp.padded_blocks_w, 140); // 1120 / 8
     }
 
@@ -368,8 +368,8 @@ mod tests {
         assert_eq!(lp.padded_width, 16); // MCU-aligned
         assert_eq!(lp.blocks_w, 1);
         assert_eq!(lp.blocks_h, 1);
+        assert_eq!(lp.c_blocks_w, 1);
         assert_eq!(lp.c_blocks_h, 1);
-        assert_eq!(lp.c_blocks_v, 1);
     }
 
     #[test]

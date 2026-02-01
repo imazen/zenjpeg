@@ -287,8 +287,8 @@ fn quantize_chroma_blocks(
     _use_trellis: bool,
     chroma_blocks_h: usize,
     chroma_blocks_v: usize,
+    y_blocks_w: usize,
     y_blocks_h: usize,
-    y_blocks_v: usize,
 ) {
     let blocks_h = chroma_blocks_h.max(1);
     let global_chroma_by = output.len() / blocks_h;
@@ -296,10 +296,10 @@ fn quantize_chroma_blocks(
     for (i, dct) in pending.iter().enumerate() {
         let bx = i % blocks_h;
         let local_by = i / blocks_h;
-        let y_bx = (bx * y_blocks_h) / blocks_h;
+        let y_bx = (bx * y_blocks_w) / blocks_h;
         let chroma_by = global_chroma_by + local_by;
-        let y_by = (chroma_by * y_blocks_v) / chroma_blocks_v.max(1);
-        let global_aq_idx = y_by * y_blocks_h + y_bx.min(y_blocks_h.saturating_sub(1));
+        let y_by = (chroma_by * y_blocks_h) / chroma_blocks_v.max(1);
+        let global_aq_idx = y_by * y_blocks_w + y_bx.min(y_blocks_w.saturating_sub(1));
         let aq_strength = if global_aq_idx < all_aq_strengths.len() {
             all_aq_strengths[global_aq_idx]
         } else {
@@ -1100,7 +1100,7 @@ impl StripProcessor {
                 }
 
                 // Process B component (2x2 downsampled from cr_down)
-                let b_blocks_w = self.layout.b_blocks_h;
+                let b_blocks_w = self.layout.b_blocks_w;
                 let b_strip_height = self.layout.b_strip_height;
                 let b_strip_blocks_h = (b_strip_height + 7) / 8;
                 let b_blocks_total = b_blocks_w * b_strip_blocks_h;
@@ -1127,7 +1127,7 @@ impl StripProcessor {
                 }
             } else {
                 // YCbCr mode: chroma dimensions from layout (single source of truth)
-                let c_blocks_w = self.layout.c_blocks_h;
+                let c_blocks_w = self.layout.c_blocks_w;
                 let c_strip_height = self.layout.c_strip_height;
                 let c_strip_blocks_h = (c_strip_height + 7) / 8;
                 let c_blocks_total = c_blocks_w * c_strip_blocks_h;
@@ -1235,10 +1235,10 @@ impl StripProcessor {
 
         // Quantize Cb/Cr blocks
         {
+            let y_blocks_w = self.layout.y_blocks_w;
             let y_blocks_h = self.layout.y_blocks_h;
-            let y_blocks_v = self.layout.y_blocks_v;
+            let c_blocks_w = self.layout.c_blocks_w;
             let c_blocks_h = self.layout.c_blocks_h;
-            let c_blocks_v = self.layout.c_blocks_v;
 
             // Cb: always uses c_blocks dimensions
             quantize_chroma_blocks(
@@ -1252,22 +1252,22 @@ impl StripProcessor {
                 #[cfg(feature = "experimental-hybrid-trellis")]
                 self.hybrid_ctx.as_ref(),
                 use_trellis,
+                c_blocks_w,
                 c_blocks_h,
-                c_blocks_v,
+                y_blocks_w,
                 y_blocks_h,
-                y_blocks_v,
             );
 
             // Cr: for XYB mode, use b_blocks dimensions (B channel is 2x2 downsampled)
             let cr_blocks_h = if self.layout.use_xyb {
+                self.layout.b_blocks_w
+            } else {
+                c_blocks_w
+            };
+            let cr_blocks_v = if self.layout.use_xyb {
                 self.layout.b_blocks_h
             } else {
                 c_blocks_h
-            };
-            let cr_blocks_v = if self.layout.use_xyb {
-                self.layout.b_blocks_v
-            } else {
-                c_blocks_v
             };
             quantize_chroma_blocks(
                 &self.pending.cr[buffer_idx],
@@ -1282,8 +1282,8 @@ impl StripProcessor {
                 use_trellis,
                 cr_blocks_h,
                 cr_blocks_v,
+                y_blocks_w,
                 y_blocks_h,
-                y_blocks_v,
             );
         }
     }
