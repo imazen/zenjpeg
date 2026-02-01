@@ -933,12 +933,12 @@ impl QualityMetrics {
         assert_eq!(original.width(), distorted.width(), "Width mismatch");
         assert_eq!(original.height(), distorted.height(), "Height mismatch");
 
-        // Convert to flat bytes for fast-ssim2
-        let orig_bytes = rgb_to_bytes(original);
-        let dist_bytes = rgb_to_bytes(distorted);
+        // Convert RGB8 pixels to [u8; 3] arrays for fast-ssim2
+        let orig_pixels: Vec<[u8; 3]> = original.pixels().map(|p| [p.r, p.g, p.b]).collect();
+        let dist_pixels: Vec<[u8; 3]> = distorted.pixels().map(|p| [p.r, p.g, p.b]).collect();
 
-        let orig_img = ImgVec::new(orig_bytes, original.width() * 3, original.height());
-        let dist_img = ImgVec::new(dist_bytes, distorted.width() * 3, distorted.height());
+        let orig_img = ImgVec::new(orig_pixels, original.width(), original.height());
+        let dist_img = ImgVec::new(dist_pixels, distorted.width(), distorted.height());
 
         compute_ssimulacra2(orig_img.as_ref(), dist_img.as_ref()).unwrap_or(0.0)
     }
@@ -1149,9 +1149,30 @@ pub fn decode_jpeg(data: &[u8]) -> Result<(Vec<u8>, usize, usize), JpegDecodeErr
 }
 
 /// Decode a JPEG to an RgbImage using zune-jpeg.
+///
+/// Note: This does NOT apply ICC color profiles. For XYB JPEGs, use
+/// [`decode_jpeg_with_icc`] instead.
 pub fn decode_jpeg_to_rgb(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
     let (pixels, width, height) = decode_jpeg(data)?;
     Ok(bytes_to_rgb(&pixels, width, height))
+}
+
+/// Decode a JPEG with ICC color profile support using zenjpeg decoder.
+///
+/// This is required for XYB-encoded JPEGs which embed an ICC profile
+/// describing the XYB color space. Standard decoders that ignore ICC
+/// will produce garbage colors.
+pub fn decode_jpeg_with_icc(data: &[u8]) -> Result<RgbImage, JpegDecodeError> {
+    let decoded = zenjpeg::decoder::Decoder::new()
+        .apply_icc(true)
+        .decode(data)
+        .map_err(|e| JpegDecodeError::Decode(format!("{:?}", e)))?;
+
+    Ok(bytes_to_rgb(
+        &decoded.data,
+        decoded.width as usize,
+        decoded.height as usize,
+    ))
 }
 
 /// Error decoding a JPEG file.

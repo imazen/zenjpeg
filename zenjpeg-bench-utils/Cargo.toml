@@ -32,7 +32,8 @@ fast-ssim2 = { workspace = true }
 butteraugli = { workspace = true }
 
 # For test image discovery and encoding (decoder required for comparison utilities)
-zenjpeg = { path = "../zenjpeg", default-features = false, features = ["test-utils", "decoder"] }
+# cms-moxcms enables ICC profile support for XYB JPEG decoding
+zenjpeg = { path = "../zenjpeg", default-features = false, features = ["test-utils", "decoder", "cms-moxcms"] }
 
 # C++ jpegli FFI bindings (optional)
 jpegli-internals-sys = { path = "../internal/jpegli-internals-sys", optional = true }
