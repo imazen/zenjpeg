@@ -329,6 +329,7 @@ impl StripProcessor {
         let padded_c_width = layout.padded_c_width;
         let padded_b_width = layout.padded_b_width;
         let c_strip_height = layout.c_strip_height;
+        let b_strip_height = layout.b_strip_height;
         let total_y_blocks = layout.total_y_blocks;
         let total_c_blocks = layout.total_c_blocks;
         let pending_y_capacity = layout.pending_y_capacity;
@@ -380,7 +381,6 @@ impl StripProcessor {
             cr_down: if is_color {
                 // For XYB mode, cr_down holds B channel which is 2x2 downsampled
                 let cr_down_size = if use_xyb {
-                    let b_strip_height = (strip_height + 1) / 2;
                     padded_b_width * b_strip_height
                 } else {
                     padded_c_width * c_strip_height
@@ -985,8 +985,6 @@ impl StripProcessor {
 
         // Compute DCT for Cb/Cr blocks (if color)
         if !self.pixel_format.is_grayscale() {
-            let width = self.layout.width;
-
             if self.layout.use_xyb {
                 // XYB mode: Y component is full resolution, B is 2x2 downsampled
                 // - Y (cb_strip): full res, same block dimensions as X (y_strip)
@@ -1021,15 +1019,11 @@ impl StripProcessor {
                 }
 
                 // Process B component (2x2 downsampled from cr_down)
-                // For XYB, B is always 2x2 downsampled, so use c_width/c_height based on that
-                let b_width = (width + 1) / 2;
-                let b_strip_height = (strip_height + 1) / 2;
-                let b_blocks_w = (b_width + 7) / 8;
+                let b_blocks_w = self.layout.b_blocks_h;
+                let b_strip_height = self.layout.b_strip_height;
                 let b_strip_blocks_h = (b_strip_height + 7) / 8;
                 let b_blocks_total = b_blocks_w * b_strip_blocks_h;
                 let padded_b_width = self.layout.padded_b_width;
-
-                // cr_down for XYB B channel uses padded_b_width stride
                 let b_size = b_strip_height * padded_b_width;
 
                 let cr_start = self.pending_cr_blocks[pending_idx].len();
@@ -1051,19 +1045,11 @@ impl StripProcessor {
                     }
                 }
             } else {
-                // YCbCr mode: standard chroma dimensions based on subsampling
-                let (c_width, c_strip_height) = match self.layout.subsampling {
-                    Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
-                    Subsampling::S422 => ((width + 1) / 2, strip_height),
-                    Subsampling::S440 => (width, (strip_height + 1) / 2),
-                    Subsampling::S444 => (width, strip_height),
-                };
-
-                let c_blocks_w = (c_width + 7) / 8;
+                // YCbCr mode: chroma dimensions from layout (single source of truth)
+                let c_blocks_w = self.layout.c_blocks_h;
+                let c_strip_height = self.layout.c_strip_height;
                 let c_strip_blocks_h = (c_strip_height + 7) / 8;
                 let c_blocks_total = c_blocks_w * c_strip_blocks_h;
-
-                // cb_down/cr_down are in padded layout (padded_c_width pixels per row)
                 let padded_c_width = self.layout.padded_c_width;
                 let c_size = c_strip_height * padded_c_width;
 

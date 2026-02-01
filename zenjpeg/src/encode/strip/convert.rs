@@ -88,13 +88,8 @@ impl StripProcessor {
         let width = self.layout.width;
         let padded_width = self.layout.padded_width;
 
-        // Calculate expected chroma dimensions based on subsampling
-        let (chroma_width, chroma_height) = match self.layout.subsampling {
-            Subsampling::S444 => (width, strip_height),
-            Subsampling::S422 => ((width + 1) / 2, strip_height),
-            Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
-            Subsampling::S440 => (width, (strip_height + 1) / 2),
-        };
+        let chroma_width = self.layout.c_width;
+        let chroma_height = self.layout.c_strip_height_for(strip_height);
 
         // Validate input sizes
         let expected_y_size = strip_height * width;
@@ -141,20 +136,9 @@ impl StripProcessor {
 
     /// Pads chroma downsampled buffers vertically for partial bottom strips.
     pub(super) fn pad_chroma_down_vertically(&mut self, actual_height: usize) -> Result<()> {
-        let (chroma_width, target_height) = match self.layout.subsampling {
-            Subsampling::S444 => (self.layout.width, self.layout.strip_height),
-            Subsampling::S422 => ((self.layout.width + 1) / 2, self.layout.strip_height),
-            Subsampling::S420 => (
-                (self.layout.width + 1) / 2,
-                (self.layout.strip_height + 1) / 2,
-            ),
-            Subsampling::S440 => (self.layout.width, (self.layout.strip_height + 1) / 2),
-        };
-
-        let actual_chroma_height = match self.layout.subsampling {
-            Subsampling::S444 | Subsampling::S422 => actual_height,
-            Subsampling::S420 | Subsampling::S440 => (actual_height + 1) / 2,
-        };
+        let chroma_width = self.layout.c_width;
+        let target_height = self.layout.c_strip_height;
+        let actual_chroma_height = self.layout.c_strip_height_for(actual_height);
 
         if actual_chroma_height >= target_height {
             return Ok(());
@@ -556,8 +540,8 @@ impl StripProcessor {
         let padded_width = self.layout.padded_width;
         let num_pixels = strip_height * width;
         let y_size = strip_height * padded_width;
-        let c_width = (width + 1) / 2;
-        let c_height = (strip_height + 1) / 2;
+        let c_width = self.layout.c_width;
+        let c_height = self.layout.c_strip_height_for(strip_height);
         let c_size = c_width * c_height;
 
         match self.pixel_format {
@@ -754,8 +738,8 @@ impl StripProcessor {
         // since Y (cb_strip) is full resolution unlike standard chroma.
 
         // Downsample B channel (cr_strip → cr_down) using 2x2 box filter
-        let b_width = (width + 1) / 2;
-        let b_height = (strip_height + 1) / 2;
+        let b_width = self.layout.b_width;
+        let b_height = self.layout.b_strip_height_for(strip_height);
         crate::encode_simd::downsample_2x2_simd_inplace(
             &self.cr_strip[..strip_height * width],
             width,
@@ -799,17 +783,13 @@ impl StripProcessor {
         let bpp = self.pixel_format.bytes_per_pixel();
         let use_iterative = self.chroma_downsampling == DownsamplingMethod::GammaAwareIterative;
 
-        // Determine chroma strip dimensions
-        let (c_width, c_strip_height) = match self.layout.subsampling {
-            Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
-            Subsampling::S422 => ((width + 1) / 2, strip_height),
-            Subsampling::S440 => (width, (strip_height + 1) / 2),
-            Subsampling::S444 => {
-                // No downsampling needed for 4:4:4, use standard path
-                return self.convert_strip_to_ycbcr(rgb_strip, strip_height);
-            }
-        };
+        if self.layout.subsampling == Subsampling::S444 {
+            // No downsampling needed for 4:4:4, use standard path
+            return self.convert_strip_to_ycbcr(rgb_strip, strip_height);
+        }
 
+        let c_width = self.layout.c_width;
+        let c_strip_height = self.layout.c_strip_height_for(strip_height);
         let num_pixels = strip_height * width;
         let c_size = c_width * c_strip_height;
 
@@ -852,7 +832,7 @@ impl StripProcessor {
                     use_iterative,
                 );
             }
-            Subsampling::S444 => unreachable!(), // Handled above
+            Subsampling::S444 => unreachable!(), // early return above
         }
 
         // Rearrange Y strip from packed to padded layout
@@ -877,19 +857,15 @@ impl StripProcessor {
     ) -> Result<()> {
         let width = self.layout.width;
         let bpp = self.pixel_format.bytes_per_pixel();
+
+        if self.layout.subsampling == Subsampling::S444 {
+            // No downsampling needed for 4:4:4, use standard path
+            return self.convert_strip_to_ycbcr(rgb_strip, strip_height);
+        }
+
         let num_pixels = strip_height * width;
-
-        // Determine chroma strip dimensions
-        let (c_width, c_strip_height) = match self.layout.subsampling {
-            Subsampling::S420 => ((width + 1) / 2, (strip_height + 1) / 2),
-            Subsampling::S422 => ((width + 1) / 2, strip_height),
-            Subsampling::S440 => (width, (strip_height + 1) / 2),
-            Subsampling::S444 => {
-                // No downsampling needed for 4:4:4, use standard path
-                return self.convert_strip_to_ycbcr(rgb_strip, strip_height);
-            }
-        };
-
+        let c_width = self.layout.c_width;
+        let c_strip_height = self.layout.c_strip_height_for(strip_height);
         let c_size = c_width * c_strip_height;
 
         match self.layout.subsampling {
@@ -926,7 +902,7 @@ impl StripProcessor {
                     bpp,
                 );
             }
-            Subsampling::S444 => unreachable!(), // Handled above
+            Subsampling::S444 => unreachable!(), // early return above
         }
 
         // Rearrange Y strip from packed to padded layout
@@ -1061,14 +1037,12 @@ impl StripProcessor {
     pub(super) fn downsample_chroma_strip(&mut self, strip_height: usize) -> Result<()> {
         let width = self.layout.width;
         let num_pixels = strip_height * width;
+        let c_width = self.layout.c_width;
+        let c_strip_height = self.layout.c_strip_height;
+        let c_size = c_width * c_strip_height;
 
-        let (c_width, c_strip_height) = match self.layout.subsampling {
+        match self.layout.subsampling {
             Subsampling::S420 => {
-                // 2x2 box filter using SIMD
-                let c_width = (width + 1) / 2;
-                let c_height = (strip_height + 1) / 2;
-                let c_size = c_width * c_height;
-
                 crate::encode_simd::downsample_2x2_simd_inplace(
                     &self.cb_strip[..num_pixels],
                     width,
@@ -1081,13 +1055,8 @@ impl StripProcessor {
                     strip_height,
                     &mut self.cr_down[..c_size],
                 );
-                (c_width, c_height)
             }
             Subsampling::S422 => {
-                // 2x1 horizontal filter using SIMD
-                let c_width = (width + 1) / 2;
-                let c_size = c_width * strip_height;
-
                 crate::encode_simd::downsample_2x1_simd_inplace(
                     &self.cb_strip[..num_pixels],
                     width,
@@ -1100,13 +1069,8 @@ impl StripProcessor {
                     strip_height,
                     &mut self.cr_down[..c_size],
                 );
-                (c_width, strip_height)
             }
             Subsampling::S440 => {
-                // 1x2 vertical filter using SIMD
-                let c_height = (strip_height + 1) / 2;
-                let c_size = width * c_height;
-
                 crate::encode_simd::downsample_1x2_simd_inplace(
                     &self.cb_strip[..num_pixels],
                     width,
@@ -1119,15 +1083,13 @@ impl StripProcessor {
                     strip_height,
                     &mut self.cr_down[..c_size],
                 );
-                (width, c_height)
             }
             Subsampling::S444 => {
                 // No downsampling - copy directly
-                self.cb_down[..num_pixels].copy_from_slice(&self.cb_strip[..num_pixels]);
-                self.cr_down[..num_pixels].copy_from_slice(&self.cr_strip[..num_pixels]);
-                (width, strip_height)
+                self.cb_down[..c_size].copy_from_slice(&self.cb_strip[..c_size]);
+                self.cr_down[..c_size].copy_from_slice(&self.cr_strip[..c_size]);
             }
-        };
+        }
 
         // Rearrange cb_down/cr_down to padded layout for DCT block extraction
         self.pad_chroma_down_strip(c_strip_height, c_width);
