@@ -1129,18 +1129,31 @@ use zenjpeg::quant::aq::compute_aq_strength_map;
 // After computing AQ map...
 let (_, _, aq_mean, aq_std) = aq_map.stats();
 let image_type = detect_image_type(aq_mean, aq_std); // Photo, Screenshot, or Mixed
-let hybrid = adaptive_config(aq_mean, aq_std);       // Returns appropriate HybridConfig
+let hybrid = adaptive_config(aq_mean, aq_std);       // Returns texture-adaptive HybridConfig
 ```
 
 Detection uses coefficient of variation (CV = std/mean):
-- CV > 1.5 → Screenshot (sharp edges, flat+texture mix) → safe_compression()
-- CV ≤ 1.5, mean ≥ 0.06 → Photo → aggressive_compression()
+- CV > 1.5 → Screenshot → safe_compression()
+- CV ≤ 1.5, mean ≥ 0.06 → Photo → **texture-adaptive coupling**
 - Otherwise → Mixed → safe_compression()
 
+**Texture-adaptive coupling (2026-02-02):** For photos, coupling scales with AQ mean:
+- Low texture (mean ≤ 0.15): coupling = -4.0 (aggressive)
+- High texture: coupling = -4.0 × (0.15 / mean), gentler as texture increases
+- Example: mean=0.30 → coupling=-2.0, mean=0.60 → coupling=-1.0
+
+**CID22 benchmark (20 images, Butteraugli metric):**
+| Mode | Size Δ | Butteraugli Δ |
+|------|--------|---------------|
+| Fixed -4.0 (old) | -9.2% | +10.9% |
+| Texture-adaptive | **-3.3%** | **+2.7%** |
+
+Run `cargo run --release --example cid22_hybrid_bench` for full benchmark.
+
 **Validated presets:**
-- `HybridConfig::aggressive_compression()` — photos only, -2-4% size
+- `HybridConfig::aggressive_compression()` — photos only (fixed -4.0), risky on high-texture
 - `HybridConfig::safe_compression()` — all content types, max_adj=1.0 protection
-- `HybridConfig::quality_boost()` — larger files, better DSSIM
+- `adaptive_config(mean, std)` — **recommended**, texture-aware for photos
 
 Run `cargo run --release --example hybrid_auto_detect` to validate detection.
 
