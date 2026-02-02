@@ -68,6 +68,134 @@ pub fn estimate_hybrid_improvement(aq_mean: f32) -> f32 {
     (85.0 * aq_mean - 5.0).max(0.0)
 }
 
+// ============================================================================
+// Image Type Detection (Experimental)
+// ============================================================================
+
+/// Detected image type based on AQ statistics.
+///
+/// **⚠️ Experimental:** These classifications are based on limited testing with
+/// ~5 images. The thresholds may not generalize. Always test on your own data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageType {
+    /// Photographic content: high texture, moderate variance.
+    /// Benefits from aggressive negative coupling without protection.
+    Photo,
+    /// Screenshot/UI/text: low mean AQ with sharp edges (high local variance).
+    /// Requires max_adjustment protection or positive coupling.
+    Screenshot,
+    /// Mixed content or unclassifiable.
+    /// Use safe settings with moderate protection.
+    Mixed,
+}
+
+/// Thresholds for image type detection.
+///
+/// **⚠️ Experimental:** Derived from testing on ~5 images.
+/// - flower_small (photo): mean=0.090, std=0.065, cv=0.72
+/// - apple.com (screenshot with images): mean=0.084, std=0.198, cv=2.35
+pub mod detection_thresholds {
+    /// Coefficient of variation (std/mean) threshold for screenshot detection.
+    /// Screenshots have very high CV due to sharp edges between flat and textured regions.
+    /// Photos typically have CV < 1.0 (consistent texture throughout).
+    pub const SCREENSHOT_CV_THRESHOLD: f32 = 1.5;
+
+    /// Minimum mean AQ for photo classification.
+    /// Photos have higher texture = higher mean AQ.
+    pub const PHOTO_MEAN_THRESHOLD: f32 = 0.06;
+
+    /// Very low mean indicates flat/UI content.
+    pub const FLAT_MEAN_THRESHOLD: f32 = 0.03;
+}
+
+/// Detect image type based on AQ statistics.
+///
+/// Uses coefficient of variation (std/mean) and absolute mean to classify:
+/// - **Photo**: Higher mean, moderate CV → natural textures throughout
+/// - **Screenshot**: Lower mean, high CV → flat areas with sharp edges
+/// - **Mixed**: Ambiguous statistics
+///
+/// **⚠️ Experimental:** Thresholds from ~5 images. Test on your own data.
+///
+/// # Arguments
+/// * `aq_mean` - Mean AQ strength from `AQStrengthMap::mean()`
+/// * `aq_std` - Standard deviation from `AQStrengthMap::std()`
+///
+/// # Example
+/// ```
+/// use zenjpeg::hybrid::config::{detect_image_type, ImageType};
+///
+/// // Typical photo statistics
+/// assert_eq!(detect_image_type(0.068, 0.039), ImageType::Photo);
+///
+/// // Typical screenshot statistics
+/// assert_eq!(detect_image_type(0.048, 0.061), ImageType::Screenshot);
+/// ```
+pub fn detect_image_type(aq_mean: f32, aq_std: f32) -> ImageType {
+    use detection_thresholds::*;
+
+    // Avoid division by zero
+    if aq_mean < 0.001 {
+        return ImageType::Screenshot; // Very flat = likely UI
+    }
+
+    let cv = aq_std / aq_mean; // Coefficient of variation
+
+    // Very low mean regardless of CV = flat content (UI, solid colors)
+    if aq_mean < FLAT_MEAN_THRESHOLD {
+        return ImageType::Screenshot;
+    }
+
+    // Very high CV = highly variable content (screenshots with embedded images,
+    // web pages, UI with photos). Even if mean is moderate, the extreme variance
+    // indicates mixed content that needs protection.
+    if cv > SCREENSHOT_CV_THRESHOLD {
+        return ImageType::Screenshot;
+    }
+
+    // Moderate mean with reasonable CV = natural photo
+    if aq_mean >= PHOTO_MEAN_THRESHOLD && cv <= SCREENSHOT_CV_THRESHOLD {
+        return ImageType::Photo;
+    }
+
+    // Ambiguous cases (low mean, low CV)
+    ImageType::Mixed
+}
+
+/// Get an adaptive HybridConfig based on detected image type.
+///
+/// Returns a preset tuned for the detected content type:
+/// - **Photo**: `aggressive_compression()` - maximum size savings
+/// - **Screenshot**: `safe_compression()` - protected from quality destruction
+/// - **Mixed**: `safe_compression()` - err on the side of caution
+///
+/// **⚠️ Experimental:** Based on limited testing. Consider passing through
+/// your own validation pipeline before deploying.
+///
+/// # Arguments
+/// * `aq_mean` - Mean AQ strength from `AQStrengthMap::mean()`
+/// * `aq_std` - Standard deviation from `AQStrengthMap::std()`
+///
+/// # Example
+/// ```
+/// use zenjpeg::hybrid::config::adaptive_config;
+///
+/// // Photo: get aggressive compression
+/// let config = adaptive_config(0.068, 0.039);
+/// assert!(config.max_adjustment == 0.0); // No protection needed
+///
+/// // Screenshot: get safe compression
+/// let config = adaptive_config(0.048, 0.061);
+/// assert!(config.max_adjustment > 0.0); // Protection enabled
+/// ```
+pub fn adaptive_config(aq_mean: f32, aq_std: f32) -> HybridConfig {
+    match detect_image_type(aq_mean, aq_std) {
+        ImageType::Photo => HybridConfig::aggressive_compression(),
+        ImageType::Screenshot => HybridConfig::safe_compression(),
+        ImageType::Mixed => HybridConfig::safe_compression(),
+    }
+}
+
 /// Configuration for hybrid AQ+trellis quantization.
 ///
 /// All parameters that affect the hybrid encoding can be tuned here.
@@ -564,5 +692,169 @@ mod tests {
         let sweep = SweepConfig::quick();
         let configs = sweep.generate_configs();
         assert_eq!(configs.len(), 3); // 3 aq_scales × 1 × 1 × 1
+    }
+
+    #[test]
+    fn test_aggressive_compression_preset() {
+        let config = HybridConfig::aggressive_compression();
+        assert!(config.enabled);
+        assert_eq!(config.aq_lambda_scale, -4.0); // Negative for smaller files
+        assert_eq!(config.max_adjustment, 0.0); // No cap
+
+        // Negative coupling produces negative adjustment
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, -2.0); // 0.5 * -4.0 = -2.0
+    }
+
+    #[test]
+    fn test_safe_compression_preset() {
+        let config = HybridConfig::safe_compression();
+        assert!(config.enabled);
+        assert_eq!(config.aq_lambda_scale, -8.0); // More aggressive coupling
+        assert_eq!(config.max_adjustment, 1.0); // Cap at ±1.0
+
+        // High AQ would produce -4.0 but capped to -1.0
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, -1.0); // Clamped from 0.5 * -8.0 = -4.0
+
+        // Low AQ produces smaller adjustment (not capped)
+        let adj_low = config.compute_lambda_adjustment(0.1, 1.0, false);
+        assert_eq!(adj_low, -0.8); // 0.1 * -8.0 = -0.8, within ±1.0
+    }
+
+    #[test]
+    fn test_quality_boost_preset() {
+        let config = HybridConfig::quality_boost();
+        assert!(config.enabled);
+        assert_eq!(config.aq_lambda_scale, 4.0); // Positive for better quality
+
+        // Positive coupling produces positive adjustment (larger files, better quality)
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, 2.0); // 0.5 * 4.0 = 2.0
+    }
+
+    #[test]
+    fn test_max_adjustment_clamping() {
+        let config = HybridConfig::new()
+            .aq_lambda_scale(-10.0)
+            .max_adjustment(2.0);
+
+        // Very negative coupling clamped to -2.0
+        let adj = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj, -2.0); // Clamped from 0.5 * -10.0 = -5.0
+
+        // Also clamps positive
+        let config_pos = HybridConfig::new()
+            .aq_lambda_scale(10.0)
+            .max_adjustment(2.0);
+        let adj_pos = config_pos.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj_pos, 2.0); // Clamped from 0.5 * 10.0 = 5.0
+    }
+
+    #[test]
+    fn test_multiplicative_coupling() {
+        let config = HybridConfig::new()
+            .aq_lambda_scale(0.1) // Use small value for multiplicative
+            .multiplicative(true);
+
+        // Multiplicative: scale1 = base * (1 + aq * coupling)
+        // With aq=0.5 and coupling=0.1: adjustment = 0.5 * 0.1 = 0.05
+        // scale1 = 14.75 * (1 + 0.05) = 14.75 * 1.05 = 15.4875
+        let trellis = config.to_trellis_config(0.5, 1.0, false);
+        let expected = 14.75 * 1.05;
+        assert!((trellis.lambda_log_scale1 - expected).abs() < 0.001);
+
+        // Compare to additive
+        let config_add = HybridConfig::new().aq_lambda_scale(0.1);
+        let trellis_add = config_add.to_trellis_config(0.5, 1.0, false);
+        // Additive: scale1 = 14.75 + 0.05 = 14.80
+        assert!((trellis_add.lambda_log_scale1 - 14.80).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_negative_coupling_with_threshold() {
+        let config = HybridConfig::new()
+            .aq_lambda_scale(-4.0)
+            .aq_threshold(0.2);
+
+        // Below threshold: no adjustment
+        let adj_low = config.compute_lambda_adjustment(0.15, 1.0, false);
+        assert_eq!(adj_low, 0.0);
+
+        // Above threshold: full adjustment
+        let adj_high = config.compute_lambda_adjustment(0.3, 1.0, false);
+        assert_eq!(adj_high, -1.2); // 0.3 * -4.0
+    }
+
+    #[test]
+    fn test_chroma_scale_with_negative_coupling() {
+        let config = HybridConfig::new()
+            .aq_lambda_scale(-4.0)
+            .chroma_scale(0.5);
+
+        // Luma: full adjustment
+        let adj_luma = config.compute_lambda_adjustment(0.5, 1.0, false);
+        assert_eq!(adj_luma, -2.0);
+
+        // Chroma: half adjustment
+        let adj_chroma = config.compute_lambda_adjustment(0.5, 1.0, true);
+        assert_eq!(adj_chroma, -1.0);
+    }
+
+    // ========================================================================
+    // Image Type Detection Tests
+    // ========================================================================
+
+    #[test]
+    fn test_detect_photo() {
+        // flower_small stats: mean=0.090, std=0.065, cv=0.72
+        assert_eq!(detect_image_type(0.090, 0.065), ImageType::Photo);
+
+        // Higher texture photo
+        assert_eq!(detect_image_type(0.10, 0.05), ImageType::Photo);
+    }
+
+    #[test]
+    fn test_detect_screenshot() {
+        // apple.com stats: mean=0.084, std=0.198, cv=2.35 (very high CV)
+        assert_eq!(detect_image_type(0.084, 0.198), ImageType::Screenshot);
+
+        // Very flat UI
+        assert_eq!(detect_image_type(0.02, 0.01), ImageType::Screenshot);
+
+        // Zero mean (edge case)
+        assert_eq!(detect_image_type(0.0, 0.0), ImageType::Screenshot);
+
+        // High CV even with moderate mean = screenshot
+        assert_eq!(detect_image_type(0.08, 0.16), ImageType::Screenshot); // CV=2.0
+    }
+
+    #[test]
+    fn test_detect_mixed() {
+        // Ambiguous: low mean, low CV (neither clearly photo nor screenshot)
+        assert_eq!(detect_image_type(0.04, 0.02), ImageType::Mixed); // mean<0.06, CV=0.5
+    }
+
+    #[test]
+    fn test_adaptive_config_photo() {
+        let config = adaptive_config(0.090, 0.065);
+        // Photos get aggressive compression (no protection)
+        assert_eq!(config.aq_lambda_scale, -4.0);
+        assert_eq!(config.max_adjustment, 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_screenshot() {
+        let config = adaptive_config(0.084, 0.198);
+        // Screenshots get safe compression (with protection)
+        assert_eq!(config.aq_lambda_scale, -8.0);
+        assert_eq!(config.max_adjustment, 1.0);
+    }
+
+    #[test]
+    fn test_adaptive_config_mixed() {
+        let config = adaptive_config(0.04, 0.02);
+        // Mixed gets safe settings (same as screenshot)
+        assert!(config.max_adjustment > 0.0);
     }
 }
