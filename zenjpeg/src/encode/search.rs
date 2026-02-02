@@ -78,214 +78,229 @@ use crate::hybrid::config::HybridConfig;
 /// for known-good starting points, mutate freely, then call
 /// [`to_encoder_config()`](Self::to_encoder_config) to encode.
 ///
-/// # Ignored Parameters
+/// # Measured Parameter Impact (256x256 noise+patches, MozjpegBaseline Q85)
 ///
-/// Some parameters are ignored depending on mode:
+/// Parameters are grouped by measured file size impact. Parameters marked DEAD
+/// have zero effect on output; parameters marked BROKEN have a code path that
+/// is never executed.
 ///
-/// | Parameter | Ignored when... |
-/// |-----------|-----------------|
-/// | `quality` (quant scaling) | `tables.scaling == Exact` (quality still affects zero-bias blend) |
-/// | `zero_bias_hq/lq/distances` | XYB mode (uses uniform 0.5) |
-/// | `downsampling_method` | 4:4:4 or grayscale (no downsampling) |
-/// | `trellis_*` fields | `trellis_enabled == false` |
-/// | `aq_trellis_*` fields | `aq_trellis_coupling == 0.0` or `trellis_enabled == false` |
-/// | `allow_16bit_quant_tables` | All quant values <= 255 at current quality |
+/// ## Parameters that affect file size
 ///
-/// # Hybrid-Mode Limitations
+/// | Parameter | Range tested | Impact |
+/// |-----------|-------------|--------|
+/// | `tables.quant` (64×3 values) | 0.5x – 2.0x | -54% to +65% |
+/// | `trellis_enabled` | on/off | ~15% savings when on |
+/// | `trellis_lambda_log_scale1` | 12.0 – 17.0 | -46% to +12% (exponential) |
+/// | `trellis_lambda_log_scale2` | 14.0 – 18.0 | -19% to +11% (inverse of scale1) |
+/// | `scan_mode` | 4 variants | up to -2% (ProgressiveSearch best) |
+/// | `zero_bias_mul` (jpegli only) | 0.0 – 1.0 | -14% to +31% |
+/// | `trellis_delta_dc_weight` | 0.0 – 5.0 | 0% to +1% |
+/// | `trellis_dc_enabled` | on/off | ~0.1% |
+/// | `downsampling_method` | 3 variants | ±0.2% |
+/// | `quality` (Scaled tables only) | 50 – 95 | -81% to +112% |
 ///
-/// When `aq_trellis_coupling > 0.0`, the hybrid path creates per-block trellis
-/// configs via [`HybridConfig::to_trellis_config()`]. That method builds from
-/// `TrellisConfig::default()` and only forwards a subset of fields. These
-/// `ExpertConfig` trellis fields are **ignored in hybrid mode**:
+/// ## DEAD parameters (zero file size effect)
 ///
-/// | Field | Hybrid behavior | Standalone behavior |
-/// |-------|----------------|---------------------|
-/// | `trellis_eob_opt` | Always `true` (hardcoded) | Forwarded |
-/// | `trellis_speed_mode` | Always `Adaptive` (default) | Forwarded |
-/// | `trellis_delta_dc_weight` | Always `0.0` (default) | Forwarded |
-/// | `trellis_use_lambda_weight_tbl` | Stored but not forwarded to per-block config | Forwarded |
+/// | Parameter | Why dead |
+/// |-----------|----------|
+/// | `trellis_eob_opt` | Implementation disabled (would destroy quality) |
+/// | `trellis_use_lambda_weight_tbl` | Always uses flat 1/q² weights regardless of flag |
+/// | `trellis_speed_mode` | Only limits search candidates; DP finds same optimum |
+/// | `trellis_num_loops` | Stored but never read — single-pass only |
+/// | `quality` (Exact tables) | Tables pre-scaled; zero-bias all zeros for mozjpeg |
+/// | `allow_16bit_quant_tables` | No effect unless quant values > 255 |
+/// | `deringing` | Only affects images with saturated (255) pixels near edges |
 ///
-/// This is a limitation of the current `HybridConfig::to_trellis_config()` API
-/// (pre-existing, not introduced by `ExpertConfig`). Fields that ARE forwarded
-/// in both modes: `trellis_dc_enabled`, `trellis_lambda_log_scale1/2`,
-/// `trellis_num_loops`.
+/// ## BROKEN: Hybrid mode (`aq_trellis_coupling > 0`)
+///
+/// **The hybrid trellis path is completely non-functional.** Setting
+/// `aq_trellis_coupling > 0` produces a `HybridConfig` that is stored in
+/// `EncoderConfig` but **never consumed** during encoding. The `create_hybrid_ctx()`
+/// function exists but is never called. All hybrid coupling values (0.5, 1.0, 2.0,
+/// 4.0, 8.0) produce identical output = trellis disabled (standard rounding).
+///
+/// All `aq_trellis_*` fields are therefore dead: `aq_trellis_coupling`,
+/// `aq_trellis_exponent`, `aq_trellis_threshold`, `aq_trellis_chroma_scale`,
+/// `aq_trellis_quality_adaptive`.
+///
+/// # Parameters for optimizers
+///
+/// The only parameters worth tuning for file size optimization are:
+/// 1. `tables.quant` — 192 values, by far the largest effect
+/// 2. `trellis_lambda_log_scale1` — single float, exponential effect
+/// 3. `trellis_lambda_log_scale2` — single float, inverse relationship to scale1
+/// 4. `zero_bias_mul` (jpegli presets) — 192 values, large effect
+/// 5. `scan_mode` — categorical, up to 2% savings
+/// 6. `trellis_enabled` — binary, ~15% savings
+/// 7. `quality` (Scaled tables) — controls both quant scaling and zero-bias blend
 #[derive(Clone, Debug)]
 pub struct ExpertConfig {
     // === Quantization Tables ===
     /// Base quantization tables, zero-bias multipliers/offsets, and quality scaling.
     ///
-    /// This is the primary data that controls quantization. The `quant` field holds
-    /// base quantization matrices (3 components x 64 coefficients). The `zero_bias_mul`
-    /// field holds the blended zero-bias multipliers (computed by
-    /// [`blend_zero_bias()`](Self::blend_zero_bias) from the HQ/LQ endpoints below).
+    /// **Largest impact on file size.** Halving quant values = +65% size;
+    /// doubling = -54% size. The 192 values in `quant` (3 × 64) are the primary
+    /// optimization target.
     ///
-    /// When `tables.scaling == ScalingParams::Exact`, the `quality` field has no
-    /// effect on quant table values (they're used as-is). Quality still affects
-    /// zero-bias blend and AQ dampen factor.
+    /// The `zero_bias_mul` field is also significant for jpegli presets: all-zeros
+    /// = +31% size, all-ones = -14% (more aggressive rounding toward zero).
+    /// For mozjpeg presets, `zero_bias_mul` is always all-zeros (standard rounding).
     ///
-    /// When `tables.scaling == ScalingParams::Scaled`, the encoder applies
-    /// per-frequency non-linear scaling controlled by `global_scale` and
-    /// `frequency_exponents`.
+    /// When `tables.scaling == ScalingParams::Exact` (mozjpeg presets), quant values
+    /// are pre-scaled to quality and used as-is. The `quality` field has **no effect**
+    /// — not even on zero-bias, since mozjpeg zero-bias is all-zeros.
+    ///
+    /// When `tables.scaling == ScalingParams::Scaled` (jpegli/hybrid presets),
+    /// the encoder applies per-frequency non-linear scaling and `quality` controls
+    /// both quant scaling and zero-bias blend.
     pub tables: EncodingTables,
 
     // === Zero-Bias Blend Control ===
+    // Only active for jpegli/hybrid presets (which have non-zero zero_bias_mul).
+    // Mozjpeg presets use all-zeros zero-bias, making this entire section no-op.
     /// HQ zero-bias multiplier tables (endpoint at high quality / low distance).
     ///
-    /// These are the zero-bias values used when distance <= `zero_bias_hq_distance`.
-    /// At intermediate distances, the encoder linearly blends between HQ and LQ.
+    /// Blended with LQ tables based on quality distance. **Only matters for
+    /// jpegli/hybrid presets** — mozjpeg presets have zero-bias = all zeros.
     ///
     /// Default: C++ jpegli's `kZeroBiasMulYCbCrHQ` tables.
-    ///
-    /// Ignored in XYB mode (XYB uses uniform 0.5 for all AC coefficients).
+    /// Ignored in XYB mode (uses uniform 0.5).
     pub zero_bias_hq: PerComponent<[f32; 64]>,
 
     /// LQ zero-bias multiplier tables (endpoint at low quality / high distance).
     ///
-    /// These are the zero-bias values used when distance >= `zero_bias_lq_distance`.
-    ///
     /// Default: C++ jpegli's `kZeroBiasMulYCbCrLQ` tables.
-    ///
     /// Ignored in XYB mode.
     pub zero_bias_lq: PerComponent<[f32; 64]>,
 
     /// Distance at or below which zero-bias is fully HQ.
     ///
-    /// Default: `1.0`. Must be less than `zero_bias_lq_distance`.
-    ///
-    /// Ignored in XYB mode.
+    /// **Small impact** (~0.1% when widened). Default: `1.0`.
+    /// Ignored in XYB mode and mozjpeg presets.
     pub zero_bias_hq_distance: f32,
 
     /// Distance at or above which zero-bias is fully LQ.
     ///
-    /// Default: `3.0`. Must be greater than `zero_bias_hq_distance`.
-    ///
-    /// Ignored in XYB mode.
+    /// **Up to ~2% impact** when set = hq_distance (forces one endpoint).
+    /// Default: `3.0`. Ignored in XYB mode and mozjpeg presets.
     pub zero_bias_lq_distance: f32,
 
     // === Trellis Quantization ===
     /// Master switch for trellis quantization.
     ///
-    /// When `false`, all other `trellis_*` and `aq_trellis_*` fields are ignored.
-    /// The encoder uses simple rounding (jpegli default).
-    ///
-    /// When `true`, the trellis mode depends on `aq_trellis_coupling`:
-    /// - `== 0.0`: Standalone trellis (mozjpeg-style). All `trellis_*` fields forwarded.
-    /// - `> 0.0`: Hybrid AQ-coupled trellis. See "Hybrid-Mode Limitations" above.
+    /// **~15% file size savings** when enabled (measured on 256x256 noise+patches).
+    /// When `false`, all other `trellis_*` and `aq_trellis_*` fields are ignored
+    /// and the encoder uses simple rounding (jpegli default).
     pub trellis_enabled: bool,
 
     /// Enable DC coefficient trellis (cross-block DC optimization).
     ///
-    /// Forwarded in both standalone and hybrid modes.
+    /// **Measured impact: ~0.1%.** Tiny but real. Forwarded in standalone mode.
     ///
     /// Default: `true`.
     pub trellis_dc_enabled: bool,
 
     /// Enable EOB run optimization (cross-block zero runs).
     ///
-    /// **Standalone mode only.** In hybrid mode, EOB optimization is always enabled
-    /// (hardcoded in `HybridConfig::to_trellis_config()`).
+    /// **DEAD PARAMETER.** The EOB optimization implementation is disabled
+    /// (commented out in `streaming.rs`) because it destroys quality. Toggling
+    /// this field has zero effect on output.
     ///
-    /// Default: `false` (matching C mozjpeg default).
+    /// Default: `false`.
     pub trellis_eob_opt: bool,
 
     /// Use perceptual lambda weighting table.
     ///
-    /// **Standalone mode only.** In hybrid mode, this field is stored in
-    /// `HybridConfig` but not forwarded to per-block trellis configs
-    /// (they default to `true`).
+    /// **DEAD PARAMETER.** The trellis always uses flat 1/q² weights regardless
+    /// of this flag. The CSF-based weighting from C mozjpeg mode=1 was never
+    /// implemented; mode=1 hardcodes flat weights. Toggling has zero effect.
     ///
     /// Default: `true`.
     pub trellis_use_lambda_weight_tbl: bool,
 
-    /// Lambda log scale 1 (rate penalty). Higher = smaller files.
+    /// Lambda log scale 1 (rate penalty). Higher = more aggressive quantization.
     ///
-    /// The effective lambda is: `2^scale1 / (2^scale2 + block_norm)`.
-    /// In hybrid mode, this is the base value before per-block AQ adjustment.
+    /// **Huge impact: -46% to +12%.** The effective lambda is
+    /// `2^scale1 / (2^scale2 + block_norm)`. This is the most impactful single
+    /// float for trellis optimization.
     ///
-    /// Forwarded in both standalone and hybrid modes.
-    ///
-    /// Default: `14.75`. Typical range: `~12.0`-`17.0`.
+    /// Default: `14.75`. Useful range: `12.0`–`17.0`.
+    /// Below 12.0, trellis zeroes out nearly all AC coefficients.
+    /// Above 17.0, approaches no-trellis behavior.
     pub trellis_lambda_log_scale1: f32,
 
     /// Lambda log scale 2 (distortion sensitivity). Higher = more quality.
     ///
-    /// Controls the denominator in the lambda formula.
+    /// **Large impact: -19% to +11%.** Controls the denominator in the lambda
+    /// formula. Relationship with scale1: reducing scale2 has a similar effect
+    /// to increasing scale1 (both make lambda larger = more aggressive zeroing).
     ///
-    /// Forwarded in both standalone and hybrid modes.
-    ///
-    /// Default: `16.5`. Typical range: `~14.0`-`18.0`.
+    /// Default: `16.5`. Useful range: `14.0`–`18.0`.
     pub trellis_lambda_log_scale2: f32,
 
     /// Number of trellis optimization loops.
     ///
-    /// Multiple loops can improve results but with diminishing returns.
-    ///
-    /// Forwarded in both standalone and hybrid modes.
+    /// **DEAD PARAMETER.** Stored but never read by the trellis engine.
+    /// The encoder always performs a single pass. Values 1–5 all produce
+    /// identical output.
     ///
     /// Default: `1`.
     pub trellis_num_loops: i32,
 
     /// Speed optimization mode for high-entropy blocks.
     ///
-    /// **Standalone mode only.** In hybrid mode, the per-block trellis config
-    /// defaults to `TrellisSpeedMode::Adaptive`.
+    /// **No effect on file size** — only affects encoding speed. All modes
+    /// (Adaptive, Thorough, Level(1)–Level(8)) produce identical output bytes.
+    /// The dynamic programming finds the same optimum regardless of search
+    /// bounds; tighter bounds just find it faster.
     ///
     /// Default: `TrellisSpeedMode::Adaptive`.
     pub trellis_speed_mode: TrellisSpeedMode,
 
     /// Weight for vertical DC gradient penalty.
     ///
-    /// When > 0.0, DC trellis penalizes large vertical DC jumps between blocks,
-    /// reducing visible banding artifacts.
-    ///
-    /// **Standalone mode only.** In hybrid mode, the per-block trellis config
-    /// defaults to `0.0`.
+    /// **Tiny impact: 0% to +1%.** When > 0.0, DC trellis penalizes large
+    /// vertical DC jumps between blocks, reducing visible banding artifacts
+    /// at the cost of slightly larger files.
     ///
     /// Default: `0.0` (disabled, matching C mozjpeg default).
+    /// Useful range: `0.0`–`5.0` (diminishing returns above 2.0).
     pub trellis_delta_dc_weight: f32,
 
     // === AQ->Trellis Coupling ===
+    // **ALL FIELDS IN THIS SECTION ARE BROKEN (dead code path).**
+    // The hybrid trellis pipeline (`create_hybrid_ctx()`) is defined but never
+    // called during encoding. Any non-zero coupling produces output identical
+    // to trellis disabled. These fields are preserved for future use when the
+    // hybrid path is wired up.
     /// Per-unit AQ strength to lambda adjustment.
     ///
-    /// Controls the transition between standalone and hybrid trellis:
-    /// - `0.0`: Pure standalone trellis (no AQ influence on lambda).
-    /// - `> 0.0`: Hybrid mode. Trellis lambda is adjusted per-block:
-    ///   `effective_scale1 = trellis_lambda_log_scale1 + aq_strength^aq_trellis_exponent * coupling`
+    /// **BROKEN — hybrid path not wired up.** Any value > 0.0 silently falls
+    /// through to standard (non-trellis) quantization. The `HybridConfig` is
+    /// built and stored in `EncoderConfig` but never consumed.
     ///
-    /// All `aq_trellis_*` fields below are ignored when this is `0.0` or when
-    /// `trellis_enabled == false`.
+    /// Intended behavior: `0.0` = standalone trellis, `> 0.0` = hybrid mode
+    /// with per-block AQ-adjusted lambda.
     ///
-    /// Default: `0.0`. Range: `0.0`-`8.0`.
+    /// Default: `0.0`. Intended range: `0.0`–`8.0`.
     pub aq_trellis_coupling: f32,
 
-    /// Non-linear AQ mapping exponent.
-    ///
-    /// Applied to AQ strength before coupling: `aq_strength.powf(exponent)`.
-    /// - `1.0` = linear
-    /// - `0.5` = sqrt (compress high AQ, expand low AQ)
-    /// - `2.0` = squared (expand high AQ, compress low AQ)
+    /// Non-linear AQ mapping exponent. **BROKEN** (see `aq_trellis_coupling`).
     ///
     /// Default: `1.0`.
     pub aq_trellis_exponent: f32,
 
-    /// Minimum AQ strength before coupling kicks in.
-    ///
-    /// Blocks with AQ strength below this threshold use the base lambda unchanged.
+    /// Minimum AQ strength before coupling kicks in. **BROKEN** (see `aq_trellis_coupling`).
     ///
     /// Default: `0.0`.
     pub aq_trellis_threshold: f32,
 
-    /// Scale coupling for chroma (Cb/Cr) components.
-    ///
-    /// `1.0` = same coupling as luma. `< 1.0` = less aggressive trellis on chroma.
+    /// Scale coupling for chroma components. **BROKEN** (see `aq_trellis_coupling`).
     ///
     /// Default: `1.0`.
     pub aq_trellis_chroma_scale: f32,
 
-    /// Scale coupling by quality-derived dampen factor.
-    ///
-    /// When `true`, the AQ lambda adjustment is multiplied by a dampen factor
-    /// that decreases at lower quality levels, making coupling less aggressive.
+    /// Scale coupling by quality-derived dampen factor. **BROKEN** (see `aq_trellis_coupling`).
     ///
     /// Default: `false`.
     pub aq_trellis_quality_adaptive: bool,
@@ -293,41 +308,51 @@ pub struct ExpertConfig {
     // === Encoder Strategy ===
     /// Scan mode (baseline vs progressive variants).
     ///
-    /// Progressive modes automatically enable optimized Huffman tables in
-    /// [`to_encoder_config()`](Self::to_encoder_config).
+    /// **Up to 2% savings.** Progressive modes outperform baseline:
+    /// - `Baseline`: reference size
+    /// - `Progressive`: -0.25%
+    /// - `ProgressiveMozjpeg`: -1.6%
+    /// - `ProgressiveSearch`: -2.0% (tries 64 candidate scan configs)
+    ///
+    /// Progressive modes automatically enable optimized Huffman tables.
     pub scan_mode: ScanMode,
 
     /// Enable overshoot deringing.
     ///
-    /// Smooths hard edges to reduce visible ringing artifacts, especially on
-    /// white backgrounds. Negligible quality/speed cost for photographic content.
+    /// **Content-dependent.** Zero effect on images without saturated pixels
+    /// (value 255) near edges. On photographic content with blown highlights
+    /// or white backgrounds, reduces ringing artifacts with negligible size cost.
     ///
     /// Default: `true` for jpegli/hybrid, `false` for mozjpeg baseline/progressive.
     pub deringing: bool,
 
     /// Allow 16-bit quantization tables (SOF1 extended JPEG).
     ///
-    /// When `false`, quant values are clamped to 255 for baseline compatibility.
-    /// When `true`, tables can use values up to 32767 for higher precision at
-    /// low quality levels (below ~Q86 for chroma).
+    /// **No effect at Q85+** (all quant values fit in 8 bits). Only matters
+    /// below ~Q86 where chroma quant values exceed 255. When `false`, values
+    /// are clamped to 255 for baseline compatibility (no quality impact — those
+    /// high-frequency chroma coefficients quantize to zero regardless).
     ///
-    /// Default: `false` (matching both cjpegli CLI and C mozjpeg).
+    /// Default: `false` (matching cjpegli CLI and C mozjpeg).
     pub allow_16bit_quant_tables: bool,
 
     /// Quality parameter.
     ///
-    /// Affects quant table scaling (when `tables.scaling == Scaled`), zero-bias
-    /// blend distance computation, and AQ dampen factor. Accepts any type that
-    /// converts to [`Quality`]: `f32`, `u8`, `i32`, or explicit `Quality::*` variants.
+    /// **Impact depends on scaling mode:**
+    /// - `ScalingParams::Scaled` (jpegli/hybrid): Q50→Q95 = -81% to +112% size.
+    ///   Controls both quant table scaling and zero-bias blend.
+    /// - `ScalingParams::Exact` (mozjpeg): **zero effect.** Tables are pre-scaled
+    ///   during `from_preset()`, and mozjpeg zero-bias is all-zeros so blend is no-op.
     ///
-    /// When using [`blend_zero_bias()`](Self::blend_zero_bias), quality is converted
-    /// to Butteraugli distance internally to determine the HQ/LQ blend position.
+    /// Accepts `f32`, `u8`, `i32`, or explicit `Quality::*` variants.
     pub quality: Quality,
 
     /// Chroma downsampling method.
     ///
-    /// Only affects RGB input with chroma subsampling (4:2:0, 4:2:2, etc.).
+    /// **±0.2% impact.** Only affects RGB input with chroma subsampling (4:2:0, etc.).
     /// Ignored for 4:4:4, grayscale, and pre-subsampled YCbCr input.
+    /// `GammaAware` and `GammaAwareIterative` may produce slightly different
+    /// chroma, affecting compressibility marginally.
     pub downsampling_method: DownsamplingMethod,
 }
 
@@ -919,5 +944,443 @@ mod tests {
             (config.tables.zero_bias_mul.c0[5] - first).abs() < 1e-6,
             "blend_zero_bias should be idempotent"
         );
+    }
+
+    // ====================================================================
+    // Parameter sensitivity: encode with permutations, measure file size
+    // ====================================================================
+
+    /// Deterministic noise+patches test image (NOT gradient — see CLAUDE.md).
+    /// Mixed content exercises both low-freq (patches) and high-freq (noise) paths.
+    fn make_test_image(width: u32, height: u32) -> Vec<u8> {
+        let mut pixels = vec![0u8; (width * height * 3) as usize];
+        let mut state: u64 = 0xDEAD_BEEF;
+        let next = |s: &mut u64| -> u8 {
+            *s = s.wrapping_mul(1103515245).wrapping_add(12345) & 0x7FFF_FFFF;
+            ((*s >> 16) & 0xFF) as u8
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let idx = ((y * width + x) * 3) as usize;
+                // Patches: 32x32 blocks of distinct colors, noise within
+                let patch_x = x / 32;
+                let patch_y = y / 32;
+                let base_r = ((patch_x * 73 + 50) % 256) as u8;
+                let base_g = ((patch_y * 97 + 80) % 256) as u8;
+                let base_b = (((patch_x + patch_y) * 131 + 30) % 256) as u8;
+                // Add noise ±30
+                let noise_r = (next(&mut state) % 61) as i16 - 30;
+                let noise_g = (next(&mut state) % 61) as i16 - 30;
+                let noise_b = (next(&mut state) % 61) as i16 - 30;
+                pixels[idx] = (base_r as i16 + noise_r).clamp(0, 255) as u8;
+                pixels[idx + 1] = (base_g as i16 + noise_g).clamp(0, 255) as u8;
+                pixels[idx + 2] = (base_b as i16 + noise_b).clamp(0, 255) as u8;
+            }
+        }
+        pixels
+    }
+
+    fn encode_expert(expert: &ExpertConfig, pixels: &[u8], w: u32, h: u32) -> usize {
+        use super::super::encoder_types::PixelLayout;
+        let enc_config = expert.to_encoder_config(ColorMode::YCbCr {
+            subsampling: ChromaSubsampling::Quarter,
+        });
+        let mut enc = enc_config
+            .encode_from_bytes(w, h, PixelLayout::Rgb8Srgb)
+            .expect("encoder creation failed");
+        enc.push_packed(pixels, enough::Unstoppable)
+            .expect("push failed");
+        let jpeg = enc.finish().expect("finish failed");
+        jpeg.len()
+    }
+
+    /// Test every ExpertConfig field for file-size sensitivity.
+    ///
+    /// Uses MozjpegBaseline as base (trellis enabled, standalone mode) so
+    /// trellis fields are active. Then tests each field individually.
+    #[test]
+    fn test_parameter_sensitivity() {
+        let w = 256u32;
+        let h = 256u32;
+        let pixels = make_test_image(w, h);
+
+        // ---- Baselines across presets ----
+        println!("\n=== Preset baseline sizes (Q85, 256x256, 4:2:0) ===");
+        for preset in OptimizationPreset::all() {
+            let expert = ExpertConfig::from_preset(preset, 85.0);
+            let size = encode_expert(&expert, &pixels, w, h);
+            println!("  {:?}: {} bytes", preset, size);
+        }
+
+        // ---- Per-field sensitivity from MozjpegBaseline base ----
+        let base = ExpertConfig::from_preset(OptimizationPreset::MozjpegBaseline, 85.0);
+        let base_size = encode_expert(&base, &pixels, w, h);
+        println!("\n=== Base: MozjpegBaseline Q85 = {} bytes ===", base_size);
+
+        // Helper: mutate one field, encode, report delta
+        let mut results: Vec<(&str, i64, String)> = Vec::new();
+        let mut test_field = |name: &'static str, config: &ExpertConfig, note: &str| {
+            let size = encode_expert(config, &pixels, w, h);
+            let delta = size as i64 - base_size as i64;
+            let pct = (delta as f64 / base_size as f64) * 100.0;
+            results.push((name, delta, note.to_string()));
+            println!("  {:<45} {:>7} bytes  {:>+7.2}%  {}", name, size, pct, note);
+        };
+
+        println!("\n--- Trellis on/off ---");
+        {
+            let mut c = base.clone();
+            c.trellis_enabled = false;
+            test_field("trellis_enabled=false", &c, "(was true)");
+        }
+
+        println!("\n--- Trellis DC ---");
+        {
+            let mut c = base.clone();
+            c.trellis_dc_enabled = false;
+            test_field("trellis_dc_enabled=false", &c, "(was true)");
+        }
+
+        println!("\n--- Trellis EOB opt ---");
+        {
+            let mut c = base.clone();
+            c.trellis_eob_opt = true;
+            test_field("trellis_eob_opt=true", &c, "(was false)");
+        }
+
+        println!("\n--- Trellis lambda weight table ---");
+        {
+            let mut c = base.clone();
+            c.trellis_use_lambda_weight_tbl = false;
+            test_field("trellis_use_lambda_weight_tbl=false", &c, "(was true)");
+        }
+
+        println!("\n--- Trellis lambda_log_scale1 (rate penalty) ---");
+        for val in [12.0, 13.0, 14.0, 14.75, 15.5, 16.0, 17.0] {
+            let mut c = base.clone();
+            c.trellis_lambda_log_scale1 = val;
+            test_field(
+                Box::leak(format!("trellis_lambda_log_scale1={}", val).into_boxed_str()),
+                &c,
+                if (val - 14.75).abs() < 0.01 {
+                    "(default)"
+                } else {
+                    ""
+                },
+            );
+        }
+
+        println!("\n--- Trellis lambda_log_scale2 (distortion sensitivity) ---");
+        for val in [14.0, 15.0, 16.0, 16.5, 17.0, 18.0] {
+            let mut c = base.clone();
+            c.trellis_lambda_log_scale2 = val;
+            test_field(
+                Box::leak(format!("trellis_lambda_log_scale2={}", val).into_boxed_str()),
+                &c,
+                if (val - 16.5).abs() < 0.01 {
+                    "(default)"
+                } else {
+                    ""
+                },
+            );
+        }
+
+        println!("\n--- Trellis num_loops ---");
+        for val in [1, 2, 3, 5] {
+            let mut c = base.clone();
+            c.trellis_num_loops = val;
+            test_field(
+                Box::leak(format!("trellis_num_loops={}", val).into_boxed_str()),
+                &c,
+                if val == 1 { "(default)" } else { "" },
+            );
+        }
+
+        println!("\n--- Trellis speed_mode ---");
+        {
+            let mut c = base.clone();
+            c.trellis_speed_mode = TrellisSpeedMode::Adaptive;
+            test_field("trellis_speed_mode=Adaptive", &c, "(was Thorough)");
+        }
+        for level in [1, 3, 5, 8] {
+            let mut c = base.clone();
+            c.trellis_speed_mode = TrellisSpeedMode::Level(level);
+            test_field(
+                Box::leak(format!("trellis_speed_mode=Level({})", level).into_boxed_str()),
+                &c,
+                "",
+            );
+        }
+
+        println!("\n--- Trellis delta_dc_weight ---");
+        for val in [0.0, 0.1, 0.5, 1.0, 2.0, 5.0] {
+            let mut c = base.clone();
+            c.trellis_delta_dc_weight = val;
+            test_field(
+                Box::leak(format!("trellis_delta_dc_weight={}", val).into_boxed_str()),
+                &c,
+                if val == 0.0 { "(default)" } else { "" },
+            );
+        }
+
+        println!("\n--- Deringing ---");
+        {
+            let mut c = base.clone();
+            c.deringing = true;
+            test_field("deringing=true", &c, "(was false for mozjpeg)");
+        }
+
+        println!("\n--- Scan mode ---");
+        for mode in [
+            ScanMode::Baseline,
+            ScanMode::Progressive,
+            ScanMode::ProgressiveMozjpeg,
+            ScanMode::ProgressiveSearch,
+        ] {
+            let mut c = base.clone();
+            c.scan_mode = mode;
+            test_field(
+                Box::leak(format!("scan_mode={:?}", mode).into_boxed_str()),
+                &c,
+                if mode == ScanMode::Baseline {
+                    "(default for this preset)"
+                } else {
+                    ""
+                },
+            );
+        }
+
+        println!("\n--- Quality (with Exact scaling, changes zero-bias only) ---");
+        for q in [50.0, 70.0, 85.0, 90.0, 95.0] {
+            let mut c = base.clone();
+            c.quality = Quality::from(q);
+            c.blend_zero_bias();
+            test_field(
+                Box::leak(format!("quality={} (exact tables)", q).into_boxed_str()),
+                &c,
+                if (q - 85.0).abs() < 0.01 {
+                    "(default)"
+                } else {
+                    ""
+                },
+            );
+        }
+
+        // Test quality with Scaled tables (jpegli preset)
+        println!("\n--- Quality (with Scaled tables, jpegli preset) ---");
+        let jpegli_base = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
+        let jpegli_base_size = encode_expert(&jpegli_base, &pixels, w, h);
+        println!("  JpegliBaseline Q85 base = {} bytes", jpegli_base_size);
+        for q in [50.0, 70.0, 85.0, 90.0, 95.0] {
+            let c = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, q);
+            let size = encode_expert(&c, &pixels, w, h);
+            let delta = size as i64 - jpegli_base_size as i64;
+            let pct = (delta as f64 / jpegli_base_size as f64) * 100.0;
+            println!(
+                "  {:<45} {:>7} bytes  {:>+7.2}%",
+                format!("quality={} (scaled tables)", q),
+                size,
+                pct
+            );
+        }
+
+        println!("\n--- Zero-bias blend range ---");
+        {
+            let mut c = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
+            // Widen range: fully HQ at distance 0.5, fully LQ at distance 5.0
+            c.zero_bias_hq_distance = 0.5;
+            c.zero_bias_lq_distance = 5.0;
+            c.blend_zero_bias();
+            let size = encode_expert(&c, &pixels, w, h);
+            let delta = size as i64 - jpegli_base_size as i64;
+            let pct = (delta as f64 / jpegli_base_size as f64) * 100.0;
+            println!(
+                "  {:<45} {:>7} bytes  {:>+7.2}%  (was 1.0-3.0)",
+                "zero_bias range 0.5-5.0", size, pct
+            );
+        }
+        {
+            let mut c = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
+            // Narrow range: HQ=LQ=2.0 (no blend, snap to nearest)
+            c.zero_bias_hq_distance = 2.0;
+            c.zero_bias_lq_distance = 2.0;
+            c.blend_zero_bias();
+            let size = encode_expert(&c, &pixels, w, h);
+            let delta = size as i64 - jpegli_base_size as i64;
+            let pct = (delta as f64 / jpegli_base_size as f64) * 100.0;
+            println!(
+                "  {:<45} {:>7} bytes  {:>+7.2}%  (forced LQ)",
+                "zero_bias range 2.0-2.0", size, pct
+            );
+        }
+
+        // Zero out all zero-bias (make them 0.0 = no zero-biasing)
+        {
+            let mut c = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
+            c.tables.zero_bias_mul = PerComponent::new([0.0f32; 64], [0.0f32; 64], [0.0f32; 64]);
+            let size = encode_expert(&c, &pixels, w, h);
+            let delta = size as i64 - jpegli_base_size as i64;
+            let pct = (delta as f64 / jpegli_base_size as f64) * 100.0;
+            println!(
+                "  {:<45} {:>7} bytes  {:>+7.2}%",
+                "zero_bias_mul=all zeros (disabled)", size, pct
+            );
+        }
+        // Max out all zero-bias (1.0 = maximum rounding toward zero)
+        {
+            let mut c = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, 85.0);
+            c.tables.zero_bias_mul = PerComponent::new([1.0f32; 64], [1.0f32; 64], [1.0f32; 64]);
+            let size = encode_expert(&c, &pixels, w, h);
+            let delta = size as i64 - jpegli_base_size as i64;
+            let pct = (delta as f64 / jpegli_base_size as f64) * 100.0;
+            println!(
+                "  {:<45} {:>7} bytes  {:>+7.2}%",
+                "zero_bias_mul=all ones (maximum)", size, pct
+            );
+        }
+
+        println!("\n--- allow_16bit_quant_tables ---");
+        {
+            let mut c = base.clone();
+            c.allow_16bit_quant_tables = true;
+            test_field("allow_16bit_quant_tables=true", &c, "(was false)");
+        }
+
+        println!("\n--- Downsampling method ---");
+        {
+            let mut c = base.clone();
+            c.downsampling_method = DownsamplingMethod::GammaAware;
+            test_field("downsampling_method=GammaAware", &c, "(was Box)");
+        }
+        {
+            let mut c = base.clone();
+            c.downsampling_method = DownsamplingMethod::GammaAwareIterative;
+            test_field("downsampling_method=GammaAwareIterative", &c, "(SharpYUV)");
+        }
+
+        // ---- Hybrid mode fields ----
+        println!("\n--- Hybrid mode: aq_trellis_coupling sweep ---");
+        for coupling in [0.0, 0.5, 1.0, 2.0, 4.0, 8.0] {
+            let mut c = base.clone();
+            c.aq_trellis_coupling = coupling;
+            test_field(
+                Box::leak(format!("aq_trellis_coupling={}", coupling).into_boxed_str()),
+                &c,
+                if coupling == 0.0 {
+                    "(standalone)"
+                } else {
+                    "(hybrid)"
+                },
+            );
+        }
+
+        println!("\n--- Hybrid mode internals (coupling=2.0) ---");
+        {
+            let mut c = base.clone();
+            c.aq_trellis_coupling = 2.0;
+            let hybrid_base_size = encode_expert(&c, &pixels, w, h);
+            println!("  Hybrid base (coupling=2.0) = {} bytes", hybrid_base_size);
+
+            for exp in [0.5, 1.0, 2.0] {
+                let mut c2 = c.clone();
+                c2.aq_trellis_exponent = exp;
+                let size = encode_expert(&c2, &pixels, w, h);
+                let delta = size as i64 - hybrid_base_size as i64;
+                let pct = (delta as f64 / hybrid_base_size as f64) * 100.0;
+                println!(
+                    "  {:<45} {:>7} bytes  {:>+7.2}%",
+                    format!("aq_trellis_exponent={}", exp),
+                    size,
+                    pct
+                );
+            }
+
+            for thresh in [0.0, 0.5, 1.0, 2.0] {
+                let mut c2 = c.clone();
+                c2.aq_trellis_threshold = thresh;
+                let size = encode_expert(&c2, &pixels, w, h);
+                let delta = size as i64 - hybrid_base_size as i64;
+                let pct = (delta as f64 / hybrid_base_size as f64) * 100.0;
+                println!(
+                    "  {:<45} {:>7} bytes  {:>+7.2}%",
+                    format!("aq_trellis_threshold={}", thresh),
+                    size,
+                    pct
+                );
+            }
+
+            for cs in [0.0, 0.5, 1.0, 2.0] {
+                let mut c2 = c.clone();
+                c2.aq_trellis_chroma_scale = cs;
+                let size = encode_expert(&c2, &pixels, w, h);
+                let delta = size as i64 - hybrid_base_size as i64;
+                let pct = (delta as f64 / hybrid_base_size as f64) * 100.0;
+                println!(
+                    "  {:<45} {:>7} bytes  {:>+7.2}%",
+                    format!("aq_trellis_chroma_scale={}", cs),
+                    size,
+                    pct
+                );
+            }
+
+            {
+                let mut c2 = c.clone();
+                c2.aq_trellis_quality_adaptive = true;
+                let size = encode_expert(&c2, &pixels, w, h);
+                let delta = size as i64 - hybrid_base_size as i64;
+                let pct = (delta as f64 / hybrid_base_size as f64) * 100.0;
+                println!(
+                    "  {:<45} {:>7} bytes  {:>+7.2}%",
+                    "aq_trellis_quality_adaptive=true", size, pct
+                );
+            }
+        }
+
+        // ---- Quant table scaling ----
+        println!("\n--- Quant table values (direct manipulation) ---");
+        {
+            // Halve all quant values (= higher quality, bigger file)
+            let mut c = base.clone();
+            for v in c.tables.quant.c0.iter_mut() {
+                *v *= 0.5;
+            }
+            for v in c.tables.quant.c1.iter_mut() {
+                *v *= 0.5;
+            }
+            for v in c.tables.quant.c2.iter_mut() {
+                *v *= 0.5;
+            }
+            test_field("quant_tables * 0.5 (finer quant)", &c, "");
+        }
+        {
+            // Double all quant values (= lower quality, smaller file)
+            let mut c = base.clone();
+            for v in c.tables.quant.c0.iter_mut() {
+                *v *= 2.0;
+            }
+            for v in c.tables.quant.c1.iter_mut() {
+                *v *= 2.0;
+            }
+            for v in c.tables.quant.c2.iter_mut() {
+                *v *= 2.0;
+            }
+            test_field("quant_tables * 2.0 (coarser quant)", &c, "");
+        }
+
+        // ---- Summary: identify dead fields ----
+        println!("\n=== SENSITIVITY SUMMARY ===");
+        println!("Fields with |delta| == 0 are effectively dead for this config:");
+        for (name, delta, note) in &results {
+            if *delta == 0 {
+                println!("  DEAD: {} {}", name, note);
+            }
+        }
+        println!("\nFields with |delta| > 0:");
+        let mut active: Vec<_> = results.iter().filter(|(_, d, _)| *d != 0).collect();
+        active.sort_by_key(|(_, d, _)| d.unsigned_abs());
+        for (name, delta, note) in active.iter().rev() {
+            let pct = (*delta as f64 / base_size as f64) * 100.0;
+            println!("  {:>+7} bytes ({:>+6.2}%): {} {}", delta, pct, name, note);
+        }
     }
 }

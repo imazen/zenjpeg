@@ -20,6 +20,13 @@
   - TrellisConfig fields changed pub(crate) → pub to allow direct construction
   - Review pass: found/fixed dead code in blend_zero_bias() and to_encoder_config()
   - Documented 4 dead params in hybrid mode (pre-existing HybridConfig limitation)
+- User request: Dig into ignored params — test file size with permutations, find sensible ranges
+  - Wrote test_parameter_sensitivity: 256x256 noise+patches, all fields permuted
+  - Found hybrid mode completely broken (create_hybrid_ctx never called, all coupling values = no trellis)
+  - Found 4 standalone trellis dead params: eob_opt (disabled), lambda_weight_tbl (flat weights), num_loops (never read), speed_mode (same output)
+  - Found quality has zero effect on mozjpeg presets (Exact tables + zero zero-bias)
+  - Documented working params: quant tables (±65%), lambda_scale1/2 (±46%), zero_bias_mul (±31%), scan_mode (up to -2%)
+  - Updated all ExpertConfig field docs with measured impact data and ranges
 
 ## 2026-01-31
 - User request: Fix pre-erosion lookahead timing (C++ has 4-row overlap at iMCU boundaries)
