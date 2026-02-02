@@ -119,6 +119,10 @@ pub struct HybridConfig {
     /// Additive (default): scale1 = base_scale1 + aq * coupling
     /// Multiplicative: scale1 = base_scale1 * (1 + aq * coupling)
     pub multiplicative: bool,
+
+    /// Maximum absolute lambda adjustment (clamps to [-max, +max]).
+    /// 0.0 = no limit. Useful for limiting quality degradation on sensitive images.
+    pub max_adjustment: f32,
 }
 
 impl Default for HybridConfig {
@@ -144,6 +148,7 @@ impl Default for HybridConfig {
             quality_adaptive: false,
             chroma_scale: 1.0,
             multiplicative: false,
+            max_adjustment: 0.0,
         }
     }
 }
@@ -264,6 +269,12 @@ impl HybridConfig {
         self
     }
 
+    /// Builder: set maximum absolute lambda adjustment
+    pub fn max_adjustment(mut self, max: f32) -> Self {
+        self.max_adjustment = max;
+        self
+    }
+
     /// Compute the effective lambda adjustment for a block.
     ///
     /// # Arguments
@@ -296,6 +307,11 @@ impl HybridConfig {
         // Chroma scaling
         if is_chroma {
             adjustment *= self.chroma_scale;
+        }
+
+        // Clamp to max_adjustment if set
+        if self.max_adjustment > 0.0 {
+            adjustment = adjustment.clamp(-self.max_adjustment, self.max_adjustment);
         }
 
         adjustment

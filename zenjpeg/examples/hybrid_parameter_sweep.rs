@@ -164,6 +164,86 @@ fn run_sweep(image_path: &str) {
         println!("{:>8.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
             coupling, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
     }
+
+    // Test AQ threshold (minimum AQ before coupling applies)
+    println!("\n=== AQ Threshold Test (coupling=-4.0) ===");
+    println!("Blocks with AQ < threshold use base lambda unchanged.\n");
+
+    let thresholds: Vec<f32> = vec![0.0, 0.05, 0.1, 0.15, 0.2, 0.3];
+
+    println!("{:>10}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Threshold", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
+    println!("{:-<10}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", "");
+
+    for &threshold in &thresholds {
+        let config = create_hybrid_config_with_threshold(quality, -4.0, threshold);
+        let jpeg_bytes = encode_image(&config, &img);
+        let bytes = jpeg_bytes.len();
+        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+
+        let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
+
+        let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
+        let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
+
+        println!("{:>10.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            threshold, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+    }
+
+    // Test AQ exponent (non-linear AQ mapping)
+    println!("\n=== AQ Exponent Test (coupling=-4.0) ===");
+    println!("Exponent transforms AQ: effective_aq = aq^exponent");
+    println!("0.5 = sqrt (compress range), 2.0 = square (emphasize high AQ)\n");
+
+    let exponents: Vec<f32> = vec![0.5, 0.75, 1.0, 1.5, 2.0];
+
+    println!("{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Exponent", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
+    println!("{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", "");
+
+    for &exp in &exponents {
+        let config = create_hybrid_config_with_exponent(quality, -4.0, exp);
+        let jpeg_bytes = encode_image(&config, &img);
+        let bytes = jpeg_bytes.len();
+        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+
+        let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
+
+        let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
+        let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
+
+        println!("{:>8.2}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            exp, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+    }
+
+    // Test max adjustment (caps lambda change to limit quality degradation)
+    println!("\n=== Max Adjustment Test (coupling=-8.0) ===");
+    println!("Clamps lambda adjustment to [-max, +max]. Higher = more effect allowed.\n");
+
+    let max_adjs: Vec<f32> = vec![0.5, 1.0, 1.5, 2.0, 3.0, 0.0]; // 0.0 = unlimited
+
+    println!("{:>8}  {:>8}  {:>10}  {:>8}  {:>8}",
+        "Max Adj", "Bytes", "DSSIM", "Δsize%", "Δdssim%");
+    println!("{:-<8}  {:-<8}  {:-<10}  {:-<8}  {:-<8}",
+        "", "", "", "", "");
+
+    for &max_adj in &max_adjs {
+        let config = create_hybrid_config_with_max_adj(quality, -8.0, max_adj);
+        let jpeg_bytes = encode_image(&config, &img);
+        let bytes = jpeg_bytes.len();
+        let decoded: RgbImage = decode_jpeg_to_rgb(&jpeg_bytes).expect("decode");
+
+        let dssim = QualityMetrics::dssim(orig_rgb.as_ref(), decoded.as_ref());
+
+        let size_vs_baseline = (bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0;
+        let dssim_vs_baseline = (dssim / baseline_dssim - 1.0) * 100.0;
+
+        let label = if max_adj == 0.0 { "none".to_string() } else { format!("{:.1}", max_adj) };
+        println!("{:>8}  {:>8}  {:>10.5}  {:>+7.1}%  {:>+7.1}%",
+            label, bytes, dssim, size_vs_baseline, dssim_vs_baseline);
+    }
 }
 
 fn create_hybrid_config(quality: i32, coupling: f32) -> EncoderConfig {
@@ -185,6 +265,45 @@ fn create_hybrid_config_multiplicative(quality: i32, coupling: f32) -> EncoderCo
     expert.trellis_enabled = true;
     expert.aq_trellis_coupling = coupling;
     expert.aq_trellis_multiplicative = true;
+
+    expert.to_encoder_config(ColorMode::YCbCr {
+        subsampling: ChromaSubsampling::Quarter,
+    })
+}
+
+fn create_hybrid_config_with_threshold(quality: i32, coupling: f32, threshold: f32) -> EncoderConfig {
+    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    expert.trellis_enabled = true;
+    expert.aq_trellis_coupling = coupling;
+    expert.aq_trellis_threshold = threshold;
+
+    expert.to_encoder_config(ColorMode::YCbCr {
+        subsampling: ChromaSubsampling::Quarter,
+    })
+}
+
+fn create_hybrid_config_with_exponent(quality: i32, coupling: f32, exponent: f32) -> EncoderConfig {
+    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    expert.trellis_enabled = true;
+    expert.aq_trellis_coupling = coupling;
+    expert.aq_trellis_exponent = exponent;
+
+    expert.to_encoder_config(ColorMode::YCbCr {
+        subsampling: ChromaSubsampling::Quarter,
+    })
+}
+
+fn create_hybrid_config_with_max_adj(quality: i32, coupling: f32, max_adj: f32) -> EncoderConfig {
+    use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode};
+
+    let mut expert = ExpertConfig::from_preset(OptimizationPreset::JpegliBaseline, quality);
+    expert.trellis_enabled = true;
+    expert.aq_trellis_coupling = coupling;
+    expert.aq_trellis_max_adjustment = max_adj;
 
     expert.to_encoder_config(ColorMode::YCbCr {
         subsampling: ChromaSubsampling::Quarter,
