@@ -114,6 +114,7 @@ impl BytesEncoder {
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.separate_chroma_tables(config.separate_chroma_tables);
         builder = builder.scan_strategy(config.scan_strategy);
+        builder = builder.quant_source(config.quant_source);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
@@ -940,6 +941,7 @@ impl YCbCrPlanarEncoder {
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
         builder = builder.separate_chroma_tables(config.separate_chroma_tables);
         builder = builder.scan_strategy(config.scan_strategy);
+        builder = builder.quant_source(config.quant_source);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
