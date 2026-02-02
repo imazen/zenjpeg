@@ -27,7 +27,7 @@ use crate::encode::mozjpeg_compat::TrellisConfig;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::trellis::{trellis_quantize_block, RateTable};
 
-/// Standard AC rate tables for trellis rate estimation.
+/// Standard rate tables for trellis rate estimation.
 ///
 /// Trellis quantization needs Huffman code lengths to estimate bit costs.
 /// Using standard JPEG tables is a reasonable approximation when
@@ -35,6 +35,8 @@ use crate::trellis::{trellis_quantize_block, RateTable};
 pub struct StandardRateTables {
     pub luma_ac: RateTable,
     pub chroma_ac: RateTable,
+    pub luma_dc: RateTable,
+    pub chroma_dc: RateTable,
 }
 
 impl StandardRateTables {
@@ -43,6 +45,8 @@ impl StandardRateTables {
         Self {
             luma_ac: RateTable::standard_luma_ac(),
             chroma_ac: RateTable::standard_chroma_ac(),
+            luma_dc: RateTable::standard_luma_dc(),
+            chroma_dc: RateTable::standard_chroma_dc(),
         }
     }
 }
