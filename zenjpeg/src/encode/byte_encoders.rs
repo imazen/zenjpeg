@@ -97,7 +97,8 @@ impl BytesEncoder {
             builder = builder.encoding_tables(Box::new(tables.clone()));
         }
         builder = builder.quant_source(config.quant_table_config.quant_source());
-        builder = builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
+        builder =
+            builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
 
         // Decompose ScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {
@@ -932,7 +933,8 @@ impl YCbCrPlanarEncoder {
             builder = builder.encoding_tables(Box::new(tables.clone()));
         }
         builder = builder.quant_source(config.quant_table_config.quant_source());
-        builder = builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
+        builder =
+            builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
 
         // Decompose ScanMode into builder's individual fields
         if config.scan_mode.is_progressive() {

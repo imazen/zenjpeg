@@ -228,8 +228,7 @@ impl StreamingEncoder {
                     )
                 };
                 (quant, zero_bias)
-            } else if builder.quant_source
-                == super::encoder_types::QuantTableSource::MozjpegDefault
+            } else if builder.quant_source == super::encoder_types::QuantTableSource::MozjpegDefault
             {
                 // Branch 2: Mozjpeg Robidoux tables with quality scaling
                 let quality_u8 = builder.quality.to_internal().round().clamp(1.0, 100.0) as u8;
