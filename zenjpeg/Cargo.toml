@@ -51,8 +51,6 @@ lcms2 = { workspace = true, optional = true }
 moxcms = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }  # For CMS decode helper
 rayon = { workspace = true, optional = true }  # For parallel encoding
-# Hybrid trellis quantization from mozjpeg
-mozjpeg-rs = { workspace = true, optional = true }
 # Fast SIMD RGB→YCbCr conversion (AVX-512/AVX2/SSE/NEON) - 10-150x faster than f32 math
 yuv = { workspace = true, optional = true }
 # Token-based safe SIMD intrinsics
@@ -154,8 +152,6 @@ sharp-yuv = []
 mozjpeg-tables = []
 # Enable WASM console tracing for debugging browser-specific issues
 wasm-trace = ["dep:web-sys"]
-# Enable hybrid trellis quantization (combines jpegli AQ + mozjpeg trellis)
-experimental-hybrid-trellis = ["dep:mozjpeg-rs"]
 # Fast SIMD RGB→YCbCr conversion using the yuv crate (10-150x faster)
 # Uses 15-bit fixed-point Professional mode (max error: 0.5 levels, invisible after JPEG quantization)
 yuv = ["dep:yuv"]

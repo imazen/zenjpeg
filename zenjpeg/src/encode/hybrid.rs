@@ -10,13 +10,12 @@
 //! This module also supports standalone trellis quantization via
 //! [`TrellisConfig`](super::TrellisConfig) for mozjpeg-compatible behavior.
 //!
-//! Note: This module is gated by `experimental-hybrid-trellis` feature in mod.rs.
 
 use crate::encode::dct::forward_dct_8x8;
 use crate::error::Result;
 use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::hybrid::config::HybridConfig;
-use crate::hybrid::core::{hybrid_quantize_block, StandardHuffmanTables};
+use crate::hybrid::core::{hybrid_quantize_block, StandardRateTables};
 use crate::quant::aq::AQStrengthMap;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 
@@ -115,7 +114,7 @@ enum TrellisMode {
 /// - **Hybrid**: Combines jpegli's AQ with mozjpeg's trellis, adjusting lambda per-block
 /// - **Standalone**: Pure mozjpeg-style trellis with fixed lambda (no AQ adjustment)
 pub(crate) struct HybridQuantContext {
-    huff_tables: StandardHuffmanTables,
+    rate_tables: StandardRateTables,
     mode: TrellisMode,
 }
 
@@ -135,7 +134,7 @@ impl HybridQuantContext {
     /// Creates a new hybrid quantization context (AQ + trellis).
     pub(crate) fn new(config: HybridConfig) -> Self {
         Self {
-            huff_tables: StandardHuffmanTables::new(),
+            rate_tables: StandardRateTables::new(),
             mode: TrellisMode::Hybrid(config),
         }
     }
@@ -143,7 +142,7 @@ impl HybridQuantContext {
     /// Creates a standalone trellis context (mozjpeg-compatible, no AQ adjustment).
     pub(crate) fn from_trellis_config(config: TrellisConfig) -> Self {
         Self {
-            huff_tables: StandardHuffmanTables::new(),
+            rate_tables: StandardRateTables::new(),
             mode: TrellisMode::Standalone(config),
         }
     }
@@ -165,9 +164,9 @@ impl HybridQuantContext {
         is_luma: bool,
     ) -> [i16; DCT_BLOCK_SIZE] {
         let ac_table = if is_luma {
-            &self.huff_tables.luma_ac
+            &self.rate_tables.luma_ac
         } else {
-            &self.huff_tables.chroma_ac
+            &self.rate_tables.chroma_ac
         };
 
         // Generate trellis config based on mode
@@ -177,8 +176,8 @@ impl HybridQuantContext {
                 hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma)
             }
             TrellisMode::Standalone(trellis_config) => {
-                // Standalone mode: use config as-is (mozjpeg-compatible)
-                trellis_config.to_mozjpeg_config()
+                // Standalone mode: use config as-is
+                *trellis_config
             }
         };
 

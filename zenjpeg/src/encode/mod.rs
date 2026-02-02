@@ -46,7 +46,6 @@ mod serialize;
 
 #[doc(hidden)]
 pub mod config;
-#[cfg(feature = "experimental-hybrid-trellis")]
 mod hybrid;
 pub(crate) mod linear_lut;
 
@@ -104,9 +103,6 @@ pub mod mozjpeg_tables;
 ///
 /// This module provides types that mirror mozjpeg-rs's API for easier migration
 /// and familiarity, including [`TrellisConfig`](mozjpeg_compat::TrellisConfig).
-///
-/// Requires the `experimental-hybrid-trellis` feature.
-#[cfg(feature = "experimental-hybrid-trellis")]
 pub mod mozjpeg_compat;
 
 // v2 is the primary public API (types re-exported below)
@@ -144,7 +140,6 @@ use crate::error::Result;
 pub(crate) use config::ProgressiveScan;
 
 use crate::foundation::alloc::{try_alloc_zeroed_f32, try_clone_slice};
-#[cfg(feature = "experimental-hybrid-trellis")]
 use crate::foundation::consts::{DCT_BLOCK_SIZE, JPEG_ZIGZAG_ORDER};
 use crate::types::{EdgePadding, EdgePaddingConfig};
 
@@ -155,7 +150,6 @@ use crate::types::{EdgePadding, EdgePaddingConfig};
 
 /// Converts coefficients from natural order to zigzag order, writing directly to destination.
 /// Avoids allocation when writing to pre-allocated block arrays.
-#[cfg(feature = "experimental-hybrid-trellis")]
 #[inline]
 fn natural_to_zigzag_into(natural: &[i16; DCT_BLOCK_SIZE], dest: &mut [i16; DCT_BLOCK_SIZE]) {
     for i in 0..DCT_BLOCK_SIZE {

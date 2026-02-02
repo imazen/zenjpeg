@@ -1561,7 +1561,6 @@ impl EncoderConfig {
 
     /// Enable hybrid trellis quantization.
     ///
-    /// Requires the `experimental-hybrid-trellis` feature to be enabled.
     /// Only applies to zenjpeg encoder.
     #[must_use]
     pub fn hybrid(mut self, enabled: bool) -> Self {
@@ -1614,11 +1613,6 @@ impl EncoderConfig {
 
     fn encode_with_jpegli_rs(&self, img: &ImageData) -> Result<Vec<u8>, String> {
         use zenjpeg::encoder::{EncoderConfig, PixelLayout, Quality, XybSubsampling};
-
-        #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        if self.hybrid {
-            return Err("hybrid requires experimental-hybrid-trellis feature".to_string());
-        }
 
         // Use distance if set, otherwise quality
         let quality: Quality = if let Some(d) = self.distance {

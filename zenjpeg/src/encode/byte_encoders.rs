@@ -123,7 +123,6 @@ impl BytesEncoder {
         }
 
         // Apply trellis quantization config if set
-        #[cfg(feature = "experimental-hybrid-trellis")]
         if let Some(ref trellis) = config.trellis {
             builder = builder.trellis(*trellis);
         }

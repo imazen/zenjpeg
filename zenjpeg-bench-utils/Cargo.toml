@@ -41,7 +41,6 @@ libc = { workspace = true, optional = true }
 
 [features]
 default = []
-experimental-hybrid-trellis = ["zenjpeg/experimental-hybrid-trellis"]
 # Enable C++ jpegli encoding via FFI (uses jpegli_* symbols directly)
 cjpegli-ffi = ["dep:jpegli-internals-sys", "dep:libc"]
 

@@ -56,20 +56,10 @@ fn main() {
             let cpp_bytes = std::fs::metadata(&cpp_path).map(|m| m.len()).unwrap_or(0);
 
             // Rust XYB with hybrid trellis (matches C jpegli's AQ)
-            #[cfg(feature = "experimental-hybrid-trellis")]
             let rust_jpeg = {
                 use zenjpeg::hybrid::HybridConfig;
                 let config = EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter)
                     .hybrid_config(HybridConfig::default());
-                let mut enc = config
-                    .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
-                    .expect("encoder setup");
-                enc.push_packed(pixels, Unstoppable).expect("push");
-                enc.finish().expect("encode")
-            };
-            #[cfg(not(feature = "experimental-hybrid-trellis"))]
-            let rust_jpeg = {
-                let config = EncoderConfig::xyb(q as f32, XybSubsampling::BQuarter);
                 let mut enc = config
                     .encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)
                     .expect("encoder setup");

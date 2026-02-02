@@ -51,12 +51,9 @@ use crate::quant::aq::streaming::StreamingAQ;
 use crate::quant::{QuantTable, ZeroBiasParams};
 use crate::types::{PixelFormat, Subsampling};
 
-// Trellis quantization support (feature-gated)
-#[cfg(feature = "experimental-hybrid-trellis")]
+// Trellis quantization support
 use crate::encode::hybrid::HybridQuantContext;
-#[cfg(feature = "experimental-hybrid-trellis")]
 use crate::encode::mozjpeg_compat::TrellisConfig;
-#[cfg(feature = "experimental-hybrid-trellis")]
 use crate::foundation::consts::JPEG_ZIGZAG_ORDER;
 
 /// Quantization context: groups all quantization tables and bias parameters.
@@ -290,8 +287,8 @@ fn quantize_chroma_blocks(
     all_aq_strengths: &[f32],
     quant_simd: &QuantTableSimd,
     zero_bias_simd: &ZeroBiasSimd,
-    #[cfg(feature = "experimental-hybrid-trellis")] quant_values: &[u16; DCT_BLOCK_SIZE],
-    #[cfg(feature = "experimental-hybrid-trellis")] hybrid_ctx: Option<&HybridQuantContext>,
+    quant_values: &[u16; DCT_BLOCK_SIZE],
+    hybrid_ctx: Option<&HybridQuantContext>,
     _use_trellis: bool,
     chroma_blocks_h: usize,
     chroma_blocks_v: usize,
@@ -315,24 +312,19 @@ fn quantize_chroma_blocks(
         };
 
         let zigzag = if _use_trellis {
-            #[cfg(feature = "experimental-hybrid-trellis")]
-            {
-                let dct_arr = dct.to_array();
-                let natural = hybrid_ctx.unwrap().quantize_block(
-                    &dct_arr,
-                    quant_values,
-                    aq_strength,
-                    1.0,
-                    false, // is_chroma
-                );
-                let mut result = [0i16; DCT_BLOCK_SIZE];
-                for j in 0..DCT_BLOCK_SIZE {
-                    result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
-                }
-                result
+            let dct_arr = dct.to_array();
+            let natural = hybrid_ctx.unwrap().quantize_block(
+                &dct_arr,
+                quant_values,
+                aq_strength,
+                1.0,
+                false, // is_chroma
+            );
+            let mut result = [0i16; DCT_BLOCK_SIZE];
+            for j in 0..DCT_BLOCK_SIZE {
+                result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
             }
-            #[cfg(not(feature = "experimental-hybrid-trellis"))]
-            unreachable!()
+            result
         } else {
             quant_simd.quantize_with_zero_bias_zigzag(dct, zero_bias_simd, aq_strength)
         };
@@ -395,10 +387,9 @@ pub struct StripProcessor {
     /// Enable overshoot deringing (on by default)
     deringing: bool,
 
-    // === Trellis quantization (feature-gated) ===
+    // === Trellis quantization ===
     /// Trellis quantization context for rate-distortion optimization.
     /// When Some, uses trellis quantization instead of standard SIMD quantization.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     hybrid_ctx: Option<HybridQuantContext>,
 
     // === Archmage SIMD token (feature-gated) ===
@@ -611,7 +602,6 @@ impl StripProcessor {
             deringing: true,
 
             // Trellis quantization (disabled by default)
-            #[cfg(feature = "experimental-hybrid-trellis")]
             hybrid_ctx: None,
 
             // Archmage SIMD token (obtained once, reused for all blocks)
@@ -696,9 +686,6 @@ impl StripProcessor {
     /// When enabled, uses trellis quantization for rate-distortion optimization
     /// instead of standard SIMD quantization. This typically produces 10-15%
     /// smaller files at the same quality.
-    ///
-    /// Requires the `experimental-hybrid-trellis` feature.
-    #[cfg(feature = "experimental-hybrid-trellis")]
     pub fn set_trellis(&mut self, config: TrellisConfig) {
         if config.is_enabled() {
             self.hybrid_ctx = Some(HybridQuantContext::from_trellis_config(config));
@@ -1152,10 +1139,7 @@ impl StripProcessor {
         let quant = &self.quant;
 
         // Check if we have trellis context for R-D optimization
-        #[cfg(feature = "experimental-hybrid-trellis")]
         let use_trellis = self.hybrid_ctx.is_some();
-        #[cfg(not(feature = "experimental-hybrid-trellis"))]
-        let use_trellis = false;
 
         // Quantize Y blocks (vectors pre-allocated at construction)
         for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
@@ -1163,26 +1147,21 @@ impl StripProcessor {
             let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
 
             let zigzag = if use_trellis {
-                #[cfg(feature = "experimental-hybrid-trellis")]
-                {
-                    // Trellis path: convert to array, quantize with R-D, apply zigzag
-                    let dct_arr = dct.to_array();
-                    let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
-                        &dct_arr,
-                        &quant.y_quant.values,
-                        aq_strength,
-                        1.0,  // dampen
-                        true, // is_luma
-                    );
-                    // Apply zigzag reordering
-                    let mut result = [0i16; DCT_BLOCK_SIZE];
-                    for j in 0..DCT_BLOCK_SIZE {
-                        result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
-                    }
-                    result
+                // Trellis path: convert to array, quantize with R-D, apply zigzag
+                let dct_arr = dct.to_array();
+                let natural = self.hybrid_ctx.as_ref().unwrap().quantize_block(
+                    &dct_arr,
+                    &quant.y_quant.values,
+                    aq_strength,
+                    1.0,  // dampen
+                    true, // is_luma
+                );
+                // Apply zigzag reordering
+                let mut result = [0i16; DCT_BLOCK_SIZE];
+                for j in 0..DCT_BLOCK_SIZE {
+                    result[JPEG_ZIGZAG_ORDER[j] as usize] = natural[j];
                 }
-                #[cfg(not(feature = "experimental-hybrid-trellis"))]
-                unreachable!()
+                result
             } else {
                 // Fast SIMD path: fused quantization + zigzag reorder
                 quant.y_quant_simd.quantize_with_zero_bias_zigzag(
@@ -1210,9 +1189,7 @@ impl StripProcessor {
                 &self.all_aq_strengths,
                 &quant.cb_quant_simd,
                 &quant.cb_zero_bias_simd,
-                #[cfg(feature = "experimental-hybrid-trellis")]
                 &quant.cb_quant.values,
-                #[cfg(feature = "experimental-hybrid-trellis")]
                 self.hybrid_ctx.as_ref(),
                 use_trellis,
                 c_blocks_w,
@@ -1238,9 +1215,7 @@ impl StripProcessor {
                 &self.all_aq_strengths,
                 &quant.cr_quant_simd,
                 &quant.cr_zero_bias_simd,
-                #[cfg(feature = "experimental-hybrid-trellis")]
                 &quant.cr_quant.values,
-                #[cfg(feature = "experimental-hybrid-trellis")]
                 self.hybrid_ctx.as_ref(),
                 use_trellis,
                 cr_blocks_h,
