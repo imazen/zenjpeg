@@ -285,15 +285,18 @@ impl EncoderConfig {
 
         let progressive = preset.is_progressive();
         let scan_strategy = preset.scan_strategy();
-        let uses_aq = preset.uses_aq();
 
-        // Trellis configuration depends on preset
+        // Trellis configuration depends on preset lineage:
+        // - Jpegli: no trellis (AQ-driven quality, no rate-distortion opt)
+        // - Mozjpeg: Thorough (full search, matching C mozjpeg default)
+        // - Hybrid: Adaptive (zenjpeg heuristic, good speed/quality balance)
         let trellis = match preset {
             JpegliBaseline | JpegliProgressive => None,
-            MozjpegBaseline | MozjpegProgressive | HybridBaseline | HybridProgressive => {
-                Some(TrellisConfig::default())
+            MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
+                Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
             }
-            MozjpegMaxCompression | HybridMaxCompression => {
+            HybridBaseline | HybridProgressive => Some(TrellisConfig::default()),
+            HybridMaxCompression => {
                 Some(TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough))
             }
         };
@@ -310,11 +313,22 @@ impl EncoderConfig {
 
         let quant_source = preset.quant_table_source();
 
+        // Deringing: independent of AQ. C mozjpeg enables overshoot deringing
+        // only for JCP_MAX_COMPRESSION profile. All jpegli/hybrid presets use it
+        // (quality win, negligible cost). Mozjpeg baseline/progressive skip it
+        // to match C mozjpeg's default profile.
+        let deringing = match preset {
+            JpegliBaseline | JpegliProgressive => true,
+            MozjpegBaseline | MozjpegProgressive => false,
+            MozjpegMaxCompression => true,
+            HybridBaseline | HybridProgressive | HybridMaxCompression => true,
+        };
+
         Self {
             progressive,
             huffman: HuffmanStrategy::Optimize,
             scan_strategy,
-            deringing: uses_aq,
+            deringing,
             separate_chroma_tables,
             trellis,
             quant_source,
@@ -1164,14 +1178,31 @@ mod tests {
     }
 
     #[test]
+    fn test_optimization_preset_mozjpeg_baseline() {
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .optimization(OptimizationPreset::MozjpegBaseline);
+        assert!(!config.progressive);
+        assert!(!config.deringing); // C mozjpeg default profile: no overshoot
+        assert!(!config.separate_chroma_tables);
+        assert!(config.trellis.is_some());
+        let trellis = config.trellis.unwrap();
+        assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
+        assert_eq!(config.quant_source, QuantTableSource::MozjpegDefault);
+        assert!(!config.allow_16bit_quant_tables);
+    }
+
+    #[test]
     fn test_optimization_preset_mozjpeg_progressive() {
         use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegProgressive);
         assert!(config.progressive);
-        assert!(!config.deringing);
+        assert!(!config.deringing); // C mozjpeg default profile: no overshoot
         assert!(!config.separate_chroma_tables);
         assert!(config.trellis.is_some());
+        let trellis = config.trellis.unwrap();
+        assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
         assert_eq!(config.scan_strategy, ScanStrategy::Mozjpeg);
         assert_eq!(config.quant_source, QuantTableSource::MozjpegDefault);
         assert!(!config.allow_16bit_quant_tables);
@@ -1183,7 +1214,7 @@ mod tests {
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegMaxCompression);
         assert!(config.progressive);
-        assert!(!config.deringing);
+        assert!(config.deringing); // JCP_MAX_COMPRESSION enables overshoot
         assert!(!config.separate_chroma_tables);
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
