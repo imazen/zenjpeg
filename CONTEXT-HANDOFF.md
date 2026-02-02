@@ -1,103 +1,49 @@
-# Context Handoff: Hybrid Trellis vs JpegliProgressive
+# Context Handoff: Hybrid Trellis Investigation Complete
 
-## Summary
+## Final Conclusion
 
-**Hybrid trellis cannot beat JpegliProgressive on both size AND quality.**
+**Hybrid coupling (`aq_lambda_scale`) is redundant.**
 
-It shifts the rate-distortion curve but doesn't dominate it. No Pareto improvement found.
+It traces the same rate-distortion curve as simply changing the quality number. There's no advantage.
 
-## Bug Fixed This Session
+## Evidence
 
-**`hybrid_config()` was being ignored!**
+At matched file size (~58k bytes):
+| Config | BA |
+|--------|-----|
+| Jpegli Q85 | 1.922 |
+| Hybrid+5 Q84 | 1.938 |
+| Hybrid-4 Q87 | 2.031 |
 
-When `OptimizationPreset::HybridProgressive` was used, it set `trellis = Some(TrellisConfig::default())`.
-Then `create_hybrid_ctx()` checked trellis first and ignored hybrid_config.
+- Hybrid+5 at same size = same quality as Jpegli
+- Hybrid-4 at same size = **worse** quality than Jpegli
 
-**Fix:** `hybrid_config()` now clears `trellis` when `enabled=true`. Commit `df94d12`.
+## Bug Fixed
 
-## Results vs JpegliProgressive Q85 (20 CID22 images)
+`hybrid_config()` wasn't being applied because `HybridProgressive` preset set `trellis` first.
+Fixed by clearing `trellis` when `hybrid_config(enabled=true)` is called. Commit `df94d12`.
 
-| Config | Size Δ | BA Δ | Notes |
-|--------|--------|------|-------|
-| HybridProg no coupling | -3.2% | +3.2% | Default trellis behavior |
-| Hybrid +5 coupling, Q85 | +3.2% | **-2.9%** | Better quality, larger |
-| Hybrid +5 coupling, Q84 | -0.5% | +1.5% | |
-| Hybrid -4 coupling, Q85 | **-9.1%** | +12.4% | Smaller, worse quality |
-| Hybrid -4 coupling, Q87 | -0.9% | +3.5% | |
-| Hybrid -4 coupling, Q88 | +4.9% | -1.7% | |
+## Recommendation
 
-### Across Quality Levels (positive coupling +5)
+Remove or deprecate `aq_lambda_scale` coupling. Users should just adjust quality instead.
 
-| Q | Jpegli | Hybrid | Size Δ | BA Δ |
-|---|--------|--------|--------|------|
-| 75 | | | +4.2% | -3.2% |
-| 80 | | | +3.7% | -1.8% |
-| 85 | | | +3.2% | -2.9% |
-| 90 | | | +2.6% | -1.9% |
-| 95 | | | +1.7% | +0.9% |
+The only value in HybridProgressive vs JpegliProgressive is:
+- HybridProgressive has trellis enabled (mozjpeg-style rate-distortion optimization)
+- JpegliProgressive has no trellis (jpegli-compatible output)
 
-Positive coupling consistently produces **better quality but larger files**.
+The trellis itself provides the size/quality tradeoff, not the coupling parameter.
 
-## What Works
+## Files
 
-1. **Coupling parameter now works correctly** after fix
-2. **Positive coupling** (+4 to +6): Better butteraugli at cost of ~3% larger files
-3. **Negative coupling** (-4 to -6): Smaller files at cost of quality
-4. **No coupling** (default): ~3% smaller than JpegliProgressive, ~3% worse BA
-
-## What Doesn't Work
-
-**No Pareto improvement over JpegliProgressive:**
-- Grid searched 7 couplings × 6 quality offsets
-- No configuration beats jpegli on BOTH size AND quality
-- Hybrid is a trade-off tool, not a free improvement
-
-## Recommended Usage
-
-### If you need smaller files:
-Use HybridProgressive with default settings (no coupling):
-```rust
-EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-    .optimization(OptimizationPreset::HybridProgressive)
-```
-Result: ~3% smaller than JpegliProgressive, ~3% worse butteraugli.
-
-### If you need better quality:
-Use positive coupling:
-```rust
-let hybrid = HybridConfig {
-    enabled: true,
-    aq_lambda_scale: 5.0,  // Positive = preserve texture
-    ..Default::default()
-};
-EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-    .optimization(OptimizationPreset::HybridProgressive)
-    .hybrid_config(hybrid)
-```
-Result: ~3% better butteraugli, ~3% larger than JpegliProgressive.
-
-### If you want jpegli-equivalent output:
-Just use JpegliProgressive:
-```rust
-EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
-    .optimization(OptimizationPreset::JpegliProgressive)
-```
-
-## Commands
-
-```bash
-# Run comparison vs JpegliProgressive
-cargo run --release --example pareto_vs_jpegli
-```
+| File | Purpose |
+|------|---------|
+| `examples/coupling_vs_quality.rs` | Proves coupling = quality change |
+| `examples/pareto_vs_jpegli.rs` | Comparison vs JpegliProgressive |
+| `examples/pareto_*.rs` | Earlier exploration (misleading, compared trellis vs trellis) |
 
 ## Commits
 
-- `df94d12` fix: hybrid_config now clears trellis to ensure coupling takes effect
-- `065abb9` investigate: positive coupling Pareto analysis for hybrid trellis
-
-## Conclusion
-
-Hybrid trellis is a **trade-off tool**, not a Pareto improvement. Users should choose:
-- JpegliProgressive for jpegli-compatible output
-- HybridProgressive for smaller files (accepting quality loss)
-- HybridProgressive + positive coupling for better quality (accepting size increase)
+- `042c52e` investigate: coupling vs quality - traces same curve
+- `df94d12` fix: hybrid_config now clears trellis
+- `b94692a` docs: update handoff
+- `065abb9` investigate: positive coupling Pareto analysis
