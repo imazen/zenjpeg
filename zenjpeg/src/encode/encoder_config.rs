@@ -539,9 +539,17 @@ impl EncoderConfig {
     ///
     /// Allows fine-tuning all hybrid AQ+trellis parameters.
     /// See [`HybridConfig`](crate::hybrid::config::HybridConfig) for available options.
+    ///
+    /// **Note:** When a `HybridConfig` with `enabled = true` is set, it takes
+    /// priority over any `TrellisConfig`. The trellis field will be cleared
+    /// to ensure the hybrid config is used.
     #[must_use]
     pub fn hybrid_config(mut self, config: crate::hybrid::config::HybridConfig) -> Self {
         self.hybrid_config = config;
+        // Clear trellis so create_hybrid_ctx() uses HybridConfig instead of TrellisConfig
+        if config.enabled {
+            self.trellis = None;
+        }
         self
     }
 
