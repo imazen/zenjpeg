@@ -15,3 +15,6 @@
 - User request: Implement LayoutParams immutable substruct refactor (planned in CLAUDE.md TODO)
   - Goal: eliminate derived-state sync bugs by computing all geometry once
   - Result: completed, removed 12 fields from StripProcessor, removed set_xyb_mode/set_strip_stride
+- User request: Add QuantTableSource enum + wire granular flags in OptimizationPreset
+  - Goal: mozjpeg presets switch to Robidoux tables, all presets set allow_16bit_quant_tables=false
+  - Result: completed, new QuantTableSource enum (Jpegli/MozjpegDefault), mozjpeg_table_data.rs always compiled, pipeline wired through
