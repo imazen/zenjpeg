@@ -1,5 +1,13 @@
 # User Feedback Log
 
+## 2026-02-02
+- User request: Implement plan for mozjpeg-rs bug fixes + OptimizationPreset enum
+  - Bug 1: DC trellis row-by-row propagation (mozjpeg-rs 8c7f411)
+  - Bug 2: delta_dc_weight support in TrellisConfig (mozjpeg-rs ec6db5a)
+  - Bug 3: Scan optimizer freq split only at Al=0 (mozjpeg-rs 01fddb9)
+  - Bug 4: Freq-split-beats-SA comparison (mozjpeg-rs 01fddb9)
+  - OptimizationPreset enum with 8 variants across 3 lineages (jpegli/mozjpeg/hybrid)
+
 ## 2026-01-31
 - User request: Fix pre-erosion lookahead timing (C++ has 4-row overlap at iMCU boundaries)
 - Investigation found root cause was v_samp=1 for XYB AQ instead of v_samp=2
