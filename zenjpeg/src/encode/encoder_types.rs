@@ -503,6 +503,233 @@ mod tests {
         assert_eq!(ChromaSubsampling::HalfHorizontal.h_factor(), 2);
         assert_eq!(ChromaSubsampling::HalfHorizontal.v_factor(), 1);
     }
+
+    #[test]
+    fn test_optimization_preset_all_has_8_variants() {
+        let all: Vec<_> = OptimizationPreset::all().collect();
+        assert_eq!(all.len(), 8);
+        // No duplicates
+        let mut set = std::collections::HashSet::new();
+        for p in &all {
+            assert!(set.insert(p), "duplicate preset: {:?}", p);
+        }
+    }
+
+    #[test]
+    fn test_optimization_preset_progressive() {
+        assert!(!OptimizationPreset::JpegliBaseline.is_progressive());
+        assert!(OptimizationPreset::JpegliProgressive.is_progressive());
+        assert!(!OptimizationPreset::MozjpegBaseline.is_progressive());
+        assert!(OptimizationPreset::MozjpegProgressive.is_progressive());
+        assert!(OptimizationPreset::MozjpegMaxCompression.is_progressive());
+        assert!(!OptimizationPreset::HybridBaseline.is_progressive());
+        assert!(OptimizationPreset::HybridProgressive.is_progressive());
+        assert!(OptimizationPreset::HybridMaxCompression.is_progressive());
+    }
+
+    #[test]
+    fn test_optimization_preset_trellis() {
+        assert!(!OptimizationPreset::JpegliBaseline.uses_trellis());
+        assert!(!OptimizationPreset::JpegliProgressive.uses_trellis());
+        assert!(OptimizationPreset::MozjpegBaseline.uses_trellis());
+        assert!(OptimizationPreset::MozjpegProgressive.uses_trellis());
+        assert!(OptimizationPreset::MozjpegMaxCompression.uses_trellis());
+        assert!(OptimizationPreset::HybridBaseline.uses_trellis());
+        assert!(OptimizationPreset::HybridProgressive.uses_trellis());
+        assert!(OptimizationPreset::HybridMaxCompression.uses_trellis());
+    }
+
+    #[test]
+    fn test_optimization_preset_aq() {
+        assert!(OptimizationPreset::JpegliBaseline.uses_aq());
+        assert!(OptimizationPreset::JpegliProgressive.uses_aq());
+        assert!(!OptimizationPreset::MozjpegBaseline.uses_aq());
+        assert!(!OptimizationPreset::MozjpegProgressive.uses_aq());
+        assert!(!OptimizationPreset::MozjpegMaxCompression.uses_aq());
+        assert!(OptimizationPreset::HybridBaseline.uses_aq());
+        assert!(OptimizationPreset::HybridProgressive.uses_aq());
+        assert!(OptimizationPreset::HybridMaxCompression.uses_aq());
+    }
+
+    #[test]
+    fn test_optimization_preset_scan_strategy() {
+        assert_eq!(
+            OptimizationPreset::JpegliBaseline.scan_strategy(),
+            ScanStrategy::Default
+        );
+        assert_eq!(
+            OptimizationPreset::MozjpegProgressive.scan_strategy(),
+            ScanStrategy::Mozjpeg
+        );
+        assert_eq!(
+            OptimizationPreset::MozjpegMaxCompression.scan_strategy(),
+            ScanStrategy::Search
+        );
+        assert_eq!(
+            OptimizationPreset::HybridMaxCompression.scan_strategy(),
+            ScanStrategy::Search
+        );
+    }
+
+    #[test]
+    fn test_optimization_preset_display() {
+        assert_eq!(OptimizationPreset::JpegliBaseline.to_string(), "jpegli-baseline");
+        assert_eq!(OptimizationPreset::HybridMaxCompression.to_string(), "hybrid-max");
+    }
+}
+
+// =============================================================================
+// Optimization Presets
+// =============================================================================
+
+/// Preset optimization modes for the encoder.
+///
+/// Each preset configures progressive mode, Huffman strategy, trellis,
+/// scan scripting, and quant table behavior to match a specific encoder
+/// profile. The three lineages are:
+///
+/// - **Jpegli** — matches C jpegli/cjpegli behavior (AQ-driven, no trellis)
+/// - **Mozjpeg** — matches C mozjpeg behavior (trellis-driven, no AQ)
+/// - **Hybrid** — combines jpegli AQ + mozjpeg trellis (zenjpeg-only)
+///
+/// Use [`OptimizationPreset::all()`] to iterate all variants for search.
+///
+/// Individual settings can still be overridden after applying a preset
+/// via [`EncoderConfig::optimization()`](super::encoder_config::EncoderConfig::optimization).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OptimizationPreset {
+    // === Jpegli lineage (matches C cjpegli) ===
+    /// Baseline JPEG, optimized Huffman, jpegli AQ. No trellis.
+    /// Matches `cjpegli --jpeg_type baseline`.
+    JpegliBaseline,
+
+    /// Progressive JPEG with jpegli scan script (freq split at 2/3,
+    /// SA for all). Optimized Huffman. Jpegli AQ. No trellis.
+    /// Matches default `cjpegli` output. This is the encoder default.
+    JpegliProgressive,
+
+    // === Mozjpeg lineage (matches C cjpeg/mozjpeg) ===
+    /// Baseline JPEG, optimized Huffman, trellis AC + DC. No jpegli AQ.
+    /// 2 quant tables (shared chroma). Matches `cjpeg -optimize -baseline`
+    /// with trellis enabled.
+    MozjpegBaseline,
+
+    /// Progressive with mozjpeg scan script (freq split at 8/9, no chroma SA).
+    /// Trellis AC + DC. No AQ. 2 quant tables.
+    /// Matches `cjpeg -progressive -optimize` with trellis.
+    MozjpegProgressive,
+
+    /// Mozjpeg progressive + scan search (64 candidates). Trellis thorough.
+    /// No AQ. 2 quant tables. Slowest mozjpeg mode, smallest files.
+    MozjpegMaxCompression,
+
+    // === Hybrid lineage (zenjpeg-unique) ===
+    /// Baseline JPEG with jpegli AQ + mozjpeg trellis.
+    /// 3 quant tables (separate chroma).
+    HybridBaseline,
+
+    /// Jpegli AQ + mozjpeg trellis + jpegli scan script.
+    /// 3 quant tables. Typically the best quality/size tradeoff.
+    HybridProgressive,
+
+    /// AQ + trellis thorough + scan search (64 candidates).
+    /// 3 quant tables. Slowest, smallest files.
+    HybridMaxCompression,
+}
+
+/// All preset variants in a fixed array for iteration.
+const ALL_PRESETS: [OptimizationPreset; 8] = [
+    OptimizationPreset::JpegliBaseline,
+    OptimizationPreset::JpegliProgressive,
+    OptimizationPreset::MozjpegBaseline,
+    OptimizationPreset::MozjpegProgressive,
+    OptimizationPreset::MozjpegMaxCompression,
+    OptimizationPreset::HybridBaseline,
+    OptimizationPreset::HybridProgressive,
+    OptimizationPreset::HybridMaxCompression,
+];
+
+impl OptimizationPreset {
+    /// Returns an iterator over all preset variants.
+    /// Useful for searching the optimization space across lineages.
+    pub fn all() -> impl Iterator<Item = Self> {
+        ALL_PRESETS.iter().copied()
+    }
+
+    /// Returns true if this preset uses progressive encoding.
+    #[must_use]
+    pub const fn is_progressive(self) -> bool {
+        matches!(
+            self,
+            Self::JpegliProgressive
+                | Self::MozjpegProgressive
+                | Self::MozjpegMaxCompression
+                | Self::HybridProgressive
+                | Self::HybridMaxCompression
+        )
+    }
+
+    /// Returns true if this preset enables trellis quantization.
+    #[must_use]
+    pub const fn uses_trellis(self) -> bool {
+        matches!(
+            self,
+            Self::MozjpegBaseline
+                | Self::MozjpegProgressive
+                | Self::MozjpegMaxCompression
+                | Self::HybridBaseline
+                | Self::HybridProgressive
+                | Self::HybridMaxCompression
+        )
+    }
+
+    /// Returns true if this preset uses jpegli AQ (adaptive quantization).
+    #[must_use]
+    pub const fn uses_aq(self) -> bool {
+        matches!(
+            self,
+            Self::JpegliBaseline
+                | Self::JpegliProgressive
+                | Self::HybridBaseline
+                | Self::HybridProgressive
+                | Self::HybridMaxCompression
+        )
+    }
+
+    /// Returns the scan strategy for this preset.
+    #[must_use]
+    pub const fn scan_strategy(self) -> ScanStrategy {
+        match self {
+            Self::JpegliBaseline | Self::MozjpegBaseline | Self::HybridBaseline => {
+                ScanStrategy::Default
+            }
+            Self::JpegliProgressive | Self::HybridProgressive => ScanStrategy::Default,
+            Self::MozjpegProgressive => ScanStrategy::Mozjpeg,
+            Self::MozjpegMaxCompression | Self::HybridMaxCompression => ScanStrategy::Search,
+        }
+    }
+
+    /// Returns the short name for display/logging.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::JpegliBaseline => "jpegli-baseline",
+            Self::JpegliProgressive => "jpegli-progressive",
+            Self::MozjpegBaseline => "mozjpeg-baseline",
+            Self::MozjpegProgressive => "mozjpeg-progressive",
+            Self::MozjpegMaxCompression => "mozjpeg-max",
+            Self::HybridBaseline => "hybrid-baseline",
+            Self::HybridProgressive => "hybrid-progressive",
+            Self::HybridMaxCompression => "hybrid-max",
+        }
+    }
+}
+
+impl core::fmt::Display for OptimizationPreset {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 // =============================================================================
