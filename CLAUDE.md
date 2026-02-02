@@ -1121,6 +1121,29 @@ Run: `cargo run --release --example hybrid_trellis_benchmark`
 - Mixed/Unknown: `coupling=-8.0, max_adjustment=1.0` → photos -4%, screenshots protected
 - Screenshots: Use `coupling=-1.0` or disable hybrid entirely
 
+**Auto-detection (2026-02-02):** Use AQ statistics to automatically choose settings:
+```rust
+use zenjpeg::hybrid::config::{adaptive_config, detect_image_type, ImageType};
+use zenjpeg::quant::aq::compute_aq_strength_map;
+
+// After computing AQ map...
+let (_, _, aq_mean, aq_std) = aq_map.stats();
+let image_type = detect_image_type(aq_mean, aq_std); // Photo, Screenshot, or Mixed
+let hybrid = adaptive_config(aq_mean, aq_std);       // Returns appropriate HybridConfig
+```
+
+Detection uses coefficient of variation (CV = std/mean):
+- CV > 1.5 → Screenshot (sharp edges, flat+texture mix) → safe_compression()
+- CV ≤ 1.5, mean ≥ 0.06 → Photo → aggressive_compression()
+- Otherwise → Mixed → safe_compression()
+
+**Validated presets:**
+- `HybridConfig::aggressive_compression()` — photos only, -2-4% size
+- `HybridConfig::safe_compression()` — all content types, max_adj=1.0 protection
+- `HybridConfig::quality_boost()` — larger files, better DSSIM
+
+Run `cargo run --release --example hybrid_auto_detect` to validate detection.
+
 **For optimizers:** Tune `tables.quant` (192 values), `lambda_log_scale1/2` (2 floats),
 `zero_bias_mul` (192 values, jpegli only), and `aq_trellis_*` fields for size/quality trade-offs.
 Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive analysis.
@@ -1149,13 +1172,15 @@ Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive ana
   1. Changed condition from `> 0` to `!= 0` to allow negative coupling (smaller files)
   2. Added `aq_trellis_multiplicative` for proportional scaling
   3. Added `aq_trellis_max_adjustment` to cap quality degradation on sensitive images
-  Results with `coupling=-4.0, max_adjustment=0.0`:
-  - Photos: -1.8% size, +3.3% DSSIM (acceptable)
-  - Screenshots: -0.9% size, +28% DSSIM (too aggressive!)
-  Results with `coupling=-8.0, max_adjustment=1.0`:
-  - Photos: -3.9% size, +7.0% DSSIM
-  - Screenshots: +5.3% size, +5.9% DSSIM (protected!)
-  Files: `encode/search.rs`, `hybrid/config.rs`, `examples/hybrid_parameter_sweep.rs`
+  4. Added auto-detection: `detect_image_type()` uses CV (std/mean) to classify images
+  5. Added `adaptive_config()` returns appropriate HybridConfig for detected image type
+  6. Added presets: `aggressive_compression()`, `safe_compression()`, `quality_boost()`
+  Results with `coupling=-4.0, max_adjustment=0.0` (photos):
+  - flower_small: -2.4% size, +3.4% DSSIM
+  Results with `coupling=-8.0, max_adjustment=1.0` (safe):
+  - flower_small: -4% size, +7% DSSIM
+  - apple.com: -2.5% size, +5.9% DSSIM (protected from 552% degradation!)
+  Files: `encode/search.rs`, `hybrid/config.rs`, `examples/hybrid_*.rs`
 
 - **XYB file size gap (2026-02-01)** - XYB baseline was 2-3% larger than C++, but this
   was due to Rust getting 2x more progressive savings (5.7-7.3% vs C++'s 3.1-3.6%).
