@@ -1,218 +1,170 @@
-# Context Handoff: EOB Optimization Investigation Results
+# Context Handoff: Hybrid Trellis Exploration
+
+## Goal
+
+Explore whether a working hybrid mode (AQ-coupled trellis) provides value over
+standalone trellis. The hybrid path exists in code but was never wired into the
+encoding pipeline. Determine if it's worth fixing.
+
+## Current State (commit bfa3b85)
 
 Branch: `feat/mozjpeg-mimic-tests`
-Date: 2026-02-01
 
-## Summary: EOB Optimization is BROKEN
+### What exists
 
-The standalone EOB optimization approach (`TrellisConfig::eob_optimization(true)`) **does not work** and has been disabled.
+The hybrid trellis infrastructure is complete but disconnected:
 
-### Test Results
+1. **`HybridConfig`** (`hybrid/config.rs`, 481 lines) — config struct with AQ coupling
+   params, `to_trellis_config(aq_strength, dampen, is_chroma)` method that adjusts
+   lambda per-block based on AQ strength
+2. **`HybridQuantContext`** (`encode/hybrid.rs`, 338 lines) — dispatch between Hybrid
+   and Standalone modes, calls `hybrid_quantize_block()` for AC trellis
+3. **`hybrid_quantize_block()`** (`hybrid/core.rs`, 310 lines) — the actual trellis
+   DP optimization, rate table construction
+4. **`create_hybrid_ctx()`** (`encode/hybrid.rs:56`) — priority dispatch: TrellisConfig
+   first, then HybridConfig, then None. **This function is never called.**
+5. **`quantize_block_dispatch()`** (`encode/hybrid.rs:84`) — dispatches hybrid vs
+   standard quantization. **Also never called from production code.**
+6. **`ExpertConfig`** (`encode/search.rs`) — flat config struct that builds either
+   `TrellisConfig` (coupling=0) or `HybridConfig` (coupling>0)
 
-Using TRUE A/B test (mozjpeg-mimic mode, no AQ, no deringing):
+### What's broken
 
-| Metric | Without EOB | With EOB | Change |
-|--------|-------------|----------|--------|
-| File size | 73856 bytes | 16613 bytes | **-77%** |
-| DSSIM | 0.0027 | 0.1098 | **40x worse** |
-
-The "77% smaller" was achieved by destroying the image.
-
----
-
-## Root Cause: Missing Lambda Weighting
-
-### How mozjpeg Computes Zero-Block Cost (CORRECT)
-
-In `jcdctmgr.c` line 1148, mozjpeg computes the cost of zeroing each coefficient **during** trellis:
-
-```c
-// x = abs(src[bi][z]) — ORIGINAL unquantized coefficient (100-1000+)
-// lambda — R-D tradeoff factor (~0.001-0.01)
-// lambda_tbl[z] — per-coefficient weight from quant table
-
-accumulated_zero_dist[i] = x * x * lambda * lambda_tbl[z] + accumulated_zero_dist[i-1];
+The standalone trellis path works through `StripProcessor`:
+```
+streaming.rs:327  →  if let Some(ref trellis) = config.trellis {
+                         processor.set_trellis(*trellis);
+                     }
+strip/mod.rs:715  →  pub fn set_trellis(&mut self, config: TrellisConfig) {
+                         self.hybrid_ctx = Some(HybridQuantContext::from_trellis_config(config));
+                     }
+strip/mod.rs:1189 →  hybrid_ctx.quantize_block(&dct, &quant_values, aq, 1.0, is_luma)
 ```
 
-Then at line 1239:
-```c
-cost_all_zeros = accumulated_zero_dist[Se];  // Sum over all AC coefficients
-```
+The hybrid path is dead because `streaming.rs` never checks `config.hybrid_config`.
+When ExpertConfig sets `aq_trellis_coupling > 0`, it puts `trellis = None` and
+`hybrid_config.enabled = true`. Streaming.rs sees `trellis = None` → skips set_trellis()
+→ StripProcessor gets no trellis context → standard rounding.
 
-**Key insight**: The zero-block cost is `lambda * Σ(original_coef²)`, which is **in the same units** as the encoding cost (both are R-D weighted).
+### The fix is simple
 
-### How Our Implementation Computes Zero-Block Cost (BROKEN)
-
-In `trellis/eob.rs`, we compute the cost **after** trellis on already-quantized blocks:
-
+In `streaming.rs`, after the existing trellis check at line 326-328, add:
 ```rust
-// coef is QUANTIZED value (small integer, typically 1-10)
-zero_block_cost += (coef as f32) * (coef as f32);
+} else if builder.hybrid_config.enabled {
+    processor.set_hybrid(builder.hybrid_config);
+}
 ```
 
-**What's missing:**
-- Original coefficients are gone (we only have quantized values)
-- No lambda weighting
-- No per-coefficient weighting from quant table
-
-### Numerical Comparison
-
-| Factor | mozjpeg | Our Implementation |
-|--------|---------|-------------------|
-| Coefficient source | Original (100-1000+) | Quantized (1-10) |
-| Lambda weighting | Yes (~0.001-0.01) | **No** |
-| Per-coef weighting | Yes (1/quant²) | **No** |
-| Typical zero cost | 1000-5000 | 1-100 |
-| Units | R-D weighted bits | Raw squared integers |
-
-### Why This Breaks Everything
-
-Consider a block with a single AC coefficient:
-- Original value: 500
-- Quantization step: 50
-- Quantized value: 10
-- Lambda: 0.005
-
-**mozjpeg's zero cost:**
-```
-cost = 500² × 0.005 × (1/50²) = 250000 × 0.005 × 0.0004 = 0.5
-```
-
-**mozjpeg's encoding cost:**
-```
-cost ≈ 4 bits (for value=10 with run=0)
-```
-
-Decision: 0.5 < 4, so **keep** the coefficient (zeroing costs more in R-D terms).
-
-**Our zero cost:**
-```
-cost = 10² = 100
-```
-
-**Our encoding cost:**
-```
-cost ≈ 4 bits
-```
-
-Decision: 4 < 100, so **zero** the coefficient.
-
-But wait—these aren't even in the same units! We're comparing bits to squared-integers. The algorithm sees "4 < 100" and always chooses to encode, right?
-
-Actually no—the comparison goes the other way in `optimize_eob_runs`. The algorithm adds up `zero_block_cost` across blocks and compares to `best_cost` (encoding cost). Since our `zero_block_cost` values are tiny (sum of squares of 1-10), and encoding costs are in bits (10-50 per block), the algorithm decides that zeroing entire runs of blocks is "cheaper."
-
-The fundamental problem: **incompatible units make the comparison meaningless**.
-
----
-
-## Why EOB Helps mozjpeg (When Implemented Correctly)
-
-With proper lambda weighting, the algorithm makes sensible tradeoffs:
-
-1. **High-detail blocks**: Large original coefficients → high zero cost → keep them
-2. **Low-detail blocks**: Small coefficients → low zero cost → candidates for zeroing
-3. **Trailing coefficients**: High-frequency coefficients with small values may be worth zeroing if it creates longer EOBRUN codes
-
-The savings are typically **0.5-1%** because:
-- Most blocks have significant coefficients that shouldn't be zeroed
-- The optimization only helps at block boundaries where EOBRUN coding applies
-- Lambda ensures quality loss is always weighed against size savings
-
----
-
-## Fix Required
-
-To properly implement EOB optimization, it **must** be integrated into trellis:
-
-### Option 1: Compute During Trellis (Recommended)
-
-In `HybridQuantContext::quantize_row_trellis()`:
-
+And add `set_hybrid()` to StripProcessor (`strip/mod.rs`):
 ```rust
-// During AC coefficient trellis loop:
-let lambda = self.compute_lambda(block_norm);
-let zero_dist = original_coef * original_coef * lambda * lambda_tbl[z];
-accumulated_zero_dist[i] = accumulated_zero_dist[i-1] + zero_dist;
-
-// After trellis:
-let cost_all_zeros = accumulated_zero_dist[se];
+pub fn set_hybrid(&mut self, config: HybridConfig) {
+    self.hybrid_ctx = Some(HybridQuantContext::new(config));
+}
 ```
 
-Store `cost_all_zeros` in the output and pass to EOB optimization.
+This wires the existing `HybridQuantContext::new(config)` (Hybrid mode) into the same
+`hybrid_ctx` field that standalone trellis uses. The `quantize_block()` dispatch already
+handles both modes correctly via `TrellisMode::Hybrid` vs `TrellisMode::Standalone`.
 
-### Option 2: Store Original Coefficients
+### But does it provide value?
 
-Keep original (unquantized) coefficients until after EOB optimization, then discard. This increases memory usage but allows standalone EOB.
+The **question** is whether AQ-adjusted lambda improves quality or compression.
 
-### Why Post-Trellis EOB Cannot Work
+**What standalone trellis does:** Fixed lambda = `2^scale1 / (2^scale2 + block_norm)`.
+Same aggressiveness for every block regardless of content complexity.
 
-After trellis quantization:
-- Original coefficients are **destroyed** (replaced with quantized values)
-- Lambda was computed per-block and **not stored**
-- Quantization table weights were applied and **not recoverable**
+**What hybrid would do:** `effective_scale1 = base_scale1 + aq_strength^exponent * coupling`.
+Blocks with high AQ strength (complex texture) get more aggressive trellis zeroing.
+Blocks with low AQ strength (smooth areas) get gentler trellis.
 
-There is no way to reconstruct proper R-D costs from quantized coefficients alone.
+**Hypothesis:** This should improve quality because:
+- Complex blocks can afford more coefficient zeroing (masking effect)
+- Smooth blocks need preserved coefficients to avoid visible artifacts
+- Same total bit budget, redistributed by perceptual importance
 
----
+**Counter-hypothesis:** It might not help because:
+- jpegli's AQ already adjusts quant tables per-block (same direction)
+- Trellis already uses `block_norm` in lambda denominator (similar signal)
+- Double-counting AQ influence could over-compress textured areas
 
-## Current State
+### Exploration plan
 
-- `TrellisConfig::eob_optimization(true)` is accepted but **has no effect**
-- The `apply_eob_optimization()` function in `streaming.rs` is disabled
-- The API is preserved for future implementation
-- Detailed warning comments explain the issue
+1. **Wire it up** — add `set_hybrid()` to StripProcessor, check hybrid_config in streaming.rs
+2. **Measure baseline** — encode CID22 corpus at Q85 with standalone trellis, record sizes + SSIMULACRA2
+3. **Measure hybrid** — same corpus with coupling=1.0, 2.0, 4.0
+4. **Compare** — are hybrid files smaller at same quality? Better quality at same size?
+5. **Sweep parameters** — try different exponents (0.5, 1.0, 2.0), thresholds, chroma_scale
+6. **If valuable** — update ExpertConfig docs, fix the Hybrid presets, add integration tests
+7. **If not** — document why, remove dead code, simplify ExpertConfig
 
-## Files Changed
+### Key files to read
 
-| File | Change |
-|------|--------|
-| `encode/streaming.rs` | Disabled `apply_eob_optimization()` with detailed comments |
-| `encode/mozjpeg_compat.rs` | `eob_optimization()` method exists but is no-op |
-| `trellis/eob.rs` | Functions exist but `estimate_block_eob_info` is fundamentally broken |
-| `examples/eob_mozjpeg_mimic.rs` | TRUE A/B test harness (now shows 0% delta) |
+| File | What | Lines |
+|------|------|-------|
+| `encode/streaming.rs:320-350` | Where trellis gets wired (and hybrid doesn't) | ~30 |
+| `encode/strip/mod.rs:710-720` | `set_trellis()` on StripProcessor | ~10 |
+| `encode/strip/mod.rs:1160-1270` | Quantization using `hybrid_ctx` | ~110 |
+| `encode/hybrid.rs` | `create_hybrid_ctx`, `HybridQuantContext`, dispatch | 338 |
+| `hybrid/config.rs` | `HybridConfig`, `to_trellis_config()` with AQ coupling | 481 |
+| `hybrid/core.rs` | `hybrid_quantize_block()` — the actual trellis DP | 310 |
+| `trellis/ac.rs` | `trellis_quantize_block()` — core trellis algorithm | 644 |
+| `encode/search.rs:570-619` | `build_trellis_or_hybrid()` — ExpertConfig dispatch | ~50 |
 
----
+### Parameter sensitivity data (from test_parameter_sensitivity)
 
-## What Still Works
+Standalone trellis at defaults saves ~15% over no trellis. The lambda parameters
+(`scale1` range 12–17, `scale2` range 14–18) have massive impact (-46% to +12%).
 
-zenjpeg with trellis **already beats** C mozjpeg with trellis:
+Preset baselines (256x256, Q85, 4:2:0):
+- MozjpegMaxCompression: 16,979 bytes (trellis + progressive search)
+- MozjpegBaseline: 17,327 bytes (trellis + baseline)
+- JpegliBaseline: 18,355 bytes (no trellis, jpegli AQ + zero-bias)
+- HybridBaseline: 23,081 bytes (BROKEN — trellis silently off, jpegli tables)
 
-| Quality | C mozjpeg+trellis | zenjpeg+trellis | Difference |
-|---------|-------------------|-----------------|------------|
-| Q50 | 45617 | 45333 | **-0.6%** |
-| Q75 | 73994 | 73856 | **-0.2%** |
-| Q90 | 130585 | 130459 | **-0.1%** |
+If hybrid provides even 1-2% additional savings at same quality, that's valuable.
+If it provides better quality at same size (higher SSIMULACRA2), even better.
 
-**No EOB optimization needed** — zenjpeg is already winning without it.
+### Also dead and worth investigating
 
----
+While wiring hybrid, consider also:
+- `trellis_num_loops`: Could multi-pass trellis help? C mozjpeg supports it.
+- `trellis_use_lambda_weight_tbl`: CSF weights could improve perceptual quality
+  (flat weights aren't optimal). Would need actual CSF table implementation.
+- `trellis_eob_opt`: The current impl is broken but the concept is sound. C mozjpeg
+  does EOB optimization successfully. Needs integration into the trellis pass rather
+  than as a post-pass (see old CONTEXT-HANDOFF.md content below for full analysis).
 
-## Recommendation
+### EOB Optimization Background (from previous investigation)
 
-**Do not pursue EOB optimization further.**
+EOB optimization is BROKEN because the post-trellis implementation uses quantized
+coefficients (integers 1-10) without lambda weighting, comparing incompatible units.
+mozjpeg computes `accumulated_zero_dist = Σ(original_coef² * lambda * lambda_tbl[z])`
+during trellis. Our impl sees quantized values and destroys quality (77% smaller, 40x
+worse DSSIM). Fix requires storing `accumulated_zero_dist` during trellis pass.
+Expected benefit is only ~0.5-1%, and zenjpeg already beats C mozjpeg by 0.1-0.6%
+without it. Low priority.
 
-Reasons:
-1. Expected gain is only ~0.5-1% (mozjpeg's own benefit)
-2. zenjpeg already beats mozjpeg by 0.1-0.6% without EOB
-3. Proper implementation requires significant trellis refactoring
-4. The complexity/benefit ratio is poor
-
-If EOB is ever needed:
-1. Store `accumulated_zero_dist` during trellis quantization
-2. Pass lambda-weighted costs to EOB optimization
-3. Apply as true R-D optimization with comparable units
-
----
-
-## Test Command
+### Test commands
 
 ```bash
-cargo run --release -p zenjpeg --features mozjpeg-tables --example eob_mozjpeg_mimic
+# Run parameter sensitivity test
+cargo test --release -p zenjpeg --lib -- search::tests::test_parameter_sensitivity --nocapture
+
+# Run all search tests
+cargo test --release -p zenjpeg --lib -- search --nocapture
+
+# Run all lib tests
+cargo test --release -p zenjpeg --lib
+
+# Clippy
+cargo clippy --release -p zenjpeg --lib -- -D warnings
+
+# Full test suite
+cargo test --release -p zenjpeg --lib --tests
 ```
 
-## Reference: mozjpeg Source Locations
+### CLAUDE.md sections to read
 
-- `jcdctmgr.c:1148` — `accumulated_zero_dist` computation
-- `jcdctmgr.c:1239` — `cost_all_zeros = accumulated_zero_dist[Se]`
-- `jcdctmgr.c:1274-1308` — EOB run optimization loop
-- `jpegint.h:106` — `trellis_eob_opt` flag definition
+- "Investigation Notes > ExpertConfig Parameter Sensitivity" — full data tables
+- "Known Bugs" items 1-2 — hybrid dead code + trellis dead params
+- "DONE: ExpertConfig for External Optimization" — struct design and API
