@@ -657,30 +657,31 @@ pub enum OptimizationPreset {
     JpegliProgressive,
 
     // === Mozjpeg lineage (matches C cjpeg/mozjpeg) ===
-    /// Baseline JPEG, optimized Huffman, trellis AC + DC. No jpegli AQ.
-    /// 2 quant tables (shared chroma). Matches `cjpeg -optimize -baseline`
-    /// with trellis enabled.
+    /// Baseline JPEG, optimized Huffman, trellis (full search). No jpegli AQ.
+    /// 2 quant tables (shared chroma), Robidoux tables. No deringing.
+    /// Matches C mozjpeg default profile with baseline output.
     MozjpegBaseline,
 
     /// Progressive with mozjpeg scan script (freq split at 8/9, no chroma SA).
-    /// Trellis AC + DC. No AQ. 2 quant tables.
-    /// Matches `cjpeg -progressive -optimize` with trellis.
+    /// Trellis (full search). No AQ. No deringing. 2 quant tables, Robidoux.
+    /// Matches C mozjpeg default profile with progressive output.
     MozjpegProgressive,
 
-    /// Mozjpeg progressive + scan search (64 candidates). Trellis thorough.
-    /// No AQ. 2 quant tables. Slowest mozjpeg mode, smallest files.
+    /// Mozjpeg progressive + scan search (64 candidates). Trellis (full search).
+    /// No AQ. Deringing enabled. 2 quant tables, Robidoux.
+    /// Matches C mozjpeg `JCP_MAX_COMPRESSION` profile.
     MozjpegMaxCompression,
 
     // === Hybrid lineage (zenjpeg-unique) ===
-    /// Baseline JPEG with jpegli AQ + mozjpeg trellis.
-    /// 3 quant tables (separate chroma).
+    /// Baseline JPEG with jpegli AQ + trellis (Adaptive speed) + deringing.
+    /// 3 quant tables (separate chroma), jpegli perceptual tables.
     HybridBaseline,
 
-    /// Jpegli AQ + mozjpeg trellis + jpegli scan script.
+    /// Jpegli AQ + trellis (Adaptive) + deringing + jpegli scan script.
     /// 3 quant tables. Typically the best quality/size tradeoff.
     HybridProgressive,
 
-    /// AQ + trellis thorough + scan search (64 candidates).
+    /// AQ + trellis (full search) + deringing + scan search (64 candidates).
     /// 3 quant tables. Slowest, smallest files.
     HybridMaxCompression,
 }

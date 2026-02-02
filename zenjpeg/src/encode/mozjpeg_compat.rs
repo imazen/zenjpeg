@@ -30,19 +30,26 @@ pub enum TrellisSpeedMode {
     /// Use when encoding time is not a concern.
     Thorough,
 
-    /// Two-tier adaptive limits matching C mozjpeg (default).
+    /// Two-tier adaptive limits (zenjpeg heuristic, NOT from C mozjpeg).
+    ///
     /// - nonzero > 55: lookback=8, candidates=3 (extreme entropy)
     /// - nonzero > 48: lookback=16, candidates=4 (high entropy)
     /// - otherwise: full search
+    ///
+    /// This is a zenjpeg-specific speed heuristic. C mozjpeg uses a formula-based
+    /// approach (see [`Level`](Self::Level)). Use [`Thorough`](Self::Thorough) to
+    /// match C mozjpeg's default full-search behavior.
     #[default]
     Adaptive,
 
-    /// Formula-based level (0-10), the original Rust implementation.
+    /// Formula-based level (0-10), matching C mozjpeg's `trellis_num_nbits` speed
+    /// optimization.
+    ///
     /// - threshold = 61 - level×3
     /// - lookback = 26 - level×2
     /// - candidates = 9 - (level+1)/2
     ///
-    /// Level 0 = full search, Level 7 ≈ C mozjpeg adaptive, Level 10 = fastest.
+    /// Level 0 = full search (C mozjpeg default), Level 10 = fastest.
     Level(u8),
 
     /// Custom two-tier thresholds for fine-tuning.
@@ -125,25 +132,25 @@ impl TrellisSpeedMode {
 ///
 /// # Presets
 ///
-/// - [`TrellisConfig::default()`] - Balanced settings (AC + DC trellis, Adaptive mode)
+/// - [`TrellisConfig::default()`] - AC + DC trellis, Adaptive speed (zenjpeg heuristic)
+/// - [`TrellisConfig::thorough()`] - Full search, matches C mozjpeg default
 /// - [`TrellisConfig::disabled()`] - No trellis (fastest encoding)
 /// - [`TrellisConfig::favor_size()`] - More aggressive zeroing (smaller files)
 /// - [`TrellisConfig::favor_quality()`] - More conservative (better quality)
-/// - [`TrellisConfig::thorough()`] - Full search, no speed optimizations
 ///
 /// # Speed Modes
 ///
-/// The [`TrellisSpeedMode`] controls adaptive search limiting:
+/// The [`TrellisSpeedMode`] controls search limiting for high-entropy blocks:
 ///
-/// - **0** = Thorough: Full O(n²) search on all blocks. Slowest but optimal.
-/// - **7** = Default: ~30% faster. Limits search on high-entropy blocks.
-/// - **10** = Fast: ~50% faster. Most aggressive limiting.
+/// - **Thorough**: Full O(n²) search. C mozjpeg default. Optimal quality.
+/// - **Adaptive** (zenjpeg default): Two-tier heuristic, ~30% faster on noisy images.
+/// - **Level(0-10)**: C mozjpeg formula. Level 0 = full search, Level 10 = fastest.
 ///
-/// Speed levels only affect high-entropy blocks (many non-zero coefficients
+/// Speed modes only affect high-entropy blocks (many non-zero coefficients
 /// at high quality). At lower quality or on smooth images, most blocks have
 /// few non-zero coefficients and the optimization rarely triggers.
 ///
-/// Quality impact is negligible even at level 10.
+/// Quality impact is negligible even at the fastest settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrellisConfig {
     /// Enable trellis quantization for AC coefficients
@@ -176,9 +183,11 @@ const DEFAULT_LAMBDA_LOG_SCALE1: f32 = 14.75;
 const DEFAULT_LAMBDA_LOG_SCALE2: f32 = 16.5;
 
 impl Default for TrellisConfig {
-    /// Default configuration: AC + DC trellis enabled, balanced speed.
+    /// Default configuration: AC + DC trellis enabled, Adaptive speed.
     ///
-    /// Matches mozjpeg's default trellis behavior.
+    /// Note: C mozjpeg defaults to full search (Thorough). This uses the
+    /// faster zenjpeg Adaptive heuristic instead. Use [`TrellisConfig::thorough()`]
+    /// or the `MozjpegBaseline`/`MozjpegProgressive` presets for C mozjpeg parity.
     fn default() -> Self {
         Self {
             enabled: true,
