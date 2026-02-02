@@ -307,6 +307,13 @@ pub struct ExpertConfig {
     /// Default: `false`.
     pub aq_trellis_multiplicative: bool,
 
+    /// Maximum absolute lambda adjustment (clamps to [-max, +max]).
+    ///
+    /// `0.0` = no limit (default).
+    /// Use to limit quality degradation on sensitive images (screenshots, text).
+    /// Recommended: `1.0-2.0` for conservative size optimization.
+    pub aq_trellis_max_adjustment: f32,
+
     // === Encoder Strategy ===
     /// Scan mode (baseline vs progressive variants).
     ///
@@ -395,6 +402,7 @@ impl ExpertConfig {
             aq_trellis_chroma_scale: 1.0,
             aq_trellis_quality_adaptive: false,
             aq_trellis_multiplicative: false,
+            aq_trellis_max_adjustment: 0.0,
 
             scan_mode: ScanMode::Progressive,
             deringing: true,
@@ -491,6 +499,7 @@ impl ExpertConfig {
             aq_trellis_chroma_scale: 1.0,
             aq_trellis_quality_adaptive: false,
             aq_trellis_multiplicative: false,
+            aq_trellis_max_adjustment: 0.0,
 
             scan_mode,
             deringing,
@@ -629,6 +638,7 @@ impl ExpertConfig {
                 quality_adaptive: self.aq_trellis_quality_adaptive,
                 chroma_scale: self.aq_trellis_chroma_scale,
                 multiplicative: self.aq_trellis_multiplicative,
+                max_adjustment: self.aq_trellis_max_adjustment,
             };
             (None, hybrid)
         } else {
