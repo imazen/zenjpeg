@@ -1328,6 +1328,10 @@ impl StripProcessor {
     /// DC trellis uses dynamic programming to find optimal DC coefficients
     /// that minimize rate (differential encoding cost) + distortion.
     /// Must be called after all blocks are quantized and DC raw values stored.
+    ///
+    /// Processes each row of blocks independently, propagating `last_dc` from
+    /// one row to the next (matching C mozjpeg behavior). When `delta_dc_weight > 0`,
+    /// also considers vertical DC gradients from the row above.
     fn apply_dc_trellis(&mut self) {
         let Some(ref hybrid_ctx) = self.hybrid_ctx else {
             return;
@@ -1339,127 +1343,165 @@ impl StripProcessor {
         let config = hybrid_ctx.trellis_config();
         let lambda1 = config.lambda_log_scale1();
         let lambda2 = config.lambda_log_scale2();
+        let delta_dc_weight = config.get_delta_dc_weight();
 
-        // Convert DC-only raw values to full blocks for the DC trellis API.
-        // AC coefficients are set to 0 since we've already done AC trellis.
-        // This slightly affects the per-block lambda (norm calculation uses AC),
-        // but DC trellis primarily optimizes DC differentials, not quality.
-        let make_raw_blocks = |dc_raw: &[i32]| -> Vec<[i32; DCT_BLOCK_SIZE]> {
-            dc_raw
-                .iter()
-                .map(|&dc| {
-                    let mut block = [0i32; DCT_BLOCK_SIZE];
-                    block[0] = dc;
-                    block
-                })
-                .collect()
-        };
-
-        // Y channel DC trellis
+        // Y channel DC trellis (row-by-row)
         if !self.y_dc_raw.is_empty() && !self.y_blocks.is_empty() {
-            let raw_blocks = make_raw_blocks(&self.y_dc_raw);
+            let blocks_w = self.layout.y_blocks_w;
             let dc_quantval = self.quant.y_quant.values[0];
             let dc_table = hybrid_ctx.luma_dc_rate_table();
-
-            // Convert zigzag blocks back to natural order for DC trellis
-            let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = self
-                .y_blocks
-                .iter()
-                .map(|zigzag| {
-                    let mut natural = [0i16; DCT_BLOCK_SIZE];
-                    for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                        natural[i] = zigzag[zz_idx as usize];
-                    }
-                    natural
-                })
-                .collect();
-
-            crate::trellis::dc_trellis_optimize(
-                &raw_blocks,
-                &mut natural_blocks,
+            dc_trellis_channel_row_by_row(
+                &self.y_dc_raw,
+                &mut self.y_blocks,
+                blocks_w,
                 dc_quantval,
                 dc_table,
-                0, // last_dc starts at 0
                 lambda1,
                 lambda2,
+                delta_dc_weight,
             );
-
-            // Convert back to zigzag order
-            for (i, natural) in natural_blocks.into_iter().enumerate() {
-                for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                    self.y_blocks[i][zz_idx as usize] = natural[j];
-                }
-            }
         }
 
-        // Cb channel DC trellis
+        // Cb channel DC trellis (row-by-row)
         if !self.cb_dc_raw.is_empty() && !self.cb_blocks.is_empty() {
-            let raw_blocks = make_raw_blocks(&self.cb_dc_raw);
+            let blocks_w = self.layout.c_blocks_w;
             let dc_quantval = self.quant.cb_quant.values[0];
             let dc_table = hybrid_ctx.chroma_dc_rate_table();
-
-            let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = self
-                .cb_blocks
-                .iter()
-                .map(|zigzag| {
-                    let mut natural = [0i16; DCT_BLOCK_SIZE];
-                    for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                        natural[i] = zigzag[zz_idx as usize];
-                    }
-                    natural
-                })
-                .collect();
-
-            crate::trellis::dc_trellis_optimize(
-                &raw_blocks,
-                &mut natural_blocks,
+            dc_trellis_channel_row_by_row(
+                &self.cb_dc_raw,
+                &mut self.cb_blocks,
+                blocks_w,
                 dc_quantval,
                 dc_table,
-                0,
                 lambda1,
                 lambda2,
+                delta_dc_weight,
             );
-
-            for (i, natural) in natural_blocks.into_iter().enumerate() {
-                for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                    self.cb_blocks[i][zz_idx as usize] = natural[j];
-                }
-            }
         }
 
-        // Cr channel DC trellis
+        // Cr channel DC trellis (row-by-row)
         if !self.cr_dc_raw.is_empty() && !self.cr_blocks.is_empty() {
-            let raw_blocks = make_raw_blocks(&self.cr_dc_raw);
+            let blocks_w = self.layout.c_blocks_w;
             let dc_quantval = self.quant.cr_quant.values[0];
             let dc_table = hybrid_ctx.chroma_dc_rate_table();
-
-            let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = self
-                .cr_blocks
-                .iter()
-                .map(|zigzag| {
-                    let mut natural = [0i16; DCT_BLOCK_SIZE];
-                    for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                        natural[i] = zigzag[zz_idx as usize];
-                    }
-                    natural
-                })
-                .collect();
-
-            crate::trellis::dc_trellis_optimize(
-                &raw_blocks,
-                &mut natural_blocks,
+            dc_trellis_channel_row_by_row(
+                &self.cr_dc_raw,
+                &mut self.cr_blocks,
+                blocks_w,
                 dc_quantval,
                 dc_table,
-                0,
                 lambda1,
                 lambda2,
+                delta_dc_weight,
             );
+        }
+    }
+}
 
-            for (i, natural) in natural_blocks.into_iter().enumerate() {
-                for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
-                    self.cr_blocks[i][zz_idx as usize] = natural[j];
-                }
+/// Apply DC trellis optimization to one channel, processing row-by-row.
+///
+/// C mozjpeg processes DC trellis one row at a time, propagating `last_dc`
+/// from the end of each row to the start of the next. This matches that
+/// behavior and also supports `delta_dc_weight` for vertical DC gradients.
+///
+/// Blocks are stored in raster order: block index = row * blocks_w + col.
+/// The zigzag-to-natural order conversion is done in-place for DC trellis,
+/// then converted back.
+#[allow(clippy::too_many_arguments)]
+fn dc_trellis_channel_row_by_row(
+    dc_raw: &[i32],
+    blocks: &mut [[i16; DCT_BLOCK_SIZE]],
+    blocks_w: usize,
+    dc_quantval: u16,
+    dc_table: &crate::trellis::RateTable,
+    lambda1: f32,
+    lambda2: f32,
+    delta_dc_weight: f32,
+) {
+    if dc_raw.is_empty() || blocks.is_empty() || blocks_w == 0 {
+        return;
+    }
+
+    let num_blocks = blocks.len();
+    let blocks_h = (num_blocks + blocks_w - 1) / blocks_w;
+
+    // Convert DC-only raw values to full blocks for the DC trellis API.
+    // AC coefficients are set to 0 since we've already done AC trellis.
+    let raw_blocks: Vec<[i32; DCT_BLOCK_SIZE]> = dc_raw
+        .iter()
+        .map(|&dc| {
+            let mut block = [0i32; DCT_BLOCK_SIZE];
+            block[0] = dc;
+            block
+        })
+        .collect();
+
+    // Convert zigzag blocks to natural order for DC trellis
+    let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = blocks
+        .iter()
+        .map(|zigzag| {
+            let mut natural = [0i16; DCT_BLOCK_SIZE];
+            for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                natural[i] = zigzag[zz_idx as usize];
             }
+            natural
+        })
+        .collect();
+
+    // Double-buffered above-row data (used when delta_dc_weight > 0).
+    // We use two buffers and swap: one holds the previous row's data while
+    // the current row writes into the other.
+    let mut above_raw_dc: Vec<i32> = vec![0; blocks_w];
+    let mut above_quant_dc: Vec<i16> = vec![0; blocks_w];
+    let mut current_raw_dc: Vec<i32> = vec![0; blocks_w];
+
+    let mut last_dc: i16 = 0;
+
+    for row in 0..blocks_h {
+        let row_start = row * blocks_w;
+        let row_end = (row_start + blocks_w).min(num_blocks);
+        let row_len = row_end - row_start;
+
+        let indices: Vec<usize> = (row_start..row_end).collect();
+
+        // Snapshot this row's raw DC values before trellis (for next row's above_data)
+        for col in 0..row_len {
+            current_raw_dc[col] = raw_blocks[row_start + col][0];
+        }
+
+        let above_data = if delta_dc_weight > 0.0 && row > 0 {
+            Some((
+                above_raw_dc[..row_len].as_ref(),
+                above_quant_dc[..row_len].as_ref(),
+            ))
+        } else {
+            None
+        };
+
+        last_dc = crate::trellis::dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut natural_blocks,
+            &indices,
+            dc_quantval,
+            dc_table,
+            last_dc,
+            lambda1,
+            lambda2,
+            delta_dc_weight,
+            above_data,
+        );
+
+        // Save this row's data as "above" for the next row
+        above_raw_dc[..row_len].copy_from_slice(&current_raw_dc[..row_len]);
+        for col in 0..row_len {
+            above_quant_dc[col] = natural_blocks[row_start + col][0];
+        }
+    }
+
+    // Convert back to zigzag order
+    for (i, natural) in natural_blocks.into_iter().enumerate() {
+        for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+            blocks[i][zz_idx as usize] = natural[j];
         }
     }
 }

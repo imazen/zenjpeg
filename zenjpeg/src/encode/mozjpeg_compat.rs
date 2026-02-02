@@ -162,6 +162,12 @@ pub struct TrellisConfig {
     pub(crate) num_loops: i32,
     /// Speed optimization mode
     pub(crate) speed_mode: TrellisSpeedMode,
+    /// Weight for vertical DC gradient consideration in DC trellis.
+    /// When > 0.0, DC trellis also considers the difference between
+    /// the current block's DC and the block directly above it, penalizing
+    /// large vertical DC jumps that create visible banding.
+    /// Default: 0.0 (disabled, matching C mozjpeg default).
+    pub(crate) delta_dc_weight: f32,
 }
 
 /// Default lambda_log_scale1 value (matches mozjpeg)
@@ -185,6 +191,7 @@ impl Default for TrellisConfig {
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             num_loops: 1,
             speed_mode: TrellisSpeedMode::Adaptive,
+            delta_dc_weight: 0.0,
         }
     }
 }
@@ -211,6 +218,7 @@ impl TrellisConfig {
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
             num_loops: 1,
             speed_mode: TrellisSpeedMode::Adaptive,
+            delta_dc_weight: 0.0,
         }
     }
 
@@ -388,6 +396,25 @@ impl TrellisConfig {
         self
     }
 
+    /// Set the weight for vertical DC gradient consideration in DC trellis.
+    ///
+    /// When > 0.0, DC trellis considers the difference between the current
+    /// block's DC value and the block directly above it, penalizing large
+    /// vertical DC jumps that create visible banding artifacts.
+    ///
+    /// - `0.0`: Disabled (default, matching C mozjpeg default behavior)
+    /// - `0.5`: Moderate vertical smoothing
+    /// - `1.0`: Strong vertical smoothing (may soften horizontal edges)
+    ///
+    /// Only has effect when DC trellis is enabled.
+    ///
+    /// Default: `0.0`
+    #[must_use]
+    pub fn delta_dc_weight(mut self, weight: f32) -> Self {
+        self.delta_dc_weight = weight.max(0.0);
+        self
+    }
+
     // === Accessors ===
 
     /// Check if AC trellis is enabled.
@@ -432,6 +459,12 @@ impl TrellisConfig {
         self.enabled || self.dc_enabled
     }
 
+    /// Returns the delta DC weight for vertical gradient consideration.
+    #[must_use]
+    pub fn get_delta_dc_weight(&self) -> f32 {
+        self.delta_dc_weight
+    }
+
     /// Returns lambda log scale parameter 1 (rate penalty).
     #[must_use]
     pub fn lambda_log_scale1(&self) -> f32 {
@@ -457,6 +490,7 @@ mod tests {
         assert!(!config.eob_opt); // Disabled by default
         assert_eq!(config.speed_mode, TrellisSpeedMode::Adaptive);
         assert!((config.lambda_log_scale1 - 14.75).abs() < 0.01);
+        assert!((config.delta_dc_weight - 0.0).abs() < 0.001);
     }
 
     #[test]
@@ -559,5 +593,15 @@ mod tests {
     fn test_num_loops_minimum() {
         let config = TrellisConfig::default().num_loops(0);
         assert_eq!(config.num_loops, 1); // Minimum is 1
+    }
+
+    #[test]
+    fn test_delta_dc_weight() {
+        let config = TrellisConfig::default().delta_dc_weight(0.5);
+        assert!((config.get_delta_dc_weight() - 0.5).abs() < 0.001);
+
+        // Negative weights are clamped to 0
+        let config = TrellisConfig::default().delta_dc_weight(-1.0);
+        assert!((config.get_delta_dc_weight() - 0.0).abs() < 0.001);
     }
 }
