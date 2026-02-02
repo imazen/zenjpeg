@@ -7,6 +7,7 @@
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
+use super::encoder_types::ScanStrategy;
 use crate::types::{EdgePaddingConfig, JpegMode, PixelFormat, Subsampling};
 
 // ============================================================================
@@ -115,11 +116,13 @@ pub struct ComputedConfig {
     /// this for compatibility with very old or limited JPEG decoders.
     pub allow_16bit_quant_tables: bool,
 
-    /// Optimize progressive scan script for minimum file size.
+    /// Progressive scan script strategy.
     ///
-    /// When `true`, tries 64 candidate scan configurations and picks the smallest.
-    /// Skipped for XYB mode.
-    pub optimize_scans: bool,
+    /// Controls how scans are structured for progressive JPEGs:
+    /// - `Default`: jpegli-style (freq split at 2/3, SA for all)
+    /// - `Search`: mozjpeg-style optimize_scans (64 candidates, picks smallest)
+    /// - `Mozjpeg`: mozjpeg default (freq split at 8/9, no chroma SA)
+    pub scan_strategy: ScanStrategy,
 
     /// Use separate quantization tables for Cb and Cr (3 tables total).
     ///
@@ -171,7 +174,7 @@ impl Default for ComputedConfig {
             // Allow 16-bit quant tables by default (matches C++ jpegli behavior)
             // Set to false only for compatibility with very old decoders
             allow_16bit_quant_tables: false,
-            optimize_scans: false,
+            scan_strategy: ScanStrategy::Default,
             // Use 3 tables by default (matches jpegli_set_distance)
             separate_chroma_tables: true,
             trellis: None,

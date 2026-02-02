@@ -569,3 +569,45 @@ pub(crate) enum HuffmanStrategy {
     /// Single-pass: use caller-provided tables.
     Custom(Box<crate::huffman::optimize::HuffmanTableSet>),
 }
+
+/// Progressive scan script strategy.
+///
+/// Controls how progressive JPEG scan scripts are generated. All progressive
+/// modes use optimized Huffman tables (two-pass encoding).
+///
+/// # Baseline JPEG
+///
+/// For baseline (non-progressive) encoding, this setting has no effect.
+/// Use `.progressive(false)` to disable progressive mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScanStrategy {
+    /// Use encoder's default progressive script (jpegli-style).
+    ///
+    /// - Frequency split at AC coefficients 2/3
+    /// - Successive approximation for all components (Al=2 → 1 → 0)
+    /// - Separate DC scans per component
+    ///
+    /// This is the default when `.progressive(true)` is used.
+    #[default]
+    Default,
+
+    /// Search 64 candidate scripts and pick the smallest (mozjpeg-style).
+    ///
+    /// Tests combinations of:
+    /// - Frequency splits at [2, 5, 8, 12, 18]
+    /// - Successive approximation levels 0-3 for luma, 0-2 for chroma
+    /// - DC scan interleaving options
+    ///
+    /// Typically saves 1-3% vs fixed scripts, at the cost of ~2x encode time.
+    Search,
+
+    /// mozjpeg's default progressive script.
+    ///
+    /// - Frequency split at AC coefficients 8/9
+    /// - No successive approximation for chroma (full precision in one pass)
+    /// - Separate DC scans per component
+    ///
+    /// Use this for closest parity with C mozjpeg's default progressive output.
+    Mozjpeg,
+}

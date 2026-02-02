@@ -6,6 +6,7 @@
 //! - Scan script generation
 
 use super::config::ComputedConfig;
+use super::encoder_types::ScanStrategy;
 use super::ProgressiveScan;
 use crate::entropy::EntropyEncoder;
 use crate::error::{Error, Result};
@@ -150,6 +151,18 @@ impl ComputedConfig {
 
     /// Returns the progressive scan script for level 2.
     pub(crate) fn get_progressive_scan_script(&self, is_color: bool) -> Vec<ProgressiveScan> {
+        match self.scan_strategy {
+            ScanStrategy::Default => self.get_jpegli_scan_script(is_color),
+            ScanStrategy::Search => self.get_jpegli_scan_script(is_color), // Search uses trial encoding
+            ScanStrategy::Mozjpeg => self.get_mozjpeg_scan_script(is_color),
+        }
+    }
+
+    /// jpegli-style progressive scan script.
+    ///
+    /// - Frequency split at AC 2/3
+    /// - Successive approximation for all components (Al=2 → 1 → 0)
+    fn get_jpegli_scan_script(&self, is_color: bool) -> Vec<ProgressiveScan> {
         let num_components = if is_color { 3 } else { 1 };
         let mut scans = Vec::new();
 
@@ -188,64 +201,121 @@ impl ComputedConfig {
         // This groups similar spectral bands together for better histogram clustering.
         // C++ order: [all AC 1-2] then [all AC 3-63 first] then [all refinements]
         // NOT: [Y all scans] then [Cb all scans] then [Cr all scans]
-        let use_refinement = true;
 
-        if use_refinement {
-            // Level 2: with successive approximation
-            // AC 1-2: full precision (low frequency, most visible) - all components
-            for c in 0..num_components {
-                scans.push(ProgressiveScan {
-                    components: vec![c],
-                    ss: 1,
-                    se: 2,
-                    ah: 0,
-                    al: 0,
-                });
-            }
+        // AC 1-2: full precision (low frequency, most visible) - all components
+        for c in 0..num_components {
+            scans.push(ProgressiveScan {
+                components: vec![c],
+                ss: 1,
+                se: 2,
+                ah: 0,
+                al: 0,
+            });
+        }
 
-            // AC 3-63 first pass: top bits only (Al=2 means bits 2+) - all components
-            for c in 0..num_components {
-                scans.push(ProgressiveScan {
-                    components: vec![c],
-                    ss: 3,
-                    se: 63,
-                    ah: 0,
-                    al: 2,
-                });
-            }
+        // AC 3-63 first pass: top bits only (Al=2 means bits 2+) - all components
+        for c in 0..num_components {
+            scans.push(ProgressiveScan {
+                components: vec![c],
+                ss: 3,
+                se: 63,
+                ah: 0,
+                al: 2,
+            });
+        }
 
-            // AC 3-63 refinement: bit 1 (Ah=2, Al=1) - all components
-            for c in 0..num_components {
-                scans.push(ProgressiveScan {
-                    components: vec![c],
-                    ss: 3,
-                    se: 63,
-                    ah: 2,
-                    al: 1,
-                });
-            }
+        // AC 3-63 refinement: bit 1 (Ah=2, Al=1) - all components
+        for c in 0..num_components {
+            scans.push(ProgressiveScan {
+                components: vec![c],
+                ss: 3,
+                se: 63,
+                ah: 2,
+                al: 1,
+            });
+        }
 
-            // AC 3-63 refinement: bit 0 (Ah=1, Al=0) - all components
-            for c in 0..num_components {
-                scans.push(ProgressiveScan {
-                    components: vec![c],
-                    ss: 3,
-                    se: 63,
-                    ah: 1,
-                    al: 0,
-                });
-            }
-        } else {
-            // Level 0: no successive approximation (simpler, works)
-            for c in 0..num_components {
-                scans.push(ProgressiveScan {
-                    components: vec![c],
-                    ss: 1,
-                    se: 63,
-                    ah: 0,
-                    al: 0,
-                });
-            }
+        // AC 3-63 refinement: bit 0 (Ah=1, Al=0) - all components
+        for c in 0..num_components {
+            scans.push(ProgressiveScan {
+                components: vec![c],
+                ss: 3,
+                se: 63,
+                ah: 1,
+                al: 0,
+            });
+        }
+
+        scans
+    }
+
+    /// mozjpeg-style progressive scan script.
+    ///
+    /// - Frequency split at AC 8/9
+    /// - No successive approximation for chroma (full precision in one pass)
+    /// - Successive approximation for luma only
+    fn get_mozjpeg_scan_script(&self, is_color: bool) -> Vec<ProgressiveScan> {
+        let num_components = if is_color { 3 } else { 1 };
+        let mut scans = Vec::new();
+
+        // DC scans (separate per component)
+        for c in 0..num_components {
+            scans.push(ProgressiveScan {
+                components: vec![c],
+                ss: 0,
+                se: 0,
+                ah: 0,
+                al: 0,
+            });
+        }
+
+        // Luma AC with successive approximation
+        // AC 1-8 at Al=0 (full precision for low frequencies)
+        scans.push(ProgressiveScan {
+            components: vec![0],
+            ss: 1,
+            se: 8,
+            ah: 0,
+            al: 0,
+        });
+
+        // AC 9-63 first pass at Al=1
+        scans.push(ProgressiveScan {
+            components: vec![0],
+            ss: 9,
+            se: 63,
+            ah: 0,
+            al: 1,
+        });
+
+        // AC 9-63 refinement at Al=0
+        scans.push(ProgressiveScan {
+            components: vec![0],
+            ss: 9,
+            se: 63,
+            ah: 1,
+            al: 0,
+        });
+
+        // Chroma AC - no successive approximation (full precision)
+        if is_color {
+            // Cb: AC 1-63 full precision
+            scans.push(ProgressiveScan {
+                components: vec![1],
+                ss: 1,
+                se: 63,
+                ah: 0,
+                al: 0,
+            });
+
+            // Cr: AC 1-63 full precision
+            scans.push(ProgressiveScan {
+                components: vec![2],
+                ss: 1,
+                se: 63,
+                ah: 0,
+                al: 0,
+            });
         }
 
         scans
@@ -301,7 +371,7 @@ impl ComputedConfig {
         let is_color = !self.pixel_format.is_grayscale();
         let num_components = if is_color { 3 } else { 1 };
 
-        if self.optimize_scans && !self.use_xyb {
+        if self.scan_strategy == ScanStrategy::Search && !self.use_xyb {
             // Generate multiple candidate scan scripts and trial-encode each.
             // The frequency estimator can't accurately compare scripts with
             // different numbers of scans (Huffman clustering effects), so we
