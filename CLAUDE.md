@@ -1111,12 +1111,19 @@ Run: `cargo run --release --example hybrid_trellis_benchmark`
 
 **Update (2026-02-02):** Negative coupling NOW WORKS and produces smaller files:
 - `aq_trellis_coupling=-4.0`: ~2% smaller files with ~3% DSSIM degradation (photos)
-- WARNING: Screenshots are more sensitive, use -1 to -2 for UI images
-- Added `aq_trellis_multiplicative` option for proportional scaling (use smaller values)
+- `aq_trellis_max_adjustment=1.0`: **CRITICAL** for screenshots — limits quality degradation
+  - Without cap: apple.com at coupling=-8.0 → -24% size, +552% DSSIM (destroyed!)
+  - With max_adj=1.0: apple.com at coupling=-8.0 → +5.3% size, +5.9% DSSIM (acceptable)
+- `aq_trellis_multiplicative=true`: Proportional scaling (use smaller values like 0.1)
+
+**Recommended settings:**
+- Photos: `coupling=-4.0, max_adjustment=0.0` → -1.8% size, +3.3% DSSIM
+- Mixed/Unknown: `coupling=-8.0, max_adjustment=1.0` → photos -4%, screenshots protected
+- Screenshots: Use `coupling=-1.0` or disable hybrid entirely
 
 **For optimizers:** Tune `tables.quant` (192 values), `lambda_log_scale1/2` (2 floats),
-`zero_bias_mul` (192 values, jpegli only), and optionally `aq_trellis_coupling` (-8 to +8)
-for size/quality trade-offs.
+`zero_bias_mul` (192 values, jpegli only), and `aq_trellis_*` fields for size/quality trade-offs.
+Run `cargo run --release --example hybrid_parameter_sweep` for comprehensive analysis.
 
 ## Known Bugs
 
@@ -1138,14 +1145,17 @@ for size/quality trade-offs.
 
 ### Fixed Bugs (historical reference)
 
-- **Hybrid trellis negative coupling (2026-02-02)** - Hybrid mode only worked with positive
-  coupling (`aq_trellis_coupling > 0`). Changed condition to `!= 0` to allow negative coupling.
-  Now negative coupling produces smaller files at the cost of quality:
-  - `coupling=-4.0`: ~2% smaller files, ~3% worse DSSIM (photographic images)
-  - `coupling=+4.0`: ~3% larger files, ~2% better DSSIM
-  - Added `aq_trellis_multiplicative` option for proportional scaling.
-  - **WARNING**: Screenshots are more sensitive - use conservative values (-1 to +1).
-  Files: `encode/search.rs:599`, `hybrid/config.rs`, `examples/hybrid_parameter_sweep.rs`
+- **Hybrid trellis improvements (2026-02-02)** - Multiple fixes and new features:
+  1. Changed condition from `> 0` to `!= 0` to allow negative coupling (smaller files)
+  2. Added `aq_trellis_multiplicative` for proportional scaling
+  3. Added `aq_trellis_max_adjustment` to cap quality degradation on sensitive images
+  Results with `coupling=-4.0, max_adjustment=0.0`:
+  - Photos: -1.8% size, +3.3% DSSIM (acceptable)
+  - Screenshots: -0.9% size, +28% DSSIM (too aggressive!)
+  Results with `coupling=-8.0, max_adjustment=1.0`:
+  - Photos: -3.9% size, +7.0% DSSIM
+  - Screenshots: +5.3% size, +5.9% DSSIM (protected!)
+  Files: `encode/search.rs`, `hybrid/config.rs`, `examples/hybrid_parameter_sweep.rs`
 
 - **XYB file size gap (2026-02-01)** - XYB baseline was 2-3% larger than C++, but this
   was due to Rust getting 2x more progressive savings (5.7-7.3% vs C++'s 3.1-3.6%).
