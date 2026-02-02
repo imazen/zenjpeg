@@ -173,7 +173,10 @@ impl HybridQuantContext {
         let (trellis_config, effective_aq) = match &self.mode {
             TrellisMode::Hybrid(hybrid_config) => {
                 // Hybrid mode: adjust lambda based on AQ strength
-                (hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma), aq_strength)
+                (
+                    hybrid_config.to_trellis_config(aq_strength, dampen, !is_luma),
+                    aq_strength,
+                )
             }
             TrellisMode::Standalone(trellis_config) => {
                 // Standalone mode: pure mozjpeg-compatible trellis, no AQ influence
