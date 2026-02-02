@@ -631,13 +631,39 @@ mod tests {
 
 /// Preset optimization modes for the encoder.
 ///
-/// Each preset configures progressive mode, Huffman strategy, trellis,
-/// scan scripting, and quant table behavior to match a specific encoder
-/// profile. The three lineages are:
+/// Each preset configures [`ScanMode`], [`QuantTableConfig`], trellis,
+/// deringing, and Huffman strategy to match a specific encoder profile.
+/// The three lineages are:
 ///
 /// - **Jpegli** — matches C jpegli/cjpegli behavior (AQ-driven, no trellis)
 /// - **Mozjpeg** — matches C mozjpeg behavior (trellis-driven, no AQ)
 /// - **Hybrid** — combines jpegli AQ + mozjpeg trellis (zenjpeg-only)
+///
+/// # Preset Matrix
+///
+/// | Preset | AQ | Trellis | Deringing | Tables | Scan |
+/// |--------|-----|---------|-----------|--------|------|
+/// | JpegliBaseline | ✓ | — | ✓ | Jpegli 3T | Baseline |
+/// | JpegliProgressive | ✓ | — | ✓ | Jpegli 3T | Progressive |
+/// | MozjpegBaseline | — | Thorough | — | Robidoux 2T | Baseline |
+/// | MozjpegProgressive | — | Thorough | — | Robidoux 2T | ProgMozjpeg |
+/// | MozjpegMaxCompression | — | Thorough | ✓ | Robidoux 2T | ProgSearch |
+/// | HybridBaseline | ✓ | Adaptive | ✓ | Jpegli 3T | Baseline |
+/// | HybridProgressive | ✓ | Adaptive | ✓ | Jpegli 3T | Progressive |
+/// | HybridMaxCompression | ✓ | Thorough | ✓ | Jpegli 3T | ProgSearch |
+///
+/// # Exploration Gaps
+///
+/// Interesting combinations NOT covered by the 8 presets (build manually):
+///
+/// - **Robidoux + AQ**: `MozjpegRobidoux` tables with jpegli AQ. Tests whether
+///   AQ can compensate for Robidoux's less precise frequency-dependent scaling.
+/// - **Jpegli + trellis without AQ**: Inverse hybrid — tests trellis value
+///   with jpegli's perceptual tables when AQ is disabled.
+/// - **Universal deringing**: All presets with deringing=true. C mozjpeg only
+///   enables it for JCP_MAX_COMPRESSION, but it may help mozjpeg baseline/prog too.
+/// - **JpegliMaxCompression**: AQ + scan search + no trellis. Tests whether
+///   scan search alone (without trellis overhead) is worthwhile for jpegli.
 ///
 /// Use [`OptimizationPreset::all()`] to iterate all variants for search.
 ///

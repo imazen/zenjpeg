@@ -7,6 +7,13 @@
   - Bug 3: Scan optimizer freq split only at Al=0 (mozjpeg-rs 01fddb9)
   - Bug 4: Freq-split-beats-SA comparison (mozjpeg-rs 01fddb9)
   - OptimizationPreset enum with 8 variants across 3 lineages (jpegli/mozjpeg/hybrid)
+- User request: Fix 3 bugs in optimization() + unify state to prevent invalid combos
+  - Fixed: deringing decoupled from AQ (was incorrectly tied to uses_aq())
+  - Fixed: mozjpeg presets now use Thorough trellis (was incorrectly using Adaptive)
+  - Fixed: TrellisSpeedMode::Adaptive comments no longer claim C mozjpeg parity
+  - Added: QuantTableConfig enum (Jpegli/JpegliSharedChroma/MozjpegRobidoux/Custom)
+  - Added: ScanMode enum (Baseline/Progressive/ProgressiveMozjpeg/ProgressiveSearch)
+  - EncoderConfig now uses type-safe enums instead of loose field combos
 
 ## 2026-01-31
 - User request: Fix pre-erosion lookahead timing (C++ has 4-row overlap at iMCU boundaries)
