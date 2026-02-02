@@ -14,6 +14,30 @@ use crate::huffman::optimize::{ContextConfig, OptimizedTable, ProgressiveTokenBu
 use crate::quant::QuantTable;
 use crate::types::Subsampling;
 
+/// Resolve the AC Huffman table cluster index and JPEG slot ID for a scan.
+///
+/// The cluster_idx indexes into AC tables (offset from `num_dc_tables`),
+/// and slot_id is the JPEG DHT slot (0-3) with modular cycling.
+fn ac_scan_slot(
+    scan_idx: usize,
+    context_config: &ContextConfig,
+    context_map: &[usize],
+    num_dc_tables: usize,
+    ac_slot_ids: &[usize],
+) -> (usize, usize) {
+    let ac_context = context_config.ac_context(scan_idx, 0);
+    let cluster_idx = if ac_context < context_map.len() {
+        context_map[ac_context].saturating_sub(num_dc_tables)
+    } else {
+        0
+    };
+    let slot_id = ac_slot_ids
+        .get(cluster_idx)
+        .copied()
+        .unwrap_or(cluster_idx % 4);
+    (cluster_idx, slot_id)
+}
+
 impl ComputedConfig {
     /// Replays tokens for a progressive scan with optimized tables.
     ///
@@ -25,7 +49,6 @@ impl ComputedConfig {
     ///   - DC contexts 0..ac_offset map to DC table indices (0..num_dc_tables)
     ///   - AC contexts ac_offset.. map to total table indices (num_dc_tables + offset)
     /// * `ac_slot_ids` - Maps AC table index to JPEG slot ID (0-3)
-    /// * `tables_emitted` - Number of tables emitted so far (DC + AC)
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn replay_progressive_scan(
         &self,
@@ -38,7 +61,6 @@ impl ComputedConfig {
         num_dc_tables: usize,
         context_map: &[usize],
         ac_slot_ids: &[usize],
-        _tables_emitted: usize,
     ) -> Result<Vec<u8>> {
         // Estimate output size from token count (~2 bytes per token average)
         let scan_info = token_buffer.scan_info.get(scan_idx);
@@ -61,16 +83,13 @@ impl ComputedConfig {
         // would cause later tables to overwrite earlier ones in the same slot,
         // leaving the wrong table active for earlier scans.
         if scan.ss > 0 {
-            let ac_context = context_config.ac_context(scan_idx, 0);
-            let cluster_idx = if ac_context < context_map.len() {
-                context_map[ac_context].saturating_sub(num_dc_tables)
-            } else {
-                0
-            };
-            let slot = ac_slot_ids
-                .get(cluster_idx)
-                .copied()
-                .unwrap_or(cluster_idx % 4);
+            let (cluster_idx, slot) = ac_scan_slot(
+                scan_idx,
+                context_config,
+                context_map,
+                num_dc_tables,
+                ac_slot_ids,
+            );
             if let Some(table) = tables.get(num_dc_tables + cluster_idx) {
                 encoder.set_ac_table(slot, &table.table);
             }
@@ -102,30 +121,25 @@ impl ComputedConfig {
             encoder.write_dc_tokens(tokens, &dc_context_map)?;
         } else if scan.ah == 0 {
             // AC first scan: replay AC tokens
-            // Use context_config for per-scan AC context lookup
-            let ac_context = context_config.ac_context(scan_idx, 0);
-            let table_idx = if ac_context < context_map.len() {
-                context_map[ac_context].saturating_sub(num_dc_tables)
-            } else {
-                0
-            };
-            // Convert table index to slot ID
-            let slot_id = ac_slot_ids.get(table_idx).copied().unwrap_or(table_idx % 4);
+            let (_cluster_idx, slot_id) = ac_scan_slot(
+                scan_idx,
+                context_config,
+                context_map,
+                num_dc_tables,
+                ac_slot_ids,
+            );
             let tokens = token_buffer.scan_tokens(scan_idx);
             encoder.write_ac_first_tokens(tokens, slot_id)?;
         } else {
             // AC refinement scan: replay refinement tokens
-            // Use context_config for per-scan AC context lookup
-            let ac_context = context_config.ac_context(scan_idx, 0);
-            let table_idx = if ac_context < context_map.len() {
-                context_map[ac_context].saturating_sub(num_dc_tables)
-            } else {
-                0
-            };
-            // Convert table index to slot ID
-            let slot_id = ac_slot_ids.get(table_idx).copied().unwrap_or(table_idx % 4);
-            // Debug dump if DUMP_RUST_AC_REFINEMENT env var is set
-            if std::env::var("DUMP_RUST_AC_REFINEMENT").is_ok() {
+            let (_cluster_idx, slot_id) = ac_scan_slot(
+                scan_idx,
+                context_config,
+                context_map,
+                num_dc_tables,
+                ac_slot_ids,
+            );
+            if cfg!(debug_assertions) && std::env::var("DUMP_RUST_AC_REFINEMENT").is_ok() {
                 scan_info.debug_dump(scan_idx);
             }
             encoder.write_ac_refinement_tokens(scan_info, slot_id)?;
@@ -455,15 +469,13 @@ impl ComputedConfig {
         for (scan_idx, scan) in scans.iter().enumerate() {
             // Emit AC table on-demand before each AC scan
             if scan.ss > 0 {
-                let ac_context = context_config.ac_context(scan_idx, 0);
-                let cluster_idx = context_map
-                    .get(ac_context)
-                    .map(|&t| t.saturating_sub(num_dc_tables))
-                    .unwrap_or(0);
-                let ac_slot = ac_slot_ids
-                    .get(cluster_idx)
-                    .copied()
-                    .unwrap_or(cluster_idx % 4);
+                let (cluster_idx, ac_slot) = ac_scan_slot(
+                    scan_idx,
+                    &context_config,
+                    &context_map,
+                    num_dc_tables,
+                    &ac_slot_ids,
+                );
                 // Only emit if this slot doesn't already have the right table
                 if slot_cluster[ac_slot] != Some(cluster_idx) {
                     if let Some(table) = tables.get(num_dc_tables + cluster_idx) {
@@ -496,7 +508,6 @@ impl ComputedConfig {
                 num_dc_tables,
                 &context_map,
                 &ac_slot_ids,
-                0,
             )?;
             output.extend_from_slice(&scan_data);
         }
