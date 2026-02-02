@@ -14,6 +14,12 @@
   - Added: QuantTableConfig enum (Jpegli/JpegliSharedChroma/MozjpegRobidoux/Custom)
   - Added: ScanMode enum (Baseline/Progressive/ProgressiveMozjpeg/ProgressiveSearch)
   - EncoderConfig now uses type-safe enums instead of loose field combos
+- User request: Implement ExpertConfig for external optimization (simulated annealing)
+  - Flat struct exposing all ~30 tunable encoder parameters with no overlapping fields
+  - from_preset() for all 8 OptimizationPreset variants, to_encoder_config() for encoding
+  - TrellisConfig fields changed pub(crate) → pub to allow direct construction
+  - Review pass: found/fixed dead code in blend_zero_bias() and to_encoder_config()
+  - Documented 4 dead params in hybrid mode (pre-existing HybridConfig limitation)
 
 ## 2026-01-31
 - User request: Fix pre-erosion lookahead timing (C++ has 4-row overlap at iMCU boundaries)

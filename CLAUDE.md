@@ -1089,6 +1089,34 @@ Eliminated derived-state sync bugs by creating `LayoutParams` (`encode/layout.rs
 - [x] Added `HuffmanStrategy` enum (replaces `optimize_huffman: bool` + `custom_huffman_tables: Option`)
 - [x] Extracted `color_convert_strip()` dispatch helper from `process_strip`
 
+### DONE: ExpertConfig for External Optimization (completed 2026-02-02)
+
+Flat struct exposing all quality/size-affecting encoder parameters for external
+optimizers (simulated annealing, Bayesian search, etc.). Eliminates the
+TrellisConfig/HybridConfig overlap where both had `lambda_scale1/2`, `dc_enabled`,
+`num_loops` — in hybrid mode the TrellisConfig copies were silently ignored.
+
+**Usage:**
+```rust
+use zenjpeg::encode::{ExpertConfig, OptimizationPreset, ColorMode, ChromaSubsampling};
+
+let mut expert = ExpertConfig::from_preset(OptimizationPreset::HybridProgressive, 85.0);
+expert.trellis_lambda_log_scale1 = 15.0;
+expert.aq_trellis_coupling = 2.0;
+let enc = expert.to_encoder_config(ColorMode::YCbCr {
+    subsampling: ChromaSubsampling::Quarter,
+});
+```
+
+**Files:** `zenjpeg/src/encode/search.rs`
+**Tests:** 22 unit tests (field pass-through, preset round-trip, blend, idempotency)
+
+**Key design decisions:**
+- `aq_trellis_coupling` is the mode control: `0.0` = standalone TrellisConfig, `>0.0` = HybridConfig
+- All fields `pub` for direct mutation
+- `blend_zero_bias()` must be called after changing quality/zero-bias fields (not automatic in `to_encoder_config`)
+- 4 trellis fields ignored in hybrid mode (pre-existing HybridConfig limitation, documented)
+
 ### Encoder Hardening TODO
 
 1. **[DONE] Rename `_h`/`_v` block fields to `_w`/`_h` in LayoutParams** — `y_blocks_h` means horizontal
@@ -1484,6 +1512,7 @@ API will have breaking changes.
 | `zenjpeg/src/color/xyb.rs` | XYB color conversion |
 | `zenjpeg/src/quant/aq/mod.rs` | Adaptive quantization |
 | `zenjpeg/src/huffman/mod.rs` | Huffman encoding |
+| `zenjpeg/src/encode/search.rs` | ExpertConfig for external optimization |
 
 ## External Dependencies
 
