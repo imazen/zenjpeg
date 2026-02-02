@@ -1016,7 +1016,8 @@ Image: 256x256 deterministic noise+patches (not gradient), MozjpegBaseline Q85 b
 | HybridProgressive | 23,455 | +35.4% |
 | HybridMaxCompression | 23,130 | +33.5% |
 
-Hybrid presets are largest because hybrid path is broken — trellis silently disabled.
+Hybrid presets use jpegli tables + standalone trellis (coupling=0). They don't use hybrid
+AQ-coupled trellis by default because `aq_trellis_coupling=0` in all presets.
 
 **Active parameters ranked by max |delta|:**
 
@@ -1040,33 +1041,50 @@ Hybrid presets are largest because hybrid path is broken — trellis silently di
 | `trellis_use_lambda_weight_tbl` | Hardcoded flat 1/q² weights | `trellis/ac.rs:47-52` |
 | `trellis_num_loops` | Stored but never read (single-pass) | `trellis/ac.rs` (absent) |
 | `trellis_speed_mode` | Only search bounds, DP finds same optimum | `trellis/ac.rs:102-113` |
-| `aq_trellis_coupling` | `create_hybrid_ctx()` never called | `hybrid.rs:56` |
-| All `aq_trellis_*` fields | Hybrid path is dead code | `hybrid.rs:65` |
+| `aq_trellis_coupling` | **FIXED**: Now affects output (larger files, better DSSIM) | `streaming.rs:263` |
+| All `aq_trellis_*` fields | **FIXED**: Now affect lambda adjustment | `hybrid/config.rs:266` |
 | `quality` (Exact tables) | Tables pre-scaled; zero-bias all-zeros | `mozjpeg_table_data.rs:99-106` |
 | `allow_16bit_quant_tables` | No effect at Q85+ (values ≤ 255) | — |
 | `deringing` | Only triggers on saturated (255) pixels | `deringing.rs:131-135` |
 
-**Hybrid mode dead code trace:**
-1. `ExpertConfig::build_trellis_or_hybrid()` builds `HybridConfig` when coupling > 0 (`search.rs:584`)
-2. `to_encoder_config()` stores it in `config.hybrid_config` (`search.rs:565`)
-3. `StreamingEncoder` copies to `ComputedConfig` (`streaming.rs:350`)
-4. **Nobody reads it.** `create_hybrid_ctx()` (`hybrid.rs:56`) exists but is never called.
-5. `StripProcessor::set_trellis()` only accepts `Option<TrellisConfig>` (`strip/mod.rs:715`)
-6. When hybrid mode, `trellis` is `None` → strip gets no trellis → standard rounding.
+**Hybrid mode flow (FIXED 2026-02-02):**
+1. `ExpertConfig::build_trellis_or_hybrid()` builds `HybridConfig` when coupling > 0
+2. `to_encoder_config()` stores it in `config.hybrid_config`
+3. `BytesEncoder::build_streaming_encoder()` calls `builder.hybrid_config(config.hybrid_config)`
+4. `StreamingEncoder::from_builder()` calls `processor.set_hybrid(builder.hybrid_config)`
+5. `StripProcessor::set_hybrid()` creates `HybridQuantContext::new(config)` (Hybrid mode)
+6. Quantization uses AQ-coupled lambda adjustment per-block
+
+**Hybrid mode benchmark results (2026-02-02):**
+Run: `cargo run --release --example hybrid_trellis_benchmark`
+
+| Image | Q | standalone | hybrid(2.0) | Size Δ | DSSIM Δ |
+|-------|---|------------|-------------|--------|---------|
+| flower_small | 85 | 42587 | 39298 | -7.7% | +28.6% |
+| flower_small | 90 | 54278 | 49677 | -8.5% | +31.2% |
+| apple.com | 85 | 469870 | 542594 | +15.5% | -37.1% |
+| apple.com | 90 | 566481 | 633700 | +11.9% | -32.8% |
+
+Hybrid improves DSSIM but at cost of larger files. Not useful for the intended
+purpose (smaller files OR better quality at same size).
 
 **For optimizers:** Only tune `tables.quant` (192 values), `lambda_log_scale1/2` (2 floats),
-and `zero_bias_mul` (192 values, jpegli only). Everything else is either dead or marginal.
+and `zero_bias_mul` (192 values, jpegli only). `aq_trellis_*` fields now work but
+produce suboptimal trade-offs.
 
 ## Known Bugs
 
-1. **Hybrid trellis path is dead code (2026-02-02)** - `HybridConfig` is built and stored
-   in `EncoderConfig` but `create_hybrid_ctx()` is never called during encoding.
-   Setting `aq_trellis_coupling > 0` silently falls through to standard (non-trellis)
-   quantization. All `aq_trellis_*` fields in ExpertConfig are non-functional.
-   - Affects: `encode/hybrid.rs:56` (`create_hybrid_ctx` defined but never called),
-     `encode/streaming.rs:350` (hybrid_config stored but not consumed)
-   - Impact: Users get no trellis instead of hybrid trellis. Silent failure.
-   - Priority: High — core feature advertised but broken
+1. **Hybrid trellis produces suboptimal rate-distortion (2026-02-02)** - FIXED: Hybrid path
+   is now wired through `byte_encoders.rs` and `streaming.rs`. But benchmark results show
+   hybrid trades file size for quality in the WRONG direction:
+   - Hybrid files are 10-30% LARGER than standalone trellis
+   - But DSSIM is 23-49% BETTER (lower)
+   - Goal was: same size + better quality, OR smaller + same quality
+   - Actual: larger + better quality (not what we wanted)
+   - Files: `encode/byte_encoders.rs:131-135`, `encode/streaming.rs:261-264`,
+     `encode/strip/mod.rs:723-730`, `examples/hybrid_trellis_benchmark.rs`
+   - Impact: Feature works but isn't useful for the intended purpose
+   - Priority: Low — investigate alternative approaches or remove
 
 2. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
    - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`trellis/ac.rs:52`)
