@@ -92,14 +92,18 @@ impl BytesEncoder {
             .chroma_downsampling(config.downsampling_method)
             .restart_interval(config.restart_interval);
 
-        // Apply custom encoding tables if configured
-        if let Some(ref tables) = config.tables {
-            builder = builder.encoding_tables(tables.clone());
+        // Decompose QuantTableConfig into builder's individual fields
+        if let Some(tables) = config.quant_table_config.custom_tables() {
+            builder = builder.encoding_tables(Box::new(tables.clone()));
         }
+        builder = builder.quant_source(config.quant_table_config.quant_source());
+        builder = builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
 
-        if config.progressive {
+        // Decompose ScanMode into builder's individual fields
+        if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
         }
+        builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
         if matches!(
             config.color_mode,
@@ -112,9 +116,6 @@ impl BytesEncoder {
         builder = builder.deringing(config.deringing);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
-        builder = builder.separate_chroma_tables(config.separate_chroma_tables);
-        builder = builder.scan_strategy(config.scan_strategy);
-        builder = builder.quant_source(config.quant_source);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {
@@ -926,22 +927,23 @@ impl YCbCrPlanarEncoder {
             .chroma_downsampling(config.downsampling_method)
             .restart_interval(config.restart_interval);
 
-        // Apply custom encoding tables if configured
-        if let Some(ref tables) = config.tables {
-            builder = builder.encoding_tables(tables.clone());
+        // Decompose QuantTableConfig into builder's individual fields
+        if let Some(tables) = config.quant_table_config.custom_tables() {
+            builder = builder.encoding_tables(Box::new(tables.clone()));
         }
+        builder = builder.quant_source(config.quant_table_config.quant_source());
+        builder = builder.separate_chroma_tables(config.quant_table_config.separate_chroma_tables());
 
-        if config.progressive {
+        // Decompose ScanMode into builder's individual fields
+        if config.scan_mode.is_progressive() {
             builder = builder.progressive(true);
         }
+        builder = builder.scan_strategy(config.scan_mode.scan_strategy());
 
         // Always pass deringing setting (StreamingEncoder defaults to true)
         builder = builder.deringing(config.deringing);
 
         builder = builder.allow_16bit_quant_tables(config.allow_16bit_quant_tables);
-        builder = builder.separate_chroma_tables(config.separate_chroma_tables);
-        builder = builder.scan_strategy(config.scan_strategy);
-        builder = builder.quant_source(config.quant_source);
 
         #[cfg(feature = "parallel")]
         if config.parallel.is_some() {

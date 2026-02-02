@@ -910,6 +910,10 @@ pub enum ScanStrategy {
 /// For other mozjpeg presets (MSSIM, Klein, etc.), use the `mozjpeg-tables`
 /// feature and supply custom tables via
 /// [`EncoderConfig::quant_tables()`](super::encoder_config::EncoderConfig::quant_tables).
+///
+/// **Prefer [`QuantTableConfig`]** for new code — it bundles table source,
+/// chroma table count, and custom tables into one type-safe enum that
+/// prevents invalid combinations.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QuantTableSource {
@@ -918,4 +922,158 @@ pub enum QuantTableSource {
     Jpegli,
     /// Mozjpeg Robidoux tables (psychovisual, quality-scaled).
     MozjpegDefault,
+}
+
+/// Unified quantization table configuration.
+///
+/// Bundles the table source, chroma table layout, and custom table overrides
+/// into a single type, preventing invalid combinations such as:
+///
+/// - `MozjpegDefault` + separate chroma tables (mozjpeg always uses 2 tables)
+/// - Custom tables + a quant source (custom overrides everything)
+///
+/// # Variants
+///
+/// | Variant | Tables | Source | Notes |
+/// |---------|--------|--------|-------|
+/// | `Jpegli` | 3 (Y, Cb, Cr) | jpegli perceptual | Default, matches `jpegli_set_distance()` |
+/// | `JpegliSharedChroma` | 2 (Y, shared) | jpegli perceptual | Matches `jpeg_set_quality()` |
+/// | `MozjpegRobidoux` | 2 (Y, shared) | Robidoux psychovisual | Matches C mozjpeg default |
+/// | `Custom` | (user-defined) | user-defined | Full control via [`EncodingTables`] |
+///
+/// [`EncodingTables`]: super::tuning::EncodingTables
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub enum QuantTableConfig {
+    /// Jpegli perceptual defaults with 3 separate quantization tables (Y, Cb, Cr).
+    ///
+    /// Matches C++ jpegli's `jpegli_set_distance()` behavior. Each chroma
+    /// component gets its own optimized table for best quality.
+    #[default]
+    Jpegli,
+
+    /// Jpegli perceptual defaults with 2 quantization tables (Y, shared chroma).
+    ///
+    /// Matches C++ jpegli's `jpeg_set_quality()` behavior. Cb and Cr share
+    /// the same table — produces slightly larger files than 3-table mode
+    /// but is compatible with encoders that use `jpeg_set_quality()`.
+    JpegliSharedChroma,
+
+    /// Mozjpeg Robidoux psychovisual tables with 2 quantization tables.
+    ///
+    /// Uses Nicolas Robidoux's psychovisual tables scaled by libjpeg's
+    /// quality formula. Always 2 tables (shared chroma), matching C mozjpeg.
+    MozjpegRobidoux,
+
+    /// User-provided custom encoding tables.
+    ///
+    /// Overrides both quantization tables and zero-bias configuration.
+    /// Use [`EncodingTables::default_ycbcr()`](super::tuning::EncodingTables::default_ycbcr)
+    /// as a starting point for modifications.
+    Custom(Box<super::tuning::EncodingTables>),
+}
+
+impl QuantTableConfig {
+    /// Returns the internal [`QuantTableSource`] for this configuration.
+    ///
+    /// Custom tables return `Jpegli` (ignored when custom tables are present).
+    #[must_use]
+    pub const fn quant_source(&self) -> QuantTableSource {
+        match self {
+            Self::Jpegli | Self::JpegliSharedChroma | Self::Custom(_) => QuantTableSource::Jpegli,
+            Self::MozjpegRobidoux => QuantTableSource::MozjpegDefault,
+        }
+    }
+
+    /// Returns whether Cb and Cr use separate quantization tables.
+    #[must_use]
+    pub const fn separate_chroma_tables(&self) -> bool {
+        match self {
+            Self::Jpegli => true,
+            Self::JpegliSharedChroma | Self::MozjpegRobidoux => false,
+            // Custom tables define their own layout; default to separate.
+            Self::Custom(_) => true,
+        }
+    }
+
+    /// Returns the custom encoding tables, if any.
+    #[must_use]
+    pub fn custom_tables(&self) -> Option<&super::tuning::EncodingTables> {
+        match self {
+            Self::Custom(t) => Some(t),
+            _ => None,
+        }
+    }
+}
+
+/// JPEG scan mode — baseline vs progressive, with script strategy.
+///
+/// Bundles the progressive flag and scan script strategy into a single type,
+/// preventing invalid combinations such as:
+///
+/// - Baseline + Search scan strategy (search only applies to progressive)
+/// - Baseline + Mozjpeg scan script (mozjpeg script is progressive-only)
+///
+/// All progressive modes automatically enable optimized Huffman tables.
+///
+/// # Variants
+///
+/// | Variant | Progressive | Script | Notes |
+/// |---------|-------------|--------|-------|
+/// | `Baseline` | No | N/A | Sequential JPEG (SOF0/SOF1) |
+/// | `Progressive` | Yes | jpegli default | Freq split at 2/3, SA for all |
+/// | `ProgressiveMozjpeg` | Yes | mozjpeg default | Freq split at 8/9, no chroma SA |
+/// | `ProgressiveSearch` | Yes | search (64 candidates) | Best compression, ~2x slower |
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScanMode {
+    /// Baseline (sequential) JPEG.
+    ///
+    /// Single scan containing all components. No progressive refinement.
+    /// Compatible with all JPEG decoders.
+    #[default]
+    Baseline,
+
+    /// Progressive JPEG with jpegli's default scan script.
+    ///
+    /// - Frequency split at AC coefficients 2/3
+    /// - Successive approximation for all components (Al=2 → 1 → 0)
+    /// - Separate DC scans per component
+    Progressive,
+
+    /// Progressive JPEG with mozjpeg's default scan script.
+    ///
+    /// - Frequency split at AC coefficients 8/9
+    /// - No successive approximation for chroma
+    /// - Separate DC scans per component
+    ///
+    /// Closest parity with C mozjpeg's default progressive output.
+    ProgressiveMozjpeg,
+
+    /// Progressive JPEG with scan search optimization.
+    ///
+    /// Tests 64 candidate scan configurations (frequency splits, SA levels,
+    /// DC interleaving) and picks the smallest. Typically saves 1-3% vs
+    /// fixed scripts, at the cost of ~2x encode time.
+    ProgressiveSearch,
+}
+
+impl ScanMode {
+    /// Returns true if this mode uses progressive encoding.
+    #[must_use]
+    pub const fn is_progressive(self) -> bool {
+        !matches!(self, Self::Baseline)
+    }
+
+    /// Returns the internal [`ScanStrategy`] for this mode.
+    ///
+    /// Baseline returns `Default` (ignored for non-progressive encoding).
+    #[must_use]
+    pub const fn scan_strategy(self) -> ScanStrategy {
+        match self {
+            Self::Baseline | Self::Progressive => ScanStrategy::Default,
+            Self::ProgressiveMozjpeg => ScanStrategy::Mozjpeg,
+            Self::ProgressiveSearch => ScanStrategy::Search,
+        }
+    }
 }

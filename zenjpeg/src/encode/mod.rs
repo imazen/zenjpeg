@@ -129,7 +129,7 @@ pub use encoder_types::ParallelEncoding;
 #[allow(unused_imports)] // Public API re-exports
 pub use encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, OptimizationPreset, PixelLayout, Quality,
-    QuantTableSource, ScanStrategy, XybSubsampling, YCbCrPlanes,
+    QuantTableConfig, QuantTableSource, ScanMode, ScanStrategy, XybSubsampling, YCbCrPlanes,
 };
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
