@@ -431,6 +431,18 @@ impl TrellisConfig {
     pub fn is_enabled(&self) -> bool {
         self.enabled || self.dc_enabled
     }
+
+    /// Returns lambda log scale parameter 1 (rate penalty).
+    #[must_use]
+    pub fn lambda_log_scale1(&self) -> f32 {
+        self.lambda_log_scale1
+    }
+
+    /// Returns lambda log scale parameter 2 (distortion sensitivity).
+    #[must_use]
+    pub fn lambda_log_scale2(&self) -> f32 {
+        self.lambda_log_scale2
+    }
 }
 
 #[cfg(test)]

@@ -186,6 +186,32 @@ impl HybridQuantContext {
 
         hybrid_quantize_block(dct_coeffs, quant, effective_aq, ac_table, &trellis_config)
     }
+
+    /// Returns true if DC trellis optimization is enabled.
+    pub(crate) fn is_dc_trellis_enabled(&self) -> bool {
+        match &self.mode {
+            TrellisMode::Hybrid(config) => config.dc_enabled,
+            TrellisMode::Standalone(config) => config.is_dc_enabled(),
+        }
+    }
+
+    /// Returns the base trellis configuration (for DC trellis lambda parameters).
+    pub(crate) fn trellis_config(&self) -> TrellisConfig {
+        match &self.mode {
+            TrellisMode::Hybrid(config) => config.to_trellis_config(0.0, 1.0, false),
+            TrellisMode::Standalone(config) => *config,
+        }
+    }
+
+    /// Returns the luma DC rate table for DC trellis optimization.
+    pub(crate) fn luma_dc_rate_table(&self) -> &crate::trellis::RateTable {
+        &self.rate_tables.luma_dc
+    }
+
+    /// Returns the chroma DC rate table for DC trellis optimization.
+    pub(crate) fn chroma_dc_rate_table(&self) -> &crate::trellis::RateTable {
+        &self.rate_tables.chroma_dc
+    }
 }
 
 // ============================================================================

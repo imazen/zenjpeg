@@ -284,6 +284,7 @@ impl PendingBuffers {
 fn quantize_chroma_blocks(
     pending: &[Block8x8f],
     output: &mut Vec<[i16; DCT_BLOCK_SIZE]>,
+    mut dc_raw_output: Option<&mut Vec<i32>>,
     all_aq_strengths: &[f32],
     quant_simd: &QuantTableSimd,
     zero_bias_simd: &ZeroBiasSimd,
@@ -299,6 +300,13 @@ fn quantize_chroma_blocks(
     let global_chroma_by = output.len() / blocks_h;
 
     for (i, dct) in pending.iter().enumerate() {
+        // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
+        if let Some(dc_raw) = dc_raw_output.as_deref_mut() {
+            let row0: [f32; 8] = dct.rows[0].into();
+            let dc_val = (row0[0] * 64.0).round() as i32;
+            dc_raw.push(dc_val);
+        }
+
         let bx = i % blocks_h;
         let local_by = i / blocks_h;
         let y_bx = (bx * y_blocks_w) / blocks_h;
@@ -364,6 +372,15 @@ pub struct StripProcessor {
     cb_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
     /// Cr channel quantized blocks
     cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+
+    // === Raw DC values for DC trellis optimization ===
+    /// Y channel raw DC coefficients (scaled by 64 for trellis compatibility).
+    /// Only populated when DC trellis is enabled.
+    y_dc_raw: Vec<i32>,
+    /// Cb channel raw DC coefficients (scaled by 64 for trellis compatibility).
+    cb_dc_raw: Vec<i32>,
+    /// Cr channel raw DC coefficients (scaled by 64 for trellis compatibility).
+    cr_dc_raw: Vec<i32>,
 
     // === Pending iMCU DCT blocks (wide-native, double-buffered) ===
     pending: PendingBuffers,
@@ -535,6 +552,12 @@ impl StripProcessor {
                 Vec::new()
             },
 
+            // Raw DC values for DC trellis (only populated when DC trellis enabled)
+            // Allocation is deferred - we'll grow these lazily if needed
+            y_dc_raw: Vec::new(),
+            cb_dc_raw: Vec::new(),
+            cr_dc_raw: Vec::new(),
+
             // Pending f32 DCT blocks (double-buffered, capacity for one iMCU row)
             pending: PendingBuffers {
                 y: [
@@ -656,6 +679,9 @@ impl StripProcessor {
             cr_blocks: std::mem::take(&mut self.cr_blocks),
             aq_strengths: std::mem::take(&mut self.all_aq_strengths),
             alloc_stats: AllocationStats::new(), // Fresh stats for remaining work
+            y_dc_raw: std::mem::take(&mut self.y_dc_raw),
+            cb_dc_raw: std::mem::take(&mut self.cb_dc_raw),
+            cr_dc_raw: std::mem::take(&mut self.cr_dc_raw),
         }
     }
 
@@ -1140,11 +1166,22 @@ impl StripProcessor {
 
         // Check if we have trellis context for R-D optimization
         let use_trellis = self.hybrid_ctx.is_some();
+        let store_dc_raw = self
+            .hybrid_ctx
+            .as_ref()
+            .is_some_and(|ctx| ctx.is_dc_trellis_enabled());
 
         // Quantize Y blocks (vectors pre-allocated at construction)
         for (i, dct) in self.pending.y[buffer_idx].iter().enumerate() {
             // Use get() with fallback to avoid branch on common path
             let aq_strength = aq_strengths.get(i).copied().unwrap_or(0.08);
+
+            // Store raw DC if DC trellis is enabled (scaled by 64 for trellis compatibility)
+            if store_dc_raw {
+                let row0: [f32; 8] = dct.rows[0].into();
+                let dc_raw = (row0[0] * 64.0).round() as i32;
+                self.y_dc_raw.push(dc_raw);
+            }
 
             let zigzag = if use_trellis {
                 // Trellis path: convert to array, quantize with R-D, apply zigzag
@@ -1183,9 +1220,15 @@ impl StripProcessor {
             let c_blocks_h = self.layout.c_blocks_h;
 
             // Cb: always uses c_blocks dimensions
+            let cb_dc_raw = if store_dc_raw {
+                Some(&mut self.cb_dc_raw)
+            } else {
+                None
+            };
             quantize_chroma_blocks(
                 &self.pending.cb[buffer_idx],
                 &mut self.cb_blocks,
+                cb_dc_raw,
                 &self.all_aq_strengths,
                 &quant.cb_quant_simd,
                 &quant.cb_zero_bias_simd,
@@ -1209,9 +1252,15 @@ impl StripProcessor {
             } else {
                 c_blocks_h
             };
+            let cr_dc_raw = if store_dc_raw {
+                Some(&mut self.cr_dc_raw)
+            } else {
+                None
+            };
             quantize_chroma_blocks(
                 &self.pending.cr[buffer_idx],
                 &mut self.cr_blocks,
+                cr_dc_raw,
                 &self.all_aq_strengths,
                 &quant.cr_quant_simd,
                 &quant.cr_zero_bias_simd,
@@ -1257,13 +1306,161 @@ impl StripProcessor {
             self.quantize_prev_pending_imcu(&default_aq);
         }
 
+        // Apply DC trellis optimization if enabled
+        if !self.y_dc_raw.is_empty() {
+            self.apply_dc_trellis();
+        }
+
         Ok(StripProcessorOutput {
             y_blocks: self.y_blocks,
             cb_blocks: self.cb_blocks,
             cr_blocks: self.cr_blocks,
             aq_strengths: self.all_aq_strengths,
             alloc_stats: self.alloc_stats,
+            y_dc_raw: self.y_dc_raw,
+            cb_dc_raw: self.cb_dc_raw,
+            cr_dc_raw: self.cr_dc_raw,
         })
+    }
+
+    /// Apply DC trellis optimization to all quantized blocks.
+    ///
+    /// DC trellis uses dynamic programming to find optimal DC coefficients
+    /// that minimize rate (differential encoding cost) + distortion.
+    /// Must be called after all blocks are quantized and DC raw values stored.
+    fn apply_dc_trellis(&mut self) {
+        let Some(ref hybrid_ctx) = self.hybrid_ctx else {
+            return;
+        };
+        if !hybrid_ctx.is_dc_trellis_enabled() {
+            return;
+        }
+
+        let config = hybrid_ctx.trellis_config();
+        let lambda1 = config.lambda_log_scale1();
+        let lambda2 = config.lambda_log_scale2();
+
+        // Convert DC-only raw values to full blocks for the DC trellis API.
+        // AC coefficients are set to 0 since we've already done AC trellis.
+        // This slightly affects the per-block lambda (norm calculation uses AC),
+        // but DC trellis primarily optimizes DC differentials, not quality.
+        let make_raw_blocks = |dc_raw: &[i32]| -> Vec<[i32; DCT_BLOCK_SIZE]> {
+            dc_raw
+                .iter()
+                .map(|&dc| {
+                    let mut block = [0i32; DCT_BLOCK_SIZE];
+                    block[0] = dc;
+                    block
+                })
+                .collect()
+        };
+
+        // Y channel DC trellis
+        if !self.y_dc_raw.is_empty() && !self.y_blocks.is_empty() {
+            let raw_blocks = make_raw_blocks(&self.y_dc_raw);
+            let dc_quantval = self.quant.y_quant.values[0];
+            let dc_table = hybrid_ctx.luma_dc_rate_table();
+
+            // Convert zigzag blocks back to natural order for DC trellis
+            let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = self
+                .y_blocks
+                .iter()
+                .map(|zigzag| {
+                    let mut natural = [0i16; DCT_BLOCK_SIZE];
+                    for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                        natural[i] = zigzag[zz_idx as usize];
+                    }
+                    natural
+                })
+                .collect();
+
+            crate::trellis::dc_trellis_optimize(
+                &raw_blocks,
+                &mut natural_blocks,
+                dc_quantval,
+                dc_table,
+                0, // last_dc starts at 0
+                lambda1,
+                lambda2,
+            );
+
+            // Convert back to zigzag order
+            for (i, natural) in natural_blocks.into_iter().enumerate() {
+                for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                    self.y_blocks[i][zz_idx as usize] = natural[j];
+                }
+            }
+        }
+
+        // Cb channel DC trellis
+        if !self.cb_dc_raw.is_empty() && !self.cb_blocks.is_empty() {
+            let raw_blocks = make_raw_blocks(&self.cb_dc_raw);
+            let dc_quantval = self.quant.cb_quant.values[0];
+            let dc_table = hybrid_ctx.chroma_dc_rate_table();
+
+            let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = self
+                .cb_blocks
+                .iter()
+                .map(|zigzag| {
+                    let mut natural = [0i16; DCT_BLOCK_SIZE];
+                    for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                        natural[i] = zigzag[zz_idx as usize];
+                    }
+                    natural
+                })
+                .collect();
+
+            crate::trellis::dc_trellis_optimize(
+                &raw_blocks,
+                &mut natural_blocks,
+                dc_quantval,
+                dc_table,
+                0,
+                lambda1,
+                lambda2,
+            );
+
+            for (i, natural) in natural_blocks.into_iter().enumerate() {
+                for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                    self.cb_blocks[i][zz_idx as usize] = natural[j];
+                }
+            }
+        }
+
+        // Cr channel DC trellis
+        if !self.cr_dc_raw.is_empty() && !self.cr_blocks.is_empty() {
+            let raw_blocks = make_raw_blocks(&self.cr_dc_raw);
+            let dc_quantval = self.quant.cr_quant.values[0];
+            let dc_table = hybrid_ctx.chroma_dc_rate_table();
+
+            let mut natural_blocks: Vec<[i16; DCT_BLOCK_SIZE]> = self
+                .cr_blocks
+                .iter()
+                .map(|zigzag| {
+                    let mut natural = [0i16; DCT_BLOCK_SIZE];
+                    for (i, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                        natural[i] = zigzag[zz_idx as usize];
+                    }
+                    natural
+                })
+                .collect();
+
+            crate::trellis::dc_trellis_optimize(
+                &raw_blocks,
+                &mut natural_blocks,
+                dc_quantval,
+                dc_table,
+                0,
+                lambda1,
+                lambda2,
+            );
+
+            for (i, natural) in natural_blocks.into_iter().enumerate() {
+                for (j, &zz_idx) in JPEG_ZIGZAG_ORDER.iter().enumerate() {
+                    self.cr_blocks[i][zz_idx as usize] = natural[j];
+                }
+            }
+        }
     }
 }
 
@@ -1280,6 +1477,13 @@ pub struct StripProcessorOutput {
     pub aq_strengths: Vec<f32>,
     /// Allocation statistics from the encoding process
     pub alloc_stats: AllocationStats,
+    /// Y channel raw DC coefficients (scaled, for DC trellis post-processing).
+    /// Empty if DC trellis was not enabled.
+    pub y_dc_raw: Vec<i32>,
+    /// Cb channel raw DC coefficients.
+    pub cb_dc_raw: Vec<i32>,
+    /// Cr channel raw DC coefficients.
+    pub cr_dc_raw: Vec<i32>,
 }
 
 #[cfg(test)]
