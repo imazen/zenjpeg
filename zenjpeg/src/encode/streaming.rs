@@ -259,6 +259,8 @@ impl StreamingEncoder {
         // Enable trellis quantization if configured
         if let Some(ref trellis) = builder.trellis {
             processor.set_trellis(*trellis);
+        } else if builder.hybrid_config.enabled {
+            processor.set_hybrid(builder.hybrid_config);
         }
 
         let strip_height = processor.strip_height();

@@ -188,6 +188,7 @@ pub fn hybrid_quantize_block(
     let mut quantized = [0i16; DCT_BLOCK_SIZE];
     trellis_quantize_block(&dct_i32, &mut quantized, base_quant, ac_table, &config);
 
+
     quantized
 }
 
