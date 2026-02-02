@@ -278,7 +278,7 @@ impl StreamingEncoder {
             original_height: None,
             allow_16bit_quant_tables: builder.allow_16bit_quant_tables,
             separate_chroma_tables: builder.separate_chroma_tables,
-            optimize_scans: builder.optimize_scans,
+            scan_strategy: builder.scan_strategy,
         };
 
         // Determine if we can use streaming-through encoding:

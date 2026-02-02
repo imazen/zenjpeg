@@ -3,7 +3,7 @@
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
-    XybSubsampling,
+    ScanStrategy, XybSubsampling,
 };
 use super::mozjpeg_compat::TrellisConfig;
 use super::tuning::EncodingTables;
@@ -46,10 +46,9 @@ pub struct EncoderConfig {
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
-    /// Optimize progressive scan script for minimum file size.
-    /// When enabled, tries 64 candidate scan configurations and picks the smallest.
-    /// Automatically enables progressive mode. Skipped for XYB.
-    pub(crate) optimize_scans: bool,
+    /// Progressive scan script strategy.
+    /// Controls how scans are structured for progressive JPEGs.
+    pub(crate) scan_strategy: ScanStrategy,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -164,7 +163,7 @@ impl EncoderConfig {
             separate_chroma_tables: true, // 3 tables (matches jpegli_set_distance)
             trellis: None,
             segments: None,
-            optimize_scans: false,
+            scan_strategy: ScanStrategy::Default,
         }
     }
 
@@ -198,24 +197,48 @@ impl EncoderConfig {
         self
     }
 
-    /// Enable progressive scan optimization (mozjpeg-style `optimize_scans`).
+    /// Set the progressive scan script strategy.
     ///
-    /// Tries 64 candidate progressive scan configurations and picks the smallest.
-    /// This is a **lossless** optimization: decoded pixels are identical, but the
-    /// progressive scan structure is chosen to minimize file size.
+    /// Controls how progressive JPEG scan scripts are generated:
     ///
-    /// Automatically enables progressive mode and optimized Huffman tables.
+    /// - [`ScanStrategy::Default`]: jpegli-style script with frequency split at 2/3
+    ///   and successive approximation for all components.
+    /// - [`ScanStrategy::Search`]: Tries 64 candidate configurations and picks the
+    ///   smallest (mozjpeg-style `optimize_scans`). 1-3% smaller, ~2x slower.
+    /// - [`ScanStrategy::Mozjpeg`]: mozjpeg's default script with frequency split
+    ///   at 8/9 and no chroma successive approximation.
+    ///
+    /// All strategies produce the same decoded pixels—this is a **lossless**
+    /// optimization affecting only the progressive scan structure.
+    ///
+    /// Automatically enables progressive mode and optimized Huffman tables
+    /// for non-Default strategies.
+    ///
     /// Skipped for XYB mode (XYB uses a fixed scan structure).
-    ///
-    /// Expected savings: 1-3% smaller progressive JPEGs.
     #[must_use]
-    pub fn optimize_scans(mut self, enable: bool) -> Self {
-        self.optimize_scans = enable;
-        if enable {
+    pub fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
+        self.scan_strategy = strategy;
+        if strategy != ScanStrategy::Default {
             self.progressive = true;
             self.huffman = HuffmanStrategy::Optimize;
         }
         self
+    }
+
+    /// Enable progressive scan optimization (mozjpeg-style `optimize_scans`).
+    ///
+    /// This is equivalent to:
+    /// - `scan_strategy(ScanStrategy::Search)` when `enable` is true
+    /// - `scan_strategy(ScanStrategy::Default)` when `enable` is false
+    ///
+    /// Prefer using [`scan_strategy()`](Self::scan_strategy) directly for more control.
+    #[must_use]
+    pub fn optimize_scans(self, enable: bool) -> Self {
+        self.scan_strategy(if enable {
+            ScanStrategy::Search
+        } else {
+            ScanStrategy::Default
+        })
     }
 
     /// Enable or disable Huffman table optimization.

@@ -8,6 +8,7 @@
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
+use super::encoder_types::ScanStrategy;
 use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
 use crate::encode::tuning::EncodingTables;
@@ -38,8 +39,8 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) allow_16bit_quant_tables: bool,
     /// Use separate Cb and Cr quantization tables (default: true = 3 tables)
     pub(crate) separate_chroma_tables: bool,
-    /// Optimize progressive scan script for minimum file size
-    pub(crate) optimize_scans: bool,
+    /// Progressive scan script strategy
+    pub(crate) scan_strategy: ScanStrategy,
     /// Enable parallel encoding (requires `parallel` feature)
     #[cfg(feature = "parallel")]
     pub(crate) parallel: bool,
@@ -69,7 +70,7 @@ impl StreamingEncoderBuilder {
             deringing: true,
             allow_16bit_quant_tables: false,
             separate_chroma_tables: true,
-            optimize_scans: false,
+            scan_strategy: ScanStrategy::Default,
             #[cfg(feature = "parallel")]
             parallel: false,
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
@@ -286,10 +287,21 @@ impl StreamingEncoderBuilder {
         self
     }
 
-    /// Enables progressive scan optimization.
+    /// Sets the progressive scan script strategy.
+    #[must_use]
+    pub(crate) fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
+        self.scan_strategy = strategy;
+        self
+    }
+
+    /// Enables progressive scan optimization (legacy API).
     #[must_use]
     pub(crate) fn optimize_scans(mut self, enable: bool) -> Self {
-        self.optimize_scans = enable;
+        self.scan_strategy = if enable {
+            ScanStrategy::Search
+        } else {
+            ScanStrategy::Default
+        };
         self
     }
 
