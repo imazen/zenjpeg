@@ -106,7 +106,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if has_cmozjpeg {
         println!("Also showing C mozjpeg for reference.");
     } else {
-        println!("C mozjpeg not found at {} - skipping reference.", CJPEG_PATH);
+        println!(
+            "C mozjpeg not found at {} - skipping reference.",
+            CJPEG_PATH
+        );
     }
     println!();
 
@@ -151,8 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             // zenjpeg in mozjpeg mimic mode with trellis (NO EOB)
-            let tables =
-                MozjpegTables::generate_ex(quality, QuantTablePreset::Robidoux, true);
+            let tables = MozjpegTables::generate_ex(quality, QuantTablePreset::Robidoux, true);
             let config_trel = EncoderConfig::ycbcr(quality, ChromaSubsampling::Quarter)
                 .progressive(false)
                 .tables(tables.clone())
@@ -189,7 +191,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Save files for inspection at Q75
             if quality == 75 {
                 std::fs::write(format!("/tmp/zen_tr_{}.jpg", filename), &{
-                    let mut enc = config_trel.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
+                    let mut enc =
+                        config_trel.encode_from_bytes(width, height, PixelLayout::Rgb8Srgb)?;
                     enc.push(&pixels, height as usize, width as usize * 3, Unstoppable)?;
                     enc.finish()?
                 })?;
