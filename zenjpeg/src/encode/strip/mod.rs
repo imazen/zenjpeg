@@ -720,6 +720,14 @@ impl StripProcessor {
         }
     }
 
+    /// Sets hybrid quantization configuration (AQ-coupled trellis).
+    ///
+    /// Hybrid mode adjusts trellis lambda per-block based on AQ strength,
+    /// spending more bits on smooth areas and fewer on complex textures.
+    pub fn set_hybrid(&mut self, config: crate::hybrid::config::HybridConfig) {
+        self.hybrid_ctx = Some(HybridQuantContext::new(config));
+    }
+
     /// Returns whether XYB mode is enabled.
     #[must_use]
     pub fn is_xyb(&self) -> bool {
@@ -1166,6 +1174,7 @@ impl StripProcessor {
 
         // Check if we have trellis context for R-D optimization
         let use_trellis = self.hybrid_ctx.is_some();
+
         let store_dc_raw = self
             .hybrid_ctx
             .as_ref()
