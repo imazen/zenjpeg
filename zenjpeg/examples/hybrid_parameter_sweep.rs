@@ -18,11 +18,12 @@ fn main() {
     let image_paths: Vec<String> = if args.len() > 1 {
         args[1..].to_vec()
     } else {
-        // Default test images
+        // Default test images (using CID22, NOT Kodak which is overfit by codecs)
         vec![
             "internal/jpegli-cpp/testdata/jxl/flower/flower_small.rgb.png".to_string(),
             "../codec-eval/codec-corpus/qoi-benchmark/screenshot_web/apple.com.png".to_string(),
-            "../codec-eval/codec-corpus/kodak/kodim01.png".to_string(),
+            // CID22 image (photographic)
+            "../glassa/results/cid22_comparison/butteraugli_matched/pexels-photo-4577831/original.png".to_string(),
         ]
     };
 
