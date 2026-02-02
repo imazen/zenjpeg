@@ -111,6 +111,12 @@ pub mod mozjpeg_tables;
 /// and familiarity, including [`TrellisConfig`](mozjpeg_compat::TrellisConfig).
 pub mod mozjpeg_compat;
 
+/// Expert configuration for external optimization (simulated annealing, etc.).
+///
+/// Flattens all quality/size-affecting parameters into a single struct with
+/// no overlapping fields. See [`ExpertConfig`](search::ExpertConfig).
+pub mod search;
+
 // v2 is the primary public API (types re-exported below)
 #[doc(hidden)]
 pub mod v2;
@@ -139,6 +145,8 @@ pub use extras::{EncoderSegment, EncoderSegments, MpfImage};
 #[cfg(feature = "mozjpeg-tables")]
 #[allow(unused_imports)] // Public API re-exports
 pub use mozjpeg_tables::{MozjpegTables, QuantTablePreset};
+#[allow(unused_imports)] // Public API re-export
+pub use search::ExpertConfig;
 
 use crate::error::Result;
 
