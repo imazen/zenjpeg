@@ -103,7 +103,6 @@ use crate::hybrid::config::HybridConfig;
 ///
 /// | Parameter | Why dead |
 /// |-----------|----------|
-/// | `trellis_eob_opt` | Implementation disabled (would destroy quality) |
 /// | `trellis_use_lambda_weight_tbl` | Always uses flat 1/q² weights regardless of flag |
 /// | `trellis_speed_mode` | Only limits search candidates; DP finds same optimum |
 /// | `trellis_num_loops` | Stored but never read — single-pass only |
@@ -199,15 +198,6 @@ pub struct ExpertConfig {
     ///
     /// Default: `true`.
     pub trellis_dc_enabled: bool,
-
-    /// Enable EOB run optimization (cross-block zero runs).
-    ///
-    /// **DEAD PARAMETER.** The EOB optimization implementation is disabled
-    /// (commented out in `streaming.rs`) because it destroys quality. Toggling
-    /// this field has zero effect on output.
-    ///
-    /// Default: `false`.
-    pub trellis_eob_opt: bool,
 
     /// Use perceptual lambda weighting table.
     ///
@@ -379,7 +369,7 @@ impl ExpertConfig {
 
             trellis_enabled: false,
             trellis_dc_enabled: true,
-            trellis_eob_opt: false,
+
             trellis_use_lambda_weight_tbl: true,
             trellis_lambda_log_scale1: 14.75,
             trellis_lambda_log_scale2: 16.5,
@@ -473,7 +463,7 @@ impl ExpertConfig {
 
             trellis_enabled,
             trellis_dc_enabled: true,
-            trellis_eob_opt: false,
+
             trellis_use_lambda_weight_tbl: true,
             trellis_lambda_log_scale1: 14.75,
             trellis_lambda_log_scale2: 16.5,
@@ -599,7 +589,7 @@ impl ExpertConfig {
     /// or `(None, enabled HybridConfig)` for hybrid mode.
     ///
     /// In hybrid mode, the following fields are NOT forwarded to per-block trellis
-    /// configs (see struct-level docs): `trellis_eob_opt`, `trellis_speed_mode`,
+    /// configs (see struct-level docs): `trellis_speed_mode`,
     /// `trellis_delta_dc_weight`, `trellis_use_lambda_weight_tbl`.
     fn build_trellis_or_hybrid(&self) -> (Option<TrellisConfig>, HybridConfig) {
         if !self.trellis_enabled {
@@ -608,7 +598,7 @@ impl ExpertConfig {
 
         if self.aq_trellis_coupling > 0.0 {
             // Hybrid mode: AQ-coupled trellis.
-            // Note: trellis_eob_opt, trellis_speed_mode, trellis_delta_dc_weight,
+            // Note: trellis_speed_mode, trellis_delta_dc_weight,
             // and trellis_use_lambda_weight_tbl are stored in HybridConfig but
             // NOT forwarded to per-block TrellisConfig by to_trellis_config().
             // See struct-level "Hybrid-Mode Limitations" docs.
@@ -631,7 +621,6 @@ impl ExpertConfig {
             let trellis = TrellisConfig {
                 enabled: true,
                 dc_enabled: self.trellis_dc_enabled,
-                eob_opt: self.trellis_eob_opt,
                 use_lambda_weight_tbl: self.trellis_use_lambda_weight_tbl,
                 lambda_log_scale1: self.trellis_lambda_log_scale1,
                 lambda_log_scale2: self.trellis_lambda_log_scale2,
@@ -837,7 +826,6 @@ mod tests {
         let mut expert = ExpertConfig::default_ycbcr(85.0);
         expert.trellis_enabled = true;
         expert.trellis_dc_enabled = false;
-        expert.trellis_eob_opt = true;
         expert.trellis_use_lambda_weight_tbl = false;
         expert.trellis_lambda_log_scale1 = 15.0;
         expert.trellis_lambda_log_scale2 = 17.0;
@@ -852,7 +840,6 @@ mod tests {
         let trellis = enc.trellis.unwrap();
         assert!(trellis.enabled);
         assert!(!trellis.dc_enabled);
-        assert!(trellis.eob_opt);
         assert!(!trellis.use_lambda_weight_tbl);
         assert!((trellis.lambda_log_scale1 - 15.0).abs() < 1e-6);
         assert!((trellis.lambda_log_scale2 - 17.0).abs() < 1e-6);
@@ -1039,13 +1026,6 @@ mod tests {
             let mut c = base.clone();
             c.trellis_dc_enabled = false;
             test_field("trellis_dc_enabled=false", &c, "(was true)");
-        }
-
-        println!("\n--- Trellis EOB opt ---");
-        {
-            let mut c = base.clone();
-            c.trellis_eob_opt = true;
-            test_field("trellis_eob_opt=true", &c, "(was false)");
         }
 
         println!("\n--- Trellis lambda weight table ---");

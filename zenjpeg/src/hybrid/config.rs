@@ -301,7 +301,6 @@ impl HybridConfig {
         TrellisConfig::default()
             .ac_trellis(true)
             .dc_trellis(self.dc_enabled)
-            .eob_optimization(true)
             .lambda_scales(
                 self.base_lambda_scale1 + adjustment,
                 self.base_lambda_scale2,

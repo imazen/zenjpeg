@@ -130,9 +130,9 @@ While wiring hybrid, consider also:
 - `trellis_num_loops`: Could multi-pass trellis help? C mozjpeg supports it.
 - `trellis_use_lambda_weight_tbl`: CSF weights could improve perceptual quality
   (flat weights aren't optimal). Would need actual CSF table implementation.
-- `trellis_eob_opt`: The current impl is broken but the concept is sound. C mozjpeg
-  does EOB optimization successfully. Needs integration into the trellis pass rather
-  than as a post-pass (see old CONTEXT-HANDOFF.md content below for full analysis).
+- EOB optimization: DELETED. The post-trellis implementation was broken and has been
+  removed entirely. If reimplemented, it would need to be integrated INTO the trellis
+  pass where original coefficients and lambda are available.
 
 ### EOB Optimization Background (from previous investigation)
 

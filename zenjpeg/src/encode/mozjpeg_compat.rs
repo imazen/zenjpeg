@@ -157,8 +157,6 @@ pub struct TrellisConfig {
     pub enabled: bool,
     /// Enable trellis quantization for DC coefficients.
     pub dc_enabled: bool,
-    /// Optimize for sequences of EOB (end-of-block).
-    pub eob_opt: bool,
     /// Use perceptual lambda weighting table.
     pub use_lambda_weight_tbl: bool,
     /// Lambda log scale parameter 1 (rate penalty).
@@ -192,9 +190,6 @@ impl Default for TrellisConfig {
         Self {
             enabled: true,
             dc_enabled: true,
-            // EOB optimization disabled by default to match C mozjpeg.
-            // The cross-block EOB algorithm can be aggressive in some cases.
-            eob_opt: false,
             use_lambda_weight_tbl: true,
             lambda_log_scale1: DEFAULT_LAMBDA_LOG_SCALE1,
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
@@ -221,7 +216,6 @@ impl TrellisConfig {
         Self {
             enabled: false,
             dc_enabled: false,
-            eob_opt: false,
             use_lambda_weight_tbl: false,
             lambda_log_scale1: DEFAULT_LAMBDA_LOG_SCALE1,
             lambda_log_scale2: DEFAULT_LAMBDA_LOG_SCALE2,
@@ -294,22 +288,6 @@ impl TrellisConfig {
     #[must_use]
     pub fn dc_trellis(mut self, enabled: bool) -> Self {
         self.dc_enabled = enabled;
-        self
-    }
-
-    /// Enable or disable EOB (end-of-block) run optimization.
-    ///
-    /// When enabled, the encoder optimizes sequences of all-zero blocks by
-    /// considering EOBRUN codes that encode multiple consecutive EOBs efficiently.
-    ///
-    /// **Note:** Disabled by default to match C mozjpeg behavior. The cross-block
-    /// EOB algorithm can be aggressive with coefficient zeroing in some cases
-    /// (especially with chroma subsampling).
-    ///
-    /// Default: `false`
-    #[must_use]
-    pub fn eob_optimization(mut self, enabled: bool) -> Self {
-        self.eob_opt = enabled;
         self
     }
 
@@ -438,12 +416,6 @@ impl TrellisConfig {
         self.dc_enabled
     }
 
-    /// Check if EOB optimization is enabled.
-    #[must_use]
-    pub fn is_eob_opt_enabled(&self) -> bool {
-        self.eob_opt
-    }
-
     /// Get the current speed mode.
     #[must_use]
     pub fn get_speed_mode(&self) -> TrellisSpeedMode {
@@ -496,7 +468,6 @@ mod tests {
         let config = TrellisConfig::default();
         assert!(config.enabled);
         assert!(config.dc_enabled);
-        assert!(!config.eob_opt); // Disabled by default
         assert_eq!(config.speed_mode, TrellisSpeedMode::Adaptive);
         assert!((config.lambda_log_scale1 - 14.75).abs() < 0.01);
         assert!((config.delta_dc_weight - 0.0).abs() < 0.001);
@@ -527,13 +498,11 @@ mod tests {
         let config = TrellisConfig::default()
             .ac_trellis(true)
             .dc_trellis(false)
-            .eob_optimization(true)
             .speed_mode(TrellisSpeedMode::Level(5))
             .lambda_scales(15.0, 17.0);
 
         assert!(config.enabled);
         assert!(!config.dc_enabled);
-        assert!(config.eob_opt);
         assert_eq!(config.speed_mode, TrellisSpeedMode::Level(5));
         assert!((config.lambda_log_scale1 - 15.0).abs() < 0.01);
         assert!((config.lambda_log_scale2 - 17.0).abs() < 0.01);
