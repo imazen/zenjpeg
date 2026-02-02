@@ -36,14 +36,9 @@ use crate::encode::config::ComputedConfig;
 use crate::encode::encoder_types::HuffmanStrategy;
 use crate::encode::strip::StripProcessor;
 use crate::error::{Error, Result};
-use crate::foundation::consts::DCT_BLOCK_SIZE;
 use crate::quant::{self, QuantTable, ZeroBiasParams};
 use crate::types::{ColorSpace, JpegMode, Subsampling};
 use enough::{Stop, Unstoppable};
-
-// EOB imports - commented out while EOB optimization is disabled
-// use crate::trellis::eob::{estimate_block_eob_info, optimize_eob_runs};
-// use crate::trellis::rate::RateTable;
 
 pub(crate) use super::streaming_builder::StreamingEncoderBuilder;
 
@@ -62,67 +57,6 @@ struct StreamingOutputState {
     total_mcus: usize,
     /// JPEG header bytes (SOI through SOS), written at construction time.
     header: Vec<u8>,
-}
-
-/// Apply EOB (end-of-block) run optimization to quantized blocks.
-///
-/// **WARNING**: This implementation is BROKEN and produces severely degraded quality.
-/// The `estimate_block_eob_info` function works on already-quantized blocks and cannot
-/// properly compute lambda-weighted R-D costs. mozjpeg computes `cost_all_zeros` DURING
-/// trellis quantization where the original coefficients and lambda are available.
-///
-/// Until EOB is integrated into the trellis pass itself, this function is disabled.
-///
-/// This is a cross-block optimization that finds opportunities to zero out
-/// trailing coefficients in multiple consecutive blocks to create longer EOBRUN
-/// codes, which compress more efficiently.
-///
-/// Only applied when `TrellisConfig::eob_optimization` is enabled.
-#[allow(dead_code)]
-fn apply_eob_optimization(
-    _y_blocks: &mut [[i16; DCT_BLOCK_SIZE]],
-    _cb_blocks: &mut [[i16; DCT_BLOCK_SIZE]],
-    _cr_blocks: &mut [[i16; DCT_BLOCK_SIZE]],
-) {
-    // DISABLED: The estimate_block_eob_info function is fundamentally broken.
-    // It compares encoding cost (bits) to zeroing cost (sum of squared coefficients)
-    // without a lambda multiplier. This causes it to zero out almost all coefficients.
-    //
-    // To fix: EOB optimization must be integrated into the trellis quantization pass
-    // where the original (unquantized) coefficients and lambda are available.
-    //
-    // See mozjpeg jcdctmgr.c where cost_all_zeros is computed during trellis.
-
-    // DO NOT ENABLE THIS CODE - it destroys image quality (77% file size reduction
-    // with 40x quality degradation measured by DSSIM).
-    /*
-    let ss = 1;
-    let se = 63;
-
-    let y_rate = RateTable::standard_luma_ac();
-    let c_rate = RateTable::standard_chroma_ac();
-
-    // Y channel
-    let y_info: Vec<_> = y_blocks
-        .iter()
-        .map(|b| estimate_block_eob_info(b, &y_rate, ss, se))
-        .collect();
-    optimize_eob_runs(y_blocks, &y_info, &y_rate, ss, se);
-
-    // Cb channel
-    let cb_info: Vec<_> = cb_blocks
-        .iter()
-        .map(|b| estimate_block_eob_info(b, &c_rate, ss, se))
-        .collect();
-    optimize_eob_runs(cb_blocks, &cb_info, &c_rate, ss, se);
-
-    // Cr channel
-    let cr_info: Vec<_> = cr_blocks
-        .iter()
-        .map(|b| estimate_block_eob_info(b, &c_rate, ss, se))
-        .collect();
-    optimize_eob_runs(cr_blocks, &cr_info, &c_rate, ss, se);
-    */
 }
 
 /// Streaming input JPEG encoder.
@@ -1211,7 +1145,7 @@ impl StreamingEncoder {
         y_quant: &QuantTable,
         cb_quant: &QuantTable,
         cr_quant: &QuantTable,
-        mut strip_output: crate::encode::strip::StripProcessorOutput,
+        strip_output: crate::encode::strip::StripProcessorOutput,
         output: &mut Vec<u8>,
         collect_frequencies: bool,
     ) -> Result<Option<Box<super::blocks::HuffmanSymbolFrequencies>>> {
@@ -1222,20 +1156,6 @@ impl StreamingEncoder {
         output
             .try_reserve(width * height / 4)
             .map_err(|_| Error::allocation_failed(width * height / 4, "sequential jpeg output"))?;
-
-        // Apply EOB optimization if enabled in trellis config
-        if config
-            .trellis
-            .as_ref()
-            .map(|t| t.is_eob_opt_enabled())
-            .unwrap_or(false)
-        {
-            apply_eob_optimization(
-                &mut strip_output.y_blocks,
-                &mut strip_output.cb_blocks,
-                &mut strip_output.cr_blocks,
-            );
-        }
 
         let (scan_data, frequencies) = if config.use_xyb {
             Self::encode_sequential_xyb(

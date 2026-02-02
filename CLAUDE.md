@@ -1037,7 +1037,6 @@ Hybrid presets are largest because hybrid path is broken — trellis silently di
 
 | Parameter | Root cause | File:line |
 |-----------|-----------|-----------|
-| `trellis_eob_opt` | Implementation commented out (quality destruction) | `streaming.rs:81-98` |
 | `trellis_use_lambda_weight_tbl` | Hardcoded flat 1/q² weights | `trellis/ac.rs:47-52` |
 | `trellis_num_loops` | Stored but never read (single-pass) | `trellis/ac.rs` (absent) |
 | `trellis_speed_mode` | Only search bounds, DP finds same optimum | `trellis/ac.rs:102-113` |
@@ -1070,10 +1069,10 @@ and `zero_bias_mul` (192 values, jpegli only). Everything else is either dead or
    - Priority: High — core feature advertised but broken
 
 2. **Trellis dead parameters (2026-02-02)** - Measured via parameter sensitivity test:
-   - `trellis_eob_opt`: Implementation commented out in `streaming.rs` (destroys quality)
    - `trellis_use_lambda_weight_tbl`: Always uses flat 1/q² weights (`trellis/ac.rs:52`)
    - `trellis_num_loops`: Stored but never read — single-pass only
    - `trellis_speed_mode`: Only affects search bounds, not output (same optimum found)
+   - EOB optimization: deleted (was broken, destroyed quality). See commit history.
    - See `encode/search.rs` test `test_parameter_sensitivity` for measurements
 
 3. **Progressive decoder fails on small images (2026-02-01)** - The progressive JPEG decoder
@@ -1190,7 +1189,7 @@ preset round-trip, blend, idempotency, full parameter sweep with file size measu
 
 **Sensitivity findings (2026-02-02):** Of ~30 fields, only ~10 actually affect file size.
 Hybrid mode is completely broken (dead code path). 4 trellis fields are dead
-(eob_opt, lambda_weight_tbl, num_loops, speed_mode). See Known Bugs section.
+(lambda_weight_tbl, num_loops, speed_mode). EOB was deleted. See Known Bugs section.
 The test encodes a 256x256 noise+patches image and reports delta bytes for each
 parameter permutation.
 
