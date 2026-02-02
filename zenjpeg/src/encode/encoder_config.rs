@@ -1347,9 +1347,11 @@ mod tests {
     fn test_quant_table_config_custom() {
         use crate::encode::encoder_types::QuantTableConfig;
         let tables = crate::encode::tuning::EncodingTables::default_ycbcr();
-        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
-            .tables(Box::new(tables));
-        assert!(matches!(config.quant_table_config, QuantTableConfig::Custom(_)));
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter).tables(Box::new(tables));
+        assert!(matches!(
+            config.quant_table_config,
+            QuantTableConfig::Custom(_)
+        ));
     }
 
     #[test]
