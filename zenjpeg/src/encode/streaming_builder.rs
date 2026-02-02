@@ -8,6 +8,7 @@
 use super::encoder_types::DownsamplingMethod;
 use super::encoder_types::HuffmanStrategy;
 use super::encoder_types::Quality;
+use super::encoder_types::QuantTableSource;
 use super::encoder_types::ScanStrategy;
 use super::layout::LayoutParams;
 use super::streaming::StreamingEncoder;
@@ -50,6 +51,9 @@ pub(crate) struct StreamingEncoderBuilder {
     pub(crate) custom_aq_map: Option<crate::quant::aq::AQStrengthMap>,
     /// Trellis quantization config (mozjpeg-compat API)
     pub(crate) trellis: Option<super::mozjpeg_compat::TrellisConfig>,
+    /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
+    /// Only used when `encoding_tables` is `None` (no custom tables).
+    pub(crate) quant_source: QuantTableSource,
 }
 
 impl StreamingEncoderBuilder {
@@ -76,6 +80,7 @@ impl StreamingEncoderBuilder {
             hybrid_config: crate::hybrid::config::HybridConfig::disabled(),
             custom_aq_map: None,
             trellis: None,
+            quant_source: QuantTableSource::default(),
         }
     }
 
@@ -327,6 +332,13 @@ impl StreamingEncoderBuilder {
     #[must_use]
     pub fn trellis(mut self, config: super::mozjpeg_compat::TrellisConfig) -> Self {
         self.trellis = Some(config);
+        self
+    }
+
+    /// Sets the quantization table source.
+    #[must_use]
+    pub(crate) fn quant_source(mut self, source: QuantTableSource) -> Self {
+        self.quant_source = source;
         self
     }
 

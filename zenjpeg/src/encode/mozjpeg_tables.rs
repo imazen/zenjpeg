@@ -187,52 +187,8 @@ impl MozjpegTables {
     }
 }
 
-/// Convert quality (1-100) to scale factor percentage.
-///
-/// This matches libjpeg's `jpeg_quality_scaling` function:
-/// - q < 50: scale = 5000 / q
-/// - q >= 50: scale = 200 - 2*q
-///
-/// Examples:
-/// - q=1 → 5000%
-/// - q=25 → 200%
-/// - q=50 → 100% (use base table as-is)
-/// - q=75 → 50%
-/// - q=100 → 0% (all values become 1)
-fn quality_to_scale_factor(quality: u8) -> u32 {
-    let q = quality.clamp(1, 100) as u32;
-
-    if q < 50 {
-        5000 / q
-    } else {
-        200 - q * 2
-    }
-}
-
-/// Scale a base quantization table by a percentage factor.
-///
-/// Formula: scaled[i] = (base[i] * scale + 50) / 100
-/// Result is clamped to 1..32767 (or 1..255 if force_baseline).
-fn scale_table(base: &[u16; DCTSIZE2], scale: u32, force_baseline: bool) -> [u16; DCTSIZE2] {
-    let mut result = [0u16; DCTSIZE2];
-    let max_val = if force_baseline { 255 } else { 32767 };
-
-    for i in 0..DCTSIZE2 {
-        let mut temp = (base[i] as u32 * scale + 50) / 100;
-
-        // Clamp to valid range [1, max_val]
-        if temp == 0 {
-            temp = 1;
-        }
-        if temp > max_val {
-            temp = max_val;
-        }
-
-        result[i] = temp as u16;
-    }
-
-    result
-}
+// Core scaling functions imported from mozjpeg_table_data (always compiled).
+use super::mozjpeg_table_data::{quality_to_scale_factor, scale_table};
 
 fn get_luminance_table(preset: QuantTablePreset) -> &'static [u16; DCTSIZE2] {
     &STD_LUMINANCE_QUANT_TBL[preset as usize]

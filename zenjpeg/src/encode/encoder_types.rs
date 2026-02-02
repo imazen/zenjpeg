@@ -572,6 +572,47 @@ mod tests {
     }
 
     #[test]
+    fn test_optimization_preset_quant_table_source() {
+        assert_eq!(
+            OptimizationPreset::JpegliBaseline.quant_table_source(),
+            QuantTableSource::Jpegli
+        );
+        assert_eq!(
+            OptimizationPreset::JpegliProgressive.quant_table_source(),
+            QuantTableSource::Jpegli
+        );
+        assert_eq!(
+            OptimizationPreset::MozjpegBaseline.quant_table_source(),
+            QuantTableSource::MozjpegDefault
+        );
+        assert_eq!(
+            OptimizationPreset::MozjpegProgressive.quant_table_source(),
+            QuantTableSource::MozjpegDefault
+        );
+        assert_eq!(
+            OptimizationPreset::MozjpegMaxCompression.quant_table_source(),
+            QuantTableSource::MozjpegDefault
+        );
+        assert_eq!(
+            OptimizationPreset::HybridBaseline.quant_table_source(),
+            QuantTableSource::Jpegli
+        );
+        assert_eq!(
+            OptimizationPreset::HybridProgressive.quant_table_source(),
+            QuantTableSource::Jpegli
+        );
+        assert_eq!(
+            OptimizationPreset::HybridMaxCompression.quant_table_source(),
+            QuantTableSource::Jpegli
+        );
+    }
+
+    #[test]
+    fn test_quant_table_source_default() {
+        assert_eq!(QuantTableSource::default(), QuantTableSource::Jpegli);
+    }
+
+    #[test]
     fn test_optimization_preset_display() {
         assert_eq!(
             OptimizationPreset::JpegliBaseline.to_string(),
@@ -701,6 +742,17 @@ impl OptimizationPreset {
                 | Self::HybridProgressive
                 | Self::HybridMaxCompression
         )
+    }
+
+    /// Returns the quantization table source for this preset.
+    #[must_use]
+    pub const fn quant_table_source(self) -> QuantTableSource {
+        match self {
+            Self::MozjpegBaseline | Self::MozjpegProgressive | Self::MozjpegMaxCompression => {
+                QuantTableSource::MozjpegDefault
+            }
+            _ => QuantTableSource::Jpegli,
+        }
     }
 
     /// Returns the scan strategy for this preset.
@@ -843,4 +895,26 @@ pub enum ScanStrategy {
     ///
     /// Use this for closest parity with C mozjpeg's default progressive output.
     Mozjpeg,
+}
+
+/// Source of quantization tables for encoding.
+///
+/// Controls which base quantization tables and scaling formula are used:
+///
+/// - **Jpegli** (default) — jpegli perceptual defaults with distance-based,
+///   frequency-dependent scaling and adaptive zero-bias.
+/// - **MozjpegDefault** — Nicolas Robidoux's psychovisual tables with
+///   libjpeg's quality-scaling formula and neutral zero-bias (0.5 AC offset).
+///
+/// For other mozjpeg presets (MSSIM, Klein, etc.), use the `mozjpeg-tables`
+/// feature and supply custom tables via
+/// [`EncoderConfig::quant_tables()`](super::encoder_config::EncoderConfig::quant_tables).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QuantTableSource {
+    /// Jpegli perceptual defaults (distance-based, frequency-dependent scaling).
+    #[default]
+    Jpegli,
+    /// Mozjpeg Robidoux tables (psychovisual, quality-scaled).
+    MozjpegDefault,
 }

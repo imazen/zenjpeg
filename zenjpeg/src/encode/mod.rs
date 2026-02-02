@@ -90,6 +90,12 @@ pub mod tables;
 /// "Table Optimization" section for research methodology.
 pub mod tuning;
 
+/// Core mozjpeg quantization table data (Robidoux arrays, quality scaling).
+///
+/// Always compiled. Used by `QuantTableSource::MozjpegDefault` to generate
+/// Robidoux-based quant tables without enabling the full `mozjpeg-tables` feature.
+pub(crate) mod mozjpeg_table_data;
+
 /// mozjpeg-compatible quantization table presets.
 ///
 /// This module provides access to the 9 quantization table variants used by mozjpeg
@@ -123,7 +129,7 @@ pub use encoder_types::ParallelEncoding;
 #[allow(unused_imports)] // Public API re-exports
 pub use encoder_types::{
     ChromaSubsampling, ColorMode, DownsamplingMethod, OptimizationPreset, PixelLayout, Quality,
-    ScanStrategy, XybSubsampling, YCbCrPlanes,
+    QuantTableSource, ScanStrategy, XybSubsampling, YCbCrPlanes,
 };
 pub use enough::Stop;
 #[allow(unused_imports)] // Public API re-exports
