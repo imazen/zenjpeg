@@ -1,117 +1,103 @@
-# Context Handoff: Hybrid Trellis Pareto Optimization
+# Context Handoff: Hybrid Trellis vs JpegliProgressive
 
-## Current State (2026-02-02)
+## Summary
 
-Hybrid trellis **shifts rate-distortion curve** but doesn't dominate it. No configuration found that achieves true Pareto improvement (smaller AND better) on full CID22 corpus.
+**Hybrid trellis cannot beat JpegliProgressive on both size AND quality.**
 
-### Key Finding: Positive Coupling
+It shifts the rate-distortion curve but doesn't dominate it. No Pareto improvement found.
 
-**Previous session explored negative coupling** (aggressive compression with quality boost to compensate).
+## Bug Fixed This Session
 
-**This session discovered positive coupling** works better:
-- `aq_lambda_scale > 0` = preserve texture detail in high-AQ blocks
-- Combined with slight quality reduction = comparable size, different quality profile
+**`hybrid_config()` was being ignored!**
 
-### CID22 Results (30 images, Butteraugli)
+When `OptimizationPreset::HybridProgressive` was used, it set `trellis = Some(TrellisConfig::default())`.
+Then `create_hybrid_ctx()` checked trellis first and ignored hybrid_config.
 
-#### Positive Coupling at Q85 Base
-| Config | Size Δ | BA Δ |
-|--------|--------|------|
-| baseline Q85 | — | — |
-| aq_lambda_scale=4, Q84 | -0.8% | +1.1% |
-| aq_lambda_scale=5, Q83.5 | -1.8% | +2.9% |
-| aq_lambda_scale=6, Q83.5 | -1.4% | +2.7% |
+**Fix:** `hybrid_config()` now clears `trellis` when `enabled=true`. Commit `df94d12`.
 
-**No Pareto at Q85** on full corpus (though 10-image subset showed some wins).
+## Results vs JpegliProgressive Q85 (20 CID22 images)
 
-#### Quality-Level Dependency
-| BaseQ | Hybrid Q | Size Δ | BA Δ | Efficiency |
-|-------|----------|--------|------|------------|
-| 75 | 73.5 | +1.4% | +1.7% | poor |
-| 80 | 78.5 | +0.9% | +0.8% | neutral |
-| 85 | 83.5 | -1.8% | +2.9% | 0.62 |
-| **90** | **88.5** | **-4.4%** | **+2.4%** | **1.83** |
-| **95** | **93.5** | **-10.5%** | **+6.1%** | **1.72** |
+| Config | Size Δ | BA Δ | Notes |
+|--------|--------|------|-------|
+| HybridProg no coupling | -3.2% | +3.2% | Default trellis behavior |
+| Hybrid +5 coupling, Q85 | +3.2% | **-2.9%** | Better quality, larger |
+| Hybrid +5 coupling, Q84 | -0.5% | +1.5% | |
+| Hybrid -4 coupling, Q85 | **-9.1%** | +12.4% | Smaller, worse quality |
+| Hybrid -4 coupling, Q87 | -0.9% | +3.5% | |
+| Hybrid -4 coupling, Q88 | +4.9% | -1.7% | |
 
-**Key insight:** Positive coupling efficiency improves dramatically at high quality (Q90+).
+### Across Quality Levels (positive coupling +5)
 
-At Q95: -10.5% size for +6.1% BA = excellent trade-off for storage-constrained apps.
+| Q | Jpegli | Hybrid | Size Δ | BA Δ |
+|---|--------|--------|--------|------|
+| 75 | | | +4.2% | -3.2% |
+| 80 | | | +3.7% | -1.8% |
+| 85 | | | +3.2% | -2.9% |
+| 90 | | | +2.6% | -1.9% |
+| 95 | | | +1.7% | +0.9% |
 
-## What's Been Tested
+Positive coupling consistently produces **better quality but larger files**.
 
-### Approach A: Quality-Neutral (boost Q to match BA)
-- Negative coupling + higher quality
-- Result: Can match BA but files are larger
-- **Not Pareto-optimal**
+## What Works
 
-### Approach D: Positive Coupling (preserve texture, reduce Q)  
-- Positive `aq_lambda_scale` preserves detail in textured areas
-- Reduce base quality to compensate for larger files
-- Result: Size savings improve at higher quality levels
-- **Best efficiency at Q90-95**
+1. **Coupling parameter now works correctly** after fix
+2. **Positive coupling** (+4 to +6): Better butteraugli at cost of ~3% larger files
+3. **Negative coupling** (-4 to -6): Smaller files at cost of quality
+4. **No coupling** (default): ~3% smaller than JpegliProgressive, ~3% worse BA
 
-### 10-Image Subset vs 30-Image Full Corpus
-The 10-image subset showed several Pareto points (`aq_lambda_scale=4, Q84` at -0.9% size, -1.5% BA).
-Full 30-image corpus eliminated these — image diversity matters for validation.
+## What Doesn't Work
+
+**No Pareto improvement over JpegliProgressive:**
+- Grid searched 7 couplings × 6 quality offsets
+- No configuration beats jpegli on BOTH size AND quality
+- Hybrid is a trade-off tool, not a free improvement
 
 ## Recommended Usage
 
-### For Q90+ Applications (archival, print):
+### If you need smaller files:
+Use HybridProgressive with default settings (no coupling):
+```rust
+EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    .optimization(OptimizationPreset::HybridProgressive)
+```
+Result: ~3% smaller than JpegliProgressive, ~3% worse butteraugli.
+
+### If you need better quality:
+Use positive coupling:
 ```rust
 let hybrid = HybridConfig {
     enabled: true,
     aq_lambda_scale: 5.0,  // Positive = preserve texture
-    max_adjustment: 0.0,
     ..Default::default()
 };
-let config = EncoderConfig::ycbcr(quality - 1.5, ChromaSubsampling::Quarter)
-    .hybrid_config(hybrid);
+EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    .optimization(OptimizationPreset::HybridProgressive)
+    .hybrid_config(hybrid)
 ```
-Expected: -4% to -10% size, +2% to +6% butteraugli (acceptable trade-off).
+Result: ~3% better butteraugli, ~3% larger than JpegliProgressive.
 
-### For Q75-85 Applications (web):
-Don't use hybrid — trade-off is unfavorable. Standard trellis is sufficient.
-
-## Files Created
-
-| File | Purpose |
-|------|---------|
-| `examples/pareto_approaches.rs` | Test Approach A and D |
-| `examples/pareto_fine_sweep.rs` | Fine grid search around optimal |
-| `examples/pareto_validate.rs` | Full corpus validation |
-
-## Remaining Questions
-
-1. **Why does positive coupling work better at high quality?**
-   - At Q95, quantization is already gentle — positive coupling can safely preserve more
-   - At Q75, aggressive quantization needed — positive coupling fights the goal
-
-2. **Could quality-adaptive coupling help?**
-   - Different `aq_lambda_scale` at different quality levels
-   - E.g., negative at Q75, neutral at Q85, positive at Q95
-
-3. **Is there a per-image adaptive strategy?**
-   - Low-texture images might benefit from negative coupling
-   - High-texture images from positive coupling
+### If you want jpegli-equivalent output:
+Just use JpegliProgressive:
+```rust
+EncoderConfig::ycbcr(85.0, ChromaSubsampling::Quarter)
+    .optimization(OptimizationPreset::JpegliProgressive)
+```
 
 ## Commands
 
 ```bash
-# Run Pareto approach comparison
-cargo run --release --example pareto_approaches
-
-# Fine sweep around optimal
-cargo run --release --example pareto_fine_sweep
-
-# Full corpus validation  
-cargo run --release --example pareto_validate
+# Run comparison vs JpegliProgressive
+cargo run --release --example pareto_vs_jpegli
 ```
 
-## Summary
+## Commits
 
-Hybrid trellis with positive coupling is a valid **"high-quality mode"** for Q90+ where:
-- Storage constraints matter
-- +2-6% butteraugli degradation is acceptable
-- -4-10% file size savings are valuable
+- `df94d12` fix: hybrid_config now clears trellis to ensure coupling takes effect
+- `065abb9` investigate: positive coupling Pareto analysis for hybrid trellis
 
-It's **not a universal improvement** over standard trellis — it's a different point on the rate-distortion curve.
+## Conclusion
+
+Hybrid trellis is a **trade-off tool**, not a Pareto improvement. Users should choose:
+- JpegliProgressive for jpegli-compatible output
+- HybridProgressive for smaller files (accepting quality loss)
+- HybridProgressive + positive coupling for better quality (accepting size increase)
