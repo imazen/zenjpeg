@@ -2,11 +2,10 @@
 
 use super::byte_encoders::{BytesEncoder, RgbEncoder, YCbCrPlanarEncoder};
 use super::encoder_types::{
-    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout,
-    Quality, QuantTableSource, ScanStrategy, XybSubsampling,
+    ChromaSubsampling, ColorMode, DownsamplingMethod, HuffmanStrategy, PixelLayout, Quality,
+    QuantTableConfig, QuantTableSource, ScanMode, ScanStrategy, XybSubsampling,
 };
 use super::mozjpeg_compat::TrellisConfig;
-use super::tuning::EncodingTables;
 use crate::error::Result;
 use crate::types::EdgePaddingConfig;
 
@@ -14,10 +13,12 @@ use crate::types::EdgePaddingConfig;
 #[derive(Clone, Debug)]
 pub struct EncoderConfig {
     pub(crate) quality: Quality,
-    /// Custom encoding tables (quantization + zero-bias).
-    /// `None` means use perceptual defaults based on color mode and quality.
-    pub(crate) tables: Option<Box<EncodingTables>>,
-    pub(crate) progressive: bool,
+    /// Quantization table configuration (source, chroma layout, custom tables).
+    /// Replaces the old `tables` + `separate_chroma_tables` + `quant_source` triple.
+    pub(crate) quant_table_config: QuantTableConfig,
+    /// Scan mode (baseline vs progressive, with script strategy).
+    /// Replaces the old `progressive` + `scan_strategy` pair.
+    pub(crate) scan_mode: ScanMode,
     pub(crate) huffman: HuffmanStrategy,
     pub(crate) color_mode: ColorMode,
     pub(crate) downsampling_method: DownsamplingMethod,
@@ -36,22 +37,11 @@ pub struct EncoderConfig {
     /// Allow 16-bit quantization tables (extended JPEG, SOF1).
     /// When false, quant values are clamped to 255 for baseline compatibility.
     pub(crate) allow_16bit_quant_tables: bool,
-    /// Use separate quantization tables for Cb and Cr (3 tables total).
-    /// When false, Cb and Cr share the same table (2 tables total).
-    /// Default is true (3 tables), matching C++ jpegli's `jpegli_set_distance()`.
-    /// Set to false for compatibility with `jpeg_set_quality()` behavior.
-    pub(crate) separate_chroma_tables: bool,
     /// Trellis quantization configuration (mozjpeg-compatible API).
     /// When Some, enables trellis quantization for rate-distortion optimization.
     pub(crate) trellis: Option<TrellisConfig>,
     /// Prepared segments for injection (EXIF, XMP, ICC, etc.) and MPF secondary images.
     pub(crate) segments: Option<super::extras::EncoderSegments>,
-    /// Progressive scan script strategy.
-    /// Controls how scans are structured for progressive JPEGs.
-    pub(crate) scan_strategy: ScanStrategy,
-    /// Source of quantization tables (jpegli perceptual vs mozjpeg Robidoux).
-    /// Only used when `tables` is `None` (no custom tables).
-    pub(crate) quant_source: QuantTableSource,
 }
 
 // Note: No Default impl - quality and color mode are required via constructors
@@ -148,8 +138,8 @@ impl EncoderConfig {
     fn default_internal() -> Self {
         Self {
             quality: Quality::default(),
-            tables: None,      // Use perceptual defaults
-            progressive: true, // Progressive gives 3-7% smaller files
+            quant_table_config: QuantTableConfig::default(), // Jpegli, 3 tables
+            scan_mode: ScanMode::Progressive,                // Progressive gives 3-7% smaller
             huffman: HuffmanStrategy::Optimize,
             color_mode: ColorMode::default(),
             downsampling_method: DownsamplingMethod::default(),
@@ -163,11 +153,8 @@ impl EncoderConfig {
             hybrid_config: crate::hybrid::config::HybridConfig::default(),
             deringing: true,
             allow_16bit_quant_tables: false,
-            separate_chroma_tables: true, // 3 tables (matches jpegli_set_distance)
             trellis: None,
             segments: None,
-            scan_strategy: ScanStrategy::Default,
-            quant_source: QuantTableSource::default(),
         }
     }
 
@@ -188,42 +175,75 @@ impl EncoderConfig {
 
     // === Encoding Mode ===
 
+    /// Set the scan mode (baseline vs progressive, with script strategy).
+    ///
+    /// This is the preferred way to configure progressive encoding.
+    /// It bundles the progressive flag and scan script strategy into a
+    /// single type-safe enum, preventing invalid combinations.
+    ///
+    /// Progressive modes automatically enable optimized Huffman tables.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, ScanMode};
+    ///
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .scan_mode(ScanMode::ProgressiveSearch);
+    /// ```
+    #[must_use]
+    pub fn scan_mode(mut self, mode: ScanMode) -> Self {
+        self.scan_mode = mode;
+        if mode.is_progressive() {
+            self.huffman = HuffmanStrategy::Optimize;
+        }
+        self
+    }
+
     /// Enable or disable progressive encoding.
     ///
-    /// Progressive encoding produces multiple scans for incremental display.
-    /// Automatically enables optimized Huffman tables (required for progressive).
+    /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
+    ///
+    /// - `true` → `ScanMode::Progressive` (jpegli default script)
+    /// - `false` → `ScanMode::Baseline`
+    ///
+    /// If the current mode is already a progressive variant (e.g. `ProgressiveSearch`),
+    /// calling `.progressive(true)` preserves it. Calling `.progressive(false)` always
+    /// switches to `Baseline`.
     #[must_use]
     pub fn progressive(mut self, enable: bool) -> Self {
-        self.progressive = enable;
         if enable {
+            // Preserve existing progressive variant if already progressive
+            if !self.scan_mode.is_progressive() {
+                self.scan_mode = ScanMode::Progressive;
+            }
             self.huffman = HuffmanStrategy::Optimize;
+        } else {
+            self.scan_mode = ScanMode::Baseline;
         }
         self
     }
 
     /// Set the progressive scan script strategy.
     ///
-    /// Controls how progressive JPEG scan scripts are generated:
+    /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
     ///
-    /// - [`ScanStrategy::Default`]: jpegli-style script with frequency split at 2/3
-    ///   and successive approximation for all components.
-    /// - [`ScanStrategy::Search`]: Tries 64 candidate configurations and picks the
-    ///   smallest (mozjpeg-style `optimize_scans`). 1-3% smaller, ~2x slower.
-    /// - [`ScanStrategy::Mozjpeg`]: mozjpeg's default script with frequency split
-    ///   at 8/9 and no chroma successive approximation.
-    ///
-    /// All strategies produce the same decoded pixels—this is a **lossless**
-    /// optimization affecting only the progressive scan structure.
-    ///
-    /// Automatically enables progressive mode and optimized Huffman tables
-    /// for non-Default strategies.
-    ///
+    /// Non-Default strategies automatically enable progressive mode.
     /// Skipped for XYB mode (XYB uses a fixed scan structure).
     #[must_use]
     pub fn scan_strategy(mut self, strategy: ScanStrategy) -> Self {
-        self.scan_strategy = strategy;
-        if strategy != ScanStrategy::Default {
-            self.progressive = true;
+        self.scan_mode = match strategy {
+            ScanStrategy::Default => {
+                if self.scan_mode.is_progressive() {
+                    ScanMode::Progressive
+                } else {
+                    ScanMode::Baseline
+                }
+            }
+            ScanStrategy::Search => ScanMode::ProgressiveSearch,
+            ScanStrategy::Mozjpeg => ScanMode::ProgressiveMozjpeg,
+        };
+        if self.scan_mode.is_progressive() {
             self.huffman = HuffmanStrategy::Optimize;
         }
         self
@@ -231,11 +251,7 @@ impl EncoderConfig {
 
     /// Enable progressive scan optimization (mozjpeg-style `optimize_scans`).
     ///
-    /// This is equivalent to:
-    /// - `scan_strategy(ScanStrategy::Search)` when `enable` is true
-    /// - `scan_strategy(ScanStrategy::Default)` when `enable` is false
-    ///
-    /// Prefer using [`scan_strategy()`](Self::scan_strategy) directly for more control.
+    /// Convenience method. Prefer [`scan_mode()`](Self::scan_mode) for full control.
     #[must_use]
     pub fn optimize_scans(self, enable: bool) -> Self {
         self.scan_strategy(if enable {
@@ -245,20 +261,50 @@ impl EncoderConfig {
         })
     }
 
+    /// Set the quantization table configuration.
+    ///
+    /// This is the preferred way to configure quantization tables.
+    /// It bundles table source, chroma layout, and custom tables into
+    /// a single type-safe enum, preventing invalid combinations.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use zenjpeg::encode::{EncoderConfig, ChromaSubsampling, QuantTableConfig};
+    ///
+    /// let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+    ///     .quant_table_config(QuantTableConfig::MozjpegRobidoux);
+    /// ```
+    #[must_use]
+    pub fn quant_table_config(mut self, config: QuantTableConfig) -> Self {
+        self.quant_table_config = config;
+        self
+    }
+
     /// Set the quantization table source.
     ///
-    /// Controls which base quantization tables and scaling formula are used:
+    /// Convenience method. Prefer [`quant_table_config()`](Self::quant_table_config)
+    /// for full control — it bundles table source, chroma layout, and custom
+    /// tables into one type-safe enum.
     ///
-    /// - [`QuantTableSource::Jpegli`] (default) — jpegli perceptual defaults
-    ///   with distance-based, frequency-dependent scaling.
-    /// - [`QuantTableSource::MozjpegDefault`] — Robidoux psychovisual tables
-    ///   with libjpeg's quality-scaling formula.
-    ///
-    /// This is overridden when custom tables are provided via
-    /// [`quant_tables()`](Self::quant_tables).
+    /// - [`QuantTableSource::Jpegli`] → preserves current chroma table layout
+    /// - [`QuantTableSource::MozjpegDefault`] → sets `MozjpegRobidoux` (always 2 tables)
     #[must_use]
     pub fn quant_source(mut self, source: QuantTableSource) -> Self {
-        self.quant_source = source;
+        match source {
+            QuantTableSource::Jpegli => {
+                // Preserve current config if already jpegli; otherwise default to Jpegli
+                if matches!(
+                    self.quant_table_config,
+                    QuantTableConfig::MozjpegRobidoux | QuantTableConfig::Custom(_)
+                ) {
+                    self.quant_table_config = QuantTableConfig::Jpegli;
+                }
+            }
+            QuantTableSource::MozjpegDefault => {
+                self.quant_table_config = QuantTableConfig::MozjpegRobidoux;
+            }
+        }
         self
     }
 
@@ -283,8 +329,22 @@ impl EncoderConfig {
         use super::encoder_types::OptimizationPreset::*;
         use super::mozjpeg_compat::{TrellisConfig, TrellisSpeedMode};
 
-        let progressive = preset.is_progressive();
-        let scan_strategy = preset.scan_strategy();
+        // Scan mode: bundles progressive + script strategy
+        let scan_mode = match preset {
+            JpegliBaseline | MozjpegBaseline | HybridBaseline => ScanMode::Baseline,
+            JpegliProgressive | HybridProgressive => ScanMode::Progressive,
+            MozjpegProgressive => ScanMode::ProgressiveMozjpeg,
+            MozjpegMaxCompression | HybridMaxCompression => ScanMode::ProgressiveSearch,
+        };
+
+        // Quant table config: bundles source + chroma layout
+        let quant_table_config = match preset {
+            JpegliBaseline | JpegliProgressive => QuantTableConfig::Jpegli,
+            MozjpegBaseline | MozjpegProgressive | MozjpegMaxCompression => {
+                QuantTableConfig::MozjpegRobidoux
+            }
+            HybridBaseline | HybridProgressive | HybridMaxCompression => QuantTableConfig::Jpegli,
+        };
 
         // Trellis configuration depends on preset lineage:
         // - Jpegli: no trellis (AQ-driven quality, no rate-distortion opt)
@@ -301,18 +361,6 @@ impl EncoderConfig {
             }
         };
 
-        // Mozjpeg modes use 2 quant tables (shared chroma), jpegli/hybrid use 3
-        let separate_chroma_tables = matches!(
-            preset,
-            JpegliBaseline
-                | JpegliProgressive
-                | HybridBaseline
-                | HybridProgressive
-                | HybridMaxCompression
-        );
-
-        let quant_source = preset.quant_table_source();
-
         // Deringing: independent of AQ. C mozjpeg enables overshoot deringing
         // only for JCP_MAX_COMPRESSION profile. All jpegli/hybrid presets use it
         // (quality win, negligible cost). Mozjpeg baseline/progressive skip it
@@ -325,13 +373,11 @@ impl EncoderConfig {
         };
 
         Self {
-            progressive,
+            scan_mode,
+            quant_table_config,
             huffman: HuffmanStrategy::Optimize,
-            scan_strategy,
             deringing,
-            separate_chroma_tables,
             trellis,
-            quant_source,
             // All presets force baseline quant tables (matching both cjpegli CLI
             // and C mozjpeg behavior). 16-bit tables provide no quality benefit.
             allow_16bit_quant_tables: false,
@@ -403,7 +449,26 @@ impl EncoderConfig {
     /// ```
     #[must_use]
     pub fn separate_chroma_tables(mut self, enable: bool) -> Self {
-        self.separate_chroma_tables = enable;
+        // Map the bool to the appropriate QuantTableConfig variant,
+        // preserving mozjpeg vs jpegli distinction.
+        match &self.quant_table_config {
+            QuantTableConfig::Custom(_) => {} // Don't touch custom tables
+            QuantTableConfig::MozjpegRobidoux => {
+                // MozjpegRobidoux is always shared chroma; can't separate
+                if enable {
+                    // User is asking for separate chroma with mozjpeg tables,
+                    // which isn't a valid combo — switch to Jpegli
+                    self.quant_table_config = QuantTableConfig::Jpegli;
+                }
+            }
+            QuantTableConfig::Jpegli | QuantTableConfig::JpegliSharedChroma => {
+                self.quant_table_config = if enable {
+                    QuantTableConfig::Jpegli
+                } else {
+                    QuantTableConfig::JpegliSharedChroma
+                };
+            }
+        }
         self
     }
 
@@ -663,8 +728,8 @@ impl EncoderConfig {
     ///     .tables(Box::new(tables));
     /// ```
     #[must_use]
-    pub fn tables(mut self, tables: Box<EncodingTables>) -> Self {
-        self.tables = Some(tables);
+    pub fn tables(mut self, tables: Box<super::tuning::EncodingTables>) -> Self {
+        self.quant_table_config = QuantTableConfig::Custom(tables);
         self
     }
 
@@ -728,7 +793,7 @@ impl EncoderConfig {
     /// Invalid combinations:
     /// - Progressive mode with disabled Huffman optimization
     pub fn validate(&self) -> Result<()> {
-        if self.progressive && !matches!(self.huffman, HuffmanStrategy::Optimize) {
+        if self.scan_mode.is_progressive() && !matches!(self.huffman, HuffmanStrategy::Optimize) {
             return Err(crate::error::Error::invalid_config(
                 "progressive mode requires optimized Huffman tables".into(),
             ));
@@ -899,7 +964,19 @@ impl EncoderConfig {
     /// Check if progressive mode is enabled.
     #[must_use]
     pub fn is_progressive(&self) -> bool {
-        self.progressive
+        self.scan_mode.is_progressive()
+    }
+
+    /// Get the current scan mode.
+    #[must_use]
+    pub fn get_scan_mode(&self) -> ScanMode {
+        self.scan_mode
+    }
+
+    /// Get the current quantization table configuration.
+    #[must_use]
+    pub fn get_quant_table_config(&self) -> &QuantTableConfig {
+        &self.quant_table_config
     }
 
     /// Check if Huffman optimization is enabled.
@@ -917,7 +994,7 @@ impl EncoderConfig {
     /// Check if separate chroma tables are enabled (3 tables vs 2).
     #[must_use]
     pub fn is_separate_chroma_tables(&self) -> bool {
-        self.separate_chroma_tables
+        self.quant_table_config.separate_chroma_tables()
     }
 
     /// Get the ICC profile, if set.
@@ -1031,7 +1108,7 @@ mod tests {
     fn test_ycbcr_config() {
         let config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
         assert!(matches!(config.quality, Quality::ApproxJpegli(90.0)));
-        assert!(config.progressive); // Progressive is now the default
+        assert!(config.scan_mode.is_progressive()); // Progressive is now the default
         assert!(matches!(config.huffman, HuffmanStrategy::Optimize));
         assert!(matches!(
             config.color_mode,
@@ -1075,7 +1152,7 @@ mod tests {
             .sharp_yuv(true);
 
         assert!(matches!(config.quality, Quality::ApproxJpegli(85.0)));
-        assert!(config.progressive);
+        assert!(config.scan_mode.is_progressive());
         assert!(matches!(config.huffman, HuffmanStrategy::Optimize)); // auto-enabled by progressive
         assert!(matches!(
             config.color_mode,
@@ -1101,7 +1178,7 @@ mod tests {
     #[test]
     fn test_validation_progressive_huffman() {
         let mut config = EncoderConfig::ycbcr(90.0, ChromaSubsampling::None);
-        config.progressive = true;
+        config.scan_mode = ScanMode::Progressive;
         config.huffman = HuffmanStrategy::Fixed;
 
         assert!(config.validate().is_err());
@@ -1166,75 +1243,67 @@ mod tests {
 
     #[test]
     fn test_optimization_preset_jpegli_baseline() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::JpegliBaseline);
-        assert!(!config.progressive);
+        assert_eq!(config.scan_mode, ScanMode::Baseline);
         assert!(config.deringing);
-        assert!(config.separate_chroma_tables);
+        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
         assert!(config.trellis.is_none());
-        assert_eq!(config.quant_source, QuantTableSource::Jpegli);
         assert!(!config.allow_16bit_quant_tables);
     }
 
     #[test]
     fn test_optimization_preset_mozjpeg_baseline() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegBaseline);
-        assert!(!config.progressive);
+        assert_eq!(config.scan_mode, ScanMode::Baseline);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
-        assert!(!config.separate_chroma_tables);
+        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
-        assert_eq!(config.quant_source, QuantTableSource::MozjpegDefault);
         assert!(!config.allow_16bit_quant_tables);
     }
 
     #[test]
     fn test_optimization_preset_mozjpeg_progressive() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegProgressive);
-        assert!(config.progressive);
+        assert_eq!(config.scan_mode, ScanMode::ProgressiveMozjpeg);
         assert!(!config.deringing); // C mozjpeg default profile: no overshoot
-        assert!(!config.separate_chroma_tables);
+        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough); // C mozjpeg = full search
-        assert_eq!(config.scan_strategy, ScanStrategy::Mozjpeg);
-        assert_eq!(config.quant_source, QuantTableSource::MozjpegDefault);
         assert!(!config.allow_16bit_quant_tables);
     }
 
     #[test]
     fn test_optimization_preset_mozjpeg_max() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegMaxCompression);
-        assert!(config.progressive);
+        assert_eq!(config.scan_mode, ScanMode::ProgressiveSearch);
         assert!(config.deringing); // JCP_MAX_COMPRESSION enables overshoot
-        assert!(!config.separate_chroma_tables);
+        assert_eq!(config.quant_table_config, QuantTableConfig::MozjpegRobidoux);
         assert!(config.trellis.is_some());
         let trellis = config.trellis.unwrap();
         assert_eq!(trellis.get_speed_mode(), TrellisSpeedMode::Thorough);
-        assert_eq!(config.scan_strategy, ScanStrategy::Search);
-        assert_eq!(config.quant_source, QuantTableSource::MozjpegDefault);
         assert!(!config.allow_16bit_quant_tables);
     }
 
     #[test]
     fn test_optimization_preset_hybrid_progressive() {
-        use crate::encode::encoder_types::{OptimizationPreset, QuantTableSource};
+        use crate::encode::encoder_types::{OptimizationPreset, QuantTableConfig, ScanMode};
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::HybridProgressive);
-        assert!(config.progressive);
+        assert_eq!(config.scan_mode, ScanMode::Progressive);
         assert!(config.deringing);
-        assert!(config.separate_chroma_tables);
+        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
         assert!(config.trellis.is_some());
-        assert_eq!(config.scan_strategy, ScanStrategy::Default);
-        assert_eq!(config.quant_source, QuantTableSource::Jpegli);
         assert!(!config.allow_16bit_quant_tables);
     }
 
@@ -1254,13 +1323,43 @@ mod tests {
 
     #[test]
     fn test_optimization_preset_overridable() {
-        use crate::encode::encoder_types::OptimizationPreset;
+        use crate::encode::encoder_types::{OptimizationPreset, ScanMode};
         // Apply preset then override progressive
         let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
             .optimization(OptimizationPreset::MozjpegProgressive)
             .progressive(false);
-        assert!(!config.progressive);
+        assert_eq!(config.scan_mode, ScanMode::Baseline);
         // Trellis should still be set from the preset
         assert!(config.trellis.is_some());
+    }
+
+    #[test]
+    fn test_scan_mode_progressive_preserves_variant() {
+        use crate::encode::encoder_types::ScanMode;
+        // ProgressiveSearch should be preserved when calling .progressive(true)
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .scan_mode(ScanMode::ProgressiveSearch)
+            .progressive(true);
+        assert_eq!(config.scan_mode, ScanMode::ProgressiveSearch);
+    }
+
+    #[test]
+    fn test_quant_table_config_custom() {
+        use crate::encode::encoder_types::QuantTableConfig;
+        let tables = crate::encode::tuning::EncodingTables::default_ycbcr();
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .tables(Box::new(tables));
+        assert!(matches!(config.quant_table_config, QuantTableConfig::Custom(_)));
+    }
+
+    #[test]
+    fn test_separate_chroma_mozjpeg_switches_to_jpegli() {
+        use crate::encode::encoder_types::QuantTableConfig;
+        // MozjpegRobidoux is always shared chroma; requesting separate
+        // should switch to Jpegli tables
+        let config = EncoderConfig::ycbcr(85, ChromaSubsampling::Quarter)
+            .quant_table_config(QuantTableConfig::MozjpegRobidoux)
+            .separate_chroma_tables(true);
+        assert_eq!(config.quant_table_config, QuantTableConfig::Jpegli);
     }
 }
