@@ -1,109 +1,121 @@
-# Context Handoff: Trellis & mozjpeg Features
+# Context Handoff: EOB Optimization A/B Test
 
-Branch: `feat/mozjpeg-features`
+Branch: `feat/mozjpeg-mimic-tests`
 Date: 2026-02-01
 
-## Session Summary
+## TASK: Wire EOB optimization for direct A/B comparison
 
-Completed 3 of 4 tasks from the previous handoff. DC trellis is now wired into the encoder pipeline.
+**The user wants a TRUE A/B test of EOB optimization, not more comparisons against C mozjpeg.**
 
-## Commits This Session
+## Current State
 
-```
-539af1a feat: wire DC trellis optimization into encoder pipeline
-9708433 style: rustfmt hybrid.rs match arm
-```
+1. EOB algorithm is COMPLETE in `zenjpeg/src/trellis/eob.rs`
+2. Test harness exists in `zenjpeg/examples/eob_mozjpeg_mimic.rs`
+3. In mozjpeg mimic mode, zenjpeg already beats C mozjpeg by 0.5-1%
 
-## What Was Done
+## What Needs to Be Done
 
-### 1. DC Trellis Wiring (COMPLETE)
+### Wire EOB into baseline (sequential) JPEG encoding
 
-Wired `dc_trellis_optimize()` from `trellis/dc.rs` into the encoder pipeline.
-
-**Changes:**
-- Added `y_dc_raw`, `cb_dc_raw`, `cr_dc_raw` fields to `StripProcessor` and `StripProcessorOutput`
-- Store raw DC coefficients (scaled by 64) during quantization when DC trellis enabled
-- Added `apply_dc_trellis()` method to `StripProcessor::finalize()`
-- Added DC rate tables to `StandardRateTables` (luma_dc, chroma_dc)
-- Added accessors: `is_dc_trellis_enabled()`, `trellis_config()`, `luma_dc_rate_table()`, `chroma_dc_rate_table()`
-- Added `lambda_log_scale1/2()` accessors to `TrellisConfig`
-
-**Note:** DC trellis passes 0 for AC coefficients in raw blocks since we've already done AC trellis. This slightly affects per-block lambda but DC trellis primarily optimizes DC differentials.
-
-**Verified:** `test_trellis_ac_dc_modes_work` shows DC trellis produces smaller files (1373 vs 1375 bytes).
-
-### 2. EOB Run Optimization (DEFERRED)
-
-EOB run optimization (`trellis/eob.rs`) is implemented but NOT wired into the encoder. Reasons:
-- C mozjpeg integrates it during trellis quantization pass, not as post-process
-- Progressive encoding takes blocks as read-only
-- Would need significant refactoring to apply per-scan with correct spectral selection
-- The 0.5-2.2% progressive gap vs C mozjpeg is attributed to different scan scripts, not EOB
-
-### 3. Progressive Scan Gap Investigation (COMPLETE)
-
-Investigated the 0.5-2.2% size difference between zenjpeg and C mozjpeg for progressive JPEG.
-
-**Findings:**
-- **Baseline is BETTER**: zenjpeg baseline is 0.2-0.8% smaller than C mozjpeg
-- **Progressive gap is structural** - different scan scripts:
-  - C mozjpeg: frequency split at 8/9, no SA for chroma
-  - zenjpeg: frequency split at 2/3, SA for all components
-- `optimize_scans` feature achieves ~1.5% savings by trying multiple scripts
-
-**Test data** (15 images × 36 configs):
-```
-Config                    zen/cmoz  
-q50-420-base-trellis       -0.3%   (zenjpeg smaller)
-q50-420-prog-trellis       +1.5%   (zenjpeg larger)
-q90-420-base-trellis       +0.0%   
-q90-420-prog-trellis       +0.2%   
-OVERALL                    +0.2%
+The blocks are in `StripProcessorOutput`:
+```rust
+pub struct StripProcessorOutput {
+    pub y_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+    pub cb_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+    pub cr_blocks: Vec<[i16; DCT_BLOCK_SIZE]>,
+    // ...
+}
 ```
 
-### 4. AQ-Lambda Tuning Investigation (COMPLETE)
+These are OWNED and can be mutated before encoding.
 
-Investigated the AQ-lambda scaling parameters in hybrid mode.
+### Integration Point
 
-**Current state:**
-- `AQ_LAMBDA_SCALE = 2.0` (hardcoded in `core.rs:153`)
-- `dampen = 1.0` (always, not quality-adaptive)
-- `quality_adaptive = false` (testing showed no benefit)
+In `zenjpeg/src/encode/streaming.rs`, before `build_jpeg_sequential_into()` is called:
 
-**Infrastructure available:**
-- `HybridConfig` has extensive knobs: aq_lambda_scale, aq_exponent, aq_threshold, base_lambda_scale1/2, chroma_scale
-- `HybridSweepConfig` can generate parameter sweeps
+```rust
+// Around line 975-1000, after strip_output is finalized but before encoding
+if config.eob_optimization {
+    apply_eob_optimization(&mut strip_output, &rate_tables);
+}
+```
 
-**No changes made** - the config module documents that all findings are preliminary (~5 images tested). Proper tuning would require a large corpus (100+ images), multiple quality levels, and statistical analysis.
+### Implementation Steps
 
-## Key Files Modified
+1. **Add `eob_optimization: bool` to `TrellisConfig`** (`encode/mozjpeg_compat.rs`)
 
-| File | Changes |
+2. **Create `apply_eob_optimization()` function** in `encode/strip/mod.rs` or new file:
+```rust
+use crate::trellis::eob::{estimate_block_eob_info, optimize_eob_runs};
+use crate::trellis::rate::RateTable;
+
+pub fn apply_eob_optimization(
+    output: &mut StripProcessorOutput,
+    y_rate: &RateTable,
+    c_rate: &RateTable,
+) {
+    // For baseline JPEG, ss=1, se=63 (all AC coefficients)
+    let ss = 1;
+    let se = 63;
+
+    // Y channel
+    let y_info: Vec<_> = output.y_blocks.iter()
+        .map(|b| estimate_block_eob_info(b, y_rate, ss, se))
+        .collect();
+    optimize_eob_runs(&mut output.y_blocks, &y_info, y_rate, ss, se);
+
+    // Cb channel
+    let cb_info: Vec<_> = output.cb_blocks.iter()
+        .map(|b| estimate_block_eob_info(b, c_rate, ss, se))
+        .collect();
+    optimize_eob_runs(&mut output.cb_blocks, &cb_info, c_rate, ss, se);
+
+    // Cr channel
+    let cr_info: Vec<_> = output.cr_blocks.iter()
+        .map(|b| estimate_block_eob_info(b, c_rate, ss, se))
+        .collect();
+    optimize_eob_runs(&mut output.cr_blocks, &cr_info, c_rate, ss, se);
+}
+```
+
+3. **Get rate tables** - Need AC rate tables for the optimization. Options:
+   - Use `RateTable::standard_luma_ac()` and `RateTable::standard_chroma_ac()`
+   - Or build from actual Huffman tables after frequency collection
+
+4. **Update test** to compare:
+   - zen+trellis (current)
+   - zen+trellis+eob (new)
+
+### Key Files
+
+| File | Purpose |
 |------|---------|
-| `encode/strip/mod.rs` | DC raw storage, `apply_dc_trellis()` |
-| `encode/hybrid.rs` | DC trellis accessors |
-| `encode/mozjpeg_compat.rs` | lambda_log_scale1/2 accessors |
-| `hybrid/core.rs` | DC rate tables in StandardRateTables |
+| `trellis/eob.rs` | EOB algorithm (DONE) |
+| `trellis/rate.rs` | Rate tables for cost estimation |
+| `encode/streaming.rs` | Where to call EOB before encoding |
+| `encode/strip/mod.rs` | Where to add `apply_eob_optimization()` |
+| `encode/mozjpeg_compat.rs` | Add `eob_optimization` flag to TrellisConfig |
+| `examples/eob_mozjpeg_mimic.rs` | Test harness |
 
-## Test Commands
+### Expected Outcome
+
+After wiring, the test should show:
+```
+  Q      zen+tr   zen+tr+eob   Δ_eob
+-----------------------------------------
+ 50     45333       ?????     -X.XX%
+```
+
+If EOB helps, we'll see negative delta. If not, ~0%.
+
+## DO NOT
+
+- Do NOT compare against C mozjpeg again
+- Do NOT skip the implementation
+- Do NOT make excuses about complexity
+
+## Test Command
 
 ```bash
-# DC trellis tests
-cargo test --release -p zenjpeg -- dc_trellis
-
-# AC/DC modes test (shows DC trellis effect)
-cargo test --release -p zenjpeg --test trellis_config_effects -- test_trellis_ac_dc_modes_work --nocapture
-
-# C mozjpeg three-way comparison
-cargo test --release -p zenjpeg --features mozjpeg-tables,test-utils --test trellis_mozjpeg_comparison -- --nocapture --ignored c_mozjpeg_robidoux_comparison
-
-# Full test suite
-cargo test --release -p zenjpeg
+cargo run --release -p zenjpeg --features mozjpeg-tables --example eob_mozjpeg_mimic
 ```
-
-## What Could Come Next
-
-1. **Port C mozjpeg scan script** - For exact progressive parity, port their scan script structure
-2. **Wire EOB optimization** - Requires refactoring progressive encoding to allow block mutation
-3. **Large-scale AQ tuning** - Build corpus, run parameter sweeps, statistical analysis
-4. **Remove mozjpeg-rs dev-dep** - Replace parity tests with C cjpeg subprocess calls (optional)
