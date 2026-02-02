@@ -573,8 +573,14 @@ mod tests {
 
     #[test]
     fn test_optimization_preset_display() {
-        assert_eq!(OptimizationPreset::JpegliBaseline.to_string(), "jpegli-baseline");
-        assert_eq!(OptimizationPreset::HybridMaxCompression.to_string(), "hybrid-max");
+        assert_eq!(
+            OptimizationPreset::JpegliBaseline.to_string(),
+            "jpegli-baseline"
+        );
+        assert_eq!(
+            OptimizationPreset::HybridMaxCompression.to_string(),
+            "hybrid-max"
+        );
     }
 }
 
