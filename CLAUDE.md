@@ -998,6 +998,66 @@ Max  |diff|: R=25, G=17, B=18
 - May be related to AQ strength interpolation or zero-bias calculation
 - Files: `zenjpeg/src/quant/aq/simd.rs`, `zenjpeg/src/encode/strip/mod.rs:quantize_pending_imcu`
 
+### ExpertConfig Parameter Sensitivity (2026-02-02)
+
+Test: `cargo test --release -p zenjpeg --lib -- search::tests::test_parameter_sensitivity --nocapture`
+Image: 256x256 deterministic noise+patches (not gradient), MozjpegBaseline Q85 base = 17,327 bytes.
+
+**Preset baselines (all Q85, 4:2:0):**
+
+| Preset | Bytes | vs MozBase |
+|--------|-------|------------|
+| MozjpegMaxCompression | 16,979 | -2.0% |
+| MozjpegProgressive | 17,043 | -1.6% |
+| MozjpegBaseline | 17,327 | — |
+| JpegliBaseline | 18,355 | +5.9% |
+| JpegliProgressive | 18,612 | +7.4% |
+| HybridBaseline | 23,081 | +33.2% |
+| HybridProgressive | 23,455 | +35.4% |
+| HybridMaxCompression | 23,130 | +33.5% |
+
+Hybrid presets are largest because hybrid path is broken — trellis silently disabled.
+
+**Active parameters ranked by max |delta|:**
+
+| Parameter | Range | Min Δ | Max Δ | Notes |
+|-----------|-------|-------|-------|-------|
+| `tables.quant` (192 vals) | 0.5x–2.0x | -54% | +65% | Primary optimization target |
+| `trellis_lambda_log_scale1` | 12.0–17.0 | -46% | +12% | Exponential rate/distortion tradeoff |
+| `zero_bias_mul` (jpegli only) | 0.0–1.0 | -14% | +31% | Mozjpeg uses all-zeros (no effect) |
+| `trellis_lambda_log_scale2` | 14.0–18.0 | -19% | +11% | Inverse relationship to scale1 |
+| `quality` (Scaled only) | Q50–Q95 | -81% | +112% | Zero effect with Exact/mozjpeg tables |
+| `trellis_enabled` | on/off | — | ~15% | Binary toggle |
+| `scan_mode` | 4 variants | — | -2% | ProgressiveSearch best |
+| `trellis_delta_dc_weight` | 0.0–5.0 | 0% | +1% | Diminishing above 2.0 |
+| `trellis_dc_enabled` | on/off | — | ~0.1% | Tiny |
+| `downsampling_method` | 3 variants | — | ±0.2% | Marginal |
+
+**Dead parameters (zero effect regardless of value):**
+
+| Parameter | Root cause | File:line |
+|-----------|-----------|-----------|
+| `trellis_eob_opt` | Implementation commented out (quality destruction) | `streaming.rs:81-98` |
+| `trellis_use_lambda_weight_tbl` | Hardcoded flat 1/q² weights | `trellis/ac.rs:47-52` |
+| `trellis_num_loops` | Stored but never read (single-pass) | `trellis/ac.rs` (absent) |
+| `trellis_speed_mode` | Only search bounds, DP finds same optimum | `trellis/ac.rs:102-113` |
+| `aq_trellis_coupling` | `create_hybrid_ctx()` never called | `hybrid.rs:56` |
+| All `aq_trellis_*` fields | Hybrid path is dead code | `hybrid.rs:65` |
+| `quality` (Exact tables) | Tables pre-scaled; zero-bias all-zeros | `mozjpeg_table_data.rs:99-106` |
+| `allow_16bit_quant_tables` | No effect at Q85+ (values ≤ 255) | — |
+| `deringing` | Only triggers on saturated (255) pixels | `deringing.rs:131-135` |
+
+**Hybrid mode dead code trace:**
+1. `ExpertConfig::build_trellis_or_hybrid()` builds `HybridConfig` when coupling > 0 (`search.rs:584`)
+2. `to_encoder_config()` stores it in `config.hybrid_config` (`search.rs:565`)
+3. `StreamingEncoder` copies to `ComputedConfig` (`streaming.rs:350`)
+4. **Nobody reads it.** `create_hybrid_ctx()` (`hybrid.rs:56`) exists but is never called.
+5. `StripProcessor::set_trellis()` only accepts `Option<TrellisConfig>` (`strip/mod.rs:715`)
+6. When hybrid mode, `trellis` is `None` → strip gets no trellis → standard rounding.
+
+**For optimizers:** Only tune `tables.quant` (192 values), `lambda_log_scale1/2` (2 floats),
+and `zero_bias_mul` (192 values, jpegli only). Everything else is either dead or marginal.
+
 ## Known Bugs
 
 1. **Hybrid trellis path is dead code (2026-02-02)** - `HybridConfig` is built and stored
